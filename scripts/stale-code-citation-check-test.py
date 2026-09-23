@@ -362,7 +362,7 @@ with tempfile.TemporaryDirectory() as workspace:
     code, out, err = run(root, "docs/still-design.md")
     check("a status naming neither landed nor built is reported beside a stale citation",
           code == 1 and "docs/still-design.md:2:" in out
-          and "say in status whether the code has landed" in out, f"{code} {out}")
+          and "append the pinned line" in out, f"{code} {out}")
     reported = [line.split(":")[1] for line in out.splitlines() if line.startswith("docs/")]
     check("findings print in the document's own line order",
           reported == sorted(reported, key=int), out)
@@ -372,7 +372,7 @@ with tempfile.TemporaryDirectory() as workspace:
         body="The test is `scripts/moved.py` lines 20-24."))
     code, out, err = run(root, "docs/landed.md")
     check("a status naming landed gets no status finding",
-          code == 1 and "say in status whether the code has landed" not in out,
+          code == 1 and "append the pinned line" not in out,
           f"{code} {out}")
 
     write_document(root, "docs/design-but-current.md", document(
@@ -393,9 +393,9 @@ with tempfile.TemporaryDirectory() as workspace:
     code, out, err = run(root, "docs/not-built.md")
     check("a status saying \"design, not built\" is reported beside a stale citation",
           code == 1 and "docs/not-built.md:2:" in out
-          and "say in status whether the code has landed" in out, f"{code} {out}")
+          and "append the pinned line" in out, f"{code} {out}")
     check("the status finding does not say the status is silent about built",
-          "does not claim the code landed or was built" in out
+          "nor status says the code landed" in out
           and "says neither landed nor built" not in out, out)
 
     write_document(root, "docs/partially-built.md", document(
@@ -404,7 +404,7 @@ with tempfile.TemporaryDirectory() as workspace:
     code, out, err = run(root, "docs/partially-built.md")
     check("a status saying partially built is reported beside a stale citation",
           code == 1 and "docs/partially-built.md:2:" in out
-          and "say in status whether the code has landed" in out, f"{code} {out}")
+          and "append the pinned line" in out, f"{code} {out}")
 
     write_document(root, "docs/not-yet-built.md", document(
         status="specification; not yet built",
@@ -412,7 +412,7 @@ with tempfile.TemporaryDirectory() as workspace:
     code, out, err = run(root, "docs/not-yet-built.md")
     check("a negator a word away from the built word still negates it",
           code == 1 and "docs/not-yet-built.md:2:" in out
-          and "say in status whether the code has landed" in out, f"{code} {out}")
+          and "append the pinned line" in out, f"{code} {out}")
 
     write_document(root, "docs/unbuilt.md", document(
         status="unbuilt specification",
@@ -420,7 +420,7 @@ with tempfile.TemporaryDirectory() as workspace:
     code, out, err = run(root, "docs/unbuilt.md")
     check("a status saying unbuilt is reported beside a stale citation",
           code == 1 and "docs/unbuilt.md:2:" in out
-          and "say in status whether the code has landed" in out, f"{code} {out}")
+          and "append the pinned line" in out, f"{code} {out}")
 
     # And the other side: an unnegated built word still ends the rider, and a
     # word that merely contains the letters does not.
@@ -429,7 +429,7 @@ with tempfile.TemporaryDirectory() as workspace:
         body="The test is `scripts/moved.py` lines 20-24."))
     code, out, err = run(root, "docs/as-built.md")
     check("a status saying as built gets no status finding",
-          code == 1 and "say in status whether the code has landed" not in out,
+          code == 1 and "append the pinned line" not in out,
           f"{code} {out}")
 
     write_document(root, "docs/build-tracked.md", document(
@@ -438,15 +438,53 @@ with tempfile.TemporaryDirectory() as workspace:
     code, out, err = run(root, "docs/build-tracked.md")
     check("a status saying build tracked is not read as built",
           code == 1 and "docs/build-tracked.md:2:" in out
-          and "say in status whether the code has landed" in out, f"{code} {out}")
+          and "append the pinned line" in out, f"{code} {out}")
 
     write_document(root, "docs/landed-build-tracked.md", document(
         status="landed design; build tracked in issue 46",
         body="The test is `scripts/moved.py` lines 20-24."))
     code, out, err = run(root, "docs/landed-build-tracked.md")
     check("a status saying landed gets no status finding whatever follows it",
-          code == 1 and "say in status whether the code has landed" not in out,
+          code == 1 and "append the pinned line" not in out,
           f"{code} {out}")
+
+
+# --- A pinned line claims the landing, whatever the status says ------------
+# The design-lifecycle walk, items 5 and 6 (user-ruled 2026-09-22): a design
+# carries decisions, never build status, and each landing appends a pinned
+# line. So a pinned design's status need not say "landed" or "built".
+with tempfile.TemporaryDirectory() as workspace:
+    root = new_repository(workspace)
+    write_code(root, "scripts/moved.py", CODE, date="2026-06-01")
+    pin = ("**Pinned to what landed:** commit [abc1234]"
+           "(https://github.com/nedschorus/nedschorus/commit/abc1234) on "
+           "2026-06-01 — the moved program.")
+
+    write_document(root, "docs/pinned.md", document(
+        status="specification",
+        body="The test is `scripts/moved.py` lines 20-24.\n\n" + pin))
+    code, out, err = run(root, "docs/pinned.md")
+    check("a pinned design's stale line-number citation is still reported",
+          code == 1 and "scripts/moved.py changed 2026-06-01" in out, f"{code} {out}")
+    check("a pinned design gets no status finding though its status says only specification",
+          "append the pinned line" not in out and "docs/pinned.md:2:" not in out,
+          f"{code} {out}")
+
+    write_document(root, "docs/unpinned.md", document(
+        status="specification",
+        body="The test is `scripts/moved.py` lines 20-24."))
+    code, out, err = run(root, "docs/unpinned.md")
+    check("an unpinned design whose status claims no landing gets the status finding",
+          code == 1 and "docs/unpinned.md:2:" in out
+          and "append the pinned line" in out, f"{code} {out}")
+
+    write_document(root, "docs/pin-quoted.md", document(
+        status="specification",
+        body="The test is `scripts/moved.py` lines 20-24.\n\n"
+             "A landing appends `**Pinned to what landed:** commit [` and a sha."))
+    code, out, err = run(root, "docs/pin-quoted.md")
+    check("a design that only quotes the pinned line mid-sentence is not read as pinned",
+          code == 1 and "docs/pin-quoted.md:2:" in out, f"{code} {out}")
 
 
 # --- Changed-paths mode ---------------------------------------------------
@@ -511,7 +549,7 @@ with tempfile.TemporaryDirectory() as workspace:
     check("a path committed before the stamp keeps its commit's date and is not stale",
           "scripts/committed.py" not in out, out)
     check("the status rider rides on an uncommitted edit's finding too",
-          "say in status whether the code has landed" in out, out)
+          "append the pinned line" in out, out)
 
     # An untracked code file is the same case with no commit at all behind it.
     (root / "scripts" / "untracked.py").write_text(CODE, encoding="utf-8")
