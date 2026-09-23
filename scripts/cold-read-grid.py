@@ -272,8 +272,11 @@ def reference_integrity_pre_pass(target: pathlib.Path, record_dir: pathlib.Path)
     cold-read-record for the reviewing agent; unresolved references are leads,
     not verdicts."""
     text = target.read_text(encoding="utf-8")
+    # A bare file name may carry more than one dot: `CLAUDE.local.md` was
+    # cut to `local.md` while the name matched one word before the extension.
     candidates = sorted(set(re.findall(
-        r"[\w./-]+/[\w./-]+|[\w-]+\.(?:md|py|sh|json|yaml|toml)", text)))
+        r"[\w./-]+/[\w./-]+|[\w-]+(?:\.[\w-]+)*\.(?:md|py|sh|json|yaml|toml)",
+        text)))
     lines = ["# Reference-integrity pre-pass", ""]
     for candidate in candidates:
         # Trailing only: a leading dot is part of the path, not

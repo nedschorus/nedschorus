@@ -1212,6 +1212,30 @@ with tempfile.TemporaryDirectory() as scratch:
     check("and nothing in that target is left unresolved",
           "UNRESOLVED" not in reference_check, reference_check)
 
+    # --- A bare file name with more than one dot keeps its whole name --------
+    # The bare-name alternative matched only one word before the extension,
+    # so `CLAUDE.local.md` was cut to `local.md` and reported UNRESOLVED.
+    # User-approved 2026-09-17, backlog-recheck walk item 1, fix 4.
+    repository = build_scratch_repository(scratch, "multi-dot-file-name-reference")
+    (repository / "CLAUDE.local.md").write_text("# Local\n", encoding="utf-8")
+    (repository / "notes.md").write_text("# Notes\n", encoding="utf-8")
+    (repository / TARGET_RELATIVE_PATH).write_text(
+        "# Target\n\nThe seat's rules are in `CLAUDE.local.md`, and a sentence\n"
+        "can end on it: CLAUDE.local.md. A one-dot name still reads: notes.md.\n",
+        encoding="utf-8")
+    run_grid(repository, stubs / "multi-dot-file-name-reference")
+    record_directory = record_directory_of(repository)
+    reference_check = (
+        record_directory / "reference-check.md"
+    ).read_text(encoding="utf-8")
+    check("a bare file name with two dots resolves with its whole name",
+          "- ok: `CLAUDE.local.md`" in reference_check, reference_check)
+    check("a bare file name with one dot still resolves",
+          "- ok: `notes.md`" in reference_check, reference_check)
+    check("and no truncated name is listed",
+          "`local.md`" not in reference_check
+          and "UNRESOLVED" not in reference_check, reference_check)
+
 
 print()
 if failures:
