@@ -275,6 +275,10 @@ target_log = os.environ.get("COLD_READ_GRID_TEST_STUB_TARGET_LOG")
 if target_log and target_match:
     with open(target_log, "a", encoding="utf-8") as handle:
         handle.write(target_match.group(0) + "\n")
+prompt_log = os.environ.get("COLD_READ_GRID_TEST_STUB_PROMPT_LOG")
+if prompt_log:
+    with open(prompt_log, "a", encoding="utf-8") as handle:
+        handle.write(json.dumps(prompt) + "\n")
 if os.environ.get("COLD_READ_GRID_TEST_STUB_EDIT_GIVEN_TARGET") and target_match:
     # A reviewer editing the very document it was handed. The frozen copy is
     # read-only, so this forces the mode first: the point of the case is the
@@ -1236,6 +1240,40 @@ with tempfile.TemporaryDirectory() as scratch:
     check("no cell was given the live document",
           (repository / TARGET_RELATIVE_PATH).resolve() not in logged_resolved,
           f"logged {sorted(logged_resolved)!r}")
+
+    # --- Relative references resolve from the original's directory ----------
+    # Only the document is copied into the record, so a link it makes to a
+    # sibling -- `../issues/x.md` -- reaches nothing beside the copy. Both
+    # reviews of 2026-09-23 blocked on this: the cells lost the context the
+    # author linked, while the reference pre-pass, which resolves against the
+    # original, marked the same links ok. Each prompt must name the original
+    # and its directory as the place relative references resolve from.
+    repository = build_scratch_repository(scratch, "checkout-cells-told-the-origin")
+    prompt_log = scratch / "cells-told-the-origin-prompts.log"
+    result = run_grid(repository, stubs,
+                      {"COLD_READ_GRID_TEST_STUB_PROMPT_LOG": str(prompt_log)})
+    prompts = ([json.loads(line) for line in prompt_log.read_text(encoding="utf-8").splitlines()]
+               if prompt_log.is_file() else [])
+    original = (repository / TARGET_RELATIVE_PATH).resolve()
+    record_directory = record_directory_of(repository)
+    frozen = (record_directory / "target" / TARGET_RELATIVE_PATH).resolve()
+
+    def names_path(prompt, path):
+        # Either spelling: the grid resolves the target, the scratch path may
+        # be reached through a symbolic link.
+        return any(str(candidate) in prompt
+                   for candidate in {path, Path(os.path.realpath(path))})
+
+    check("every cell's prompt names the original as what the copy was frozen from",
+          len(prompts) == 6 and all(
+              names_path(prompt, frozen) and names_path(prompt, original)
+              and "is a frozen copy of" in prompt for prompt in prompts),
+          f"{len(prompts)} prompts; first={prompts[:1]!r}")
+    check("every cell's prompt says relative references resolve from the original's directory",
+          len(prompts) == 6 and all(
+              f"from {original.parent}, the original's directory" in prompt
+              for prompt in prompts),
+          f"expected directory {original.parent}; first={prompts[:1]!r}")
 
     # --- An edit to the COPY is caught, which is where the risk moved --------
     # The records tree is gitignored, so the cell's own stray-write detector

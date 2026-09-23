@@ -26,13 +26,21 @@ tells the operator to do, restores the original bytes and both endpoint
 fingerprints match. Reading a copy removes the failure instead of detecting it.
 Consequences a reader should expect: a report's `path:line` citations name the
 copy's path inside the cold-read-record, which is where the text it reviewed
-is; and the run fingerprints BOTH the copy and the original at the end, because
+is; each cold-read-cell is also given the original's path (`--target-origin`)
+and told to resolve the document's relative references from the original's
+directory, because only the document itself is copied and a link such as
+`../issues/x.md` has nothing beside the copy to reach -- the reference
+pre-pass resolves those links against the original too, so the record and the
+reviewers agree on what a link names (asked for by both reviews of 2026-09-23);
+and the run fingerprints BOTH the copy and the original at the end, because
 the records tree is gitignored and an edit to the copy would otherwise be
 invisible to the cold-read-cell's `git status` stray-write detector. At the
 end of the run the cold-read-record is shipped to the log-store on ned-box by
 scripts/cold-read-record-ship.py, whatever the run's outcome, and the shipper's
 one line is printed as `record:`; a shipping failure is reported, never fatal
-(user-ruled 2026-09-07).
+(user-ruled 2026-09-07). The one run that ships nothing is the one that could
+not freeze the target: it exits 2 before any cold-read-cell launches, so its
+record holds the reference check alone and no report to keep.
 
 WHEN A COLD-READ-CELL FAILS (nedschorus#413; the design, user-reviewed
 2026-09-16 and 2026-09-17, is
@@ -582,16 +590,21 @@ def start_attempt(command: list, report_path: pathlib.Path, attempt: int,
     return CellAttempt(report_path, command, attempt, process, stderr_path, "")
 
 
-def launch_cells(target: pathlib.Path, record_dir: pathlib.Path) -> dict:
-    """Start all six cold-read-cells in parallel, each on its first attempt.
-    Returns {report_path: CellAttempt}."""
+def launch_cells(target: pathlib.Path, record_dir: pathlib.Path,
+                 target_origin: pathlib.Path) -> dict:
+    """Start all six cold-read-cells in parallel, each on its first attempt,
+    on `target` -- the frozen copy -- with `target_origin`, the live document
+    it was copied from, named so the cell resolves relative references from
+    the original's directory. Returns {report_path: CellAttempt}."""
     running = {}
     for runtime, launcher in CELL_LAUNCHERS.items():
         for cell_pass, tier, effort in GRID_CELL_ROSTER:
             report_path = cell_report_path(record_dir, runtime, cell_pass, tier)
             stderr_path = record_dir / (report_path.name + ".stderr.log")
             command = [str(launcher), "--cell", cell_pass, "--tier", tier,
-                       "--target", str(target), "--report", str(report_path)]
+                       "--target", str(target),
+                       "--target-origin", str(target_origin),
+                       "--report", str(report_path)]
             # A roster effort is the cold-read-grid's pin for that
             # cold-read-cell, passed on the command line where the launcher
             # honors it exactly, with no fallback to its tier map.
@@ -896,7 +909,7 @@ def main() -> int:
           f"{record_dir} as each completes — read each as it arrives.")
 
     # THE CELLS READ THE FROZEN COPY, never the live document.
-    outcome = wait_for_cells(launch_cells(frozen_target, record_dir))
+    outcome = wait_for_cells(launch_cells(frozen_target, record_dir, target))
     # BOTH ENDS, and they answer different questions now. The copy is what was
     # read, so a copy that moved is the serious one: it is the old mixed-set
     # failure relocated, and it is invisible to the stray-write detector
