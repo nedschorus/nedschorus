@@ -746,8 +746,15 @@ def provenance_line(runtime: str, model: str, attack: str, target: str,
     `fallback_from=` appears only when an earlier model in a chain produced
     no review, so a degraded cell is visible in the record and not only in
     the run's output. Both follow the cold-read cells' stamp
-    (stamp_provenance in scripts/cold-read-cell-common.py), field order
-    included.
+    (stamp_provenance in scripts/cold-read-cell-common.py), and so does the
+    order of the line's first four fields: `runtime=`, `model=`,
+    `fallback_from=` when present, `effort=`. After those the two stamps
+    differ: `cli=`, `attack=` and `isolation=` are this runner's own;
+    `target=` is in both but is not last here as it is there; and the
+    checkout is recorded differently: the cold-read stamp writes
+    `checkout=<hash>`, with `-dirty` appended when the tree is dirty, where
+    this line writes `commit=<hash>` and `worktree=clean|dirty(N)` (see
+    reviewed_revision).
     """
     fallback_note = f"fallback_from={fallback_from} " if fallback_from else ""
     return (
