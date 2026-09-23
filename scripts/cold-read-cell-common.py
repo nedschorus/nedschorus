@@ -385,12 +385,18 @@ def resolve_target_origin(target_origin_argument) -> typing.Optional[pathlib.Pat
 def target_origin_paragraph(target: pathlib.Path, target_origin: pathlib.Path) -> str:
     """The instruction appended to the prompt when the target is a frozen
     copy. Appended, not a template placeholder, so every template -- the
-    passes' own and any --prompt-file draft -- carries it unchanged."""
+    passes' own and any --prompt-file draft -- carries it unchanged.
+
+    The resolution order is the reference pre-pass's (cold-read-grid.py's
+    reference_integrity_pre_pass): the repository root first, then the
+    original's directory. This repository mostly cites paths from the root,
+    so naming only the original's directory sent the common case astray."""
     return (
         f"\n\n{target} is a frozen copy of {target_origin}. Read the copy for "
-        f"the document's text. Resolve every relative path the document "
-        f"references from {target_origin.parent}, the original's directory, "
-        f"not from the copy's directory.\n"
+        f"the document's text. Resolve each relative path the document "
+        f"references from the repository root, {REPO_ROOT}, and when it does "
+        f"not exist there, from {target_origin.parent}, the original's "
+        f"directory. Never resolve one from the copy's directory.\n"
     )
 
 

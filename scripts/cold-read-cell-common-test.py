@@ -1281,9 +1281,13 @@ with tempfile.TemporaryDirectory() as scratch:
                        if received_prompt_path.is_file() else "")
     check("the model receives the draft's text, not the cell's own template",
           "DRAFT PROMPT MARKER" in received_prompt, repr(received_prompt[:200]))
+    # Either spelling: a macOS temporary directory is reached through a
+    # symbolic link (/var -> /private/var), and the cell resolves the target.
+    def named_in_prompt(path):
+        return str(path) in received_prompt or str(path.resolve()) in received_prompt
     check("{TARGET_PATH} and {REPORT_PATH} are substituted in the draft too",
-          str(repository / TARGET_RELATIVE_PATH) in received_prompt
-          and str(report) in received_prompt
+          named_in_prompt(repository / TARGET_RELATIVE_PATH)
+          and named_in_prompt(report)
           and "{TARGET_PATH}" not in received_prompt
           and "{REPORT_PATH}" not in received_prompt,
           repr(received_prompt[:300]))
@@ -1325,6 +1329,15 @@ with tempfile.TemporaryDirectory() as scratch:
           repr(received_prompt[-400:]))
     check("the prompt says relative references resolve from the origin's directory",
           f"from {origin.parent}, the original's directory" in received_prompt,
+          repr(received_prompt[-400:]))
+    # Root first: this repository mostly cites paths from its root
+    # (`scripts/foo.py`), which the origin's directory would send astray; the
+    # order is the reference pre-pass's.
+    root_phrase = f"from the repository root, {repository.resolve()},"
+    origin_phrase = f"from {origin.parent}, the original's directory"
+    check("the prompt resolves a path from the repository root before the origin's directory",
+          root_phrase in received_prompt and origin_phrase in received_prompt
+          and received_prompt.index(root_phrase) < received_prompt.index(origin_phrase),
           repr(received_prompt[-400:]))
     shutil.rmtree(repository)
     repository = build_scratch_repository(scratch)

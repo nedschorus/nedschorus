@@ -1260,6 +1260,14 @@ with tempfile.TemporaryDirectory() as scratch:
               f"from {original.parent}, the original's directory" in prompt
               for prompt in prompts),
           f"expected directory {original.parent}; first={prompts[:1]!r}")
+    root_phrase = f"from the repository root, {repository.resolve()},"
+    check("every cell's prompt resolves a path from the repository root before the original's directory",
+          len(prompts) == 6 and all(
+              root_phrase in prompt
+              and prompt.index(root_phrase)
+              < prompt.index(f"from {original.parent}, the original's directory")
+              for prompt in prompts),
+          f"expected root {repository.resolve()}; first={prompts[:1]!r}")
 
     # --- An edit to the COPY is caught, which is where the risk moved --------
     # The records tree is gitignored, so the cell's own stray-write detector
