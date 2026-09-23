@@ -611,16 +611,17 @@ class WatcherProcess:
         except subprocess.TimeoutExpired:
             self.process.kill()
             returncode = self.process.wait()
-            # Said out loud, because this kill is what fails the cases that
-            # follow: rc=-9 read as a handler defect is what sent four sweeps
-            # looking for one. Facts only, no remedy: the remedy this line
-            # used to carry, "re-run this suite alone", named concurrency,
-            # and naming concurrency is what turned four inherited-SIG_IGN
-            # failures into four load records.
+            # Said out loud, because this kill is what the cases that follow
+            # read as rc=-9. Only what this helper knows, no cause and no
+            # remedy: the remedy this line once carried, "re-run this suite
+            # alone", named concurrency and turned four inherited-SIG_IGN
+            # failures into four load records, and the attribution it later
+            # carried, "not the watcher's handler", cleared the handler in
+            # the one case left where the handler is what failed (review
+            # comment on PR 630, 2026-09-22).
             print(f"NOTE  the watcher did not exit within {timeout:g}s of "
                   f"{signal.Signals(signal_number).name}, so this helper "
-                  f"SIGKILLed it. The cases below fail for that reason, not "
-                  f"the watcher's handler.")
+                  f"SIGKILLed it.")
         for thread in self._threads:
             thread.join(timeout=2)
         return returncode
