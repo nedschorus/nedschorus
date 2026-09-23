@@ -1,11 +1,11 @@
 ---
-status: landed design; build tracked in issue [Build ghi-info — the GHI knowledge agent](https://github.com/nedschorus/nedschorus/issues/46)
+status: design
 design-as-of: 2026-08-11
 ---
 
 # ghi-info — the GHI knowledge agent (design)
 
-How agents work with GitHub issues (GHIs) in nedschorus: `ghi-info`, a long-lived knowledge agent over the issue corpus; a script-maintained local mirror; a write path whose hook routes raw writes through the project write tool; and the `ghi-write` skill carrying the judgment none of the machinery can. Throughout, **GHI author** means whichever agent is filing or editing an issue. Decision trail: [ghi-info-agent-plan-draft.md](../drafts/ghi-info-agent-plan-draft.md) (per-item dispositions, 2026-08-07) and [git show db917b5:md-review-records/2026-08-09-ghi-info-agent-design-2/dispositions.md](../../git show db917b5:md-review-records/2026-08-09-ghi-info-agent-design-2/dispositions.md); the rejected single-gate direction is kept in § Why issue writes cannot be a credential gate, below, and in full at `git show 0860628:docs/drafts/ghi-gatekeeper-plan-draft.md`.
+How agents work with GitHub issues (GHIs) in nedschorus: `ghi-info`, a long-lived knowledge agent over the issue corpus; a script-maintained local mirror; a write path whose hook routes raw writes through the project write tool; and the `ghi-write` skill carrying the judgment none of the machinery can. Throughout, **GHI author** means whichever agent is filing or editing an issue. Decision trail: `git show 6c9b437:docs/drafts/ghi-info-agent-plan-draft.md` (per-item dispositions, 2026-08-07) and [git show db917b5:md-review-records/2026-08-09-ghi-info-agent-design-2/dispositions.md](../../git show db917b5:md-review-records/2026-08-09-ghi-info-agent-design-2/dispositions.md); the rejected single-gate direction is kept in § Why issue writes cannot be a credential gate, below, and in full at `git show 0860628:docs/drafts/ghi-gatekeeper-plan-draft.md`.
 
 The organizing idea: instead of building a vector or graph database of the GHIs, we use a modern agent — the corpus fits in its context window (measured 2026-08-07: 45 issues ≈ 109 KB). Mechanical work is script work — fetch, format, measure, filter; `ghi-info` spends model turns only on judgment.
 
@@ -105,7 +105,7 @@ Pair staleness is swept in one direction only — issue moved, GHI-MD not. The r
 
 ## The three-layer stack
 
-1. **`ghi-write`** (skill; landed at [.claude/skills/ghi-write/SKILL.md](../../.claude/skills/ghi-write/SKILL.md), user-ruled 2026-08-12; decision trail at [ghi-write-skill-draft.md](../drafts/ghi-write-skill-draft.md)): fires when a GHI author is about to file or edit; front-loads the right behavior — ask `ghi-info` first, route by state, edit rather than duplicate, and write the GHI-MD, which the tool then files, names, lands and links.
+1. **`ghi-write`** (skill; landed at [.claude/skills/ghi-write/SKILL.md](../../.claude/skills/ghi-write/SKILL.md), user-ruled 2026-08-12; decision trail at `git show 6bd0aa5:docs/drafts/ghi-write-skill-draft.md`): fires when a GHI author is about to file or edit; front-loads the right behavior — ask `ghi-info` first, route by state, edit rather than duplicate, and write the GHI-MD, which the tool then files, names, lands and links.
 2. **Hook + tool** — the correctness backstop when the skill does not fire: on the covered write path with `ghi-info` answering, a missed trigger costs efficiency — a late merge catch, one comment retry. The fail-open window and the enumeration holes are the accepted residuals, visible in the delta.
 3. **CLAUDE.md** — ambient documentation only (issue [Build ghi-write (step-1 founding skill): trigger on creating or revising a GHI; enforce edit-don't-comment-or-duplicate](https://github.com/nedschorus/nedschorus/issues/13) is this project's record of a written convention losing to trained habit).
 
@@ -272,3 +272,5 @@ Each with its failure branch (item 7 is a plain measurement and carries none):
 7. Comment-fetch cost at real volume (measured once: 0.42 s for one issue with comments).
 
 **Constants** live as named values at the top of the owning script — no config file in version 1; starting values, tuned in live use: closes-since-birth reincarnation threshold 20; stale-match 2 in the last 10 answers; transcript threshold set at build from NM's working values; ask timeout 5 minutes, inside the hook budget; one drift recheck per ask.
+
+**Pinned to what landed:** commit [b9d8b4e](https://github.com/nedschorus/nedschorus/commit/b9d8b4e9e4ce8af26269dc03d1df325fe16051bb) on 2026-09-22 — `scripts/ghi-info-ask.py` as merged by PR [ghi-info-ask's state key names the session it holds](https://github.com/nedschorus/nedschorus/pull/637).

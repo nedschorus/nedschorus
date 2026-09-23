@@ -18,7 +18,7 @@ A fleet of interactive agents running with little attention. Reincarnate a sessi
 Each script's module docstring says what it does and why it is shaped that way; each has a `…-test.py` suite beside it stating what must keep passing.
 
 - `scripts/handoff-context-threshold-hook.py` — the auto-trigger: a Stop hook that reads context used from the session's own transcript and tells the agent to run the skill at the threshold — or, while one of the session's subagents is still in flight and context is below the ceiling, that the handoff is deferred until it finishes (next section).
-- `.claude/skills/handoff/SKILL.md` — the skill: the agent writes `next-step`, runs the writer, does what it reports. Walked and landed 2026-08-06 (dispositions in `docs/drafts/handoff-skill-draft.md`).
+- `.claude/skills/handoff/SKILL.md` — the skill: the agent writes `next-step`, runs the writer, does what it reports. Walked and landed 2026-08-06 (dispositions in `git show 9f8cc38:docs/drafts/handoff-skill-draft.md`).
 - `nc-systems/handoff/handoff-write-and-check-supervisor.py` — the writer: fills every field a machine can compute, writes the handoff file, reports supervisor liveness.
 - `nc-systems/handoff/handoff-supervisor.py` — the supervisor: watch, kill, extract, carry tasks across (since PR [Bind each seat's task list to its NAME (CLAUDE_CODE_TASK_LIST_ID), so a recycled seat resumes the same list](https://github.com/nedschorus/nedschorus/pull/141) a launched seat's generations share one launcher-pinned list and nothing is copied; pre-seed copying is the unpinned-session path), launch the successor with the initial agent instructions; one per agent, self-registered, lock-guarded.
 - `scripts/handoff-extract-conversation.py` — the extractor: carries the word-floor tail of the dialog verbatim to the successor.
@@ -280,3 +280,5 @@ Four generations of a headless essay-writing agent; three auto-triggered reincar
 ## Open question — attached to the seat move
 
 **Where the successor's output goes in an interactive pane.** A self-started supervisor is detached, its output going to `<agent>-supervisor.log`, so the successor it launches inherits that rather than the terminal the person is watching — correct headless, wrong for a console pane. Recommendation: panes run their supervisor directly (the supervisor as parent), leaving adoption as the bootstrap and recovery path. Settle before the seat move.
+
+**Pinned to what landed:** commit [40afb38](https://github.com/nedschorus/nedschorus/commit/40afb3882d9e4c3de7705898f0965708252689fe) on 2026-09-23 — the handoff system's code as merged by PR [Each handoff removes the finished worktrees and merged branches](https://github.com/nedschorus/nedschorus/pull/664).

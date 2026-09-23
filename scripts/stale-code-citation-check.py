@@ -135,6 +135,18 @@ code is built -- the exact shape of the 413 fault, which read
 "status: design; its cold-read-full-run of 2026-09-16 is triaged" while the
 code had been in main for two days. It adds no findings of its own on main.
 
+A PINNED LINE IS THE SIGNAL THE STATUS NEVER WAS. The walk
+what-a-design-becomes-when-its-code-lands-2026-09-22 (items 5 and 6, user-ruled
+2026-09-22; minutes at nedlern@ned-box:/home/nedlern/nedschorus-logs/walk/
+what-a-design-becomes-when-its-code-lands-2026-09-22-minutes.md) ruled that a
+design carries decisions, never build status, and that each landing appends
+one line beginning "**Pinned to what landed:** commit [" naming the landing
+commit. So a design that carries that line claims its code landed, whatever
+its `status:` says, and the rider stays silent on it; the stale citation
+itself is still reported. The status rule below is kept for designs not yet
+pinned. The rider's instruction no longer asks for the claim in `status:`,
+which the same ruling forbids: it asks for the pinned line.
+
 A STATUS CLAIMS THE CODE IS BUILT when "landed" or "built" appears in it as a
 WHOLE WORD with no negating word in the two words before it. Both halves are
 measured on the nine values in use, not on invented strings. A substring test,
@@ -292,6 +304,10 @@ STATUS_NEGATOR_LOOKBACK_WORDS = 2
 # A word of a status value, for that lookback. The value is lowercased first,
 # so a-z is every letter there is to match.
 STATUS_WORD = re.compile(r"[a-z]+")
+
+# The start of the line a landing appends to a design. See A PINNED LINE IS
+# THE SIGNAL THE STATUS NEVER WAS in the docstring.
+LANDING_PIN_PREFIX = "**Pinned to what landed:** commit ["
 
 _commit_ish_cache = {}
 _last_change_cache = {}
@@ -582,6 +598,12 @@ def status_means_built(status: str) -> bool:
     return False
 
 
+def carries_landing_pin(text: str) -> bool:
+    """Whether a design carries the pinned line a landing appends."""
+    return any(line.strip().startswith(LANDING_PIN_PREFIX)
+               for line in text.splitlines())
+
+
 def repository_relative_name(found: pathlib.Path, repository_root: pathlib.Path):
     """A cited file's path relative to this repository, or None if it is outside.
 
@@ -664,17 +686,19 @@ def findings_for_document(document: pathlib.Path, repository_root: pathlib.Path,
             f"read {where} and cite the function or constant by name, or "
             f"restamp the document once the citation is verified"))
 
-    if findings:
+    if findings and not carries_landing_pin(text):
         status_field = frontmatter_field(text, STATUS_FIELD)
         if status_field is not None:
             status_line, status = status_field
             if not status_means_built(status):
                 findings.append((
                     status_line,
-                    f"{STATUS_NAME} does not claim the code landed or was "
-                    f"built, and code this document cites by line number "
-                    f"moved after {DESIGN_AS_OF_NAME} {stamp}: say in "
-                    f"{STATUS_NAME} whether the code has landed"))
+                    f"code this document cites by line number moved after "
+                    f"{DESIGN_AS_OF_NAME} {stamp}, and neither a pinned line "
+                    f"nor {STATUS_NAME} says the code landed: if it landed, "
+                    f"append the pinned line, "
+                    f"{LANDING_PIN_PREFIX}<sha>](<commit url>) on "
+                    f"<YYYY-MM-DD> — <what landed>."))
     return findings, pinned_count
 
 
