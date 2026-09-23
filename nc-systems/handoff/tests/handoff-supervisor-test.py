@@ -1756,6 +1756,129 @@ def run_agent_exit_record_cases(workspace: Path):
           str(state))
 
 
+def run_handoff_worktree_cleanup_cases(workspace: Path):
+    """Each handoff runs scripts/clean-worktrees.py --remove between the
+    retiring session's stop and the successor's launch (superwalk item 6,
+    2026-09-23), and nothing the cleaner does can stop the launch."""
+    root = workspace / "handoff-worktree-cleanup"
+    root.mkdir()
+    remote = root / "remote.git"
+    git_in(["init", "--quiet", "--bare", "--initial-branch=main", str(remote)], root)
+    home = root / "seat-home"
+    git_in(["clone", "--quiet", str(remote), str(home)], root)
+    git_in(["config", "user.name", "fixture"], home)
+    git_in(["config", "user.email", "fixture@nedschorus.invalid"], home)
+    (home / "README.md").write_text("seed\n", encoding="utf-8")
+    git_in(["add", "-A"], home)
+    git_in(["commit", "--quiet", "-m", "seed"], home)
+    git_in(["push", "--quiet", "origin", "main"], home)
+    git_in(["fetch", "--quiet", "origin"], home)
+    # One finished worktree (clean, landed, vacant), one holding uncommitted
+    # work, and one branch with no worktree and nothing beyond main.
+    finished = home / ".claude" / "worktrees" / "finished-worktree"
+    git_in(["worktree", "add", "--quiet", "-b", "finished-branch", str(finished)], home)
+    unfinished = home / ".claude" / "worktrees" / "unfinished-worktree"
+    git_in(["worktree", "add", "--quiet", "-b", "unfinished-branch", str(unfinished)], home)
+    (unfinished / "notes.txt").write_text("uncommitted\n", encoding="utf-8")
+    git_in(["branch", "orphaned-branch"], home)
+
+    report = supervisor.remove_finished_worktrees_at_handoff(home)
+    branches = git_in(["branch", "--format=%(refname:short)"], home).stdout.split()
+    check("WORKTREE CLEANUP: a finished worktree and its branch are removed",
+          not finished.exists() and "finished-branch" not in branches,
+          f"{report} {branches}")
+    check("WORKTREE CLEANUP: a worktree holding uncommitted work is kept",
+          (unfinished / "notes.txt").exists() and "unfinished-branch" in branches,
+          f"{report} {branches}")
+    check("WORKTREE CLEANUP: a branch with no worktree and nothing beyond main is deleted",
+          "orphaned-branch" not in branches, f"{report} {branches}")
+    check("WORKTREE CLEANUP: the report counts what was removed and deleted",
+          report == ("worktree cleanup: 1 finished worktree(s) removed, "
+                     "1 branch ref(s) with nothing beyond main deleted"),
+          report)
+
+    not_a_checkout = root / "not-a-checkout"
+    not_a_checkout.mkdir()
+    report = supervisor.remove_finished_worktrees_at_handoff(not_a_checkout)
+    check("WORKTREE CLEANUP: a directory that is not a checkout is reported, not raised",
+          "exited 2" in report, report)
+
+    hanging = root / "hanging-cleaner.py"
+    hanging.write_text("import time\ntime.sleep(30)\n", encoding="utf-8")
+    started = time.monotonic()
+    with supervisor_names_replaced(CLEAN_WORKTREES_PATH=hanging):
+        report = supervisor.remove_finished_worktrees_at_handoff(home, timeout_seconds=1)
+    elapsed = time.monotonic() - started
+    check("WORKTREE CLEANUP: a cleaner that hangs is stopped at the bound",
+          elapsed < 15 and "did not finish in 1 s" in report, f"{elapsed:.1f}s {report}")
+
+    with supervisor_names_replaced(sys=SimpleNamespace(executable=str(root / "no-such-python"))):
+        report = supervisor.remove_finished_worktrees_at_handoff(home)
+    check("WORKTREE CLEANUP: a cleaner that cannot be run is reported, not raised",
+          "could not be run" in report, report)
+
+    # The wiring: after the handoff, the retiring session is stopped, then the
+    # cleaner runs against the seat's directory, then the successor launches.
+    handoff_directory = root / "handoffs"
+    handoff_directory.mkdir()
+    settings = supervisor.SupervisorSettings(
+        agent="worktreecleanup", working_directory=home,
+        handoff_directory=handoff_directory, agent_command="unused-stub-agent",
+        first_prompt="")
+    events = []
+
+    def launch(agent_command, session_id, working_directory, prompt, **_):
+        events.append("launch")
+        if events.count("launch") == 1:
+            settings.handoff_path.write_text(
+                "restart-counter: 1\nnext-step: carry on\n", encoding="utf-8")
+            return StubLaunchedSession(-15, ended=False)
+        return StubLaunchedSession(0)
+
+    def stop(process):
+        events.append("stop")
+        process.terminate()
+
+    def cleanup(working_directory):
+        events.append(("cleanup", working_directory))
+        return "worktree cleanup: stubbed"
+
+    console = io.StringIO()
+    with supervisor_names_replaced(
+            launch_agent_session=launch, stop_session=stop,
+            remove_finished_worktrees_at_handoff=cleanup,
+            sync_working_branch_with_main=lambda working_directory: "branch sync: stubbed",
+            carry_over_to_successor=lambda settings, retiring, fields, generation: (
+                f"successor-{generation}", None),
+            stdin_isatty=True), \
+            contextlib.redirect_stdout(console):
+        supervisor.supervise_sessions(settings)
+    check("WORKTREE CLEANUP: a handoff runs the cleaner on the seat's directory, "
+          "between the stop and the successor's launch",
+          events == ["launch", "stop", ("cleanup", home), "launch"],
+          str(events))
+    check("WORKTREE CLEANUP: the cleaner's report reaches the supervisor's console",
+          "handoff-supervisor: worktree cleanup: stubbed" in console.getvalue(),
+          console.getvalue()[-400:])
+
+    # A first launch is not a handoff: the launchers' boot report covers it.
+    events.clear()
+    settings = supervisor.SupervisorSettings(
+        agent="worktreecleanupfirst", working_directory=home,
+        handoff_directory=handoff_directory, agent_command="unused-stub-agent",
+        first_prompt="")
+    with supervisor_names_replaced(
+            launch_agent_session=lambda *arguments, **_: (
+                events.append("launch") or StubLaunchedSession(0)),
+            remove_finished_worktrees_at_handoff=cleanup,
+            sync_working_branch_with_main=lambda working_directory: "branch sync: stubbed",
+            stdin_isatty=False), \
+            contextlib.redirect_stdout(io.StringIO()):
+        supervisor.supervise_sessions(settings)
+    check("WORKTREE CLEANUP: a launch with no handoff before it runs no cleaner",
+          events == ["launch"], str(events))
+
+
 def run_resume_after_a_death_without_a_handoff_cases(workspace: Path):
     """The ruling of 2026-09-21 (GHI [The handoff-supervisor resumes a session
     that died without a handoff, instead of stopping the seat](https://github.com/nedschorus/nedschorus/issues/613)):
@@ -2941,6 +3064,7 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     run_dont_restart_without_a_terminal_case(Path(temporary_directory))
     run_no_seat_recycle_refusal_case(Path(temporary_directory))
     run_agent_exit_record_cases(Path(temporary_directory))
+    run_handoff_worktree_cleanup_cases(Path(temporary_directory))
     run_resume_after_a_death_without_a_handoff_cases(Path(temporary_directory))
     run_by_hand_resume_cases(Path(temporary_directory))
     run_boot_ignition_case(Path(temporary_directory))
