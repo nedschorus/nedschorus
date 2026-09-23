@@ -736,6 +736,27 @@ with tempfile.TemporaryDirectory() as naming_scratch:
     check("an uncategorised path is still surfaced rather than hidden",
           "other files (1): Makefile" in named(("Makefile", "a makefile")), named())
 
+    # nc-systems/ holds a system kept whole — its code, its tests and its
+    # design of record in one directory — so a change there is named as what
+    # it is. Until 2026-09-22 the directory matched no category and fell to
+    # the catch-all: observed live that day, when
+    # nc-systems/handoff/handoff-design.md moved on main and this hook
+    # reported it as "other files". The pair is a design AND a program, so the
+    # case proves the category is decided by the path's prefix, not by the
+    # extension; the catch-all still holds this scratch repository's Makefile
+    # from the case above, so what is asserted is that nc-systems/ is not on
+    # that line.
+    systems_listing = named(("nc-systems/handoff/handoff-design.md", "a design of record"),
+                            ("nc-systems/handoff/handoff-supervisor.py", "the system's code"))
+    check("a system kept whole is named as one, its design of record and its code together",
+          "systems you build on, code and design of record (2): "
+          "nc-systems/handoff/handoff-design.md, nc-systems/handoff/handoff-supervisor.py"
+          in systems_listing, systems_listing)
+    catch_all_line = next((line for line in systems_listing.splitlines()
+                           if line.lstrip().startswith("other files")), "")
+    check("and never under the catch-all, the least informative label available",
+          "nc-systems/" not in catch_all_line, catch_all_line or systems_listing)
+
     # A wide gap is capped, or the agent reads a wall and skims it. Its own
     # repository, so the count is exactly what this case put there.
     wide_origin = tmp / "wide-origin"
