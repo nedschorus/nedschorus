@@ -105,9 +105,17 @@ PROGRAM = "cold-read-codex-cell"
 # unique-and-real over two designs and two runs). Luna keeps `second`:
 # added to opus at max plus sol at max it lifts 238-round-1 0.89 -> 0.94 and
 # 120-design 0.94 -> 0.97 at no wall-clock cost (mean 665 s, under sol's).
+#
+# 2026-09-22 (user direction, the day GPT-6 Sol shipped): both cold-read-tiers
+# move to the same-slot GPT-6 successors, gpt-6-sol and gpt-6-luna, at the
+# same efforts. The numbers above were measured on gpt-5.6-sol and
+# gpt-5.6-luna; the campaign never ran the GPT-6 pair, so those numbers are
+# the baseline a re-measurement compares against, not evidence for the new
+# pins. Live-verified the same day on codex-cli 0.156.0: both ids accepted at
+# xhigh and recorded as the answering model.
 TIER_TO_CODEX_MODEL_CHAIN = {
-    "deep": ("gpt-5.6-sol",),
-    "second": ("gpt-5.6-luna",),
+    "deep": ("gpt-6-sol",),
+    "second": ("gpt-6-luna",),
 }
 
 # cold-read-tier -> reasoning effort, pinned explicitly so a cold-read-cell's

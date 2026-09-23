@@ -159,7 +159,7 @@ JUDGE_MODEL_TO_REASONING_EFFORT = {
 }
 
 # What --restater may be: the restater class under judgment, named as the
-# roster names its models (claude-opus-5, gpt-5.6-sol, gemini-3.8-flash-low).
+# roster names its models (claude-opus-5, gpt-6-sol, gemini-3.8-flash-low).
 # Lowercase letters and digits joined by single hyphens or dots, so the label
 # is safe as a path segment -- the runner builds this restater's
 # cold-read-record name out of it -- and reads in a report as the
@@ -214,7 +214,7 @@ def build_judge_argument_parser():
     parser.add_argument(
         "--restater", required=True, metavar="CLASS",
         help="the restater class under judgment, named as the roster names "
-             "its models (gemini-3.8-flash-low, gpt-5.6-sol, claude-opus-5); "
+             "its models (gemini-3.8-flash-low, gpt-6-sol, claude-opus-5); "
              "lowercase letters and digits joined by single hyphens or dots",
     )
     parser.add_argument(
