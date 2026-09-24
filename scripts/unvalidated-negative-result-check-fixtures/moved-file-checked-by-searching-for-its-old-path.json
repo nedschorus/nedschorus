@@ -5,7 +5,6 @@
   "exit_code": 1,
   "stdout": "",
   "stderr": "",
-  "ran_on_this_machine": true,
   "control_corpus_root": ".",
   "must_fire": true
 }

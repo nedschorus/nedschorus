@@ -5,7 +5,6 @@
   "exit_code": 0,
   "stdout": "scripts/unvalidated-negative-result-check-fixtures/cold-read-reports-with-four-finding-numbering-shapes/2026-09-15-handoff-system-overview-2--claude-hunt-floor.md:0\nscripts/unvalidated-negative-result-check-fixtures/cold-read-reports-with-four-finding-numbering-shapes/2026-09-15-handoff-system-overview-2--claude-hunt-good.md:33\nscripts/unvalidated-negative-result-check-fixtures/cold-read-reports-with-four-finding-numbering-shapes/2026-09-15-handoff-system-overview-2--claude-terminology-good.md:0\nscripts/unvalidated-negative-result-check-fixtures/cold-read-reports-with-four-finding-numbering-shapes/2026-09-15-handoff-system-overview-2--codex-hunt-floor.md:0\nscripts/unvalidated-negative-result-check-fixtures/cold-read-reports-with-four-finding-numbering-shapes/2026-09-15-handoff-system-overview-2--codex-hunt-good.md:0\nscripts/unvalidated-negative-result-check-fixtures/cold-read-reports-with-four-finding-numbering-shapes/2026-09-15-handoff-system-overview-2--codex-terminology-good.md:0\n",
   "stderr": "",
-  "ran_on_this_machine": true,
   "control_corpus_root": ".",
   "must_fire": true
 }

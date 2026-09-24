@@ -10,14 +10,21 @@ The four fixtures are replayed here too, controls and all, because the
 fixtures are the reason this program exists and a change that stops one of
 them firing is the regression that matters.
 
+Every corpus and transcript the suite makes lives under one scratch directory
+of its own, removed when the suite exits, and the measurement case reads only
+that directory: reading the system temp directory would count other programs'
+.jsonl files.
+
 Run: python3 scripts/unvalidated-negative-result-check-test.py
 """
 
+import atexit
 import importlib.util
 import io
 import json
 import os
 import pathlib
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -25,6 +32,11 @@ import tempfile
 CHECK_SCRIPT = pathlib.Path(__file__).resolve().with_name(
     "unvalidated-negative-result-check.py")
 CHECKOUT_ROOT = CHECK_SCRIPT.parent.parent
+
+SUITE_SCRATCH = pathlib.Path(tempfile.mkdtemp(
+    prefix="unvalidated-negative-result-check-test-"))
+atexit.register(shutil.rmtree, SUITE_SCRATCH, ignore_errors=True)
+TRANSCRIPTS_ROOT = SUITE_SCRATCH / "transcripts"
 
 _spec = importlib.util.spec_from_file_location(
     "unvalidated_negative_result_check", CHECK_SCRIPT)
@@ -63,6 +75,11 @@ check("git grep counts as a search stage",
       judge("git grep -n needle main", exit_code=1, stdout="").applicable)
 check("git log --grep counts as a search stage",
       judge("git log --grep=needle --oneline", exit_code=0, stdout="").applicable)
+check("git log -S with its pattern attached counts as a search stage",
+      judge("git log -Sneedle --oneline", exit_code=0, stdout="").applicable
+      and judge("git log -Gneedle --oneline", exit_code=0, stdout="").applicable,
+      "-Sneedle is how the pickaxe is usually written; no word boundary "
+      "follows the S")
 
 check("a bare 0 is an empty result",
       check_module.empty_shape_of("0\n") == "zero-count")
@@ -94,6 +111,13 @@ check("head -c ahead of the search fires",
       "truncating-stage-upstream-of-the-search" in
       judge("cat big.md | head -c 500 | grep needle", exit_code=1,
             stdout="").signals)
+check("tail -n ahead of the search fires, as head -n does",
+      "truncating-stage-upstream-of-the-search" in
+      judge("cat big.md | tail -n 50 | grep needle", exit_code=1,
+            stdout="").signals)
+check("tail -n after the search does not fire",
+      "truncating-stage-upstream-of-the-search" not in
+      judge("grep needle big.md | tail -n 5", exit_code=1, stdout="").signals)
 check("cut -f, which keeps whole fields, does not fire",
       "truncating-stage-upstream-of-the-search" not in
       judge("cat rows.tsv | cut -f2 | grep needle", exit_code=1,
@@ -108,15 +132,19 @@ check("a search that discards its stderr fires",
       str(discarded.signals))
 check("the same search keeping its stderr is silent",
       not judge("grep -rn needle docs/", exit_code=1, stdout="").fires)
+check("a search FOR the text 2>/dev/null is not read as discarding stderr",
+      not judge("grep -n '2>/dev/null' notes.md", exit_code=1,
+                stdout="").fires,
+      "a quoted pattern is the thing searched for, not a redirect")
 
 remote = judge("ssh nedlern@ned-box 'rg -n needle ~/agents' 2>/dev/null | head -5",
-               exit_code=0, stdout="", ran_on_this_machine=False)
+               exit_code=0, stdout="")
 check("a search run over ssh is judged through the ssh stage",
       "stderr-discarded-by-the-search-stage" in remote.signals,
       str(remote.signals))
 check("the same remote search keeping its stderr is silent",
       not judge("ssh nedlern@ned-box 'rg -n needle ~/agents'", exit_code=0,
-                stdout="", ran_on_this_machine=False).fires)
+                stdout="").fires)
 check("the remote command inside ssh is found",
       check_module.remote_command_of(
           "ssh nedlern@ned-box 'rg -n needle ~/agents' 2>/dev/null")
@@ -135,6 +163,23 @@ check("a merged result saying the program was not found fires",
 check("a merged result holding real matches is silent",
       not judge("rg -n needle .", exit_code=1,
                 stdout="notes.md:4:needle\n",
+                stderr_was_captured=False).fires)
+check("zsh's form of the not-found line fires too",
+      "search-program-missing-on-this-machine" in
+      judge("rg -n needle .", exit_code=127,
+            stdout="zsh:1: command not found: rg\n",
+            stderr_was_captured=False).signals)
+missing_path = judge("grep -rn needle missing/", exit_code=2, stdout="",
+                     stderr="grep: missing/: No such file or directory\n")
+check("a missing path is reported as a failed search, not a missing program",
+      "search-program-missing-on-this-machine" not in missing_path.signals
+      and "exit-status-reports-an-error-not-an-absence" in missing_path.signals,
+      f"{missing_path.signals}: grep is installed; telling the agent to "
+      f"install it is a wrong instruction")
+check("a not-found line naming a program outside the search's pipeline is "
+      "silent",
+      not judge("grep -n needle notes.md; frobnicate", exit_code=127,
+                stdout="bash: line 1: frobnicate: command not found\n",
                 stderr_was_captured=False).fires)
 check("a program off PATH but present as a shell function does not fire",
       not judge("rg -n needle .", exit_code=1, stdout="").fires,
@@ -155,7 +200,18 @@ check("grep's 1, which means no match, is silent",
 check("ssh's 255, which means the connection failed, fires",
       "exit-status-reports-an-error-not-an-absence" in
       judge("ssh nedlern@ned-box 'grep -rn needle agents'", exit_code=255,
-            stdout="", ran_on_this_machine=False).signals)
+            stdout="").signals)
+check("a later command's error status is not blamed on the search",
+      not judge("grep -n needle notes.md; ls missing", exit_code=2,
+                stdout="ls: cannot access 'missing': No such file or "
+                       "directory\n",
+                stderr_was_captured=False).fires,
+      "the status of `a; b` is b's, and grep ran fine and found nothing")
+check("the search's own error status fires after a cd",
+      "exit-status-reports-an-error-not-an-absence" in
+      judge("cd docs && grep -rn needle missing/", exit_code=2,
+            stdout="grep: missing/: No such file or directory\n",
+            stderr_was_captured=False).signals)
 
 
 # ------------------------------------------------------ stderr and stdout
@@ -205,7 +261,7 @@ check("PIPESTATUS recovers the status, so it does not fire",
 # ------------------------------------------------- the weakened control run
 
 def in_a_scratch_corpus(files):
-    directory = tempfile.mkdtemp(prefix="unvalidated-negative-control-")
+    directory = tempfile.mkdtemp(prefix="control-corpus-", dir=SUITE_SCRATCH)
     for name, body in files.items():
         path = pathlib.Path(directory) / name
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -245,6 +301,46 @@ check("the same count with no zero among it is not judged at all",
                 stdout="one.md:2\ntwo.md:3\n",
                 control_corpus_root=anchored_corpus).applicable)
 
+absolute_corpus = in_a_scratch_corpus({
+    "one.md": "### 1. a finding\n",
+    "two.md": "**1.** a finding written another way\n",
+})
+try:
+    absolute_outcome = judge(
+        f"grep -c '^### [0-9]\\+\\.' {absolute_corpus}/*.md", exit_code=0,
+        stdout=f"{absolute_corpus}/one.md:1\n{absolute_corpus}/two.md:0\n",
+        control_corpus_root=absolute_corpus).signals
+except Exception as error:  # the failure this case exists to catch
+    absolute_outcome = f"raised {error!r}"
+check("a control over an absolute glob expands it and fires",
+      "weakened-pattern-control-run-found-matches" in absolute_outcome,
+      f"{absolute_outcome}: the log-store is cited by its absolute path, so "
+      f"failure 1's real shape is an absolute glob")
+
+for cleanup in ("find ./build/sub -name '*.tmp' -delete",
+                "find ./build/sub -name '*.tmp' -exec rm {} +",
+                "fd 'build/one' -x rm"):
+    cleanup_corpus = in_a_scratch_corpus({
+        "sub/one.tmp": "", "sub/two.tmp": "", "one-x": "",
+    })
+    judge(cleanup, exit_code=0, stdout="", control_corpus_root=cleanup_corpus)
+    check(f"a control run never carries out the action of: {cleanup}",
+          all((pathlib.Path(cleanup_corpus) / name).exists()
+              for name in ("sub/one.tmp", "sub/two.tmp", "one-x")),
+          str(sorted(str(path.relative_to(cleanup_corpus))
+                     for path in pathlib.Path(cleanup_corpus).rglob("*"))))
+
+piped_corpus = in_a_scratch_corpus({
+    "notes.txt": "nothing here\n", "other.txt": "needle\n",
+})
+piped = judge('cat notes.txt | grep -rn "x/needle"', exit_code=1, stdout="",
+              control_corpus_root=piped_corpus)
+check("a search fed by a pipe is never re-run over the corpus",
+      piped.control is None and
+      "weakened-pattern-control-run-found-matches" not in piped.signals,
+      f"{piped.control}: it read the pipe, so a re-run over the corpus "
+      f"searches files the original never read")
+
 check("the control refuses a command carrying a pipe",
       check_module.run_control("grep -rn 'a/b' . | head", "a/b", corpus, [])
       is None,
@@ -264,9 +360,13 @@ check("a literal head before a regex element is dropped",
 
 # --------------------------------------------- reading a session transcript
 
-def transcript_holding(records):
+def transcript_holding(records, root=TRANSCRIPTS_ROOT, where="project"):
+    """Write the records as one transcript under root/where; return its path."""
+    directory = pathlib.Path(root) / where
+    directory.mkdir(parents=True, exist_ok=True)
     handle = tempfile.NamedTemporaryFile(
-        mode="w", suffix=".jsonl", delete=False, encoding="utf-8")
+        mode="w", suffix=".jsonl", delete=False, encoding="utf-8",
+        dir=directory)
     for record in records:
         handle.write(json.dumps(record) + "\n")
     handle.close()
@@ -325,12 +425,40 @@ check("a backgrounded command is not a pair",
       list(check_module.bash_pairs_in_transcript(background_shape)) == [],
       "its empty stdout is the launch, not the search")
 
+measured_root = SUITE_SCRATCH / "measured-transcripts"
+transcript_holding([
+    assistant_bash("m1", "rg -n needle ."),
+    result_block("m1", "Error: Exit code 127\nbash: line 1: rg: command not found"),
+    assistant_bash("m2", "grep -rn needle missing/"),
+    result_block("m2", "Error: Exit code 2\n"
+                       "grep: missing/: No such file or directory"),
+], root=measured_root)
+transcript_holding([
+    assistant_bash("m3", "grep -n needle notes.md"),
+    result_block("m3", {"stdout": "", "stderr": "", "interrupted": False,
+                        "isImage": False, "noOutputExpected": False}),
+], root=measured_root, where="project/session-one/subagents")
+
+
+def funnel(measurement):
+    return {key: measurement.get(key) for key in (
+        "pairs", "from_subagents", "search_shaped", "empty", "fired")}
+
+
 measurement = check_module.measure_transcripts(
-    [os.path.dirname(exit_zero_shape)], limit=None, top=3, out=io.StringIO())
-check("the measurement reports its funnel",
-      measurement["pairs"] >= 1 and "fired" in measurement,
-      str({k: measurement[k] for k in ("pairs", "search_shaped", "empty",
-                                       "fired")}))
+    [str(measured_root)], limit=None, top=3, out=io.StringIO())
+check("the measurement reads subagent transcripts",
+      measurement["pairs"] == 3 and measurement.get("from_subagents") == 1,
+      f"{funnel(measurement)}: review cells and reviewers are subagents, and "
+      f"they run most of this fleet's searches")
+check("the measurement judges a failure whose merged output is only error lines",
+      measurement["empty"] == 3 and measurement["fired"] == 2,
+      f"{funnel(measurement)}: a transcript merges the streams of a non-zero "
+      f"command, so failure 3's shape has a stdout that is not empty")
+limited = check_module.measure_transcripts(
+    [str(measured_root)], limit=1, top=3, out=io.StringIO())
+check("--limit stops the replay at that many pairs across transcripts",
+      limited["pairs"] == 1, str(funnel(limited)))
 
 
 # ------------------------------------------------------- the four fixtures
@@ -385,6 +513,20 @@ check("two modes at once is a bad invocation, not a silent default",
 code, _out, err = run_program("--replay-fixtures", "/no/such/fixtures")
 check("a fixtures directory that does not exist is a bad invocation",
       code == 2, f"{code} {err!r}")
+
+
+# ------------------------------------------------ what a control never runs
+
+for refused_stage in ("find . -name 'x/needle'",
+                      "fd 'x/needle' -x rm",
+                      "rg --pre ./decompress 'x/needle' .",
+                      "ugrep --filter='*:cat' 'x/needle' .",
+                      "git grep -O 'x/needle'",
+                      "git grep --open-files-in-pager=vim 'x/needle'"):
+    check(f"a control run is refused for: {refused_stage}",
+          check_module.control_refusal(refused_stage) is not None)
+check("a control run is allowed for a bare grep",
+      check_module.control_refusal("grep -rn 'x/needle' .") is None)
 
 
 if failures:
