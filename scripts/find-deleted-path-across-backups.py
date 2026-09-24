@@ -43,10 +43,12 @@ THE SEVEN SURFACES, in the order they are searched:
                     default, so this surface's memory is about a month.
   4. log-store    — every file name under /home/nedlern/nedschorus-logs on the
                     box, where seats ship what git does not carry. FOUND only
-                    for a file with the exact name; a name that only contains
-                    the file's stem is listed as a CANDIDATE, because a copy
-                    is usually renamed on its way in, but not counted. Read
-                    in place on the box; one ssh call from the Mac.
+                    for a file whose path ends with the path asked for, the
+                    rule git's surface uses; any other file whose name
+                    contains the file's stem, the same name in another
+                    directory included, is listed as a CANDIDATE, because a
+                    copy is usually renamed on its way in, but not counted.
+                    Read in place on the box; one ssh call from the Mac.
   5. transcripts  — agent session JSONL under ~/.claude/projects, on this Mac
                     AND on the box. A file's content often survives in the
                     transcript of the session that wrote or read it, even when
@@ -178,10 +180,12 @@ UNAVAILABLE naming that reason, and a relative path with a directory component
 is read as repo-relative — if it was meant as a fragment of some other path,
 surface 1 tested the wrong place and says which place it tested. git, its
 reflog, transcripts and Timeshift answer the fragment forms; the log-store
-answers by the file's name alone, whatever form it was given in.
+lists by the file's name, whatever form it was given in, and counts as found
+only a copy whose path ends with the form given.
 
 Exit code: 0 when at least one surface FOUND it. 1 when every surface that ran
-was searched and none has it — the only exit that means "stop looking". 3 when
+was searched and none has it — the only exit that means "stop looking", once
+any log-store candidates the summary names have been checked. 3 when
 nothing was found and at least one surface could NOT be searched: the same
 thing the summary's "Could NOT search" line says, and the usual result of an
 unattended run, because reading inside Time Machine needs root — unless the
@@ -199,6 +203,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import shlex
 import subprocess
 import sys
@@ -1046,21 +1051,32 @@ def search_log_store(wanted, log_store_root, box_ssh_host, runner=run_command, s
     merge-lane-28e4f5f.md. So this surface LISTS every name containing the
     file's stem, case-insensitively, newest first.
 
-    ONLY THE EXACT NAME IS FOUND. A name that merely contains the stem is a
-    candidate: listed, never counted. Counting it made a path that never
-    existed come back FOUND, exit 0, "Recoverable from: log-store.", with a
-    cp of an unrelated file and the password speech silenced
-    (`nowhere/never-existed/plan.md` matched 88 names in the real store;
-    mac-claude's review 5298558956 on PR 702). So with no exact-name file the
-    surface is NOT FOUND, or UNAVAILABLE when a directory went unread, and
-    it still lists the candidates and marks the report `candidate_copies`,
-    which the summary names. With one, the recovery copies the newest
-    exact-name copy, the only one whose identity the name establishes, and
-    a line says when renamed candidates are newer: the exact-name copy the
-    store held for that file was a cold-read-record's frozen target from
-    2026-09-01, older than the renamed drafts, and research episode E13 was
-    an agent handing over exactly such a copy ("that's not the latest
-    reference"; review 5298465965 on PR 702).
+    ONLY A COPY AT THE WANTED PATH IS FOUND: its path ends with the path
+    asked for, at a component boundary and whatever the case
+    — `path_matches`, the rule git's surface uses. A cold-read-record keeps
+    its target's repository path under `target/`, so that is the copy the
+    path identifies. Every other hit is a candidate: listed, never counted.
+    Counting a stem match made a path that never existed come back FOUND,
+    exit 0, "Recoverable from: log-store.", with a cp of an unrelated file
+    and the password speech silenced (`nowhere/never-existed/plan.md`
+    matched 88 names in the real store; mac-claude's review 5298558956 on
+    PR 702). Counting the same file NAME did the same one level down: the
+    store reuses names across records, 40 `dispositions.md` and 11
+    `SKILL.md` on 2026-09-24, so `nowhere/never-existed/dispositions.md`,
+    and this tool's own founding path, came back FOUND with a cp of another
+    record's file (mac-claude's review 5298738764; Codex P1). A bare file
+    name still matches every copy of that name, as it does in git.
+
+    So with no copy at the wanted path the surface is NOT FOUND, or
+    UNAVAILABLE when a directory went unread, and it still lists the
+    candidates and marks the report `candidate_copies`, which the summary
+    names. With one, the recovery copies the newest copy at the wanted
+    path, and a line says when other candidates are newer: research episode
+    E13 was an agent handing over a cold-read-record's frozen copy older
+    than the renamed drafts ("that's not the latest reference"; review
+    5298465965 on PR 702). A listing cut at LOG_STORE_HITS_SHOWN names how
+    many it left out and the command that lists them all (Codex P2 on
+    review 5298743638).
 
     The store is read in place when it is on this machine, which is the box,
     and through one ssh call otherwise. `store_is_here` lets the tests drive the
@@ -1129,55 +1145,77 @@ def search_log_store(wanted, log_store_root, box_ssh_host, runner=run_command, s
         return SurfaceReport("log-store", NOT_FOUND, ["searched every file name under %s on %s; none has %r in it"
                                                       % (log_store_root, where, name)])
 
-    exact_name = _exact_name_to_find_in_the_log_store(wanted)
+    shown_path = _path_to_find_in_the_log_store(wanted)
+    wanted_in_store = shown_path.lower()
+    same_name = os.path.basename(wanted_in_store)
     hits.sort(key=lambda hit: -hit[0])
-    exact = [hit for hit in hits if os.path.basename(hit[1]).lower() == exact_name]
+    at_wanted_path = [hit for hit in hits if path_matches(hit[1].lower(), wanted_in_store)]
     listing = []
     for mtime, path in hits[:LOG_STORE_HITS_SHOWN]:
         listing.append("    %s  %s" % (time.strftime("%Y-%m-%d %H:%M", time.localtime(mtime)), path))
     if len(hits) > LOG_STORE_HITS_SHOWN:
-        listing.append("    ... and %d more" % (len(hits) - LOG_STORE_HITS_SHOWN))
+        listing.append("    ... and %d more — list them all with: %s"
+                       % (len(hits) - LOG_STORE_HITS_SHOWN,
+                          _command_listing_every_log_store_name(log_store_root, name, store_is_here, box_ssh_host)))
 
-    if not exact:
+    if not at_wanted_path:
         # Only candidates: not a find. The status, exit code, summary and
         # speech are NOT FOUND's (or UNAVAILABLE's, when a directory went
-        # unread and could hold the exact name), and the names are still
-        # listed, because E11 and E14's copies were renamed ones.
+        # unread and could hold the file), and the names are still listed,
+        # because E11 and E14's copies were renamed ones.
         if unread:
-            head = [unread_line, "the rest were searched, and no file there is named %r" % exact_name]
+            head = [unread_line, "the rest were searched, and no file there is at a path ending in %r"
+                    % shown_path]
             status = UNAVAILABLE
         else:
-            head = ["searched every file name under %s on %s; none is named %r" % (log_store_root, where, exact_name)]
+            head = ["searched every file name under %s on %s; none is at a path ending in %r"
+                    % (log_store_root, where, shown_path)]
             status = NOT_FOUND
         lines = head + ["%d file(s) have %r in their name, newest first — candidates only, not counted as found:"
                         % (len(hits), name)] + listing
+        elsewhere = sum(1 for hit in hits if os.path.basename(hit[1]).lower() == same_name)
+        if elsewhere:
+            lines.append("(%d of them %s named %r but in another directory: a different file unless its content says"
+                         " otherwise)" % (elsewhere, "is" if elsewhere == 1 else "are", os.path.basename(shown_path)))
         lines.append("(a copy is often renamed on its way into the store: check a candidate's content")
         lines.append(" before calling it recovered, and before saying the file does not exist)")
         report = SurfaceReport("log-store", status, lines)
         report.candidate_copies = len(hits)
         return report
 
-    lines = ["%d file(s) under %s on %s have %r in their name, newest first; %d of them %s named %r:"
-             % (len(hits), log_store_root, where, name, len(exact), "is" if len(exact) == 1 else "are", exact_name)]
+    lines = ["%d file(s) under %s on %s have %r in their name, newest first; %d of them %s at a path ending in %r:"
+             % (len(hits), log_store_root, where, name, len(at_wanted_path),
+                "is" if len(at_wanted_path) == 1 else "are", shown_path)]
     lines += listing
-    newer_candidates = [hit for hit in hits if hit[0] > exact[0][0] and hit not in exact]
+    newer_candidates = [hit for hit in hits if hit[0] > at_wanted_path[0][0] and hit not in at_wanted_path]
     if newer_candidates:
-        lines.append("(%d renamed candidate(s) are newer than the newest copy named %r: check their content"
-                     % (len(newer_candidates), exact_name))
+        lines.append("(%d other candidate(s) are newer than the newest copy at %r: check their content"
+                     % (len(newer_candidates), shown_path))
         lines.append(" before settling on that copy)")
-    elif len(hits) > len(exact):
-        lines.append("(a name that only contains %r is a candidate — check its content before calling it recovered)"
-                     % name)
+    elif len(hits) > len(at_wanted_path):
+        lines.append("(a file elsewhere with %r in its name is a candidate — check its content before calling it"
+                     " recovered)" % name)
     if unread:
         lines.append("(%s)" % unread_line)
-    newest_exact = shlex.quote(exact[0][1])
-    recovery = ["cp %s ." % newest_exact] if store_is_here else ["scp %s:%s ." % (box_ssh_host, newest_exact)]
+    newest_at_wanted_path = shlex.quote(at_wanted_path[0][1])
+    recovery = (["cp %s ." % newest_at_wanted_path] if store_is_here
+                else ["scp %s:%s ." % (box_ssh_host, newest_at_wanted_path)])
     return SurfaceReport("log-store", FOUND, lines, recovery)
 
 
-def _exact_name_to_find_in_the_log_store(wanted):
-    """The wanted file's own name, lower-cased: 'pr-main-process-design.md'. Only this counts as FOUND."""
-    return os.path.basename(_strip_dot_slash(wanted).rstrip("/")).lower()
+def _path_to_find_in_the_log_store(wanted):
+    """The path asked for, as the store is searched for it: 'docs/drafts/pr-main-process-design.md'.
+
+    Compared lower-cased; shown as given, so the report names the file the caller named.
+    """
+    return _strip_dot_slash(wanted).rstrip("/")
+
+
+def _command_listing_every_log_store_name(log_store_root, name, store_is_here, box_ssh_host):
+    """The command that lists every name the walk matched, newest first; `find` and `ls` as both machines have them."""
+    pattern = "*%s*" % re.sub(r"([*?\[\\])", r"\\\1", name)
+    command = "find %s ! -type d -iname %s -exec ls -lt {} +" % (shlex.quote(log_store_root), shlex.quote(pattern))
+    return command if store_is_here else "ssh %s %s" % (box_ssh_host, shlex.quote(command))
 
 
 def _name_to_match_in_the_log_store(wanted):

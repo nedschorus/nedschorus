@@ -1238,11 +1238,16 @@ import time  # noqa: E402
 
 
 def log_store_fixture(tmp):
-    """E11 and E14's file as the store held it: two renamed copies, and an older exact-name copy."""
+    """E11 and E14's file as the store held it: two renamed copies, and an older copy at its own path.
+
+    The older copy sits where a cold-read-record keeps its target, under the
+    repository path it was read at, as the real store does
+    (cold-read-records/2026-09-15-explain-skill-draft/target/docs/drafts/explain-skill-draft.md).
+    """
     store = Path(tmp, "nedschorus-logs")
     shipped = Path(store, "seats", "merge-lane")
     shipped.mkdir(parents=True)
-    frozen = Path(store, "cold-read-records", "pr-main-process-design-2026-09-01", "target")
+    frozen = Path(store, "cold-read-records", "pr-main-process-design-2026-09-01", "target", "docs", "drafts")
     frozen.mkdir(parents=True)
     files = [
         (Path(frozen, "pr-main-process-design.md"), "2026-09-01 09:00"),
@@ -1263,29 +1268,29 @@ with tempfile.TemporaryDirectory() as tmp:
     here = RunsLocallyRefusesSsh([])
     report = finder.search_log_store("docs/drafts/pr-main-process-design.md", str(store), "nedlern@ned-box", here)
     listed = [l.strip() for l in report.lines if l.startswith("    ")]
-    check("log-store, store here: the exact-name copy makes it FOUND, and the renamed copies are listed with it",
+    check("log-store, store here: the copy at the wanted path makes it FOUND, and the renamed copies are listed with it",
           report.status == FOUND and any(str(older_rename) in l for l in listed)
           and any(str(newer_rename) in l for l in listed),
           "%s %s" % (report.status, report.lines))
     check("log-store: the name matches whatever its case, and an unrelated name is not listed",
           any(str(newer_rename) in l for l in listed) and not any(str(unrelated) in l for l in listed),
           str(listed))
-    check("log-store: every copy is listed newest first, the older exact-name copy after the renamed ones (E13)",
+    check("log-store: every copy is listed newest first, the older copy at the path after the renamed ones (E13)",
           [l.split("  ", 1)[1] for l in listed] == [str(newer_rename), str(older_rename), str(exact_copy)],
           str(listed))
     check("log-store: each listed copy carries its time, so the newest can be told at a glance",
           listed and listed[0].startswith("2026-09-18 12:00") and listed[-1].startswith("2026-09-01 09:00"),
           str(listed))
-    check("log-store: renamed candidates newer than the exact-name copy are named, to be checked first (E13)",
-          any("2 renamed candidate(s) are newer than the newest copy named 'pr-main-process-design.md'" in l
+    check("log-store: other candidates newer than the copy at the path are named, to be checked first (E13)",
+          any("2 other candidate(s) are newer than the newest copy at 'docs/drafts/pr-main-process-design.md'" in l
               for l in report.lines), str(report.lines))
     check("log-store, store here: read in place, and nothing is sent over ssh",
           not any(c.startswith("ssh") for c in here.calls), str(here.calls))
-    check("log-store, store here: the recovery copies the exact-name copy, the one its name identifies",
+    check("log-store, store here: the recovery copies the copy at the wanted path, the one the path identifies",
           report.recovery == ["cp %s ." % exact_copy], str(report.recovery))
 
     report = finder.search_log_store("docs/drafts/PR-Main-Process-Design.md", str(store), "", RunsLocallyRefusesSsh([]))
-    check("log-store: the exact name is matched whatever its case",
+    check("log-store: the wanted path is matched whatever its case",
           report.status == FOUND and report.recovery == ["cp %s ." % exact_copy],
           "%s %s" % (report.status, report.recovery))
 
@@ -1322,6 +1327,22 @@ with tempfile.TemporaryDirectory() as tmp:
           sum(1 for l in report.lines if l.startswith("    2026-")) == finder.LOG_STORE_HITS_SHOWN
           and any("... and 5 more" in l for l in report.lines),
           str(report.lines))
+    # Codex P2 on review 5298743638: the rest were a bare count, with nothing
+    # saying how to see them. The line now carries the command, and the
+    # command is run here: it must list every match, not only the ten shown.
+    more = [l for l in report.lines if "... and 5 more" in l]
+    command = more[0].split("list them all with: ", 1)[1] if more and "list them all with: " in more[0] else ""
+    listed_by_command = subprocess.run(["sh", "-c", command], capture_output=True, text=True)
+    check("log-store: the count of the rest names a command, and that command lists every match",
+          command.startswith("find ") and listed_by_command.returncode == 0
+          and len(listed_by_command.stdout.splitlines()) == finder.LOG_STORE_HITS_SHOWN + 5,
+          "%r -> exit %s\n%s" % (command, listed_by_command.returncode, listed_by_command.stdout))
+    report = finder.search_log_store("pr-main-process-design.md", str(store), "nedlern@ned-box",
+                                     LocalShellRunner([], Path(tmp)), store_is_here=False)
+    more = [l for l in report.lines if "... and 5 more" in l]
+    check("log-store, store on the box: the list-them-all command is the same find, sent over ssh",
+          more and more[0].split("list them all with: ", 1)[-1].startswith("ssh nedlern@ned-box 'find "),
+          str(more))
 
     if os.geteuid() != 0:
         locked = Path(tmp, "locked-store")
@@ -1375,8 +1396,9 @@ with tempfile.TemporaryDirectory() as tmp:
           and any("candidates only, not counted as found" in l for l in report.lines)
           and getattr(report, "candidate_copies", 0) == 2,
           str(report.lines))
-    check("log-store: ... and it says no file has the exact name",
-          any("none is named 'pr-main-process-design.md'" in l for l in report.lines), str(report.lines))
+    check("log-store: ... and it says no file is at the wanted path",
+          any("none is at a path ending in 'docs/drafts/pr-main-process-design.md'" in l for l in report.lines),
+          str(report.lines))
     check("log-store: a candidates-only report counts as not found in the summary and the exit code",
           finder.exit_status([report]) == 1
           and "Recoverable from" not in finder.render_summary([report])
@@ -1412,6 +1434,100 @@ with tempfile.TemporaryDirectory() as tmp:
               report.status == UNAVAILABLE and getattr(report, "candidate_copies", 0) == 2
               and any("could not read 1 directory" in l for l in report.lines),
               "%s %s" % (report.status, report.lines))
+
+# Only a copy AT THE WANTED PATH is FOUND. mac-claude's review 5298738764 on PR 702
+# (Codex P1): the store reuses file names across records, 40 dispositions.md and
+# 11 SKILL.md on 2026-09-24, and matching the name alone made this tool's founding
+# path come back FOUND, exit 0, with a cp of another record's dispositions.md.
+FOUNDING_PATH = "md-review-records/2026-08-11-ghi-info-agent-design/dispositions.md"
+with tempfile.TemporaryDirectory() as tmp:
+    store = Path(tmp, "nedschorus-logs")
+    other_record = Path(store, "cold-read-records", "2026-09-05-SKILL", "dispositions.md")
+    other_record.parent.mkdir(parents=True)
+    other_record.write_text("another record's dispositions\n")
+    report = finder.search_log_store(FOUNDING_PATH, str(store), "", RunsLocallyRefusesSsh([]))
+    check("log-store: the same file name in another directory is NOT FOUND, with no recovery command",
+          report.status == NOT_FOUND and report.recovery == [] and getattr(report, "candidate_copies", 0) == 1,
+          "%s %s %s" % (report.status, report.lines, report.recovery))
+    check("log-store: ... it is listed as a candidate, saying it has the name but another directory",
+          any(str(other_record) in l for l in report.lines)
+          and any("1 of them is named 'dispositions.md' but in another directory" in l for l in report.lines),
+          str(report.lines))
+    check("log-store: ... and the run counts it as not found: exit 1, nothing recoverable",
+          finder.exit_status([report]) == 1 and "Recoverable from" not in finder.render_summary([report]),
+          finder.render_summary([report]))
+    LOG_STORE_SAME_NAME_ELSEWHERE = report
+
+    captured = io.StringIO()
+    with contextlib.redirect_stdout(captured):
+        code = finder.main(["nowhere/never-existed/dispositions.md", "--repo", str(tmp), "--log-store-root", str(store),
+                            "--skip", "localsnapshots", "--skip", "git", "--skip", "reflog", "--skip", "transcripts",
+                            "--skip", "box", "--skip", "timemachine"],
+                           runner=RunsLocallyRefusesSsh([]))
+    text = captured.getvalue()
+    check("a path that never existed, whose file name another record uses, exits 1 with no cp",
+          code == 1 and "Recoverable from" not in text and "$ cp" not in text
+          and "Candidates only, not counted as found: log-store" in text,
+          "exit=%s\n%s" % (code, text))
+
+    report = finder.search_log_store("dispositions.md", str(store), "", RunsLocallyRefusesSsh([]))
+    check("log-store: a bare file name still matches that name in any directory, as it does in git",
+          report.status == FOUND and report.recovery == ["cp %s ." % other_record],
+          "%s %s" % (report.status, report.recovery))
+    report = finder.search_log_store(str(other_record), str(store), "", RunsLocallyRefusesSsh([]))
+    check("log-store: a store file asked for by its own absolute path is FOUND",
+          report.status == FOUND and report.recovery == ["cp %s ." % other_record],
+          "%s %s" % (report.status, report.recovery))
+
+    at_its_path = Path(store, "cold-read-records", "2026-08-11-ghi-info-agent-design", "target",
+                       *FOUNDING_PATH.split("/"))
+    at_its_path.parent.mkdir(parents=True)
+    at_its_path.write_text("the founding dispositions\n")
+    older = time.mktime(time.strptime("2026-08-12 09:00", "%Y-%m-%d %H:%M"))
+    os.utime(str(at_its_path), (older, older))
+    report = finder.search_log_store(FOUNDING_PATH, str(store), "", RunsLocallyRefusesSsh([]))
+    check("log-store: a copy kept under a record's target/ at the wanted path is FOUND, and is what is copied",
+          report.status == FOUND and report.recovery == ["cp %s ." % at_its_path],
+          "%s %s %s" % (report.status, report.lines, report.recovery))
+    check("log-store: ... and the newer same-name file elsewhere is flagged as a candidate to check, not copied",
+          any("1 other candidate(s) are newer than the newest copy at %r" % FOUNDING_PATH in l for l in report.lines),
+          str(report.lines))
+
+    skill_target = Path(store, "cold-read-records", "SKILL-ghi-write-2026-09-19", "target",
+                        ".claude", "skills", "ghi-write", "SKILL.md")
+    skill_target.parent.mkdir(parents=True)
+    skill_target.write_text("the ghi-write skill\n")
+    report = finder.search_log_store(".claude/skills/ghi-write/SKILL.md", str(store), "", RunsLocallyRefusesSsh([]))
+    check("log-store: a skill kept at its own path under target/ is FOUND, whatever the case of its name",
+          report.status == FOUND and report.recovery == ["cp %s ." % skill_target],
+          "%s %s %s" % (report.status, report.lines, report.recovery))
+    report = finder.search_log_store(".claude/skills/never-existed-skill/SKILL.md", str(store), "",
+                                     RunsLocallyRefusesSsh([]))
+    check("log-store: ... while another skill's SKILL.md is only a candidate for a skill that never existed",
+          report.status == NOT_FOUND and report.recovery == [] and getattr(report, "candidate_copies", 0) == 1,
+          "%s %s %s" % (report.status, report.lines, report.recovery))
+    check("log-store: ... and the report names the path as the caller wrote it, not lower-cased",
+          any("none is at a path ending in '.claude/skills/never-existed-skill/SKILL.md'" in l for l in report.lines)
+          and any("is named 'SKILL.md' but in another directory" in l for l in report.lines),
+          str(report.lines))
+
+    split_component = Path(store, "seats", "merge-lane", "mydrafts", "plan.md")
+    split_component.parent.mkdir(parents=True)
+    split_component.write_text("x\n")
+    report = finder.search_log_store("drafts/plan.md", str(store), "", RunsLocallyRefusesSsh([]))
+    check("log-store: the path must end at a directory boundary: mydrafts/plan.md is not drafts/plan.md",
+          report.status == NOT_FOUND and getattr(report, "candidate_copies", 0) == 1,
+          "%s %s" % (report.status, report.lines))
+
+    bracketed = Path(store, "seats", "merge-lane", "notes[1].md")
+    bracketed.write_text("x\n")
+    Path(store, "seats", "merge-lane", "notes1.md").write_text("x\n")
+    command = finder._command_listing_every_log_store_name(str(store), "notes[1]", True, "")
+    listed_by_command = subprocess.run(["sh", "-c", command], capture_output=True, text=True)
+    check("log-store: the list-them-all command matches a name's brackets literally, as the walk does",
+          listed_by_command.returncode == 0 and len(listed_by_command.stdout.splitlines()) == 1
+          and "notes[1].md" in listed_by_command.stdout,
+          "%r -> exit %s\n%s" % (command, listed_by_command.returncode, listed_by_command.stdout))
 
 with tempfile.TemporaryDirectory() as tmp:
     store, _ = log_store_fixture(tmp)
@@ -2100,6 +2216,9 @@ check("condition 1 — a surface that could NOT be searched does not excuse the 
 check("condition 1 — log-store candidates are not a find, so they do not silence the wall",
       spoken("docs/a/b.md", missed + [LOG_STORE_CANDIDATES_ONLY, tm_wall_report()]) is not None,
       "a name that only contains the stem recovers nothing; the person is still needed")
+check("condition 1 — the same file name in another directory does not silence the wall either",
+      spoken("docs/a/b.md", missed + [LOG_STORE_SAME_NAME_ELSEWHERE, tm_wall_report()]) is not None,
+      "another record's dispositions.md recovers nothing; the person is still needed")
 check("condition 2 — no wall mark, no line: a warm sudo searched and never met one",
       spoken("docs/a/b.md",
              missed + [tm_report_without_the_wall_mark(NOT_FOUND, "searched")]) is None)
