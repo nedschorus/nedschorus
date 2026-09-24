@@ -5,7 +5,7 @@ replaced, fail loudly), the five paths built
 without a glob, the
 exits, the one-line stdout, and the shape of the remote invocation.
 
-Two modes, as scripts/cold-read-record-ship-test.py has them. LOCAL: the
+Two modes, as nc-systems/cold-read/tests/cold-read-record-ship-test.py has them. LOCAL: the
 destination override names a scratch directory and the real rsync on this
 machine does the copy, so add-only, replace and the README are exercised for
 real. REMOTE: the override is the ruled scp-form destination and stub `ssh` and

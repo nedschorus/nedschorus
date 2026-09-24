@@ -7,7 +7,7 @@ reads that restatement beside the draft it came from, the perfect version of
 that document and the scrubbed defect list between them, and reports which
 listed defects the restatement caught and where the restatement was stupid.
 Two runs of this cold-read-cell make one restater's score; the program that
-launches both and scores them is scripts/cold-read-restater-judge-runner.py.
+launches both and scores them is nc-systems/cold-read/cold-read-restater-judge-runner.py.
 
 THE RULED DESIGN THIS IMPLEMENTS (user-ruled 2026-09-05, "Opus max is the
 backup to Fable. y"). One fresh Claude Fable 5.1 instance at effort xhigh per
@@ -25,7 +25,7 @@ docs/walk/fast-cold-read-perfect-test-cases.md at the cold-read-research seat
 which is why the ruling is written out here.
 
 Usage:
-  scripts/cold-read-restater-judge-cell.py --restater gemini-3.8-flash-low \\
+  nc-systems/cold-read/cold-read-restater-judge-cell.py --restater gemini-3.8-flash-low \\
       --case <rough draft> <perfect version> <defect list> <restatement> \\
       --case ... --case ... \\
       --prompt-file <the judge's instructions> \\
@@ -39,7 +39,7 @@ Exit codes: 0 a model produced a report; 1 every model in the chain failed to
 produce one; 64 this program refused the invocation and never launched a
 model, naming its own fix -- a --prompt-file naming no file, or naming an
 empty one, is refused that way like any other bad invocation. 64 rather than the conventional 2 for the reason
-written beside EXIT_BAD_INVOCATION in scripts/cold-read-cell-common.py, which
+written beside EXIT_BAD_INVOCATION in nc-systems/cold-read/cold-read-cell-common.py, which
 every cold-read-cell shares.
 
 WHAT THIS LEG SHARES WITH THE OTHER COLD-READ-CELLS, AND WHERE IT PARTS FROM THEM.
@@ -47,7 +47,7 @@ Everything after the prompt is composed is the shared module's: the model
 chain and its fallback, the report-exists-iff-the-run-succeeded invariant, the
 near-miss recovery, the stray-write detection, the provenance stamp, the exit
 codes. The invocation is the Claude launcher's own -- this file imports
-scripts/cold-read-claude-cell.py and calls its `invocation_builder`, so the
+nc-systems/cold-read/cold-read-claude-cell.py and calls its `invocation_builder`, so the
 argv the judge runs under cannot drift from the argv every other Claude
 cold-read-cell runs under. Two things do part from the other cold-read-cells,
 both because the ruled design asks for something their shape cannot express:
@@ -83,7 +83,7 @@ he has walked it is .claude/skills/cold-read/prompts/restater-judge.md,
 beside every other cold-read-cell's prompt, and .claude/ changes only
 through that walk (.claude/hooks/instruction-file-guard.py, user-walked
 2026-08-07, nedschorus#45). This is not the cold-read-fast-read's ruling
-(scripts/cold-read-fast-read.py holds its prompt in the file because the user
+(nc-systems/cold-read/cold-read-fast-read.py holds its prompt in the file because the user
 ruled that for the fast cold-read-cell).
 
 WHY THIS COLD-READ-CELL HAS NO --tier. The other launchers take one because
@@ -97,7 +97,7 @@ run at a level nobody chose.
 WHY THIS COLD-READ-CELL'S STAMP CARRIES NO `tokens=` FIELD: the same reason
 the Claude leg's does not -- the Claude CLI prints no "tokens used" line,
 so the field is omitted rather than filled with a zero. If the CLI starts
-printing one, the shared parser in scripts/cold-read-cell-common.py picks
+printing one, the shared parser in nc-systems/cold-read/cold-read-cell-common.py picks
 it up with no change here.
 """
 

@@ -58,7 +58,7 @@ WHAT IS PINNED HERE.
     a failed run, not a restater that caught nothing. A bad invocation is
     refused before anything is launched.
 
-Run: python3 scripts/cold-read-restater-judge-runner-test.py
+Run: python3 nc-systems/cold-read/tests/cold-read-restater-judge-runner-test.py
 """
 
 import datetime
@@ -71,12 +71,14 @@ import sys
 import tempfile
 from pathlib import Path
 
-SCRIPTS_DIR = Path(__file__).resolve().parent
+# This suite sits in nc-systems/cold-read/tests/; the programs it tests are
+# one directory up.
+SYSTEM_DIRECTORY = Path(__file__).resolve().parent.parent
 
 # The scratch repository every cold-read suite builds, defined once.
 _scratch_repository_fixture_spec = importlib.util.spec_from_file_location(
     "cold_read_scratch_repository_test_fixture",
-    SCRIPTS_DIR / "cold-read-scratch-repository-test-fixture.py")
+    SYSTEM_DIRECTORY / "tests" / "cold-read-scratch-repository-test-fixture.py")
 scratch_repository_fixture = importlib.util.module_from_spec(
     _scratch_repository_fixture_spec)
 _scratch_repository_fixture_spec.loader.exec_module(scratch_repository_fixture)
@@ -287,7 +289,7 @@ def run_runner(repository, stub_directory, plan, *arguments,
         prompt_file = write_stub_prompt_file(repository)
     command = [
         sys.executable,
-        str(repository / "scripts" / "cold-read-restater-judge-runner.py"),
+        str(repository / "nc-systems" / "cold-read" / "cold-read-restater-judge-runner.py"),
         "--restater", restater, "--prompt-file", str(prompt_file),
     ]
     for case in cases:

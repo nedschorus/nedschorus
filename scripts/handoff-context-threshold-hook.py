@@ -141,7 +141,7 @@ other way and defers the handoff no further than the ceiling.
 A RUNNING BACKGROUND BASH TASK COUNTS TOO, FOR A BOUNDED WHILE (user-ruled
 2026-09-14). The deferral above saw only Agent-tool subagents, and on
 2026-09-14 session 831c08ee handed off at 50% with the cold-read grid
-(scripts/cold-read-grid.py) running as a background Bash task: the scan found
+(nc-systems/cold-read/cold-read-grid.py) running as a background Bash task: the scan found
 nothing in flight, the reincarnation killed the grid and its six reviewer
 cells 12.7 minutes in, and five of the six reports were lost, because a cell
 writes its report as its last act. The user's ruling, verbatim: "do 72 - if

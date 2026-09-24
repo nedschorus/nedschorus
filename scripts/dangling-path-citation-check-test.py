@@ -744,7 +744,7 @@ echo hello
     # FORWARD: the placeholder is in the MIDDLE, so the token's first
     # component is a real directory of this repository and its ending is a
     # real extension, and nothing else would refuse it. Two live lines of
-    # scripts/cold-read-cell-common.py are written exactly so.
+    # nc-systems/cold-read/cold-read-cell-common.py are written exactly so.
     git(root, "checkout", "-q", "-b", "placeholder-forward", base)
     commit_change(root, "scripts/illustrates-shapes.py",
                   "# a program of the shape <system>/scripts/absent-illustration.py\n"

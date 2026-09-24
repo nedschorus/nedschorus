@@ -59,7 +59,7 @@ __pycache__/
 # here, so the directory grew to 69% of everything the repository tracked.
 # A review's findings belong in the document it reviewed; the reports that
 # produced them are logs, and logs live in the log-store on ned-box, not here
-# and not deleted (user-ruled 2026-08-25). scripts/cold-read-record-ship.py
+# and not deleted (user-ruled 2026-08-25). nc-systems/cold-read/cold-read-record-ship.py
 # puts them there. What was deleted before that ruling stays retrievable:
 # git show db917b5:<path>
 cold-read-records/

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Tests for scripts/cold-read-reviewer-score.py.
+"""Tests for nc-systems/cold-read/cold-read-reviewer-score.py.
 
 Two kinds of case. SYNTHETIC: small placement tables and a small ruler built
 in a scratch directory, where the right answer can be worked out by hand, so
@@ -18,7 +18,7 @@ itself while only the synthetic cases exercised the code; PR #302's
 reviewer caught that. They deliberately do NOT use the real placement
 tables: those are run output and live in the log-store, not here.
 
-Run: python3 scripts/cold-read-reviewer-score-test.py   (exit 0 = all passed)
+Run: python3 nc-systems/cold-read/tests/cold-read-reviewer-score-test.py   (exit 0 = all passed)
 """
 
 import contextlib
@@ -29,9 +29,11 @@ import subprocess
 import sys
 import tempfile
 
-SCRIPTS_DIR = pathlib.Path(__file__).resolve().parent
-SCORER = SCRIPTS_DIR / "cold-read-reviewer-score.py"
-REAL_RULER = (SCRIPTS_DIR.parent / "cold-read-reviewer-test-cases"
+# This suite sits in nc-systems/cold-read/tests/; the programs it tests are
+# one directory up.
+SYSTEM_DIRECTORY = pathlib.Path(__file__).resolve().parent.parent
+SCORER = SYSTEM_DIRECTORY / "cold-read-reviewer-score.py"
+REAL_RULER = (SYSTEM_DIRECTORY.parent.parent / "cold-read-reviewer-test-cases"
               / "ghi-write-trio" / "ghi-write-defect-list-2026-09-07.md")
 
 failures = []

@@ -2,7 +2,7 @@
 """Tests for scripts/sanity-check-record-ship.py (nedschorus#392).
 
 The ship logic is the record shipper's and is tested by
-scripts/cold-read-record-ship-test.py; what is tested here is what this
+nc-systems/cold-read/tests/cold-read-record-ship-test.py; what is tested here is what this
 program adds: the store's kind is `sanity-check-records/`, the checkout's
 directory of the same name is what --all reads, and the consequences the
 runner's closing line promises — a second ship sends only the new
@@ -148,6 +148,10 @@ with tempfile.TemporaryDirectory(prefix="sanity-check-record-ship-test-") as scr
     # added tomorrow needs no edit here (user-ruled 2026-09-20, walk
     # md-skills-seat-open-decisions-2026-09-20 item 3).
     shutil.copytree(SCRIPTS_DIR, scratch_repo / "scripts",
+                    ignore=shutil.ignore_patterns("__pycache__"))
+    # The record shipper it loads lives with the cold read, not in scripts/.
+    shutil.copytree(SCRIPTS_DIR.parent / "nc-systems" / "cold-read",
+                    scratch_repo / "nc-systems" / "cold-read",
                     ignore=shutil.ignore_patterns("__pycache__"))
     scratch_ship = scratch_repo / "scripts" / SHIP.name
     all_store = str(scratch / "all-store" / "cold-read-records")

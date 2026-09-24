@@ -96,7 +96,7 @@ seat → agent-seat; handoff → session-handoff; supervisor → handoff-supervi
 
 ## Still open: the new name for `dispositions.md`
 
-The triage record both review instruments write beside their reports is named with one part, and the name does not say dispositions of what. On 2026-09-15, at item 3 of the `/sanity-check` skill triage walk at the cold-read-research seat (that seat's walk minutes, Mac-local), the user ruled that the name stays for now and handed the rename to this sweep. So the rename is the sweep's to make, as the one exception to ruling 5 he made himself; what is open is the name, which the MD-skills seat proposes to him in the same message as the cold-read terms below. It is written by `.claude/skills/cold-read/SKILL.md` step 7, read by `scripts/cold-read-record-ship.py`, and present in every shipped record, so the rename touches skill prose, a script and the shipper's expectations together.
+The triage record both review instruments write beside their reports is named with one part, and the name does not say dispositions of what. On 2026-09-15, at item 3 of the `/sanity-check` skill triage walk at the cold-read-research seat (that seat's walk minutes, Mac-local), the user ruled that the name stays for now and handed the rename to this sweep. So the rename is the sweep's to make, as the one exception to ruling 5 he made himself; what is open is the name, which the MD-skills seat proposes to him in the same message as the cold-read terms below. It is written by `.claude/skills/cold-read/SKILL.md` step 7, read by `nc-systems/cold-read/cold-read-record-ship.py`, and present in every shipped record, so the rename touches skill prose, a script and the shipper's expectations together.
 
 ## Terms the MD-skills seat proposes
 
@@ -104,9 +104,9 @@ Not yet put to him. Under his ruling these go as one message from the MD-skills 
 
 - `cold-read-cell`: one reviewer model reading one target under one prompt. Already 41 uses in the tree.
 - `cold-read-record`: the directory holding one run's reports, its frozen target and its dispositions. 24 uses.
-- `cold-read-grid`: the program that launches the six cold-read-cells, `scripts/cold-read-grid.py`.
+- `cold-read-grid`: the program that launches the six cold-read-cells, `nc-systems/cold-read/cold-read-grid.py`.
 - `cold-read-tier`: which model a cold-read-cell runs, and at what effort. 5 uses.
-- `cold-read-fast-read`: the one-reviewer pass that precedes the full run, matching `scripts/cold-read-fast-read.py`.
+- `cold-read-fast-read`: the one-reviewer pass that precedes the full run, matching `nc-systems/cold-read/cold-read-fast-read.py`.
 - `cold-read-full-run`: the six-cold-read-cell run.
 - `cold-read-target`: the document under review, frozen at launch.
 

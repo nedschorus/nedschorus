@@ -17,7 +17,7 @@ second viewer ssh'd to the machine it was already running on.
 THIS SUITE RUNS ON BOTH MACHINES, under scripts/run-all-test-suites.py. So a
 case that depends on which machine it is on patches socket.gethostname in the
 loaded module rather than assuming the Mac, the way
-scripts/cold-read-record-ship-test.py and scripts/seat-shared-file-ship-test.py
+nc-systems/cold-read/tests/cold-read-record-ship-test.py and scripts/seat-shared-file-ship-test.py
 do. A case that asserted "mac" unpatched would fail on ned-box, which is the
 machine most of this program's new behaviour is about.
 

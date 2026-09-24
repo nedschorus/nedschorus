@@ -4,14 +4,14 @@ Status: design for everything the cold read encodes as code; feeds the build; it
 
 ## Components
 
-1. **`scripts/cold-read-claude-cell.py`** — Claude-runtime cell launcher, twin of the Codex one.
+1. **`nc-systems/cold-read/cold-read-claude-cell.py`** — Claude-runtime cell launcher, twin of the Codex one.
    - Headless `claude -p` invocation; per-run exact pinned model id AND reasoning effort (user-confirmed both are settable headless; smoke-test both in background execution mode before relying on them).
    - Reads the shared template from the skill's `prompts/` directory, substitutes the target path.
    - Read-only tool restriction; working directory = the nedschorus checkout, so Claude and Codex cells see the identical instruction floor.
    - Prints the provenance stamp (runtime, exact model id, effort, cell, tier, target) plus the cell's final message on stdout; progress on stderr.
    - Tier-to-model and effort pins at the top of the script, with the user-picked change-control comment, same as the Codex script.
-2. **`scripts/cold-read-codex-cell.py`** — rename of `scripts/d-review-codex-cell.py`; content otherwise unchanged.
-3. **`scripts/cold-read-grid.py`** — the orchestrator; `--target <path>`, no mode argument (one review approach).
+2. **`nc-systems/cold-read/cold-read-codex-cell.py`** — rename of `scripts/d-review-codex-cell.py`; content otherwise unchanged.
+3. **`nc-systems/cold-read/cold-read-grid.py`** — the orchestrator; `--target <path>`, no mode argument (one review approach).
    - Creates the dated record directory `cold-read-records/<YYYY-MM-DD>-<target-slug>/` —
      gitignored working material kept on this machine only, deleted once the work it served lands
      (user-ruled 2026-08-14).
@@ -47,3 +47,5 @@ Writing rules the project adopts for agent instruction files (the step-2 CLAUDE.
 ## Walk state for the skill draft
 
 WALK COMPLETE 2026-08-05: all four items processed; the bare skill file APPROVED verbatim by the user (nedschorus 74ad5b9). LANDED 2026-08-05, user-ordered ("make it so"): both cell launchers and the `cold-read-grid.py` orchestrator built; rename sweep executed (records directory, Codex launcher, skill directory); the approved text is live at `.claude/skills/cold-read/SKILL.md`. Remaining from this design: NONE. Class (h)'s deferred micro-test RAN 2026-08-06 at the CLAUDE.md landing and PASSED — a planted file contradicting two floor definitions (durable artifacts; legacy-system permissions) drew class-(h) findings quoting the checkout's CLAUDE.md verbatim against both, at "sure" confidence, with the write- and execute-conflicts separated. The records README was CUT at the user's challenge — no reader needs it. This design is fully built.
+
+**Pinned to what landed:** commit [daf5fc6](https://github.com/nedschorus/nedschorus/commit/daf5fc62b63b45c73fac70ec4ba785fe2c621076) on 2026-09-22 — the cold read's code as merged by PR [Codex runners: move model pins from GPT-5.6 to GPT-6 Sol and Luna](https://github.com/nedschorus/nedschorus/pull/661), then in `scripts/`; it moved whole into `nc-systems/cold-read/` on 2026-09-23.

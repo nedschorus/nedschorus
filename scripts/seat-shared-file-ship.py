@@ -26,7 +26,7 @@ ned-box's internal disk, snapshotted every ten minutes by Timeshift to a
 separate internal disk. Off-machine, not off-site.
 
 THE STORE'S RULES HOLD HERE, WITH ONE DIFFERENCE INSIDE `seats/`. FAIL
-LOUDLY is the record shipper's (scripts/cold-read-record-ship.py) and is
+LOUDLY is the record shipper's (nc-systems/cold-read/cold-read-record-ship.py) and is
 kept: an unreachable ned-box prints a line opening FAILED and exits non-zero
 with the file still on disk for a later run. ADD-ONLY and REFUSE ON
 DIFFERENCE remain the rules of the records kind, which that program still
@@ -113,7 +113,7 @@ PROGRAM = "seat-shared-file-ship"
 # scp-form destination is split. The convention -- importlib for a module
 # whose filename has hyphens -- is the cold-read cell launchers'.
 _shipper_spec = importlib.util.spec_from_file_location(
-    "cold_read_record_ship", REPO_ROOT / "scripts" / "cold-read-record-ship.py")
+    "cold_read_record_ship", REPO_ROOT / "nc-systems" / "cold-read" / "cold-read-record-ship.py")
 shipper = importlib.util.module_from_spec(_shipper_spec)
 _shipper_spec.loader.exec_module(shipper)
 
@@ -195,7 +195,7 @@ def ensure_seat_directory(destination: SeatsStoreDestination, seat: str):
     BOTH THE DIRECTORY AND THE README ARE THE RECORD SHIPPER'S RULES, called
     here rather than restated: `refresh_store_readme` locally and
     `make_directory_and_refresh_readme_script` over ssh, so this program and
-    scripts/cold-read-record-ship.py cannot disagree about when the README is
+    nc-systems/cold-read/cold-read-record-ship.py cannot disagree about when the README is
     rewritten. One ssh round trip remotely, as before.
 
     THIS PROGRAM USED TO APPEND A `seats/` BULLET to a README that lacked

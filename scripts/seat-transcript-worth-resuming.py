@@ -17,9 +17,9 @@ programs own separately, and `scripts/recover-crashed-seats-test.py`'s F8 group
 asserts the supervisor-owned ones against handoff-supervisor.py's own source --
 an assertion that means nothing once the thing asserted and the thing asserted
 against are the same file. The convention here — importlib for a module whose
-filename has hyphens — is scripts/cold-read-cell-common.py's, and the
+filename has hyphens — is nc-systems/cold-read/cold-read-cell-common.py's, and the
 precedent for a module that exists only to stop two programs drifting is
-scripts/cold-read-record-names.py.
+nc-systems/cold-read/cold-read-record-names.py.
 
 It is imported, never run. A program loads it:
 

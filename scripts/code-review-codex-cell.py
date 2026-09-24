@@ -8,7 +8,7 @@ rather than a shell line in one seat's transcript, and so the pins that
 must not drift are pinned:
 
   - model and reasoning effort, explicit (the tier convention of
-    scripts/cold-read-codex-cell.py: `deep` = gpt-6-sol at xhigh);
+    nc-systems/cold-read/cold-read-codex-cell.py: `deep` = gpt-6-sol at xhigh);
   - the sandbox, read-only AT THE PARENT LEVEL -- this machine's Codex
     config defaults to workspace-write, so a reviewer that forgets this
     flag can write (the nested `review` parser rejects --sandbox; parent
@@ -30,7 +30,7 @@ checks belong to the deferred pr-merge-decision component
 
 WHY THE CODEX MEMORY STORE IS OFF FOR REVIEW CELLS -- the one explanation
 for every `codex exec` this repository launches; the other two sites
-(scripts/cold-read-codex-cell.py, scripts/sanity-check-attacks.py) pass the
+(nc-systems/cold-read/cold-read-codex-cell.py, scripts/sanity-check-attacks.py) pass the
 same flag and point here.
 
 Codex keeps a memory store under `~/.codex/` that Codex processes on this

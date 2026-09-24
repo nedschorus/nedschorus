@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """What a cold-read-record is called and where it lives -- defined once.
 
-Four programs create or find cold-read-records: scripts/cold-read-grid.py,
-scripts/cold-read-fast-read.py, scripts/cold-read-restater-judge-runner.py
-and scripts/cold-read-record-ship.py. Each held its own `RECORDS_DIR`, two
+Four programs create or find cold-read-records: nc-systems/cold-read/cold-read-grid.py,
+nc-systems/cold-read/cold-read-fast-read.py, nc-systems/cold-read/cold-read-restater-judge-runner.py
+and nc-systems/cold-read/cold-read-record-ship.py. Each held its own `RECORDS_DIR`, two
 held their own `FROZEN_TARGET_DIRECTORY_NAME`, and two carried
 byte-identical copies of the naming and same-day-collision rules. A rename of
 the records directory had seven places to find, and nothing failed when it
@@ -14,7 +14,7 @@ repeated name to one definition).
 The path built under the frozen copy's directory name was the last piece
 still written twice: `frozen_target_path` was defined in each launcher and
 the two disagreed. The cold-read-grid resolved the cold-read-target before
-making it relative and scripts/cold-read-fast-read.py did not, while its
+making it relative and nc-systems/cold-read/cold-read-fast-read.py did not, while its
 docstring called its rule "the cold-read-grid's rule". On macOS /tmp is a
 symbolic link to /private/tmp and this fleet's worktrees live under it, so
 the same in-repository document, spelled through /tmp, froze at
@@ -28,11 +28,11 @@ was in the rule rather than in any frozen record. The resolving version is
 the one kept (user-ruled 2026-09-20, walk
 md-skills-seat-open-decisions-2026-09-20, item 1).
 
-The copies had a stated reason, in scripts/cold-read-fast-read.py: the rule
+The copies had a stated reason, in nc-systems/cold-read/cold-read-fast-read.py: the rule
 was "restated here rather than imported because the cold-read-grid is a
 program, not a module". That was true of every candidate home, since all four
 are programs. This file answers it by being a module and nothing else, the
-way scripts/cold-read-cell-common.py already serves the cold-read-cells.
+way nc-systems/cold-read/cold-read-cell-common.py already serves the cold-read-cells.
 
 It is imported, never run. A program loads it the way the cold-read-cells
 load their shared module:
@@ -43,14 +43,15 @@ load their shared module:
     record_names = importlib.util.module_from_spec(_names_spec)
     _names_spec.loader.exec_module(record_names)
 
-Run scripts/cold-read-record-names-test.py to check that no program has gone
+Run nc-systems/cold-read/tests/cold-read-record-names-test.py to check that no program has gone
 back to keeping its own copy.
 """
 
 import datetime
 import pathlib
 
-REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
+# This file sits in nc-systems/cold-read/, two directories below the root.
+REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent.parent
 # Where cold-read-records are written in a checkout, before the shipper
 # copies them to the log-store on ned-box. Never entered into git
 # (user-ruled 2026-09-07: cold-read-records are logs, not system).

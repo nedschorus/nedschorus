@@ -6,7 +6,7 @@ A walk's files are `<name>-draft.md`, `<name>-suggestions.md`, `<name>.md`,
 `<name>-minutes.md` and, for a walk on a cold-read-full-run,
 `<name>-dispositions.md`. `.claude/skills/walk-me-through/SKILL.md` is where
 that list is decided, and two programs carry a copy in code:
-scripts/cold-read-fast-read.py, which puts a walk draft's report beside it as
+nc-systems/cold-read/cold-read-fast-read.py, which puts a walk draft's report beside it as
 the suggestions file, and scripts/walk-files-ship.py, which ships all five to
 the log-store.
 
@@ -48,9 +48,9 @@ def check(case_name, condition, detail=""):
         failures.append(case_name)
 
 
-def load(script_name):
+def load(script_name, directory="scripts"):
     """Import a script whose filename has hyphens, the project's convention."""
-    path = REPO_ROOT / "scripts" / script_name
+    path = REPO_ROOT / directory / script_name
     spec = importlib.util.spec_from_file_location(
         script_name.replace("-", "_").removesuffix(".py"), path)
     module = importlib.util.module_from_spec(spec)
@@ -66,7 +66,7 @@ check("the skill names the walk files' endings",
       f"found only {sorted(skill_suffixes)} in {SKILL_FILE.name}; the pattern "
       f"this test reads is <name>-<role>.md")
 
-fast_read = load("cold-read-fast-read.py")
+fast_read = load("cold-read-fast-read.py", "nc-systems/cold-read")
 for constant_name in ("WALK_DRAFT_SUFFIX", "WALK_SUGGESTIONS_SUFFIX"):
     ending = getattr(fast_read, constant_name)
     check(f"cold-read-fast-read.py {constant_name} is an ending the skill names",

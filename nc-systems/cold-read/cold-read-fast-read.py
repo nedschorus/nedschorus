@@ -3,11 +3,11 @@
 on the fast cold-read-tier.
 
 Usage:
-  scripts/cold-read-fast-read.py --target docs/walk/foo-draft.md
+  nc-systems/cold-read/cold-read-fast-read.py --target docs/walk/foo-draft.md
 
 WHAT IT DOES. Picks the report path from the cold-read-target, runs
 ONE fast-clarify cold-read-cell on the fast cold-read-tier through
-scripts/cold-read-agy-cell.py (user-ruled 2026-09-07 after measurements,
+nc-systems/cold-read/cold-read-agy-cell.py (user-ruled 2026-09-07 after measurements,
 superseding the earlier ruling for low: Gemini 3.8 Flash at medium, about
 100-110 s per document in single runs on a 658-word skill and a 1,967-word walk
 draft, recall 42% against 19% at low on the ghi-write candidate defect list,
@@ -69,7 +69,7 @@ cold-read-grid's rule (user-ruled 2026-09-18). That directory
 also gets `target/<repository path>`, the exact bytes the reviewer read,
 frozen before the cold-read-cell launches, and once the report has landed the
 directory is shipped to the log-store on ned-box by
-scripts/cold-read-record-ship.py, whose one line is printed on stderr as
+nc-systems/cold-read/cold-read-record-ship.py, whose one line is printed on stderr as
 `record:` (user-ruled 2026-09-07; a shipping failure never fails the read).
 The cold-read-cell launcher pre-clears the report path, so a suggestions file
 left by an earlier read is replaced, never appended to.
@@ -107,7 +107,8 @@ import subprocess
 import sys
 import tempfile
 
-REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
+# This file sits in nc-systems/cold-read/, two directories below the root.
+REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent.parent
 AGY_CELL_LAUNCHER = pathlib.Path(__file__).with_name("cold-read-agy-cell.py")
 # The program that copies a cold-read-record to the log-store on ned-box
 # (user-ruled 2026-09-07: cold-read-records are logs, not system). Run after
@@ -119,7 +120,7 @@ RECORD_SHIPPER = pathlib.Path(__file__).with_name("cold-read-record-ship.py")
 # module so no program keeps its own copy (user-ruled 2026-09-19, walk
 # file-naming-and-location-standards-cold-read-findings, item 4). The
 # convention -- importlib for a module whose filename has hyphens -- is
-# scripts/cold-read-cell-common.py's.
+# nc-systems/cold-read/cold-read-cell-common.py's.
 _record_names_spec = importlib.util.spec_from_file_location(
     "cold_read_record_names",
     pathlib.Path(__file__).with_name("cold-read-record-names.py"))
@@ -133,7 +134,7 @@ FAST_READ_TIER = "fast"
 # Attempts in all: the first run and one retry.
 FAST_READ_ATTEMPTS = 2
 # The launcher's own refusal code (EXIT_BAD_INVOCATION in
-# scripts/cold-read-cell-common.py), which this program also uses for its
+# nc-systems/cold-read/cold-read-cell-common.py), which this program also uses for its
 # own refusal and never retries.
 EXIT_BAD_INVOCATION = 64
 
@@ -245,7 +246,7 @@ def full_run_required_line(class_name: str) -> str:
     """The one sentence said on stderr and written into the report."""
     return (f"the cold-read-full-run is required before this document lands "
             f"({class_name}); this fast read is its first step, not the whole "
-            f"review. Run scripts/cold-read-grid.py --target on it.")
+            f"review. Run nc-systems/cold-read/cold-read-grid.py --target on it.")
 
 
 def fast_read_report_path_for_target(
@@ -285,9 +286,9 @@ def fast_read_report_path_for_target(
 # documents with the same stem in different directories read on one day come
 # out as -2 of each other (target/ shows which was which), and the -N count
 # says nothing about which draft each read was. Both accepted at the walk.
-# The code implementing it is not restated: scripts/cold-read-record-names.py
-# holds it, and this program and scripts/cold-read-grid.py both import it, so
-# the two cannot drift apart. scripts/cold-read-record-names-test.py fails a
+# The code implementing it is not restated: nc-systems/cold-read/cold-read-record-names.py
+# holds it, and this program and nc-systems/cold-read/cold-read-grid.py both import it, so
+# the two cannot drift apart. nc-systems/cold-read/tests/cold-read-record-names-test.py fails a
 # program that writes its own copy back. The report inside the record is
 # bare `fast-read.md` (item 5): the directory says which read, the file says
 # what it is.

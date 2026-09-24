@@ -43,7 +43,7 @@ The design-to-main workflow takes a design written in English and delivers an im
 
 **Between agent instances, only files cross.** An agent persists within its own instance — across the cold-read iterations of §4, the turns of a conversation, and the re-entries of its state in a design version — and never across instances. What sets the user apart from every agent in the run is not memory but availability (standing decision 20): the arbitrator holds the branch history and so has a broad context across the states it is entered in, but the user is often not available, so his checks are states the machine waits in, not steps it can route around, and the counters in §7 bound how often the automated work spends his attention.
 
-**Together the states are one Code Prompt Code (CPC) program**, the fleet glossary's term: code launching agents and reading their state-exits. Its input is a conversation with the user about one component; it ends with a submission accepted by the gate, or with the component failed or stopped by the user. The fleet already has the pattern: `scripts/cold-read-grid.py` is code that launches reviewer agents and reads their status lines.
+**Together the states are one Code Prompt Code (CPC) program**, the fleet glossary's term: code launching agents and reading their state-exits. Its input is a conversation with the user about one component; it ends with a submission accepted by the gate, or with the component failed or stopped by the user. The fleet already has the pattern: `nc-systems/cold-read/cold-read-grid.py` is code that launches reviewer agents and reads their status lines.
 
 ## 2. Vocabulary
 
@@ -80,7 +80,7 @@ The **coverage-type** of an implementation, and of a test, says what kind of thi
 
 A **nit** is the standard word: a small defect of no consequence to any component-consumer. `exxample` for `example` in a comment is one; the same typo in a CLI flag is a contract defect, because a component-consumer depends on it. Nits are recorded in a reviewer's notes, in their own section, and never routed to a writer as work.
 
-A **cold read** is the fleet's fresh-reader review, `.claude/skills/cold-read/SKILL.md`, run by `scripts/cold-read-grid.py`: reviewer agents with no context from the conversation that produced a document report what each passage made them think it meant and what defects they found. A **cold-read run** is one invocation. In this machine it is not a state (§4).
+A **cold read** is the fleet's fresh-reader review, `.claude/skills/cold-read/SKILL.md`, run by `nc-systems/cold-read/cold-read-grid.py`: reviewer agents with no context from the conversation that produced a document report what each passage made them think it meant and what defects they found. A **cold-read run** is one invocation. In this machine it is not a state (§4).
 
 **Durable prose** lands where people read it and stays: `docs/`, the wiki, skills, `CLAUDE.md`, and standing-agent-instructions wherever they land. **Run-record prose** is consumed inside one run and stays on the component's topic branch as record. The design, the component-contract and the test-design are durable prose and land with the component (§9); the notes and the investigation reports are run-record prose.
 

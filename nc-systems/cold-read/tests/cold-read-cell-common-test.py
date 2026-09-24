@@ -105,7 +105,7 @@ WHAT IS PINNED HERE.
     every one of those cases.
 
   - The runtime's stderr survives a successful run. It used to be passed
-    straight through to the log scripts/cold-read-grid.py deletes on success,
+    straight through to the log nc-systems/cold-read/cold-read-grid.py deletes on success,
     which is why the only token figure recoverable from six cold-read runs on
     2026-08-25 came from the one cell that failed.
 
@@ -138,7 +138,7 @@ WHAT IS PINNED HERE.
     (nedschorus#161). A pair of cases, one per launcher, is what makes a
     reintroduced gate fail loudly instead of quietly.
 
-Run: python3 scripts/cold-read-cell-common-test.py
+Run: python3 nc-systems/cold-read/tests/cold-read-cell-common-test.py
 """
 
 import importlib.util
@@ -152,14 +152,16 @@ import tempfile
 import time
 from pathlib import Path
 
-SCRIPTS_DIR = Path(__file__).resolve().parent
-REPO_ROOT = SCRIPTS_DIR.parent
+# This suite sits in nc-systems/cold-read/tests/; the programs it tests are
+# one directory up.
+SYSTEM_DIRECTORY = Path(__file__).resolve().parent.parent
+REPO_ROOT = SYSTEM_DIRECTORY.parent.parent
 PROMPTS_DIR = REPO_ROOT / ".claude" / "skills" / "cold-read" / "prompts"
 
 # The scratch repository every cold-read suite builds, defined once.
 _scratch_repository_fixture_spec = importlib.util.spec_from_file_location(
     "cold_read_scratch_repository_test_fixture",
-    SCRIPTS_DIR / "cold-read-scratch-repository-test-fixture.py")
+    SYSTEM_DIRECTORY / "tests" / "cold-read-scratch-repository-test-fixture.py")
 scratch_repository_fixture = importlib.util.module_from_spec(
     _scratch_repository_fixture_spec)
 _scratch_repository_fixture_spec.loader.exec_module(scratch_repository_fixture)
@@ -170,7 +172,7 @@ _scratch_repository_fixture_spec.loader.exec_module(scratch_repository_fixture)
 TARGET_RELATIVE_PATH = "docs/drafts/cold-read-cell-common-test-target.md"
 
 # The phrase both "the check did not run" messages must carry, spelled out
-# here rather than imported: it is a contract with scripts/cold-read-grid.py,
+# here rather than imported: it is a contract with nc-systems/cold-read/cold-read-grid.py,
 # which greps a cell's stderr log for this text, and a test that read the
 # phrase from the module it tests would pass however either side was reworded.
 STRAY_WRITE_CHECK_SKIPPED_PHRASE = "stray writes were not checked for this run"
@@ -356,7 +358,7 @@ def run_cell_launcher(repository, stub_directory, plan, report_path, *arguments,
     environment["COLD_READ_CELL_TEST_STUB_REPORT_PATH"] = str(report_path)
     environment.update(environment_overrides or {})
     return subprocess.run(
-        [sys.executable, str(repository / "scripts" / f"cold-read-{runtime}-cell.py"),
+        [sys.executable, str(repository / "nc-systems" / "cold-read" / f"cold-read-{runtime}-cell.py"),
          "--cell", cell, "--tier", "second",
          "--target", TARGET_RELATIVE_PATH, "--report", str(report_path),
          *arguments],
@@ -572,15 +574,15 @@ with tempfile.TemporaryDirectory() as scratch:
     # (user-ruled 2026-09-18), and only in the agent-binary's own output; the
     # module knows none of its own.
     common_spec = importlib.util.spec_from_file_location(
-        "cold_read_cell_common_under_test", SCRIPTS_DIR / "cold-read-cell-common.py")
+        "cold_read_cell_common_under_test", SYSTEM_DIRECTORY / "cold-read-cell-common.py")
     common_module = importlib.util.module_from_spec(common_spec)
     common_spec.loader.exec_module(common_module)
     claude_spec = importlib.util.spec_from_file_location(
-        "cold_read_claude_cell_under_test", SCRIPTS_DIR / "cold-read-claude-cell.py")
+        "cold_read_claude_cell_under_test", SYSTEM_DIRECTORY / "cold-read-claude-cell.py")
     claude_module = importlib.util.module_from_spec(claude_spec)
     claude_spec.loader.exec_module(claude_module)
     codex_spec = importlib.util.spec_from_file_location(
-        "cold_read_codex_cell_under_test", SCRIPTS_DIR / "cold-read-codex-cell.py")
+        "cold_read_codex_cell_under_test", SYSTEM_DIRECTORY / "cold-read-codex-cell.py")
     codex_module = importlib.util.module_from_spec(codex_spec)
     codex_spec.loader.exec_module(codex_module)
     SESSION_LIMIT_LINE = "You've hit your session limit · resets 8:50pm (America/Los_Angeles)"
@@ -757,7 +759,7 @@ with tempfile.TemporaryDirectory() as scratch:
           repr(result.stderr))
 
     # And a LONG stdout with no file is still not a report on this leg. The
-    # Antigravity launcher (scripts/cold-read-agy-cell.py, 2026-09-07) opts
+    # Antigravity launcher (nc-systems/cold-read/cold-read-agy-cell.py, 2026-09-07) opts
     # into taking a review-length stdout as the report, through a rule only
     # it passes to the shared module; the Claude and Codex legs pass none,
     # and this case is what fails if the rule ever leaks to them.
@@ -790,8 +792,8 @@ with tempfile.TemporaryDirectory() as scratch:
     # Two ways the check cannot run, and both must be distinguishable from a
     # clean result — that is the whole reason WriteDetectorUnavailable is an
     # exception and not a path-shaped string. Both lines carry the phrase
-    # scripts/cold-read-grid.py greps this cell's log for before deleting it;
-    # scripts/cold-read-grid-test.py pins the other end of that contract.
+    # nc-systems/cold-read/cold-read-grid.py greps this cell's log for before deleting it;
+    # nc-systems/cold-read/tests/cold-read-grid-test.py pins the other end of that contract.
     shutil.rmtree(repository)
     repository = build_scratch_repository(scratch)
     report = repository / "cold-read-records" / "run-f" / "claude-restate-second.md"
@@ -1217,7 +1219,7 @@ with tempfile.TemporaryDirectory() as scratch:
     # measured the wrong configuration under a stamp naming the right one.
     # The fast tier ran through this same flag (2026-08-30: gpt-5.6-terra at
     # low) until 2026-09-07, when it got a launcher of its own that pins
-    # medium (scripts/cold-read-agy-cell.py); on these two legs it is still
+    # medium (nc-systems/cold-read/cold-read-agy-cell.py); on these two legs it is still
     # the flag.
     shutil.rmtree(repository)
     repository = build_scratch_repository(scratch)
@@ -1586,7 +1588,7 @@ with tempfile.TemporaryDirectory() as scratch:
 # and a check that missed a claim because of where its line ended would be a
 # check that passes for the wrong reason.
 codex_cell_prose = " ".join(
-    (SCRIPTS_DIR / "cold-read-codex-cell.py").read_text(encoding="utf-8").split())
+    (SYSTEM_DIRECTORY / "cold-read-codex-cell.py").read_text(encoding="utf-8").split())
 check("the Codex cell does not claim a clean git status proves anything",
       "a clean `git status` afterwards means" not in codex_cell_prose,
       "the docstring still promises a guarantee the ordinary dirty tree cannot give")

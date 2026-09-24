@@ -2,14 +2,14 @@
 """Run one Codex cold-read-cell against a cold-read-target.
 
 One invocation = one cold-read-cell — the twin of the Claude cold-read-cell
-launcher (scripts/cold-read-claude-cell.py). Everything the two do apart
-from invoking their model lives in scripts/cold-read-cell-common.py and is
+launcher (nc-systems/cold-read/cold-read-claude-cell.py). Everything the two do apart
+from invoking their model lives in nc-systems/cold-read/cold-read-cell-common.py and is
 imported by both, so the legs cannot drift. Read that file for the report
 contract, the write-detection rule, and why the reviewer writes a file rather
 than answering in chat.
 
 Usage:
-  scripts/cold-read-codex-cell.py --cell restate --tier second \\
+  nc-systems/cold-read/cold-read-codex-cell.py --cell restate --tier second \\
       --target docs/cross-project/foo.md \\
       --report cold-read-records/foo-2026-01-01/codex-restate-second.md
 
@@ -67,7 +67,7 @@ WHAT THE CODEX CLI TELLS US ABOUT COST, and where it goes (user-ruled
 12,345" on stderr, and it is the only place a cold-read-cell's token cost is
 stated by anyone. The shared module captures stderr, parses that line, and
 stamps `tokens=` into the report's provenance line -- see `parse_tokens_used`
-in scripts/cold-read-cell-common.py, which is where the pattern lives so
+in nc-systems/cold-read/cold-read-cell-common.py, which is where the pattern lives so
 this launcher keeps its single job of building an invocation. If a future
 CLI version reworks or drops that line, the field simply goes absent from
 the stamps: an absent field reads as "not reported", which is the truth, and

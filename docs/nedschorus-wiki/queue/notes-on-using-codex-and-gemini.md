@@ -37,7 +37,7 @@ positional argument, or on stdin. Flags the cells use:
 Outside a trusted git checkout it refuses with "Not inside a trusted directory";
 add `--skip-git-repo-check` for scratch directories. Its stdout carries a
 bracketed trace and a `tokens used` line before and after the answer; the
-repo's `scripts/cold-read-codex-cell.py` already strips these, and a direct
+repo's `nc-systems/cold-read/cold-read-codex-cell.py` already strips these, and a direct
 runner must (the terminology runner keeps everything after the last
 `] codex` banner line).
 
@@ -116,7 +116,7 @@ not a seat in the full set.
 
 ## Running either as a cold-read cell without a launcher
 
-`scripts/cold-read-claude-cell.py` and `scripts/cold-read-codex-cell.py` take
+`nc-systems/cold-read/cold-read-claude-cell.py` and `nc-systems/cold-read/cold-read-codex-cell.py` take
 their prompt only from `.claude/skills/cold-read/prompts/<cell>.md`; there is
 no `--prompt-file` flag (as of 2026-09-04; MD-skills has it queued) and no
 `agy` launcher at all. For a one-off prompt or runtime, the pattern that works

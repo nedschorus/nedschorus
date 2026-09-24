@@ -137,7 +137,7 @@ prints it.
 
 CONCURRENCY. -j N runs N suites at once. Measured on ned-box 2026-09-21
 over the 65 suites: serial 479 s, -j4 247 s, -j8 235 s. -j8 buys little
-because scripts/cold-read-grid-test.py alone takes 233 s. The default is 1,
+because nc-systems/cold-read/tests/cold-read-grid-test.py alone takes 233 s. The default is 1,
 which is what the walk-ledgers loop did; -j4 is the measured choice.
 
 NO PER-SUITE TIMEOUT. No suite has been seen to hang, so none is imposed.
