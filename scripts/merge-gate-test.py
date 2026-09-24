@@ -51,6 +51,18 @@ is now the later of the pin and the merge account's own latest review; the
 mutation back to the pin alone turns the case red, and two neighbouring 687
 cases hold the rest of F2 and F5 in place on the same capture.
 
+THE PIN IS EXCLUDED FROM THE REVIEW COUNT BY ID, AND THAT STAYS. Codex asked, on
+PR 691's merge review, whether another account's approval posted after
+reviewed-since should count: it becomes the pin and is never counted. Counting
+the pin instead refuses the lane's own recorded calls. merge-lane-2 gated PR 662
+with reviewed-since 2026-09-23T00:54:38Z and PR 663 with 01:32:58Z, each taken
+seconds before its own approval posted (00:54:43Z, 01:33:05Z), as recorded in
+nedlern@ned-box:/home/nedlern/.claude/projects/-home-nedlern-agents-merge-lane-2/0283c766-09a0-40f0-b809-a0d0833f3264.jsonl.
+Case LANE 662 replays the first, and the mutation that counts the pin turns it
+red. merge-lane-2's scan of merged pull requests 540 to 701 found none where
+another account approved after the merge account, so the case Codex describes
+has not occurred.
+
 The mutation section reruns named cases against a mutated COPY of the gate in a
 scratch directory, one mutation per fix, and requires each to go red. The file
 under test is never modified, so no revert can discard uncommitted work. Each
@@ -355,6 +367,35 @@ def case_687_since_after_the_merge_accounts_review(gate):
     return refused_with(run, "687", "is later than"), run.summary()
 
 
+def case_lane_662_since_taken_before_its_own_approval(gate):
+    """PR 662 as merge-lane-2 gated it: reviewed-since taken five seconds before
+    its own approval posted. The pin's exclusion by id is what passes it."""
+    reviews = "nedschorus-nedschorus-662-reviews-channel-paginated.json"
+    own = review(reviews, 5285715840)
+    routes = {"state": {"stdout_file": str(arranged_state(
+        "nedschorus-nedschorus-662-pr-view-state.json", mergeStateStatus=CLEAN))}}
+    routes.update(captured_channel_routes("reviews", "nedschorus-nedschorus-662-reviews-channel"))
+    routes.update(QUIET_INLINE)
+    routes.update(QUIET_ISSUE)
+    run = run_gate(gate, "662", own["commit_id"], "2026-09-23T00:54:38Z", routes)
+    return passed_pinned_to(run, "662", own["commit_id"]), run.summary()
+
+
+def case_f2_since_at_another_accounts_later_review(gate):
+    """Only the merge account's own reviews extend F2's bound. pytorch 114309's
+    pin (malfet, 15:16:51Z) is followed by xinyazhang's COMMENTED review at
+    17:20:06Z; reviewed-since at that review is still later than the bound."""
+    later = review("pytorch-pytorch-114309-reviews-channel-paginated.json", 1782308820)
+    routes = {"state": {"stdout_file": str(arranged_state(
+        "pytorch-pytorch-114309-pr-view-state.json", mergeStateStatus=CLEAN))}}
+    routes.update(captured_channel_routes("reviews", "pytorch-pytorch-114309-reviews-channel"))
+    routes.update(QUIET_INLINE)
+    routes.update(QUIET_ISSUE)
+    head = captured_value("pytorch-pytorch-114309-pr-view-state.json", "headRefOid")
+    run = run_gate(gate, "114309", head, later["submitted_at"], routes)
+    return refused_with(run, "114309", "is later than"), run.summary()
+
+
 def case_b1_inline_beyond_first_page(gate):
     # reviewed-since is the newest timestamp on the captured first page, so every
     # new comment is on page two: 24 of them.
@@ -579,6 +620,32 @@ def case_e9_gh_fails(gate):
             and refused_with(run, BASE_PR, "could not read the review channel")), run.summary()
 
 
+def comment_channel_failing_after_its_first_page(gate, channel, first_page_capture, reason):
+    # gh --paginate prints the pages it has read, then exits non-zero when a later
+    # page fails. What it printed here is pytorch 114309's captured first page; the
+    # exit status and stderr are the captured 404's. reviewed-since is the base
+    # approval, years after every comment on that page, so the partial read counts
+    # nothing new and only the channel's status check can refuse.
+    record = capture_record_entry("nedschorus-nedschorus-999999-reviews-channel-not-found.json")
+    routes = base_routes()
+    routes[f"{channel}:paginated"] = {"stdout_file": str(captured(first_page_capture)),
+                                      "exit": record["exit_code"], "stderr": record["stderr"]}
+    run = run_gate(gate, BASE_PR, BASE_HEAD, BASE_APPROVAL["submitted_at"], routes)
+    return (record["exit_code"] != 0 and refused_with(run, BASE_PR, reason)), run.summary()
+
+
+def case_e9_inline_channel_fails_after_its_first_page(gate):
+    return comment_channel_failing_after_its_first_page(
+        gate, "inline", "pytorch-pytorch-114309-inline-channel-first-page-only.json",
+        "could not read the inline comment channel")
+
+
+def case_e9_issue_channel_fails_after_its_first_page(gate):
+    return comment_channel_failing_after_its_first_page(
+        gate, "issue", "pytorch-pytorch-114309-issue-channel-first-page-only.json",
+        "could not read the issue comment channel")
+
+
 def case_fa_chain_line_passes_a_pass(gate):
     run = run_gate(gate, BASE_PR, BASE_HEAD, BASE_APPROVAL["submitted_at"], base_routes(),
                    wrapper=CHAIN_GATE_LINE)
@@ -610,6 +677,10 @@ CASES = [
      case_687_since_at_the_approval_counts_the_merge_accounts_review),
     ("F2 PR 687 with reviewed-since after the merge account's own latest review refuses",
      case_687_since_after_the_merge_accounts_review),
+    ("F2 reviewed-since at another account's review after the pin refuses",
+     case_f2_since_at_another_accounts_later_review),
+    ("LANE: PR 662 as merge-lane-2 gated it, reviewed-since taken before its own approval, passes",
+     case_lane_662_since_taken_before_its_own_approval),
     ("B1 an inline comment beyond the first page of 30 is counted", case_b1_inline_beyond_first_page),
     ("B1 an issue comment beyond the first page of 30 is counted", case_b1_issue_beyond_first_page),
     ("B1 a review beyond the first page of 30 is counted", case_b1_reviews_beyond_first_page),
@@ -634,6 +705,10 @@ CASES = [
     ("E7 inline comments after the approval refuse", case_e7_new_inline_comments),
     ("E10 a comment stamped exactly reviewed-since is not new", case_e10_stamped_exactly_since_is_not_new),
     ("E9 gh failing on a channel read refuses", case_e9_gh_fails),
+    ("E9 the inline comment channel failing after its first page refuses",
+     case_e9_inline_channel_fails_after_its_first_page),
+    ("E9 the issue comment channel failing after its first page refuses",
+     case_e9_issue_channel_fails_after_its_first_page),
     ("F-a the chain's gate line exits 0 on a pass", case_fa_chain_line_passes_a_pass),
     ("F-a the chain's gate line stops on a refusal", case_fa_chain_line_stops_on_a_refusal),
     ("F-a the chain's gate line stops when the gate could not run",
@@ -687,6 +762,21 @@ MUTATIONS = [
      [("'[$approved] + [.[][] | select(.user.login == $merge_account and .submitted_at != null)",
        "'[$approved] + [.[][] | select(false)")],
      [case_live_chain_merge_account_opened_the_pull_request]),
+    ("F2's bound extended by every account's reviews, not only the merge account's",
+     [("select(.user.login == $merge_account and .submitted_at != null)",
+       "select(.submitted_at != null)")],
+     [case_f2_since_at_another_accounts_later_review]),
+    ("the pinned approval counted as new activity",
+     [("select(.id != $approval_id and ", "select(")],
+     [case_lane_662_since_taken_before_its_own_approval]),
+    ("without the inline comment channel's read check",
+     [('[ $? -eq 0 ] || fail "could not read the inline comment channel"',
+       ': || fail "could not read the inline comment channel"')],
+     [case_e9_inline_channel_fails_after_its_first_page]),
+    ("without the issue comment channel's read check",
+     [('[ $? -eq 0 ] || fail "could not read the issue comment channel"',
+       ': || fail "could not read the issue comment channel"')],
+     [case_e9_issue_channel_fails_after_its_first_page]),
     ("F4's merge-account filter re-added to the pin",
      [('select(.state == "APPROVED")',
        'select(.state == "APPROVED" and .user.login != "ned-review-merge")')],
