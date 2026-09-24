@@ -207,6 +207,12 @@ GRID_MARKER_PREFIXES = (TARGET_CHANGED_MARKER_PREFIX, INCOMPLETE_SET_MARKER_PREF
 # `FAILED (exit` opening, the one marker carrying no colon.
 RETRYING_PREFIX = "RETRYING:"
 AGENT_BINARY_DOWN_PREFIX = "AGENT-BINARY DOWN:"
+# After `WRITE CHECK DID NOT RUN: <report name> — ` for each cell the run
+# stopped because the cold-read-target moved.
+STOPPED_CELL_WRITE_CHECK_LINE = (
+    "this cell was stopped before its stray-write check ran, which is a failure "
+    "to look, not a clean result. Before the new run, read `git status` against "
+    "the edits you know are your own and revert only what you did not write.")
 
 # ONE CLOSING TEXT FOR EVERY RUN (user-ruled 2026-09-11, point 3, replacing
 # the Opus-absent and Fable-only branches of 2026-09-04: "why is opus
@@ -957,6 +963,18 @@ def wait_for_cells(running: dict,
                     if attempt.process is not None:
                         stop_process_tree(attempt.process)
                     outcome.stopped.append(cell_name_of(report_path))
+                    # A STOPPED CELL NEVER REACHED ITS STRAY-WRITE CHECK, which
+                    # runs only after the model exits; left unsaid, the run
+                    # reads exactly like one whose check ran and found nothing,
+                    # and the next run takes any stray file into its baseline
+                    # (nedschorus#167; PR 699's review, 2026-09-24). Whatever
+                    # the log already holds is lifted first, then one line per
+                    # stopped cell says the check did not run.
+                    log_lines = (attempt.stderr_path.read_text(encoding="utf-8").splitlines()
+                                 if attempt.stderr_path.is_file() else [])
+                    lift_cell_status_lines(report_path, log_lines)
+                    print(f"WRITE CHECK DID NOT RUN: {report_path.name} — {STOPPED_CELL_WRITE_CHECK_LINE}",
+                          flush=True)
                 return outcome._replace(moved_mid_run=move)
     return outcome
 
@@ -1066,8 +1084,14 @@ def main() -> int:
     # instruction to the reader either way, so it carries the same marker
     # rather than a new one nothing downstream would recognise. The end-of-run
     # comparison is taken whether or not a poll saw a move: it is what catches
-    # a move after the last cell finished, which stopped nothing.
-    move = outcome.moved_mid_run or moved_target(target, frozen_target, target_before)
+    # a move after the last cell finished, which stopped nothing. It is taken
+    # AFTER the stop and preferred over what the poll saw, because the poll may
+    # have seen only the original move while a cell wrote the frozen copy
+    # before it was stopped; reporting the poll's answer would then stamp the
+    # set "the frozen copy did not move" when it did (PR 699's review,
+    # 2026-09-24). The poll's answer stands only when the end comparison finds
+    # nothing, as when the original was put back before the end.
+    move = moved_target(target, frozen_target, target_before) or outcome.moved_mid_run
     target_changed = move is not None
     if target_changed:
         changed_path, changed_after = move
