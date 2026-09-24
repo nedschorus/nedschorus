@@ -175,6 +175,23 @@ def run_cases(scratch: Path):
           == "seat-g <seat-g@nedschorus.invalid>|seat-g <seat-g@nedschorus.invalid>",
           (completed.stderr.strip(), repository.head_author_and_committer()))
 
+    # --- A per-command -c override is config too, and is checked. This is
+    # the exact form merge-lane used on 2026-09-22, which until this case
+    # only a one-off probe verified (merge-lane-2's review of PR "Each seat
+    # commits under its own name, and no agent commits as the user"). ----
+    for address in ("junk@lerner1.com", "ned@lerner1.com"):
+        repository = ThrowawayRepository(scratch, f"dash-c-{address}")
+        before = repository.head()
+        with open(repository.root / "a.txt", "a") as handle:
+            handle.write("line\n")
+        repository.git({}, "add", "a.txt")
+        completed = repository.attempt(
+            FAKE_SESSION, "-c", f"user.email={address}", "-c", "user.name=Edward Lerner",
+            "commit", "--quiet", "-m", "A change")
+        check(f"a session's `git -c user.email={address} commit` is refused",
+              refused(completed) and repository.head() == before,
+              (completed.returncode, completed.stderr.strip()))
+
     # --- The address match ignores case: git keeps an email as typed. -
     repository = ThrowawayRepository(scratch, "case")
     before = repository.head()
