@@ -219,16 +219,41 @@ FULL_RUN_NAME_SUFFIXES = (
 FAST_READ_ONLY_NAMES = ("CLAUDE.md", "CLAUDE.local.md")
 
 
+def checkout_root_holding(target: pathlib.Path) -> pathlib.Path:
+    """The top of the git worktree holding `target`, or REPO_ROOT when git
+    finds none (the target's directory is missing or in no repository).
+    GIT_DIR and GIT_WORK_TREE are dropped for this one call: set in the
+    environment they override -C and would name the wrong worktree
+    (nedschorus#639)."""
+    environment = {name: value for name, value in os.environ.items()
+                   if name not in ("GIT_DIR", "GIT_WORK_TREE")}
+    completed = subprocess.run(
+        ["git", "-C", str(target.parent), "rev-parse", "--show-toplevel"],
+        capture_output=True, stdin=subprocess.DEVNULL, text=True,
+        env=environment, check=False)
+    top = completed.stdout.strip()
+    if completed.returncode != 0 or not top:
+        return REPO_ROOT
+    return pathlib.Path(top).resolve()
+
+
 def full_run_class_of_target(target: pathlib.Path):
     """The name of the class that sends this target to the cold-read-full-run,
     or None when the fast read is the whole review.
 
-    `target` is absolute and resolved. A file outside this checkout is not
-    classified: the class list is about where a document lives in the
-    repository, and a copy somewhere else is not that document.
+    `target` is absolute and resolved. It is placed relative to the top of
+    the git worktree that holds it, not only this checkout: seats work in
+    scratch worktrees, and a brief edited in one is the same document on a
+    branch. Measured 2026-09-22: a fast read on a scratch worktree's copy of
+    docs/agents/doctrine-instructions.md said nothing, because relative_to
+    raised against this checkout and the class came back None -- the
+    warning ruled 2026-09-17 (item 4 of nedschorus#418's walk) silent where
+    agents work. A file in no git worktree is still placed against this
+    checkout, so a copy somewhere else is not classified: the class list is
+    about where a document lives in the repository.
     """
     try:
-        relative = target.relative_to(REPO_ROOT)
+        relative = target.relative_to(checkout_root_holding(target))
     except ValueError:
         return None
     if relative.parent == WALK_DIRECTORY_RELATIVE or relative.name in FAST_READ_ONLY_NAMES:
