@@ -65,6 +65,23 @@ decided: the retry, the absence, the closing text and the exit code turn
 only on whether a report landed. No timeout: a cold-read-cell that hangs
 holds the run (user-ruled 2026-09-17: add one if a hang is ever seen).
 
+A RUN STOPS AS SOON AS ITS COLD-READ-TARGET MOVES (user-ruled 2026-09-23, walk
+cold-read-research-decisions-waiting-on-the-user-2026-09-23, item 6: "n, and
+yes abort early"). A set read against a document that has since changed is
+discarded and the document read again, so a reviewer still reading after the
+move is spending the rest of a 10-20 minute read on a review nobody will
+triage. Both fingerprints are therefore taken at every poll, not only at the
+end: the first poll that sees either the original or the frozen copy differ
+while any cold-read-cell is still running stops every running cold-read-cell
+with its children, marks what the set holds, and exits 3. Every poll, which
+is every 5 seconds, because hashing a Markdown file costs microseconds: a
+slower cadence would buy nothing and add a timer. The end-of-run comparison
+stays, for a move after the last cold-read-cell has finished, which stops
+nothing. A cold-read-cell is stopped with its children because it is a launcher
+whose model CLI runs as a child process: stopping the launcher alone would
+leave the CLI reading, spending tokens, and free to write its report into the
+record after the marker went on.
+
 Exit codes: 0 all cold-read-cells ran, 1 one or more reports are absent, 2 no
 cold-read-cell was launched (a bad invocation, a cold-read-target this
 instrument refuses to review, or a cold-read-target that could not be frozen
@@ -81,6 +98,7 @@ import importlib.util
 import os
 import pathlib
 import re
+import signal
 import subprocess
 import sys
 import time
@@ -189,6 +207,12 @@ GRID_MARKER_PREFIXES = (TARGET_CHANGED_MARKER_PREFIX, INCOMPLETE_SET_MARKER_PREF
 # `FAILED (exit` opening, the one marker carrying no colon.
 RETRYING_PREFIX = "RETRYING:"
 AGENT_BINARY_DOWN_PREFIX = "AGENT-BINARY DOWN:"
+# After `WRITE CHECK DID NOT RUN: <report name> — ` for each cell the run
+# stopped because the cold-read-target moved.
+STOPPED_CELL_WRITE_CHECK_LINE = (
+    "this cell was stopped before its stray-write check ran, which is a failure "
+    "to look, not a clean result. Before the new run, read `git status` against "
+    "the edits you know are your own and revert only what you did not write.")
 
 # ONE CLOSING TEXT FOR EVERY RUN (user-ruled 2026-09-11, point 3, replacing
 # the Opus-absent and Fable-only branches of 2026-09-04: "why is opus
@@ -258,6 +282,14 @@ where they live."""
 RECORD_CLOCK_OVERRIDE_VARIABLE = "COLD_READ_RECORD_CLOCK_OVERRIDE"
 RECORD_CLOCK_OVERRIDE_FORMAT = "%Y-%m-%dT%H:%M"
 
+# How often, in seconds, the cold-read-target is fingerprinted while
+# cold-read-cells run. Unset, it is every poll. A test seam like the clock
+# override above: a stub cell edits the target as it exits, and a poll landing
+# between one cell's edit and another's exit would make a case about the
+# end-of-run comparison stop cells at random; such a case sets this past its
+# own length, so only the end-of-run comparison ever sees the move.
+TARGET_CHECK_INTERVAL_OVERRIDE_VARIABLE = "COLD_READ_GRID_TARGET_CHECK_INTERVAL_SECONDS"
+
 
 def record_clock_reading() -> datetime.datetime:
     """The ONE local clock reading a cold-read-record's date and time are both
@@ -322,7 +354,7 @@ def freeze_target(target: pathlib.Path, record_dir: pathlib.Path) -> str:
     their sha256.
 
     One read serves both, so the frozen copy and the fingerprint the
-    cold-read-grid compares at the end of the run describe the same bytes by
+    cold-read-grid compares at every poll and at the end describe the same bytes by
     construction (user-ruled 2026-09-07: freeze the reviewed cold-read-target
     into each cold-read-record; the hash alone left a reader of an old
     cold-read-record with reports but not the text they reviewed). ""
@@ -377,9 +409,10 @@ def target_content_fingerprint(target: pathlib.Path) -> str:
 
     mtime moves whenever the file is written, so an editor that saves and
     undoes would trip an mtime guard with nothing wrong. The guard exists so
-    no report describes bytes that are not the document's. It compares only
-    the two endpoints, so an edit made and undone between them leaves no
-    trace, and a cell that read the edited version is not flagged. A file
+    no report describes bytes that are not the document's. It compares at
+    every 5-second poll and at the end, so an edit made and undone between
+    two polls leaves no trace, and a cell that read the edited version is not
+    flagged. A file
     deleted or made unreadable mid-run yields "", which differs from any real
     digest and so counts as a change.
 
@@ -398,10 +431,34 @@ def target_content_fingerprint(target: pathlib.Path) -> str:
         return ""
 
 
+def moved_target(target: pathlib.Path, frozen_target: pathlib.Path,
+                 before: str) -> typing.Optional[tuple]:
+    """(path, sha256 now) of the file that no longer matches the launch
+    fingerprint, or None when neither moved. The frozen copy is named first
+    when both moved: it is what the cold-read-cells read, so a copy that moved
+    is the serious case -- the old mixed-set failure relocated, and invisible
+    to the stray-write detector because the records tree is gitignored."""
+    frozen_now = target_content_fingerprint(frozen_target)
+    if frozen_now != before:
+        return frozen_target, frozen_now
+    target_now = target_content_fingerprint(target)
+    if target_now != before:
+        return target, target_now
+    return None
+
+
+# The window sentence of the marker and of the closing text, one per way the
+# move was seen. The end-of-run one is the sentence every record marked before
+# 2026-09-23 carries, kept word for word so old and new records read alike.
+WINDOW_SEEN_AT_END = ("differed between the moment the cells launched and the "
+                      "moment the last one finished")
+WINDOW_SEEN_MID_RUN = ("changed while the cells were still running, and the run "
+                       "stopped the ones still reading")
+
+
 TARGET_CHANGED_INSTRUCTIONS = """\
 The reports are in {record_dir}, and every one of them is marked: the document's
-bytes differed between the moment the cells launched and the moment the last one
-finished, so this set is not a review of the document as it now stands.
+bytes {window}, so this set is not a review of the document as it now stands.
 
 Do not triage this set as a review of the document. Stop editing the document
 and start a new cold-read run against the settled text.
@@ -413,6 +470,7 @@ is evidence of what the reviewers saw — not of how the file now stands.
 
 def mark_reports_target_changed(
     record_dir: pathlib.Path, target: pathlib.Path, before: str, after: str,
+    seen_mid_run: bool = False,
 ) -> str:
     """Stamp every report in the set as reviewing a cold-read-target that moved.
 
@@ -430,7 +488,10 @@ def mark_reports_target_changed(
     # WHAT THE TWO FINGERPRINTS PROVE, and no more: the bytes differed between
     # the moment before the cold-read-cells launched and the moment after the
     # last one finished. They do not say when in that window the edit landed,
-    # so they cannot say that it landed while a reviewer was reading.
+    # so they cannot say that it landed while a reviewer was reading. A move
+    # SEEN MID-RUN is narrower and says so: the poll that saw it came while a
+    # cold-read-cell was still running, and the run stopped it there -- still
+    # without knowing when, before that poll, the edit landed.
     #
     # WHICH TEXT THE REPORTS DESCRIBE turns on WHICH FILE MOVED, now that the
     # cold-read-cells read the frozen copy. A copy that moved leaves the old
@@ -457,9 +518,9 @@ def mark_reports_target_changed(
             "target/, which did not move; what moved is the document in the "
             "repository."
         )
+    window = WINDOW_SEEN_MID_RUN if seen_mid_run else WINDOW_SEEN_AT_END
     detail = (
-        f"{target}'s bytes differed between the moment the cells launched and the "
-        f"moment the last one finished — sha256 {before[:12] or 'unreadable'} then "
+        f"{target}'s bytes {window} — sha256 {before[:12] or 'unreadable'} then "
         f"{after[:12] or 'unreadable'}. {what_the_reports_describe} Treat this set "
         f"as evidence of what reviewers saw, not as a review of the current file; "
         f"start a new cold-read run against the settled document."
@@ -554,12 +615,16 @@ class AbsentReport(typing.NamedTuple):
 
 class RunOutcome(typing.NamedTuple):
     """What the cold-read-cells left: the cell names that landed, in order;
-    the absent reports by cell name, in the order they became absent; and
-    per agent-binary that went down, (cause class, detail, reports absent)."""
+    the absent reports by cell name, in the order they became absent; per
+    agent-binary that went down, (cause class, detail, reports absent); the
+    cell names the run stopped because the cold-read-target moved; and that
+    move as (path, sha256 seen), or None when no poll saw one."""
 
     landed: list
     absent: dict
     down: dict
+    stopped: list
+    moved_mid_run: typing.Optional[tuple]
 
 
 def cell_name_of(report_path: pathlib.Path) -> str:
@@ -750,9 +815,81 @@ def announce_agent_binary_down(cells_by_runtime: dict, outcome: RunOutcome) -> N
               f"{len(absences)} reports absent", flush=True)
 
 
-def wait_for_cells(running: dict) -> RunOutcome:
-    """Poll until every cold-read-cell has landed or is absent; print per-report
-    progress; relaunch each cold-read-cell once when its first attempt fails.
+def process_parents() -> dict:
+    """{pid: parent pid} for every process on the machine, from one `ps` call
+    (the same flags on macOS and Linux); {} when ps cannot be run."""
+    try:
+        completed = subprocess.run(["ps", "-A", "-o", "pid=", "-o", "ppid="],
+                                   capture_output=True, text=True, check=False)
+    except OSError:
+        return {}
+    parents = {}
+    for line in completed.stdout.splitlines():
+        fields = line.split()
+        if len(fields) == 2 and fields[0].isdigit() and fields[1].isdigit():
+            parents[int(fields[0])] = int(fields[1])
+    return parents
+
+
+def stop_process_tree(process: subprocess.Popen, grace_seconds: float = 5.0) -> None:
+    """Stop a cold-read-cell launcher and every process under it.
+
+    Frozen top-down with SIGSTOP first, re-reading the process table after
+    each level, so no process in the tree can start a new one while the tree
+    is being collected: a launcher killed first would orphan its model CLI,
+    which then no longer names the launcher as its parent and cannot be found.
+    Then SIGTERM and SIGCONT to all, so each can exit on its own terms, and
+    SIGKILL to whatever is still there after the grace. The launcher is reaped
+    here; its descendants are not this program's children and are reaped by
+    init.
+    """
+    frozen = []
+    tried = set()
+    frontier = [process.pid]
+    while frontier:
+        for pid in frontier:
+            tried.add(pid)
+            try:
+                os.kill(pid, signal.SIGSTOP)
+            except (ProcessLookupError, PermissionError):
+                continue
+            frozen.append(pid)
+        # `tried`, not `frozen`: a process that could not be stopped is not
+        # offered again, or this loop would never end.
+        frontier = [pid for pid, parent in process_parents().items()
+                    if parent in frozen and pid not in tried]
+    for signal_number in (signal.SIGTERM, signal.SIGCONT):
+        for pid in frozen:
+            try:
+                os.kill(pid, signal_number)
+            except (ProcessLookupError, PermissionError):
+                pass
+    try:
+        process.wait(timeout=grace_seconds)
+    except subprocess.TimeoutExpired:
+        pass
+    for pid in frozen:
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            pass
+    process.wait()
+
+
+def wait_for_cells(running: dict,
+                   target_move: typing.Callable[[], typing.Optional[tuple]],
+                   target_check_interval_seconds: float = 0.0) -> RunOutcome:
+    """Poll until every cold-read-cell has landed or is absent, or the
+    cold-read-target moves; print per-report progress; relaunch each
+    cold-read-cell once when its first attempt fails.
+
+    `target_move` is asked at the end of every poll while any cold-read-cell
+    is still running (no oftener than `target_check_interval_seconds`, which
+    is 0 outside the tests); the first answer that is not None stops every running
+    cold-read-cell (stop_process_tree) and ends the wait, with the stopped
+    cells and the move in the outcome. Asked only while one is running,
+    because a move after the last has finished stops nothing and is the
+    end-of-run comparison's to report, as it always was.
 
     RETRY ONCE, HERE (user-ruled 2026-09-11, point 1: "Every failed cell is
     retried once, automatically, with the SAME model. No cell is special.").
@@ -776,7 +913,8 @@ def wait_for_cells(running: dict) -> RunOutcome:
     believe -- six "saved" lines over empty files read as six reviewers
     finding nothing.
     """
-    outcome = RunOutcome([], {}, {})
+    outcome = RunOutcome([], {}, {}, [], None)
+    last_target_check = time.monotonic()
     cells_by_runtime = {}
     for report_path in running:
         cells_by_runtime.setdefault(
@@ -817,6 +955,27 @@ def wait_for_cells(running: dict) -> RunOutcome:
                     outcome.absent[name] = AbsentReport(
                         name, runtime_of(name), cause_class, detail, attempt.stderr_path)
             announce_agent_binary_down(cells_by_runtime, outcome)
+        if running and time.monotonic() - last_target_check >= target_check_interval_seconds:
+            last_target_check = time.monotonic()
+            move = target_move()
+            if move is not None:
+                for report_path, attempt in running.items():
+                    if attempt.process is not None:
+                        stop_process_tree(attempt.process)
+                    outcome.stopped.append(cell_name_of(report_path))
+                    # A STOPPED CELL NEVER REACHED ITS STRAY-WRITE CHECK, which
+                    # runs only after the model exits; left unsaid, the run
+                    # reads exactly like one whose check ran and found nothing,
+                    # and the next run takes any stray file into its baseline
+                    # (nedschorus#167; PR 699's review, 2026-09-24). Whatever
+                    # the log already holds is lifted first, then one line per
+                    # stopped cell says the check did not run.
+                    log_lines = (attempt.stderr_path.read_text(encoding="utf-8").splitlines()
+                                 if attempt.stderr_path.is_file() else [])
+                    lift_cell_status_lines(report_path, log_lines)
+                    print(f"WRITE CHECK DID NOT RUN: {report_path.name} — {STOPPED_CELL_WRITE_CHECK_LINE}",
+                          flush=True)
+                return outcome._replace(moved_mid_run=move)
     return outcome
 
 
@@ -912,25 +1071,33 @@ def main() -> int:
     print(f"Launched six reviewers against {target}. Reports appear in "
           f"{record_dir} as each completes — read each as it arrives.")
 
-    # THE CELLS READ THE FROZEN COPY, never the live document.
-    outcome = wait_for_cells(launch_cells(frozen_target, record_dir, target))
-    # BOTH ENDS, and they answer different questions now. The copy is what was
-    # read, so a copy that moved is the serious one: it is the old mixed-set
-    # failure relocated, and it is invisible to the stray-write detector
-    # because the records tree is gitignored. The original moving no longer
-    # reaches any reviewer, but it still means the document triage is about to
-    # be done against is not the one reviewed — which is the same instruction
-    # to the reader either way, so it carries the same marker rather than a
-    # new one nothing downstream would recognise.
-    target_after = target_content_fingerprint(target)
-    frozen_after = target_content_fingerprint(frozen_target)
-    changed_path, changed_after = (
-        (frozen_target, frozen_after) if frozen_after != target_before
-        else (target, target_after))
-    target_changed = target_before != target_after or target_before != frozen_after
+    # THE CELLS READ THE FROZEN COPY, never the live document. Both files are
+    # fingerprinted at every poll while a cell runs, and a move stops the run.
+    outcome = wait_for_cells(
+        launch_cells(frozen_target, record_dir, target),
+        lambda: moved_target(target, frozen_target, target_before),
+        float(os.environ.get(TARGET_CHECK_INTERVAL_OVERRIDE_VARIABLE) or 0))
+    # BOTH FILES, and they answer different questions now. The copy is what
+    # was read, so a copy that moved is the serious one. The original moving
+    # no longer reaches any reviewer, but it still means the document triage
+    # is about to be done against is not the one reviewed — which is the same
+    # instruction to the reader either way, so it carries the same marker
+    # rather than a new one nothing downstream would recognise. The end-of-run
+    # comparison is taken whether or not a poll saw a move: it is what catches
+    # a move after the last cell finished, which stopped nothing. It is taken
+    # AFTER the stop and preferred over what the poll saw, because the poll may
+    # have seen only the original move while a cell wrote the frozen copy
+    # before it was stopped; reporting the poll's answer would then stamp the
+    # set "the frozen copy did not move" when it did (PR 699's review,
+    # 2026-09-24). The poll's answer stands only when the end comparison finds
+    # nothing, as when the original was put back before the end.
+    move = moved_target(target, frozen_target, target_before) or outcome.moved_mid_run
+    target_changed = move is not None
     if target_changed:
+        changed_path, changed_after = move
         detail = mark_reports_target_changed(
-            record_dir, changed_path, target_before, changed_after)
+            record_dir, changed_path, target_before, changed_after,
+            seen_mid_run=outcome.moved_mid_run is not None)
         print(f"TARGET CHANGED DURING RUN: {detail}", flush=True)
 
     launched = len(CELL_LAUNCHERS) * len(GRID_CELL_ROSTER)
@@ -963,7 +1130,11 @@ def main() -> int:
     tell = tell_the_user_sentence(outcome.absent)
     absences = absence_lines(outcome)
     if target_changed:
-        print(TARGET_CHANGED_INSTRUCTIONS.format(record_dir=record_dir))
+        print(TARGET_CHANGED_INSTRUCTIONS.format(
+            record_dir=record_dir,
+            window=WINDOW_SEEN_MID_RUN if outcome.moved_mid_run else WINDOW_SEEN_AT_END))
+        if outcome.stopped:
+            print("Stopped before finishing: " + ", ".join(outcome.stopped) + ".")
         if absences:
             print(absences)
     elif not outcome.absent:
