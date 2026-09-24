@@ -23,6 +23,7 @@ import json
 import os
 import pathlib
 import re
+import shutil
 import socket
 import subprocess
 import sys
@@ -1109,6 +1110,63 @@ with scratch() as directory:
           and "md-records/a-record/git-path-probe.md, deleted"
           in sections(stdout)[1], stdout + stderr)
 
+# --- Another project's commit, asked at its linked worktree's path --------------
+# PR 703 review 5308486733, inline at :1023 (Codex P2-b): a commit made in a
+# linked worktree of another project was taken to be at the path inside the
+# project's main clone only, so asked by the linked worktree's path it read as
+# not found, exit 1, with the commit a mere candidate.
+with scratch() as directory:
+    base = pathlib.Path(directory).resolve()
+    make_stand_in_bin(base)
+    project = base / "mac" / "Projects" / "linked-project"
+    linked = base / "mac" / "Projects" / "linked-project-wt"
+    commit_files(project, {"README.md": "the project"}, "Start")
+    git(project, "worktree", "add", "-q", "-b", "topic", str(linked))
+    commit_files(linked, {"docs/linked-worktree-probe.md": "on the topic"})
+    git(linked, "rm", "-q", "docs/linked-worktree-probe.md")
+    git(linked, "commit", "-q", "-m", "Remove the linked worktree probe")
+    for asked, label in ((linked, "the linked worktree's path"),
+                         (project, "the main clone's path")):
+        code, stdout, stderr = run(
+            base, str(asked / "docs" / "linked-worktree-probe.md"))
+        check(f"another project's commit is found by {label}",
+              code == 0 and "docs/linked-worktree-probe.md, deleted"
+              in sections(stdout)[0], stdout + stderr)
+    code, stdout, stderr = run(
+        base, str(base / "mac" / "Projects" / "unrelated-project" / "docs"
+                  / "linked-worktree-probe.md"))
+    check("... and not by a path in a directory that is no worktree of it",
+          code == 1 and not sections(stdout)[0]
+          and "docs/linked-worktree-probe.md, deleted" in sections(stdout)[1],
+          stdout + stderr)
+    # When git cannot list that project's worktrees, "not found" at a path
+    # the list might have held is not established: exit 3, and the reason.
+    failing_bin = base / "failing-worktree-list-bin"
+    failing_bin.mkdir()
+    real_git = shutil.which("git")
+    stand_in_git = failing_bin / "git"
+    stand_in_git.write_text(
+        "#!/bin/sh\n"
+        "for argument in \"$@\"; do\n"
+        "  if [ \"$argument\" = worktree ]; then\n"
+        "    echo 'fatal: stand-in worktree listing failure' >&2; exit 128\n"
+        "  fi\n"
+        "done\n"
+        f"exec {shlex_quote(real_git)} \"$@\"\n", encoding="utf-8")
+    stand_in_git.chmod(0o755)
+    environment = program_environment(base)
+    environment["PATH"] = f"{failing_bin}{os.pathsep}{environment['PATH']}"
+    result = subprocess.run(
+        [sys.executable, str(PROGRAM),
+         str(linked / "docs" / "linked-worktree-probe.md")],
+        capture_output=True, text=True, cwd=base, env=environment, timeout=120)
+    check("when git cannot list that project's worktrees, the answer is not "
+          "established, exit 3, and says which listing failed",
+          result.returncode == 3
+          and "stand-in worktree listing failure" in result.stdout
+          and str(project) in result.stdout.split("NOT searched", 1)[-1],
+          f"exit {result.returncode}\n{result.stdout}{result.stderr}")
+
 with scratch() as directory:
     base = pathlib.Path(directory)
     make_stand_in_bin(base)
@@ -1407,6 +1465,26 @@ with scratch() as directory:
           code == 0 and "/agents/s/docs/gone-dir-probe.md"
           in sections(stdout)[0] and "Traceback" not in stderr,
           f"exit {code}\n{stdout}{stderr}")
+    # PR 703 review 5308486733, inline at :896: git refuses to start in a
+    # directory that no longer exists, so every git surface went unsearched
+    # and a file that only git history holds read as "not established", exit
+    # 3. The clone here holds such a file.
+    clone = base / "mac" / "Projects" / "nedschorus"
+    commit_files(clone, {"docs/removed-cwd-history-probe.md": "only in git"})
+    git(clone, "rm", "-q", "docs/removed-cwd-history-probe.md")
+    git(clone, "commit", "-q", "-m", "Remove the history probe")
+    for query, label in (
+            ("removed-cwd-history-probe.md", "a bare name"),
+            (str(base / "mac" / "agents" / "s" / "docs"
+                 / "removed-cwd-history-probe.md"), "an absolute path")):
+        code, stdout, stderr = run_in_removed_directory(query)
+        check(f"{label} asked from a removed directory is found in git "
+              f"history, which is searched from there too",
+              code == 0 and "docs/removed-cwd-history-probe.md, deleted"
+              in sections(stdout)[0]
+              and "Unable to read current working directory" not in stdout
+              and "NOT searched" not in stdout,
+              f"exit {code}\n{stdout}{stderr}")
 
 # --- Which files git tracks is asked of the checkout, not of a caller's GIT_DIR --
 # A leaked GIT_DIR would make `git ls-files` answer for another repository, so

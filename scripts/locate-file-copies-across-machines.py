@@ -58,6 +58,11 @@ seat whose own copy was absent exited 0 on another project's file, and
 current directory no longer exists -- a shell still standing in a removed
 worktree, which two transcripts show (PR 703 review 5307798976) -- a relative
 query cannot be placed: the program says so, searches nothing and exits 3.
+Any other query is searched from `/`, the program's current directory once
+the query is placed: git refuses to start in a directory that no longer
+exists ("Unable to read current working directory"), and from one every git
+surface went unsearched, so a file only git history holds read as not
+established (PR 703 review 5308486733).
 The log-store reuses generic names across its records (measured 2026-09-24:
 40 dispositions.md, 31 fast-read.md, 29 reference-check.md, 26 memory.md,
 11 SKILL.md), and the backup search's log-store surface read an unrelated
@@ -124,7 +129,10 @@ checked on 2026-09-24 against `git worktree list` in each machine's main clone
     them git checkouts, the legacy nedlern one among them), and so is
     anything else outside the list: a query there is found only by the file
     at that very path, or by a commit of that project's own clone at that
-    path. The same holds for the log-store and the handoffs.
+    path, in the clone's own work tree or in any worktree the clone lists
+    (PR 703 review 5308486733: a commit made in another project's linked
+    worktree was found only at the main clone's path). The same holds for
+    the log-store and the handoffs.
     Another project's files and git history never count as a copy of this
     repository's path, nor this repository's as a copy of theirs (PR 703
     review 5299487158: another project's root README.md under
@@ -601,6 +609,24 @@ def tracked_in_checkout(root, relative_paths):
     return {os.fsdecode(raw) for raw in result.stdout.split(b"\0") if raw}, None
 
 
+def worktrees_listed_by(git_dir):
+    """(the work trees `git worktree list` names for the repository at
+    `git_dir`, failure or None). Git records each path with its symbolic
+    links resolved."""
+    try:
+        result = subprocess.run(
+            ["git", "--git-dir", git_dir, "worktree", "list", "--porcelain"],
+            capture_output=True, timeout=LOCAL_COMMAND_TIMEOUT_SECONDS)
+    except (subprocess.TimeoutExpired, OSError) as error:
+        return [], str(error)
+    if result.returncode != 0:
+        lines = result.stderr.decode("utf-8", "replace").strip().splitlines()
+        return [], lines[-1] if lines else "no message"
+    return [line[len("worktree "):] for line in
+            result.stdout.decode("utf-8", "surrogateescape").splitlines()
+            if line.startswith("worktree ")], None
+
+
 def listed_worktrees_outside(layout, surfaces):
     """(directories, failures): each worktree a main clone of this
     repository lists that exists and lies under none of `surfaces`' roots.
@@ -614,24 +640,12 @@ def listed_worktrees_outside(layout, surfaces):
         git_dir = os.path.join(clone, ".git")
         if not os.path.isdir(git_dir):
             continue
-        try:
-            result = subprocess.run(
-                ["git", "--git-dir", git_dir, "worktree", "list",
-                 "--porcelain"], capture_output=True,
-                timeout=LOCAL_COMMAND_TIMEOUT_SECONDS)
-        except (subprocess.TimeoutExpired, OSError) as error:
+        worktrees, failure = worktrees_listed_by(git_dir)
+        if failure:
             failures.append(f"the worktrees {clone} lists could not be read: "
-                            f"{error}")
+                            f"{failure}")
             continue
-        if result.returncode != 0:
-            lines = result.stderr.decode("utf-8", "replace").strip().splitlines()
-            failures.append(f"the worktrees {clone} lists could not be read: "
-                            + (lines[-1] if lines else "no message"))
-            continue
-        for line in result.stdout.decode("utf-8", "surrogateescape").splitlines():
-            if not line.startswith("worktree "):
-                continue
-            worktree = line[len("worktree "):]
+        for worktree in worktrees:
             if os.path.isdir(worktree) and not any(
                     parts_below(os.path.realpath(worktree), root) is not None
                     for root in roots):
@@ -923,7 +937,11 @@ def search_this_machine(machine_plan, stem, name, check_tracked=False):
     `check_tracked`, a file hit in a checkout of this repository carries
     `untracked` when git does not track it there, or `tracking_unknown` when
     git could not say. A git hit from a clone that is not this repository
-    carries `canonical`, the path it had in that clone's own work tree."""
+    carries `canonical`, the path it had in that clone's own work tree, and,
+    with `check_tracked`, `canonical_in_linked_worktrees`, the paths it had
+    in each linked worktree the clone lists. `check_tracked` is set for a
+    query with directories in it, the only kind whose answer compares
+    paths."""
     surfaces = machine_plan["surfaces"]
     layout = machine_plan.get("this_repository", {})
     spellings = machine_plan.get("spellings", [])
@@ -1018,13 +1036,35 @@ def search_this_machine(machine_plan, stem, name, check_tracked=False):
                     "failures"].append(failure)
     for hit in git_hits:
         hit["this_repository"] = hit["clone"] in this_git_dirs
-        # Another project's clone: its path is the path in that clone's own
-        # work tree, so a query for that very path finds its history.
-        if (not hit["this_repository"]
-                and os.path.basename(hit["clone"]) == ".git"):
+    # Another project's clone: its path is the path in that clone's own work
+    # tree, and in each linked worktree the clone lists, so a query for any
+    # of those paths finds its history. A listing git could not give leaves
+    # "not found" at a linked worktree's path unestablished, so it is
+    # reported as a git failure.
+    other_clones = (sorted({hit["clone"] for hit in git_hits
+                            if not hit["this_repository"]})
+                    if check_tracked else [])
+    with concurrent.futures.ThreadPoolExecutor(max_workers=16) as pool:
+        listings = dict(zip(other_clones,
+                            pool.map(worktrees_listed_by, other_clones)))
+    for clone, (_, failure) in listings.items():
+        if failure:
+            git_failures.append(f"the worktrees {clone} lists could not be "
+                                f"read: {failure}")
+    for hit in git_hits:
+        if hit["this_repository"]:
+            continue
+        if os.path.basename(hit["clone"]) == ".git":
             hit["canonical"] = canonical_path(
                 os.path.join(os.path.dirname(hit["clone"]), hit["path"]),
                 spellings)
+        linked = []
+        for tree in listings.get(hit["clone"], ([], None))[0]:
+            path = canonical_path(os.path.join(tree, hit["path"]), spellings)
+            if path != hit.get("canonical") and path not in linked:
+                linked.append(path)
+        if linked:
+            hit["canonical_in_linked_worktrees"] = linked
     hits += git_hits
 
     git_surfaces = [surface["name"] for surface in surfaces
@@ -1191,8 +1231,10 @@ def render(query, target, results, not_searched, elapsed):
         hit = entry["hit"]
         if kind == "name":
             return is_same_name(os.path.basename(hit["path"]), name)
-        if hit.get("canonical") and same_parts(
-                parts_of(hit["canonical"]), parts_of(target["canonical"])):
+        if any(same_parts(parts_of(path), parts_of(target["canonical"]))
+               for path in (hit.get("canonical"),
+                            *hit.get("canonical_in_linked_worktrees", ()))
+               if path):
             return True
         # A file git does not track in its checkout counts only at its own
         # path, just tested (PR 703 review 5299970582: another seat's
@@ -1368,6 +1410,10 @@ def main(argv=None) -> int:
             f"When you report this, do not say the file does not exist: "
             f"nothing was searched.\n")
         return 3
+    # The query is now absolute or a bare name, so nothing below needs the
+    # current directory, and git refuses to start in one that no longer
+    # exists (see the module docstring).
+    os.chdir("/")
     stem = query_stem(query)
     if not stem:
         parser.error("the query has no file name to match")
