@@ -1,6 +1,6 @@
 # Ladder extension for pair issue [Open research thread: usage-vs-expectation observation — obsolescence is a design problem, not an age problem](https://github.com/nedschorus/nedschorus/issues/35) (declaration-vs-reality) — the posit system at three granularities
 
-Queued for the user's drain (promote / edit / demote / drop). Source: `nc-queue/2026-07-28-sdlc-skill-set-coverage-and-app-skill-pile.md` §2 (rewalked) and §6a (user-walked 2026-07-29/30). Destination: issue [Open research thread: usage-vs-expectation observation — obsolescence is a design problem, not an age problem](https://github.com/nedschorus/nedschorus/issues/35) — this extends that thread's primitive (declare expectation → observe reality → mismatch is red) down a granularity ladder; it is one system with one home, not a new thread. Status: direction with ruled structure; awaits a real codebase to instrument.
+Queued for the user's drain (promote / edit / demote / drop). Source: `nc-queue/archived/2026-07-28-sdlc-skill-set-coverage-and-app-skill-pile.md` §2 (rewalked) and §6a (user-walked 2026-07-29/30). Destination: issue [Open research thread: usage-vs-expectation observation — obsolescence is a design problem, not an age problem](https://github.com/nedschorus/nedschorus/issues/35) — this extends that thread's primitive (declare expectation → observe reality → mismatch is red) down a granularity ladder; it is one system with one home, not a new thread. Status: direction with ruled structure; awaits a real codebase to instrument.
 
 ## The ladder (coarse → fine)
 
