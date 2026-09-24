@@ -104,9 +104,12 @@ class ThrowawayRepository:
         return self.git({}, "log", "-1", "--format=%an <%ae>|%cn <%ce>").stdout.strip()
 
 
+REFUSAL_FIRST_INSTRUCTION = "Commit under this seat's own name, not as "
+
+
 def refused(completed):
     return (completed.returncode != 0
-            and "git commit refused" in completed.stderr)
+            and REFUSAL_FIRST_INSTRUCTION in completed.stderr)
 
 
 def run_cases(scratch: Path):
@@ -270,6 +273,21 @@ def run_cases(scratch: Path):
     check("the refusal says not to change the shared config",
           "Do not change user.name or user.email" in completed.stderr,
           completed.stderr)
+    check("the refusal says to set the identity in the same command as the commit",
+          "in the same command as the commit" in completed.stderr
+          and "GIT_COMMITTER_EMAIL=<seat>@nedschorus.invalid git commit"
+          in completed.stderr, completed.stderr)
+    check("the refusal tells a user committing by hand to use a terminal outside the session",
+          "If the user is committing by hand, commit from a terminal outside"
+          " the Claude session." in completed.stderr, completed.stderr)
+    # Instruction only (CLAUDE.md): every line is an instruction, or an
+    # instruction under a stated condition, never a status or a reason.
+    refusal_lines = [line for line in completed.stderr.splitlines() if line.strip()]
+    check("every refusal line is an instruction",
+          bool(refusal_lines) and all(
+              line.startswith(("Commit ", "If ", "Do not "))
+              for line in refusal_lines),
+          refusal_lines)
 
 
 def main():
