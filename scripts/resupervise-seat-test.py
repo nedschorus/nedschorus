@@ -313,9 +313,15 @@ def run_end_to_end_case(workspace: Path):
         "consumed_counter": 8, "launched_session_id": "s",
         "last_poll_at": "2026-08-18T00:00:00+00:00",
     })
+    # The pane's command lives exactly as long as this suite, never a fixed
+    # time: before its kill-session lands the script can spend about 150 s in
+    # 30-s-limited lsof and tmux calls, and a session that ended first reads as
+    # the script's kill failing (measured 2026-09-24 with both slowed 29 s: a
+    # `sleep 120` pane was gone when kill-session ran at 145 s). Not a read of
+    # stdin to EOF: a pane's stdin is its tty, which never closes.
     created = subprocess.run(
         ["tmux", "-L", "default", "new-session", "-d", "-s", session,
-         "-c", str(workspace), "sleep 120"],
+         "-c", str(workspace), f"while kill -0 {os.getpid()} 2>/dev/null; do sleep 1; done"],
         capture_output=True, text=True, check=False,
     )
     if created.returncode != 0:
@@ -374,9 +380,12 @@ def run_per_seat_server_end_to_end_case(workspace: Path):
         "consumed_counter": 8, "launched_session_id": "s",
         "last_poll_at": "2026-08-18T00:00:00+00:00",
     })
+    # The pane's command lives exactly as long as this suite, for the reason
+    # given in run_end_to_end_case: a fixed `sleep 120` expired before the
+    # script's kill-session when its lsof and tmux calls were slow.
     created = subprocess.run(
         ["tmux", "-L", session, "new-session", "-d", "-s", session,
-         "-c", str(workspace), "sleep 120"],
+         "-c", str(workspace), f"while kill -0 {os.getpid()} 2>/dev/null; do sleep 1; done"],
         capture_output=True, text=True, check=False,
     )
     if created.returncode != 0:
