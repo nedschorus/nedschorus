@@ -456,8 +456,12 @@ with tempfile.TemporaryDirectory() as workspace:
 with tempfile.TemporaryDirectory() as workspace:
     root = new_repository(workspace)
     write_code(root, "scripts/moved.py", CODE, date="2026-06-01")
-    pin = ("**Pinned to what landed:** commit [abc1234]"
-           "(https://github.com/nedschorus/nedschorus/commit/abc1234) on "
+    # The landing commit is a real commit of this repository's main, written
+    # the way every pinned line on main writes it: seven hex characters in the
+    # brackets and the full sha in the link.
+    landed = git(root, "rev-parse", "HEAD")
+    pin = (f"**Pinned to what landed:** commit [{landed[:7]}]"
+           f"(https://github.com/nedschorus/nedschorus/commit/{landed}) on "
            "2026-06-01 — the moved program.")
 
     write_document(root, "docs/pinned.md", document(
@@ -476,6 +480,38 @@ with tempfile.TemporaryDirectory() as workspace:
     code, out, err = run(root, "docs/unpinned.md")
     check("an unpinned design whose status claims no landing gets the status finding",
           code == 1 and "docs/unpinned.md:2:" in out
+          and "append the pinned line" in out, f"{code} {out}")
+
+    # The rider's own template, pasted without being filled in, names no
+    # commit. Codex's review of pull request 678 found it read as a landing.
+    # The template is taken from the finding above, so the case is the text an
+    # agent is actually handed.
+    template = next((line.split("append the pinned line, ", 1)[1]
+                     for line in out.splitlines()
+                     if "append the pinned line, " in line), "")
+    write_document(root, "docs/pin-template.md", document(
+        status="specification",
+        body="The test is `scripts/moved.py` lines 20-24.\n\n" + template))
+    code, out, err = run(root, "docs/pin-template.md")
+    check("a design carrying the rider's unfilled pin template gets the status finding",
+          template.startswith("**Pinned to what landed:** commit [<sha>]")
+          and code == 1 and "docs/pin-template.md:2:" in out
+          and "append the pinned line" in out, f"{template!r} {code} {out}")
+
+    # A sha of the right shape that this repository holds no commit for. It is
+    # the one pull request 678's own test pinned to, which Codex's review named.
+    # The first condition proves the throwaway repository does not hold it.
+    absent = "abc1234"
+    write_document(root, "docs/pin-absent-commit.md", document(
+        status="specification",
+        body="The test is `scripts/moved.py` lines 20-24.\n\n"
+             f"**Pinned to what landed:** commit [{absent}]"
+             f"(https://github.com/nedschorus/nedschorus/commit/{absent}) on "
+             "2026-06-01 — the moved program."))
+    code, out, err = run(root, "docs/pin-absent-commit.md")
+    check("a pinned line naming a well-formed sha that is no commit here gets the status finding",
+          git(root, "rev-parse", "--verify", "--quiet", absent + "^{commit}") == ""
+          and code == 1 and "docs/pin-absent-commit.md:2:" in out
           and "append the pinned line" in out, f"{code} {out}")
 
     write_document(root, "docs/pin-quoted.md", document(
