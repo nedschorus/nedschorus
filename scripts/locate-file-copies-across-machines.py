@@ -43,12 +43,46 @@ a dispositions.md in some other directory. The log-store reuses generic names
 across its records (measured 2026-09-24: 40 dispositions.md, 31 fast-read.md,
 29 reference-check.md, 26 memory.md, 11 SKILL.md), and the backup search's
 log-store surface read an unrelated record as the file until the same rule
-was applied there (PR 702 review 5298743638). A git hit's path is relative to
-its clone, so an absolute query is first made relative to the checkout that
-holds it, found by walking up to the nearest `.git`; an absolute query under
-no checkout keeps its whole path. Every other file whose name contains the
-stem, including a same-name copy in another directory, is a candidate, to be
-checked by content; candidates do not make the answer "found".
+was applied there (PR 702 review 5298743638). Every other file whose name
+contains the stem, including a same-name copy in another directory, is a
+candidate, to be checked by content; candidates do not make the answer
+"found".
+
+AN ABSOLUTE QUERY IS COMPARED BY ITS PATH INSIDE ITS CHECKOUT. A git hit's
+path is relative to its clone, and the same file sits in every seat's
+checkout, so `/Users/el/agents/merge-lane/docs/x.md` is found by commit
+<hash>'s `docs/x.md` and by `/home/nedlern/agents/<seat>/docs/x.md`. The path
+inside the checkout is decided, in order:
+  - by the nearest `.git` above the path, when that checkout is on this disk;
+  - for a path under a checkout parent (the agents and Projects trees of
+    either machine, whose children are checkouts), by dropping the parent
+    and the child: this holds when the checkout was removed, or is on the
+    other machine;
+  - for a path under a scratch tree (/private/tmp/claude-501,
+    /tmp/claude-1000), where a worktree can sit at any depth, by the longest
+    tail of the path, two components or more, that a searched clone or
+    checkout holds. A removed scratch worktree leaves nothing else to tell
+    its root by. A tail of one component is not trusted, because
+    `<worktree>/docs/README.md` would then be found by the clone's own
+    README.md.
+PR 703 review 5299114606 measured the gap this closes: a query into a worktree
+removed after its commit answered found before `git worktree remove` and not
+found after it, and a ned-box checkout path asked on the Mac was not found at
+all. A file hit is compared the same way, by its own path inside its
+checkout, worked out on the machine that holds it. An absolute query under no
+checkout, a log-store or handoff path for one, is found only by the file at
+that very path. A query for a file at a checkout's root, such as
+`/Users/el/agents/merge-lane/CLAUDE.md`, is found only at the root of a
+checkout, not by a CLAUDE.md in some subdirectory.
+
+THE QUERY MAY BE WRITTEN AS IT IS CITED. `nedlern@ned-box:/home/...`, the scp
+form CLAUDE.md prescribes for log-store citations, is read as the path after
+the colon; so is `ned-box:<path>`. A host is recognised when a user name comes
+before it or when it is a machine this program knows, so a file name that
+merely holds a colon is left alone. `~` is expanded, on ned-box to
+/home/nedlern. A relative path that climbs out with `..` is made absolute from
+the current directory. PR 703 review 5299114606 measured the scp form never
+being found, even at its exact path.
 Measured 2026-09-24: `plan.md`, a name no file has, matched 1,767 names on
 the Mac alone, and this program exited 0 on them without naming the next
 step. The same fault was found in the backup search's log-store surface on
@@ -181,12 +215,18 @@ MAX_ENTRIES_PER_LIST = 25
 # node_modules and 0.02 s without it.
 SKIPPED_DIRECTORY_NAMES = ("__pycache__", "node_modules", ".venv", "venv")
 
+# A checkouts surface's roots are checkout parents, whose children are
+# checkouts, except those it lists under `scratch_roots`: scratch trees, where
+# a worktree sits at any depth. The difference decides how a path's place
+# inside its checkout is worked out once that checkout is gone (see the module
+# docstring).
 MAC_SURFACES = {
     "machine": "mac",
     "surfaces": [
         {"name": "checkouts",
          "roots": ["/Users/el/agents", "/Users/el/Projects",
                    "/private/tmp/claude-501"],
+         "scratch_roots": ["/private/tmp/claude-501"],
          "git": True},
         {"name": "handoffs", "roots": ["/Users/el/.claude/handoffs"]},
     ],
@@ -197,12 +237,15 @@ NED_BOX_SURFACES = {
         {"name": "checkouts",
          "roots": ["/home/nedlern/agents", "/home/nedlern/Projects",
                    "/tmp/claude-1000"],
+         "scratch_roots": ["/tmp/claude-1000"],
          "git": True},
         {"name": "log-store", "roots": ["/home/nedlern/nedschorus-logs"],
          "prune": ["/home/nedlern/nedschorus-logs/transcripts"]},
         {"name": "handoffs", "roots": ["/home/nedlern/.claude/handoffs"]},
     ],
 }
+# The machines a bare `<host>:<path>` query may name, and where `~` is there.
+KNOWN_HOST_HOMES = {NED_BOX_HOSTNAME: "/home/nedlern"}
 MAC_NOT_REACHABLE_FROM_NED_BOX = (
     "no route from ned-box to the Mac is documented")
 
@@ -261,29 +304,156 @@ def is_same_name(basename: str, name: str) -> bool:
         "." not in name and pathlib.PurePath(basename).stem == name)
 
 
-def checkout_root_of(path):
+def split_host(query):
+    """(host, path) for a query in the scp form `[user@]host:path`, or
+    (None, query). A host is taken only when a user name comes before it or
+    it is in KNOWN_HOST_HOMES, and never when a `/` comes before the colon."""
+    head, colon, path = query.partition(":")
+    if not colon or not path or "/" in head:
+        return None, query
+    user, at, host = head.rpartition("@")
+    if at and user and host:
+        return host, path
+    if head in KNOWN_HOST_HOMES:
+        return head, path
+    return None, query
+
+
+def resolve_query(query, cwd=None):
+    """The query as a plain path: an scp host prefix taken off, `~`
+    expanded, and a relative path that climbs out with `..` made absolute
+    from `cwd` (the current directory by default)."""
+    host, path = split_host(query)
+    if host is not None:
+        home = KNOWN_HOST_HOMES.get(host.split(".")[0])
+        if path == "~" or path.startswith("~/"):
+            path = home + path[1:] if home else path[2:]
+        elif home and not path.startswith("/"):
+            path = home + "/" + path
+    elif path == "~" or path.startswith("~/"):
+        path = os.path.expanduser(path)
+    path = os.path.normpath(path.rstrip("/") or path)
+    if not os.path.isabs(path) and path.split(os.sep)[0] == os.pardir:
+        path = os.path.normpath(os.path.join(cwd or os.getcwd(), path))
+    return path
+
+
+def parts_of(path):
+    return [part for part in pathlib.PurePath(path).parts
+            if part not in (os.sep, ".")]
+
+
+def root_spellings(root):
+    """A root and, for one under /tmp, its other spelling: on the Mac /tmp is
+    /private/tmp, and a query may use either."""
+    root = root.rstrip("/")
+    if root.startswith("/private/tmp/"):
+        return [root, root[len("/private"):]]
+    if root.startswith("/tmp/"):
+        return [root, "/private" + root]
+    return [root]
+
+
+def parts_below(path, root):
+    """`path`'s components below `root`, or None when it is not under it."""
+    for spelling in root_spellings(root):
+        if path == spelling:
+            return []
+        if path.startswith(spelling + "/"):
+            return parts_of(path[len(spelling) + 1:])
+    return None
+
+
+def checkout_root_of(path, stop=None):
     """The nearest directory at or above `path`'s directory holding a `.git`
-    entry, or None."""
+    entry, looking no higher than `stop` when one is given, or None."""
     directory = os.path.dirname(path)
     while True:
         if os.path.lexists(os.path.join(directory, ".git")):
             return directory
         parent = os.path.dirname(directory)
-        if parent == directory:
+        if parent == directory or (stop is not None
+                                   and directory in root_spellings(stop)):
             return None
         directory = parent
 
 
-def wanted_path_parts(query):
-    """The path components a found copy's path must end with: the query,
-    made relative to its checkout when it is an absolute path inside one."""
-    path = os.path.normpath(query.rstrip("/"))
-    if os.path.isabs(path):
-        root = checkout_root_of(path)
-        if root:
-            path = os.path.relpath(path, root)
-    return [part for part in pathlib.PurePath(path).parts
-            if part not in (os.sep, ".")]
+def checkout_roots(plan):
+    """(checkout parents, scratch trees) of both machines' git surfaces."""
+    parents, scratch = [], []
+    for machine in (plan.get("this"), plan.get("other")):
+        for surface in (machine or {}).get("surfaces", []):
+            if not surface.get("git"):
+                continue
+            trees = surface.get("scratch_roots", [])
+            scratch += [root for root in surface["roots"] if root in trees]
+            parents += [root for root in surface["roots"] if root not in trees]
+    return parents, scratch
+
+
+def path_in_checkout(path, surface):
+    """`path`'s path inside the checkout that holds it, "/"-joined, or None:
+    the nearest `.git` no higher than the surface's root decides; failing
+    one, under a checkout parent, the parent's child is the checkout."""
+    if not surface.get("git"):
+        return None
+    for root in surface["roots"]:
+        below = parts_below(path, root)
+        if below is None:
+            continue
+        found_root = checkout_root_of(path, stop=root)
+        if found_root:
+            return "/".join(parts_of(os.path.relpath(path, found_root)))
+        if root not in surface.get("scratch_roots", []) and len(below) >= 2:
+            return "/".join(below[1:])
+        return None
+    return None
+
+
+def query_target(resolved, parents, scratch):
+    """What a found copy must match, for a resolved query. `kind` is "name"
+    (a bare file name), "tail" (a relative path: a found copy's path ends
+    with `parts`), "checkout" (an absolute path whose path inside its
+    checkout is `parts`), "scratch" (an absolute path under a scratch tree
+    whose checkout is not on this disk: `parts` are its components below the
+    tree), or "absolute" (any other absolute path). `path` is the query."""
+    parts = parts_of(resolved)
+    if not os.path.isabs(resolved):
+        return {"kind": "name" if len(parts) <= 1 else "tail",
+                "parts": parts, "path": resolved}
+    for root in parents + scratch:
+        below = parts_below(resolved, root)
+        if below is None:
+            continue
+        found_root = checkout_root_of(resolved, stop=root)
+        if found_root:
+            return {"kind": "checkout", "path": resolved,
+                    "parts": parts_of(os.path.relpath(resolved, found_root))}
+        if root in scratch:
+            return {"kind": "scratch", "parts": below, "path": resolved}
+        if len(below) >= 2:
+            return {"kind": "checkout", "parts": below[1:], "path": resolved}
+        break
+    else:
+        found_root = checkout_root_of(resolved)
+        if found_root:
+            return {"kind": "checkout", "path": resolved,
+                    "parts": parts_of(os.path.relpath(resolved, found_root))}
+    return {"kind": "absolute", "parts": parts, "path": resolved}
+
+
+def same_parts(parts, wanted):
+    """Whether two component lists name the same path: the directories equal
+    in any case, the names the same by is_same_name."""
+    return (bool(parts) and bool(wanted)
+            and [part.lower() for part in parts[:-1]]
+            == [part.lower() for part in wanted[:-1]]
+            and is_same_name(parts[-1], wanted[-1]))
+
+
+def ends_with(parts, tail):
+    return len(parts) >= len(tail) and same_parts(parts[len(parts) - len(tail):],
+                                                   tail)
 
 
 def is_found_copy(path, wanted, name):
@@ -519,29 +689,29 @@ def parse_git_log(output: bytes, stem: str):
 
 
 def run_git_log(git_dir, stem, name):
-    """(hits, failure) for one clone."""
+    """(hits, failure, candidate paths cut by the cap) for one clone."""
     try:
         result = subprocess.run(git_log_command(git_dir, stem),
                                 capture_output=True,
                                 timeout=LOCAL_COMMAND_TIMEOUT_SECONDS)
     except subprocess.TimeoutExpired:
         return [], (f"git log in {git_dir} did not finish within "
-                    f"{LOCAL_COMMAND_TIMEOUT_SECONDS} s")
+                    f"{LOCAL_COMMAND_TIMEOUT_SECONDS} s"), 0
     except OSError as error:
-        return [], f"git could not run: {error}"
+        return [], f"git could not run: {error}", 0
     if result.returncode != 0:
         lines = result.stderr.decode("utf-8", "replace").strip().splitlines()
         return [], (f"git log in {git_dir} exited {result.returncode}: "
-                    + (lines[-1] if lines else "no message"))
+                    + (lines[-1] if lines else "no message")), 0
     newest = parse_git_log(result.stdout, stem)
     ordered = sorted(newest.items(), key=lambda item: -item[1]["time"])
-    hits = []
-    for path, found in keep_same_name_and_newest(
-            ordered, name, MAX_GIT_PATHS_PER_CLONE,
-            lambda item: os.path.basename(item[0])):
-        hits.append(dict(found, kind="git", surface="git", path=path,
-                         clone=git_dir, size=None))
-    return hits, None
+    kept = keep_same_name_and_newest(
+        ordered, name, MAX_GIT_PATHS_PER_CLONE,
+        lambda item: os.path.basename(item[0]))
+    hits = [dict(found, kind="git", surface="git", path=path, clone=git_dir,
+                 size=None)
+            for path, found in kept]
+    return hits, None, len(ordered) - len(kept)
 
 
 def search_this_machine(machine_plan, stem, name):
@@ -580,10 +750,11 @@ def search_this_machine(machine_plan, stem, name):
             search_clones(entries)
             if failure:
                 report["failures"].append(failure)
-        git_hits, git_failures = [], []
+        git_hits, git_failures, git_cut = [], [], 0
         for future in logs:
-            hits, failure = future.result()
+            hits, failure, cut = future.result()
             git_hits += hits
+            git_cut += cut
             if failure:
                 git_failures.append(failure)
 
@@ -595,13 +766,16 @@ def search_this_machine(machine_plan, stem, name):
             continue
         stated.append((status.st_mtime, surface_name, path, status.st_size))
     stated.sort(key=lambda entry: -entry[0])
+    by_name = {surface["name"]: surface for surface in surfaces}
     hits = []
     for mtime, surface_name, path, size in keep_same_name_and_newest(
             stated, name, MAX_FILE_HITS_PER_MACHINE,
             lambda entry: os.path.basename(entry[2])):
         hits.append({"kind": "file", "surface": surface_name, "path": path,
                      "time": mtime, "size": size,
-                     "blob": git_blob_id(path, size)})
+                     "blob": git_blob_id(path, size),
+                     "in_checkout": path_in_checkout(path,
+                                                     by_name[surface_name])})
     hits += git_hits
 
     git_surfaces = [surface["name"] for surface in surfaces
@@ -609,7 +783,8 @@ def search_this_machine(machine_plan, stem, name):
     return {"machine": machine_plan["machine"], "hits": hits,
             "surfaces": reports,
             "git": ({"under": git_surfaces, "clones": len(git_dirs),
-                     "failed": git_failures} if git_surfaces else None),
+                     "failed": git_failures, "candidates_cut": git_cut}
+                    if git_surfaces else None),
             "file_matches_total": len(stated),
             "candidate_matches_total": sum(
                 1 for entry in stated
@@ -627,8 +802,12 @@ def remote_command(machine_plan, query):
 
 
 def start_remote_search(other, query):
-    """(process, error) for the other machine's search, started at once so it
-    runs while this machine searches."""
+    """(process, error) for the other machine's search. The ssh connection
+    starts at once, so its handshake overlaps this machine's search; the
+    program is sent on stdin, and the search there runs, only when
+    finish_remote_search is called. PR 703 review 5299114606 measured it: the
+    search there runs after this machine's, adding its own time, about 0.3 s,
+    in series."""
     try:
         source = pathlib.Path(__file__).read_bytes()
         process = subprocess.Popen(
@@ -715,18 +894,53 @@ def render_group(group, lines):
                      f"{describe(member['hit'], member['machine'])}")
 
 
-def render(query, results, not_searched, elapsed):
-    """(text, exit code) for the merged results of both machines."""
+def render(query, target, results, not_searched, elapsed):
+    """(text, exit code) for the merged results of both machines. `query` is
+    the resolved query and `target` its query_target."""
     stem = query_stem(query)
     name = query_name(query)
-    wanted = wanted_path_parts(query)
-    wanted_label = (f"at {'/'.join(wanted)}" if len(wanted) > 1
-                    else f"named {name}")
+    kind, wanted = target["kind"], target["parts"]
     entries = [{"machine": result["machine"], "hit": hit}
                for result in results for hit in result["hits"]]
 
+    def checkout_parts(entry):
+        hit = entry["hit"]
+        if hit["kind"] == "git":
+            return parts_of(hit["path"])
+        return parts_of(hit["in_checkout"]) if hit.get("in_checkout") else None
+
+    # Under a scratch tree the checkout's own directory is not known once it
+    # is gone: its path inside the checkout is the longest tail of the query,
+    # two components or more, that some clone or checkout holds.
+    anchor = wanted if kind == "checkout" else None
+    if kind == "scratch":
+        held = [len(parts) for parts in map(checkout_parts, entries)
+                if parts and len(parts) >= 2 and ends_with(wanted, parts)]
+        if held:
+            anchor = wanted[len(wanted) - max(held):]
+
     def found_copy(entry):
-        return is_found_copy(entry["hit"]["path"], wanted, name)
+        hit = entry["hit"]
+        if kind == "name":
+            return is_same_name(os.path.basename(hit["path"]), name)
+        if kind == "tail":
+            return is_found_copy(hit["path"], wanted, name)
+        if hit["kind"] == "file" and same_parts(parts_of(hit["path"]),
+                                                parts_of(target["path"])):
+            return True
+        parts = checkout_parts(entry)
+        return bool(anchor and parts) and same_parts(parts, anchor)
+
+    if kind == "name":
+        heading, wanted_label = f"Same name ({name})", f"named {name}"
+    else:
+        if kind == "tail":
+            shown = "/".join(wanted)
+        elif anchor:
+            shown = "/".join(anchor)
+        else:
+            shown = target["path"]
+        heading, wanted_label = f"Same path ({shown})", f"at {shown}"
 
     def same_name(entry):
         return is_same_name(os.path.basename(entry["hit"]["path"]), name)
@@ -750,9 +964,7 @@ def render(query, results, not_searched, elapsed):
     lines = [f"{PROGRAM}: file names containing \"{stem}\", any case"]
     truncated = False
     if same:
-        lines += ["", (f"Same path ({'/'.join(wanted)}), newest first:"
-                       if len(wanted) > 1
-                       else f"Same name ({name}), newest first:")]
+        lines += ["", f"{heading}, newest first:"]
         for group in same:
             render_group(group, lines)
     if other:
@@ -785,6 +997,12 @@ def render(query, results, not_searched, elapsed):
                          f"{', '.join(git['under'])}")
             failed += [f"{machine} git: {failure}"
                        for failure in git["failed"]]
+            if git.get("candidates_cut"):
+                truncated = True
+                lines.append(f"  {machine} git: every path named {name} was "
+                             f"kept, and {git['candidates_cut']} older "
+                             f"candidate path(s) were cut, past the newest "
+                             f"{MAX_GIT_PATHS_PER_CLONE} per clone")
         if result.get("candidate_matches_total", 0) > MAX_FILE_HITS_PER_MACHINE:
             truncated = True
             lines.append(f"  {machine}: {result['file_matches_total']} files "
@@ -858,18 +1076,20 @@ def main(argv=None) -> int:
         description="Find every copy of a file by its name, on the Mac and "
                     "ned-box, newest first: checkouts, the log-store, the "
                     "handoffs, and git history including the reflog.")
-    parser.add_argument("query", help="a file name or a path; its name's "
-                        "stem is matched, case-insensitively, anywhere in a "
-                        "file's name")
+    parser.add_argument("query", help="a file name or a path, which may be "
+                        "written in the scp form nedlern@ned-box:<path>; its "
+                        "name's stem is matched, case-insensitively, anywhere "
+                        "in a file's name")
     parser.add_argument(THIS_MACHINE_JSON_FLAG, metavar="SURFACES_JSON",
                         help="search only this machine, over these surfaces, "
                              "and print the answer as JSON: what the program "
                              "runs on the other machine over ssh")
     args = parser.parse_args(argv)
-    stem = query_stem(args.query)
+    query = resolve_query(args.query)
+    stem = query_stem(query)
     if not stem:
         parser.error("the query has no file name to match")
-    name = query_name(args.query)
+    name = query_name(query)
 
     if args.this_machine_json:
         result = search_this_machine(json.loads(args.this_machine_json), stem,
@@ -883,7 +1103,7 @@ def main(argv=None) -> int:
     not_searched = []
     remote = None
     if other and other.get("ssh_target"):
-        remote, error = start_remote_search(other, args.query)
+        remote, error = start_remote_search(other, query)
         if error:
             not_searched.append((other["machine"], error))
     elif other:
@@ -898,7 +1118,8 @@ def main(argv=None) -> int:
         else:
             not_searched.append((other["machine"], answer))
 
-    text, code = render(args.query, results, not_searched,
+    target = query_target(query, *checkout_roots(plan))
+    text, code = render(query, target, results, not_searched,
                         time.monotonic() - started_at)
     # A path that is not valid UTF-8 prints with a replacement character
     # rather than stopping the whole answer with an encoding error.

@@ -120,6 +120,7 @@ def make_plan(base, other="ssh", timeout_seconds=20, extra_mac_roots=()):
         {"name": "checkouts",
          "roots": [str(base / "mac" / "agents"), str(base / "mac" / "Projects"),
                    str(base / "mac" / "tmp")],
+         "scratch_roots": [str(base / "mac" / "tmp")],
          "git": True},
         {"name": "handoffs",
          "roots": [str(base / "mac" / "handoffs"), *extra_mac_roots]},
@@ -665,6 +666,167 @@ with scratch() as directory:
 with scratch() as directory:
     base = pathlib.Path(directory)
     make_stand_in_bin(base)
+    write(base / "mac" / "agents" / "s" / "suffixless-probe.md", "the file")
+    code, stdout, stderr = run(base, "suffixless-probe")
+    check("a query with no suffix is found by a file of that stem",
+          code == 0 and "/s/suffixless-probe.md" in sections(stdout)[0],
+          stdout + stderr)
+
+with scratch() as directory:
+    base = pathlib.Path(directory)
+    make_stand_in_bin(base)
+    write(base / "box" / "logs" / "x" / "lead-probe.md", "the same bytes",
+          NOW - 500)
+    write(base / "mac" / "agents" / "s" / "lead-probe-renamed.md",
+          "the same bytes", NOW - 5)
+    code, stdout, stderr = run(base, "nowhere/lead-probe.md")
+    _, other, _ = sections(stdout)
+    check("a candidate group is led by its same-name copy, not by a newer "
+          "renamed copy of the same content",
+          code == 1 and len(entry_lines(other)) == 1
+          and "/x/lead-probe.md" in entry_lines(other)[0]
+          and "same content" in other and "lead-probe-renamed.md" in other,
+          stdout + stderr)
+
+# --- The query may be written as it is cited -------------------------------------
+# CLAUDE.md prescribes nedlern@ned-box:<path> for log-store citations; PR 703
+# review 5299114606 measured that form never found, even at its exact path.
+with scratch() as directory:
+    base = pathlib.Path(directory)
+    make_stand_in_bin(base)
+    stored = write(base / "box" / "logs" / "seats" / "s" / "scp-probe-report.md",
+                   "the report")
+    write(base / "box" / "logs" / "seats" / "t" / "scp-probe-report.md",
+          "another seat's", NOW + 5)
+    code, stdout, stderr = run(base, f"nedlern@{FAKE_BOX}:{stored}")
+    same, other, _ = sections(stdout)
+    check("a query in the scp citation form is found at its exact path",
+          code == 0 and "/seats/s/scp-probe-report.md" in same
+          and "/seats/t/scp-probe-report.md" in other, stdout + stderr)
+    code, stdout, stderr = run(base, f"ned-box:{stored}")
+    check("a query naming ned-box without a user is found the same way",
+          code == 0 and "/seats/s/scp-probe-report.md" in sections(stdout)[0],
+          stdout + stderr)
+
+with scratch() as directory:
+    base = pathlib.Path(directory)
+    make_stand_in_bin(base)
+    (base / "mac" / "agents" / "seat-r" / ".git").mkdir(parents=True)
+    write(base / "mac" / "agents" / "seat-r" / "docs" / "rel-probe.md", "it")
+    write(base / "mac" / "agents" / "seat-q" / "notes" / "rel-probe.md", "no")
+    query = f"../{base.name}/mac/agents/seat-r/docs/rel-probe.md"
+    code, stdout, stderr = run(base, query)
+    same, other, _ = sections(stdout)
+    check("a query that climbs out with .. is found at the path it names",
+          code == 0 and "/seat-r/docs/rel-probe.md" in same
+          and "/seat-q/notes/rel-probe.md" in other, stdout + stderr)
+
+# --- An absolute query into a checkout that is gone, or on the other machine ----
+# PR 703 review 5299114606: the same query answered found before `git worktree
+# remove` and not found after it.
+with scratch() as directory:
+    base = pathlib.Path(directory)
+    make_stand_in_bin(base)
+    clone = base / "mac" / "Projects" / "wt-clone"
+    clone.mkdir(parents=True)
+    git(clone, "init", "-q")
+    write(clone / "README.md", "the clone")
+    write(clone / "tail-probe.md", "a file at the clone's root")
+    git(clone, "add", "README.md", "tail-probe.md")
+    git(clone, "commit", "-q", "-m", "Start")
+    worktree = base / "mac" / "tmp" / "-slug" / "session" / "scratchpad" / "wt"
+    git(clone, "worktree", "add", "-q", "-b", "topic", str(worktree))
+    write(worktree / "docs" / "lost-draft-probe.md", "the draft")
+    git(worktree, "add", "docs")
+    git(worktree, "commit", "-q", "-m", "Draft")
+    query = str(worktree / "docs" / "lost-draft-probe.md")
+    code, stdout, stderr = run(base, query)
+    check("a query into a scratch worktree is found while the worktree is "
+          "there", code == 0 and "Same path (docs/lost-draft-probe.md)" in stdout,
+          stdout + stderr)
+    git(clone, "worktree", "remove", "--force", str(worktree))
+    code, stdout, stderr = run(base, query)
+    same, _, _ = sections(stdout)
+    check("after the worktree is removed, its commit is still found by the "
+          "query's path inside the checkout",
+          code == 0 and "Same path (docs/lost-draft-probe.md)" in stdout
+          and "docs/lost-draft-probe.md, added" in same, stdout + stderr)
+    code, stdout, stderr = run(base, str(worktree / "docs" / "tail-probe.md"))
+    same, other, _ = sections(stdout)
+    check("under a scratch tree a one-component tail is not trusted: the "
+          "clone's own root file is a candidate, not the file",
+          code == 1 and not same and "tail-probe.md" in other,
+          stdout + stderr)
+
+with scratch() as directory:
+    base = pathlib.Path(directory)
+    make_stand_in_bin(base)
+    clone = base / "box" / "Projects" / "box-clone"
+    clone.mkdir(parents=True)
+    git(clone, "init", "-q")
+    write(clone / "docs" / "box-probe.md", "on the box")
+    git(clone, "add", "docs")
+    git(clone, "commit", "-q", "-m", "Add the probe")
+    git(clone, "rm", "-q", "-r", "docs")
+    git(clone, "commit", "-q", "-m", "Remove the probe")
+    # A .git above the roots must not be taken for the checkout: the walk up
+    # from a path stops at its root.
+    (base / ".git").mkdir()
+    query = str(base / "box" / "agents" / "absent-seat" / "docs" / "box-probe.md")
+    code, stdout, stderr = run(base, query)
+    check("a checkout path on the other machine, whose checkout is not here, "
+          "is found by the other machine's commit at that path",
+          code == 0 and "Same path (docs/box-probe.md)" in stdout
+          and "docs/box-probe.md, deleted" in sections(stdout)[0],
+          stdout + stderr)
+
+with scratch() as directory:
+    base = pathlib.Path(directory)
+    make_stand_in_bin(base)
+    (base / "mac" / "agents" / "seat-z" / ".git").mkdir(parents=True)
+    nested = base / "mac" / "agents" / "seat" / ".claude" / "worktrees" / "agent-x"
+    write(nested / ".git", "gitdir: /nowhere/.git/worktrees/agent-x\n")
+    write(nested / "docs" / "nest-probe.md", "in a nested worktree")
+    code, stdout, stderr = run(
+        base, str(base / "mac" / "agents" / "seat-z" / "docs" / "nest-probe.md"))
+    check("a copy in a worktree nested inside a checkout is compared by its "
+          "path in that worktree",
+          code == 0 and "/agent-x/docs/nest-probe.md" in sections(stdout)[0],
+          stdout + stderr)
+
+with scratch() as directory:
+    base = pathlib.Path(directory)
+    make_stand_in_bin(base)
+    (base / "elsewhere" / "repo" / ".git").mkdir(parents=True)
+    write(base / "mac" / "agents" / "s" / "docs" / "out-probe.md", "a copy")
+    code, stdout, stderr = run(
+        base, str(base / "elsewhere" / "repo" / "docs" / "out-probe.md"))
+    check("an absolute query into a checkout outside the searched roots is "
+          "compared by its path inside that checkout",
+          code == 0 and "Same path (docs/out-probe.md)" in stdout
+          and "/s/docs/out-probe.md" in sections(stdout)[0], stdout + stderr)
+
+# --- A file at a checkout's root is found only at a checkout's root -------------
+with scratch() as directory:
+    base = pathlib.Path(directory)
+    make_stand_in_bin(base)
+    (base / "mac" / "agents" / "seat-a" / ".git").mkdir(parents=True)
+    write(base / "mac" / "agents" / "seat-b" / "root-probe.md", "at the root",
+          NOW - 50)
+    write(base / "mac" / "agents" / "seat-b" / "sub" / "root-probe.md",
+          "in a subdirectory", NOW - 5)
+    code, stdout, stderr = run(
+        base, str(base / "mac" / "agents" / "seat-a" / "root-probe.md"))
+    same, other, _ = sections(stdout)
+    check("a query for a checkout's root file is found by another checkout's "
+          "root copy, and a copy in a subdirectory is a candidate",
+          code == 0 and "/seat-b/root-probe.md" in same
+          and "/seat-b/sub/root-probe.md" in other
+          and "/sub/" not in same, stdout + stderr)
+
+with scratch() as directory:
+    base = pathlib.Path(directory)
+    make_stand_in_bin(base)
     repo = base / "mac" / "Projects" / "path-repo"
     repo.mkdir(parents=True)
     git(repo, "init", "-q")
@@ -752,6 +914,10 @@ with scratch() as directory:
           "newer candidate paths match",
           code == 0 and f"commit {removal[:12]}" in same
           and "cap-git-probe.md, deleted" in same, stdout + stderr)
+    check("the git cap's cut is reported, with the way to narrow the answer",
+          "1 older candidate path(s) were cut, past the newest "
+          f"{program.MAX_GIT_PATHS_PER_CLONE} per clone" in stdout
+          and "run again with more of the name" in stdout, stdout)
 
 # --- Every same-name copy is printed ---------------------------------------------
 with scratch() as directory:
@@ -777,6 +943,34 @@ with scratch() as directory:
           code == 2 and "no file name" in stderr, stderr)
 
 # --- The pieces, in process -------------------------------------------------------
+# How a query written as it is cited is read (PR 703 review 5299114606).
+check("the scp form is read as the path after the colon",
+      program.resolve_query("nedlern@ned-box:/home/nedlern/nedschorus-logs/a.md")
+      == "/home/nedlern/nedschorus-logs/a.md")
+check("a bare known host is read the same way, and its ~ is its home",
+      program.resolve_query("ned-box:~/nedschorus-logs/a.md")
+      == "/home/nedlern/nedschorus-logs/a.md"
+      and program.resolve_query("ned-box:agents/a.md")
+      == "/home/nedlern/agents/a.md")
+check("a file name that merely holds a colon is left alone",
+      program.resolve_query("notes:12.md") == "notes:12.md"
+      and program.resolve_query("docs/at-12:30.md") == "docs/at-12:30.md")
+check("a colon after a slash is part of a local path, not a host",
+      program.resolve_query("/a/b@c:d.md") == "/a/b@c:d.md")
+check("a path under /tmp is recognised under its /private/tmp root, and the "
+      "other way round",
+      program.parts_below("/tmp/claude-501/a/b.md", "/private/tmp/claude-501")
+      == ["a", "b.md"]
+      and program.parts_below("/private/tmp/claude-1000/a.md", "/tmp/claude-1000")
+      == ["a.md"]
+      and program.parts_below("/tmp/claude-5010/a.md", "/tmp/claude-501") is None)
+check("a ~ with no host is this machine's home",
+      program.resolve_query("~/a.md") == os.path.expanduser("~/a.md"))
+check("a path that climbs out with .. is made absolute from the current "
+      "directory",
+      program.resolve_query("../docs/a.md", cwd="/x/checkout/scripts")
+      == "/x/checkout/docs/a.md")
+
 blob_a = "a" * 40
 blob_b = "b" * 40
 crafted = (
