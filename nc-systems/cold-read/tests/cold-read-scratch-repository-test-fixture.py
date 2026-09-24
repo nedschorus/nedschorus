@@ -30,6 +30,7 @@ prompts it copies differ suite by suite, and the ruling says each suite
 keeps its own.
 """
 
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -44,11 +45,28 @@ SYSTEM_DIRECTORY = Path(__file__).resolve().parent.parent
 SEED_COMMIT_AUTHOR_NAME = "cold-read scratch repository test fixture"
 SEED_COMMIT_AUTHOR_EMAIL = "test@test.invalid"
 
+# Stripped from the environment git runs with, so a suite run directly with
+# one of them set still builds its scratch repository here rather than in the
+# repository the variable names, as a GIT_DIR run did to ned-box's shared
+# clone on 2026-09-24. The list is scripts/run-all-test-suites.py's, which is
+# the source; its docstring says what each one was measured to do.
+GIT_REDIRECTING_ENVIRONMENT_VARIABLES = (
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_INDEX_FILE",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    "GIT_COMMON_DIR",
+)
+
 
 def git(repository, *arguments):
+    environment = dict(os.environ)
+    for variable in GIT_REDIRECTING_ENVIRONMENT_VARIABLES:
+        environment.pop(variable, None)
     completed = subprocess.run(
         ["git", "-C", str(repository), *arguments],
-        capture_output=True, text=True, check=False,
+        capture_output=True, text=True, check=False, env=environment,
     )
     if completed.returncode != 0:
         raise RuntimeError(f"git {' '.join(arguments)}: {completed.stderr.strip()}")
