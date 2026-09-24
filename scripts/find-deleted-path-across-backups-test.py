@@ -835,6 +835,99 @@ with tempfile.TemporaryDirectory() as tmp:
           report.status == UNAVAILABLE, "%s %s" % (report.status, report.lines))
 
 # --------------------------------------------------------------------------
+# git reflog — commits no branch or tag reaches, which only a reflog names
+# --------------------------------------------------------------------------
+
+
+def git_clean(*args, cwd, date=None):
+    """git with GIT_DIR and GIT_WORK_TREE removed, so a fixture cannot land in the live clone."""
+    env = dict(os.environ)
+    env.pop("GIT_DIR", None)
+    env.pop("GIT_WORK_TREE", None)
+    if date:
+        env["GIT_AUTHOR_DATE"] = env["GIT_COMMITTER_DATE"] = date
+    return subprocess.run(["git", "-C", str(cwd), "-c", "commit.gpgsign=false", "-c", "user.name=fixture",
+                           "-c", "user.email=fixture@example.com"] + list(args),
+                          check=True, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE).stdout.decode()
+
+
+def reflog_only_fixture(tmp):
+    """Episode E11's shape: a draft committed in a seat's worktree, then its seat branch recreated.
+
+        main:      base.md
+        seat:      base.md + docs/drafts/pr-main-process-design.md   <- then `seat` is
+                   deleted and recreated from main, so no ref reaches the draft
+                   commit and only the seat WORKTREE's HEAD reflog names it.
+
+    The search runs from the MAIN checkout, whose own HEAD reflog never saw the
+    commit: git's --reflog must reach the other worktree's HEAD reflog, as it
+    did in the 2026-09-23 measurement.
+    """
+    main = Path(tmp, "clone")
+    main.mkdir()
+    git_clean("init", "-q", "-b", "main", cwd=main)
+    Path(main, "base.md").write_text("base\n")
+    git_clean("add", "base.md", cwd=main)
+    git_clean("commit", "-q", "-m", "base", cwd=main, date="2026-08-20T10:00:00")
+    seat = Path(tmp, "seat-worktree")
+    git_clean("worktree", "add", "-q", "-b", "seat", str(seat), cwd=main)
+    Path(seat, "docs", "drafts").mkdir(parents=True)
+    Path(seat, "docs", "drafts", "pr-main-process-design.md").write_text("the draft\n")
+    git_clean("add", "docs/drafts/pr-main-process-design.md", cwd=seat)
+    git_clean("commit", "-q", "-m", "draft the design", cwd=seat, date="2026-08-23T10:00:00")
+    draft = git_clean("rev-parse", "HEAD", cwd=seat).strip()
+    git_clean("checkout", "-q", "--detach", cwd=seat)
+    git_clean("branch", "-q", "-D", "seat", cwd=seat)
+    git_clean("checkout", "-q", "-b", "seat", "main", cwd=seat)
+    return main, draft
+
+
+with tempfile.TemporaryDirectory() as tmp:
+    clone, draft_sha = reflog_only_fixture(tmp)
+    reached_by_a_ref = git_clean("branch", "-a", "--contains", draft_sha, cwd=clone).strip()
+    check("reflog fixture: no branch reaches the draft commit, so the case measures what it claims",
+          reached_by_a_ref == "", repr(reached_by_a_ref))
+
+    report = finder.search_git("docs/drafts/pr-main-process-design.md", str(clone))
+    check("real git: the git surface cannot see a commit only a reflog names (the E11 miss)",
+          report.status == NOT_FOUND, "%s %s" % (report.status, report.lines))
+
+    report = finder.search_git_reflog("docs/drafts/pr-main-process-design.md", str(clone))
+    check("real git: the reflog surface FINDS it, from a checkout whose own HEAD reflog never named it",
+          report.status == FOUND and report.surface == "git reflog"
+          and report.recovery == ["git -C %s show %s:docs/drafts/pr-main-process-design.md" % (clone, draft_sha[:9])],
+          "%s %s %s (draft is %s)" % (report.status, report.lines, report.recovery, draft_sha[:9]))
+    recovered = subprocess.run(report.recovery[0] if report.recovery else "false", shell=True,
+                               stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                               env={k: v for k, v in os.environ.items() if k not in ("GIT_DIR", "GIT_WORK_TREE")})
+    check("real git: the reflog surface's recovery command prints the file's content",
+          recovered.returncode == 0 and recovered.stdout.decode() == "the draft\n",
+          "exit %s: %r %r" % (recovered.returncode, recovered.stdout, recovered.stderr))
+    check("real git: a reflog FOUND says the reflog entry will be pruned, so copy it out now",
+          any("prunes reflog entries" in l for l in report.lines), str(report.lines))
+
+    report = finder.search_git_reflog("pr-main-process-design.md", str(clone))
+    check("real git: the reflog surface answers the bare-filename fragment by suffix",
+          report.status == FOUND and any("docs/drafts/pr-main-process-design.md" == l for l in report.lines),
+          "%s %s" % (report.status, report.lines))
+
+    report = finder.search_git_reflog("base.md", str(clone))
+    check("real git: a file every ref reaches is the git surface's, not the reflog surface's",
+          report.status == NOT_FOUND, "%s %s %s" % (report.status, report.lines, report.recovery))
+
+reflog_git_fails = FakeRunner([
+    ("rev-parse --git-dir", (0, ".git\n", "")),
+    ("log --reflog --not --all", (128, "", "fatal: bad object refs/heads/broken")),
+])
+report = finder.search_git_reflog("a/b.md", "/repo", reflog_git_fails)
+check("a reflog search whose git log fails is UNAVAILABLE with git's words, not NOT FOUND",
+      report.status == UNAVAILABLE and any("bad object" in l for l in report.lines),
+      "%s %s" % (report.status, report.lines))
+report = finder.search_git_reflog("x.md", "/tmp", FakeRunner([("rev-parse --git-dir", (128, "", "not a git repository"))]))
+check("the reflog surface on a non-repo is UNAVAILABLE, not NOT FOUND",
+      report.status == UNAVAILABLE and report.surface == "git reflog", "%s %s" % (report.status, report.lines))
+
+# --------------------------------------------------------------------------
 # transcripts
 # --------------------------------------------------------------------------
 
@@ -916,19 +1009,30 @@ check("a box grep that fails is UNAVAILABLE and quotes grep",
                                            for l in report.lines),
       str(report.lines))
 
+# The log-store is on the box and nowhere else, so on the box itself the
+# default root exists and the surface would read it in place. Every case that
+# is not about the log-store names a root that exists on neither machine, so
+# the suite gives one answer wherever it runs; main() takes it from the
+# environment, as its other roots do.
+NO_LOG_STORE_ON_THIS_MACHINE = "/nonexistent-log-store-for-find-deleted-path-tests"
+os.environ["FIND_DELETED_PATH_LOG_STORE_ROOT"] = NO_LOG_STORE_ON_THIS_MACHINE
+
 # --skip box exists because the box is asleep; the first version still sent
 # the transcripts grep over ssh (only the Timeshift call honoured the skip),
 # so the flag bought nothing but a ConnectTimeout wait.
 skip_box = FakeRunner([("rev-parse --git-dir", (128, "", "not a git repository"))])
 reports = finder.build_report("a/b.md", "/not-a-repo", "/nonexistent-transcripts", "nedlern@ned-box",
                               "/mnt/backup/timeshift/snapshots", finder.DEFAULT_BOX_SEARCH_ROOTS,
-                              skip={"box", "timemachine"}, runner=skip_box)
+                              skip={"box", "timemachine"}, runner=skip_box,
+                              log_store_root=NO_LOG_STORE_ON_THIS_MACHINE)
 check("--skip box sends nothing over ssh",
       not any(c.startswith("ssh") for c in skip_box.calls), str(skip_box.calls))
 transcripts_report = [r for r in reports if r.surface == "transcripts"][0]
 check("--skip box: the transcripts surface says its box half was not searched",
       any(l.startswith("the box: not searched") for l in transcripts_report.lines), str(transcripts_report.lines))
 check("--skip box drops the Timeshift surface", not any(r.surface == "timeshift" for r in reports))
+check("--skip box drops the log-store when it is not on this machine",
+      not any(r.surface == "log-store" for r in reports), str([r.surface for r in reports]))
 
 skip_timeshift = FakeRunner([
     ("rev-parse --git-dir", (128, "", "not a git repository")),
@@ -936,9 +1040,10 @@ skip_timeshift = FakeRunner([
 ])
 reports = finder.build_report("a/b.md", "/not-a-repo", "/nonexistent-transcripts", "nedlern@ned-box",
                               "/mnt/backup/timeshift/snapshots", finder.DEFAULT_BOX_SEARCH_ROOTS,
-                              skip={"timeshift", "timemachine"}, runner=skip_timeshift)
+                              skip={"timeshift", "timemachine"}, runner=skip_timeshift,
+                              log_store_root=NO_LOG_STORE_ON_THIS_MACHINE)
 check("--skip timeshift still greps the box's transcripts",
-      sum(1 for c in skip_timeshift.calls if c.startswith("ssh")) == 1 and
+      sum(1 for c in skip_timeshift.calls if c.startswith("ssh") and ".claude/projects" in c) == 1 and
       not any(r.surface == "timeshift" for r in reports),
       str(skip_timeshift.calls))
 
@@ -1046,6 +1151,175 @@ report = finder.search_timeshift("a/b.md", "nedlern@ned-box", "/mnt/backup/times
                                  finder.DEFAULT_BOX_SEARCH_ROOTS, timeshift_down)
 check("an unreachable box is UNAVAILABLE and says the snapshots are fine",
       report.status == UNAVAILABLE and any("cannot see them" in l for l in report.lines), str(report.lines))
+
+# --------------------------------------------------------------------------
+# the log-store — matched by name, because copies are renamed on the way in
+# --------------------------------------------------------------------------
+
+
+class RunsLocallyRefusesSsh(FakeRunner):
+    """Runs every command for real, except ssh, which it records and fails: the store is here."""
+
+    def __call__(self, argv, timeout=None, cwd=None):
+        if argv[0] == "ssh":
+            self.calls.append(" ".join(argv))
+            return 255, "", "ssh: this case must not reach the network"
+        self.calls.append(" ".join(argv))
+        return finder.run_command(argv, timeout=timeout or finder.SHORT_TIMEOUT_SECONDS, cwd=cwd)
+
+
+# Imported here rather than with the others: scripts/run-all-test-suites.py
+# cites this file's line 793 by number, and a line added above it moves it.
+import select  # noqa: E402
+import signal  # noqa: E402
+import time  # noqa: E402
+
+
+def log_store_fixture(tmp):
+    """E11 and E14's file as the store held it: two renamed copies, and an older exact-name copy."""
+    store = Path(tmp, "nedschorus-logs")
+    shipped = Path(store, "seats", "merge-lane")
+    shipped.mkdir(parents=True)
+    frozen = Path(store, "cold-read-records", "pr-main-process-design-2026-09-01", "target")
+    frozen.mkdir(parents=True)
+    files = [
+        (Path(frozen, "pr-main-process-design.md"), "2026-09-01 09:00"),
+        (Path(shipped, "pr-main-process-design-draft-from-origin-merge-lane-28e4f5f.md"), "2026-09-18 11:00"),
+        (Path(shipped, "PR-Main-Process-Design-draft-from-local-merge-lane-33211e6.md"), "2026-09-18 12:00"),
+        (Path(shipped, "unrelated-notes.md"), "2026-09-20 12:00"),
+    ]
+    for path, stamp in files:
+        path.write_text("content of %s\n" % path.name)
+        when = time.mktime(time.strptime(stamp, "%Y-%m-%d %H:%M"))
+        os.utime(path, (when, when))
+    return store, [path for path, _ in files]
+
+
+with tempfile.TemporaryDirectory() as tmp:
+    store, (exact_copy, older_rename, newer_rename, unrelated) = log_store_fixture(tmp)
+
+    here = RunsLocallyRefusesSsh([])
+    report = finder.search_log_store("docs/drafts/pr-main-process-design.md", str(store), "nedlern@ned-box", here)
+    listed = [l.strip() for l in report.lines if l.startswith("    ")]
+    check("log-store, store here: the renamed copies are FOUND by the file's name",
+          report.status == FOUND and any(str(older_rename) in l for l in listed)
+          and any(str(newer_rename) in l for l in listed),
+          "%s %s" % (report.status, report.lines))
+    check("log-store: the name matches whatever its case, and an unrelated name is not listed",
+          any(str(newer_rename) in l for l in listed) and not any(str(unrelated) in l for l in listed),
+          str(listed))
+    check("log-store: the exact name is listed first, then the renamed copies newest first",
+          [l.split("  ", 1)[1] for l in listed] == [str(exact_copy), str(newer_rename), str(older_rename)],
+          str(listed))
+    check("log-store: each listed copy carries its time, so the newest can be told at a glance",
+          listed and listed[0].startswith("2026-09-01 09:00"), str(listed))
+    check("log-store: a renamed candidate is flagged as a candidate, to be checked by content",
+          any("check its content" in l for l in report.lines), str(report.lines))
+    check("log-store, store here: read in place, and nothing is sent over ssh",
+          not any(c.startswith("ssh") for c in here.calls), str(here.calls))
+    check("log-store, store here: the recovery copies the first listed file",
+          report.recovery == ["cp %s ." % exact_copy], str(report.recovery))
+
+    report = finder.search_log_store("docs/drafts/nowhere-at-all.md", str(store), "nedlern@ned-box",
+                                     RunsLocallyRefusesSsh([]))
+    check("log-store: a name in no file is NOT FOUND after a real search",
+          report.status == NOT_FOUND and any("searched every file name under" in l for l in report.lines),
+          "%s %s" % (report.status, report.lines))
+
+    over_ssh = LocalShellRunner([], Path(tmp))
+    report = finder.search_log_store("pr-main-process-design.md", str(store), "nedlern@ned-box", over_ssh,
+                                     store_is_here=False)
+    ssh_calls = [c for c in over_ssh.calls if c.startswith("ssh")]
+    check("log-store, store on the box: one ssh call, BatchMode and a short connect timeout",
+          len(ssh_calls) == 1 and "BatchMode=yes" in ssh_calls[0]
+          and "ConnectTimeout=%d" % finder.BOX_LOG_STORE_CONNECT_TIMEOUT_SECONDS in ssh_calls[0],
+          str(over_ssh.calls))
+    check("log-store, store on the box: the same walk runs there and FINDS the same three copies",
+          report.status == FOUND and sum(1 for l in report.lines if l.startswith("    2026-")) == 3,
+          "%s %s" % (report.status, report.lines))
+    check("log-store, store on the box: the recovery is an scp from the box",
+          report.recovery == ["scp nedlern@ned-box:%s ." % exact_copy], str(report.recovery))
+
+    report = finder.search_log_store("pr-main-process-design.md", str(Path(tmp, "no-store-here")),
+                                     "nedlern@ned-box", LocalShellRunner([], Path(tmp)), store_is_here=False)
+    check("log-store: a root the box does not have is UNAVAILABLE, naming it",
+          report.status == UNAVAILABLE and any("does not exist on the box" in l for l in report.lines),
+          "%s %s" % (report.status, report.lines))
+
+    for index in range(finder.LOG_STORE_HITS_SHOWN + 2):
+        Path(store, "seats", "merge-lane", "pr-main-process-design-extra-%02d.md" % index).write_text("x\n")
+    report = finder.search_log_store("pr-main-process-design.md", str(store), "", RunsLocallyRefusesSsh([]))
+    check("log-store: more matches than the report lists end in a count of the rest",
+          sum(1 for l in report.lines if l.startswith("    2026-")) == finder.LOG_STORE_HITS_SHOWN
+          and any("... and 5 more" in l for l in report.lines),
+          str(report.lines))
+
+    if os.geteuid() != 0:
+        locked = Path(tmp, "locked-store")
+        Path(locked, "sealed").mkdir(parents=True)
+        os.chmod(str(Path(locked, "sealed")), 0)
+        try:
+            report = finder.search_log_store("pr-main-process-design.md", str(locked), "",
+                                             RunsLocallyRefusesSsh([]))
+        finally:
+            os.chmod(str(Path(locked, "sealed")), 0o700)
+        check("log-store: a directory the walk cannot read makes an empty search UNAVAILABLE, naming it",
+              report.status == UNAVAILABLE and any("could not read 1 directory" in l and "sealed" in l
+                                                   for l in report.lines),
+              "%s %s" % (report.status, report.lines))
+
+log_store_box_down = FakeRunner([("ssh", (255, "", "ssh: connect to host ned-box port 22: Operation timed out\n"))])
+report = finder.search_log_store("a/b.md", NO_LOG_STORE_ON_THIS_MACHINE, "nedlern@ned-box", log_store_box_down)
+check("log-store: an unreachable box is UNAVAILABLE with ssh's words and how to see why, never NOT FOUND",
+      report.status == UNAVAILABLE and any("unreachable" in l and "timed out" in l for l in report.lines)
+      and any("ssh nedlern@ned-box true" in l for l in report.lines),
+      "%s %s" % (report.status, report.lines))
+
+log_store_timed_out = FakeRunner([("ssh", (124, "", "timed out after 20s: ssh ..."))])
+report = finder.search_log_store("a/b.md", NO_LOG_STORE_ON_THIS_MACHINE, "nedlern@ned-box", log_store_timed_out)
+check("log-store: a search that does not complete is UNAVAILABLE, not a searched store",
+      report.status == UNAVAILABLE and any("did not complete (exit 124)" in l for l in report.lines),
+      "%s %s" % (report.status, report.lines))
+
+report = finder.search_log_store("a/b.md", NO_LOG_STORE_ON_THIS_MACHINE, "", FakeRunner([]))
+check("log-store: not here and no ssh host is UNAVAILABLE, saying why it was not searched",
+      report.status == UNAVAILABLE and any(l.startswith("not searched") for l in report.lines),
+      "%s %s" % (report.status, report.lines))
+
+check("log-store: the name matched is the file's stem, lower-cased",
+      finder._name_to_match_in_the_log_store("docs/drafts/PR-Main-Process-Design.md") == "pr-main-process-design"
+      and finder._name_to_match_in_the_log_store("./.env") == ".env")
+
+with tempfile.TemporaryDirectory() as tmp:
+    store, _ = log_store_fixture(tmp)
+    here_skip_box = RunsLocallyRefusesSsh([("rev-parse --git-dir", (128, "", "not a git repository"))])
+    reports = finder.build_report("docs/drafts/pr-main-process-design.md", "/not-a-repo", "/nonexistent-transcripts",
+                                  "nedlern@ned-box", "/mnt/backup/timeshift/snapshots",
+                                  finder.DEFAULT_BOX_SEARCH_ROOTS, skip={"localsnapshots", "box", "timemachine"},
+                                  runner=here_skip_box, log_store_root=str(store))
+    check("--skip box on the machine that holds the store still reads it in place, sending nothing over ssh",
+          [r.status for r in reports if r.surface == "log-store"] == [FOUND]
+          and not any(c.startswith("ssh") for c in here_skip_box.calls),
+          "%s %s" % ([(r.surface, r.status) for r in reports], here_skip_box.calls))
+
+skip_log_store = FakeRunner([("rev-parse --git-dir", (128, "", "not a git repository")), ("ssh", (1, "", ""))])
+reports = finder.build_report("a/b.md", "/not-a-repo", "/nonexistent-transcripts", "nedlern@ned-box",
+                              "/mnt/backup/timeshift/snapshots", finder.DEFAULT_BOX_SEARCH_ROOTS,
+                              skip={"localsnapshots", "logstore", "reflog", "timemachine"}, runner=skip_log_store,
+                              log_store_root=NO_LOG_STORE_ON_THIS_MACHINE)
+check("--skip logstore and --skip reflog drop those two surfaces and nothing else",
+      [r.surface for r in reports] == ["git", "transcripts", "timeshift"]
+      and not any("python3 -c" in c for c in skip_log_store.calls),
+      "%s %s" % ([r.surface for r in reports], skip_log_store.calls))
+
+order_everything = FakeRunner([("rev-parse --git-dir", (128, "", "not a git repository")), ("ssh", (1, "", ""))])
+reports = finder.build_report("a/b.md", "/not-a-repo", "/nonexistent-transcripts", "nedlern@ned-box",
+                              "/mnt/backup/timeshift/snapshots", finder.DEFAULT_BOX_SEARCH_ROOTS,
+                              skip={"localsnapshots", "timemachine"}, runner=order_everything,
+                              log_store_root=NO_LOG_STORE_ON_THIS_MACHINE)
+check("the surfaces run in the docstring's order: the two fast new ones before transcripts and Timeshift",
+      [r.surface for r in reports] == ["git", "git reflog", "log-store", "transcripts", "timeshift"],
+      str([r.surface for r in reports]))
 
 # --------------------------------------------------------------------------
 # Time Machine — the surface with the password wall
@@ -1370,8 +1644,9 @@ NOT_A_REPO = ("rev-parse --git-dir", (128, "", "fatal: not a git repository"))
 code, text = run_main(["a/b.md", "--repo", "/nonexistent-not-a-repo", "--transcripts-dir", "/nonexistent",
                        "--box-ssh-host", "", "--skip", "timemachine", "--skip", "localsnapshots"],
                       FakeRunner([NOT_A_REPO]))
-check("exit 3 when no surface could be searched (git, transcripts, timeshift all UNAVAILABLE)",
-      code == 3 and "Could NOT search: git, transcripts, timeshift" in text, "exit=%s\n%s" % (code, text))
+check("exit 3 when no surface could be searched (git, its reflog, the log-store, transcripts, timeshift all UNAVAILABLE)",
+      code == 3 and "Could NOT search: git, git reflog, log-store, transcripts, timeshift" in text,
+      "exit=%s\n%s" % (code, text))
 check("... and the docstring's exit-code block promises exactly that",
       "3 when" in finder.__doc__ and "could NOT be searched" in finder.__doc__)
 
@@ -1394,7 +1669,7 @@ mixed = FakeRunner([
 code, text = run_main(["a/b.md", "--repo", "/repo", "--skip", "transcripts", "--skip", "timemachine",
                        "--skip", "localsnapshots"], mixed)
 check("exit 3 when git was searched and empty but the box could not be reached (not exhaustive)",
-      code == 3 and "Could NOT search: timeshift" in text, "exit=%s\n%s" % (code, text))
+      code == 3 and "Could NOT search: log-store, timeshift" in text, "exit=%s\n%s" % (code, text))
 
 check("exit_status: no surface at all is 3, not 1", finder.exit_status([]) == 3)
 
@@ -1418,6 +1693,101 @@ check("the header shows the repo-relative form an absolute path was searched as"
       text.startswith("Searching every history this fleet keeps for: md-review-records/x/dispositions.md "
                       "(given as /repo/md-review-records/x/dispositions.md)"),
       text.splitlines()[0])
+
+
+# --------------------------------------------------------------------------
+# Each surface is printed the moment it answers. The 2026-09-19 run that
+# `timeout 280` killed at 283 s printed nothing: the report was printed only
+# after the last surface, and a killed process loses its pipe buffer.
+# --------------------------------------------------------------------------
+
+
+class RecordsWhatWasAnnouncedAtEachCall(FakeRunner):
+    """A table runner that notes, at every command, which surfaces had been handed on so far."""
+
+    def __init__(self, table, announced):
+        FakeRunner.__init__(self, table)
+        self.announced = announced
+        self.announced_at_call = []
+
+    def __call__(self, argv, timeout=None, cwd=None):
+        self.announced_at_call.append((" ".join(argv), [r.surface for r in self.announced]))
+        return FakeRunner.__call__(self, argv, timeout, cwd)
+
+
+announced = []
+recording = RecordsWhatWasAnnouncedAtEachCall([("rev-parse --git-dir", (128, "", "not a git repository")),
+                                               ("ssh", (1, "", ""))], announced)
+reports = finder.build_report("a/b.md", "/not-a-repo", "/nonexistent-transcripts", "nedlern@ned-box",
+                              "/mnt/backup/timeshift/snapshots", finder.DEFAULT_BOX_SEARCH_ROOTS,
+                              skip={"localsnapshots", "timemachine"}, runner=recording,
+                              log_store_root=NO_LOG_STORE_ON_THIS_MACHINE, on_surface_done=announced.append)
+timeshift_call = [seen for joined, seen in recording.announced_at_call if "timeshift/snapshots" in joined]
+check("each surface is handed on before the next one starts searching",
+      timeshift_call == [["git", "git reflog", "log-store", "transcripts"]]
+      and [r.surface for r in announced] == [r.surface for r in reports],
+      "%s %s" % (timeshift_call, [r.surface for r in announced]))
+
+completed_table = [
+    ("rev-parse --git-dir", (0, ".git\n", "")),
+    ("log --all --full-history -1 --format=%H", (0, "abc123def\n", "")),
+    ("log --all --full-history --format=%H|%P|%ct|%ad|%s",
+     (0, "abc123def|00000000|1786708800|2026-08-14|retire review records\n", "")),
+    ("cat-file -e abc123def:", (0, "", "")),
+    ("ssh", (255, "", "ssh: connect to host ned-box port 22: No route to host\n")),
+]
+streamed_args = ["md-review-records/x/dispositions.md", "--repo", "/repo", "--transcripts-dir", "/nonexistent",
+                 "--box-ssh-host", "nedlern@ned-box", "--timeshift-snapshot-root", "/mnt/backup/timeshift/snapshots",
+                 "--skip", "localsnapshots", "--skip", "timemachine"]
+code, text = run_main(streamed_args, FakeRunner(completed_table))
+reports = finder.build_report("md-review-records/x/dispositions.md", "/repo", "/nonexistent", "nedlern@ned-box",
+                              "/mnt/backup/timeshift/snapshots", finder.DEFAULT_BOX_SEARCH_ROOTS,
+                              skip={"localsnapshots", "timemachine"}, runner=FakeRunner(completed_table),
+                              log_store_root=NO_LOG_STORE_ON_THIS_MACHINE)
+check("a run that completes prints exactly the report it printed before streaming, summary last",
+      text == finder.render("md-review-records/x/dispositions.md", reports) + "\n"
+      and text.rstrip().splitlines()[-1].startswith("Could NOT search:"),
+      "--- streamed ---\n%s--- render() ---\n%s" % (text, finder.render("md-review-records/x/dispositions.md", reports)))
+
+# The real thing: the program as a child process with its stdout a pipe, as an
+# agent's shell runs it, and a stand-in ssh that hangs, as a sleeping box does.
+# The child is killed with SIGTERM to its process group, which is what
+# `timeout` does.
+with tempfile.TemporaryDirectory() as tmp:
+    repo = git_fixture_repo(tmp)
+    fake_bin = Path(tmp, "fake-bin")
+    fake_bin.mkdir()
+    Path(fake_bin, "ssh").write_text("#!/bin/sh\nexec sleep 60\n")
+    os.chmod(str(Path(fake_bin, "ssh")), 0o755)
+    Path(tmp, "transcripts").mkdir()
+    env = {k: v for k, v in os.environ.items() if k not in ("GIT_DIR", "GIT_WORK_TREE")}
+    env["PATH"] = str(fake_bin) + os.pathsep + env.get("PATH", "")
+    child = subprocess.Popen(
+        [sys.executable, str(MODULE_PATH), "a/b.md", "--repo", str(repo), "--transcripts-dir", str(Path(tmp, "transcripts")),
+         "--box-ssh-host", "a-box-that-never-answers", "--log-store-root", NO_LOG_STORE_ON_THIS_MACHINE,
+         "--skip", "localsnapshots", "--skip", "timemachine"],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env, start_new_session=True)
+    seen = b""
+    deadline = time.monotonic() + 20
+    while b"git reflog" not in seen and time.monotonic() < deadline:
+        ready, _, _ = select.select([child.stdout], [], [], 0.5)
+        if ready:
+            chunk = os.read(child.stdout.fileno(), 65536)
+            if not chunk:
+                break
+            seen += chunk
+    still_searching = child.poll() is None
+    os.killpg(child.pid, signal.SIGTERM)
+    rest, _ = child.communicate(timeout=30)
+    printed = (seen + rest).decode("utf-8", "replace")
+    check("streaming, real pipe: git's FOUND section is readable while the log-store's ssh is still hanging",
+          still_searching and re.search(r"^git\s+FOUND$", seen.decode("utf-8", "replace"), re.M) is not None,
+          "still searching: %s; read before the kill: %r" % (still_searching, seen))
+    check("streaming, real pipe: a run killed mid-search keeps every section that had answered, and no summary",
+          printed.startswith("Searching every history this fleet keeps for: a/b.md")
+          and re.search(r"^git\s+FOUND$", printed, re.M) and re.search(r"^git reflog\s+NOT FOUND$", printed, re.M)
+          and "Recoverable from" not in printed,
+          repr(printed))
 
 
 # --------------------------------------------------------------------------
@@ -1535,13 +1905,13 @@ report = finder.search_time_machine("a/b.md", newest_date_held="2026-08-14",
 check("with --prompt-for-root and a credential already cached, the search still runs",
       report.status == NOT_FOUND, "%s %s" % (report.status, report.lines))
 
-code, text = run_main(["a/b.md", "--repo", "/repo", "--skip", "localsnapshots", "--skip", "git",
+code, text = run_main(["a/b.md", "--repo", "/repo", "--skip", "localsnapshots", "--skip", "git", "--skip", "reflog",
                        "--skip", "transcripts", "--skip", "box", "--prompt-for-root"],
                       FakeRunner(COLD_THEN_PROMPTED))
 check("--prompt-for-root reaches the Time Machine surface from the command line",
       code == 0 and "Recoverable from: time machine." in text, "exit=%s\n%s" % (code, text))
 
-code, text = run_main(["a/b.md", "--repo", "/repo", "--skip", "localsnapshots", "--skip", "git",
+code, text = run_main(["a/b.md", "--repo", "/repo", "--skip", "localsnapshots", "--skip", "git", "--skip", "reflog",
                        "--skip", "transcripts", "--skip", "box"], FakeRunner(COLD_THEN_PROMPTED))
 check("the flag is off by default: the identical run without it stops at the wall",
       code == 3 and "Could NOT search: time machine" in text, "exit=%s\n%s" % (code, text))
@@ -1645,7 +2015,7 @@ SPEAKS = [
 
 speaking_runner = FakeRunner(SPEAKS)
 finder.build_report("docs/a/b.md", "/repo", "/nonexistent", "", "/snap", (),
-                    skip={"localsnapshots", "transcripts", "box"}, runner=speaking_runner)
+                    log_store_root=NO_LOG_STORE_ON_THIS_MACHINE, skip={"localsnapshots", "transcripts", "box"}, runner=speaking_runner)
 said = [c for c in speaking_runner.calls if c.startswith("say ")]
 check("a whole run that hits the wall speaks, once, without an agent in between",
       len(said) == 1 and "b.md" in said[0] and finder.SPOKEN_TOOL_NAME in said[0],
@@ -1655,7 +2025,7 @@ silent_runner = FakeRunner(SPEAKS + [("sudo mount_apfs", (0, "", "")),
                                      ("diskutil unmount", (0, "", "")),
                                      (TM_FIND, (0, "", ""))])
 finder.build_report("docs/a/b.md", "/repo", "/nonexistent", "", "/snap", (),
-                    skip={"localsnapshots", "transcripts", "box"}, runner=silent_runner,
+                    log_store_root=NO_LOG_STORE_ON_THIS_MACHINE, skip={"localsnapshots", "transcripts", "box"}, runner=silent_runner,
                     prompt_for_root=True)
 check("--prompt-for-root never speaks: the person is already at the terminal",
       not any(c.startswith("say ") for c in silent_runner.calls), str(silent_runner.calls))
@@ -1700,7 +2070,7 @@ rule_installed_run = FakeRunner(RULE_INSTALLED + [
     DELETED_2026_08_13_NOON,
 ])
 finder.build_report("docs/a/b.md", "/repo", "/nonexistent", "", "/snap", (),
-                    skip={"localsnapshots", "transcripts", "box"}, runner=rule_installed_run)
+                    log_store_root=NO_LOG_STORE_ON_THIS_MACHINE, skip={"localsnapshots", "transcripts", "box"}, runner=rule_installed_run)
 check("with the rule installed nothing is spoken: the wall was never reached",
       not any(c.startswith("say ") for c in rule_installed_run.calls), str(rule_installed_run.calls))
 

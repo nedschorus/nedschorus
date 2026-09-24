@@ -12,7 +12,7 @@ reached for git reflexively — but that it did not know three of the four
 surfaces existed. This script means no future agent has to know: it searches
 every one of them and says plainly which it could not search, and why.
 
-THE FIVE SURFACES, in the order they are searched:
+THE SEVEN SURFACES, in the order they are searched:
 
   1. local
      snapshots    — the hourly Time Machine snapshots macOS keeps on this Mac's
@@ -36,13 +36,22 @@ THE FIVE SURFACES, in the order they are searched:
                     cannot be mounted again.
   2. git          — every ref in this repo, full history, including paths that
                     no commit reachable from HEAD still contains.
-  3. transcripts  — agent session JSONL under ~/.claude/projects, on this Mac
+  3. git reflog   — the commits no branch or tag reaches any more, which only
+                    a reflog still names: what a recreated branch, a reset or a
+                    rebase left behind. Surface 2 walks refs and cannot see
+                    them. git prunes these reflog entries after 30 days by
+                    default, so this surface's memory is about a month.
+  4. log-store    — every file name under /home/nedlern/nedschorus-logs on the
+                    box, where seats ship what git does not carry. Matched by
+                    NAME, because a copy is usually renamed on its way in. Read
+                    in place on the box; one ssh call from the Mac.
+  5. transcripts  — agent session JSONL under ~/.claude/projects, on this Mac
                     AND on the box. A file's content often survives in the
                     transcript of the session that wrote or read it, even when
                     every copy on disk is gone.
-  4. Timeshift    — snapshots on ned-box at /mnt/backup/timeshift/snapshots.
+  6. Timeshift    — snapshots on ned-box at /mnt/backup/timeshift/snapshots.
                     Ordinary world-readable directories: no privilege needed.
-  5. Time Machine — snapshots on the Mac's EXTERNAL backup disk. Enumerating
+  7. Time Machine — snapshots on the Mac's EXTERNAL backup disk. Enumerating
                     them needs no privilege; READING INSIDE ONE NEEDS ROOT
                     (measured 2026-08-23: `sudo mount_apfs -o ro` refused
                     without a password). The difference from surface 1 is the
@@ -53,7 +62,25 @@ THE FIVE SURFACES, in the order they are searched:
                     operation, which is what makes that wall crossable at all —
                     see CROSSING THE ROOT WALL below.
 
-WHY SURFACE 1 IS NOT REDUNDANT WITH SURFACE 5, measured 2026-08-31.
+WHY SURFACES 3 AND 4, AND WHY EACH SURFACE PRINTS AS IT FINISHES. Both were
+added on 2026-09-23 after the lost-file research
+(nedlern@ned-box:/home/nedlern/nedschorus-logs/seats/merge-lane/lost-file-research-report-2026-09-23.md,
+episodes E11 and E14). Two seats, three days apart, could not find
+docs/drafts/pr-main-process-design.md. It was in commits 12c18b5 and 28e4f5f,
+which only the merge-lane worktree's HEAD reflog still named after its seat
+branch was recreated, and in the log-store under two renamed copies. This
+script searched neither place. Its two runs for that file also printed
+nothing useful in time: `timeout 280` killed one at 283 s with no output at
+all, because the whole report was printed only after the last surface
+answered, and a process killed by a signal loses whatever its pipe buffer
+held. The other took 533 s, 480 of them in Time Machine timeouts, and found
+nothing. So the header and each surface's section are now printed and
+flushed the moment that surface answers, and only the summary waits for the
+end. A run that completes prints exactly the text render() composes, as one
+print at the end did; a run that is killed keeps every surface that had
+already answered.
+
+WHY SURFACE 1 IS NOT REDUNDANT WITH SURFACE 7, measured 2026-08-31.
 `tmutil isexcluded /private/tmp/claude-501` reports [Excluded], so the external
 backup disk holds NOTHING under the scratchpad directory every agent in this
 fleet is told to write its intermediate work to. The local snapshots do hold it,
@@ -87,7 +114,7 @@ ro` on a local snapshot opens it READ-ONLY, which is reading a snapshot rather
 than modifying one, and every snapshot this script opens is unmounted again in
 a `finally` — including when the search inside it fails.
 
-CROSSING THE ROOT WALL, WITH NOBODY IN THE ROOM. The whole of surface 5's
+CROSSING THE ROOT WALL, WITH NOBODY IN THE ROOM. The whole of surface 7's
 privilege is that one mount_apfs against the external backup volume. Two things
 make it crossable, and they only work together.
 
@@ -131,6 +158,7 @@ Usage:
   python3 scripts/find-deleted-path-across-backups.py <path>
   python3 scripts/find-deleted-path-across-backups.py <path> --skip box
   python3 scripts/find-deleted-path-across-backups.py <path> --skip localsnapshots
+  python3 scripts/find-deleted-path-across-backups.py <path> --log-store-root /home/nedlern/nedschorus-logs
   python3 scripts/find-deleted-path-across-backups.py <path> --repo ~/Projects/nedschorus
   python3 scripts/find-deleted-path-across-backups.py <path> --prompt-for-root
 
@@ -146,8 +174,9 @@ inside one would need a `find` over the whole volume, and this version does not
 run that fan-out on either snapshot surface. So a bare filename makes surface 1
 UNAVAILABLE naming that reason, and a relative path with a directory component
 is read as repo-relative — if it was meant as a fragment of some other path,
-surface 1 tested the wrong place and says which place it tested. git,
-transcripts and Timeshift answer the fragment forms.
+surface 1 tested the wrong place and says which place it tested. git, its
+reflog, transcripts and Timeshift answer the fragment forms; the log-store
+answers by the file's name alone, whatever form it was given in.
 
 Exit code: 0 when at least one surface FOUND it. 1 when every surface that ran
 was searched and none has it — the only exit that means "stop looking". 3 when
@@ -169,6 +198,7 @@ import os
 import shlex
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 FOUND = "FOUND"
@@ -190,6 +220,11 @@ DEFAULT_BOX_SEARCH_ROOTS = (
     "/home/nedlern/agents/*",
 )
 DEFAULT_TRANSCRIPTS_DIR = "~/.claude/projects"
+# The log-store: where seats ship what git does not carry. It exists on the
+# box only; the Mac reaches it over ssh.
+DEFAULT_LOG_STORE_ROOT = "/home/nedlern/nedschorus-logs"
+# How many log-store matches the report lists; the count of the rest follows.
+LOG_STORE_HITS_SHOWN = 10
 
 # How many Time Machine snapshots to open when a password IS available. Each
 # mount costs seconds, and the git surface usually narrows the date first.
@@ -245,6 +280,9 @@ LOCAL_SNAPSHOT_MOUNT_POINT = "/private/tmp/find-deleted-path-across-backups-loca
 # Command timeouts. ssh to a sleeping box must not hang a recovery.
 SHORT_TIMEOUT_SECONDS = 20
 LONG_TIMEOUT_SECONDS = 120
+# The log-store's one ssh call gives up connecting sooner than the older box
+# surfaces' 10 s: the whole search takes under half a second when the box is up.
+BOX_LOG_STORE_CONNECT_TIMEOUT_SECONDS = 5
 
 # The box transcript grep's own exit status comes back through ssh: 0 hits,
 # 1 no hits, 2 grep failed. This one is ours: ~/.claude/projects is not there.
@@ -759,16 +797,38 @@ def search_git(wanted, repo, runner=run_command):
     that HEAD cannot, and --full-history stops history simplification from
     pruning the very commits that touched a since-deleted path.
     """
+    report = _search_git_revisions(
+        wanted, repo, runner, "git", GIT_REVISIONS_EVERY_REF,
+        "no ref in %s has ever contained a path matching %r")
+    if report.status == FOUND:
+        # The newest date on which git still had the file bounds where to look in
+        # the filesystem backups: any snapshot after it is unlikely to help.
+        report.newest_date_held = max(report.dates_held) if report.dates_held else None
+    return report
+
+
+# The revision sets the two git surfaces walk. Every other argument to their
+# `git log` calls is shared, so the git surface's commands are exactly what
+# they were before the reflog surface existed.
+GIT_REVISIONS_EVERY_REF = ("--all",)
+GIT_REVISIONS_REFLOG_ONLY = ("--reflog", "--not", "--all")
+
+
+def _search_git_revisions(wanted, repo, runner, surface, revisions, never_contained_template):
+    """One git history search, over `revisions`, reported as `surface`.
+
+    `never_contained_template` takes the repository and the path searched for.
+    """
     code, _, stderr = runner(["git", "-C", repo, "rev-parse", "--git-dir"])
     if code != 0:
-        return SurfaceReport("git", UNAVAILABLE, ["%s is not a git repository (%s)" % (repo, stderr.strip())])
+        return SurfaceReport(surface, UNAVAILABLE, ["%s is not a git repository (%s)" % (repo, stderr.strip())])
 
     wanted, toplevel = _repo_relative_form(wanted, repo, runner)
     if wanted.startswith("/"):
         # git can only be asked about paths inside its own work tree, and an
         # absolute path that is not under it was not converted above.
         return SurfaceReport(
-            "git",
+            surface,
             UNAVAILABLE,
             ["%s is outside %s, so git was not asked for it" % (wanted, toplevel or repo),
              "re-run with the path relative to the repository, or a trailing fragment of it"],
@@ -778,11 +838,11 @@ def search_git(wanted, repo, runner=run_command):
     recovery = []
     dates_held = []
     try:
-        paths = _git_candidate_paths(wanted, repo, runner)
+        paths = _git_candidate_paths(wanted, repo, runner, revisions)
         if not paths:
-            return SurfaceReport("git", NOT_FOUND, ["no ref in %s has ever contained a path matching %r" % (repo, wanted)])
+            return SurfaceReport(surface, NOT_FOUND, [never_contained_template % (repo, wanted)])
         for path in paths:
-            commit = _git_newest_commit_holding(path, repo, runner)
+            commit = _git_newest_commit_holding(path, repo, runner, revisions)
             if commit is None:
                 continue
             sha, date, subject = commit
@@ -791,16 +851,14 @@ def search_git(wanted, repo, runner=run_command):
             recovery.append("git -C %s show %s:%s" % (shlex.quote(repo), sha[:9], shlex.quote(path)))
             dates_held.append(date)
     except _GitCommandFailed as failure:
-        return SurfaceReport("git", UNAVAILABLE, ["git failed while searching %s — %s" % (repo, failure)])
+        return SurfaceReport(surface, UNAVAILABLE, ["git failed while searching %s — %s" % (repo, failure)])
 
     if not lines:
-        return SurfaceReport("git", NOT_FOUND, ["matching paths appear in history, but neither the commits that "
-                                                "touched them nor those commits' parents hold the content"])
+        return SurfaceReport(surface, NOT_FOUND, ["matching paths appear in history, but neither the commits that "
+                                                  "touched them nor those commits' parents hold the content"])
 
-    report = SurfaceReport("git", FOUND, lines, recovery)
-    # The newest date on which git still had the file bounds where to look in
-    # the filesystem backups: any snapshot after it is unlikely to help.
-    report.newest_date_held = max(dates_held) if dates_held else None
+    report = SurfaceReport(surface, FOUND, lines, recovery)
+    report.dates_held = dates_held
     return report
 
 
@@ -828,14 +886,15 @@ def _repo_relative_form(wanted, repo, runner=run_command):
     return wanted, toplevel
 
 
-def _git_candidate_paths(wanted, repo, runner):
+def _git_candidate_paths(wanted, repo, runner, revisions=GIT_REVISIONS_EVERY_REF):
     """Exact pathspec first; fall back to a suffix scan of every path git knows."""
-    code, out, _ = runner(["git", "-C", repo, "log", "--all", "--full-history", "-1", "--format=%H", "--", wanted])
+    code, out, _ = runner(["git", "-C", repo, "log"] + list(revisions)
+                          + ["--full-history", "-1", "--format=%H", "--", wanted])
     if code == 0 and out.strip():
         return [wanted]
 
     code, out, stderr = runner(
-        ["git", "-C", repo, "log", "--all", "--full-history", "--name-only", "--format="],
+        ["git", "-C", repo, "log"] + list(revisions) + ["--full-history", "--name-only", "--format="],
         timeout=LONG_TIMEOUT_SECONDS,
     )
     if code != 0:
@@ -856,7 +915,7 @@ class _GitCommandFailed(Exception):
     """A git call the surface depends on returned non-zero; the text is its stderr."""
 
 
-def _git_newest_commit_holding(path, repo, runner):
+def _git_newest_commit_holding(path, repo, runner, revisions=GIT_REVISIONS_EVERY_REF):
     """The newest commit whose tree actually contains `path`: (sha, date, subject), or None.
 
     `git log -- <path>` lists the commits that TOUCHED the path, newest first,
@@ -880,7 +939,8 @@ def _git_newest_commit_holding(path, repo, runner):
     UNAVAILABLE rather than a NOT FOUND for a search that did not run.
     """
     code, out, stderr = runner(
-        ["git", "-C", repo, "log", "--all", "--full-history", "--format=%H|%P|%ct|%ad|%s", "--date=short", "--", path],
+        ["git", "-C", repo, "log"] + list(revisions)
+        + ["--full-history", "--format=%H|%P|%ct|%ad|%s", "--date=short", "--", path],
         timeout=LONG_TIMEOUT_SECONDS,
     )
     if code != 0:
@@ -917,7 +977,163 @@ def _git_tree_holds(sha, path, repo, runner):
 
 
 # --------------------------------------------------------------------------
-# Surface 3 — agent transcripts, on this Mac and on the box
+# Surface 3 — commits only a reflog still names
+# --------------------------------------------------------------------------
+
+def search_git_reflog(wanted, repo, runner=run_command):
+    """Search the commits that no branch or tag reaches and only a reflog names.
+
+    Surface 2 cannot see these: `--all` starts from refs, and a commit left
+    behind by a recreated branch, a reset or a rebase has none. `--reflog
+    --not --all` walks exactly the rest, so this surface and the git surface
+    never report the same commit. git's `--reflog` covers the HEAD reflog of
+    every worktree of the clone, not just the one `repo` names (measured with
+    git 2.55 on 2026-09-23: a fresh worktree whose own HEAD reflog did not
+    name commit 12c18b5c still listed it, from the merge-lane worktree's).
+    """
+    report = _search_git_revisions(
+        wanted, repo, runner, "git reflog", GIT_REVISIONS_REFLOG_ONLY,
+        "no commit that only a reflog names in %s has ever contained a path matching %r")
+    if report.status == FOUND:
+        report.lines.append("(no branch or tag reaches these commits, and git prunes reflog entries for "
+                            "unreachable commits after 30 days by default — copy the file out now)")
+    return report
+
+
+# --------------------------------------------------------------------------
+# Surface 4 — the log-store on the box, matched by name
+# --------------------------------------------------------------------------
+
+def search_log_store(wanted, log_store_root, box_ssh_host, runner=run_command, store_is_here=None):
+    """Look for the wanted file's name in every file name under the log-store.
+
+    The log-store is where seats ship what git does not carry, and a copy is
+    usually RENAMED on the way in: docs/drafts/pr-main-process-design.md was
+    shipped as seats/merge-lane/pr-main-process-design-draft-from-origin-
+    merge-lane-28e4f5f.md. So this surface matches the file's stem anywhere
+    inside a name, case-insensitively, rather than the path or the exact name,
+    and lists the exact name first when it is there.
+
+    The store is read in place when it is on this machine, which is the box,
+    and through one ssh call otherwise. `store_is_here` lets the tests drive the
+    ssh branch against a local tree; None decides by whether the root exists
+    here. The walk is one Python program either way, so both branches match by
+    the same rule: measured 2026-09-23 on the box, it read 17,089 names in
+    0.07 s, and the whole call from the Mac took 0.44 s.
+    """
+    name = _name_to_match_in_the_log_store(wanted)
+    if store_is_here is None:
+        store_is_here = os.path.isdir(log_store_root)
+    probe_arguments = [_LOG_STORE_NAME_PROBE, log_store_root, name]
+    if store_is_here:
+        where = "this machine"
+        code, out, stderr = runner([sys.executable, "-c"] + probe_arguments, timeout=SHORT_TIMEOUT_SECONDS)
+    elif box_ssh_host:
+        where = "the box (%s)" % box_ssh_host
+        code, out, stderr = runner(
+            ["ssh", "-o", "ConnectTimeout=%d" % BOX_LOG_STORE_CONNECT_TIMEOUT_SECONDS, "-o", "BatchMode=yes",
+             box_ssh_host, "python3 -c " + " ".join(shlex.quote(a) for a in probe_arguments)],
+            timeout=SHORT_TIMEOUT_SECONDS,
+        )
+        if code == 255:
+            first_error = stderr.strip().splitlines()[0] if stderr.strip() else ""
+            return SurfaceReport(
+                "log-store",
+                UNAVAILABLE,
+                ["the box (%s) is unreachable — %s" % (box_ssh_host, first_error or "ssh failed"),
+                 "see why with `ssh %s true`; once it connects, re-run this search" % box_ssh_host],
+            )
+    else:
+        return SurfaceReport(
+            "log-store",
+            UNAVAILABLE,
+            ["not searched — %s is not on this machine and no ssh host was given "
+             "(--skip box, or an empty --box-ssh-host)" % log_store_root],
+        )
+
+    first_error = stderr.strip().splitlines()[0] if stderr.strip() else ""
+    if code != 0:
+        # The runner's 124 on timeout, a missing python3, or the walk itself
+        # failing. Falling through would call an unsearched store searched.
+        return SurfaceReport(
+            "log-store",
+            UNAVAILABLE,
+            ["the search on %s did not complete (exit %s) — %s" % (where, code, first_error or "no error text")],
+        )
+    if "NOROOT" in out.splitlines():
+        return SurfaceReport("log-store", UNAVAILABLE, ["%s does not exist on %s" % (log_store_root, where)])
+
+    hits = []
+    unread = []
+    for line in out.splitlines():
+        if line.startswith("HIT "):
+            mtime, _, path = line[4:].partition(" ")
+            if mtime.isdigit() and path:
+                hits.append((int(mtime), path))
+        elif line.startswith("PROBEFAIL "):
+            unread.append(line[10:].strip())
+    unread_line = ("could not read %d director%s under %s, first: %s — those were not searched"
+                   % (len(unread), "y" if len(unread) == 1 else "ies", log_store_root, unread[0])) if unread else ""
+
+    if not hits:
+        if unread:
+            return SurfaceReport("log-store", UNAVAILABLE, [unread_line, "the rest were searched and do not have it"])
+        return SurfaceReport("log-store", NOT_FOUND, ["searched every file name under %s on %s; none has %r in it"
+                                                      % (log_store_root, where, name)])
+
+    exact_name = os.path.basename(_strip_dot_slash(wanted))
+    hits.sort(key=lambda hit: (os.path.basename(hit[1]) != exact_name, -hit[0]))
+    lines = ["%d file(s) under %s on %s have %r in their name, the exact name first, then newest first:"
+             % (len(hits), log_store_root, where, name)]
+    for mtime, path in hits[:LOG_STORE_HITS_SHOWN]:
+        lines.append("    %s  %s" % (time.strftime("%Y-%m-%d %H:%M", time.localtime(mtime)), path))
+    if len(hits) > LOG_STORE_HITS_SHOWN:
+        lines.append("    ... and %d more" % (len(hits) - LOG_STORE_HITS_SHOWN))
+    if any(os.path.basename(path) != exact_name for _, path in hits[:LOG_STORE_HITS_SHOWN]):
+        lines.append("(a copy is usually renamed on its way into the store, so a name that only contains %r is a"
+                     % name)
+        lines.append(" candidate — check its content before calling it recovered)")
+    if unread:
+        lines.append("(%s)" % unread_line)
+    newest = shlex.quote(hits[0][1])
+    recovery = ["cp %s ." % newest] if store_is_here else ["scp %s:%s ." % (box_ssh_host, newest)]
+    return SurfaceReport("log-store", FOUND, lines, recovery)
+
+
+def _name_to_match_in_the_log_store(wanted):
+    """The wanted file's name without its last extension, lower-cased: 'pr-main-process-design'."""
+    base = os.path.basename(_strip_dot_slash(wanted).rstrip("/"))
+    return (os.path.splitext(base)[0] or base).lower()
+
+
+# The walk that runs on whichever machine holds the store. Prints HIT <mtime>
+# <path> per matching file, NOROOT when the root is absent, and PROBEFAIL
+# <dir> per directory os.walk could not read, so an unreadable corner is
+# reported rather than counted as searched. Python rather than find, because
+# BSD find on the Mac and GNU find on the box disagree on printing a file's
+# time, and the tests run this same text on the Mac.
+_LOG_STORE_NAME_PROBE = "\n".join([
+    "import os, sys",
+    "root, name = sys.argv[1], sys.argv[2].lower()",
+    "if not os.path.isdir(root):",
+    "    print('NOROOT')",
+    "    sys.exit(0)",
+    "unread = []",
+    "for directory, _, files in os.walk(root, onerror=unread.append):",
+    "    for base in files:",
+    "        if name in base.lower():",
+    "            path = os.path.join(directory, base)",
+    "            try:",
+    "                print('HIT %d %s' % (os.stat(path).st_mtime, path))",
+    "            except OSError as error:",
+    "                unread.append(error)",
+    "for error in unread:",
+    "    print('PROBEFAIL %s' % (getattr(error, 'filename', None) or error))",
+])
+
+
+# --------------------------------------------------------------------------
+# Surface 5 — agent transcripts, on this Mac and on the box
 # --------------------------------------------------------------------------
 
 def search_transcripts(wanted, transcripts_dir, box_ssh_host, runner=run_command):
@@ -1016,7 +1232,7 @@ def _box_transcript_grep_script(wanted):
 
 
 # --------------------------------------------------------------------------
-# Surface 4 — Timeshift on the box
+# Surface 6 — Timeshift on the box
 # --------------------------------------------------------------------------
 
 def search_timeshift(wanted, box_ssh_host, snapshot_root, search_roots, runner=run_command):
@@ -1121,7 +1337,7 @@ def _timeshift_probe_script(wanted, snapshot_root, search_roots):
 
 
 # --------------------------------------------------------------------------
-# Surface 5 — Time Machine on the Mac's EXTERNAL backup disk
+# Surface 7 — Time Machine on the Mac's EXTERNAL backup disk
 # --------------------------------------------------------------------------
 
 def search_time_machine(wanted, newest_date_held=None, snapshot_limit=DEFAULT_TIME_MACHINE_SNAPSHOT_LIMIT,
@@ -1649,8 +1865,8 @@ def announce_root_password_wall_by_speech(wanted, reports, repo, skip, runner):
     reaches the room directly. It is the user's own convention for the same
     reason: he works in other seats' terminals and does not read transcripts.
 
-    It is spoken before the report is printed, and blocks for the few seconds
-    the sentence takes. That is deliberate rather than backgrounded: a spoken
+    It is spoken after the last surface's section is printed and before the
+    summary, and blocks for the few seconds the sentence takes. That is deliberate rather than backgrounded: a spoken
     line whose process is orphaned when the script exits is a line nobody
     hears, and this path is rare enough that a few seconds cost nothing.
 
@@ -1777,33 +1993,49 @@ def _combine(statuses):
 
 
 def build_report(wanted, repo, transcripts_dir, box_ssh_host, snapshot_root, search_roots, skip=(),
-                 runner=run_command, prompt_for_root=False):
+                 runner=run_command, prompt_for_root=False, log_store_root=DEFAULT_LOG_STORE_ROOT,
+                 on_surface_done=None):
     reports = []
     newest_date_held = None
+
+    def finished(report):
+        # Handed on the moment the surface answers, so main() can print it
+        # while the slower surfaces after it are still searching.
+        reports.append(report)
+        if on_surface_done is not None:
+            on_surface_done(report)
+        return report
 
     if "localsnapshots" not in skip:
         # First, on the design's ruling: no network, no privilege, and it is the
         # surface that answers "I deleted it minutes ago" outright. It takes no
         # date hint from git — every retained snapshot is cheap enough to search,
         # so there is nothing for a bound to narrow.
-        reports.append(search_local_snapshots(wanted, repo, runner))
+        finished(search_local_snapshots(wanted, repo, runner))
     if "git" not in skip:
-        git_report = search_git(wanted, repo, runner)
+        git_report = finished(search_git(wanted, repo, runner))
         newest_date_held = getattr(git_report, "newest_date_held", None)
-        reports.append(git_report)
+    if "reflog" not in skip:
+        finished(search_git_reflog(wanted, repo, runner))
     if "box" in skip:
         # Nothing on the box is contacted: the transcripts surface's box half
         # as well as Timeshift. The reason to type --skip box is that the box
         # is asleep, and an ssh with ConnectTimeout=10 inside a 120-second
         # window is exactly the wait the flag exists to avoid.
         box_ssh_host = ""
+    if "logstore" not in skip and ("box" not in skip or os.path.isdir(log_store_root)):
+        # Before transcripts, Timeshift and Time Machine because it answers in
+        # under a second, so a run killed during the slow surfaces has already
+        # printed it. Under --skip box it runs only where the store is local,
+        # which sends nothing over ssh.
+        finished(search_log_store(wanted, log_store_root, box_ssh_host, runner))
     if "transcripts" not in skip:
-        reports.append(search_transcripts(wanted, transcripts_dir, box_ssh_host, runner))
+        finished(search_transcripts(wanted, transcripts_dir, box_ssh_host, runner))
     if "box" not in skip and "timeshift" not in skip:
-        reports.append(search_timeshift(wanted, box_ssh_host, snapshot_root, search_roots, runner))
+        finished(search_timeshift(wanted, box_ssh_host, snapshot_root, search_roots, runner))
     if "timemachine" not in skip:
-        reports.append(search_time_machine(wanted, newest_date_held, runner=runner,
-                                           prompt_for_root=prompt_for_root))
+        finished(search_time_machine(wanted, newest_date_held, runner=runner,
+                                     prompt_for_root=prompt_for_root))
     # Here rather than in main(), because this is the first point at which every
     # surface's answer exists, and it is what the designed recovery hook will
     # call: the hook assembles a report, it does not run the command line.
@@ -1811,11 +2043,12 @@ def build_report(wanted, repo, transcripts_dir, box_ssh_host, snapshot_root, sea
     return reports
 
 
-def render(wanted, reports):
-    out = ["Searching every history this fleet keeps for: %s" % wanted, ""]
-    for report in reports:
-        out.append(report.render())
-        out.append("")
+def render_header(wanted):
+    return "Searching every history this fleet keeps for: %s" % wanted
+
+
+def render_summary(reports):
+    out = []
     found = [r for r in reports if r.status == FOUND]
     blocked = [r for r in reports if r.status == UNAVAILABLE]
     if found:
@@ -1828,10 +2061,26 @@ def render(wanted, reports):
     return "\n".join(out)
 
 
+def render(wanted, reports):
+    """The whole report as one text: exactly what main() prints, piece by piece, for a run that completes."""
+    out = [render_header(wanted), ""]
+    for report in reports:
+        out.append(report.render())
+        out.append("")
+    out.append(render_summary(reports))
+    return "\n".join(out)
+
+
+def print_surface_as_it_finishes(report):
+    # flush, because stdout into a pipe is block-buffered and a run killed by
+    # `timeout` would otherwise take every finished surface down with it.
+    print(report.render() + "\n", flush=True)
+
+
 def main(argv=None, runner=run_command):
     parser = argparse.ArgumentParser(
-        description="Find a deleted path across this Mac's local snapshots, git, agent transcripts, "
-                    "Timeshift on the box, and Time Machine.",
+        description="Find a deleted path across this Mac's local snapshots, git and its reflog, the log-store, "
+                    "agent transcripts, Timeshift on the box, and Time Machine.",
     )
     parser.add_argument("path", help="repo-relative, absolute, or any trailing fragment of the path")
     parser.add_argument("--repo", default=os.environ.get("FIND_DELETED_PATH_REPO", "."),
@@ -1839,10 +2088,15 @@ def main(argv=None, runner=run_command):
     parser.add_argument("--transcripts-dir", default=os.environ.get("FIND_DELETED_PATH_TRANSCRIPTS_DIR", DEFAULT_TRANSCRIPTS_DIR))
     parser.add_argument("--box-ssh-host", default=os.environ.get("FIND_DELETED_PATH_BOX_SSH_HOST", DEFAULT_BOX_SSH_HOST))
     parser.add_argument("--timeshift-snapshot-root", default=os.environ.get("FIND_DELETED_PATH_TIMESHIFT_SNAPSHOT_ROOT", DEFAULT_TIMESHIFT_SNAPSHOT_ROOT))
+    parser.add_argument("--log-store-root", default=os.environ.get("FIND_DELETED_PATH_LOG_STORE_ROOT", DEFAULT_LOG_STORE_ROOT),
+                        help="the log-store's directory: read in place when it exists on this machine, "
+                             "otherwise on the box over ssh")
     parser.add_argument("--skip", action="append", default=[],
-                        choices=["localsnapshots", "git", "transcripts", "box", "timeshift", "timemachine"],
+                        choices=["localsnapshots", "git", "reflog", "logstore", "transcripts", "box", "timeshift",
+                                 "timemachine"],
                         help="skip a surface (repeatable); 'box' skips everything on the box — "
-                             "its transcripts as well as Timeshift — so nothing is sent over ssh")
+                             "its transcripts, Timeshift, and the log-store unless it is on this machine — "
+                             "so nothing is sent over ssh")
     parser.add_argument("--prompt-for-root", action="store_true",
                         help="mount the Time Machine snapshot from here, letting sudo ask for your "
                              "password in this terminal, instead of printing the command. Only ever "
@@ -1854,6 +2108,7 @@ def main(argv=None, runner=run_command):
     wanted, _ = _repo_relative_form(args.path, args.repo, runner)
     shown = wanted if wanted == args.path else "%s (given as %s)" % (wanted, args.path)
 
+    print(render_header(shown) + "\n", flush=True)
     reports = build_report(
         wanted,
         args.repo,
@@ -1864,8 +2119,10 @@ def main(argv=None, runner=run_command):
         skip=set(args.skip),
         runner=runner,
         prompt_for_root=args.prompt_for_root,
+        log_store_root=args.log_store_root,
+        on_surface_done=print_surface_as_it_finishes,
     )
-    print(render(shown, reports))
+    print(render_summary(reports), flush=True)
     return exit_status(reports)
 
 
