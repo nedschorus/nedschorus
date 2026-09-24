@@ -188,6 +188,9 @@ with tempfile.TemporaryDirectory(prefix="seat-shared-file-ship-test-") as scratc
           "those bytes can be found in a Timeshift snapshot",
           f"the content it held was sha256 {displaced_digest}" in result.stderr,
           result.stderr)
+    check("the replacement tells the agent how to list the snapshots that exist and promises no cadence: the ten-minute claim was false for the 2026-09-21 loss",
+          "sudo timeshift --list" in result.stderr
+          and "every ten minutes" not in result.stderr, result.stderr)
 
     # rsync's own quick check is size and modification time to the second, and
     # it skips a file the two agree on. Whether to copy was already decided by

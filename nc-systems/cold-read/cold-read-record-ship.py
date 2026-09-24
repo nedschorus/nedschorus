@@ -592,10 +592,10 @@ def ship_one(host, records_path: pathlib.PurePosixPath, record_dir: pathlib.Path
         print(f"{PROGRAM}: REPLACED {triage_relative} in the store — the content "
               f"it held was sha256 {displaced_triage_digest}, and what is there "
               f"now is sha256 {local[triage_relative]}.\n"
-              f"{PROGRAM}: if the displaced triage was wanted — a fresh session "
-              f"can hold an older copy than the store's — the store is "
-              f"snapshotted every ten minutes by Timeshift, and the first digest "
-              f"above says which file to look for there.", file=sys.stderr)
+              f"{PROGRAM}: if the displaced triage was wanted, look for the file "
+              f"whose sha256 is the first digest above in ned-box's Timeshift "
+              f"snapshots; `sudo timeshift --list` on ned-box lists the snapshots "
+              f"that exist.", file=sys.stderr)
     summary = []
     if new_files:
         summary.append(f"{len(new_files)} file(s) added")

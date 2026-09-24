@@ -146,6 +146,9 @@ with tempfile.TemporaryDirectory(prefix="walk-files-ship-test-") as scratch_name
           "REPLACED" in result.stderr and old_minutes_digest in result.stderr, result.stderr)
     check("the replacement announcement is not on stdout",
           "REPLACED" not in result.stdout)
+    check("the replacement tells the agent how to list the snapshots that exist and promises no cadence: the ten-minute claim was false for the 2026-09-21 loss",
+          "sudo timeshift --list" in result.stderr
+          and "every ten minutes" not in result.stderr, result.stderr)
 
     # Same length, same second: the case openrsync skips without --ignore-times.
     stored_minutes.write_text("# minutes\n\nItem 1 ruled.\nItem 2 ruled.\n", encoding="utf-8")
