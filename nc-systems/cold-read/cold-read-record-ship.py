@@ -587,6 +587,9 @@ def ship_one(host, records_path: pathlib.PurePosixPath, record_dir: pathlib.Path
                   f"{triage_relative}; a later run finishes it.")
             sys.stderr.write(replaced.stderr)
             return EXIT_FAILED
+        # The store on ned-box, which the snapshots copy: this module's
+        # constant, not written out again.
+        store_root = split_destination(LOG_STORE_RECORDS_DESTINATION)[1].parent
         # After the copy has landed and never on stdout, which carries the
         # summary and the citation. See rule 4 for what this line is for.
         print(f"{PROGRAM}: REPLACED {triage_relative} in the store — the content "
@@ -594,8 +597,10 @@ def ship_one(host, records_path: pathlib.PurePosixPath, record_dir: pathlib.Path
               f"now is sha256 {local[triage_relative]}.\n"
               f"{PROGRAM}: if the displaced triage was wanted, look for the file "
               f"whose sha256 is the first digest above in ned-box's Timeshift "
-              f"snapshots; `sudo timeshift --list` on ned-box lists the snapshots "
-              f"that exist.", file=sys.stderr)
+              f"snapshots, one directory per snapshot under "
+              f"`/mnt/backup/timeshift/snapshots/<snapshot>/localhost{store_root}/` "
+              f"on ned-box; `scripts/find-deleted-path-across-backups.py` searches "
+              f"them by path.", file=sys.stderr)
     summary = []
     if new_files:
         summary.append(f"{len(new_files)} file(s) added")

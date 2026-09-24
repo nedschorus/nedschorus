@@ -473,8 +473,9 @@ with tempfile.TemporaryDirectory(prefix="cold-read-record-ship-test-") as scratc
           and landed_digest in result.stderr, result.stderr)
     check("the replacement is announced on stderr and never on the one stdout line",
           "REPLACED" not in result.stdout, result.stdout)
-    check("the replacement tells the agent how to list the snapshots that exist and promises no cadence: the ten-minute claim was false for the 2026-09-21 loss",
-          "sudo timeshift --list" in result.stderr
+    check("the replacement names the directory the snapshots persist in and promises no cadence: the ten-minute claim was false for the 2026-09-21 loss, and `sudo timeshift --list` names only a mount that is gone when it exits",
+          "/mnt/backup/timeshift/snapshots/" in result.stderr
+          and "sudo timeshift --list" not in result.stderr
           and "every ten minutes" not in result.stderr, result.stderr)
 
     stored_report_mtime = stored_a.stat().st_mtime_ns

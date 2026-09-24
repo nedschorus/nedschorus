@@ -447,6 +447,10 @@ def ship_walk(destination: WalkStoreDestination, name: str,
             print(f"FAILED: {name} — {reason} during the copy; a later run finishes it.")
             sys.stderr.write(copied.stderr)
             return EXIT_FAILED
+    # The store on ned-box, which the snapshots copy: the record shipper's
+    # constant, never written out again here.
+    store_root = shipper.split_destination(
+        shipper.LOG_STORE_RECORDS_DESTINATION)[1].parent
     for replacement in replaced:
         # One line per replaced file, never on stdout: that line is the summary
         # and the citation. See REPLACED and APPENDED TO in the module
@@ -457,8 +461,10 @@ def ship_walk(destination: WalkStoreDestination, name: str,
               f"now is sha256 {replacement.local_sha256}. {replacement.ruling} If "
               f"the displaced {replacement.role_name} were wanted, look for the file "
               f"whose sha256 is the first digest on this line in ned-box's Timeshift "
-              f"snapshots; `sudo timeshift --list` on ned-box lists the snapshots "
-              f"that exist.", file=sys.stderr)
+              f"snapshots, one directory per snapshot under "
+              f"`/mnt/backup/timeshift/snapshots/<snapshot>/localhost{store_root}/` "
+              f"on ned-box; `scripts/find-deleted-path-across-backups.py` searches "
+              f"them by path.", file=sys.stderr)
 
     parts = []
     if added:
