@@ -48,32 +48,66 @@ contains the stem, including a same-name copy in another directory, is a
 candidate, to be checked by content; candidates do not make the answer
 "found".
 
-AN ABSOLUTE QUERY IS COMPARED BY ITS PATH INSIDE ITS CHECKOUT. A git hit's
-path is relative to its clone, and the same file sits in every seat's
-checkout, so `/Users/el/agents/merge-lane/docs/x.md` is found by commit
-<hash>'s `docs/x.md` and by `/home/nedlern/agents/<seat>/docs/x.md`. The path
-inside the checkout is decided, in order:
-  - by the nearest `.git` above the path, when that checkout is on this disk;
-  - for a path under a checkout parent (the agents and Projects trees of
-    either machine, whose children are checkouts), by dropping the parent
-    and the child: this holds when the checkout was removed, or is on the
-    other machine;
-  - for a path under a scratch tree (/private/tmp/claude-501,
-    /tmp/claude-1000), where a worktree can sit at any depth, by the longest
-    tail of the path, two components or more, that a searched clone or
-    checkout holds. A removed scratch worktree leaves nothing else to tell
-    its root by. A tail of one component is not trusted, because
-    `<worktree>/docs/README.md` would then be found by the clone's own
-    README.md.
-PR 703 review 5299114606 measured the gap this closes: a query into a worktree
-removed after its commit answered found before `git worktree remove` and not
-found after it, and a ned-box checkout path asked on the Mac was not found at
-all. A file hit is compared the same way, by its own path inside its
-checkout, worked out on the machine that holds it. An absolute query under no
-checkout, a log-store or handoff path for one, is found only by the file at
-that very path. A query for a file at a checkout's root, such as
-`/Users/el/agents/merge-lane/CLAUDE.md`, is found only at the root of a
-checkout, not by a CLAUDE.md in some subdirectory.
+AN ABSOLUTE QUERY INTO THIS REPOSITORY IS COMPARED BY ITS PATH INSIDE ITS
+CHECKOUT. A git hit's path is relative to its clone, and the same file sits in
+every seat's checkout, so `/Users/el/agents/merge-lane/docs/x.md` is found by
+commit <hash>'s `docs/x.md` and by `/home/nedlern/agents/<seat>/docs/x.md`.
+Where a path sits in this repository is read from one ordered list of the
+places this repository's checkouts live, written from the map of record,
+docs/nedschorus-wiki/nedschorus-fleet-machine-paths-and-checkouts.md, and
+checked on 2026-09-24 against `git worktree list` in each machine's main clone
+(74 checkouts on the Mac, 15 on ned-box, every one in a place below):
+
+    place                              Mac                  ned-box
+    the main clone                     /Users/el/Projects/  /home/nedlern/
+                                         nedschorus           Projects/nedschorus
+    a seat's checkout, each child of   /Users/el/agents     /home/nedlern/agents
+    a task worktree, nested in either  <checkout>/.claude/worktrees/<name>
+      of the above
+    a scratch or ad-hoc worktree,      /tmp                 /tmp
+      at any depth
+
+  - Under the main clone, or under a child of a seats directory, the path
+    inside the checkout is what follows it, with a leading
+    `.claude/worktrees/<name>/` taken off: that is where Claude Code puts a
+    task worktree, and the file sits in that worktree, not in the checkout
+    around it (PR 703 review 5299440729: a removed nested worktree turned a
+    found query into a not-found one). This needs nothing on disk, so it
+    answers the same whether the checkout is there, removed, or on the other
+    machine.
+  - Under /tmp a worktree can sit at any depth, so its root is not in the
+    path. A query there is compared by the longest tail of the path, two
+    components or more, that a copy of this repository holds. A tail of one
+    component is not trusted, because `<worktree>/docs/README.md` would then
+    be found by the clone's own README.md. A file found there, which is on
+    disk, is placed by the nearest `.git` above it, when that `.git` belongs
+    to this repository.
+  - Other children of Projects are other projects (the Mac holds 31, 23 of
+    them git checkouts, the legacy nedlern one among them), and so is
+    anything else outside the list: a query there is found only by the file
+    at that very path. The same holds for the log-store and the handoffs.
+    Another project's files and git history never count as a copy of this
+    repository's path, nor this repository's as a copy of theirs (PR 703
+    review 5299487158: another project's root README.md under
+    /Users/el/Projects counted as found for this repository's).
+THIS REPOSITORY is the main clone's git directory on each machine: every seat
+and task worktree resolves to it through its `.git` file (measured 2026-09-24:
+no seat directory on either machine is a clone of its own). A git hit counts
+for a path inside a checkout only when it comes from that git directory.
+A file at a checkout's root, such as `/Users/el/agents/merge-lane/CLAUDE.md`,
+is found only at the root of a checkout, not by a CLAUDE.md in some
+subdirectory.
+EVERY PATH IS COMPARED IN ONE SPELLING. On the Mac /tmp is /private/tmp, and
+the Mac mounts ned-box's home at /Volumes/nedhome (named in
+.claude/hooks/backup-and-snapshot-write-guard.py; the map of record does not
+list it), so `/Volumes/nedhome/nedschorus-logs/x.md` is
+`/home/nedlern/nedschorus-logs/x.md`. Both the query and every hit are put in
+the canonical spelling before any comparison (PR 703 review 5299440729: a
+scratchpad file asked as /tmp/claude-501/... was not found at its own path).
+/private/tmp itself is not searched on the Mac, only /private/tmp/claude-501:
+it holds the backup search's snapshot mounts of the whole disk, and a find
+over it ran past 120 s on 2026-09-24. A worktree there is still found through
+its commits.
 
 THE QUERY MAY BE WRITTEN AS IT IS CITED. `nedlern@ned-box:/home/...`, the scp
 form CLAUDE.md prescribes for log-store citations, is read as the path after
@@ -215,21 +249,28 @@ MAX_ENTRIES_PER_LIST = 25
 # node_modules and 0.02 s without it.
 SKIPPED_DIRECTORY_NAMES = ("__pycache__", "node_modules", ".venv", "venv")
 
-# A checkouts surface's roots are checkout parents, whose children are
-# checkouts, except those it lists under `scratch_roots`: scratch trees, where
-# a worktree sits at any depth. The difference decides how a path's place
-# inside its checkout is worked out once that checkout is gone (see the module
-# docstring).
+# A machine plan has three parts. `surfaces` are the places searched.
+# `this_repository` is where this repository's checkouts live on that
+# machine, the ordered list the module docstring sets out: `clones` (the main
+# clone), `checkout_parents` (every child a checkout) and `scratch_trees` (a
+# worktree at any depth); a task worktree nested at NESTED_WORKTREE_PARTS
+# inside a clone or a parent's child is recognised under both. `spellings` are
+# [alias, canonical] pairs: a path under the alias is compared as the same
+# path under the canonical prefix.
+NESTED_WORKTREE_PARTS = (".claude", "worktrees")
 MAC_SURFACES = {
     "machine": "mac",
     "surfaces": [
         {"name": "checkouts",
          "roots": ["/Users/el/agents", "/Users/el/Projects",
                    "/private/tmp/claude-501"],
-         "scratch_roots": ["/private/tmp/claude-501"],
          "git": True},
         {"name": "handoffs", "roots": ["/Users/el/.claude/handoffs"]},
     ],
+    "this_repository": {"clones": ["/Users/el/Projects/nedschorus"],
+                        "checkout_parents": ["/Users/el/agents"],
+                        "scratch_trees": ["/tmp"]},
+    "spellings": [["/private/tmp", "/tmp"]],
 }
 NED_BOX_SURFACES = {
     "machine": "ned-box",
@@ -237,12 +278,16 @@ NED_BOX_SURFACES = {
         {"name": "checkouts",
          "roots": ["/home/nedlern/agents", "/home/nedlern/Projects",
                    "/tmp/claude-1000"],
-         "scratch_roots": ["/tmp/claude-1000"],
          "git": True},
         {"name": "log-store", "roots": ["/home/nedlern/nedschorus-logs"],
          "prune": ["/home/nedlern/nedschorus-logs/transcripts"]},
         {"name": "handoffs", "roots": ["/home/nedlern/.claude/handoffs"]},
     ],
+    "this_repository": {"clones": ["/home/nedlern/Projects/nedschorus"],
+                        "checkout_parents": ["/home/nedlern/agents"],
+                        "scratch_trees": ["/tmp"]},
+    # How the Mac spells this machine's paths: its mount of ned-box's home.
+    "spellings": [["/Volumes/nedhome", "/home/nedlern"]],
 }
 # The machines a bare `<host>:<path>` query may name, and where `~` is there.
 KNOWN_HOST_HOMES = {NED_BOX_HOSTNAME: "/home/nedlern"}
@@ -343,103 +388,135 @@ def parts_of(path):
             if part not in (os.sep, ".")]
 
 
-def root_spellings(root):
-    """A root and, for one under /tmp, its other spelling: on the Mac /tmp is
-    /private/tmp, and a query may use either."""
-    root = root.rstrip("/")
-    if root.startswith("/private/tmp/"):
-        return [root, root[len("/private"):]]
-    if root.startswith("/tmp/"):
-        return [root, "/private" + root]
-    return [root]
+def canonical_path(path, spellings):
+    """`path` in its canonical spelling: under the first alias it starts
+    with, that alias is replaced by its canonical prefix."""
+    for alias, canonical in spellings:
+        alias, canonical = alias.rstrip("/"), canonical.rstrip("/")
+        if path == alias or path.startswith(alias + "/"):
+            return canonical + path[len(alias):]
+    return path
 
 
 def parts_below(path, root):
-    """`path`'s components below `root`, or None when it is not under it."""
-    for spelling in root_spellings(root):
-        if path == spelling:
-            return []
-        if path.startswith(spelling + "/"):
-            return parts_of(path[len(spelling) + 1:])
+    """`path`'s components below `root`, or None when it is not under it.
+    Both are in one spelling already."""
+    root = root.rstrip("/")
+    if path == root:
+        return []
+    if path.startswith(root + "/"):
+        return parts_of(path[len(root) + 1:])
     return None
 
 
-def checkout_root_of(path, stop=None):
-    """The nearest directory at or above `path`'s directory holding a `.git`
-    entry, looking no higher than `stop` when one is given, or None."""
-    directory = os.path.dirname(path)
-    while True:
-        if os.path.lexists(os.path.join(directory, ".git")):
-            return directory
-        parent = os.path.dirname(directory)
-        if parent == directory or (stop is not None
-                                   and directory in root_spellings(stop)):
-            return None
-        directory = parent
+def inside_nested_worktree(parts):
+    """A path inside a checkout, with a task worktree nested at
+    NESTED_WORKTREE_PARTS/<name>/ taken off its front."""
+    depth = len(NESTED_WORKTREE_PARTS)
+    if (len(parts) > depth + 1
+            and tuple(parts[:depth]) == NESTED_WORKTREE_PARTS):
+        return parts[depth + 1:]
+    return parts
 
 
-def checkout_roots(plan):
-    """(checkout parents, scratch trees) of both machines' git surfaces."""
-    parents, scratch = [], []
+def place_in_this_repository(path, layouts):
+    """Where the canonical absolute `path` sits among this repository's
+    checkouts, walking the ordered list the module docstring sets out:
+    ("checkout", its path inside the checkout), ("scratch", its components
+    below the scratch tree, the checkout's root being unknown), or None when
+    it is in none of the places this repository's checkouts live."""
+    for layout in layouts:
+        for clone in layout.get("clones", []):
+            below = parts_below(path, clone)
+            if below:
+                return "checkout", inside_nested_worktree(below)
+    for layout in layouts:
+        for parent in layout.get("checkout_parents", []):
+            below = parts_below(path, parent)
+            if below and len(below) >= 2:
+                return "checkout", inside_nested_worktree(below[1:])
+    for layout in layouts:
+        for tree in layout.get("scratch_trees", []):
+            below = parts_below(path, tree)
+            if below:
+                return "scratch", below
+    return None
+
+
+def layouts_and_spellings(plan):
+    """(this repository's layouts, every spelling pair) of both machines."""
+    layouts, spellings = [], []
     for machine in (plan.get("this"), plan.get("other")):
-        for surface in (machine or {}).get("surfaces", []):
-            if not surface.get("git"):
-                continue
-            trees = surface.get("scratch_roots", [])
-            scratch += [root for root in surface["roots"] if root in trees]
-            parents += [root for root in surface["roots"] if root not in trees]
-    return parents, scratch
+        if machine:
+            layouts.append(machine.get("this_repository", {}))
+            spellings += machine.get("spellings", [])
+    return layouts, spellings
 
 
-def path_in_checkout(path, surface):
-    """`path`'s path inside the checkout that holds it, "/"-joined, or None:
-    the nearest `.git` no higher than the surface's root decides; failing
-    one, under a checkout parent, the parent's child is the checkout."""
-    if not surface.get("git"):
+def this_repository_git_dirs(layout):
+    """The git directories that are this repository on this machine: each
+    main clone's, as git_dirs_of names them."""
+    return set(git_dirs_of([os.path.join(clone, ".git")
+                            for clone in layout.get("clones", [])]))
+
+
+def place_of_file(path, layout, spellings, this_git_dirs, cache):
+    """The path inside this repository's checkout of a file on this disk,
+    "/"-joined, or None when the file is not in a checkout of this
+    repository. Under a scratch tree, where the path does not say where the
+    worktree starts, the nearest `.git` above the file decides, and only
+    when it is this repository's; `cache` remembers each directory's
+    answer."""
+    placed = place_in_this_repository(canonical_path(path, spellings),
+                                      [layout])
+    if placed is None:
         return None
-    for root in surface["roots"]:
-        below = parts_below(path, root)
-        if below is None:
-            continue
-        found_root = checkout_root_of(path, stop=root)
-        if found_root:
-            return "/".join(parts_of(os.path.relpath(path, found_root)))
-        if root not in surface.get("scratch_roots", []) and len(below) >= 2:
-            return "/".join(below[1:])
+    kind, parts = placed
+    if kind == "checkout":
+        return "/".join(parts) if parts else None
+    directory = os.path.dirname(path)
+    walked = []
+    while directory not in cache:
+        walked.append(directory)
+        if os.path.lexists(os.path.join(directory, ".git")):
+            owners = git_dirs_of([os.path.join(directory, ".git")])
+            cache[directory] = (directory if owners
+                                and owners[0] in this_git_dirs else None)
+            break
+        parent = os.path.dirname(directory)
+        if (parent == directory
+                or place_in_this_repository(canonical_path(parent, spellings),
+                                            [layout]) is None):
+            cache[directory] = None
+            break
+        directory = parent
+    root = cache[directory]
+    for step in walked:
+        cache[step] = root
+    if root is None:
         return None
-    return None
+    return "/".join(parts_of(os.path.relpath(path, root)))
 
 
-def query_target(resolved, parents, scratch):
+def query_target(resolved, layouts, spellings):
     """What a found copy must match, for a resolved query. `kind` is "name"
     (a bare file name), "tail" (a relative path: a found copy's path ends
-    with `parts`), "checkout" (an absolute path whose path inside its
-    checkout is `parts`), "scratch" (an absolute path under a scratch tree
-    whose checkout is not on this disk: `parts` are its components below the
-    tree), or "absolute" (any other absolute path). `path` is the query."""
+    with `parts`), "checkout" (an absolute path whose path inside this
+    repository's checkout is `parts`), "scratch" (an absolute path under a
+    scratch tree: `parts` are its components below the tree), or "absolute"
+    (any other absolute path). `path` is the query as given; `canonical` is
+    it in the canonical spelling, which every comparison uses."""
     parts = parts_of(resolved)
     if not os.path.isabs(resolved):
         return {"kind": "name" if len(parts) <= 1 else "tail",
                 "parts": parts, "path": resolved}
-    for root in parents + scratch:
-        below = parts_below(resolved, root)
-        if below is None:
-            continue
-        found_root = checkout_root_of(resolved, stop=root)
-        if found_root:
-            return {"kind": "checkout", "path": resolved,
-                    "parts": parts_of(os.path.relpath(resolved, found_root))}
-        if root in scratch:
-            return {"kind": "scratch", "parts": below, "path": resolved}
-        if len(below) >= 2:
-            return {"kind": "checkout", "parts": below[1:], "path": resolved}
-        break
-    else:
-        found_root = checkout_root_of(resolved)
-        if found_root:
-            return {"kind": "checkout", "path": resolved,
-                    "parts": parts_of(os.path.relpath(resolved, found_root))}
-    return {"kind": "absolute", "parts": parts, "path": resolved}
+    canonical = canonical_path(resolved, spellings)
+    placed = place_in_this_repository(canonical, layouts)
+    if placed and placed[1]:
+        return {"kind": placed[0], "parts": placed[1], "path": resolved,
+                "canonical": canonical}
+    return {"kind": "absolute", "parts": parts_of(canonical), "path": resolved,
+            "canonical": canonical}
 
 
 def same_parts(parts, wanted):
@@ -766,16 +843,23 @@ def search_this_machine(machine_plan, stem, name):
             continue
         stated.append((status.st_mtime, surface_name, path, status.st_size))
     stated.sort(key=lambda entry: -entry[0])
-    by_name = {surface["name"]: surface for surface in surfaces}
+    layout = machine_plan.get("this_repository", {})
+    spellings = machine_plan.get("spellings", [])
+    this_git_dirs = this_repository_git_dirs(layout)
+    place_cache = {}
     hits = []
     for mtime, surface_name, path, size in keep_same_name_and_newest(
             stated, name, MAX_FILE_HITS_PER_MACHINE,
             lambda entry: os.path.basename(entry[2])):
         hits.append({"kind": "file", "surface": surface_name, "path": path,
+                     "canonical": canonical_path(path, spellings),
                      "time": mtime, "size": size,
                      "blob": git_blob_id(path, size),
-                     "in_checkout": path_in_checkout(path,
-                                                     by_name[surface_name])})
+                     "in_this_repository": place_of_file(
+                         path, layout, spellings, this_git_dirs,
+                         place_cache)})
+    for hit in git_hits:
+        hit["this_repository"] = hit["clone"] in this_git_dirs
     hits += git_hits
 
     git_surfaces = [surface["name"] for surface in surfaces
@@ -794,8 +878,10 @@ def search_this_machine(machine_plan, stem, name):
 def remote_command(machine_plan, query):
     """The command line ssh hands the other machine's shell: this program,
     read from stdin, told which surfaces to search."""
-    surfaces = {"machine": machine_plan["machine"],
-                "surfaces": machine_plan["surfaces"]}
+    surfaces = {key: machine_plan[key]
+                for key in ("machine", "surfaces", "this_repository",
+                            "spellings")
+                if key in machine_plan}
     return " ".join(["python3", "-", THIS_MACHINE_JSON_FLAG,
                      shlex.quote(json.dumps(surfaces)), "--",
                      shlex.quote(query)])
@@ -904,14 +990,18 @@ def render(query, target, results, not_searched, elapsed):
                for result in results for hit in result["hits"]]
 
     def checkout_parts(entry):
+        """A hit's path inside this repository's checkout, or None when it is
+        not a copy of this repository: a git hit from another repository's
+        clone, or a file outside this repository's checkouts."""
         hit = entry["hit"]
         if hit["kind"] == "git":
-            return parts_of(hit["path"])
-        return parts_of(hit["in_checkout"]) if hit.get("in_checkout") else None
+            return parts_of(hit["path"]) if hit.get("this_repository") else None
+        place = hit.get("in_this_repository")
+        return parts_of(place) if place else None
 
-    # Under a scratch tree the checkout's own directory is not known once it
-    # is gone: its path inside the checkout is the longest tail of the query,
-    # two components or more, that some clone or checkout holds.
+    # Under a scratch tree the checkout's own directory is not in the path:
+    # its path inside the checkout is the longest tail of the query, two
+    # components or more, that a copy of this repository holds.
     anchor = wanted if kind == "checkout" else None
     if kind == "scratch":
         held = [len(parts) for parts in map(checkout_parts, entries)
@@ -925,8 +1015,9 @@ def render(query, target, results, not_searched, elapsed):
             return is_same_name(os.path.basename(hit["path"]), name)
         if kind == "tail":
             return is_found_copy(hit["path"], wanted, name)
-        if hit["kind"] == "file" and same_parts(parts_of(hit["path"]),
-                                                parts_of(target["path"])):
+        if hit["kind"] == "file" and same_parts(
+                parts_of(hit.get("canonical", hit["path"])),
+                parts_of(target["canonical"])):
             return True
         parts = checkout_parts(entry)
         return bool(anchor and parts) and same_parts(parts, anchor)
@@ -945,16 +1036,15 @@ def render(query, target, results, not_searched, elapsed):
     def same_name(entry):
         return is_same_name(os.path.basename(entry["hit"]["path"]), name)
 
-    groups = group_by_content(entries)
-    same = [group for group in groups if any(map(found_copy, group))]
-    other = [group for group in groups if not any(map(found_copy, group))]
-    # A found group is led by its newest found copy, not by a renamed copy
-    # that happens to be newer; a candidate group by its newest same-name
-    # copy, and candidate groups holding one come first.
-    for group in same:
-        group.sort(key=lambda entry: (not found_copy(entry),
-                                      -entry["hit"]["time"]))
-    same.sort(key=lambda group: -group[0]["hit"]["time"])
+    # Found copies and candidates are separated BEFORE copies are grouped by
+    # content, so an identical file at some other path stays a candidate
+    # rather than printing as "same content" under the found list (PR 703,
+    # Codex's review in 5299487158).
+    same = group_by_content([entry for entry in entries if found_copy(entry)])
+    other = group_by_content([entry for entry in entries
+                              if not found_copy(entry)])
+    # A candidate group is led by its newest same-name copy, and candidate
+    # groups holding one come first.
     for group in other:
         group.sort(key=lambda entry: (not same_name(entry),
                                       -entry["hit"]["time"]))
@@ -1118,7 +1208,7 @@ def main(argv=None) -> int:
         else:
             not_searched.append((other["machine"], answer))
 
-    target = query_target(query, *checkout_roots(plan))
+    target = query_target(query, *layouts_and_spellings(plan))
     text, code = render(query, target, results, not_searched,
                         time.monotonic() - started_at)
     # A path that is not valid UTF-8 prints with a replacement character

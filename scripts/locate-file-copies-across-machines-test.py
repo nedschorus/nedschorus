@@ -116,23 +116,38 @@ def git(cwd, *arguments):
 
 
 def make_plan(base, other="ssh", timeout_seconds=20, extra_mac_roots=()):
+    """Both machines' plans under `base`, laid out as production lays them
+    out: this repository's main clone is <machine>/Projects/nedschorus, seat
+    checkouts are children of <machine>/agents, and <machine>/tmp is the
+    scratch tree. The Mac spells its tmp also as mac/private/tmp, and ned-box's
+    home, `base/box`, as mac/Volumes/nedhome."""
     mac = {"machine": "mac", "surfaces": [
         {"name": "checkouts",
          "roots": [str(base / "mac" / "agents"), str(base / "mac" / "Projects"),
                    str(base / "mac" / "tmp")],
-         "scratch_roots": [str(base / "mac" / "tmp")],
          "git": True},
         {"name": "handoffs",
          "roots": [str(base / "mac" / "handoffs"), *extra_mac_roots]},
-    ]}
+    ], "this_repository": {
+        "clones": [str(base / "mac" / "Projects" / "nedschorus")],
+        "checkout_parents": [str(base / "mac" / "agents")],
+        "scratch_trees": [str(base / "mac" / "tmp")],
+    }, "spellings": [[str(base / "mac" / "private" / "tmp"),
+                      str(base / "mac" / "tmp")]]}
     box = {"machine": "ned-box", "surfaces": [
         {"name": "checkouts",
-         "roots": [str(base / "box" / "agents"), str(base / "box" / "Projects")],
+         "roots": [str(base / "box" / "agents"), str(base / "box" / "Projects"),
+                   str(base / "box" / "tmp")],
          "git": True},
         {"name": "log-store", "roots": [str(base / "box" / "logs")],
          "prune": [str(base / "box" / "logs" / "transcripts")]},
         {"name": "handoffs", "roots": [str(base / "box" / "handoffs")]},
-    ]}
+    ], "this_repository": {
+        "clones": [str(base / "box" / "Projects" / "nedschorus")],
+        "checkout_parents": [str(base / "box" / "agents")],
+        "scratch_trees": [str(base / "box" / "tmp")],
+    }, "spellings": [[str(base / "mac" / "Volumes" / "nedhome"),
+                      str(base / "box")]]}
     for machine in (mac, box):
         for surface in machine["surfaces"]:
             for root in surface["roots"]:
@@ -291,13 +306,15 @@ with scratch() as directory:
     write(base / "box/logs/seats/lead-case-copy.md", "same bytes", NOW - 5)
     write(base / "mac/tmp/other/lead-case.md", "different bytes", NOW - 100)
     code, stdout, _ = run(base, "lead-case.md")
-    same, _, _ = sections(stdout)
+    same, other, _ = sections(stdout)
     leads = entry_lines(same)
-    check("a same-name group is led by its same-name copy even when a "
-          "renamed identical copy is newer",
-          any("/mac/agents/s/lead-case.md" in line for line in leads)
-          and not any("lead-case-copy.md" in line for line in leads)
-          and "lead-case-copy.md" in same, same)
+    # PR 703, Codex's P2 in review 5299487158: grouping by content ran before
+    # the found copies were set apart, so this renamed copy printed as "same
+    # content" under the found list.
+    check("a renamed copy with the same bytes as a found copy stays a "
+          "candidate, not a same-content line in the found list",
+          "lead-case-copy.md" not in same and "lead-case-copy.md" in other,
+          stdout)
     check("the same-name list is ordered by the copy that leads each entry",
           len(leads) == 2 and "/mac/tmp/other/lead-case.md" in leads[0]
           and "/mac/agents/s/lead-case.md" in leads[1], same)
@@ -709,7 +726,10 @@ with scratch() as directory:
           stdout + stderr)
 
 with scratch() as directory:
-    base = pathlib.Path(directory)
+    # Resolved, because a `..` query is made absolute from the current
+    # directory, which the operating system reports resolved: on macOS the
+    # temporary directory sits behind the /var -> /private/var link.
+    base = pathlib.Path(directory).resolve()
     make_stand_in_bin(base)
     (base / "mac" / "agents" / "seat-r" / ".git").mkdir(parents=True)
     write(base / "mac" / "agents" / "seat-r" / "docs" / "rel-probe.md", "it")
@@ -727,7 +747,7 @@ with scratch() as directory:
 with scratch() as directory:
     base = pathlib.Path(directory)
     make_stand_in_bin(base)
-    clone = base / "mac" / "Projects" / "wt-clone"
+    clone = base / "mac" / "Projects" / "nedschorus"
     clone.mkdir(parents=True)
     git(clone, "init", "-q")
     write(clone / "README.md", "the clone")
@@ -761,7 +781,7 @@ with scratch() as directory:
 with scratch() as directory:
     base = pathlib.Path(directory)
     make_stand_in_bin(base)
-    clone = base / "box" / "Projects" / "box-clone"
+    clone = base / "box" / "Projects" / "nedschorus"
     clone.mkdir(parents=True)
     git(clone, "init", "-q")
     write(clone / "docs" / "box-probe.md", "on the box")
@@ -769,9 +789,6 @@ with scratch() as directory:
     git(clone, "commit", "-q", "-m", "Add the probe")
     git(clone, "rm", "-q", "-r", "docs")
     git(clone, "commit", "-q", "-m", "Remove the probe")
-    # A .git above the roots must not be taken for the checkout: the walk up
-    # from a path stops at its root.
-    (base / ".git").mkdir()
     query = str(base / "box" / "agents" / "absent-seat" / "docs" / "box-probe.md")
     code, stdout, stderr = run(base, query)
     check("a checkout path on the other machine, whose checkout is not here, "
@@ -801,10 +818,202 @@ with scratch() as directory:
     write(base / "mac" / "agents" / "s" / "docs" / "out-probe.md", "a copy")
     code, stdout, stderr = run(
         base, str(base / "elsewhere" / "repo" / "docs" / "out-probe.md"))
-    check("an absolute query into a checkout outside the searched roots is "
-          "compared by its path inside that checkout",
-          code == 0 and "Same path (docs/out-probe.md)" in stdout
-          and "/s/docs/out-probe.md" in sections(stdout)[0], stdout + stderr)
+    same, other, _ = sections(stdout)
+    check("an absolute query outside every place this repository's checkouts "
+          "live is found only at that very path: this repository's copy at "
+          "docs/ is a candidate",
+          code == 1 and not same and "/s/docs/out-probe.md" in other,
+          stdout + stderr)
+
+# --- Every place this repository's checkouts live, present and removed ---------
+# Three review rounds on PR 703 (5298686798, 5299114606, 5299440729) each found
+# one more place where a path's place in its checkout went wrong. This walks
+# every place the map of record and `git worktree list` show a checkout
+# living, on both machines, each with the worktree there and then removed, in
+# every spelling a query may use. A file committed in each is found at its own
+# path while the worktree is there, and by its commit on the branch that
+# still holds it once the worktree is gone.
+with scratch() as directory:
+    base = pathlib.Path(directory)
+    make_stand_in_bin(base)
+    plan = make_plan(base)
+    clones = {"mac": base / "mac" / "Projects" / "nedschorus",
+              "box": base / "box" / "Projects" / "nedschorus"}
+    for clone in clones.values():
+        clone.mkdir(parents=True)
+        git(clone, "init", "-q")
+        write(clone / "README.md", "the clone")
+        git(clone, "add", "README.md")
+        git(clone, "commit", "-q", "-m", "Start")
+    mac_seat = base / "mac" / "agents" / "seat-holding-nested"
+    git(clones["mac"], "worktree", "add", "-q", "-b", "seat-holding-nested",
+        str(mac_seat))
+    alias_home = base / "mac" / "Volumes" / "nedhome"
+    layouts = [
+        # (label, clone, worktree, the spellings a query may use for it)
+        ("a seat's checkout on the Mac", "mac",
+         base / "mac" / "agents" / "seat-row", [None]),
+        ("a task worktree nested in the Mac's main clone", "mac",
+         clones["mac"] / ".claude" / "worktrees" / "agent-row-a", [None]),
+        ("a task worktree nested in a Mac seat's checkout", "mac",
+         mac_seat / ".claude" / "worktrees" / "agent-row-b", [None]),
+        ("a scratch worktree on the Mac", "mac",
+         base / "mac" / "tmp" / "-Users-el-agents-x" / "session" / "scratchpad"
+         / "wt", [None, ("mac/tmp", "mac/private/tmp")]),
+        ("an ad-hoc worktree in the Mac's tmp", "mac",
+         base / "mac" / "tmp" / "adhoc-fix", [None]),
+        ("a seat's checkout on ned-box", "box",
+         base / "box" / "agents" / "seat-row-b",
+         [None, ("box", "mac/Volumes/nedhome")]),
+        ("a task worktree nested in ned-box's main clone", "box",
+         clones["box"] / ".claude" / "worktrees" / "agent-row-c", [None]),
+        ("a scratch worktree on ned-box", "box",
+         base / "box" / "tmp" / "-home-nedlern-agents-y" / "session"
+         / "scratchpad" / "wt", [None]),
+    ]
+    for number, (label, machine, worktree, spellings) in enumerate(layouts):
+        (base / "mac" / "private").mkdir(exist_ok=True)
+        if not (base / "mac" / "private" / "tmp").exists():
+            (base / "mac" / "private" / "tmp").symlink_to(base / "mac" / "tmp")
+        relative = f"docs/layout-row-{number}-probe.md"
+        branch = f"layout-row-{number}"
+        worktree.parent.mkdir(parents=True, exist_ok=True)
+        git(clones[machine], "worktree", "add", "-q", "-b", branch,
+            str(worktree))
+        write(worktree / relative, f"row {number}")
+        git(worktree, "add", "docs")
+        git(worktree, "commit", "-q", "-m", f"Add the row {number} probe")
+        commit = git(worktree, "rev-parse", "HEAD")
+        queries = []
+        for spelling in spellings:
+            query = str(worktree / relative)
+            if spelling:
+                query = query.replace(str(base / spelling[0]),
+                                      str(base / spelling[1]), 1)
+            queries.append((query, "" if spelling is None
+                            else f", asked as {spelling[1]}"))
+        for query, asked in queries:
+            code, stdout, stderr = run(base, query, plan=plan)
+            same, _, _ = sections(stdout)
+            check(f"{label}{asked}, worktree there: the file is found at its "
+                  f"own path",
+                  code == 0 and f"Same path ({relative})" in stdout
+                  and str(worktree / relative).replace(str(base), "") in same,
+                  stdout + stderr)
+        git(clones[machine], "worktree", "remove", "--force", str(worktree))
+        for query, asked in queries:
+            code, stdout, stderr = run(base, query, plan=plan)
+            same, _, _ = sections(stdout)
+            check(f"{label}{asked}, worktree removed: its commit on the branch "
+                  f"that still holds it is found",
+                  code == 0 and f"Same path ({relative})" in stdout
+                  and f"commit {commit[:12]}" in same
+                  and f"{relative}, added" in same, stdout + stderr)
+    write(clones["mac"] / "docs" / "main-clone-probe.md", "in the main clone")
+    code, stdout, stderr = run(
+        base, str(clones["mac"] / "docs" / "main-clone-probe.md"), plan=plan)
+    check("a file in the main clone itself is found at its own path",
+          code == 0 and "Same path (docs/main-clone-probe.md)" in stdout,
+          stdout + stderr)
+
+# --- Every comparison uses one spelling of each path ----------------------------
+# PR 703 review 5299440729: on the Mac a scratchpad file, in no worktree, is
+# listed as /private/tmp/..., and asked for as /tmp/... it was not found at
+# its own path.
+with scratch() as directory:
+    base = pathlib.Path(directory)
+    make_stand_in_bin(base)
+    plan = make_plan(base)
+    (base / "mac" / "private").mkdir()
+    (base / "mac" / "private" / "tmp").symlink_to(base / "mac" / "tmp")
+    plan["this"]["surfaces"][0]["roots"][2] = str(base / "mac" / "private"
+                                                 / "tmp")
+    listed = base / "mac" / "private" / "tmp" / "-Users-el-agents-z" / "s" \
+        / "scratchpad" / "spelling-probe.md"
+    asked = base / "mac" / "tmp" / "-Users-el-agents-z" / "s" / "scratchpad" \
+        / "spelling-probe.md"
+    write(asked, "a scratchpad file")
+    write(base / "mac" / "tmp" / "-Users-el-agents-z" / "t" / "scratchpad"
+          / "spelling-probe.md", "another session's", NOW + 5)
+    code, stdout, stderr = run(base, str(asked), plan=plan)
+    same, other, _ = sections(stdout)
+    check("a file the search lists under one spelling of tmp is found when "
+          "asked for under the other",
+          code == 0 and str(listed) in same and "/t/scratchpad/" in other,
+          stdout + stderr)
+    code, stdout, stderr = run(base, str(listed), plan=plan)
+    check("... and the other way round",
+          code == 0 and str(listed) in sections(stdout)[0], stdout + stderr)
+    write(base / "box" / "logs" / "seats" / "s" / "nedhome-probe.md", "stored")
+    write(base / "box" / "logs" / "seats" / "t" / "nedhome-probe.md", "other")
+    code, stdout, stderr = run(
+        base, str(base / "mac" / "Volumes" / "nedhome" / "logs" / "seats" / "s"
+                  / "nedhome-probe.md"), plan=plan)
+    same, other, _ = sections(stdout)
+    check("a log-store file asked for by the Mac's /Volumes/nedhome spelling "
+          "of ned-box's home is found at its own path",
+          code == 0 and "/box/logs/seats/s/nedhome-probe.md" in same
+          and "/box/logs/seats/t/nedhome-probe.md" in other, stdout + stderr)
+
+# --- Only this repository counts, on either side ---------------------------------
+# PR 703 review 5299487158: another project's file at the same path inside its
+# checkout, such as its root README.md, was found for this repository's.
+with scratch() as directory:
+    base = pathlib.Path(directory)
+    make_stand_in_bin(base)
+    plan = make_plan(base)
+    clone = base / "mac" / "Projects" / "nedschorus"
+    sibling = base / "mac" / "Projects" / "nedlern"
+    for repository in (clone, sibling):
+        repository.mkdir(parents=True)
+        git(repository, "init", "-q")
+    write(clone / "sibling-probe.md", "this repository's", NOW - 50)
+    git(clone, "add", "sibling-probe.md")
+    git(clone, "commit", "-q", "-m", "Add this repository's probe")
+    write(sibling / "sibling-probe.md", "the sibling's", NOW - 500)
+    git(sibling, "add", "sibling-probe.md")
+    git(sibling, "commit", "-q", "-m", "Add the sibling's probe")
+    code, stdout, stderr = run(base, str(sibling / "sibling-probe.md"),
+                               plan=plan)
+    same, other, _ = sections(stdout)
+    check("a query into another project under Projects is found only at that "
+          "path, not by this repository's copy at the same place",
+          code == 0 and "/Projects/nedlern/sibling-probe.md" in same
+          and "/Projects/nedschorus/sibling-probe.md" not in same
+          and "Add this repository's probe" not in same, stdout + stderr)
+    write(sibling / "other-repo-probe.md", "only in the sibling")
+    git(sibling, "add", "other-repo-probe.md")
+    git(sibling, "commit", "-q", "-m", "Add the sibling-only probe")
+    git(sibling, "rm", "-q", "other-repo-probe.md")
+    git(sibling, "commit", "-q", "-m", "Remove the sibling-only probe")
+    code, stdout, stderr = run(
+        base, str(base / "mac" / "agents" / "seat-q" / "other-repo-probe.md"),
+        plan=plan)
+    same, other, _ = sections(stdout)
+    check("another repository's commit at the same path inside its clone is "
+          "a candidate for a query into this repository, not a found copy",
+          code == 1 and not same and "Remove the sibling-only probe" in other,
+          stdout + stderr)
+    foreign = base / "mac" / "tmp" / "probe-repo"
+    foreign.mkdir(parents=True)
+    git(foreign, "init", "-q")
+    write(foreign / "docs" / "foreign-probe.md", "a probe repository's file")
+    git(foreign, "add", "docs")
+    git(foreign, "commit", "-q", "-m", "Add the foreign probe")
+    code, stdout, stderr = run(
+        base, str(base / "mac" / "agents" / "seat-q" / "docs"
+                  / "foreign-probe.md"), plan=plan)
+    same, other, _ = sections(stdout)
+    check("a file in a scratch-tree repository that is not this one is a "
+          "candidate, not a copy of this repository's path",
+          code == 1 and not same and "/probe-repo/docs/foreign-probe.md" in other,
+          stdout + stderr)
+    code, stdout, stderr = run(
+        base, str(base / "mac" / "tmp" / "-Users-el-agents-w" / "s"
+                  / "scratchpad" / "wt" / "docs" / "foreign-probe.md"),
+        plan=plan)
+    check("a scratch query is not anchored by another repository's copies",
+          code == 1 and not sections(stdout)[0], stdout + stderr)
 
 # --- A file at a checkout's root is found only at a checkout's root -------------
 with scratch() as directory:
@@ -957,13 +1166,38 @@ check("a file name that merely holds a colon is left alone",
       and program.resolve_query("docs/at-12:30.md") == "docs/at-12:30.md")
 check("a colon after a slash is part of a local path, not a host",
       program.resolve_query("/a/b@c:d.md") == "/a/b@c:d.md")
-check("a path under /tmp is recognised under its /private/tmp root, and the "
-      "other way round",
-      program.parts_below("/tmp/claude-501/a/b.md", "/private/tmp/claude-501")
-      == ["a", "b.md"]
-      and program.parts_below("/private/tmp/claude-1000/a.md", "/tmp/claude-1000")
-      == ["a.md"]
-      and program.parts_below("/tmp/claude-5010/a.md", "/tmp/claude-501") is None)
+spellings = [spelling for machine in (program.MAC_SURFACES,
+                                      program.NED_BOX_SURFACES)
+             for spelling in machine["spellings"]]
+check("the production spellings put /private/tmp and /Volumes/nedhome in "
+      "the one spelling every comparison uses",
+      program.canonical_path("/private/tmp/claude-501/a.md", spellings)
+      == "/tmp/claude-501/a.md"
+      and program.canonical_path("/tmp/claude-501/a.md", spellings)
+      == "/tmp/claude-501/a.md"
+      and program.canonical_path("/Volumes/nedhome/agents/s/a.md", spellings)
+      == "/home/nedlern/agents/s/a.md"
+      and program.canonical_path("/private/tmpfoo/a.md", spellings)
+      == "/private/tmpfoo/a.md", spellings)
+layouts = [program.MAC_SURFACES["this_repository"],
+           program.NED_BOX_SURFACES["this_repository"]]
+check("the production layout places each of the fleet's checkout places",
+      program.place_in_this_repository(
+          "/Users/el/Projects/nedschorus/.claude/worktrees/agent-a/docs/a.md",
+          layouts) == ("checkout", ["docs", "a.md"])
+      and program.place_in_this_repository(
+          "/home/nedlern/agents/prof/.claude/worktrees/x/docs/a.md", layouts)
+      == ("checkout", ["docs", "a.md"])
+      and program.place_in_this_repository(
+          "/Users/el/agents/merge-lane/CLAUDE.md", layouts)
+      == ("checkout", ["CLAUDE.md"])
+      and program.place_in_this_repository(
+          "/tmp/pr619-fix-round-baseline/docs/a.md", layouts)
+      == ("scratch", ["pr619-fix-round-baseline", "docs", "a.md"])
+      and program.place_in_this_repository(
+          "/Users/el/Projects/nedlern/README.md", layouts) is None
+      and program.place_in_this_repository(
+          "/home/nedlern/nedschorus-logs/seats/a.md", layouts) is None)
 check("a ~ with no host is this machine's home",
       program.resolve_query("~/a.md") == os.path.expanduser("~/a.md"))
 check("a path that climbs out with .. is made absolute from the current "
