@@ -167,7 +167,7 @@ CELL_PROGRAM_NAMES = tuple(path.stem for path in CELL_LAUNCHERS.values())
 # added a criterion-1 catch, so no `second` cold-read-cell runs for this pass;
 # wall clock 16-20 min per cold-read-cell, inside the defect-hunt strong
 # cold-read-cells' 18-23. The effort is passed to the launchers explicitly
-# rather than left to their tier maps, which happen to pin max for the `deep`
+# rather than left to their tier maps, which pin xhigh for the `deep`
 # cold-read-tier today: a later change to either map would otherwise move this
 # pass silently. The defect-hunt cold-read-cells carry no override, so their
 # pins stay the launchers' own.
