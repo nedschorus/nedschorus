@@ -146,6 +146,12 @@ with tempfile.TemporaryDirectory(prefix="walk-files-ship-test-") as scratch_name
           "REPLACED" in result.stderr and old_minutes_digest in result.stderr, result.stderr)
     check("the replacement announcement is not on stdout",
           "REPLACED" not in result.stdout)
+    check("the replacement tells the agent to match the displaced digest across the snapshots at the file's full path in the store on ned-box, not to search by path: a replaced file keeps its path, so the newest snapshots holding it hold the replacement",
+          ("sha256sum /mnt/backup/timeshift/snapshots/*/localhost"
+           f"/home/nedlern/nedschorus-logs/walk/{WALK}-minutes.md") in result.stderr
+          and "find-deleted-path-across-backups" not in result.stderr
+          and "sudo timeshift --list" not in result.stderr
+          and "every ten minutes" not in result.stderr, result.stderr)
 
     # Same length, same second: the case openrsync skips without --ignore-times.
     stored_minutes.write_text("# minutes\n\nItem 1 ruled.\nItem 2 ruled.\n", encoding="utf-8")

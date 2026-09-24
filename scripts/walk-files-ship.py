@@ -79,7 +79,10 @@ sometimes updated status file". The rules are PER FILE:
     announced on its own stderr line, as scripts/seat-shared-file-ship.py
     announces a replacement, so a fresh session shipping an older local copy
     over a newer stored one leaves a trace, and the displaced bytes can be
-    found by digest in the store's Timeshift snapshots. An appended-to walk
+    found by digest in the store's Timeshift snapshots while one taken before
+    the replacement is still kept; the line states no cadence, for the reason
+    scripts/seat-shared-file-ship.py's docstring records under THE SNAPSHOT
+    CADENCE IS NOT A PROMISE. An appended-to walk
     text is announced on the same line in the same form, its own ruling
     named. The copy passes
     --ignore-times, for the reason that program's rsync_one_file records:
@@ -444,6 +447,11 @@ def ship_walk(destination: WalkStoreDestination, name: str,
             print(f"FAILED: {name} — {reason} during the copy; a later run finishes it.")
             sys.stderr.write(copied.stderr)
             return EXIT_FAILED
+    # The walk kind's directory in the store on ned-box, which the snapshots
+    # copy, built from the record shipper's constant, never written out again
+    # here; the destination may be a local override, the snapshots never.
+    stored_walk_directory = (shipper.split_destination(
+        shipper.LOG_STORE_RECORDS_DESTINATION)[1].parent / WALK_KIND_DIRECTORY)
     for replacement in replaced:
         # One line per replaced file, never on stdout: that line is the summary
         # and the citation. See REPLACED and APPENDED TO in the module
@@ -451,12 +459,14 @@ def ship_walk(destination: WalkStoreDestination, name: str,
         # the rule that allowed this particular replacement.
         print(f"{PROGRAM}: REPLACED {replacement.file_name} in the store — the content "
               f"it held was sha256 {replacement.displaced_sha256}, and what is there "
-              f"now is sha256 {replacement.local_sha256}. {replacement.ruling} This "
-              f"line is the trace a replacement leaves: if the displaced "
-              f"{replacement.role_name} were wanted — a fresh session can hold an "
-              f"older copy than the store's — the store is snapshotted every ten "
-              f"minutes by Timeshift, and the digest above says which file to look "
-              f"for.", file=sys.stderr)
+              f"now is sha256 {replacement.local_sha256}. {replacement.ruling} If "
+              f"the displaced {replacement.role_name} were wanted, look for the file "
+              f"whose sha256 is the first digest on this line in ned-box's Timeshift "
+              f"snapshots: on ned-box, run `sha256sum "
+              f"/mnt/backup/timeshift/snapshots/*/localhost"
+              f"{shlex.quote(str(stored_walk_directory / replacement.file_name))}` "
+              f"and take a snapshot "
+              f"whose line shows that digest.", file=sys.stderr)
 
     parts = []
     if added:

@@ -473,6 +473,12 @@ with tempfile.TemporaryDirectory(prefix="cold-read-record-ship-test-") as scratc
           and landed_digest in result.stderr, result.stderr)
     check("the replacement is announced on stderr and never on the one stdout line",
           "REPLACED" not in result.stdout, result.stdout)
+    check("the replacement tells the agent to match the displaced digest across the snapshots at the file's full path in the store on ned-box, not to search by path: a replaced file keeps its path, so the newest snapshots holding it hold the replacement",
+          ("sha256sum /mnt/backup/timeshift/snapshots/*/localhost"
+           f"/home/nedlern/nedschorus-logs/cold-read-records/{demo.name}/triage.md") in result.stderr
+          and "find-deleted-path-across-backups" not in result.stderr
+          and "sudo timeshift --list" not in result.stderr
+          and "every ten minutes" not in result.stderr, result.stderr)
 
     stored_report_mtime = stored_a.stat().st_mtime_ns
     triage_mtime_after_replacement = stored_triage.stat().st_mtime_ns

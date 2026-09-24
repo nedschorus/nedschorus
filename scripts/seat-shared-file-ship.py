@@ -22,8 +22,21 @@ walk's five files, a transcript -- goes to that kind through its own program,
 not here.
 
 THERE IS NO NETWORK DRIVE, and this is not one. The store is a directory on
-ned-box's internal disk, snapshotted every ten minutes by Timeshift to a
-separate internal disk. Off-machine, not off-site.
+ned-box's internal disk, snapshotted by Timeshift to a separate internal disk.
+Off-machine, not off-site.
+
+THE SNAPSHOT CADENCE IS NOT A PROMISE, which is why no printed line states it.
+Measured on 2026-09-23 with `sudo -n timeshift --list` on ned-box: daily
+snapshots through 2026-09-21_16-10-01, ten-minute ones only from
+2026-09-22_10-50-02 on (the configuration keeps 24 hourly, and older ones rotate
+out), and `/home/nedlern/**` included. Until 2026-09-22 these programs printed
+"the store is snapshotted every ten minutes by Timeshift" at the moment an
+agent decides whether a displaced file is recoverable; for the corrupted walk
+minutes of 2026-09-21 that was false, and it sent the search after a snapshot
+that never existed. The printed line now says only where to look and how to
+list what exists (task 112 of the cold-read-research seat; CLAUDE.md: text a
+program hands an agent at the moment it must act is instruction and nothing
+else).
 
 THE STORE'S RULES HOLD HERE, WITH ONE DIFFERENCE INSIDE `seats/`. FAIL
 LOUDLY is the record shipper's (nc-systems/cold-read/cold-read-record-ship.py) and is
@@ -52,9 +65,10 @@ REPLACED, and the replacement is announced.
     silence would leave nothing to notice it by. So a replacement prints on
     stderr that it replaced a file and the sha256 the store held. The event
     is then visible in the session's own output, and the bytes it displaced
-    are identifiable by that digest in a Timeshift snapshot, the store being
-    snapshotted every ten minutes to a separate internal disk. stdout does
-    not change: one line, the citation.
+    are identifiable by that digest in a Timeshift snapshot on ned-box, if a
+    snapshot taken before the replacement is still kept (see THE SNAPSHOT
+    CADENCE IS NOT A PROMISE, above). stdout does not change: one line, the
+    citation.
 
 WHY IT PRINTS THE CITATION. The line this program prints on success is the
 exact text to paste into a document, in the scp form that works from either
@@ -101,6 +115,7 @@ import hashlib
 import importlib.util
 import os
 import pathlib
+import shlex
 import subprocess
 import sys
 import typing
@@ -325,14 +340,22 @@ def ship_one_file(destination: SeatsStoreDestination, seat: str,
         # Never on stdout: that line is the citation and nothing else. See
         # "THE REPLACEMENT IS NOT SILENT" in this module's docstring for what
         # this line is for.
+        # The file's path in the store on ned-box, which the snapshots copy,
+        # built from the record shipper's constant, never written out again
+        # here; the destination may be a local override, the snapshots never.
+        # Quoted, with the snapshot glob left outside the quotes for the shell.
+        stored_path = shlex.quote(str(shipper.split_destination(
+            shipper.LOG_STORE_RECORDS_DESTINATION)[1].parent
+            / SEATS_KIND_DIRECTORY / seat / stored_name))
         print(f"{PROGRAM}: REPLACED {seat}/{stored_name} in the store — the "
               f"content it held was sha256 {replaced_digest}, and what is "
               f"there now is sha256 {local_digest}.\n"
               f"{PROGRAM}: a seat replaces its own files (user-ruled "
-              f"2026-09-09). If the displaced bytes were wanted — a fresh "
-              f"session can hold an older copy than the store's — the store "
-              f"is snapshotted every ten minutes by Timeshift, and the "
-              f"digest above says which file to look for.", file=sys.stderr)
+              f"2026-09-09). If the displaced bytes were wanted, look for the "
+              f"file whose sha256 is the first digest above in ned-box's "
+              f"Timeshift snapshots: on ned-box, run `sha256sum "
+              f"/mnt/backup/timeshift/snapshots/*/localhost{stored_path}` and "
+              f"take a snapshot whose line shows that digest.", file=sys.stderr)
     return EXIT_SHIPPED
 
 
