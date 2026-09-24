@@ -43,10 +43,23 @@ The route runs one way. CLAUDE.md names `ssh nedlern@ned-box` and no route
 back, and measured 2026-09-22 ned-box reaches the Mac's port 22 but has no
 trusted key for it: ssh from ned-box to this Mac answers "Host key
 verification failed." So from the Mac both stores are read, and from ned-box
-only ned-box's is; asking for the Mac there names the condition, says where
-to run instead, and exits non-zero rather than showing one machine's seats as
-the fleet. Opening a route the other way is the user's call, not this
+only ned-box's is. Opening a route the other way is the user's call, not this
 program's to assume.
+
+A MACHINE WITH NO ROUTE IS NOT A FAILURE (user-ruled 2026-09-24, item 5 of
+the meta-walk reboot-test-meta-walk-2026-09-23, "Y" to: "on ned-box, don't
+count the Mac as a failure. Exit 0, and keep the line that names the Mac as
+not read. If ned-box can't read its own store, it still exits 1."). Until
+then a run on ned-box exited 1 every time, because the Mac was always
+unread, and an exit code that never changes tells a caller nothing and
+trains it to stop looking. So the unrouted machine is still named, in its
+own block after the machines-read line, and still carried by every refusal,
+so a seat that lives there never reads as a seat that does not exist; but it
+no longer sets the exit code. Everything the refuses-rather-than-omits rule
+covers is unchanged: a machine that HAS a route and could not be read, a
+missing store on this machine, an unreadable task file, all still exit 1.
+Asking for the unrouted machine alone (--machine mac on ned-box) still
+refuses, because then nothing that was asked for could be read.
 
 ned-box's store is read as ONE tar over ssh and unpacked here with the
 standard library into a temporary directory, so nothing depends on which
@@ -308,12 +321,14 @@ def unpack_task_store_members(archive, store, machine):
 def read_task_lists(machines, store, scratch, runner):
     """Every task list on the machines asked for, and what was not read.
 
-    Returns (locations, problems, machines actually read). A machine is
-    counted as read when its store was reached, empty or not; one that was
-    not appears in problems and nowhere else, so no caller can mistake a
-    short answer for the whole.
+    Returns (locations, problems, machines actually read, unrouted). A
+    machine is counted as read when its store was reached, empty or not; one
+    that was not appears in problems or in unrouted and nowhere else, so no
+    caller can mistake a short answer for the whole. unrouted holds the
+    notice for each machine this one has no ssh route to at all: named like a
+    problem, but not a failure (the module docstring's ruling of 2026-09-24).
     """
-    locations, problems, machines_read = [], [], []
+    locations, problems, machines_read, unrouted = [], [], [], []
     for machine in machines:
         if machine == this_machine_name():
             if not store.is_dir():
@@ -323,7 +338,7 @@ def read_task_lists(machines, store, scratch, runner):
             locations.extend(task_lists_in_store(store, machine))
             continue
         if machine not in SSH_TARGET_BY_MACHINE:
-            problems.append(no_route_notice(machine))
+            unrouted.append(no_route_notice(machine))
             continue
         archive_bytes, fetch_problems = fetch_task_store_archive(
             machine, runner)
@@ -337,7 +352,7 @@ def read_task_lists(machines, store, scratch, runner):
             continue
         machines_read.append(machine)
         locations.extend(task_lists_in_store(unpacked, machine))
-    return sorted(locations), problems, machines_read
+    return sorted(locations), problems, machines_read, unrouted
 
 
 def task_lists_or_refuse(locations, machines_read):
@@ -554,6 +569,21 @@ def print_problems(problems):
         print(problem)
 
 
+def print_unrouted(unrouted):
+    """The block that names each machine this one has no route to.
+
+    Printed on every entry path, like the machines-read line, so the answer
+    never reads as the whole fleet; kept apart from the problems block
+    because it does not make the run fail.
+    """
+    if not unrouted:
+        return
+    print()
+    print("Not read, because this machine has no route to it:")
+    for notice in unrouted:
+        print(notice)
+
+
 def report_seats(locations):
     """One line per task list: its seat, machine and counts."""
     unreadable_seen = False
@@ -694,7 +724,7 @@ def main(argv=None, runner=None):
 
     with tempfile.TemporaryDirectory(
             prefix="seat-task-list-read-") as scratch:
-        locations, problems, machines_read = read_task_lists(
+        locations, problems, machines_read, unrouted = read_task_lists(
             machines, store, Path(scratch), runner)
         try:
             task_lists = task_lists_or_refuse(locations, machines_read)
@@ -713,9 +743,11 @@ def main(argv=None, runner=None):
             # Every refusal carries what could not be read, in one place: a
             # seat missing from an answer because its machine was never
             # reached must not read as a seat that does not exist.
-            raise SystemExit("\n".join([str(refusal.code)] + problems))
+            raise SystemExit(
+                "\n".join([str(refusal.code)] + problems + unrouted))
 
         print(machines_read_line(machines_read))
+        print_unrouted(unrouted)
         print_problems(problems)
 
     if problems or unreadable_seen:
