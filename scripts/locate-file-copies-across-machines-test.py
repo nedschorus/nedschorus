@@ -184,9 +184,9 @@ def make_stand_in_bin(base):
     return bin_dir
 
 
-def run(base, query, mode="ok", plan=None, cwd=None):
-    """(exit code, stdout, stderr) of one run of the program, from `cwd`
-    (`base` by default)."""
+def program_environment(base, mode="ok", plan=None):
+    """The environment one run of the program gets: the plan, the stand-in
+    ssh first on PATH, and no variable that points git elsewhere."""
     environment = dict(os.environ)
     for variable in GIT_REDIRECTING_VARIABLES:
         environment.pop(variable, None)
@@ -195,6 +195,13 @@ def run(base, query, mode="ok", plan=None, cwd=None):
     environment["FAKE_SSH_MODE"] = mode
     environment["FAKE_SSH_ARGV_LOG"] = str(base / "ssh-argv.log")
     environment["PYTHONDONTWRITEBYTECODE"] = "1"
+    return environment
+
+
+def run(base, query, mode="ok", plan=None, cwd=None):
+    """(exit code, stdout, stderr) of one run of the program, from `cwd`
+    (`base` by default)."""
+    environment = program_environment(base, mode, plan)
     result = subprocess.run([sys.executable, str(PROGRAM), query],
                             capture_output=True, text=True, cwd=cwd or base,
                             env=environment, timeout=120)
@@ -231,6 +238,18 @@ def read_command_of(stdout, commit):
 
 def scratch():
     return tempfile.TemporaryDirectory(prefix="locate-file-copies-test-")
+
+
+def raises(exception, function, *arguments):
+    try:
+        function(*arguments)
+    except exception:
+        return True
+    return False
+
+
+def shlex_quote(text):
+    return "'" + text.replace("'", "'\\''") + "'"
 
 
 NOW = time.time()
@@ -654,11 +673,11 @@ with scratch() as directory:
     check("candidates alone, with ned-box unreachable, exit 3",
           code == 3, stdout + stderr)
 
-# --- A query with directories is found only by a copy at that path -------------
+# --- A query with directories is found only at its own path ---------------------
 # The log-store reuses generic names across records (40 dispositions.md on
 # 2026-09-24), so a same-name copy in another directory is a candidate.
 with scratch() as directory:
-    base = pathlib.Path(directory)
+    base = pathlib.Path(directory).resolve()
     make_stand_in_bin(base)
     write(base / "box" / "logs" / "cold-read-records" / "other-record"
           / "path-probe.md", "an unrelated record", NOW - 5)
@@ -668,31 +687,45 @@ with scratch() as directory:
           "another directory: exit 1, the copy listed as a candidate",
           code == 1 and not same and "other-record/path-probe.md" in other,
           stdout + stderr)
-    check("the instruction names the path that was not found",
-          "No copy at nowhere/never-existed/path-probe.md was found: the files "
-          "above are candidates only" in stdout, stdout)
-    write(base / "box" / "logs" / "s" / "wanted" / "dir" / "path-probe.md",
-          "the real one", NOW - 500)
+    check("the instruction names the path that was not found, made absolute "
+          "from the current directory",
+          f"No copy at {base / 'nowhere' / 'never-existed' / 'path-probe.md'} "
+          f"was found: the files above are candidates only" in stdout, stdout)
+    stored = base / "box" / "logs" / "s" / "wanted" / "dir" / "path-probe.md"
+    write(stored, "the real one", NOW - 500)
     write(base / "mac" / "agents" / "s" / "path-probe-notes.md", "stem only",
           NOW - 1)
-    code, stdout, stderr = run(base, "wanted/dir/path-probe.md")
+    code, stdout, stderr = run(base, str(stored))
     same, other, _ = sections(stdout)
-    check("a copy whose path ends with the query's path is found, under a "
-          "same-path heading",
-          code == 0 and "Same path (wanted/dir/path-probe.md)" in stdout
+    check("a copy at the query's own path is found, under a same-path heading",
+          code == 0 and f"Same path ({stored})" in stdout
           and "/logs/s/wanted/dir/path-probe.md" in same
           and "other-record" not in same, stdout + stderr)
     check("a same-name candidate is listed before a newer stem-only one",
           len(entry_lines(other)) == 2
           and "other-record/path-probe.md" in entry_lines(other)[0]
           and "path-probe-notes.md" in entry_lines(other)[1], other)
-    code, stdout, stderr = run(base, "wanted/DIR/Path-Probe.md")
+    code, stdout, stderr = run(base, "wanted/dir/path-probe.md",
+                               cwd=base / "box" / "logs" / "s")
+    check("the same path asked relative to the directory that holds it is "
+          "found there",
+          code == 0 and "/logs/s/wanted/dir/path-probe.md" in sections(stdout)[0],
+          stdout + stderr)
+    code, stdout, stderr = run(base, "wanted/DIR/Path-Probe.md",
+                               cwd=base / "box" / "logs" / "s")
     check("the path is compared without regard to case",
           code == 0 and "/logs/s/wanted/dir/path-probe.md" in sections(stdout)[0],
           stdout + stderr)
-    code, stdout, stderr = run(base, "anted/dir/path-probe.md")
+    code, stdout, stderr = run(base, "anted/dir/path-probe.md",
+                               cwd=base / "box" / "logs" / "s")
     check("the path is compared on whole components, not characters",
           code == 1 and not sections(stdout)[0], stdout + stderr)
+    code, stdout, stderr = run(base, "wanted/dir/path-probe.md")
+    check("a relative path is not matched against the ends of other paths: "
+          "asked from elsewhere, the stored copy is a candidate",
+          code == 1 and not sections(stdout)[0]
+          and "/logs/s/wanted/dir/path-probe.md" in sections(stdout)[1],
+          stdout + stderr)
 
 with scratch() as directory:
     base = pathlib.Path(directory)
@@ -1048,7 +1081,7 @@ with scratch() as directory:
           and "/sub/" not in same, stdout + stderr)
 
 with scratch() as directory:
-    base = pathlib.Path(directory)
+    base = pathlib.Path(directory).resolve()
     make_stand_in_bin(base)
     repo = base / "mac" / "Projects" / "path-repo"
     repo.mkdir(parents=True)
@@ -1058,11 +1091,23 @@ with scratch() as directory:
     git(repo, "commit", "-q", "-m", "Add the record")
     git(repo, "rm", "-q", "-r", "md-records")
     git(repo, "commit", "-q", "-m", "Remove the record")
-    code, stdout, stderr = run(base, "md-records/a-record/git-path-probe.md")
-    check("a git hit, whose path is relative to its clone, is found by a "
-          "query with that path",
+    code, stdout, stderr = run(
+        base, str(repo / "md-records" / "a-record" / "git-path-probe.md"))
+    check("another project's commit is found for that project's own path: a "
+          "git hit's path is taken inside its clone's work tree",
           code == 0 and "md-records/a-record/git-path-probe.md, deleted"
           in sections(stdout)[0], stdout + stderr)
+    code, stdout, stderr = run(base, "md-records/a-record/git-path-probe.md",
+                               cwd=repo)
+    check("... and asked relative to that project, the same",
+          code == 0 and "md-records/a-record/git-path-probe.md, deleted"
+          in sections(stdout)[0], stdout + stderr)
+    code, stdout, stderr = run(base, "md-records/a-record/git-path-probe.md")
+    check("... but asked from outside that project it is a candidate, since "
+          "the path it names is not that project's",
+          code == 1 and not sections(stdout)[0]
+          and "md-records/a-record/git-path-probe.md, deleted"
+          in sections(stdout)[1], stdout + stderr)
 
 with scratch() as directory:
     base = pathlib.Path(directory)
@@ -1195,6 +1240,16 @@ with scratch() as directory:
           code == 3 and "so which files it tracks is unknown" in stdout
           and "/seat-broken/docs/broken-probe.md" in sections(stdout)[1],
           stdout + stderr)
+    check("a file whose tracking git could not report is labelled tracking "
+          "unknown, not \"not tracked by git\"",
+          "bytes, tracking unknown)" in sections(stdout)[1]
+          and "not tracked by git" not in stdout, stdout)
+    code, stdout, stderr = run(
+        base, str(base / "mac" / "agents" / "seat-broken" / "docs"
+                  / "broken-probe.md"))
+    check("... and it is still found at its own path",
+          code == 0 and "/seat-broken/docs/broken-probe.md"
+          in sections(stdout)[0], stdout + stderr)
 
 # Under a scratch tree an untracked file sets no anchor: were it to, the
 # tracked copy at the shorter path would not be found.
@@ -1218,7 +1273,9 @@ with scratch() as directory:
 
 # --- A relative query into a task worktree, the worktree there and removed -----
 # PR 703 review 5299980640: a relative query keeping .claude/worktrees/<name>/
-# was found while the worktree was there and not once it was removed.
+# was found while the worktree was there and not once it was removed. It is
+# now made absolute first, so the layout list places it as it does the
+# absolute spelling.
 with scratch() as directory:
     base = pathlib.Path(directory).resolve()
     make_stand_in_bin(base)
@@ -1239,6 +1296,145 @@ with scratch() as directory:
           code == 0 and "Same path (docs/nested-rel-probe.md)" in stdout
           and "docs/nested-rel-probe.md, added" in sections(stdout)[0],
           stdout + stderr)
+
+# --- A relative query gets exactly its absolute spelling's answer ---------------
+# PR 703 review 5307849568: relative queries had their own code path, and it
+# reached the fault the untracked rule closed. `.claude/settings.local.json`
+# from a seat whose own copy was absent exited 0 on another project's file
+# (mac-claude, inline at :1185), and `./CLAUDE.local.md` became the bare name
+# and found every seat's (Codex P1, :413-415). Every relative query is now
+# made absolute before it is classified; this table holds that to be so for
+# each kind of place.
+with scratch() as directory:
+    base = pathlib.Path(directory).resolve()
+    make_stand_in_bin(base)
+    plan = make_plan(base)
+    clone = base / "mac" / "Projects" / "nedschorus"
+    commit_files(clone, {"README.md": "the clone",
+                         "docs/rel-tracked-probe.md": "tracked"}, "Start")
+    seat_a = base / "mac" / "agents" / "rel-seat-a"
+    seat_b = base / "mac" / "agents" / "rel-seat-b"
+    for seat in (seat_a, seat_b):
+        git(clone, "worktree", "add", "-q", "-b", seat.name, str(seat))
+    write(seat_b / "CLAUDE.local.md", "You are rel-seat-b.", NOW - 60)
+    write(seat_b / ".claude" / "settings.local.json", "{}", NOW - 60)
+    write(seat_b / "docs" / "drafts" / "rel-untracked-probe.md", "draft",
+          NOW - 50)
+    other_project = base / "mac" / "Projects" / "rel-other-project"
+    write(other_project / ".claude" / "settings.local.json",
+          "another project's settings", NOW - 40)
+    nested = clone / ".claude" / "worktrees" / "rel-agent"
+    git(clone, "worktree", "add", "-q", "-b", "rel-agent", str(nested))
+    commit_files(nested, {"docs/rel-nested-probe.md": "in the task worktree"},
+                 "Add the nested relative probe")
+    rows = [
+        # (label, current directory, relative query, expected exit code)
+        ("a seat whose own untracked settings file is absent", seat_a,
+         ".claude/settings.local.json", 1),
+        ("./ before a seat's own untracked file, absent there", seat_a,
+         "./CLAUDE.local.md", 1),
+        ("./ before an untracked file the seat holds", seat_b,
+         "./CLAUDE.local.md", 0),
+        ("an untracked file another seat holds", seat_a,
+         "docs/drafts/rel-untracked-probe.md", 1),
+        ("an untracked file the seat itself holds", seat_b,
+         "docs/drafts/rel-untracked-probe.md", 0),
+        ("a tracked file", seat_a, "docs/rel-tracked-probe.md", 0),
+        ("../ out of a subdirectory to a tracked file", seat_a / "docs",
+         "../docs/rel-tracked-probe.md", 0),
+        ("a task worktree nested in the main clone", clone,
+         ".claude/worktrees/rel-agent/docs/rel-nested-probe.md", 0),
+    ]
+    for label, cwd, query, expected in rows:
+        absolute = str(pathlib.Path(os.path.normpath(cwd / query)))
+        code_r, stdout_r, stderr_r = run(base, query, plan=plan, cwd=cwd)
+        code_a, stdout_a, stderr_a = run(base, absolute, plan=plan, cwd=cwd)
+        same_r, other_r, _ = sections(stdout_r)
+        same_a, other_a, _ = sections(stdout_a)
+        check(f"relative and absolute agree, {label}: exit {expected}, the "
+              f"same copies found and the same candidates",
+              code_r == code_a == expected
+              and entry_lines(same_r) == entry_lines(same_a)
+              and entry_lines(other_r) == entry_lines(other_a),
+              f"relative {query!r} from {cwd}: exit {code_r}\n{stdout_r}"
+              f"{stderr_r}\nabsolute {absolute}: exit {code_a}\n{stdout_a}"
+              f"{stderr_a}")
+    code, stdout, stderr = run(base, ".claude/settings.local.json", plan=plan,
+                               cwd=seat_a)
+    check("another project's untracked settings file is a candidate for a "
+          "seat's own path, never the copy found",
+          code == 1 and not sections(stdout)[0]
+          and "/rel-other-project/.claude/settings.local.json"
+          in sections(stdout)[1], stdout + stderr)
+
+# --- A relative query from a directory that no longer exists --------------------
+# PR 703 review 5307798976, inline at :635: the program searched both machines
+# and then died on os.getcwd() with a traceback and exit 1, the code for "not
+# found, every surface searched". Agents' shells do stand in removed
+# directories; two transcripts show `pwd: error retrieving current directory`.
+with scratch() as directory:
+    base = pathlib.Path(directory).resolve()
+    make_stand_in_bin(base)
+    write(base / "mac" / "agents" / "s" / "docs" / "gone-dir-probe.md",
+          "a copy")
+    gone = base / "removed-worktree"
+
+    def run_in_removed_directory(query):
+        gone.mkdir()
+        script = (f"cd {shlex_quote(str(gone))} && rmdir "
+                  f"{shlex_quote(str(gone))} && exec "
+                  f"{shlex_quote(sys.executable)} "
+                  f"{shlex_quote(str(PROGRAM))} {shlex_quote(query)}")
+        result = subprocess.run(["sh", "-c", script], capture_output=True,
+                                text=True, env=program_environment(base),
+                                timeout=120)
+        return result.returncode, result.stdout, result.stderr
+
+    code, stdout, stderr = run_in_removed_directory("docs/gone-dir-probe.md")
+    check("a relative query from a removed directory exits 3, says why, and "
+          "searches nothing",
+          code == 3 and "the current directory no longer exists" in stdout
+          and "Run again with the file's absolute path" in stdout
+          and "Searched:" not in stdout and "Traceback" not in stderr,
+          f"exit {code}\n{stdout}{stderr}")
+    code, stdout, stderr = run_in_removed_directory("./gone-dir-probe.md")
+    check("... and so does ./ before a bare name",
+          code == 3 and "the current directory no longer exists" in stdout,
+          f"exit {code}\n{stdout}{stderr}")
+    code, stdout, stderr = run_in_removed_directory("gone-dir-probe.md")
+    check("a bare name needs no current directory, and is still searched "
+          "from a removed one",
+          code == 0 and "/agents/s/docs/gone-dir-probe.md"
+          in sections(stdout)[0] and "Traceback" not in stderr,
+          f"exit {code}\n{stdout}{stderr}")
+
+# --- Which files git tracks is asked of the checkout, not of a caller's GIT_DIR --
+# A leaked GIT_DIR would make `git ls-files` answer for another repository, so
+# tracked_in_checkout drops the variables that point git elsewhere. The suite's
+# run() drops them too, so only a call made with them set can see the strip
+# go (PR 703 review 5307849568: removing it failed no case).
+with scratch() as directory:
+    base = pathlib.Path(directory).resolve()
+    checkout = base / "checkout"
+    commit_files(checkout, {"README.md": "the checkout"}, "Start")
+    write(checkout / "strip-probe.md", "untracked here")
+    decoy = base / "decoy"
+    commit_files(decoy, {"strip-probe.md": "tracked in the decoy"}, "Decoy")
+    saved = {name: os.environ.get(name) for name in GIT_REDIRECTING_VARIABLES}
+    os.environ["GIT_DIR"] = str(decoy / ".git")
+    os.environ["GIT_WORK_TREE"] = str(decoy)
+    try:
+        tracked, failure = program.tracked_in_checkout(str(checkout),
+                                                       ["strip-probe.md"])
+    finally:
+        for name, value in saved.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
+    check("with GIT_DIR pointing at another repository, the checkout's own "
+          "answer is given: the file is not tracked there",
+          tracked == set() and failure is None, (tracked, failure))
 
 # --- A worktree the main clone lists outside every root is searched ------------
 # PR 703 review 5299980640: an ad-hoc worktree directly under /tmp, such as
@@ -1368,7 +1564,12 @@ check("a bare known host is read the same way, and its ~ is its home",
       == "/home/nedlern/agents/a.md")
 check("a file name that merely holds a colon is left alone",
       program.resolve_query("notes:12.md") == "notes:12.md"
-      and program.resolve_query("docs/at-12:30.md") == "docs/at-12:30.md")
+      and program.resolve_query("docs/at-12:30.md", cwd="/c")
+      == "/c/docs/at-12:30.md")
+check("a relative path after a host whose home is not known is refused, "
+      "not guessed on this machine; a bare name there is still a name",
+      raises(ValueError, program.resolve_query, "el@elsewhere:docs/a.md")
+      and program.resolve_query("el@elsewhere:a.md") == "a.md")
 check("a colon after a slash is part of a local path, not a host",
       program.resolve_query("/a/b@c:d.md") == "/a/b@c:d.md")
 spellings = [spelling for machine in (program.MAC_SURFACES,
@@ -1403,21 +1604,29 @@ check("the production layout places each of the fleet's checkout places",
           "/Users/el/Projects/nedlern/README.md", layouts) is None
       and program.place_in_this_repository(
           "/home/nedlern/nedschorus-logs/seats/a.md", layouts) is None)
-check("a relative query's task-worktree prefix is taken off, when two "
-      "components or more follow it",
-      program.inside_nested_worktree_anywhere(
-          ["x", ".claude", "worktrees", "a", "docs", "b.md"]) == ["docs", "b.md"]
-      and program.inside_nested_worktree_anywhere(
-          [".claude", "worktrees", "a", "CLAUDE.md"])
-      == [".claude", "worktrees", "a", "CLAUDE.md"]
-      and program.inside_nested_worktree_anywhere(["docs", "b.md"])
-      == ["docs", "b.md"])
 check("a ~ with no host is this machine's home",
       program.resolve_query("~/a.md") == os.path.expanduser("~/a.md"))
 check("a path that climbs out with .. is made absolute from the current "
       "directory",
       program.resolve_query("../docs/a.md", cwd="/x/checkout/scripts")
       == "/x/checkout/docs/a.md")
+check("every relative path with a / is made absolute, ./ and a plain "
+      "directory path alike, and only a bare name is left as a name",
+      program.resolve_query("./CLAUDE.local.md", cwd="/x/seat")
+      == "/x/seat/CLAUDE.local.md"
+      and program.resolve_query(".claude/settings.local.json", cwd="/x/seat")
+      == "/x/seat/.claude/settings.local.json"
+      and program.resolve_query("CLAUDE.local.md", cwd="/x/seat")
+      == "CLAUDE.local.md")
+check("a relative query's target is the same as its absolute spelling's",
+      program.query_target(program.resolve_query(
+          ".claude/worktrees/a/docs/b.md", cwd="/Users/el/agents/s"),
+          layouts, spellings)
+      == program.query_target("/Users/el/agents/s/.claude/worktrees/a/docs/b.md",
+                              layouts, spellings)
+      == {"kind": "checkout", "parts": ["docs", "b.md"],
+          "path": "/Users/el/agents/s/.claude/worktrees/a/docs/b.md",
+          "canonical": "/Users/el/agents/s/.claude/worktrees/a/docs/b.md"})
 
 blob_a = "a" * 40
 blob_b = "b" * 40

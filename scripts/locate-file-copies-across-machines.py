@@ -44,14 +44,25 @@ was never searched (PR 703 review 5299980640). Measured 2026-09-24: one such
 worktree on each machine; listing them took 3 to 34 ms and searching one 12 ms.
 
 FOUND MEANS THE SAME NAME, AND THE SAME PATH WHEN ONE IS GIVEN. A query that is
-a bare file name is found by a copy with that name, in any case. A query with
-directories is found only by a copy whose path ends with the query's path, on
-whole path components: `md-review-records/x/dispositions.md` is not found by
-a dispositions.md in some other directory. The log-store reuses generic names
-across its records (measured 2026-09-24: 40 dispositions.md, 31 fast-read.md,
-29 reference-check.md, 26 memory.md, 11 SKILL.md), and the backup search's
-log-store surface read an unrelated record as the file until the same rule
-was applied there (PR 702 review 5298743638). Every other file whose name
+a bare file name, with no `/` in it, is found by a copy with that name, in any
+case. Any other query names one path, and is found only at that path -- or,
+inside this repository, at the same place in any of its checkouts and in its
+history (see below): a dispositions.md in some other directory is not found
+for `md-review-records/x/dispositions.md`. A query that is not absolute is made
+absolute from the current directory BEFORE anything else looks at it, `./x`
+and `../x` included, so it gets exactly the answer its absolute spelling gets
+through the one code path. PR 703 review 5307849568 measured what a separate
+path for relative queries did: `.claude/settings.local.json` asked from a
+seat whose own copy was absent exited 0 on another project's file, and
+`./CLAUDE.local.md` became the bare name and found every seat's. When the
+current directory no longer exists -- a shell still standing in a removed
+worktree, which two transcripts show (PR 703 review 5307798976) -- a relative
+query cannot be placed: the program says so, searches nothing and exits 3.
+The log-store reuses generic names across its records (measured 2026-09-24:
+40 dispositions.md, 31 fast-read.md, 29 reference-check.md, 26 memory.md,
+11 SKILL.md), and the backup search's log-store surface read an unrelated
+record as the file until the same rule was applied there (PR 702 review
+5298743638). Every other file whose name
 contains the stem, including a same-name copy in another directory, is a
 candidate, to be checked by content; candidates do not make the answer
 "found".
@@ -71,7 +82,9 @@ checkout's untracked file. A bare file name still finds every file of that
 name, tracked or not: it asks for any file so named, and each copy is listed
 with its machine and path. Which files git tracks is asked with one
 `git ls-files` per checkout that holds a hit, and only for a query with
-directories in it.
+directories in it. When git cannot answer for a checkout, its files are
+listed as "tracking unknown" and counted only at their own path, as an
+untracked file is: an unanswered question is not an answer.
 
 AN ABSOLUTE QUERY INTO THIS REPOSITORY IS COMPARED BY ITS PATH INSIDE ITS
 CHECKOUT. A git hit's path is relative to its clone, and the same file sits in
@@ -110,7 +123,8 @@ checked on 2026-09-24 against `git worktree list` in each machine's main clone
   - Other children of Projects are other projects (the Mac holds 31, 23 of
     them git checkouts, the legacy nedlern one among them), and so is
     anything else outside the list: a query there is found only by the file
-    at that very path. The same holds for the log-store and the handoffs.
+    at that very path, or by a commit of that project's own clone at that
+    path. The same holds for the log-store and the handoffs.
     Another project's files and git history never count as a copy of this
     repository's path, nor this repository's as a copy of theirs (PR 703
     review 5299487158: another project's root README.md under
@@ -139,9 +153,11 @@ form CLAUDE.md prescribes for log-store citations, is read as the path after
 the colon; so is `ned-box:<path>`. A host is recognised when a user name comes
 before it or when it is a machine this program knows, so a file name that
 merely holds a colon is left alone. `~` is expanded, on ned-box to
-/home/nedlern. A relative path that climbs out with `..` is made absolute from
-the current directory. PR 703 review 5299114606 measured the scp form never
-being found, even at its exact path.
+/home/nedlern. A relative path after an scp host is inside that host's home,
+when this program knows it; a relative path with directories after a host
+whose home it does not know is a usage error, rather than a path guessed on
+this machine. PR 703 review 5299114606 measured the scp form never being
+found, even at its exact path.
 Measured 2026-09-24: `plan.md`, a name no file has, matched 1,767 names on
 the Mac alone, and this program exited 0 on them without naming the next
 step. The same fault was found in the backup search's log-store surface on
@@ -211,7 +227,9 @@ EXIT CODES.
        still be listed
     2  bad invocation (argparse's own exit)
     3  no copy was found, and at least one surface or machine could NOT be
-       searched -- so "not found" is not established
+       searched -- so "not found" is not established; or the query was a
+       relative path and the current directory no longer exists, so nothing
+       was searched
 A failed surface never reads as "not found": that is why 3 exists apart
 from 1. A candidate never reads as "found": that is why 1 and 3 allow them.
 
@@ -397,22 +415,44 @@ def split_host(query):
     return None, query
 
 
+class CurrentDirectoryIsGone(Exception):
+    """A relative path was asked for from a directory that no longer
+    exists, so there is nothing to make it absolute from."""
+
+
 def resolve_query(query, cwd=None):
     """The query as a plain path: an scp host prefix taken off, `~`
-    expanded, and a relative path that climbs out with `..` made absolute
-    from `cwd` (the current directory by default)."""
+    expanded, and every path with a `/` in it that is not absolute made
+    absolute from `cwd` (the current directory by default). A bare file name,
+    with no `/` at all, is returned as it is. Raises CurrentDirectoryIsGone
+    when the current directory is needed and no longer exists, and
+    ValueError for a relative path with directories on a host whose home
+    is not known."""
     host, path = split_host(query)
-    if host is not None:
+    if host is not None and not path.startswith("/"):
+        # A relative path after a host is inside that host's home.
         home = KNOWN_HOST_HOMES.get(host.split(".")[0])
-        if path == "~" or path.startswith("~/"):
-            path = home + path[1:] if home else path[2:]
-        elif home and not path.startswith("/"):
-            path = home + "/" + path
-    elif path == "~" or path.startswith("~/"):
+        inside = path[2:] if path.startswith("~/") else (
+            "" if path == "~" else path)
+        if home:
+            path = home + ("/" + inside if inside else "")
+        elif "/" in inside.rstrip("/"):
+            raise ValueError(
+                f"the query names host {host}, whose home this program does "
+                f"not know: give the file's absolute path on {host}")
+        else:
+            path = inside
+    elif host is None and (path == "~" or path.startswith("~/")):
         path = os.path.expanduser(path)
+    bare = "/" not in path
     path = os.path.normpath(path.rstrip("/") or path)
-    if not os.path.isabs(path) and path.split(os.sep)[0] == os.pardir:
-        path = os.path.normpath(os.path.join(cwd or os.getcwd(), path))
+    if not bare and not os.path.isabs(path):
+        if cwd is None:
+            try:
+                cwd = os.getcwd()
+            except OSError as error:
+                raise CurrentDirectoryIsGone(str(error)) from error
+        path = os.path.normpath(os.path.join(cwd, path))
     return path
 
 
@@ -449,22 +489,6 @@ def inside_nested_worktree(parts):
     if (len(parts) > depth + 1
             and tuple(parts[:depth]) == NESTED_WORKTREE_PARTS):
         return parts[depth + 1:]
-    return parts
-
-
-def inside_nested_worktree_anywhere(parts):
-    """A relative query's path inside a task worktree it names: what follows
-    the first NESTED_WORKTREE_PARTS/<name>/ in it, when two components or
-    more follow; otherwise the query's own components. A relative query that
-    kept the prefix was found while the worktree was there and not once it
-    was removed, when only its commit holds the file (PR 703 review
-    5299980640). A single component is left as it was, so the file at a
-    worktree's root is not found by every file of that name."""
-    depth = len(NESTED_WORKTREE_PARTS)
-    for index in range(len(parts) - depth):
-        if tuple(parts[index:index + depth]) == NESTED_WORKTREE_PARTS:
-            rest = parts[index + depth + 1:]
-            return rest if len(rest) >= 2 else parts
     return parts
 
 
@@ -615,25 +639,18 @@ def listed_worktrees_outside(layout, surfaces):
     return sorted(outside), failures
 
 
-def query_target(resolved, layouts, spellings, cwd=None):
-    """What a found copy must match, for a resolved query. `kind` is "name"
-    (a bare file name), "tail" (a relative path: a found copy's path ends
-    with `parts`), "checkout" (an absolute path whose path inside this
-    repository's checkout is `parts`), "scratch" (an absolute path under a
-    scratch tree: `parts` are its components below the tree), or "absolute"
-    (any other absolute path). `path` is the query as given; `canonical` is
-    it in the canonical spelling, which every comparison uses; a relative
-    query's is its path from `cwd` (the current directory by default), the
-    one place a file git does not track is found for it."""
+def query_target(resolved, layouts, spellings):
+    """What a found copy must match, for a query resolve_query returned:
+    either a bare file name or an absolute path. `kind` is "name" (a bare
+    file name), "checkout" (a path whose path inside this repository's
+    checkout is `parts`), "scratch" (a path under a scratch tree: `parts` are
+    its components below the tree), or "absolute" (any other path). `path` is
+    the resolved query; `canonical` is it in the canonical spelling, which
+    every comparison uses, and the one place a file git does not track is
+    found for it."""
     parts = parts_of(resolved)
     if not os.path.isabs(resolved):
-        if len(parts) <= 1:
-            return {"kind": "name", "parts": parts, "path": resolved}
-        return {"kind": "tail", "parts": inside_nested_worktree_anywhere(parts),
-                "path": resolved,
-                "canonical": canonical_path(
-                    os.path.normpath(os.path.join(cwd or os.getcwd(), resolved)),
-                    spellings)}
+        return {"kind": "name", "parts": parts, "path": resolved}
     canonical = canonical_path(resolved, spellings)
     placed = place_in_this_repository(canonical, layouts)
     if placed and placed[1]:
@@ -655,21 +672,6 @@ def same_parts(parts, wanted):
 def ends_with(parts, tail):
     return len(parts) >= len(tail) and same_parts(parts[len(parts) - len(tail):],
                                                    tail)
-
-
-def is_found_copy(path, wanted, name):
-    """Whether a hit at `path` (absolute for a file, clone-relative for git)
-    is a copy of the query: the same name for a bare-name query; for a query
-    with directories, a path ending with those directories and that name."""
-    parts = [part for part in pathlib.PurePath(path).parts if part != os.sep]
-    if not parts or not is_same_name(parts[-1], name):
-        return False
-    if len(wanted) <= 1:
-        return True
-    if len(parts) < len(wanted):
-        return False
-    return ([part.lower() for part in parts[-len(wanted):-1]]
-            == [part.lower() for part in wanted[:-1]])
 
 
 def keep_same_name_and_newest(items, name, cap, basename_of):
@@ -919,7 +921,9 @@ def search_this_machine(machine_plan, stem, name, check_tracked=False):
     """Everything this machine holds under the plan, as one JSON-ready dict:
     the hits, a report per surface, and the git report. With
     `check_tracked`, a file hit in a checkout of this repository carries
-    `untracked` when git does not track it there."""
+    `untracked` when git does not track it there, or `tracking_unknown` when
+    git could not say. A git hit from a clone that is not this repository
+    carries `canonical`, the path it had in that clone's own work tree."""
     surfaces = machine_plan["surfaces"]
     layout = machine_plan.get("this_repository", {})
     spellings = machine_plan.get("spellings", [])
@@ -1005,12 +1009,22 @@ def search_this_machine(machine_plan, stem, name, check_tracked=False):
         for future in concurrent.futures.as_completed(asked):
             tracked, failure = future.result()
             for hit, inside in asked[future]:
-                hit["untracked"] = inside not in tracked
+                if failure:
+                    hit["tracking_unknown"] = True
+                else:
+                    hit["untracked"] = inside not in tracked
             if failure:
                 reports_by_surface[asked[future][0][0]["surface"]][
                     "failures"].append(failure)
     for hit in git_hits:
         hit["this_repository"] = hit["clone"] in this_git_dirs
+        # Another project's clone: its path is the path in that clone's own
+        # work tree, so a query for that very path finds its history.
+        if (not hit["this_repository"]
+                and os.path.basename(hit["clone"]) == ".git"):
+            hit["canonical"] = canonical_path(
+                os.path.join(os.path.dirname(hit["clone"]), hit["path"]),
+                spellings)
     hits += git_hits
 
     git_surfaces = [surface["name"] for surface in surfaces
@@ -1087,7 +1101,9 @@ def format_time(epoch):
 def describe(hit, machine):
     """The part of an entry's line after its time: machine, surface, what."""
     if hit["kind"] == "file":
-        untracked = ", not tracked by git" if hit.get("untracked") else ""
+        untracked = (", not tracked by git" if hit.get("untracked")
+                     else ", tracking unknown" if hit.get("tracking_unknown")
+                     else "")
         what = f"{hit['path']}  ({hit['size']:,} bytes{untracked})"
     else:
         status = STATUS_WORDS.get(hit["status"], hit["status"])
@@ -1151,9 +1167,12 @@ def render(query, target, results, not_searched, elapsed):
         place = hit.get("in_this_repository")
         return parts_of(place) if place else None
 
-    def untracked(entry):
-        return entry["hit"]["kind"] == "file" and bool(
-            entry["hit"].get("untracked"))
+    def own_path_only(entry):
+        """A file git does not track in its checkout, or where git could not
+        say: it counts only at its own path."""
+        hit = entry["hit"]
+        return hit["kind"] == "file" and bool(
+            hit.get("untracked") or hit.get("tracking_unknown"))
 
     # Under a scratch tree the checkout's own directory is not in the path:
     # its path inside the checkout is the longest tail of the query, two
@@ -1164,7 +1183,7 @@ def render(query, target, results, not_searched, elapsed):
         held = [len(parts) for entry, parts in
                 ((entry, checkout_parts(entry)) for entry in entries)
                 if parts and len(parts) >= 2 and ends_with(wanted, parts)
-                and not untracked(entry)]
+                and not own_path_only(entry)]
         if held:
             anchor = wanted[len(wanted) - max(held):]
 
@@ -1172,29 +1191,21 @@ def render(query, target, results, not_searched, elapsed):
         hit = entry["hit"]
         if kind == "name":
             return is_same_name(os.path.basename(hit["path"]), name)
-        if hit["kind"] == "file" and same_parts(
-                parts_of(hit.get("canonical", hit["path"])),
-                parts_of(target["canonical"])):
+        if hit.get("canonical") and same_parts(
+                parts_of(hit["canonical"]), parts_of(target["canonical"])):
             return True
         # A file git does not track in its checkout counts only at its own
         # path, just tested (PR 703 review 5299970582: another seat's
         # CLAUDE.local.md was found for this seat's).
-        if untracked(entry):
+        if own_path_only(entry):
             return False
-        if kind == "tail":
-            return is_found_copy(hit["path"], wanted, name)
         parts = checkout_parts(entry)
         return bool(anchor and parts) and same_parts(parts, anchor)
 
     if kind == "name":
         heading, wanted_label = f"Same name ({name})", f"named {name}"
     else:
-        if kind == "tail":
-            shown = "/".join(wanted)
-        elif anchor:
-            shown = "/".join(anchor)
-        else:
-            shown = target["path"]
+        shown = "/".join(anchor) if anchor else target["path"]
         heading, wanted_label = f"Same path ({shown})", f"at {shown}"
 
     def same_name(entry):
@@ -1343,7 +1354,20 @@ def main(argv=None) -> int:
                              "and print the answer as JSON: what the program "
                              "runs on the other machine over ssh")
     args = parser.parse_args(argv)
-    query = resolve_query(args.query)
+    try:
+        query = resolve_query(args.query)
+    except ValueError as error:
+        parser.error(str(error))
+    except CurrentDirectoryIsGone as error:
+        sys.stdout.write(
+            f"{PROGRAM}: the current directory no longer exists ({error}), so "
+            f"the relative path {args.query!r} cannot be made absolute; "
+            f"nothing was searched.\n\n"
+            f"Run again with the file's absolute path, or from a directory "
+            f"that exists.\n"
+            f"When you report this, do not say the file does not exist: "
+            f"nothing was searched.\n")
+        return 3
     stem = query_stem(query)
     if not stem:
         parser.error("the query has no file name to match")
