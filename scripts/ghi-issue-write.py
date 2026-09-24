@@ -910,10 +910,10 @@ def source_path_on_main(source: Path, repository_root: Path, runner):
     """The source's path inside the repository, if origin/main tracks it.
     Returns None for a file that is new, or outside the checkout.
 
-    Raises on a failed list, as paired_paths does and for the reason written
-    there: `git ls-tree` exits 0 with empty output for a path that is not on
-    the revision, so a non-zero exit is a real failure and never means "not
-    tracked". Until 2026-09-22 this call passed `check=False` and read a
+    Raises on a failed list, as ghi_md_paths_for_issue does and for the reason
+    written there: `git ls-tree` exits 0 with empty output for a path that is
+    not on the revision, so a non-zero exit is a real failure and never means
+    "not tracked". Until 2026-09-22 this call passed `check=False` and read a
     failure as "not tracked", so step 4 copied a source it should have moved
     and the same document landed at two paths once the pull request merged
     (user-ruled a fix 2026-09-22, "y sounds like this is a fix now", item 4
