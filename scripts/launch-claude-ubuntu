@@ -244,11 +244,19 @@ AGENT_DIRECTORY_SUPERVISOR="~/agents/$AGENT_NAME"
 # The after-exit shell inherits this export, as it inherits the task-list
 # pin, and for the same reason: the `claude --continue` it offers is the
 # same seat, and a `gh` typed there is the seat acting.
+# The seat's own git identity, box-side — the twin of the same block in
+# scripts/launch-claude-mac, where the defect, the ruling and the design are
+# written out in full. The exports ride inside the pane command because ssh
+# forwards no environment: they must be set in the seat's own shell at P2.
+# The single-quoted values ride through P1's double-quote context untouched,
+# exactly as the task-list id beside them does, and AGENT_NAME needs no
+# escaping at either parse (charset-checked above).
 SUPERVISOR_COMMAND="export PATH=\"\$HOME/.local/bin:\$PATH\"; \
 unset GH_TOKEN; if [ -s \"\$HOME/$SEAT_GITHUB_TOKEN_FILE_UNDER_HOME\" ]; then IFS= read -r GH_TOKEN < \"\$HOME/$SEAT_GITHUB_TOKEN_FILE_UNDER_HOME\"; export GH_TOKEN; fi; \
 if [ -d \"\$HOME/.claude/tasks/$AGENT_NAME-tasks\" ] && [ ! -e \"\$HOME/.claude/tasks/nedschorus-$AGENT_NAME-tasks\" ]; then mv \"\$HOME/.claude/tasks/$AGENT_NAME-tasks\" \"\$HOME/.claude/tasks/nedschorus-$AGENT_NAME-tasks\"; fi; \
 export CLAUDE_CODE_TASK_LIST_ID='nedschorus-$AGENT_NAME-tasks'; \
 export CLAUDE_CODE_ENABLE_TODO_TOOLS=1; \
+export GIT_AUTHOR_NAME='$AGENT_NAME' GIT_AUTHOR_EMAIL='$AGENT_NAME@nedschorus.invalid' GIT_COMMITTER_NAME='$AGENT_NAME' GIT_COMMITTER_EMAIL='$AGENT_NAME@nedschorus.invalid'; \
 python3 \$HOME/Projects/nedschorus/nc-systems/handoff/handoff-supervisor.py \
 --agent '$AGENT_NAME' --cd '$AGENT_DIRECTORY_SUPERVISOR'"
 

@@ -1934,6 +1934,19 @@ with tempfile.TemporaryDirectory() as temporary:
               for marker in ("CLAUDE_CODE_TASK_LIST_ID",
                              "CLAUDE_CODE_ENABLE_TODO_TOOLS")),
           box_command)
+    # PR "Each seat commits under its own name, and no agent commits as the
+    # user" review (mac-claude, inline at launch-claude-ubuntu): this branch
+    # is how restart-live-seats-at-login and a by-hand box recovery start a
+    # box seat, so without the launcher's identity exports a recovered seat
+    # commits under the shared config's name, or under the recovering seat's.
+    for variable, value in (("GIT_AUTHOR_NAME", workspace.name),
+                            ("GIT_AUTHOR_EMAIL", f"{workspace.name}@nedschorus.invalid"),
+                            ("GIT_COMMITTER_NAME", workspace.name),
+                            ("GIT_COMMITTER_EMAIL", f"{workspace.name}@nedschorus.invalid")):
+        check(f"git identity: the box branch sets {variable} to the seat's own",
+              f"{variable}={value}" in box_assignments
+              and box_command.index(variable) < box_command.index("handoff-supervisor.py"),
+              box_command)
     # This branch hand-composes the supervisor's path, and it is the only
     # branch off macOS -- launcher_path() returns None there, which is
     # ned-box, where the seats run. The assertion resolves the path and asks

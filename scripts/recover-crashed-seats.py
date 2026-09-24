@@ -803,6 +803,13 @@ def launch_seat(name: str, seat_directory: Path, handoff_directory: Path,
     # the launcher comment's Warning 2, arriving at the one moment
     # continuity is being promised. The launcher branch above needs nothing
     # here; it runs the launcher, which does this itself.
+    # The seat's git identity rides here for the same reason (user-ruled
+    # 2026-09-22, the per-seat identity the launchers export): without it a
+    # boot-restarted or crash-recovered box seat commits under the clone's
+    # shared .git/config identity, and a recovery run by hand from another
+    # box seat hands the recovered seat the RECOVERING seat's name, because
+    # the per-seat tmux server copies the caller's environment. The explicit
+    # export overrides whatever the caller carried.
     # The one-time store migration rides here too (user-ruled 2026-08-29):
     # this branch bypasses the launcher, so without the rename a recovered
     # seat would pin to an empty prefixed store while its list sat under the
@@ -817,6 +824,10 @@ def launch_seat(name: str, seat_directory: Path, handoff_directory: Path,
         f'"$HOME/.claude/tasks/nedschorus-{name}-tasks"; fi; '
         f"export CLAUDE_CODE_TASK_LIST_ID={shlex.quote(f'nedschorus-{name}-tasks')}; "
         "export CLAUDE_CODE_ENABLE_TODO_TOOLS=1; "
+        f"export GIT_AUTHOR_NAME={shlex.quote(name)} "
+        f"GIT_AUTHOR_EMAIL={shlex.quote(f'{name}@nedschorus.invalid')} "
+        f"GIT_COMMITTER_NAME={shlex.quote(name)} "
+        f"GIT_COMMITTER_EMAIL={shlex.quote(f'{name}@nedschorus.invalid')}; "
         f"python3 {SUPERVISOR_SCRIPT} "
         f"--agent {shlex.quote(name)} --cd {shlex.quote(str(seat_directory))} "
         f"{supervisor_arguments}"

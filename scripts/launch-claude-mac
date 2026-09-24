@@ -489,10 +489,39 @@ if [ ! -s "$SEAT_GITHUB_TOKEN_FILE" ]; then
     echo "launch-claude-mac: ============================================================" >&2
 fi
 
+# The seat's own git identity (user-approved 2026-09-22, the walk
+# ghi-write-session-open-rulings-and-concerns item 7; his naming words: "I'd
+# probably use the name of the agent, or if namelss, the model and effort
+# ofthe agent"). Author and committer, name and email, are all set per
+# process, so the seat commits as itself whatever the shared .git/config
+# holds. That config is one file behind every worktree of the clone, and
+# any agent's `git config user.name` rewrote it for every seat at once:
+# measured 2026-09-22, one seat's commits went out that day as
+# identity-probe, as reviewer, and once as identity-probe <junk@lerner1.com>,
+# the user's own address, on a public pull request. The environment outranks
+# the config at commit time, and rewriting the config between two commits
+# does not move it (measured before the design was approved).
+#
+# The email is <seat>@nedschorus.invalid: RFC 2606 reserves .invalid, so the
+# address can never be anyone's real one. AGENT_NAME needs no escaping here
+# (charset-checked above to letters, digits, - and _).
+#
+# Subagents inherit the seat's environment, so a subagent commits as its
+# seat. Naming unnamed subagents by model and effort is deferred, with the
+# user's agreement; the Claude-Session trailer already tells sessions apart.
+#
+# The after-exit shell inherits this export too: a `git commit` typed there
+# is the seat acting, as a `gh` typed there is.
+#
+# scripts/git-client-side-hooks/pre-commit refuses a commit made inside a
+# Claude session that is authored or committed by the user's own address or
+# by the unconfigured-agent tripwire; it is what catches a session started
+# without this launcher once the tripwire is in the shared config.
 SUPERVISOR_COMMAND="export PATH=\"\$HOME/.local/bin:\$PATH\"; \
 unset GH_TOKEN; if [ -s \"\$HOME/$SEAT_GITHUB_TOKEN_FILE_UNDER_HOME\" ]; then IFS= read -r GH_TOKEN < \"\$HOME/$SEAT_GITHUB_TOKEN_FILE_UNDER_HOME\"; export GH_TOKEN; fi; \
 export CLAUDE_CODE_TASK_LIST_ID='nedschorus-$AGENT_NAME-tasks'; \
 export CLAUDE_CODE_ENABLE_TODO_TOOLS=1; \
+export GIT_AUTHOR_NAME='$AGENT_NAME' GIT_AUTHOR_EMAIL='$AGENT_NAME@nedschorus.invalid' GIT_COMMITTER_NAME='$AGENT_NAME' GIT_COMMITTER_EMAIL='$AGENT_NAME@nedschorus.invalid'; \
 python3 '$SUPERVISOR' --agent '$AGENT_NAME' --cd '$QUOTED_AGENT_DIRECTORY'"
 
 # A first-prompt file seeds only the FIRST session. The supervisor reads the

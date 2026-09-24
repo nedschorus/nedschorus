@@ -73,6 +73,26 @@ def check(case_name, condition, detail=""):
         failures.append(case_name)
 
 
+# The seat's git identity, recorded wherever the task-list pin is: the four
+# variables the launcher exports so the seat commits as itself.
+GIT_IDENTITY_VARIABLES = ("GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL",
+                          "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL")
+GIT_IDENTITY_ECHO_LINES = "".join(
+    f'      echo "{name}=${{{name}-<unset>}}";\n'
+    for name in GIT_IDENTITY_VARIABLES)
+
+
+def git_identity(environment: dict) -> dict:
+    return {name: environment.get(name) for name in GIT_IDENTITY_VARIABLES}
+
+
+def seat_git_identity(seat_name: str) -> dict:
+    return {"GIT_AUTHOR_NAME": seat_name,
+            "GIT_AUTHOR_EMAIL": f"{seat_name}@nedschorus.invalid",
+            "GIT_COMMITTER_NAME": seat_name,
+            "GIT_COMMITTER_EMAIL": f"{seat_name}@nedschorus.invalid"}
+
+
 def write_stub(directory: Path, name: str, body: str):
     path = directory / name
     path.write_text("#!/bin/sh\n" + body, encoding="utf-8")
@@ -147,7 +167,9 @@ class MacLaunchSandbox:
                    '      echo "NEDSCHORUS_SEAT_GITHUB_ACCOUNT='
                    '${NEDSCHORUS_SEAT_GITHUB_ACCOUNT-<unset>}";\n'
                    '      echo "LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS='
-                   '${LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS-<unset>}"; } '
+                   '${LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS-<unset>}";\n'
+                   + GIT_IDENTITY_ECHO_LINES +
+                   ' } '
                    f'> "{self.captures}/supervisor-environment.txt";;\n'
                    '  esac\n'
                    'done\n'
@@ -168,7 +190,9 @@ class MacLaunchSandbox:
                    '  echo "NEDSCHORUS_SEAT_GITHUB_ACCOUNT='
                    '${NEDSCHORUS_SEAT_GITHUB_ACCOUNT-<unset>}";\n'
                    '  echo "LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS='
-                   '${LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS-<unset>}"; } '
+                   '${LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS-<unset>}";\n'
+                   + GIT_IDENTITY_ECHO_LINES +
+                   ' } '
                    f'> "{self.captures}/after-exit-environment.txt"\n')
 
     def write_seat_token(self, account: str, token: str,
@@ -186,7 +210,8 @@ class MacLaunchSandbox:
 
     def run(self, agents_root, seat_name="seat-t", attach=False,
             extra_arguments=None, update_timeout_seconds=None,
-            seat_github_account=None, ambient_gh_token=None):
+            seat_github_account=None, ambient_gh_token=None,
+            ambient_git_identity=None):
         """Run the launcher in the sandbox. extra_arguments, when given, is
         placed in LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS the way
         recover-crashed-seats.py's launch_seat places it — after the strip
@@ -200,6 +225,7 @@ class MacLaunchSandbox:
         environment = {
             **{key: value for key, value in os.environ.items()
                if key != "GH_TOKEN"
+               and key not in GIT_IDENTITY_VARIABLES
                and not key.startswith(("NEDSCHORUS_", "LAUNCH_CLAUDE_",
                                        "CLAUDE_CODE_"))},
             "NEDSCHORUS_AGENTS_ROOT": agents_root,
@@ -215,6 +241,8 @@ class MacLaunchSandbox:
             environment["NEDSCHORUS_SEAT_GITHUB_ACCOUNT"] = seat_github_account
         if ambient_gh_token is not None:
             environment["GH_TOKEN"] = ambient_gh_token
+        if ambient_git_identity is not None:
+            environment.update(ambient_git_identity)
         return subprocess.run(
             [str(LAUNCHER), *arguments],
             capture_output=True, text=True, check=False,
@@ -474,6 +502,36 @@ def main() -> int:
               == "nedschorus-seat-b-tasks",
               sandbox.supervisor_environment())
 
+        # --- the seat's git identity (user-approved 2026-09-22): author and
+        # committer, name and email, reach the supervisor as the SEAT'S name,
+        # so the seat commits as itself whatever the shared .git/config
+        # holds. Two seat names are the teeth, as for the task list, and an
+        # ambient identity — the user's own address, the 2026-09-22 leak —
+        # must be replaced, not inherited. -----------------------------------
+        sandbox = MacLaunchSandbox(root / "git-identity-detached")
+        result = sandbox.run("~/agents", seat_name="seat-a")
+        check("git identity: author and committer are the seat's name and <seat>@nedschorus.invalid",
+              result.returncode == 0
+              and git_identity(sandbox.supervisor_environment())
+              == seat_git_identity("seat-a"),
+              (result.returncode, git_identity(sandbox.supervisor_environment())))
+        sandbox = MacLaunchSandbox(root / "git-identity-second-seat")
+        sandbox.run("~/agents", seat_name="seat-b")
+        check("git identity: a second seat name yields that seat's identity",
+              git_identity(sandbox.supervisor_environment())
+              == seat_git_identity("seat-b"),
+              git_identity(sandbox.supervisor_environment()))
+        sandbox = MacLaunchSandbox(root / "git-identity-ambient")
+        sandbox.run("~/agents", seat_name="seat-a", ambient_git_identity={
+            "GIT_AUTHOR_NAME": "Edward Lerner",
+            "GIT_AUTHOR_EMAIL": "junk@lerner1.com",
+            "GIT_COMMITTER_NAME": "Edward Lerner",
+            "GIT_COMMITTER_EMAIL": "junk@lerner1.com"})
+        check("git identity: an identity in the launching shell is replaced, not inherited",
+              git_identity(sandbox.supervisor_environment())
+              == seat_git_identity("seat-a"),
+              git_identity(sandbox.supervisor_environment()))
+
         # --- the same binding on the ATTACHED path, including the after-exit
         # shell: that shell offers `claude --continue`, and a continue run
         # without the pin binds to a session-keyed store whose TaskList
@@ -495,6 +553,14 @@ def main() -> int:
               and sandbox.after_exit_environment().get(
                   "CLAUDE_CODE_ENABLE_TODO_TOOLS") == "1",
               sandbox.after_exit_environment())
+        check("git identity (attached): the supervisor commits as the seat",
+              git_identity(sandbox.supervisor_environment())
+              == seat_git_identity("seat-c"),
+              git_identity(sandbox.supervisor_environment()))
+        check("git identity (attached): the after-exit shell keeps the seat's identity",
+              git_identity(sandbox.after_exit_environment())
+              == seat_git_identity("seat-c"),
+              git_identity(sandbox.after_exit_environment()))
         check("attached: the after-exit shell starts in the seat directory",
               # resolve() both sides: macOS reports /var for /private/var
               bool(sandbox.after_exit_cwd())

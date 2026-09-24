@@ -70,6 +70,26 @@ def check(case_name, condition, detail=""):
         failures.append(case_name)
 
 
+# The seat's git identity, recorded wherever the task-list pin is: the four
+# variables the launcher exports box-side so the seat commits as itself.
+GIT_IDENTITY_VARIABLES = ("GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL",
+                          "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL")
+GIT_IDENTITY_ECHO_LINES = "".join(
+    f'      echo "{name}=${{{name}-<unset>}}";\n'
+    for name in GIT_IDENTITY_VARIABLES)
+
+
+def git_identity(environment: dict) -> dict:
+    return {name: environment.get(name) for name in GIT_IDENTITY_VARIABLES}
+
+
+def seat_git_identity(seat_name: str) -> dict:
+    return {"GIT_AUTHOR_NAME": seat_name,
+            "GIT_AUTHOR_EMAIL": f"{seat_name}@nedschorus.invalid",
+            "GIT_COMMITTER_NAME": seat_name,
+            "GIT_COMMITTER_EMAIL": f"{seat_name}@nedschorus.invalid"}
+
+
 def write_stub(directory: Path, name: str, body: str):
     path = directory / name
     path.write_text("#!/bin/sh\n" + body, encoding="utf-8")
@@ -136,7 +156,9 @@ class LaunchHarness:
                    '${CLAUDE_CODE_TASK_LIST_ID-<unset>}";\n'
                    '      echo "CLAUDE_CODE_ENABLE_TODO_TOOLS='
                    '${CLAUDE_CODE_ENABLE_TODO_TOOLS-<unset>}";\n'
-                   '      echo "GH_TOKEN=${GH_TOKEN-<unset>}"; } '
+                   '      echo "GH_TOKEN=${GH_TOKEN-<unset>}";\n'
+                   + GIT_IDENTITY_ECHO_LINES +
+                   ' } '
                    '> "$LCU_TEST_DIR/supervisor-environment.txt";;\n'
                    '  esac\n'
                    'done\n'
@@ -153,7 +175,9 @@ class LaunchHarness:
                    '${CLAUDE_CODE_TASK_LIST_ID-<unset>}";\n'
                    '  echo "CLAUDE_CODE_ENABLE_TODO_TOOLS='
                    '${CLAUDE_CODE_ENABLE_TODO_TOOLS-<unset>}";\n'
-                   '  echo "GH_TOKEN=${GH_TOKEN-<unset>}"; } '
+                   '  echo "GH_TOKEN=${GH_TOKEN-<unset>}";\n'
+                   + GIT_IDENTITY_ECHO_LINES +
+                   ' } '
                    '> "$LCU_TEST_DIR/after-exit-environment.txt"\n')
         # has-session answers "no session" so socket selection stays on the
         # per-seat socket; a new-session call records its argv, then replays
@@ -585,6 +609,23 @@ def main() -> int:
               == "nedschorus-seat-i-tasks",
               result["supervisor_environment"])
 
+        # --- the seat's git identity, box-side (user-approved 2026-09-22):
+        # the exports ride inside the pane command, because ssh forwards no
+        # environment, and reach the box-side supervisor as the SEAT'S name.
+        # Two seat names are the teeth, as for the task list. ----------------
+        harness = LaunchHarness(root / "git-identity-detached")
+        result = harness.run(["seat-h", "--no-attach"])
+        check("git identity: author and committer are the seat's name and <seat>@nedschorus.invalid",
+              git_identity(result["supervisor_environment"])
+              == seat_git_identity("seat-h"),
+              git_identity(result["supervisor_environment"]))
+        harness = LaunchHarness(root / "git-identity-second-seat")
+        result = harness.run(["seat-i", "--no-attach"])
+        check("git identity: a second seat name yields that seat's identity",
+              git_identity(result["supervisor_environment"])
+              == seat_git_identity("seat-i"),
+              git_identity(result["supervisor_environment"]))
+
         # --- 9. the same binding on the ATTACHED path, including the
         # after-exit shell: that shell offers `claude --continue`, and a
         # continue run without the pin binds to a session-keyed store whose
@@ -603,6 +644,14 @@ def main() -> int:
               and result["after_exit_environment"].get(
                   "CLAUDE_CODE_ENABLE_TODO_TOOLS") == "1",
               result["after_exit_environment"])
+        check("git identity (attached): the supervisor commits as the seat",
+              git_identity(result["supervisor_environment"])
+              == seat_git_identity("seat-j"),
+              git_identity(result["supervisor_environment"]))
+        check("git identity (attached): the after-exit shell keeps the seat's identity",
+              git_identity(result["after_exit_environment"])
+              == seat_git_identity("seat-j"),
+              git_identity(result["after_exit_environment"]))
 
         # --- the window role (nedschorus#116, user-ruled 2026-09-14): an
         # attached window reconnects on its own, and the remote side neither

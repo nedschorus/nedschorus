@@ -1,0 +1,5 @@
+#!/bin/sh
+# The pre-commit identity check, for a merge commit made by `git merge`, which
+# runs this hook instead of pre-commit. The reasons, the reach and the
+# tripwire step are all in scripts/git-client-side-hooks/pre-commit.
+exec "$(dirname "$0")/pre-commit"
