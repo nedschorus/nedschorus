@@ -1,0 +1,9 @@
+{
+  "case": "a phrase search ran over a line cut to 220 characters and reported the phrase absent",
+  "provenance": "Failure 2 of the four. A seat grepped a file for a phrase, saw no match, and concluded the phrase was absent; its pipeline piped through `cut -c1-220`, so it had searched a truncation of a one-paragraph line, and reading the file whole reversed the conclusion. The shape is reconstructed here against this repository's own CLAUDE.md, whose line 14 is 1,127 characters of one paragraph: `never an amend` sits past character 220, the truncated search finds nothing, and the same search over the whole line returns 1. Run in this worktree on 2026-09-23.",
+  "command": "sed -n '14p' CLAUDE.md | cut -c1-220 | grep -n \"never an amend\"",
+  "exit_code": 1,
+  "stdout": "",
+  "stderr": "",
+  "must_fire": true
+}
