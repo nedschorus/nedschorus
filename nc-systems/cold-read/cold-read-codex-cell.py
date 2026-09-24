@@ -138,9 +138,8 @@ TIER_TO_CODEX_MODEL_CHAIN = {
 #
 # The `second` cold-read-tier stays at xhigh because luna is the one model
 # the step does not help: max was +8 net alone, positive on only three of six
-# targets, and in the union it is worth -1. Opus and fable stay at max, where
-# the union says the effort is worth 20 and 6 findings; see the claude
-# cold-read-cell.
+# targets, and in the union it is worth -1. Fable stays at max, where the
+# union says the effort is worth 6 findings; see the claude cold-read-cell.
 TIER_TO_REASONING_EFFORT = {
     "deep": "xhigh",
     "second": "xhigh",

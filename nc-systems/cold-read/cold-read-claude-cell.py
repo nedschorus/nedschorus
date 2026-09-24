@@ -50,8 +50,8 @@ PROGRAM = "cold-read-claude-cell"
 # ruled 2026-09-04; the `deep` cold-read-tier was Opus-class until 2026-08-17,
 # Fable-class from then until the 2026-08-25 ruling below, and Opus-class
 # since; `second` was Sonnet-class from 2026-08-25 until the 2026-09-04
-# ruling); the opus id verified against live subagent transcripts 2026-08-04,
-# the fable-5-1 id by the 2026-09-03 campaign's smoke run (its provenance stamp
+# ruling); the fable-5-1 id verified by the 2026-09-03 campaign's smoke run and
+# the opus-5-5 id by the 2026-09-23 effort sweep's (each provenance stamp
 # carried the requested model and effort, no fallback).
 #
 # WHY THE `second` COLD-READ-TIER IS FABLE, NOT SONNET (user-ruled
@@ -97,6 +97,15 @@ PROGRAM = "cold-read-claude-cell"
 # they found either way — so what the swap buys is depth in this one slot, not
 # a wider cold-read-cell roster.
 #
+# WHY OPUS 5.5, NOT OPUS 5 (user-ruled 2026-09-24: "Yes use opus 5.5"). The
+# 2026-09-23 effort sweep ran both under the same launchers and prompt, two
+# runs on four targets: claude-opus-5-5 at xhigh beat claude-opus-5 at max
+# by +10 net unique-and-real findings, positive on three of the four, tied
+# it in the four-seat roster union (242 against 244 real findings) and ran
+# faster (mean 1032 s against 1103 s). The record is in the log-store at
+# nedlern@ned-box:/home/nedlern/nedschorus-logs/cold-read-records/2026-09-23-effort-sweep-opus-5-5-gpt-6-sol/REPORT.md
+# ("The instrument controls" and "THE ANSWERS").
+#
 # WHY THE `deep` COLD-READ-TIER HAS NO FALLBACK (user-ruled 2026-09-04: "opus
 # falling back to fable is not valid. If opus fails we stop working and wait
 # for it to come back"). From 2026-08-23 to 2026-09-04 the `deep`
@@ -120,35 +129,36 @@ PROGRAM = "cold-read-claude-cell"
 # line and the stamp's `fallback_from=` field stay for the same reason; no
 # pinned chain can produce them today.
 TIER_TO_CLAUDE_MODEL_CHAIN = {
-    "deep": ("claude-opus-5",),
+    "deep": ("claude-opus-5-5",),
     "second": ("claude-fable-5-1",),
 }
 
 # cold-read-tier -> reasoning effort, pinned explicitly so a cold-read-cell's
 # behavior never depends on the machine's own default. Accepted levels today:
-# low, medium, high, xhigh, max. "max" for both cold-read-tiers (user-ruled
-# 2026-09-04 on the 2026-09-03 tier-roster campaign, REPORT.md path above,
-# "Step-rule tally, ALL SIX TARGETS" and "THE ANSWERS" section 2): opus at max
-# beat opus at high by +70 net unique-and-real findings over two runs and six
-# targets, positive on every target, with the cold-read-cell's worst-target
-# recall rising 0.56 -> 0.72 and no precision cost (0.18 against 0.20 pooled);
-# fable at max beat fable at high by +63, positive on every target. Time
-# roughly doubles (opus mean 757 -> 1047 s) and stays under the Codex `deep`
-# cold-read-cell's. Recalibrating is the user's call, here.
+# low, medium, high, xhigh, max. Recalibrating is the user's call, here.
 #
-# REAFFIRMED 2026-09-15 against the union, which is the number that decides a
-# grid: those figures measure a cold-read-cell alone, and what matters is
-# what a cold-read-cell adds to what the others already found. Computed
-# from the same campaign's cluster tables over its six targets, opus
-# at max is worth 20 findings of a 331-finding union and 14 points of
-# worst-target recall against opus at high, and it contributes 34 findings
-# no other cold-read-cell in the grid found, more than twice any other
-# cold-read-cell. Fable at max is worth 6, and contributes 14. Both stay
-# at max. The Codex `deep` cold-read-tier went the other way on the same
-# analysis; its own comment says why. The analysis is in the log-store at
+# `deep` is xhigh (user-ruled 2026-09-24, the effort sweep REPORT.md cited
+# above, "Within-model effort steps" and "THE ANSWERS"). Over the 2026-09-03
+# campaign's six targets, two runs each: claude-opus-5-5 at xhigh beat it at
+# high by +58 net unique-and-real findings, positive on all six, and added
+# 13 real findings to the four-seat roster union; at max it scored -7
+# against xhigh, added nothing to the union, and took 1754 s mean against
+# 937 s.
+#
+# `second` is max (user-ruled 2026-09-04 on the 2026-09-03 tier-roster
+# campaign, REPORT.md path above, "Step-rule tally, ALL SIX TARGETS" and
+# "THE ANSWERS" section 2): fable at max beat fable at high by +63 net
+# unique-and-real findings, positive on every target. Reaffirmed 2026-09-15
+# against the union, which is the number that decides a grid: computed from
+# the same campaign's cluster tables, fable at max is worth 6 findings of a
+# 331-finding union and contributes 14 no other cold-read-cell found. The
+# analysis is in the log-store at
 # nedlern@ned-box:/home/nedlern/nedschorus-logs/analysis/2026-09-15-cold-read-grid-union-and-effort-analysis.md
+# The same campaign put claude-opus-5 at max for `deep` (+70 over high,
+# worst-target recall 0.64 -> 0.79; first published as 0.56 -> 0.72, a
+# scorer bug the 2026-09-23 sweep found and corrected, its incident 1).
 TIER_TO_REASONING_EFFORT = {
-    "deep": "max",
+    "deep": "xhigh",
     "second": "max",
 }
 

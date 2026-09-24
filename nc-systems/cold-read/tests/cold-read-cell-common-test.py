@@ -543,7 +543,7 @@ with tempfile.TemporaryDirectory() as scratch:
     report = repository / "cold-read-records" / "run-d" / "claude-restate-deep.md"
     result = run_claude_cell(
         repository, stubs,
-        {"claude-opus-5": {"exit": 1},
+        {"claude-opus-5-5": {"exit": 1},
          "*": {"report": "STUB REVIEW: findings a fallback would have written\n"}},
         report, "--tier", "deep",
     )
@@ -554,7 +554,7 @@ with tempfile.TemporaryDirectory() as scratch:
           and "fell back to" not in result.stderr,
           f"stderr={result.stderr!r}")
     check("the failure names the one attempt",
-          "claude-opus-5(exit1)" in result.stderr, repr(result.stderr))
+          "claude-opus-5-5(exit1)" in result.stderr, repr(result.stderr))
 
     # --- Every failed attempt names its cause (nedschorus#413) ---------------
     # The classifier's fixtures are real lines (the fixture rule,
@@ -1207,6 +1207,23 @@ with tempfile.TemporaryDirectory() as scratch:
     )
     check("the Codex `deep` tier runs at xhigh, not max",
           result.returncode == 0
+          and "effort=xhigh" in provenance_stamp_of(report),
+          f"exit {result.returncode}; stamp={provenance_stamp_of(report)!r}")
+
+    # The Claude `deep` tier (user-ruled 2026-09-24). In the 2026-09-23
+    # effort sweep Opus 5.5 at xhigh beat Opus 5 at max by +10 net findings
+    # under the same launchers and tied it in the union; Opus 5.5 at max
+    # added nothing over xhigh and took 1754 s mean against 937 s.
+    shutil.rmtree(repository)
+    repository = build_scratch_repository(scratch)
+    report = report_path_for(repository, "claude-deep-model-and-effort", "claude")
+    result = run_claude_cell(
+        repository, stubs, {"*": {"report": "STUB REVIEW: one restatement\n"}},
+        report, "--tier", "deep",
+    )
+    check("the Claude `deep` tier runs claude-opus-5-5 at xhigh",
+          result.returncode == 0
+          and " model=claude-opus-5-5 " in provenance_stamp_of(report)
           and "effort=xhigh" in provenance_stamp_of(report),
           f"exit {result.returncode}; stamp={provenance_stamp_of(report)!r}")
 
