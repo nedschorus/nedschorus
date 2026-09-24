@@ -115,6 +115,19 @@ def git(cwd, *arguments):
     ).stdout.strip()
 
 
+def commit_files(repository, files, message="Add the files"):
+    """Write `files` ({path inside: text}) into `repository`, a git work
+    tree (made one first when it is not), and commit them, so git tracks
+    them there."""
+    if not (repository / ".git").exists():
+        repository.mkdir(parents=True, exist_ok=True)
+        git(repository, "init", "-q")
+    for relative, text in files.items():
+        write(repository / relative, text)
+    git(repository, "add", *files)
+    git(repository, "commit", "-q", "-m", message)
+
+
 def make_plan(base, other="ssh", timeout_seconds=20, extra_mac_roots=()):
     """Both machines' plans under `base`, laid out as production lays them
     out: this repository's main clone is <machine>/Projects/nedschorus, seat
@@ -171,8 +184,9 @@ def make_stand_in_bin(base):
     return bin_dir
 
 
-def run(base, query, mode="ok", plan=None):
-    """(exit code, stdout, stderr) of one run of the program."""
+def run(base, query, mode="ok", plan=None, cwd=None):
+    """(exit code, stdout, stderr) of one run of the program, from `cwd`
+    (`base` by default)."""
     environment = dict(os.environ)
     for variable in GIT_REDIRECTING_VARIABLES:
         environment.pop(variable, None)
@@ -182,7 +196,7 @@ def run(base, query, mode="ok", plan=None):
     environment["FAKE_SSH_ARGV_LOG"] = str(base / "ssh-argv.log")
     environment["PYTHONDONTWRITEBYTECODE"] = "1"
     result = subprocess.run([sys.executable, str(PROGRAM), query],
-                            capture_output=True, text=True, cwd=base,
+                            capture_output=True, text=True, cwd=cwd or base,
                             env=environment, timeout=120)
     return result.returncode, result.stdout, result.stderr
 
@@ -657,7 +671,7 @@ with scratch() as directory:
     check("the instruction names the path that was not found",
           "No copy at nowhere/never-existed/path-probe.md was found: the files "
           "above are candidates only" in stdout, stdout)
-    write(base / "mac" / "agents" / "s" / "wanted" / "dir" / "path-probe.md",
+    write(base / "box" / "logs" / "s" / "wanted" / "dir" / "path-probe.md",
           "the real one", NOW - 500)
     write(base / "mac" / "agents" / "s" / "path-probe-notes.md", "stem only",
           NOW - 1)
@@ -666,7 +680,7 @@ with scratch() as directory:
     check("a copy whose path ends with the query's path is found, under a "
           "same-path heading",
           code == 0 and "Same path (wanted/dir/path-probe.md)" in stdout
-          and "/s/wanted/dir/path-probe.md" in same
+          and "/logs/s/wanted/dir/path-probe.md" in same
           and "other-record" not in same, stdout + stderr)
     check("a same-name candidate is listed before a newer stem-only one",
           len(entry_lines(other)) == 2
@@ -674,7 +688,7 @@ with scratch() as directory:
           and "path-probe-notes.md" in entry_lines(other)[1], other)
     code, stdout, stderr = run(base, "wanted/DIR/Path-Probe.md")
     check("the path is compared without regard to case",
-          code == 0 and "/s/wanted/dir/path-probe.md" in sections(stdout)[0],
+          code == 0 and "/logs/s/wanted/dir/path-probe.md" in sections(stdout)[0],
           stdout + stderr)
     code, stdout, stderr = run(base, "anted/dir/path-probe.md")
     check("the path is compared on whole components, not characters",
@@ -802,8 +816,7 @@ with scratch() as directory:
     make_stand_in_bin(base)
     (base / "mac" / "agents" / "seat-z" / ".git").mkdir(parents=True)
     nested = base / "mac" / "agents" / "seat" / ".claude" / "worktrees" / "agent-x"
-    write(nested / ".git", "gitdir: /nowhere/.git/worktrees/agent-x\n")
-    write(nested / "docs" / "nest-probe.md", "in a nested worktree")
+    commit_files(nested, {"docs/nest-probe.md": "in a nested worktree"})
     code, stdout, stderr = run(
         base, str(base / "mac" / "agents" / "seat-z" / "docs" / "nest-probe.md"))
     check("a copy in a worktree nested inside a checkout is compared by its "
@@ -1020,10 +1033,11 @@ with scratch() as directory:
     base = pathlib.Path(directory)
     make_stand_in_bin(base)
     (base / "mac" / "agents" / "seat-a" / ".git").mkdir(parents=True)
-    write(base / "mac" / "agents" / "seat-b" / "root-probe.md", "at the root",
-          NOW - 50)
-    write(base / "mac" / "agents" / "seat-b" / "sub" / "root-probe.md",
-          "in a subdirectory", NOW - 5)
+    commit_files(base / "mac" / "agents" / "seat-b",
+                 {"root-probe.md": "at the root",
+                  "sub/root-probe.md": "in a subdirectory"})
+    os.utime(base / "mac" / "agents" / "seat-b" / "root-probe.md",
+             (NOW - 50, NOW - 50))
     code, stdout, stderr = run(
         base, str(base / "mac" / "agents" / "seat-a" / "root-probe.md"))
     same, other, _ = sections(stdout)
@@ -1054,10 +1068,9 @@ with scratch() as directory:
     base = pathlib.Path(directory)
     make_stand_in_bin(base)
     (base / "mac" / "agents" / "seat-x" / ".git").mkdir(parents=True)
-    write(base / "mac" / "agents" / "seat-y" / "docs" / "abs-probe.md",
-          "the copy in another checkout", NOW - 50)
-    write(base / "mac" / "agents" / "seat-y" / "other" / "abs-probe.md",
-          "elsewhere", NOW - 10)
+    commit_files(base / "mac" / "agents" / "seat-y",
+                 {"docs/abs-probe.md": "the copy in another checkout",
+                  "other/abs-probe.md": "elsewhere"})
     query = str(base / "mac" / "agents" / "seat-x" / "docs" / "abs-probe.md")
     code, stdout, stderr = run(base, query)
     same, other, _ = sections(stdout)
@@ -1066,6 +1079,198 @@ with scratch() as directory:
           code == 0 and "Same path (docs/abs-probe.md)" in stdout
           and "/seat-y/docs/abs-probe.md" in same
           and "/seat-y/other/abs-probe.md" in other, stdout + stderr)
+
+# --- A file git does not track is found only at its own path --------------------
+# PR 703 review 5299970582: on ned-box, /Users/el/agents/merge-lane/
+# CLAUDE.local.md exited 0 on merge-lane-2's CLAUDE.local.md. A seat's
+# untracked file belongs to that seat; another checkout's file at the same
+# place is a different file, while a tracked one is the same file on another
+# branch.
+with scratch() as directory:
+    base = pathlib.Path(directory).resolve()
+    make_stand_in_bin(base)
+    plan = make_plan(base)
+    clone = base / "mac" / "Projects" / "nedschorus"
+    commit_files(clone, {"README.md": "the clone"}, "Start")
+    seat_a = base / "mac" / "agents" / "seat-a"
+    seat_b = base / "mac" / "agents" / "seat-b"
+    for seat in (seat_a, seat_b):
+        git(clone, "worktree", "add", "-q", "-b", seat.name, str(seat))
+    write(seat_b / "CLAUDE.local.md", "You are seat-b.", NOW - 50)
+    write(seat_b / ".claude" / "settings.local.json", "{}", NOW - 50)
+    write(base / "box" / "agents" / "seat-c" / "CLAUDE.local.md",
+          "You are seat-c.", NOW - 40)
+    write(seat_b / "docs" / "drafts" / "e13-probe-draft.md", "the draft",
+          NOW - 30)
+    commit_files(seat_b, {"docs/tracked-probe.md": "committed in seat-b"},
+                 "Add the tracked probe")
+
+    code, stdout, stderr = run(base, str(seat_a / "CLAUDE.local.md"),
+                               plan=plan)
+    same, other, _ = sections(stdout)
+    check("another seat's untracked CLAUDE.local.md is not found for this "
+          "seat's: exit 1, listed as a candidate on either machine",
+          code == 1 and not same
+          and str(seat_b / "CLAUDE.local.md") in other
+          and "/box/agents/seat-c/CLAUDE.local.md" in other, stdout + stderr)
+    check("the candidate is marked as a file git does not track, and the "
+          "agent is told to check its content and what to run next",
+          "(15 bytes, not tracked by git)" in other
+          and "check a candidate's content before you say it is the file"
+          in stdout and "Run next `python3 " in stdout, stdout)
+    code, stdout, stderr = run(base, str(seat_b / "CLAUDE.local.md"),
+                               plan=plan)
+    check("an untracked file is found at its own path",
+          code == 0 and str(seat_b / "CLAUDE.local.md") in sections(stdout)[0]
+          and "/seat-c/CLAUDE.local.md" in sections(stdout)[1],
+          stdout + stderr)
+    code, stdout, stderr = run(base, "CLAUDE.local.md", plan=plan)
+    check("a bare file name still finds every file of that name, tracked or "
+          "not",
+          code == 0 and str(seat_b / "CLAUDE.local.md") in sections(stdout)[0]
+          and "/seat-c/CLAUDE.local.md" in sections(stdout)[0],
+          stdout + stderr)
+    code, stdout, stderr = run(base, str(seat_a / "docs" / "tracked-probe.md"),
+                               plan=plan)
+    check("a file git tracks in another checkout is still found by its path "
+          "inside the checkout",
+          code == 0 and str(seat_b / "docs" / "tracked-probe.md")
+          in sections(stdout)[0], stdout + stderr)
+    code, stdout, stderr = run(base, ".claude/settings.local.json", plan=plan)
+    check("a relative query from outside every checkout does not find a "
+          "seat's untracked file: it is a candidate",
+          code == 1 and ".claude/settings.local.json" in sections(stdout)[1],
+          stdout + stderr)
+    code, stdout, stderr = run(base, ".claude/settings.local.json", plan=plan,
+                               cwd=seat_b)
+    check("a relative query from inside the checkout that holds the "
+          "untracked file finds it there",
+          code == 0 and str(seat_b / ".claude" / "settings.local.json")
+          in sections(stdout)[0], stdout + stderr)
+    # Research episode E13: a draft untracked in one seat's checkout was
+    # declared "never existed" from another seat's.
+    code, stdout, stderr = run(base, "e13-probe-draft.md", plan=plan,
+                               cwd=seat_a)
+    check("E13 asked by its bare name from another seat: found",
+          code == 0 and str(seat_b / "docs" / "drafts" / "e13-probe-draft.md")
+          in sections(stdout)[0], stdout + stderr)
+    code, stdout, stderr = run(base, "docs/drafts/e13-probe-draft.md",
+                               plan=plan, cwd=seat_a)
+    check("E13 asked by its relative path from another seat: listed, as a "
+          "candidate, exit 1",
+          code == 1 and str(seat_b / "docs" / "drafts" / "e13-probe-draft.md")
+          in sections(stdout)[1], stdout + stderr)
+    code, stdout, stderr = run(
+        base, str(seat_b / "docs" / "drafts" / "e13-probe-draft.md"),
+        plan=plan, cwd=seat_a)
+    check("E13 asked by its exact path: found",
+          code == 0 and str(seat_b / "docs" / "drafts" / "e13-probe-draft.md")
+          in sections(stdout)[0], stdout + stderr)
+    box_plan = make_plan(base, other=program.MAC_NOT_REACHABLE_FROM_NED_BOX)
+    box_plan["this"], box_plan["other"] = (
+        dict(box_plan["other"], machine="ned-box"),
+        dict(box_plan["this"],
+             not_searched_because=program.MAC_NOT_REACHABLE_FROM_NED_BOX))
+    box_plan["this"].pop("not_searched_because", None)
+    code, stdout, stderr = run(base, str(seat_a / "CLAUDE.local.md"),
+                               plan=box_plan)
+    check("run on ned-box, a Mac seat's CLAUDE.local.md is not found at a box "
+          "seat's copy: exit 3, the Mac not searched",
+          code == 3 and not sections(stdout)[0]
+          and "/box/agents/seat-c/CLAUDE.local.md" in sections(stdout)[1],
+          stdout + stderr)
+
+with scratch() as directory:
+    base = pathlib.Path(directory)
+    make_stand_in_bin(base)
+    write(base / "mac" / "agents" / "seat-broken" / ".git",
+          "gitdir: /nowhere/.git/worktrees/seat-broken\n")
+    write(base / "mac" / "agents" / "seat-broken" / "docs" / "broken-probe.md",
+          "in a checkout git cannot read")
+    code, stdout, stderr = run(
+        base, str(base / "mac" / "agents" / "seat-q" / "docs"
+                  / "broken-probe.md"))
+    check("a checkout where git cannot say what it tracks is reported as "
+          "searched only in part, and nothing found exits 3",
+          code == 3 and "so which files it tracks is unknown" in stdout
+          and "/seat-broken/docs/broken-probe.md" in sections(stdout)[1],
+          stdout + stderr)
+
+# Under a scratch tree an untracked file sets no anchor: were it to, the
+# tracked copy at the shorter path would not be found.
+with scratch() as directory:
+    base = pathlib.Path(directory)
+    make_stand_in_bin(base)
+    clone = base / "mac" / "Projects" / "nedschorus"
+    commit_files(clone, {"docs/anchor-probe.md": "the tracked copy"}, "Start")
+    other_worktree = base / "mac" / "tmp" / "other-wt"
+    git(clone, "worktree", "add", "-q", "-b", "other-wt", str(other_worktree))
+    write(other_worktree / "a" / "docs" / "anchor-probe.md", "untracked")
+    code, stdout, stderr = run(
+        base, str(base / "mac" / "tmp" / "gone-wt" / "a" / "docs"
+                  / "anchor-probe.md"))
+    same, other, _ = sections(stdout)
+    check("under a scratch tree a tracked copy is found, and an untracked "
+          "file at a longer path is a candidate that sets no anchor",
+          code == 0 and "Same path (docs/anchor-probe.md)" in stdout
+          and "/other-wt/docs/anchor-probe.md" in same
+          and "/other-wt/a/docs/anchor-probe.md" in other, stdout + stderr)
+
+# --- A relative query into a task worktree, the worktree there and removed -----
+# PR 703 review 5299980640: a relative query keeping .claude/worktrees/<name>/
+# was found while the worktree was there and not once it was removed.
+with scratch() as directory:
+    base = pathlib.Path(directory).resolve()
+    make_stand_in_bin(base)
+    clone = base / "mac" / "Projects" / "nedschorus"
+    commit_files(clone, {"README.md": "the clone"}, "Start")
+    nested = clone / ".claude" / "worktrees" / "agent-rel"
+    git(clone, "worktree", "add", "-q", "-b", "agent-rel", str(nested))
+    commit_files(nested, {"docs/nested-rel-probe.md": "in the task worktree"},
+                 "Add the nested probe")
+    query = ".claude/worktrees/agent-rel/docs/nested-rel-probe.md"
+    code, stdout, stderr = run(base, query, cwd=clone)
+    check("a relative query into a task worktree is found while it is there",
+          code == 0 and "Same path (docs/nested-rel-probe.md)" in stdout,
+          stdout + stderr)
+    git(clone, "worktree", "remove", "--force", str(nested))
+    code, stdout, stderr = run(base, query, cwd=clone)
+    check("... and by its commit once the worktree is removed",
+          code == 0 and "Same path (docs/nested-rel-probe.md)" in stdout
+          and "docs/nested-rel-probe.md, added" in sections(stdout)[0],
+          stdout + stderr)
+
+# --- A worktree the main clone lists outside every root is searched ------------
+# PR 703 review 5299980640: an ad-hoc worktree directly under /tmp, such as
+# ned-box's /tmp/pr619-fix-round-baseline, was never searched.
+with scratch() as directory:
+    base = pathlib.Path(directory)
+    make_stand_in_bin(base)
+    clone = base / "mac" / "Projects" / "nedschorus"
+    commit_files(clone, {"README.md": "the clone"}, "Start")
+    adhoc = base / "elsewhere" / "adhoc-listed"
+    git(clone, "worktree", "add", "-q", "-b", "adhoc-listed", str(adhoc))
+    write(adhoc / "notes" / "adhoc-listed-probe.md", "only here")
+    seat = base / "mac" / "agents" / "seat-listed"
+    git(clone, "worktree", "add", "-q", "-b", "seat-listed", str(seat))
+    write(seat / "seat-listed-probe.md", "under a root")
+    gone = base / "elsewhere" / "gone-wt"
+    git(clone, "worktree", "add", "-q", "-b", "gone-wt", str(gone))
+    subprocess.run(["rm", "-rf", str(gone)], check=True)
+    code, stdout, stderr = run(base, "adhoc-listed-probe.md")
+    check("a file in a worktree the main clone lists outside every root is "
+          "found, and the worktree is named in the searched lines",
+          code == 0 and "/adhoc-listed/notes/adhoc-listed-probe.md"
+          in sections(stdout)[0]
+          and f"lists outside them: {adhoc.resolve()}" in stdout,
+          stdout + stderr)
+    check("a listed worktree whose directory is gone is skipped, not "
+          "reported as a place not searched",
+          "NOT searched" not in stdout and str(gone) not in stdout, stdout)
+    code, stdout, stderr = run(base, "seat-listed-probe.md")
+    check("a listed worktree under a root is searched once, not twice",
+          code == 0 and len(entry_lines(sections(stdout)[0])) == 1
+          and "same content" not in stdout, stdout + stderr)
 
 # --- A same-name copy is never cut by the per-machine caps ----------------------
 with scratch() as directory:
@@ -1198,6 +1403,15 @@ check("the production layout places each of the fleet's checkout places",
           "/Users/el/Projects/nedlern/README.md", layouts) is None
       and program.place_in_this_repository(
           "/home/nedlern/nedschorus-logs/seats/a.md", layouts) is None)
+check("a relative query's task-worktree prefix is taken off, when two "
+      "components or more follow it",
+      program.inside_nested_worktree_anywhere(
+          ["x", ".claude", "worktrees", "a", "docs", "b.md"]) == ["docs", "b.md"]
+      and program.inside_nested_worktree_anywhere(
+          [".claude", "worktrees", "a", "CLAUDE.md"])
+      == [".claude", "worktrees", "a", "CLAUDE.md"]
+      and program.inside_nested_worktree_anywhere(["docs", "b.md"])
+      == ["docs", "b.md"])
 check("a ~ with no host is this machine's home",
       program.resolve_query("~/a.md") == os.path.expanduser("~/a.md"))
 check("a path that climbs out with .. is made absolute from the current "

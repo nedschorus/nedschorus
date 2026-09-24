@@ -26,14 +26,22 @@ matched case-insensitively as a substring of each file's name, so
 `pr-main-process-design-draft-from-origin-merge-lane-28e4f5f.md`.
 
     Mac      checkouts  /Users/el/agents, /Users/el/Projects,
-                        /private/tmp/claude-501 (scratch worktrees)
+                        /private/tmp/claude-501 (scratch worktrees),
+                        and every worktree the main clone lists outside them
              handoffs   /Users/el/.claude/handoffs
              git        every clone found under the checkouts
     ned-box  checkouts  /home/nedlern/agents, /home/nedlern/Projects,
-                        /tmp/claude-1000 (scratch worktrees)
+                        /tmp/claude-1000 (scratch worktrees),
+                        and every worktree the main clone lists outside them
              log-store  /home/nedlern/nedschorus-logs, except transcripts/
              handoffs   /home/nedlern/.claude/handoffs
              git        every clone found under the checkouts
+
+The worktrees a main clone lists (`git worktree list`) are searched even when
+they sit outside every root: an ad-hoc worktree directly under /tmp, such as
+ned-box's /tmp/pr619-fix-round-baseline or the Mac's /private/tmp/ghi-569-fix,
+was never searched (PR 703 review 5299980640). Measured 2026-09-24: one such
+worktree on each machine; listing them took 3 to 34 ms and searching one 12 ms.
 
 FOUND MEANS THE SAME NAME, AND THE SAME PATH WHEN ONE IS GIVEN. A query that is
 a bare file name is found by a copy with that name, in any case. A query with
@@ -47,6 +55,23 @@ was applied there (PR 702 review 5298743638). Every other file whose name
 contains the stem, including a same-name copy in another directory, is a
 candidate, to be checked by content; candidates do not make the answer
 "found".
+
+A FILE GIT DOES NOT TRACK IS FOUND ONLY AT ITS OWN PATH. A file in a checkout
+of this repository that git does not track there -- a seat's CLAUDE.local.md,
+its .claude/settings.local.json, an uncommitted draft -- belongs to that one
+checkout, so another checkout's file at the same place is a different file:
+it is a candidate, never the copy found, unless the query names that file's
+own path. A tracked file at the same place in another checkout is the same
+file on another branch, and is found as before. PR 703 review 5299970582
+measured the fault: on ned-box, /Users/el/agents/merge-lane/CLAUDE.local.md
+exited 0 on merge-lane-2's CLAUDE.local.md, handing a seat another seat's
+standing instructions as its own. A relative query names its own path from
+the current directory, so a relative query from inside a checkout finds that
+checkout's untracked file. A bare file name still finds every file of that
+name, tracked or not: it asks for any file so named, and each copy is listed
+with its machine and path. Which files git tracks is asked with one
+`git ls-files` per checkout that holds a hit, and only for a query with
+directories in it.
 
 AN ABSOLUTE QUERY INTO THIS REPOSITORY IS COMPARED BY ITS PATH INSIDE ITS
 CHECKOUT. A git hit's path is relative to its clone, and the same file sits in
@@ -219,6 +244,14 @@ SSH_OPTIONS = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=5"]
 SSH_EXIT_CONNECTION_FAILED = 255
 REMOTE_TIMEOUT_SECONDS = 30
 LOCAL_COMMAND_TIMEOUT_SECONDS = 30
+
+# The variables that point git at another repository. They are dropped from
+# the environment of every git this program runs in a checkout by its path,
+# so a caller's GIT_DIR cannot answer for the checkout asked about; the same
+# six scripts/run-all-test-suites.py strips.
+GIT_REDIRECTING_VARIABLES = (
+    "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY",
+    "GIT_COMMON_DIR", "GIT_ALTERNATE_OBJECT_DIRECTORIES")
 
 PLAN_ENVIRONMENT_VARIABLE = "LOCATE_FILE_COPIES_ACROSS_MACHINES_PLAN"
 THIS_MACHINE_JSON_FLAG = "--this-machine-json"
@@ -419,6 +452,22 @@ def inside_nested_worktree(parts):
     return parts
 
 
+def inside_nested_worktree_anywhere(parts):
+    """A relative query's path inside a task worktree it names: what follows
+    the first NESTED_WORKTREE_PARTS/<name>/ in it, when two components or
+    more follow; otherwise the query's own components. A relative query that
+    kept the prefix was found while the worktree was there and not once it
+    was removed, when only its commit holds the file (PR 703 review
+    5299980640). A single component is left as it was, so the file at a
+    worktree's root is not found by every file of that name."""
+    depth = len(NESTED_WORKTREE_PARTS)
+    for index in range(len(parts) - depth):
+        if tuple(parts[index:index + depth]) == NESTED_WORKTREE_PARTS:
+            rest = parts[index + depth + 1:]
+            return rest if len(rest) >= 2 else parts
+    return parts
+
+
 def place_in_this_repository(path, layouts):
     """Where the canonical absolute `path` sits among this repository's
     checkouts, walking the ordered list the module docstring sets out:
@@ -461,8 +510,8 @@ def this_repository_git_dirs(layout):
 
 
 def place_of_file(path, layout, spellings, this_git_dirs, cache):
-    """The path inside this repository's checkout of a file on this disk,
-    "/"-joined, or None when the file is not in a checkout of this
+    """(the checkout's root, the file's path inside it, "/"-joined) for a
+    file on this disk, or None when the file is not in a checkout of this
     repository. Under a scratch tree, where the path does not say where the
     worktree starts, the nearest `.git` above the file decides, and only
     when it is this repository's; `cache` remembers each directory's
@@ -473,7 +522,12 @@ def place_of_file(path, layout, spellings, this_git_dirs, cache):
         return None
     kind, parts = placed
     if kind == "checkout":
-        return "/".join(parts) if parts else None
+        if not parts:
+            return None
+        root = path
+        for _ in parts:
+            root = os.path.dirname(root)
+        return root, "/".join(parts)
     directory = os.path.dirname(path)
     walked = []
     while directory not in cache:
@@ -495,21 +549,91 @@ def place_of_file(path, layout, spellings, this_git_dirs, cache):
         cache[step] = root
     if root is None:
         return None
-    return "/".join(parts_of(os.path.relpath(path, root)))
+    return root, "/".join(parts_of(os.path.relpath(path, root)))
 
 
-def query_target(resolved, layouts, spellings):
+def tracked_in_checkout(root, relative_paths):
+    """(the paths among `relative_paths` that git tracks in the checkout at
+    `root`, failure or None). A root with no `.git` tracks nothing."""
+    if not os.path.lexists(os.path.join(root, ".git")):
+        return set(), None
+    environment = {key: value for key, value in os.environ.items()
+                   if key not in GIT_REDIRECTING_VARIABLES}
+    command = ["git", "-C", root, "ls-files", "-z", "--",
+               *[":(literal)" + path for path in relative_paths]]
+    try:
+        result = subprocess.run(command, capture_output=True, env=environment,
+                                timeout=LOCAL_COMMAND_TIMEOUT_SECONDS)
+    except subprocess.TimeoutExpired:
+        return set(), (f"git ls-files in {root} did not finish within "
+                       f"{LOCAL_COMMAND_TIMEOUT_SECONDS} s")
+    except OSError as error:
+        return set(), f"git could not run: {error}"
+    if result.returncode != 0:
+        lines = result.stderr.decode("utf-8", "replace").strip().splitlines()
+        return set(), (f"git ls-files in {root} exited {result.returncode}, "
+                       f"so which files it tracks is unknown: "
+                       + (lines[-1] if lines else "no message"))
+    return {os.fsdecode(raw) for raw in result.stdout.split(b"\0") if raw}, None
+
+
+def listed_worktrees_outside(layout, surfaces):
+    """(directories, failures): each worktree a main clone of this
+    repository lists that exists and lies under none of `surfaces`' roots.
+    Both sides are compared resolved, since git records a worktree's path
+    with its symbolic links resolved (/private/tmp for the Mac's /tmp), and
+    a worktree under a root would otherwise be searched twice."""
+    roots = [os.path.realpath(root)
+             for surface in surfaces for root in surface["roots"]]
+    outside, failures = set(), []
+    for clone in layout.get("clones", []):
+        git_dir = os.path.join(clone, ".git")
+        if not os.path.isdir(git_dir):
+            continue
+        try:
+            result = subprocess.run(
+                ["git", "--git-dir", git_dir, "worktree", "list",
+                 "--porcelain"], capture_output=True,
+                timeout=LOCAL_COMMAND_TIMEOUT_SECONDS)
+        except (subprocess.TimeoutExpired, OSError) as error:
+            failures.append(f"the worktrees {clone} lists could not be read: "
+                            f"{error}")
+            continue
+        if result.returncode != 0:
+            lines = result.stderr.decode("utf-8", "replace").strip().splitlines()
+            failures.append(f"the worktrees {clone} lists could not be read: "
+                            + (lines[-1] if lines else "no message"))
+            continue
+        for line in result.stdout.decode("utf-8", "surrogateescape").splitlines():
+            if not line.startswith("worktree "):
+                continue
+            worktree = line[len("worktree "):]
+            if os.path.isdir(worktree) and not any(
+                    parts_below(os.path.realpath(worktree), root) is not None
+                    for root in roots):
+                outside.add(worktree)
+    return sorted(outside), failures
+
+
+def query_target(resolved, layouts, spellings, cwd=None):
     """What a found copy must match, for a resolved query. `kind` is "name"
     (a bare file name), "tail" (a relative path: a found copy's path ends
     with `parts`), "checkout" (an absolute path whose path inside this
     repository's checkout is `parts`), "scratch" (an absolute path under a
     scratch tree: `parts` are its components below the tree), or "absolute"
     (any other absolute path). `path` is the query as given; `canonical` is
-    it in the canonical spelling, which every comparison uses."""
+    it in the canonical spelling, which every comparison uses; a relative
+    query's is its path from `cwd` (the current directory by default), the
+    one place a file git does not track is found for it."""
     parts = parts_of(resolved)
     if not os.path.isabs(resolved):
-        return {"kind": "name" if len(parts) <= 1 else "tail",
-                "parts": parts, "path": resolved}
+        if len(parts) <= 1:
+            return {"kind": "name", "parts": parts, "path": resolved}
+        return {"kind": "tail", "parts": inside_nested_worktree_anywhere(parts),
+                "path": resolved,
+                "canonical": canonical_path(
+                    os.path.normpath(os.path.join(cwd or os.getcwd(), resolved)),
+                    spellings)}
     canonical = canonical_path(resolved, spellings)
     placed = place_in_this_repository(canonical, layouts)
     if placed and placed[1]:
@@ -791,10 +915,14 @@ def run_git_log(git_dir, stem, name):
     return hits, None, len(ordered) - len(kept)
 
 
-def search_this_machine(machine_plan, stem, name):
+def search_this_machine(machine_plan, stem, name, check_tracked=False):
     """Everything this machine holds under the plan, as one JSON-ready dict:
-    the hits, a report per surface, and the git report."""
+    the hits, a report per surface, and the git report. With
+    `check_tracked`, a file hit in a checkout of this repository carries
+    `untracked` when git does not track it there."""
     surfaces = machine_plan["surfaces"]
+    layout = machine_plan.get("this_repository", {})
+    spellings = machine_plan.get("spellings", [])
     file_paths = []  # (surface name, path)
     reports = []
     git_dirs, logs = set(), []
@@ -813,6 +941,12 @@ def search_this_machine(machine_plan, stem, name):
         pending = {}
         for surface in surfaces:
             directories, files, report = split_surface(surface, stem)
+            if surface.get("git"):
+                listed, failures = listed_worktrees_outside(layout, surfaces)
+                if listed:
+                    report["listed_worktrees"] = listed
+                directories += listed
+                report["failures"] += failures
             reports.append(report)
             file_paths += [(surface["name"], path) for path in files]
             for directory in directories:
@@ -843,21 +977,38 @@ def search_this_machine(machine_plan, stem, name):
             continue
         stated.append((status.st_mtime, surface_name, path, status.st_size))
     stated.sort(key=lambda entry: -entry[0])
-    layout = machine_plan.get("this_repository", {})
-    spellings = machine_plan.get("spellings", [])
     this_git_dirs = this_repository_git_dirs(layout)
     place_cache = {}
     hits = []
+    in_checkouts = {}  # checkout root: [(hit, path inside it)]
     for mtime, surface_name, path, size in keep_same_name_and_newest(
             stated, name, MAX_FILE_HITS_PER_MACHINE,
             lambda entry: os.path.basename(entry[2])):
-        hits.append({"kind": "file", "surface": surface_name, "path": path,
-                     "canonical": canonical_path(path, spellings),
-                     "time": mtime, "size": size,
-                     "blob": git_blob_id(path, size),
-                     "in_this_repository": place_of_file(
-                         path, layout, spellings, this_git_dirs,
-                         place_cache)})
+        placed = place_of_file(path, layout, spellings, this_git_dirs,
+                               place_cache)
+        hit = {"kind": "file", "surface": surface_name, "path": path,
+               "canonical": canonical_path(path, spellings),
+               "time": mtime, "size": size,
+               "blob": git_blob_id(path, size),
+               "in_this_repository": placed[1] if placed else None}
+        hits.append(hit)
+        if placed and check_tracked:
+            in_checkouts.setdefault(placed[0], []).append((hit, placed[1]))
+    # A file git does not track in its checkout is that checkout's own, and
+    # counts as a copy only at its own path (see the module docstring).
+    reports_by_surface = {report["name"]: report for report in reports}
+    with concurrent.futures.ThreadPoolExecutor(max_workers=16) as pool:
+        asked = {pool.submit(tracked_in_checkout, root,
+                             sorted({inside for _, inside in placed_hits})):
+                 placed_hits
+                 for root, placed_hits in in_checkouts.items()}
+        for future in concurrent.futures.as_completed(asked):
+            tracked, failure = future.result()
+            for hit, inside in asked[future]:
+                hit["untracked"] = inside not in tracked
+            if failure:
+                reports_by_surface[asked[future][0][0]["surface"]][
+                    "failures"].append(failure)
     for hit in git_hits:
         hit["this_repository"] = hit["clone"] in this_git_dirs
     hits += git_hits
@@ -936,7 +1087,8 @@ def format_time(epoch):
 def describe(hit, machine):
     """The part of an entry's line after its time: machine, surface, what."""
     if hit["kind"] == "file":
-        what = f"{hit['path']}  ({hit['size']:,} bytes)"
+        untracked = ", not tracked by git" if hit.get("untracked") else ""
+        what = f"{hit['path']}  ({hit['size']:,} bytes{untracked})"
     else:
         status = STATUS_WORDS.get(hit["status"], hit["status"])
         what = (f"commit {hit['commit'][:12]} (\"{hit['subject']}\"), "
@@ -999,13 +1151,20 @@ def render(query, target, results, not_searched, elapsed):
         place = hit.get("in_this_repository")
         return parts_of(place) if place else None
 
+    def untracked(entry):
+        return entry["hit"]["kind"] == "file" and bool(
+            entry["hit"].get("untracked"))
+
     # Under a scratch tree the checkout's own directory is not in the path:
     # its path inside the checkout is the longest tail of the query, two
-    # components or more, that a copy of this repository holds.
+    # components or more, that a copy of this repository holds. A file git
+    # does not track is no copy of the repository's, so it sets no anchor.
     anchor = wanted if kind == "checkout" else None
     if kind == "scratch":
-        held = [len(parts) for parts in map(checkout_parts, entries)
-                if parts and len(parts) >= 2 and ends_with(wanted, parts)]
+        held = [len(parts) for entry, parts in
+                ((entry, checkout_parts(entry)) for entry in entries)
+                if parts and len(parts) >= 2 and ends_with(wanted, parts)
+                and not untracked(entry)]
         if held:
             anchor = wanted[len(wanted) - max(held):]
 
@@ -1013,12 +1172,17 @@ def render(query, target, results, not_searched, elapsed):
         hit = entry["hit"]
         if kind == "name":
             return is_same_name(os.path.basename(hit["path"]), name)
-        if kind == "tail":
-            return is_found_copy(hit["path"], wanted, name)
         if hit["kind"] == "file" and same_parts(
                 parts_of(hit.get("canonical", hit["path"])),
                 parts_of(target["canonical"])):
             return True
+        # A file git does not track in its checkout counts only at its own
+        # path, just tested (PR 703 review 5299970582: another seat's
+        # CLAUDE.local.md was found for this seat's).
+        if untracked(entry):
+            return False
+        if kind == "tail":
+            return is_found_copy(hit["path"], wanted, name)
         parts = checkout_parts(entry)
         return bool(anchor and parts) and same_parts(parts, anchor)
 
@@ -1077,6 +1241,10 @@ def render(query, target, results, not_searched, elapsed):
                 root + (" (absent)" if root in report["absent"] else "")
                 for root in report["roots"])
             excepting = "".join(f", except {path}" for path in report["prune"])
+            listed = report.get("listed_worktrees")
+            if listed:
+                excepting += (", and the worktree(s) the main clone lists "
+                              "outside them: " + ", ".join(listed))
             lines.append(f"  {machine} {report['name']}: {roots}{excepting}")
             failed += [f"{machine} {report['name']}: {failure}"
                        for failure in report["failures"]]
@@ -1180,10 +1348,13 @@ def main(argv=None) -> int:
     if not stem:
         parser.error("the query has no file name to match")
     name = query_name(query)
+    # Only a query with directories asks for a path, and only a path query
+    # needs to know which files git tracks.
+    check_tracked = len(parts_of(query)) > 1
 
     if args.this_machine_json:
         result = search_this_machine(json.loads(args.this_machine_json), stem,
-                                     name)
+                                     name, check_tracked)
         json.dump(result, sys.stdout)
         return 0
 
@@ -1200,7 +1371,7 @@ def main(argv=None) -> int:
         not_searched.append((other["machine"],
                              other.get("not_searched_because", "no route")))
 
-    results = [search_this_machine(plan["this"], stem, name)]
+    results = [search_this_machine(plan["this"], stem, name, check_tracked)]
     if remote:
         answer = finish_remote_search(remote, other)
         if isinstance(answer, dict):
