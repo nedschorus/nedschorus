@@ -20,6 +20,7 @@ import io
 import json
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -1758,6 +1759,20 @@ def run_agent_exit_record_cases(workspace: Path):
           str(state))
 
 
+def process_is_gone_within_seconds(process_id: int, seconds: float) -> bool:
+    """True once `ps` finds no process with this id, or finds it a zombie: a
+    killed process whose parent has died waits as one until it is reaped."""
+    deadline = time.monotonic() + seconds
+    while True:
+        state = subprocess.run(["ps", "-o", "stat=", "-p", str(process_id)],
+                               capture_output=True, text=True, check=False).stdout.strip()
+        if not state or state.startswith("Z"):
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(0.1)
+
+
 def run_handoff_worktree_cleanup_cases(workspace: Path):
     """Each handoff runs scripts/clean-worktrees.py --remove between the
     retiring session's stop and the successor's launch (superwalk item 6,
@@ -1860,18 +1875,41 @@ def run_handoff_worktree_cleanup_cases_without_git_redirection(workspace: Path):
     check("WORKTREE CLEANUP: a cleaner that hangs is stopped at the bound",
           elapsed < 15 and "did not finish in 1 s" in report, f"{elapsed:.1f}s {report}")
 
+    # Like the real cleaner, this stand-in prints with a plain print() into a
+    # pipe, never flushing, and has a child of its own running (the real one's
+    # are lsof and git) when the bound stops it.
+    grandchild_pid_file = root / "partway-cleaner-grandchild.pid"
     partway = root / "partway-cleaner.py"
     partway.write_text(
-        "import sys, time\n"
-        "print('agent-early: removed, branch worktree-agent-early deleted', flush=True)\n"
+        "import subprocess, time\n"
+        "print('agent-early: removed, branch worktree-agent-early deleted')\n"
+        "print('branch landed-early: deleted (no worktree, nothing beyond origin/main)')\n"
+        "grandchild = subprocess.Popen(['sleep', '30'], stdout=subprocess.DEVNULL,\n"
+        "                              stderr=subprocess.DEVNULL)\n"
+        f"open({str(grandchild_pid_file)!r}, 'w').write(str(grandchild.pid))\n"
         "time.sleep(30)\n", encoding="utf-8")
+    started = time.monotonic()
     with supervisor_names_replaced(CLEAN_WORKTREES_PATH=partway):
-        report = supervisor.remove_finished_worktrees_at_handoff(home, timeout_seconds=2)
+        report = supervisor.remove_finished_worktrees_at_handoff(home, timeout_seconds=3)
+    elapsed = time.monotonic() - started
     check("WORKTREE CLEANUP: a cleaner stopped at the bound partway through "
-          "reports what it removed before the stop",
+          "reports what it removed before the stop, though it never flushed its output",
           report.startswith("worktree cleanup: 1 finished worktree(s) removed, "
-                            "1 branch ref(s)")
-          and "did not finish in 2 s" in report, report)
+                            "2 branch ref(s)")
+          and "did not finish in 3 s" in report and elapsed < 15,
+          f"{elapsed:.1f}s {report}")
+    grandchild_pid = (int(grandchild_pid_file.read_text(encoding="utf-8"))
+                      if grandchild_pid_file.exists() else None)
+    grandchild_gone = (grandchild_pid is not None
+                       and process_is_gone_within_seconds(grandchild_pid, 5))
+    check("WORKTREE CLEANUP: a cleaner stopped at the bound takes the processes "
+          "it started down with it",
+          grandchild_gone,
+          f"the stand-in's child, pid {grandchild_pid}, is still running"
+          if grandchild_pid is not None else "the stand-in never recorded its child")
+    if grandchild_pid is not None and not grandchild_gone:
+        with contextlib.suppress(ProcessLookupError, PermissionError):
+            os.kill(grandchild_pid, signal.SIGKILL)
 
     crashing = root / "crashing-cleaner.py"
     crashing.write_text("raise RuntimeError('the cleaner broke')\n", encoding="utf-8")

@@ -164,8 +164,11 @@ EXTRACTOR_PATH = SCRIPTS_DIRECTORY / "handoff-extract-conversation.py"
 # the whole run, which calls lsof once per candidate worktree, each call allowed
 # VACANCY_CHECK_TIMEOUT_SECONDS (120 s); a run stopped at the bound has removed
 # what it reported before the stop, and the handoff goes on without the rest.
+# The stop at the bound reaches the cleaner's whole process group, SIGTERM
+# first and SIGKILL after the grace below.
 CLEAN_WORKTREES_PATH = SCRIPTS_DIRECTORY / "clean-worktrees.py"
 FINISHED_WORKTREE_REMOVAL_TIMEOUT_SECONDS = 180
+WORKTREE_CLEANER_STOP_GRACE_SECONDS = 5
 HANDOFF_POLL_SECONDS = 2.0
 GENERATIONS_KEPT = 2
 
@@ -1328,31 +1331,62 @@ def remove_finished_worktrees_at_handoff(
     The cleaner runs with GIT_DIR and GIT_WORK_TREE removed from its
     environment, because either one would point its `git -C` calls, removals
     included, at another repository (GHI 639's hazard).
+
+    The cleaner runs unbuffered (`python3 -u`) and in a session of its own,
+    for the run the bound stops (both found by the round-2 reviews of PR "Each
+    handoff removes the finished worktrees and merged branches"). Unbuffered,
+    because the cleaner prints into a pipe with a plain print(), and a stop
+    found its lines still in its buffer, so the report read 0 removed after
+    real removals. Its own session, because the stop killed only the cleaner
+    and left the lsof or git it had started running.
     """
     environment = {name: value for name, value in os.environ.items()
                    if name not in ("GIT_DIR", "GIT_WORK_TREE")}
     try:
-        finished = subprocess.run(
-            [sys.executable, str(CLEAN_WORKTREES_PATH), "--remove",
+        cleaner = subprocess.Popen(
+            [sys.executable, "-u", str(CLEAN_WORKTREES_PATH), "--remove",
              "--repo", str(working_directory)],
-            capture_output=True, text=True, check=False, timeout=timeout_seconds,
-            env=environment,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+            env=environment, start_new_session=True,
         )
-    except subprocess.TimeoutExpired as stopped:
-        partial = stopped.stdout or ""
-        if isinstance(partial, bytes):
-            partial = partial.decode("utf-8", errors="replace")
+        stdout, stderr = cleaner.communicate(timeout=timeout_seconds)
+    except subprocess.TimeoutExpired:
+        partial = stop_worktree_cleaner_process_group(cleaner)
         return (summarize_worktree_cleanup_output(partial.splitlines())
                 + f"; clean-worktrees.py --remove did not finish in {timeout_seconds} s "
                   f"and was stopped, so the counts cover only what it did before the stop")
     except (OSError, subprocess.SubprocessError) as error:
         return (f"worktree cleanup: clean-worktrees.py could not be run: "
                 f"{type(error).__name__}: {error}")
-    report = summarize_worktree_cleanup_output(finished.stdout.splitlines())
-    if finished.returncode != 0 and "FAILED" not in finished.stdout:
-        detail = finished.stderr.strip().splitlines()[-1:] or ["no detail"]
-        report += f"; clean-worktrees.py exited {finished.returncode}: {detail[0]}"
+    report = summarize_worktree_cleanup_output(stdout.splitlines())
+    if cleaner.returncode != 0 and "FAILED" not in stdout:
+        detail = stderr.strip().splitlines()[-1:] or ["no detail"]
+        report += f"; clean-worktrees.py exited {cleaner.returncode}: {detail[0]}"
     return report
+
+
+def stop_worktree_cleaner_process_group(cleaner) -> str:
+    """Stop the cleaner and every process it started, and return what it
+    printed before the stop.
+
+    The cleaner leads a process group of its own, so the signal reaches its
+    lsof and git calls too. SIGTERM goes first, because git removes its lock
+    files on SIGTERM and not on SIGKILL; SIGKILL follows when the group has not
+    ended within WORKTREE_CLEANER_STOP_GRACE_SECONDS.
+    """
+    partial = ""
+    for signal_number in (signal.SIGTERM, signal.SIGKILL):
+        try:
+            os.killpg(cleaner.pid, signal_number)
+        except (ProcessLookupError, PermissionError):
+            pass
+        try:
+            return cleaner.communicate(timeout=WORKTREE_CLEANER_STOP_GRACE_SECONDS)[0] or ""
+        except subprocess.TimeoutExpired as still_open:
+            partial = still_open.stdout or ""
+    if isinstance(partial, bytes):
+        partial = partial.decode("utf-8", errors="replace")
+    return partial
 
 
 def summarize_worktree_cleanup_output(lines) -> str:
