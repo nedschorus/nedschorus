@@ -591,6 +591,50 @@
       "stderr": "",
       "stored": false,
       "note": "byte-identical to nedschorus-nedschorus-687-issue-channel-paginated.json when captured (the channel is under one page); not stored, and the suite serves nedschorus-nedschorus-687-issue-channel-paginated.json for this call"
+    },
+    {
+      "file": "nedschorus-nedschorus-662-pr-view-state.json",
+      "command": [
+        "gh",
+        "pr",
+        "view",
+        "662",
+        "--repo",
+        "nedschorus/nedschorus",
+        "--json",
+        "headRefOid,mergeStateStatus,reviewDecision,isDraft"
+      ],
+      "captured_at_utc": "2026-09-24T01:32:05Z",
+      "exit_code": 0,
+      "stderr": "",
+      "gh_version": "gh version 2.101.0 (2026-09-15)"
+    },
+    {
+      "file": "nedschorus-nedschorus-662-reviews-channel-paginated.json",
+      "command": [
+        "gh",
+        "api",
+        "repos/nedschorus/nedschorus/pulls/662/reviews",
+        "--paginate"
+      ],
+      "captured_at_utc": "2026-09-24T01:32:05Z",
+      "exit_code": 0,
+      "stderr": "",
+      "gh_version": "gh version 2.101.0 (2026-09-15)"
+    },
+    {
+      "file": "nedschorus-nedschorus-662-reviews-channel-first-page-only.json",
+      "command": [
+        "gh",
+        "api",
+        "repos/nedschorus/nedschorus/pulls/662/reviews"
+      ],
+      "captured_at_utc": "2026-09-24T01:32:06Z",
+      "exit_code": 0,
+      "stderr": "",
+      "stored": false,
+      "note": "byte-identical to nedschorus-nedschorus-662-reviews-channel-paginated.json when captured (the channel is under one page); not stored, and the suite serves nedschorus-nedschorus-662-reviews-channel-paginated.json for this call",
+      "gh_version": "gh version 2.101.0 (2026-09-15)"
     }
   ]
 }
