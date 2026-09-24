@@ -1,3 +1,10 @@
+---
+processed: 2026-09-24
+walk-item: queue-and-drafts-drain-2026-09-22 item 6; its own walk opened 2026-07-28, marked complete in this note ("OUTER WALK COMPLETE", "WALK MINUTES COMPLETE — all eight items processed")
+dispositions: [§2 → GHI [Open research thread: usage-vs-expectation observation — obsolescence is a design problem, not an age problem](https://github.com/nedschorus/nedschorus/issues/35); §4 and §6a → `docs/issues/queue/18-write-test-plan-agent-native-riders.md`, `docs/issues/queue/20-implement-with-evidence-agent-native-riders.md`, `docs/issues/queue/35-declaration-vs-reality-posit-ladder.md`, `docs/nedschorus-wiki/queue/agent-loop-rules-draft.md`; §6b → `docs/issues/queue/3-gatekeeper-build-bindings.md`; walk-order items 6–8 → `docs/issues/32-preservation-and-placement.md`; §3 suite-health → the founding plan's open-question-8 line, which went with the plan in commit [docs: remove obsolete founding plan](https://github.com/nedschorus/nedschorus/commit/7e172e8c32a4156251c27730989501fe54e4aa14)]
+dropped-by: new-vp, commit [nc-queue: park SDLC skill-set coverage + app-skill pile note for the boss's walk](https://github.com/nedschorus/nedschorus/commit/1703c5359b45d4f60b54d2bc97d3c5f2e663c309) (archived 2026-09-24 by the queue drain; the seven destinations above verified on main before the move)
+---
+
 # SDLC skill-set coverage check, and the app-skill pile question
 
 User-requested (2026-07-28, shared-conversation-discussion session). Sources: the cops research record `nedlern-sonnet/cops/tasks/sessions/cops-nedschorus-reproducible-engineering-skills-research-2026-07-22.md` (read in full); the user's 2026-07-05 claude.ai conversation proposing ten test-infrastructure skills from CockroachDB/LLVM/Hypothesis; the live repo state (boot-set rule of 2026-07-24, candidate GHIs #15–#23, founding plan step 7).

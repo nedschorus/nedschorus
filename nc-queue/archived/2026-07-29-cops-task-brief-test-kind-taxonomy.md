@@ -1,3 +1,10 @@
+---
+processed: 2026-09-24
+walk-item: queue-and-drafts-drain-2026-09-22 item 6; commissioned during the 2026-07-28 queue-note walk (its own text); no walk minutes of its own
+dispositions: [the commissioned survey delivered as `/Users/el/Projects/nedlern-sonnet/cops/tasks/sessions/cops-nedschorus-automated-testing-kinds-survey-2026-07-29.md` (COPS, 36,153 bytes, on the Mac); its three framing rulings landed in `docs/issues/18-write-test-plan-riders-and-test-evidence-rules.md` riders 1 and 3, for issue [Candidate skill: write-test-plan — consequence-ranked test plan with observable oracles and traceability (likely FIRST build)](https://github.com/nedschorus/nedschorus/issues/18)]
+dropped-by: new-vp, landed from the app-session branch in commit [nc-queue landing: agent-native walk dispersal from app-session branch f7cc0ef](https://github.com/nedschorus/nedschorus/commit/a83c8a9531c95fcdde990c43481331e04f9119d1) (archived 2026-09-24 by the queue drain)
+---
+
 # Task brief for COPS — automated test-kind taxonomy (precursor to write-test-plan)
 
 **From:** the user, via the shared-conversation-discussion session (Claude runtime), 2026-07-29. Outbound brief; a relay agent delivers it. COPS cannot reply to the drafting session — deliver results as a file (see Deliverable) and the user walks them.
