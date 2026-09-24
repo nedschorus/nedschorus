@@ -464,7 +464,8 @@ def ship_walk(destination: WalkStoreDestination, name: str,
               f"whose sha256 is the first digest on this line in ned-box's Timeshift "
               f"snapshots: on ned-box, run `sha256sum "
               f"/mnt/backup/timeshift/snapshots/*/localhost"
-              f"{stored_walk_directory / replacement.file_name}` and take a snapshot "
+              f"{shlex.quote(str(stored_walk_directory / replacement.file_name))}` "
+              f"and take a snapshot "
               f"whose line shows that digest.", file=sys.stderr)
 
     parts = []

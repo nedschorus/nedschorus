@@ -134,6 +134,23 @@ with tempfile.TemporaryDirectory(prefix="sanity-check-record-ship-test-") as scr
           and (shipped_dir / "finding-dispositions.md").read_text(encoding="utf-8") == DISPOSITIONS,
           result.stdout)
 
+    # --- A replaced triage names this kind's directory ------------------------
+    # The record shipper builds the printed path; its own constant names
+    # cold-read-records, and a sanity-check record lives under
+    # sanity-check-records, where the command must look.
+    triaged = make_record(records, "2026-09-23-triage-replacement", {
+        "cut-claude.md": CUT_REPORT, "triage.md": "# triage\n"})
+    ship(local_destination, str(triaged))
+    (triaged / "triage.md").write_text("# triage\n\nrevised\n", encoding="utf-8")
+    result = ship(local_destination, str(triaged))
+    check("a replaced sanity-check triage prints the sha256sum path under sanity-check-records, not cold-read-records",
+          result.returncode == 0 and "REPLACED" in result.stderr
+          and ("sha256sum /mnt/backup/timeshift/snapshots/*/localhost"
+               f"/home/nedlern/nedschorus-logs/sanity-check-records/{triaged.name}/triage.md")
+          in result.stderr
+          and "localhost/home/nedlern/nedschorus-logs/cold-read-records/" not in result.stderr,
+          result.stderr)
+
     # --- Bad invocation --------------------------------------------------------
     result = ship(local_destination)
     check("no argument exits 64 with FAILED on stdout",

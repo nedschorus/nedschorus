@@ -195,6 +195,20 @@ with tempfile.TemporaryDirectory(prefix="seat-shared-file-ship-test-") as scratc
           and "sudo timeshift --list" not in result.stderr
           and "every ten minutes" not in result.stderr, result.stderr)
 
+    # A stored name with a space: printed unquoted, the path splits in two at
+    # the space and sha256sum reads neither half. The glob stays outside the
+    # quotes so the shell still expands the snapshots.
+    spaced = work / "measurement two.md"
+    spaced.write_text("# measurement two\n", encoding="utf-8")
+    ship(local_destination, str(spaced), "--seat", "cold-read-research")
+    spaced.write_text("# measurement two\n\nrevised\n", encoding="utf-8")
+    result = ship(local_destination, str(spaced), "--seat", "cold-read-research")
+    check("a stored name with a space is quoted in the printed command, with the snapshot glob outside the quotes",
+          result.returncode == 0 and "REPLACED" in result.stderr
+          and ("sha256sum /mnt/backup/timeshift/snapshots/*/localhost"
+               "'/home/nedlern/nedschorus-logs/seats/cold-read-research/measurement two.md'")
+          in result.stderr, result.stderr)
+
     # rsync's own quick check is size and modification time to the second, and
     # it skips a file the two agree on. Whether to copy was already decided by
     # sha256, so a revision of the same length written in the same second must

@@ -115,6 +115,7 @@ import hashlib
 import importlib.util
 import os
 import pathlib
+import shlex
 import subprocess
 import sys
 import typing
@@ -342,9 +343,10 @@ def ship_one_file(destination: SeatsStoreDestination, seat: str,
         # The file's path in the store on ned-box, which the snapshots copy,
         # built from the record shipper's constant, never written out again
         # here; the destination may be a local override, the snapshots never.
-        stored_path = (shipper.split_destination(
+        # Quoted, with the snapshot glob left outside the quotes for the shell.
+        stored_path = shlex.quote(str(shipper.split_destination(
             shipper.LOG_STORE_RECORDS_DESTINATION)[1].parent
-            / SEATS_KIND_DIRECTORY / seat / stored_name)
+            / SEATS_KIND_DIRECTORY / seat / stored_name))
         print(f"{PROGRAM}: REPLACED {seat}/{stored_name} in the store — the "
               f"content it held was sha256 {replaced_digest}, and what is "
               f"there now is sha256 {local_digest}.\n"

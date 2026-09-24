@@ -123,6 +123,7 @@ the invocation). A destination with no `host:` prefix is local.
 
 import argparse
 import hashlib
+import shlex
 import os
 import importlib.util
 import pathlib
@@ -587,11 +588,15 @@ def ship_one(host, records_path: pathlib.PurePosixPath, record_dir: pathlib.Path
                   f"{triage_relative}; a later run finishes it.")
             sys.stderr.write(replaced.stderr)
             return EXIT_FAILED
-        # The triage's path in the store on ned-box, which the snapshots copy,
-        # built from this module's constant, not written out again; the
-        # destination may be a local override, the snapshots never.
-        stored_triage = (split_destination(LOG_STORE_RECORDS_DESTINATION)[1]
-                         / name / triage_relative)
+        # The triage's path in the store on ned-box, which the snapshots copy:
+        # the store's root from this module's constant, since the destination
+        # may be a local override and the snapshots never are, and the kind
+        # from the destination this call was given, since a caller such as
+        # scripts/sanity-check-record-ship.py ships its own kind. Quoted, with
+        # the snapshot glob left outside the quotes for the shell to expand.
+        stored_triage = shlex.quote(str(
+            split_destination(LOG_STORE_RECORDS_DESTINATION)[1].parent
+            / records_path.name / name / triage_relative))
         # After the copy has landed and never on stdout, which carries the
         # summary and the citation. See rule 4 for what this line is for.
         print(f"{PROGRAM}: REPLACED {triage_relative} in the store — the content "
