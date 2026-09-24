@@ -831,6 +831,49 @@ check("an ordinary document is not in the class",
 check("a file outside the checkout is not classified",
       class_of(Path("/tmp/somewhere/a-design.md")) is None)
 
+# A seat's scratch worktree is a checkout of the repository too: a brief
+# edited there is the same document on a branch, and the warning must fire
+# for it (measured 2026-09-22: it did not, on a scratch worktree's copy of
+# docs/agents/doctrine-instructions.md). A real second worktree of a scratch
+# repository, with the module's own checkout pointed at the first, stands in
+# for the seat's. A directory in no repository keeps the old answer.
+with tempfile.TemporaryDirectory() as worktree_scratch:
+    worktree_scratch = Path(worktree_scratch).resolve()
+    git_environment = {name: value for name, value in os.environ.items()
+                       if name not in ("GIT_DIR", "GIT_WORK_TREE")}
+
+    def git(*arguments, cwd):
+        subprocess.run(["git", "-c", "user.name=test", "-c", "user.email=test@local",
+                        *arguments], cwd=cwd, env=git_environment, check=True,
+                       capture_output=True, text=True)
+
+    first_checkout = worktree_scratch / "first-checkout"
+    first_checkout.mkdir()
+    git("init", "-q", cwd=first_checkout)
+    (first_checkout / "README.md").write_text("scratch\n", encoding="utf-8")
+    git("add", "README.md", cwd=first_checkout)
+    git("commit", "-q", "-m", "scratch", cwd=first_checkout)
+    second_worktree = worktree_scratch / "second-worktree"
+    git("worktree", "add", "-q", "-b", "seat-branch", str(second_worktree), cwd=first_checkout)
+    brief_in_second = second_worktree / "docs/agents/a-seat-instructions.md"
+    brief_in_second.parent.mkdir(parents=True)
+    brief_in_second.write_text("# A seat\n", encoding="utf-8")
+    loose_brief = worktree_scratch / "no-repository/docs/agents/a-seat-instructions.md"
+    loose_brief.parent.mkdir(parents=True)
+    loose_brief.write_text("# A seat\n", encoding="utf-8")
+
+    real_checkout = warning_module.REPO_ROOT
+    warning_module.REPO_ROOT = first_checkout.resolve()
+    try:
+        in_second = class_of(brief_in_second.resolve())
+        in_no_repository = class_of(loose_brief.resolve())
+    finally:
+        warning_module.REPO_ROOT = real_checkout
+    check("a brief in a second worktree of the repository is in the class",
+          in_second == "a file under docs/agents/", repr(in_second))
+    check("a brief in no repository at all is still not classified",
+          in_no_repository is None, repr(in_no_repository))
+
 # And the read itself says it, on stderr before the cell runs and in the
 # report that ships with the record. Its own scratch tree, because the one
 # above went with its temporary directory.
