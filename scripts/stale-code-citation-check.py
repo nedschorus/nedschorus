@@ -148,6 +148,26 @@ itself is still reported. The status rule below is kept for designs not yet
 pinned. The rider's instruction no longer asks for the claim in `status:`,
 which the same ruling forbids: it asks for the pinned line.
 
+A PINNED LINE COUNTS ONLY WHEN ITS COMMIT RESOLVES. The line must name a
+complete, resolvable commit: the text inside its brackets is a sha, 7 to 40
+lowercase hex characters as a landing writes it, and git finds a commit by
+that name in this repository. The prefix alone was the test when the pinned
+line was first read, and it took the rider's own unfilled template,
+`commit [<sha>](<commit url>)`, for a landing, so an agent that pasted the
+template without filling it in silenced the status finding. A well-formed
+sha that names no commit here, `abc1234` in the first test of the pinned
+line, was taken for a landing the same way. Both were found by Codex's
+built-in review, run by merge-lane-2 on pull request [stale-code-citation-
+check: a pinned line says the code landed](
+https://github.com/nedschorus/nedschorus/pull/678), and the user ruled the
+fix ("Y", 2026-09-24T20:34:15Z) at item 7 of the walk
+merge-lane-2-meta-walk-open-items-2026-09-23. The link's URL is not read: the
+bracketed sha is what names the commit. The one cost is that a checkout that
+does not hold the landing commit, a shallow clone, reads a pinned design as
+unpinned and reports the status finding beside its stale citation. Measured
+on main at f90c415: the six designs that carry a pinned line still read as
+pinned, and the seven stamped documents report what they reported before.
+
 A STATUS CLAIMS THE CODE IS BUILT when "landed" or "built" appears in it as a
 WHOLE WORD with no negating word in the two words before it. Both halves are
 measured on the nine values in use, not on invented strings. A substring test,
@@ -309,6 +329,11 @@ STATUS_WORD = re.compile(r"[a-z]+")
 # The start of the line a landing appends to a design. See A PINNED LINE IS
 # THE SIGNAL THE STATUS NEVER WAS in the docstring.
 LANDING_PIN_PREFIX = "**Pinned to what landed:** commit ["
+
+# A pinned line and the sha inside its brackets. Whether that sha is a commit
+# is git's answer: see A PINNED LINE COUNTS ONLY WHEN ITS COMMIT RESOLVES in
+# the docstring.
+LANDING_PIN_COMMIT = re.compile(re.escape(LANDING_PIN_PREFIX) + r"([0-9a-f]{7,40})\]")
 
 _commit_ish_cache = {}
 _last_change_cache = {}
@@ -599,10 +624,14 @@ def status_means_built(status: str) -> bool:
     return False
 
 
-def carries_landing_pin(text: str) -> bool:
-    """Whether a design carries the pinned line a landing appends."""
-    return any(line.strip().startswith(LANDING_PIN_PREFIX)
-               for line in text.splitlines())
+def carries_landing_pin(text: str, repository_root: pathlib.Path) -> bool:
+    """Whether a design carries the pinned line a landing appends, naming a
+    commit this repository holds."""
+    for line in text.splitlines():
+        pinned = LANDING_PIN_COMMIT.match(line.strip())
+        if pinned and names_a_commit(pinned.group(1), repository_root):
+            return True
+    return False
 
 
 def repository_relative_name(found: pathlib.Path, repository_root: pathlib.Path):
@@ -687,7 +716,7 @@ def findings_for_document(document: pathlib.Path, repository_root: pathlib.Path,
             f"read {where} and cite the function or constant by name, or "
             f"restamp the document once the citation is verified"))
 
-    if findings and not carries_landing_pin(text):
+    if findings and not carries_landing_pin(text, repository_root):
         status_field = frontmatter_field(text, STATUS_FIELD)
         if status_field is not None:
             status_line, status = status_field
@@ -696,7 +725,8 @@ def findings_for_document(document: pathlib.Path, repository_root: pathlib.Path,
                     status_line,
                     f"code this document cites by line number moved after "
                     f"{DESIGN_AS_OF_NAME} {stamp}, and neither a pinned line "
-                    f"nor {STATUS_NAME} says the code landed: if it landed, "
+                    f"naming a commit this repository holds nor {STATUS_NAME} "
+                    f"says the code landed: if it landed, "
                     f"append the pinned line, "
                     f"{LANDING_PIN_PREFIX}<sha>](<commit url>) on "
                     f"<YYYY-MM-DD> — <what landed>."))
