@@ -915,6 +915,68 @@ with tempfile.TemporaryDirectory() as tmp:
     check("real git: a file every ref reaches is the git surface's, not the reflog surface's",
           report.status == NOT_FOUND, "%s %s %s" % (report.status, report.lines, report.recovery))
 
+
+def reflog_only_deletion_fixture(tmp):
+    """Two reflog-only commits that DELETE a path, one over a parent main reaches.
+
+        main:    kept.md                 <- main's tip still holds kept.md
+        gone:    kept.md removed         <- branch `gone` deleted: only a reflog names it
+        draft:   + only-draft.md, then only-draft.md removed
+                                         <- branch `draft` deleted: both commits reflog-only
+
+    Review 5298465965 on PR 702: the deleting commit's parent holds the file,
+    so the reflog surface fell back to it without asking whether a ref reaches
+    it. For kept.md the parent is main's tip, which the git surface reports.
+    For only-draft.md the parent is itself reflog-only, and is the answer.
+    """
+    repo = Path(tmp, "deletions")
+    repo.mkdir()
+    git_clean("init", "-q", "-b", "main", cwd=repo)
+    Path(repo, "kept.md").write_text("kept\n")
+    git_clean("add", "kept.md", cwd=repo)
+    git_clean("commit", "-q", "-m", "keep it", cwd=repo, date="2026-08-20T10:00:00")
+    main_tip = git_clean("rev-parse", "HEAD", cwd=repo).strip()
+    git_clean("checkout", "-q", "-b", "gone", cwd=repo)
+    git_clean("rm", "-q", "kept.md", cwd=repo)
+    git_clean("commit", "-q", "-m", "drop kept.md", cwd=repo, date="2026-08-21T10:00:00")
+    git_clean("checkout", "-q", "main", cwd=repo)
+    git_clean("branch", "-q", "-D", "gone", cwd=repo)
+    git_clean("checkout", "-q", "-b", "draft", cwd=repo)
+    Path(repo, "only-draft.md").write_text("the only copy\n")
+    git_clean("add", "only-draft.md", cwd=repo)
+    git_clean("commit", "-q", "-m", "draft it", cwd=repo, date="2026-08-22T10:00:00")
+    draft_holder = git_clean("rev-parse", "HEAD", cwd=repo).strip()
+    git_clean("rm", "-q", "only-draft.md", cwd=repo)
+    git_clean("commit", "-q", "-m", "drop the draft", cwd=repo, date="2026-08-23T10:00:00")
+    git_clean("checkout", "-q", "main", cwd=repo)
+    git_clean("branch", "-q", "-D", "draft", cwd=repo)
+    return repo, main_tip, draft_holder
+
+
+with tempfile.TemporaryDirectory() as tmp:
+    repo, main_tip, draft_holder = reflog_only_deletion_fixture(tmp)
+    reflog_only = git_clean("log", "--reflog", "--not", "--all", "--format=%s", cwd=repo).split("\n")
+    check("deletion fixture: both deleting commits are reflog-only, so the cases measure what they claim",
+          "drop kept.md" in reflog_only and "drop the draft" in reflog_only and "draft it" in reflog_only,
+          repr(reflog_only))
+
+    git_report = finder.search_git("kept.md", str(repo))
+    report = finder.search_git_reflog("kept.md", str(repo))
+    check("real git: a reflog-only deletion whose parent main reaches is NOT FOUND by the reflog surface",
+          report.status == NOT_FOUND and not report.recovery,
+          "%s %s %s (main's tip is %s)" % (report.status, report.lines, report.recovery, main_tip[:9]))
+    check("real git: that parent is the git surface's to report, so the two surfaces never name one commit",
+          git_report.status == FOUND and any(main_tip[:9] in r for r in git_report.recovery)
+          and not any(main_tip[:9] in r for r in report.recovery),
+          "git %s %s / reflog %s" % (git_report.status, git_report.recovery, report.recovery))
+    check("real git: the reflog surface's NOT FOUND says the branch history is the git surface's",
+          any("git surface" in l for l in report.lines), str(report.lines))
+
+    report = finder.search_git_reflog("only-draft.md", str(repo))
+    check("real git: a reflog-only deletion whose parent is reflog-only too is FOUND at that parent",
+          report.status == FOUND and report.recovery == ["git -C %s show %s:only-draft.md" % (repo, draft_holder[:9])],
+          "%s %s %s (holder is %s)" % (report.status, report.lines, report.recovery, draft_holder[:9]))
+
 reflog_git_fails = FakeRunner([
     ("rev-parse --git-dir", (0, ".git\n", "")),
     ("log --reflog --not --all", (128, "", "fatal: bad object refs/heads/broken")),
@@ -1208,17 +1270,18 @@ with tempfile.TemporaryDirectory() as tmp:
     check("log-store: the name matches whatever its case, and an unrelated name is not listed",
           any(str(newer_rename) in l for l in listed) and not any(str(unrelated) in l for l in listed),
           str(listed))
-    check("log-store: the exact name is listed first, then the renamed copies newest first",
-          [l.split("  ", 1)[1] for l in listed] == [str(exact_copy), str(newer_rename), str(older_rename)],
+    check("log-store: every copy is listed newest first, the older exact-name copy after the renamed ones (E13)",
+          [l.split("  ", 1)[1] for l in listed] == [str(newer_rename), str(older_rename), str(exact_copy)],
           str(listed))
     check("log-store: each listed copy carries its time, so the newest can be told at a glance",
-          listed and listed[0].startswith("2026-09-01 09:00"), str(listed))
+          listed and listed[0].startswith("2026-09-18 12:00") and listed[-1].startswith("2026-09-01 09:00"),
+          str(listed))
     check("log-store: a renamed candidate is flagged as a candidate, to be checked by content",
           any("check its content" in l for l in report.lines), str(report.lines))
     check("log-store, store here: read in place, and nothing is sent over ssh",
           not any(c.startswith("ssh") for c in here.calls), str(here.calls))
-    check("log-store, store here: the recovery copies the first listed file",
-          report.recovery == ["cp %s ." % exact_copy], str(report.recovery))
+    check("log-store, store here: the recovery copies the newest file, not the frozen exact-name copy",
+          report.recovery == ["cp %s ." % newer_rename], str(report.recovery))
 
     report = finder.search_log_store("docs/drafts/nowhere-at-all.md", str(store), "nedlern@ned-box",
                                      RunsLocallyRefusesSsh([]))
@@ -1238,7 +1301,7 @@ with tempfile.TemporaryDirectory() as tmp:
           report.status == FOUND and sum(1 for l in report.lines if l.startswith("    2026-")) == 3,
           "%s %s" % (report.status, report.lines))
     check("log-store, store on the box: the recovery is an scp from the box",
-          report.recovery == ["scp nedlern@ned-box:%s ." % exact_copy], str(report.recovery))
+          report.recovery == ["scp nedlern@ned-box:%s ." % newer_rename], str(report.recovery))
 
     report = finder.search_log_store("pr-main-process-design.md", str(Path(tmp, "no-store-here")),
                                      "nedlern@ned-box", LocalShellRunner([], Path(tmp)), store_is_here=False)

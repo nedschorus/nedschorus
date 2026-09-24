@@ -799,7 +799,9 @@ def search_git(wanted, repo, runner=run_command):
     """
     report = _search_git_revisions(
         wanted, repo, runner, "git", GIT_REVISIONS_EVERY_REF,
-        "no ref in %s has ever contained a path matching %r")
+        "no ref in %s has ever contained a path matching %r",
+        "matching paths appear in history, but neither the commits that touched them nor those commits' "
+        "parents hold the content")
     if report.status == FOUND:
         # The newest date on which git still had the file bounds where to look in
         # the filesystem backups: any snapshot after it is unlikely to help.
@@ -814,10 +816,14 @@ GIT_REVISIONS_EVERY_REF = ("--all",)
 GIT_REVISIONS_REFLOG_ONLY = ("--reflog", "--not", "--all")
 
 
-def _search_git_revisions(wanted, repo, runner, surface, revisions, never_contained_template):
+def _search_git_revisions(wanted, repo, runner, surface, revisions, never_contained_template, none_held_line,
+                          parents_outside_every_ref=False):
     """One git history search, over `revisions`, reported as `surface`.
 
     `never_contained_template` takes the repository and the path searched for.
+    `none_held_line` is the NOT FOUND line when matching paths were touched but
+    no candidate commit holds them. `parents_outside_every_ref` is passed on to
+    _git_newest_commit_holding.
     """
     code, _, stderr = runner(["git", "-C", repo, "rev-parse", "--git-dir"])
     if code != 0:
@@ -842,7 +848,7 @@ def _search_git_revisions(wanted, repo, runner, surface, revisions, never_contai
         if not paths:
             return SurfaceReport(surface, NOT_FOUND, [never_contained_template % (repo, wanted)])
         for path in paths:
-            commit = _git_newest_commit_holding(path, repo, runner, revisions)
+            commit = _git_newest_commit_holding(path, repo, runner, revisions, parents_outside_every_ref)
             if commit is None:
                 continue
             sha, date, subject = commit
@@ -854,8 +860,7 @@ def _search_git_revisions(wanted, repo, runner, surface, revisions, never_contai
         return SurfaceReport(surface, UNAVAILABLE, ["git failed while searching %s — %s" % (repo, failure)])
 
     if not lines:
-        return SurfaceReport(surface, NOT_FOUND, ["matching paths appear in history, but neither the commits that "
-                                                  "touched them nor those commits' parents hold the content"])
+        return SurfaceReport(surface, NOT_FOUND, [none_held_line])
 
     report = SurfaceReport(surface, FOUND, lines, recovery)
     report.dates_held = dates_held
@@ -915,7 +920,8 @@ class _GitCommandFailed(Exception):
     """A git call the surface depends on returned non-zero; the text is its stderr."""
 
 
-def _git_newest_commit_holding(path, repo, runner, revisions=GIT_REVISIONS_EVERY_REF):
+def _git_newest_commit_holding(path, repo, runner, revisions=GIT_REVISIONS_EVERY_REF,
+                               parents_outside_every_ref=False):
     """The newest commit whose tree actually contains `path`: (sha, date, subject), or None.
 
     `git log -- <path>` lists the commits that TOUCHED the path, newest first,
@@ -934,6 +940,15 @@ def _git_newest_commit_holding(path, repo, runner, revisions=GIT_REVISIONS_EVERY
     does not; the newest by commit time wins. The list is newest-first and a
     parent is never newer than its child, so the walk stops at the first line
     older than the best candidate so far.
+
+    `parents_outside_every_ref` keeps a parent only when no branch or tag
+    reaches it. The reflog surface needs this: `--reflog --not --all` limits
+    the TOUCHING commits to ones no ref reaches, but a reflog-only commit that
+    deleted the path usually sits on a parent main does reach. Without the
+    check the reflog surface reported that parent as reflog-only, with its
+    "copy the file out now" line, while the git surface reported the same
+    commit (review 5298465965 on PR 702, reproduced in ned-box's clone at
+    3ee2553bc, an ancestor of origin/main).
 
     Raises _GitCommandFailed when git itself fails, so the caller reports
     UNAVAILABLE rather than a NOT FOUND for a search that did not run.
@@ -960,6 +975,8 @@ def _git_newest_commit_holding(path, repo, runner, revisions=GIT_REVISIONS_EVERY
         for parent in parents.split():
             if not _git_tree_holds(parent, path, repo, runner):
                 continue
+            if parents_outside_every_ref and _git_some_ref_reaches(parent, repo, runner):
+                continue
             code, out, stderr = runner(["git", "-C", repo, "log", "-1", "--format=%ct|%ad|%s", "--date=short", parent])
             if code != 0:
                 raise _GitCommandFailed(stderr.strip() or "git log exited %s" % code)
@@ -976,6 +993,14 @@ def _git_tree_holds(sha, path, repo, runner):
     return code == 0
 
 
+def _git_some_ref_reaches(sha, repo, runner):
+    """True when a branch or tag reaches `sha`: `rev-list <sha> --not --all` then prints nothing."""
+    code, out, stderr = runner(["git", "-C", repo, "rev-list", "-n", "1", sha, "--not", "--all"])
+    if code != 0:
+        raise _GitCommandFailed(stderr.strip() or "git rev-list exited %s" % code)
+    return not out.strip()
+
+
 # --------------------------------------------------------------------------
 # Surface 3 — commits only a reflog still names
 # --------------------------------------------------------------------------
@@ -985,15 +1010,19 @@ def search_git_reflog(wanted, repo, runner=run_command):
 
     Surface 2 cannot see these: `--all` starts from refs, and a commit left
     behind by a recreated branch, a reset or a rebase has none. `--reflog
-    --not --all` walks exactly the rest, so this surface and the git surface
-    never report the same commit. git's `--reflog` covers the HEAD reflog of
+    --not --all` walks exactly the rest, and a deleting commit's parent is
+    kept only when no ref reaches it either, so this surface and the git
+    surface never report the same commit. git's `--reflog` covers the HEAD reflog of
     every worktree of the clone, not just the one `repo` names (measured with
     git 2.55 on 2026-09-23: a fresh worktree whose own HEAD reflog did not
     name commit 12c18b5c still listed it, from the merge-lane worktree's).
     """
     report = _search_git_revisions(
         wanted, repo, runner, "git reflog", GIT_REVISIONS_REFLOG_ONLY,
-        "no commit that only a reflog names in %s has ever contained a path matching %r")
+        "no commit that only a reflog names in %s has ever contained a path matching %r",
+        "commits that only a reflog names touched a matching path, but none of them, and no parent of theirs "
+        "that a branch or tag does not reach, holds it; history a branch or tag reaches is the git surface's",
+        parents_outside_every_ref=True)
     if report.status == FOUND:
         report.lines.append("(no branch or tag reaches these commits, and git prunes reflog entries for "
                             "unreachable commits after 30 days by default — copy the file out now)")
@@ -1012,7 +1041,12 @@ def search_log_store(wanted, log_store_root, box_ssh_host, runner=run_command, s
     shipped as seats/merge-lane/pr-main-process-design-draft-from-origin-
     merge-lane-28e4f5f.md. So this surface matches the file's stem anywhere
     inside a name, case-insensitively, rather than the path or the exact name,
-    and lists the exact name first when it is there.
+    and lists every match newest first, the recovery copying the newest. An
+    exact-name copy is not preferred: the one the store held for that file
+    was a cold-read-record's frozen target from 2026-09-01, older than the
+    renamed drafts, and research episode E13 was an agent handing over
+    exactly such a copy ("that's not the latest reference"; review
+    5298465965 on PR 702).
 
     The store is read in place when it is on this machine, which is the box,
     and through one ssh call otherwise. `store_is_here` lets the tests drive the
@@ -1082,8 +1116,8 @@ def search_log_store(wanted, log_store_root, box_ssh_host, runner=run_command, s
                                                       % (log_store_root, where, name)])
 
     exact_name = os.path.basename(_strip_dot_slash(wanted))
-    hits.sort(key=lambda hit: (os.path.basename(hit[1]) != exact_name, -hit[0]))
-    lines = ["%d file(s) under %s on %s have %r in their name, the exact name first, then newest first:"
+    hits.sort(key=lambda hit: -hit[0])
+    lines = ["%d file(s) under %s on %s have %r in their name, newest first:"
              % (len(hits), log_store_root, where, name)]
     for mtime, path in hits[:LOG_STORE_HITS_SHOWN]:
         lines.append("    %s  %s" % (time.strftime("%Y-%m-%d %H:%M", time.localtime(mtime)), path))
