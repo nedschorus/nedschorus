@@ -339,20 +339,21 @@ def ship_one_file(destination: SeatsStoreDestination, seat: str,
         # Never on stdout: that line is the citation and nothing else. See
         # "THE REPLACEMENT IS NOT SILENT" in this module's docstring for what
         # this line is for.
-        # The store on ned-box, which the snapshots copy: the record shipper's
-        # constant, never written out again here.
-        store_root = shipper.split_destination(
+        # The file's path in the store on ned-box, which the snapshots copy,
+        # built from the record shipper's constant, never written out again
+        # here; the destination may be a local override, the snapshots never.
+        stored_path = (shipper.split_destination(
             shipper.LOG_STORE_RECORDS_DESTINATION)[1].parent
+            / SEATS_KIND_DIRECTORY / seat / stored_name)
         print(f"{PROGRAM}: REPLACED {seat}/{stored_name} in the store — the "
               f"content it held was sha256 {replaced_digest}, and what is "
               f"there now is sha256 {local_digest}.\n"
               f"{PROGRAM}: a seat replaces its own files (user-ruled "
               f"2026-09-09). If the displaced bytes were wanted, look for the "
               f"file whose sha256 is the first digest above in ned-box's "
-              f"Timeshift snapshots, one directory per snapshot under "
-              f"`/mnt/backup/timeshift/snapshots/<snapshot>/localhost{store_root}/` "
-              f"on ned-box; `scripts/find-deleted-path-across-backups.py` "
-              f"searches them by path.", file=sys.stderr)
+              f"Timeshift snapshots: on ned-box, run `sha256sum "
+              f"/mnt/backup/timeshift/snapshots/*/localhost{stored_path}` and "
+              f"take a snapshot whose line shows that digest.", file=sys.stderr)
     return EXIT_SHIPPED
 
 

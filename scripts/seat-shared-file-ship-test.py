@@ -188,8 +188,10 @@ with tempfile.TemporaryDirectory(prefix="seat-shared-file-ship-test-") as scratc
           "those bytes can be found in a Timeshift snapshot",
           f"the content it held was sha256 {displaced_digest}" in result.stderr,
           result.stderr)
-    check("the replacement names the directory the snapshots persist in and promises no cadence: the ten-minute claim was false for the 2026-09-21 loss, and `sudo timeshift --list` names only a mount that is gone when it exits",
-          "/mnt/backup/timeshift/snapshots/" in result.stderr
+    check("the replacement tells the agent to match the displaced digest across the snapshots at the file's full path in the store on ned-box, not to search by path: a replaced file keeps its path, so the newest snapshots holding it hold the replacement",
+          ("sha256sum /mnt/backup/timeshift/snapshots/*/localhost"
+           "/home/nedlern/nedschorus-logs/seats/cold-read-research/measurement.md") in result.stderr
+          and "find-deleted-path-across-backups" not in result.stderr
           and "sudo timeshift --list" not in result.stderr
           and "every ten minutes" not in result.stderr, result.stderr)
 

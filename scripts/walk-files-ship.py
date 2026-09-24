@@ -447,10 +447,11 @@ def ship_walk(destination: WalkStoreDestination, name: str,
             print(f"FAILED: {name} — {reason} during the copy; a later run finishes it.")
             sys.stderr.write(copied.stderr)
             return EXIT_FAILED
-    # The store on ned-box, which the snapshots copy: the record shipper's
-    # constant, never written out again here.
-    store_root = shipper.split_destination(
-        shipper.LOG_STORE_RECORDS_DESTINATION)[1].parent
+    # The walk kind's directory in the store on ned-box, which the snapshots
+    # copy, built from the record shipper's constant, never written out again
+    # here; the destination may be a local override, the snapshots never.
+    stored_walk_directory = (shipper.split_destination(
+        shipper.LOG_STORE_RECORDS_DESTINATION)[1].parent / WALK_KIND_DIRECTORY)
     for replacement in replaced:
         # One line per replaced file, never on stdout: that line is the summary
         # and the citation. See REPLACED and APPENDED TO in the module
@@ -461,10 +462,10 @@ def ship_walk(destination: WalkStoreDestination, name: str,
               f"now is sha256 {replacement.local_sha256}. {replacement.ruling} If "
               f"the displaced {replacement.role_name} were wanted, look for the file "
               f"whose sha256 is the first digest on this line in ned-box's Timeshift "
-              f"snapshots, one directory per snapshot under "
-              f"`/mnt/backup/timeshift/snapshots/<snapshot>/localhost{store_root}/` "
-              f"on ned-box; `scripts/find-deleted-path-across-backups.py` searches "
-              f"them by path.", file=sys.stderr)
+              f"snapshots: on ned-box, run `sha256sum "
+              f"/mnt/backup/timeshift/snapshots/*/localhost"
+              f"{stored_walk_directory / replacement.file_name}` and take a snapshot "
+              f"whose line shows that digest.", file=sys.stderr)
 
     parts = []
     if added:
