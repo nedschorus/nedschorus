@@ -95,6 +95,7 @@ Prints one line per case and exits non-zero if any case fails.
 
 import ast
 import sys
+import textwrap
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -446,6 +447,127 @@ def composing_sites(path):
                             for argument in arguments)):
                 report(node, "the suffix constant passed to .format()")
     return sites, helpers, bool(definitions)
+
+
+# --- the guard's own logic, on fixture modules, before the real scripts ---
+# Every case after this block reads the real supervisor, whose clean tree
+# defines each constant once, so until 2026-09-24 the duplicate and scope
+# logic above had no case of its own. With annotated definitions no longer
+# collected, or with the remedy made to name a line in force whatever the
+# scopes, the whole suite still passed, and each break showed only in a hand
+# probe (merge-lane-2's review 5294677757 of PR nedschorus#643, "Questions,
+# not findings", 2026-09-23). Each fixture is a module the size of the shape
+# it pins, and its line numbers are its own.
+def fixture_tree(source):
+    return ast.parse(textwrap.dedent(source))
+
+
+ANNOTATED_BESIDE_PLAIN = fixture_tree("""\
+    HANDOFF_FILE_SUFFIX = "-handoff.md"
+    HANDOFF_FILE_SUFFIX: str = "-handoff-renamed.md"
+    """)
+check("fixture: an annotated second definition is counted and read",
+      definitions_by_constant(ANNOTATED_BESIDE_PLAIN)
+      == {"HANDOFF_FILE_SUFFIX": [(1, True), (2, True)]}
+      and defined_suffix_values(ANNOTATED_BESIDE_PLAIN)
+      == ["-handoff.md", "-handoff-renamed.md"],
+      f"{definitions_by_constant(ANNOTATED_BESIDE_PLAIN)}, "
+      f"{defined_suffix_values(ANNOTATED_BESIDE_PLAIN)}")
+
+BARE_ANNOTATION_THEN_PLAIN = fixture_tree("""\
+    HANDOFF_FILE_SUFFIX: str
+    HANDOFF_FILE_SUFFIX = "-handoff.md"
+    """)
+check("fixture: an annotation with no value is not a definition",
+      definitions_by_constant(BARE_ANNOTATION_THEN_PLAIN)
+      == {"HANDOFF_FILE_SUFFIX": [(2, True)]},
+      str(definitions_by_constant(BARE_ANNOTATION_THEN_PLAIN)))
+
+OTHER_NAMES_BESIDE_ONE_SUFFIX = fixture_tree("""\
+    HANDOFF_FILE_SUFFIX = "-handoff.md"
+    HANDOFF_FILE_NAME = "-handoff.md"
+    OTHER_FILE_SUFFIX: str = "-other.md"
+    """)
+check("fixture: only the suffix constants' definitions are collected",
+      definitions_by_constant(OTHER_NAMES_BESIDE_ONE_SUFFIX)
+      == {"HANDOFF_FILE_SUFFIX": [(1, True)]}
+      and defined_suffix_values(OTHER_NAMES_BESIDE_ONE_SUFFIX)
+      == ["-handoff.md"],
+      f"{definitions_by_constant(OTHER_NAMES_BESIDE_ONE_SUFFIX)}, "
+      f"{defined_suffix_values(OTHER_NAMES_BESIDE_ONE_SUFFIX)}")
+
+NESTED_COPIES = fixture_tree("""\
+    HANDOFF_FILE_SUFFIX = "-handoff.md"
+    class ProbeSettings:
+        HANDOFF_FILE_SUFFIX: str = "-handoff.md"
+    def probe():
+        HANDOFF_FILE_SUFFIX = "-handoff.md"
+    if True:
+        HANDOFF_FILE_SUFFIX = "-handoff.md"
+    try:
+        HANDOFF_FILE_SUFFIX = "-handoff.md"
+    except OSError:
+        pass
+    """)
+check("fixture: a copy in a class, a function, an if or a try is counted "
+      "and is not module-level",
+      definitions_by_constant(NESTED_COPIES)
+      == {"HANDOFF_FILE_SUFFIX": [(1, True), (3, False), (5, False),
+                                  (7, False), (9, False)]},
+      str(definitions_by_constant(NESTED_COPIES)))
+
+NESTED_ABOVE_MODULE_LEVEL = fixture_tree("""\
+    if True:
+        HANDOFF_FILE_SUFFIX = "-handoff.md"
+    HANDOFF_FILE_SUFFIX = "-handoff.md"
+    """)
+check("fixture: definitions come back in file order, not ast.walk order",
+      definitions_by_constant(NESTED_ABOVE_MODULE_LEVEL)
+      == {"HANDOFF_FILE_SUFFIX": [(2, False), (3, True)]},
+      str(definitions_by_constant(NESTED_ABOVE_MODULE_LEVEL)))
+
+TWO_CONSTANTS_ONE_STATEMENT = fixture_tree("""\
+    SUPERVISOR_LOCK_FILE_SUFFIX = HANDOFF_FILE_SUFFIX = "-x"
+    """)
+check("fixture: one statement assigning two suffix constants defines each",
+      definitions_by_constant(TWO_CONSTANTS_ONE_STATEMENT)
+      == {"SUPERVISOR_LOCK_FILE_SUFFIX": [(1, True)],
+          "HANDOFF_FILE_SUFFIX": [(1, True)]},
+      str(definitions_by_constant(TWO_CONSTANTS_ONE_STATEMENT)))
+
+# The remedy is asked of definitions given as literals, the shape
+# definitions_by_constant() returns, so a break in the collection above
+# fails the collection cases and cannot also crash these.
+in_force_clause = duplicate_definition_clause(
+    "HANDOFF_FILE_SUFFIX", [(1, True), (2, True)])
+check("fixture: two module-level lines name the last as the value in force",
+      in_force_clause == "HANDOFF_FILE_SUFFIX is defined 2 times, at module "
+      "level on line(s) 1, 2 -- delete every definition but the one at line "
+      "2, the value in force",
+      in_force_clause)
+
+# A module constant on line 1 and a class-attribute copy on line 3.
+class_copy_clause = duplicate_definition_clause(
+    "HANDOFF_FILE_SUFFIX", [(1, True), (3, False)])
+check("fixture: a copy outside module level names no line in force",
+      class_copy_clause == "HANDOFF_FILE_SUFFIX is defined 2 times, at "
+      "module level on line(s) 1, not at module level on line(s) 3 -- delete "
+      "every definition but one, and leave that one at module level",
+      class_copy_clause)
+
+CHAINED_ON_ONE_LINE = fixture_tree("""\
+    HANDOFF_FILE_SUFFIX = HANDOFF_FILE_SUFFIX = "-handoff.md"
+    """)
+chained_definitions = definitions_by_constant(CHAINED_ON_ONE_LINE)
+chained_clause = duplicate_definition_clause(
+    "HANDOFF_FILE_SUFFIX", [(1, True), (1, True)])
+check("fixture: a chained definition is two bindings on one line, named "
+      "once and with no line in force",
+      chained_definitions == {"HANDOFF_FILE_SUFFIX": [(1, True), (1, True)]}
+      and chained_clause == "HANDOFF_FILE_SUFFIX is defined 2 times, at "
+      "module level on line(s) 1 -- delete every definition but one, and "
+      "leave that one at module level",
+      f"{chained_definitions}, {chained_clause}")
 
 
 scripts_read = production_scripts()

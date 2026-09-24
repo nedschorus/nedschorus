@@ -128,6 +128,8 @@ with tempfile.TemporaryDirectory() as temporary_directory:
 
     commit_file(repository, "scripts/cold-read-grid.py")
     commit_file(repository, "scripts/only-one-of-these.py")
+    # Hard-linked under a case variant below, and nothing else.
+    commit_file(repository, "docs/hard-linked-notes.md")
     # A tracked name carrying uppercase, which the repository really has --
     # AGENTS.md, CLAUDE.md, engineering-code-review-SKILL.md. Without one,
     # only the fold on the written side is ever exercised.
@@ -243,6 +245,39 @@ with tempfile.TemporaryDirectory() as temporary_directory:
               "and is silent",
               silent(variant_result),
               f"one entry on disk, hook said {variant_result.stdout!r}")
+
+    # The same question with the answer fixed to ONE file on every machine.
+    # The case above takes its folded branch only on a filesystem that folds
+    # case, so on ned-box, where every full sweep runs, nothing reached
+    # is_the_same_file_on_this_filesystem(): with its samefile() call replaced
+    # by `return False` this suite still passed there (mac-claude's inline
+    # finding on PR nedschorus#641, review 5294748911, 2026-09-23). A hard
+    # link is one file under two spellings, which is what samefile() sees
+    # where case is folded. Where case IS folded, the link is refused because
+    # the variant spelling already names the tracked file -- one file under
+    # two spellings before any link is made -- so both machines end with the
+    # fixture this case needs.
+    linked_tracked = repository / "docs" / "hard-linked-notes.md"
+    linked_variant = repository / "docs" / "Hard-Linked-Notes.md"
+    try:
+        os.link(linked_tracked, linked_variant)
+        link_detail = "hard link made"
+    except FileExistsError:
+        link_detail = "the variant spelling already named the tracked file"
+    except OSError as link_refused:
+        link_detail = f"os.link failed: {link_refused!r}"
+    try:
+        one_file_two_spellings = linked_variant.samefile(linked_tracked)
+    except OSError as stat_refused:
+        one_file_two_spellings = False
+        link_detail += f"; samefile failed: {stat_refused!r}"
+    check("the hard-link fixture is one file under two spellings",
+          one_file_two_spellings, link_detail)
+    linked_result = run_hook(hook_payload(repository, linked_variant))
+    check("one file under two spellings is silent on every filesystem "
+          "(hard link)",
+          silent(linked_result),
+          f"{link_detail}; hook said {linked_result.stdout!r}")
 
     # --- a slow git may not cost the turn ---------------------------------
     # The hook runs at every Edit and every Write, so each git call is
