@@ -42,8 +42,10 @@ THE SEVEN SURFACES, in the order they are searched:
                     them. git prunes these reflog entries after 30 days by
                     default, so this surface's memory is about a month.
   4. log-store    — every file name under /home/nedlern/nedschorus-logs on the
-                    box, where seats ship what git does not carry. Matched by
-                    NAME, because a copy is usually renamed on its way in. Read
+                    box, where seats ship what git does not carry. FOUND only
+                    for a file with the exact name; a name that only contains
+                    the file's stem is listed as a CANDIDATE, because a copy
+                    is usually renamed on its way in, but not counted. Read
                     in place on the box; one ssh call from the Mac.
   5. transcripts  — agent session JSONL under ~/.claude/projects, on this Mac
                     AND on the box. A file's content often survives in the
@@ -186,7 +188,9 @@ unattended run, because reading inside Time Machine needs root — unless the
 sudoers rule described above is installed, which is exactly what makes that
 surface answerable with nobody in the room. 2 on a usage error. The first
 version returned 1 for the third case too, so a wrapper branching on $? was
-told "not found" by a run that had searched nothing.
+told "not found" by a run that had searched nothing. Log-store candidates
+never count toward 0: the summary names them on a line of their own instead,
+because counting them told a wrapper "found" for a path that never existed.
 """
 
 # Deferred annotations keep this runnable on the Mac's system python3, which is
@@ -1039,14 +1043,24 @@ def search_log_store(wanted, log_store_root, box_ssh_host, runner=run_command, s
     The log-store is where seats ship what git does not carry, and a copy is
     usually RENAMED on the way in: docs/drafts/pr-main-process-design.md was
     shipped as seats/merge-lane/pr-main-process-design-draft-from-origin-
-    merge-lane-28e4f5f.md. So this surface matches the file's stem anywhere
-    inside a name, case-insensitively, rather than the path or the exact name,
-    and lists every match newest first, the recovery copying the newest. An
-    exact-name copy is not preferred: the one the store held for that file
-    was a cold-read-record's frozen target from 2026-09-01, older than the
-    renamed drafts, and research episode E13 was an agent handing over
-    exactly such a copy ("that's not the latest reference"; review
-    5298465965 on PR 702).
+    merge-lane-28e4f5f.md. So this surface LISTS every name containing the
+    file's stem, case-insensitively, newest first.
+
+    ONLY THE EXACT NAME IS FOUND. A name that merely contains the stem is a
+    candidate: listed, never counted. Counting it made a path that never
+    existed come back FOUND, exit 0, "Recoverable from: log-store.", with a
+    cp of an unrelated file and the password speech silenced
+    (`nowhere/never-existed/plan.md` matched 88 names in the real store;
+    mac-claude's review 5298558956 on PR 702). So with no exact-name file the
+    surface is NOT FOUND, or UNAVAILABLE when a directory went unread, and
+    it still lists the candidates and marks the report `candidate_copies`,
+    which the summary names. With one, the recovery copies the newest
+    exact-name copy, the only one whose identity the name establishes, and
+    a line says when renamed candidates are newer: the exact-name copy the
+    store held for that file was a cold-read-record's frozen target from
+    2026-09-01, older than the renamed drafts, and research episode E13 was
+    an agent handing over exactly such a copy ("that's not the latest
+    reference"; review 5298465965 on PR 702).
 
     The store is read in place when it is on this machine, which is the box,
     and through one ssh call otherwise. `store_is_here` lets the tests drive the
@@ -1115,23 +1129,55 @@ def search_log_store(wanted, log_store_root, box_ssh_host, runner=run_command, s
         return SurfaceReport("log-store", NOT_FOUND, ["searched every file name under %s on %s; none has %r in it"
                                                       % (log_store_root, where, name)])
 
-    exact_name = os.path.basename(_strip_dot_slash(wanted))
+    exact_name = _exact_name_to_find_in_the_log_store(wanted)
     hits.sort(key=lambda hit: -hit[0])
-    lines = ["%d file(s) under %s on %s have %r in their name, newest first:"
-             % (len(hits), log_store_root, where, name)]
+    exact = [hit for hit in hits if os.path.basename(hit[1]).lower() == exact_name]
+    listing = []
     for mtime, path in hits[:LOG_STORE_HITS_SHOWN]:
-        lines.append("    %s  %s" % (time.strftime("%Y-%m-%d %H:%M", time.localtime(mtime)), path))
+        listing.append("    %s  %s" % (time.strftime("%Y-%m-%d %H:%M", time.localtime(mtime)), path))
     if len(hits) > LOG_STORE_HITS_SHOWN:
-        lines.append("    ... and %d more" % (len(hits) - LOG_STORE_HITS_SHOWN))
-    if any(os.path.basename(path) != exact_name for _, path in hits[:LOG_STORE_HITS_SHOWN]):
-        lines.append("(a copy is usually renamed on its way into the store, so a name that only contains %r is a"
+        listing.append("    ... and %d more" % (len(hits) - LOG_STORE_HITS_SHOWN))
+
+    if not exact:
+        # Only candidates: not a find. The status, exit code, summary and
+        # speech are NOT FOUND's (or UNAVAILABLE's, when a directory went
+        # unread and could hold the exact name), and the names are still
+        # listed, because E11 and E14's copies were renamed ones.
+        if unread:
+            head = [unread_line, "the rest were searched, and no file there is named %r" % exact_name]
+            status = UNAVAILABLE
+        else:
+            head = ["searched every file name under %s on %s; none is named %r" % (log_store_root, where, exact_name)]
+            status = NOT_FOUND
+        lines = head + ["%d file(s) have %r in their name, newest first — candidates only, not counted as found:"
+                        % (len(hits), name)] + listing
+        lines.append("(a copy is often renamed on its way into the store: check a candidate's content")
+        lines.append(" before calling it recovered, and before saying the file does not exist)")
+        report = SurfaceReport("log-store", status, lines)
+        report.candidate_copies = len(hits)
+        return report
+
+    lines = ["%d file(s) under %s on %s have %r in their name, newest first; %d of them %s named %r:"
+             % (len(hits), log_store_root, where, name, len(exact), "is" if len(exact) == 1 else "are", exact_name)]
+    lines += listing
+    newer_candidates = [hit for hit in hits if hit[0] > exact[0][0] and hit not in exact]
+    if newer_candidates:
+        lines.append("(%d renamed candidate(s) are newer than the newest copy named %r: check their content"
+                     % (len(newer_candidates), exact_name))
+        lines.append(" before settling on that copy)")
+    elif len(hits) > len(exact):
+        lines.append("(a name that only contains %r is a candidate — check its content before calling it recovered)"
                      % name)
-        lines.append(" candidate — check its content before calling it recovered)")
     if unread:
         lines.append("(%s)" % unread_line)
-    newest = shlex.quote(hits[0][1])
-    recovery = ["cp %s ." % newest] if store_is_here else ["scp %s:%s ." % (box_ssh_host, newest)]
+    newest_exact = shlex.quote(exact[0][1])
+    recovery = ["cp %s ." % newest_exact] if store_is_here else ["scp %s:%s ." % (box_ssh_host, newest_exact)]
     return SurfaceReport("log-store", FOUND, lines, recovery)
+
+
+def _exact_name_to_find_in_the_log_store(wanted):
+    """The wanted file's own name, lower-cased: 'pr-main-process-design.md'. Only this counts as FOUND."""
+    return os.path.basename(_strip_dot_slash(wanted).rstrip("/")).lower()
 
 
 def _name_to_match_in_the_log_store(wanted):
@@ -2085,10 +2131,14 @@ def render_summary(reports):
     out = []
     found = [r for r in reports if r.status == FOUND]
     blocked = [r for r in reports if r.status == UNAVAILABLE]
+    candidates = [r for r in reports if r.status != FOUND and getattr(r, "candidate_copies", 0)]
     if found:
         out.append("Recoverable from: %s." % ", ".join(r.surface for r in found))
     else:
         out.append("No surface that could be searched has it.")
+    if candidates:
+        out.append("Candidates only, not counted as found: %s — check their content before saying it does not exist."
+                   % ", ".join(r.surface for r in candidates))
     if blocked:
         out.append("Could NOT search: %s — see each one's line above; those are not 'not found'."
                    % ", ".join(r.surface for r in blocked))

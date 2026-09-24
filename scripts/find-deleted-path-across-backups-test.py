@@ -1263,7 +1263,7 @@ with tempfile.TemporaryDirectory() as tmp:
     here = RunsLocallyRefusesSsh([])
     report = finder.search_log_store("docs/drafts/pr-main-process-design.md", str(store), "nedlern@ned-box", here)
     listed = [l.strip() for l in report.lines if l.startswith("    ")]
-    check("log-store, store here: the renamed copies are FOUND by the file's name",
+    check("log-store, store here: the exact-name copy makes it FOUND, and the renamed copies are listed with it",
           report.status == FOUND and any(str(older_rename) in l for l in listed)
           and any(str(newer_rename) in l for l in listed),
           "%s %s" % (report.status, report.lines))
@@ -1276,12 +1276,18 @@ with tempfile.TemporaryDirectory() as tmp:
     check("log-store: each listed copy carries its time, so the newest can be told at a glance",
           listed and listed[0].startswith("2026-09-18 12:00") and listed[-1].startswith("2026-09-01 09:00"),
           str(listed))
-    check("log-store: a renamed candidate is flagged as a candidate, to be checked by content",
-          any("check its content" in l for l in report.lines), str(report.lines))
+    check("log-store: renamed candidates newer than the exact-name copy are named, to be checked first (E13)",
+          any("2 renamed candidate(s) are newer than the newest copy named 'pr-main-process-design.md'" in l
+              for l in report.lines), str(report.lines))
     check("log-store, store here: read in place, and nothing is sent over ssh",
           not any(c.startswith("ssh") for c in here.calls), str(here.calls))
-    check("log-store, store here: the recovery copies the newest file, not the frozen exact-name copy",
-          report.recovery == ["cp %s ." % newer_rename], str(report.recovery))
+    check("log-store, store here: the recovery copies the exact-name copy, the one its name identifies",
+          report.recovery == ["cp %s ." % exact_copy], str(report.recovery))
+
+    report = finder.search_log_store("docs/drafts/PR-Main-Process-Design.md", str(store), "", RunsLocallyRefusesSsh([]))
+    check("log-store: the exact name is matched whatever its case",
+          report.status == FOUND and report.recovery == ["cp %s ." % exact_copy],
+          "%s %s" % (report.status, report.recovery))
 
     report = finder.search_log_store("docs/drafts/nowhere-at-all.md", str(store), "nedlern@ned-box",
                                      RunsLocallyRefusesSsh([]))
@@ -1301,7 +1307,7 @@ with tempfile.TemporaryDirectory() as tmp:
           report.status == FOUND and sum(1 for l in report.lines if l.startswith("    2026-")) == 3,
           "%s %s" % (report.status, report.lines))
     check("log-store, store on the box: the recovery is an scp from the box",
-          report.recovery == ["scp nedlern@ned-box:%s ." % newer_rename], str(report.recovery))
+          report.recovery == ["scp nedlern@ned-box:%s ." % exact_copy], str(report.recovery))
 
     report = finder.search_log_store("pr-main-process-design.md", str(Path(tmp, "no-store-here")),
                                      "nedlern@ned-box", LocalShellRunner([], Path(tmp)), store_is_here=False)
@@ -1352,6 +1358,60 @@ check("log-store: not here and no ssh host is UNAVAILABLE, saying why it was not
 check("log-store: the name matched is the file's stem, lower-cased",
       finder._name_to_match_in_the_log_store("docs/drafts/PR-Main-Process-Design.md") == "pr-main-process-design"
       and finder._name_to_match_in_the_log_store("./.env") == ".env")
+
+# Only the exact name is FOUND. mac-claude's review 5298558956 on PR 702, reproduced
+# against the real store: nowhere/never-existed/plan.md matched 88 names containing
+# "plan", came back FOUND with exit 0, "Recoverable from: log-store." and a cp of an
+# unrelated file, and silenced the password speech.
+with tempfile.TemporaryDirectory() as tmp:
+    store, (exact_copy, older_rename, newer_rename, unrelated) = log_store_fixture(tmp)
+    exact_copy.unlink()
+    report = finder.search_log_store("docs/drafts/pr-main-process-design.md", str(store), "", RunsLocallyRefusesSsh([]))
+    listed = [l.strip() for l in report.lines if l.startswith("    ")]
+    check("log-store: renamed copies alone are NOT FOUND, with no recovery command",
+          report.status == NOT_FOUND and report.recovery == [], "%s %s %s" % (report.status, report.lines, report.recovery))
+    check("log-store: ... but they are still listed newest first, as candidates (E11, E14)",
+          [l.split("  ", 1)[1] for l in listed] == [str(newer_rename), str(older_rename)]
+          and any("candidates only, not counted as found" in l for l in report.lines)
+          and getattr(report, "candidate_copies", 0) == 2,
+          str(report.lines))
+    check("log-store: ... and it says no file has the exact name",
+          any("none is named 'pr-main-process-design.md'" in l for l in report.lines), str(report.lines))
+    check("log-store: a candidates-only report counts as not found in the summary and the exit code",
+          finder.exit_status([report]) == 1
+          and "Recoverable from" not in finder.render_summary([report])
+          and "Candidates only, not counted as found: log-store" in finder.render_summary([report]),
+          finder.render_summary([report]))
+    LOG_STORE_CANDIDATES_ONLY = report
+
+    walk = Path(store, "walk")
+    walk.mkdir()
+    Path(walk, "rulings-agents-cannot-find-from-problem-to-build-plan-minutes.md").write_text("minutes\n")
+    Path(walk, "plan-of-something-else.md").write_text("other\n")
+    captured = io.StringIO()
+    with contextlib.redirect_stdout(captured):
+        code = finder.main(["nowhere/never-existed/plan.md", "--repo", str(tmp), "--log-store-root", str(store),
+                            "--skip", "localsnapshots", "--skip", "git", "--skip", "reflog", "--skip", "transcripts",
+                            "--skip", "box", "--skip", "timemachine"],
+                           runner=RunsLocallyRefusesSsh([]))
+    text = captured.getvalue()
+    check("a path that never existed, whose stem is in other names, exits 1: not found, not recoverable",
+          code == 1 and "Recoverable from" not in text and "$ cp" not in text
+          and "No surface that could be searched has it." in text
+          and "Candidates only, not counted as found: log-store" in text,
+          "exit=%s\n%s" % (code, text))
+
+    if os.geteuid() != 0:
+        Path(store, "sealed").mkdir()
+        os.chmod(str(Path(store, "sealed")), 0)
+        try:
+            report = finder.search_log_store("pr-main-process-design.md", str(store), "", RunsLocallyRefusesSsh([]))
+        finally:
+            os.chmod(str(Path(store, "sealed")), 0o700)
+        check("log-store: candidates with an unread directory are UNAVAILABLE, since the exact name could be there",
+              report.status == UNAVAILABLE and getattr(report, "candidate_copies", 0) == 2
+              and any("could not read 1 directory" in l for l in report.lines),
+              "%s %s" % (report.status, report.lines))
 
 with tempfile.TemporaryDirectory() as tmp:
     store, _ = log_store_fixture(tmp)
@@ -2037,6 +2097,9 @@ check("condition 1 — a surface that could NOT be searched does not excuse the 
       is not None,
       "an unreachable box leaves him just as needed; only a FOUND makes him unnecessary")
 
+check("condition 1 — log-store candidates are not a find, so they do not silence the wall",
+      spoken("docs/a/b.md", missed + [LOG_STORE_CANDIDATES_ONLY, tm_wall_report()]) is not None,
+      "a name that only contains the stem recovers nothing; the person is still needed")
 check("condition 2 — no wall mark, no line: a warm sudo searched and never met one",
       spoken("docs/a/b.md",
              missed + [tm_report_without_the_wall_mark(NOT_FOUND, "searched")]) is None)
