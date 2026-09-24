@@ -29,18 +29,51 @@ matched case-insensitively as a substring of each file's name, so
                         /private/tmp/claude-501 (scratch worktrees)
              handoffs   /Users/el/.claude/handoffs
              git        every clone found under the checkouts
-    ned-box  checkouts  /home/nedlern/agents, /home/nedlern/Projects
+    ned-box  checkouts  /home/nedlern/agents, /home/nedlern/Projects,
+                        /tmp/claude-1000 (scratch worktrees)
              log-store  /home/nedlern/nedschorus-logs, except transcripts/
              handoffs   /home/nedlern/.claude/handoffs
              git        every clone found under the checkouts
+
+FOUND MEANS THE SAME NAME, AND THE SAME PATH WHEN ONE IS GIVEN. A query that is
+a bare file name is found by a copy with that name, in any case. A query with
+directories is found only by a copy whose path ends with the query's path, on
+whole path components: `md-review-records/x/dispositions.md` is not found by
+a dispositions.md in some other directory. The log-store reuses generic names
+across its records (measured 2026-09-24: 40 dispositions.md, 31 fast-read.md,
+29 reference-check.md, 26 memory.md, 11 SKILL.md), and the backup search's
+log-store surface read an unrelated record as the file until the same rule
+was applied there (PR 702 review 5298743638). A git hit's path is relative to
+its clone, so an absolute query is first made relative to the checkout that
+holds it, found by walking up to the nearest `.git`; an absolute query under
+no checkout keeps its whole path. Every other file whose name contains the
+stem, including a same-name copy in another directory, is a candidate, to be
+checked by content; candidates do not make the answer "found".
+Measured 2026-09-24: `plan.md`, a name no file has, matched 1,767 names on
+the Mac alone, and this program exited 0 on them without naming the next
+step. The same fault was found in the backup search's log-store surface on
+PR "The lost-file tool searches git's reflog and the log-store, and prints
+each place as it finishes" (review 5298558956), where a stem match printed a
+recovery command for an unrelated file. A renamed copy, which the research's
+E11 and E14 needed, is still listed, as a candidate.
 
 The log-store's transcripts/ directory is left out on purpose: its files are
 named by session id, and searching inside transcripts was not part of what
 was approved. `.git`, `__pycache__`, `node_modules`, `.venv` and `venv`
 directories are never descended into.
 
-THE GIT SURFACE is `git log --reflog --all` over each clone, with a pathspec
-that matches the name anywhere in the tree. `--reflog` is what the research's
+THE GIT SURFACE is `git log --reflog --all --full-history` over each clone,
+with a pathspec that matches the name anywhere in the tree. `--full-history`
+is needed because with a pathspec git otherwise simplifies history: at a
+merge that leaves the path as its first parent had it, git follows that
+parent alone, so a file added and deleted on a merged topic branch is never
+reached. Measured 2026-09-24: in ned-box's shared clone, `git log --reflog
+--all -- docs/drafts/simplification-review-prompt-draft.md` printed nothing,
+and with `--full-history` it printed commits 40fef4e and ae3b93a, both on
+origin/main; 32 of the 662 deleted paths in that clone were hidden that way
+(PR 703 review 5298686798). The flag cost about 0.04 s on the Mac's main
+clone. scripts/find-deleted-path-across-backups.py passes it for the same
+reason. `--reflog` is what the research's
 episodes E11 and E14 needed: two commits of docs/drafts/pr-main-process-design.md
 were reachable only from the merge-lane worktree's HEAD reflog after its
 seat-branch was recreated. Measured 2026-09-23 with git 2.55 on the Mac: those
@@ -61,9 +94,9 @@ searched: no route from ned-box to the Mac is documented
 describes only the Mac to ned-box direction), so the program says the Mac was
 not searched rather than building one.
 
-WHAT IT PRINTS. Two lists, each newest first: copies with the same name as
-the query, then files whose names contain its stem. Each line carries the
-time (UTC), the machine, the surface, the path and the size; a git hit names
+WHAT IT PRINTS. Two lists: the copies found (see FOUND MEANS above), every one
+of them, newest first; then the candidates, cut to the newest few, those with
+the query's name first. Each line carries the time (UTC), the machine, the surface, the path and the size; a git hit names
 its commit as commit <hash> ("<subject>"), the form ruled on 2026-09-22.
 Copies whose content is identical (compared by git's blob hash, so a checkout
 file and the commit that holds the same bytes are recognised as one) are
@@ -79,13 +112,15 @@ backup search when nothing was found; report where it looked rather than that
 the file does not exist.
 
 EXIT CODES.
-    0  at least one copy was found (a surface that failed is still printed)
-    1  nothing was found, and every surface was searched
+    0  at least one copy was found, as FOUND MEANS above defines it (a
+       surface that failed is still printed)
+    1  no copy was found, and every surface was searched; candidates may
+       still be listed
     2  bad invocation (argparse's own exit)
-    3  nothing was found, and at least one surface or machine could NOT be
+    3  no copy was found, and at least one surface or machine could NOT be
        searched -- so "not found" is not established
 A failed surface never reads as "not found": that is why 3 exists apart
-from 1.
+from 1. A candidate never reads as "found": that is why 1 and 3 allow them.
 
 TESTS. scripts/locate-file-copies-across-machines-test.py. The surfaces are
 injectable through the LOCATE_FILE_COPIES_ACROSS_MACHINES_PLAN environment
@@ -119,18 +154,26 @@ LOCAL_COMMAND_TIMEOUT_SECONDS = 30
 
 PLAN_ENVIRONMENT_VARIABLE = "LOCATE_FILE_COPIES_ACROSS_MACHINES_PLAN"
 THIS_MACHINE_JSON_FLAG = "--this-machine-json"
-BACKUP_SEARCH_PROGRAM = "scripts/find-deleted-path-across-backups.py"
+# The backup search, beside this program in the same checkout. It is printed
+# as `python3 <absolute path>`, because the file is not executable (mode
+# 100644 on main) and an agent may be in any directory when it runs it.
+BACKUP_SEARCH_PROGRAM_NAME = "find-deleted-path-across-backups.py"
 
 # A match larger than this is listed but not hashed, so it is never collapsed
 # with an identical copy. Hashing is the only part of a search whose cost
 # grows with file size.
 HASH_SIZE_LIMIT_BYTES = 64 * 1024 * 1024
-# Per machine, only the newest this-many file matches are stat-sorted into the
-# answer and hashed; per clone, only the newest this-many matching paths. A
-# one-letter query must still answer in seconds.
+# Per machine, only the newest this-many candidate file matches are hashed
+# into the answer; per clone, only the newest this-many candidate paths. A
+# one-letter query must still answer in seconds. A copy with the query's own
+# name is never cut by either cap: the remedy the answer offers for a cut,
+# "run again with more of the name", cannot help when the query is already
+# the whole name (PR 703 review 5298659418: `CLAUDE.md` lost two copies to
+# the cap on ned-box).
 MAX_FILE_HITS_PER_MACHINE = 300
 MAX_GIT_PATHS_PER_CLONE = 300
-# Entries printed per list; the rest are counted.
+# Candidate entries printed; the rest are counted. Same-name copies are all
+# printed.
 MAX_ENTRIES_PER_LIST = 25
 # Directories never descended into, besides `.git`: bytecode, and third-party
 # dependency trees no agent writes into. Measured 2026-09-23 on the Mac:
@@ -152,7 +195,8 @@ NED_BOX_SURFACES = {
     "machine": "ned-box",
     "surfaces": [
         {"name": "checkouts",
-         "roots": ["/home/nedlern/agents", "/home/nedlern/Projects"],
+         "roots": ["/home/nedlern/agents", "/home/nedlern/Projects",
+                   "/tmp/claude-1000"],
          "git": True},
         {"name": "log-store", "roots": ["/home/nedlern/nedschorus-logs"],
          "prune": ["/home/nedlern/nedschorus-logs/transcripts"]},
@@ -205,6 +249,69 @@ def escape_glob(text: str) -> str:
 
 def name_matches(basename: str, stem: str) -> bool:
     return stem.lower() in basename.lower()
+
+
+def is_same_name(basename: str, name: str) -> bool:
+    """Whether a file named `basename` is a copy of the query named `name`:
+    the same name in any case, or, for a query with no suffix, the same stem.
+    Only these count as found; every other name that holds the stem is a
+    candidate."""
+    basename, name = basename.lower(), name.lower()
+    return basename == name or (
+        "." not in name and pathlib.PurePath(basename).stem == name)
+
+
+def checkout_root_of(path):
+    """The nearest directory at or above `path`'s directory holding a `.git`
+    entry, or None."""
+    directory = os.path.dirname(path)
+    while True:
+        if os.path.lexists(os.path.join(directory, ".git")):
+            return directory
+        parent = os.path.dirname(directory)
+        if parent == directory:
+            return None
+        directory = parent
+
+
+def wanted_path_parts(query):
+    """The path components a found copy's path must end with: the query,
+    made relative to its checkout when it is an absolute path inside one."""
+    path = os.path.normpath(query.rstrip("/"))
+    if os.path.isabs(path):
+        root = checkout_root_of(path)
+        if root:
+            path = os.path.relpath(path, root)
+    return [part for part in pathlib.PurePath(path).parts
+            if part not in (os.sep, ".")]
+
+
+def is_found_copy(path, wanted, name):
+    """Whether a hit at `path` (absolute for a file, clone-relative for git)
+    is a copy of the query: the same name for a bare-name query; for a query
+    with directories, a path ending with those directories and that name."""
+    parts = [part for part in pathlib.PurePath(path).parts if part != os.sep]
+    if not parts or not is_same_name(parts[-1], name):
+        return False
+    if len(wanted) <= 1:
+        return True
+    if len(parts) < len(wanted):
+        return False
+    return ([part.lower() for part in parts[-len(wanted):-1]]
+            == [part.lower() for part in wanted[:-1]])
+
+
+def keep_same_name_and_newest(items, name, cap, basename_of):
+    """`items`, newest first, with every same-name item kept and only the
+    newest `cap` of the others."""
+    kept, others = [], 0
+    for item in items:
+        if is_same_name(basename_of(item), name):
+            kept.append(item)
+        elif others < cap:
+            kept.append(item)
+            others += 1
+    return kept
 
 
 def git_blob_id(path: str, size: int):
@@ -325,13 +432,6 @@ def git_dirs_of(git_entries):
     for entry in git_entries:
         if os.path.isdir(entry):
             git_dir = entry
-            # A `.git` directory with no HEAD is not a repository, and git
-            # log refuses it ("not a git repository"). Measured 2026-09-23:
-            # five on the Mac, probe repositories under /private/tmp whose
-            # files are gone and whose directories remain. They hold nothing
-            # to search, so they are skipped rather than reported as failed.
-            if not os.path.isfile(os.path.join(git_dir, "HEAD")):
-                continue
         else:
             try:
                 with open(entry, encoding="utf-8") as handle:
@@ -347,14 +447,24 @@ def git_dirs_of(git_entries):
             if os.path.basename(parent) != "worktrees":
                 continue
             git_dir = os.path.dirname(parent)
-        if os.path.isdir(git_dir):
+        # A directory without git's three markers -- a HEAD file, objects/
+        # and refs/ -- is not a repository, and git log refuses it ("not a
+        # git repository"). Measured: on 2026-09-23 five on the Mac, probe
+        # repositories under /private/tmp with no HEAD; on 2026-09-24 seven
+        # on ned-box under /tmp/claude-1000, git-variable experiments whose
+        # objects/ was written elsewhere. They hold nothing to search, so
+        # they are skipped rather than reported as places not searched.
+        if (os.path.isfile(os.path.join(git_dir, "HEAD"))
+                and os.path.isdir(os.path.join(git_dir, "objects"))
+                and os.path.isdir(os.path.join(git_dir, "refs"))):
             found.setdefault(os.path.realpath(git_dir), git_dir)
     return sorted(found)
 
 
 def git_log_command(git_dir, stem):
     return ["git", "--git-dir", git_dir, "log", "--reflog", "--all",
-            "--topo-order", "--no-renames", "--raw", "--no-abbrev", "-z",
+            "--full-history", "--topo-order", "--no-renames", "--raw",
+            "--no-abbrev", "-z",
             "--format=%x01%H%x00%ct%x00%s", "--",
             f":(glob,icase)**/*{escape_glob(stem)}*"]
 
@@ -408,7 +518,7 @@ def parse_git_log(output: bytes, stem: str):
     return newest
 
 
-def run_git_log(git_dir, stem):
+def run_git_log(git_dir, stem, name):
     """(hits, failure) for one clone."""
     try:
         result = subprocess.run(git_log_command(git_dir, stem),
@@ -426,13 +536,15 @@ def run_git_log(git_dir, stem):
     newest = parse_git_log(result.stdout, stem)
     ordered = sorted(newest.items(), key=lambda item: -item[1]["time"])
     hits = []
-    for path, found in ordered[:MAX_GIT_PATHS_PER_CLONE]:
+    for path, found in keep_same_name_and_newest(
+            ordered, name, MAX_GIT_PATHS_PER_CLONE,
+            lambda item: os.path.basename(item[0])):
         hits.append(dict(found, kind="git", surface="git", path=path,
                          clone=git_dir, size=None))
     return hits, None
 
 
-def search_this_machine(machine_plan, stem):
+def search_this_machine(machine_plan, stem, name):
     """Everything this machine holds under the plan, as one JSON-ready dict:
     the hits, a report per surface, and the git report."""
     surfaces = machine_plan["surfaces"]
@@ -448,7 +560,8 @@ def search_this_machine(machine_plan, stem):
             for git_dir in git_dirs_of(git_entries):
                 if git_dir not in git_dirs:
                     git_dirs.add(git_dir)
-                    logs.append(pool.submit(run_git_log, git_dir, stem))
+                    logs.append(pool.submit(run_git_log, git_dir, stem,
+                                            name))
 
         pending = {}
         for surface in surfaces:
@@ -483,7 +596,9 @@ def search_this_machine(machine_plan, stem):
         stated.append((status.st_mtime, surface_name, path, status.st_size))
     stated.sort(key=lambda entry: -entry[0])
     hits = []
-    for mtime, surface_name, path, size in stated[:MAX_FILE_HITS_PER_MACHINE]:
+    for mtime, surface_name, path, size in keep_same_name_and_newest(
+            stated, name, MAX_FILE_HITS_PER_MACHINE,
+            lambda entry: os.path.basename(entry[2])):
         hits.append({"kind": "file", "surface": surface_name, "path": path,
                      "time": mtime, "size": size,
                      "blob": git_blob_id(path, size)})
@@ -495,7 +610,10 @@ def search_this_machine(machine_plan, stem):
             "surfaces": reports,
             "git": ({"under": git_surfaces, "clones": len(git_dirs),
                      "failed": git_failures} if git_surfaces else None),
-            "file_matches_total": len(stated)}
+            "file_matches_total": len(stated),
+            "candidate_matches_total": sum(
+                1 for entry in stated
+                if not is_same_name(os.path.basename(entry[2]), name))}
 
 
 def remote_command(machine_plan, query):
@@ -600,38 +718,52 @@ def render_group(group, lines):
 def render(query, results, not_searched, elapsed):
     """(text, exit code) for the merged results of both machines."""
     stem = query_stem(query)
-    name = query_name(query).lower()
+    name = query_name(query)
+    wanted = wanted_path_parts(query)
+    wanted_label = (f"at {'/'.join(wanted)}" if len(wanted) > 1
+                    else f"named {name}")
     entries = [{"machine": result["machine"], "hit": hit}
                for result in results for hit in result["hits"]]
 
+    def found_copy(entry):
+        return is_found_copy(entry["hit"]["path"], wanted, name)
+
     def same_name(entry):
-        basename = os.path.basename(entry["hit"]["path"]).lower()
-        return basename == name or (
-            "." not in name and pathlib.PurePath(basename).stem == name)
+        return is_same_name(os.path.basename(entry["hit"]["path"]), name)
 
     groups = group_by_content(entries)
-    same = [group for group in groups if any(map(same_name, group))]
-    other = [group for group in groups if not any(map(same_name, group))]
-    # In the same-name list a group is led by its newest same-name copy,
-    # not by a renamed copy that happens to be newer.
+    same = [group for group in groups if any(map(found_copy, group))]
+    other = [group for group in groups if not any(map(found_copy, group))]
+    # A found group is led by its newest found copy, not by a renamed copy
+    # that happens to be newer; a candidate group by its newest same-name
+    # copy, and candidate groups holding one come first.
     for group in same:
-        group.sort(key=lambda entry: (not same_name(entry),
+        group.sort(key=lambda entry: (not found_copy(entry),
                                       -entry["hit"]["time"]))
     same.sort(key=lambda group: -group[0]["hit"]["time"])
+    for group in other:
+        group.sort(key=lambda entry: (not same_name(entry),
+                                      -entry["hit"]["time"]))
+    other.sort(key=lambda group: (not same_name(group[0]),
+                                  -group[0]["hit"]["time"]))
 
     lines = [f"{PROGRAM}: file names containing \"{stem}\", any case"]
     truncated = False
-    for title, chosen in (
-            (f"Same name ({query_name(query)}), newest first:", same),
-            (f"Other names containing \"{stem}\", newest first:", other)):
-        if not chosen:
-            continue
-        lines += ["", title]
-        for group in chosen[:MAX_ENTRIES_PER_LIST]:
+    if same:
+        lines += ["", (f"Same path ({'/'.join(wanted)}), newest first:"
+                       if len(wanted) > 1
+                       else f"Same name ({name}), newest first:")]
+        for group in same:
             render_group(group, lines)
-        if len(chosen) > MAX_ENTRIES_PER_LIST:
+    if other:
+        lines += ["", f"Candidates only, not counted as found: names "
+                      f"containing \"{stem}\", any named {name} first, then "
+                      f"newest first:"]
+        for group in other[:MAX_ENTRIES_PER_LIST]:
+            render_group(group, lines)
+        if len(other) > MAX_ENTRIES_PER_LIST:
             truncated = True
-            lines.append(f"  ... and {len(chosen) - MAX_ENTRIES_PER_LIST} "
+            lines.append(f"  ... and {len(other) - MAX_ENTRIES_PER_LIST} "
                          f"more not shown")
 
     failed = []
@@ -653,18 +785,19 @@ def render(query, results, not_searched, elapsed):
                          f"{', '.join(git['under'])}")
             failed += [f"{machine} git: {failure}"
                        for failure in git["failed"]]
-        if result.get("file_matches_total", 0) > MAX_FILE_HITS_PER_MACHINE:
+        if result.get("candidate_matches_total", 0) > MAX_FILE_HITS_PER_MACHINE:
             truncated = True
             lines.append(f"  {machine}: {result['file_matches_total']} files "
-                         f"matched; only the newest "
-                         f"{MAX_FILE_HITS_PER_MACHINE} were considered")
+                         f"matched; every one named {name} was kept, and "
+                         f"only the newest {MAX_FILE_HITS_PER_MACHINE} of the "
+                         f"others were considered")
     if failed or not_searched:
         lines += ["", "NOT searched, or searched only in part:"]
         lines += [f"  {machine}: {reason}" for machine, reason in not_searched]
         lines += [f"  {failure}" for failure in failed]
     lines += ["", f"Took {elapsed:.1f} s."]
 
-    found = bool(entries)
+    found = bool(same)
     incomplete = bool(failed or not_searched)
     instructions = []
     for machine, reason in not_searched:
@@ -688,10 +821,23 @@ def render(query, results, not_searched, elapsed):
         instructions.append("To see the entries not shown, run again with "
                             "more of the name.")
     if not found:
+        backup_search = pathlib.Path(__file__).resolve().parent / \
+            BACKUP_SEARCH_PROGRAM_NAME
+        command = (f"`python3 {shlex.quote(str(backup_search))} "
+                   f"{shlex.quote(query)}`")
+        if other:
+            instructions += [
+                f"No copy {wanted_label} was found: the files above are "
+                f"candidates only; check a candidate's content before you "
+                f"say it is the file.",
+                f"Run next {command}, which searches git history and the "
+                f"backups.",
+            ]
+        else:
+            instructions.append(
+                f"Nothing was found: run next {command}, which searches git "
+                f"history and the backups.")
         instructions += [
-            f"Nothing was found: run next "
-            f"`{BACKUP_SEARCH_PROGRAM} {shlex.quote(query)}`, which searches "
-            f"git history and the backups.",
             "When you report this, say where you looked (the Searched lines "
             "above); do not say the file does not exist.",
         ]
@@ -723,9 +869,11 @@ def main(argv=None) -> int:
     stem = query_stem(args.query)
     if not stem:
         parser.error("the query has no file name to match")
+    name = query_name(args.query)
 
     if args.this_machine_json:
-        result = search_this_machine(json.loads(args.this_machine_json), stem)
+        result = search_this_machine(json.loads(args.this_machine_json), stem,
+                                     name)
         json.dump(result, sys.stdout)
         return 0
 
@@ -742,7 +890,7 @@ def main(argv=None) -> int:
         not_searched.append((other["machine"],
                              other.get("not_searched_because", "no route")))
 
-    results = [search_this_machine(plan["this"], stem)]
+    results = [search_this_machine(plan["this"], stem, name)]
     if remote:
         answer = finish_remote_search(remote, other)
         if isinstance(answer, dict):
