@@ -60,6 +60,17 @@ DECISIONS, and where they depart from the design of record:
   command, or an issue URL naming another repository send the write
   elsewhere, and the ruling is about this project's issues. An agent may
   report a defect upstream.
+- The repository flag is read wherever gh accepts it: between `gh` and
+  `issue`, between `issue` and the subcommand, and after the subcommand, in
+  every spelling gh takes (`-R X`, `-RX`, `-R=X`, `--repo X`, `--repo=X`;
+  each checked against gh 2.101.0 on 2026-09-24). When the flag is given
+  more than once, gh uses the last one, and so does this guard. Reading it
+  only after the subcommand let `gh -R nedschorus/nedschorus issue create`
+  and `gh issue -R nedschorus/nedschorus comment` through while naming this
+  repository, and agents do write `gh --repo X issue ...`. Found in the
+  review of PR "Hand-typed gh issue comments, creates and body edits are
+  refused" (https://github.com/nedschorus/nedschorus/pull/708), where Codex
+  also raised it.
 - `gh api` writes to issue endpoints are out of scope: the design's accepted
   residual (user-ruled 2026-08-07, reaffirmed 2026-08-09), "the enumeration
   holes stay open — `gh api`, MCP tools, creative quoting — under the
@@ -187,7 +198,8 @@ def find_gh_issue_invocation(words):
     """Given one simple command's words, return (subcommand, arguments,
     repository_from_environment) for an invoked `gh issue <subcommand>`, or
     None. Quoted prose naming it arrives as one data word and never matches.
-    Leading assignments and an `env` in front are read through."""
+    Leading assignments and an `env` in front are read through, and a
+    repository flag before the subcommand is carried into the arguments."""
     index = 0
     repository_from_environment = None
     while index < len(words) and ENVIRONMENT_ASSIGNMENT_PATTERN.match(words[index]):
@@ -210,12 +222,42 @@ def find_gh_issue_invocation(words):
                 index += 1
                 continue
             break
-    if index + 2 >= len(words):
+    if index >= len(words) or not is_program(words[index], "gh"):
         return None
-    if not is_program(words[index], "gh") or words[index + 1] != "issue":
+    repository_flag_values = []
+    index = skip_repository_flags(words, index + 1, repository_flag_values)
+    if index >= len(words) or words[index] != "issue":
         return None
-    subcommand = SUBCOMMAND_ALIASES.get(words[index + 2], words[index + 2])
-    return subcommand, words[index + 3:], repository_from_environment
+    index = skip_repository_flags(words, index + 1, repository_flag_values)
+    if index >= len(words):
+        return None
+    subcommand = SUBCOMMAND_ALIASES.get(words[index], words[index])
+    arguments = ([f"--repo={value}" for value in repository_flag_values]
+                 + words[index + 1:])
+    return subcommand, arguments, repository_from_environment
+
+
+def skip_repository_flags(words, index, repository_flag_values):
+    """Step past gh's -R/--repo flags starting at words[index], in every
+    spelling gh accepts, appending each value to repository_flag_values.
+    Return the index of the first word that is not one."""
+    while index < len(words):
+        word = words[index]
+        if word in ("-R", "--repo"):
+            if index + 1 >= len(words):
+                return len(words)
+            repository_flag_values.append(words[index + 1])
+            index += 2
+        elif word.startswith("--repo="):
+            repository_flag_values.append(word[len("--repo="):])
+            index += 1
+        elif word.startswith("-R") and len(word) > 2:
+            value = word[3:] if word[2] == "=" else word[2:]
+            repository_flag_values.append(value)
+            index += 1
+        else:
+            return index
+    return index
 
 
 def parse_arguments(subcommand, arguments):
@@ -248,7 +290,8 @@ def parse_arguments(subcommand, arguments):
             name = SHORT_TO_LONG.get(short, short)
             if name in value_flags:
                 if len(word) > 2:
-                    value = word[2:]
+                    # `-R=X` means X, as gh's flag parser reads it.
+                    value = word[3:] if word[2] == "=" else word[2:]
                 else:
                     value = arguments[index] if index < len(arguments) else ""
                     index += 1
@@ -265,7 +308,8 @@ def names_another_repository(flags, positionals, repository_from_environment):
     named = []
     repository_values = flags.get("--repo")
     if isinstance(repository_values, list):
-        named.extend(repository_values)
+        # gh uses the last repository flag given, wherever it sits.
+        named.append(repository_values[-1])
     elif repository_from_environment is not None:
         named.append(repository_from_environment)
     named.extend(word for word in positionals if ISSUE_URL_PATTERN.match(word))
