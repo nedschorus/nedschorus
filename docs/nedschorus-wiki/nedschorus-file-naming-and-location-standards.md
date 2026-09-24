@@ -47,7 +47,10 @@ drifts:
 > When creating or inventing names, for directories, file names, globals,
 > functions, classes, scripts, and other names likely to be grepped, use
 > explicit, clear and precise multi-part names. Check newly invented names
-> with glob (for path names) or grep (for names in files). If these checks
+> in both your checkout and main: glob or grep your checkout, then
+> `git fetch`, stopping if it fails, and
+> `git ls-tree -r --name-only origin/main | grep -i <name>` for path names
+> or `git grep -i <name> origin/main` for names in files. If these checks
 > return collisions or ambiguity, choose a more explicit name, with 3 or 4
 > parts, not 1 or 2. If the thing you are naming already has a name in the
 > project, use the existing name instead of inventing a new one.
