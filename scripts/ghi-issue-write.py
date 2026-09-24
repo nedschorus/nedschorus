@@ -4,7 +4,7 @@ to that issue's files; and land an edit to one of those files, after which
 the issue follows it. The `create` and `edit` verbs of the GHI write tool.
 
 WHAT THIS IS. The user ruled on 2026-09-15 that a GHI's body is the link to
-its paired markdown file and nothing else: one copy of every fact, GitHub
+its GHI-MD and nothing else: one copy of every fact, GitHub
 holding the state and the file holding the content. Nothing could build that
 rule by hand, because a body of links needs its files on main first and main
 takes no direct push. This is the program that does it. Designed in
@@ -20,7 +20,7 @@ which is the accepted cooperative posture the design states.
 THE SEQUENCE, and what makes each step safe to run twice:
 
   1. Validate   the file exists, opens with a heading, and is not already
-                paired with an issue whose filing finished.
+                filed under an issue whose filing finished.
   2. Adjudicate ask ghi-info whether an open issue already covers this.
                 Fail-open: unreachable means the write proceeds.
   3. File       gh issue create, title from the file's first heading, body a
@@ -74,7 +74,7 @@ nedlern@ned-box:/home/nedlern/nedschorus-logs/walk/ghi-write-create-verb-follow-
 A FINISHED FILING LEAVES NO KEY ANYWHERE. Step 5 makes the body links, and a
 source the tool did not move — any file not already tracked on main, which
 is every freshly written document — is still on disk. A rerun on it finds no
-pairing and would file a second issue. So before filing, every paired file
+pairing and would file a second issue. So before filing, every filed GHI-MD
 on main is compared against what this source would become if it were filed
 under that file's issue number. That is step 4's own idempotency test
 generalised over the corpus, and it is computed forward: stripping the
@@ -109,10 +109,10 @@ branch left behind wedged every later run on that content, not one run.
 AFTER THE MERGE, WHAT TO RERUN ON. Step 4 is a move when the source is
 already tracked on main, so the merge takes the source path off main and the
 author's pull takes it off disk; a rerun on that path has nothing to read.
-So a paired file — one whose name carries an issue number — is accepted as
+So a filed GHI-MD — one whose name carries an issue number — is accepted as
 the resume entry point when that issue's body is still a placeholder, and
 the run finishes at step 5. When the body is no longer a placeholder the
-filing is done, and the refusal at step 1 stands: changing a paired file is
+filing is done, and the refusal at step 1 stands: changing a filed GHI-MD is
 the edit verb's work.
 
 WHERE THE GIT WORK HAPPENS. In a throwaway worktree cut from a just-fetched
@@ -126,7 +126,7 @@ machine, so two seats filing at once each push their own branch; they are
 separate branches and separate pull requests, so nothing collides.
 
 EDITING AN ISSUE IS EDITING ITS GHI-MD. `edit <path>` takes a file
-already paired with an issue — a paired file carries its issue's number in
+already filed under an issue — a filed GHI-MD carries its issue's number in
 its name wherever it sits — and does four things:
 
   1. Validate   the file exists, opens with a heading, is named for an
@@ -134,7 +134,7 @@ its name wherever it sits — and does four things:
                 docs/issues/ before its system's code starts, directly in
                 the system's own directory after. The same two places
                 step 5 builds the body from, and the same predicate —
-                `writable_relative_path`, which `paired_paths` calls.
+                `writable_relative_path`, which `ghi_md_paths_for_issue` calls.
   2. Adjudicate as create does, with this issue left out of the comparison,
                 which the cold-start prompt's item 2 asks for. Asked only
                 where step 3 has new content to land, which a rerun
@@ -149,8 +149,8 @@ its name wherever it sits — and does four things:
                 refused on the same conflict the landing is, and it is made
                 only where main holds the file under the same name.
   4. Title      when the edit CHANGED the file's first heading, and the
-                issue has one paired file.
-  5. Link       the body to the paired files on main, as create's step 5
+                issue has one filed GHI-MD.
+  5. Link       the body to the filed GHI-MDs on main, as create's step 5
                 writes it in the first place.
 
 THE ISSUE IS READ BEFORE ANYTHING IS LANDED, not after. The number comes
@@ -174,10 +174,11 @@ same pull request; see `edit_landing_state`.
 THE TITLE FOLLOWS A CHANGE, NOT A MISMATCH. The design's trigger is "when
 the edit changes the file's first heading", and reading that as "make the
 title match the heading" would be a different tool. Measured 2026-09-21 over
-the paired corpus on main — the 26 files `paired_paths` returns, for the 21
+the filed corpus on main — the 26 files `ghi_md_paths_for_issue` returns, for
+the 21
 issues that have one: 25 of them have a heading that differs from their
 issue's title, so the matching rule renames most issues the first time
-anybody edits one. An issue with several paired files is left alone even
+anybody edits one. An issue with several filed GHI-MDs is left alone even
 when the heading did change — issue 3 has four files with four headings, and
 nothing in the pairing says which one names it — and the tool says so
 rather than guessing.
@@ -192,7 +193,7 @@ so a moved file's title would follow a heading change never.
 WHICH IS WHY THE FILE'S `issue:` LINE CITES GITHUB'S TITLE, NOT THE
 HEADING. That line cites the issue the way CLAUDE.md says to cite one, by
 title and link. In `create` the heading IS the title, the issue being
-filed under it. In `edit` it is not, on 25 of the 26 paired files on main,
+filed under it. In `edit` it is not, on 25 of the 26 filed GHI-MDs on main,
 and a run that cited the heading wrote each of an issue's files a
 different wrong name for it. So the line carries the title this run leaves
 the issue holding: the heading where step 4 sets it to that, and GitHub's
@@ -202,7 +203,7 @@ read, for that reason — see `issue_title_after_this_edit`.
 THE CONFLICT THIS REFUSES ON IS THE FILE'S, NOT THE BODY'S. The user ruled
 on 2026-09-08 that a GHI edit checks for conflicts and refuses rather than
 merges; scripts/ghi-issue-body-edit.py is that ruling built, for the world
-where an author typed the body. Under link-only the body is computed from
+where an author typed the body. For a link-only-GHI the body is computed from
 main's file set, so two seats computing it reach the same answer and there
 is no body change to lose. The content is in the file, so the file is where
 the check belongs: main's copy is compared against the copy at `git
@@ -259,7 +260,7 @@ push, so the run that pushes nothing passes both.
 A PROSE BODY IS LEFT ALONE, NOT RELINKED AND NOT REFUSED. The design says
 that until an issue is migrated it keeps its prose body and is read as it
 stands, and measurement says that is every issue this verb can reach:
-2026-09-21, all 21 issues with a paired file on main still carry the prose
+2026-09-21, all 21 issues with a filed GHI-MD on main still carry the prose
 body they were filed with, migrating them being its own build-slice. So step
 5 writes only over a body this tool wrote — its link list, or create's
 placeholder — reports what it found otherwise, and finishes. Refusing
@@ -269,7 +270,7 @@ happened.
 
 Usage:
   ghi-issue-write.py create <path-to-ghi-md> [--repo OWNER/NAME] [--dry-run]
-  ghi-issue-write.py edit <path-to-paired-ghi-md> [--repo OWNER/NAME]
+  ghi-issue-write.py edit <path-to-filed-ghi-md> [--repo OWNER/NAME]
                      [--dry-run]
 
 A rerun after the merge is given the file that still exists: the source
@@ -284,8 +285,8 @@ Exit codes:
   0   the work is done — or the run resumed and said what is still
       outstanding
   1   an operating failure — gh, git or the network
-  64  the caller's input is wrong: no such file, no heading, paired when
-      create wants it unpaired or unpaired when edit wants it paired,
+  64  the caller's input is wrong: no such file, no heading, filed when
+      create wants it unfiled or unfiled when edit wants it filed,
       already on main under an issue, a filing of the same heading already
       in flight, a path this tool does not write, a name carrying a number
       that names no issue — one no issue has, or one a pull request has, or
@@ -321,7 +322,7 @@ import tempfile
 from pathlib import Path
 
 DEFAULT_REPO = "nedschorus/nedschorus"
-PAIRED_DIRECTORY = "docs/issues"
+GHI_MD_DIRECTORY = "docs/issues"
 SYSTEM_DIRECTORY = "nc-systems"
 PAIRING_KEY_PREFIX = "ghipair"
 RECONSIDERED_MARKER_NAME = ".ghi-issue-write-reconsidered"
@@ -401,14 +402,14 @@ def placeholder_body(key: str) -> str:
             "links to this issue's files once they land on main. If it still "
             "reads this way, rerun `scripts/ghi-issue-write.py create` on the "
             "file and it will continue from where it stopped. If that file is "
-            f"gone, rerun it on this issue's file under {PAIRED_DIRECTORY}/.")
+            f"gone, rerun it on this issue's file under {GHI_MD_DIRECTORY}/.")
 
 
 ISSUE_FRONTMATTER_KEY = "issue"
 
 
 def issue_frontmatter_line(repo: str, number: int, title: str) -> str:
-    """The issue this file is paired with, written the way CLAUDE.md says to
+    """The issue this file is filed under, written the way CLAUDE.md says to
     cite one: its ID-type — the key — then its name, as a link. Never a
     bare number.
 
@@ -471,7 +472,8 @@ def with_issue_frontmatter(text: str, repo: str, number: int,
 
 
 def links_body(repo: str, paths) -> str:
-    """The body under link-only: one link per paired file, in filename order,
+    """The body of a link-only-GHI: one link per filed GHI-MD, in filename
+    order,
     and nothing else. Derived at every write, so nobody curates it and it
     cannot fall behind the files."""
     lines = []
@@ -483,9 +485,9 @@ def links_body(repo: str, paths) -> str:
 
 # --- The steps ----------------------------------------------------------
 
-def paired_issue_number(path: Path):
-    """The issue number a paired file carries in its name, or None for a file
-    that is not paired. A paired file carries the number wherever it sits, so
+def issue_number_in_file_name(path: Path):
+    """The issue number a filed GHI-MD carries in its name, or None for a file
+    that is not filed. A filed GHI-MD carries the number wherever it sits, so
     this does not look at the directory."""
     match = re.match(r"^(\d+)-", path.name)
     return int(match.group(1)) if match else None
@@ -493,7 +495,7 @@ def paired_issue_number(path: Path):
 
 def issue_body_carries_pairing_key(repo: str, number: int, runner) -> bool:
     """Whether this issue's body is still the placeholder a create wrote,
-    which is what tells a rerun on a paired file that the filing stopped
+    which is what tells a rerun on a filed GHI-MD that the filing stopped
     partway rather than finished. Read from the API for the same reason the
     resume scan is: a rerun seconds after a failure must see the write."""
     viewed = runner(["gh", "issue", "view", str(number), "--repo", repo,
@@ -504,10 +506,10 @@ def issue_body_carries_pairing_key(repo: str, number: int, runner) -> bool:
 
 def validate(path: Path):
     """Step 1. Refuses rather than guesses: a file with no heading has no
-    title to generate, and a file already at a paired path belongs to an
+    title to generate, and a file already at a filed path belongs to an
     issue that exists.
 
-    THE PAIRED-NAME REFUSAL SAYS WHERE THE EDIT VERB WRITES, not merely
+    THE FILED-NAME REFUSAL SAYS WHERE THE EDIT VERB WRITES, not merely
     that the edit verb exists, because the two verbs met at a dead end
     otherwise. This check sends every `<number>-*` file to `edit`, and
     `edit` writes only a file sitting DIRECTLY in docs/issues/ or directly
@@ -530,12 +532,12 @@ def validate(path: Path):
             f"{path} has no heading, so there is no title to generate from "
             "it. The issue's title is the file's first heading, after any "
             "frontmatter (user-ruled 2026-09-16).", 64)
-    if paired_issue_number(path) is not None:
+    if issue_number_in_file_name(path) is not None:
         raise Refused(
             f"{path} is already named for an issue, so that issue exists. A "
-            "paired file carries its issue's number wherever it sits, so this "
-            "check does not depend on the directory.\n"
-            f"Directly in {PAIRED_DIRECTORY}/, or directly in "
+            "filed GHI-MD carries its issue's number wherever it sits, so "
+            "this check does not depend on the directory.\n"
+            f"Directly in {GHI_MD_DIRECTORY}/, or directly in "
             f"{SYSTEM_DIRECTORY}/<system>/: change this file with the edit "
             "verb.\n"
             "Anywhere else, a queue note or an archived draft included: the "
@@ -718,27 +720,28 @@ def origin_main_commit_hash(repository_root: Path, runner) -> str:
 
 
 def ghi_md_paths_on_main(revision: str, repository_root: Path, runner):
-    """Every paired GHI-MD at this revision — the files that carry an issue
+    """Every filed GHI-MD at this revision — the files that carry an issue
     number in their name and sit directly under `docs/issues/`.
 
-    Two things in that directory are not paired files. The queue's files
+    Two things in that directory are not filed GHI-MDs. The queue's files
     belong to no issue and carry no number, so the number is one thing that
     selects. And `-r` descends, so a numbered file in a subdirectory is
     listed too — docs/issues/queue/18-… and docs/issues/archived/43-… are
-    both on main — and those are named for their issue without being paired
-    with it: step 4 lands every file it files as a direct child of
-    `docs/issues/`, which is the only place a paired file is. The parent is
+    both on main — and those are named for their issue without being filed
+    under it: step 4 lands every file it files as a direct child of
+    `docs/issues/`, which is the only place a filed GHI-MD is. The parent is
     what selects those out, and the cost of not selecting them was one
     `git show` each, every create.
 
-    Raises on a failed list for the reason paired_paths does, which is where
+    Raises on a failed list for the reason ghi_md_paths_for_issue does, which
+    is where
     that reasoning and the real-repository measurement behind it are
     written."""
     listed = runner(["git", "ls-tree", "-r", "--name-only", revision,
-                     f"{PAIRED_DIRECTORY}/"], cwd=str(repository_root))
+                     f"{GHI_MD_DIRECTORY}/"], cwd=str(repository_root))
     return [line for line in (listed.stdout or "").splitlines()
-            if str(Path(line).parent) == PAIRED_DIRECTORY
-            and paired_issue_number(Path(line)) is not None]
+            if str(Path(line).parent) == GHI_MD_DIRECTORY
+            and issue_number_in_file_name(Path(line)) is not None]
 
 
 def refuse_if_already_landed_on_main(repo: str, text: str, title: str,
@@ -750,7 +753,7 @@ def refuse_if_already_landed_on_main(repo: str, text: str, title: str,
     still on disk — every source the tool did not move, which is every
     freshly written document — finds no pairing and files a second issue.
 
-    Each paired file on main is compared against what this source would
+    Each filed GHI-MD on main is compared against what this source would
     become if it were filed under that file's issue number, which is
     land_file's own idempotency test generalised over the corpus. Computed
     forward, never by stripping the `issue:` line back off main's copy:
@@ -772,7 +775,7 @@ def refuse_if_already_landed_on_main(repo: str, text: str, title: str,
     runner(["git", "fetch", "origin", "main"], cwd=str(repository_root))
     revision = origin_main_commit_hash(repository_root, runner)
     for landed in ghi_md_paths_on_main(revision, repository_root, runner):
-        number = paired_issue_number(Path(landed))
+        number = issue_number_in_file_name(Path(landed))
         staged = with_issue_frontmatter(text, repo, number, title)
         read = runner(["git", "show", f"{revision}:{landed}"],
                       cwd=str(repository_root))
@@ -816,7 +819,7 @@ def create_pull_request_for_branch(repo: str, branch: str, number: int,
     from the worktree on the ordinary path, and from the filing checkout when
     a rerun finds the branch pushed with no pull request on it."""
     body = (f"The GHI-MD for issue #{number}, filed by "
-            "`scripts/ghi-issue-write.py`.\n\nUnder link-only that "
+            "`scripts/ghi-issue-write.py`.\n\nAs a link-only-GHI, that "
             "issue's body is the links to its files, so this file has to "
             "be on main before the body can point at it. Prose under "
             "`docs/`, silent to reviewers by CLAUDE.md's review-scope "
@@ -837,7 +840,7 @@ def land_file(repo: str, number: int, title: str, source: Path,
     what this run would land before any branch is looked at: see the module
     docstring, WHAT A RERUN TESTS."""
     branch = f"ghi-{number}-{slug(title)}"
-    destination = f"{PAIRED_DIRECTORY}/{number}-{slug(title)}.md"
+    destination = f"{GHI_MD_DIRECTORY}/{number}-{slug(title)}.md"
     staged = with_issue_frontmatter(source.read_text(encoding="utf-8"), repo,
                                     number, title)
 
@@ -880,7 +883,7 @@ def land_file(repo: str, number: int, title: str, source: Path,
         # A move, not a copy. When the source is already tracked on main —
         # a queue file, typically — leaving it behind would put the same
         # document at two paths the moment this merges, which is the
-        # duplication link-only exists to prevent.
+        # duplication a link-only-GHI exists to prevent.
         tracked = source_path_on_main(source, repository_root, runner)
         if tracked and tracked != destination:
             runner(["git", "rm", "--quiet", tracked], cwd=str(worktree))
@@ -926,11 +929,11 @@ def source_path_on_main(source: Path, repository_root: Path, runner):
     return str(relative) if (listed.stdout or "").strip() else None
 
 
-def paired_paths(number: int, repository_root: Path, runner):
-    """Every file paired with this issue that is on main: the files named
+def ghi_md_paths_for_issue(number: int, repository_root: Path, runner):
+    """Every file filed under this issue that is on main: the files named
     `<number>-*` DIRECTLY in docs/issues/, and the files named `<number>-*`
     DIRECTLY in a system's own directory under nc-systems/. Those are the
-    two places § Where the tool may write allows a paired file to sit —
+    two places § Where the tool may write allows a filed GHI-MD to sit —
     before a system's code starts and after — and the move between them is
     the reason the design gives for rewriting the body. The body is built
     from this, so a file still sitting on an unmerged branch is not linked:
@@ -950,7 +953,7 @@ def paired_paths(number: int, repository_root: Path, runner):
     the name at any depth would have linked instead: issue 3 six files
     rather than four, the two extra being queue notes under
     docs/issues/queue/; issue 18 two rather than one; issue 45 three rather
-    than one; and issue 43, which has no paired file at all, one — an
+    than one; and issue 43, which has no filed GHI-MD at all, one — an
     archived draft under docs/issues/archived/. Neither the queue nor the
     archive is part of an issue's file set. `create`'s step 5 calls this
     function too, so a wider rule would have rewritten those issues' bodies
@@ -966,7 +969,7 @@ def paired_paths(number: int, repository_root: Path, runner):
     128 — and never means "nothing there"."""
     listed = runner(
         ["git", "ls-tree", "-r", "--name-only", "origin/main",
-         f"{PAIRED_DIRECTORY}/", f"{SYSTEM_DIRECTORY}/"],
+         f"{GHI_MD_DIRECTORY}/", f"{SYSTEM_DIRECTORY}/"],
         cwd=str(repository_root))
     prefix = f"{number}-"
     selected = []
@@ -995,11 +998,11 @@ def link_body(repo: str, number: int, repository_root: Path, runner, report,
     the file that exists.
 
     The fetch raises rather than being ignored. A fetch that failed leaves
-    the list below empty exactly as a main with nothing paired does, and the
+    the list below empty exactly as a main with nothing filed does, and the
     report then tells the author no file for this issue is on main yet —
     which, the fetch having failed, this run cannot know."""
     runner(["git", "fetch", "origin", "main"], cwd=str(repository_root))
-    paths = paired_paths(number, repository_root, runner)
+    paths = ghi_md_paths_for_issue(number, repository_root, runner)
     if not paths:
         report(f"step 5 not done: no file for issue {number} is on main yet, "
                "so its body keeps the placeholder.")
@@ -1014,18 +1017,18 @@ def link_body(repo: str, number: int, repository_root: Path, runner, report,
 
 def create(path: Path, repo: str, repository_root: Path, runner, report):
     """The whole sequence, and the one function the tests drive."""
-    paired = paired_issue_number(path)
-    if (paired is not None and path.is_file()
-            and issue_body_carries_pairing_key(repo, paired, runner)):
+    filed_number = issue_number_in_file_name(path)
+    if (filed_number is not None and path.is_file()
+            and issue_body_carries_pairing_key(repo, filed_number, runner)):
         # The file this run was given is named for an issue whose body is
         # still the placeholder a create wrote, so that filing stopped
-        # before step 5. Step 4 is what puts a file at a paired name, so
+        # before step 5. Step 4 is what puts a file at a filed name, so
         # step 5 is what is left, and this run touches nothing else.
-        report(f"resuming issue {paired} on its landed file: the issue's "
-               "body still carries a pairing key, so an earlier run stopped "
-               "before step 5")
-        return paired, link_body(repo, paired, repository_root, runner,
-                                 report, str(path))
+        report(f"resuming issue {filed_number} on its landed file: the "
+               "issue's body still carries a pairing key, so an earlier run "
+               "stopped before step 5")
+        return filed_number, link_body(repo, filed_number, repository_root,
+                                       runner, report, str(path))
 
     text, title = validate(path)
     key = pairing_key(text)
@@ -1071,7 +1074,8 @@ def writable_relative_path(relative: str) -> bool:
     system's code starts, DIRECTLY in that system's own directory after,
     nowhere else.
 
-    THE SAME TWO PLACES `paired_paths` RETURNS, and now the same predicate:
+    THE SAME TWO PLACES `ghi_md_paths_for_issue` RETURNS, and now the same
+    predicate:
     that function calls this one, so the files an issue's body is built
     from and the files this verb will land are one set. They were two
     rules until the review of PR [Build the GHI write tool's edit
@@ -1088,10 +1092,10 @@ def writable_relative_path(relative: str) -> bool:
     2026-09-21, not this function's choice: one link per file matching
     `docs/issues/<number>-*`, globbed at every write, never curated. A
     literal prefix does not descend, which puts docs/issues/queue/ and
-    docs/issues/archived/ both outside it. `paired_paths` carries the
+    docs/issues/archived/ both outside it. `ghi_md_paths_for_issue` carries the
     measurement over main's own tree."""
     parts = Path(relative).parts
-    if parts[:-1] == tuple(Path(PAIRED_DIRECTORY).parts):
+    if parts[:-1] == tuple(Path(GHI_MD_DIRECTORY).parts):
         return True
     return len(parts) == 3 and parts[0] == SYSTEM_DIRECTORY
 
@@ -1121,13 +1125,14 @@ def is_derived_body(body: str) -> bool:
 
 def validate_edit(path: Path, repository_root: Path):
     """Step 1 of `edit`, which is `create`'s check inverted: this verb wants
-    a file that is already paired, and refuses one that is not rather than
+    a file that is already filed, and refuses one that is not rather than
     filing it.
 
     THE UNWRITABLE-PATH REFUSAL DOES NOT SAY "MOVE IT", because the file
     most often at such a path is a queue note, and moving a queue note into
     the issue's own directory makes it one of the issue's files: step 5
-    links it, and main keeps the copy under `queue/` — `paired_paths` skips
+    links it, and main keeps the copy under `queue/` — `ghi_md_paths_for_issue`
+    skips
     that directory, so no moved-from path matches it and nothing removes it
     — leaving one document at two paths. Main holds ten queue notes named
     for issues and an archived draft named for one. `create`'s refusal, on
@@ -1146,15 +1151,15 @@ def validate_edit(path: Path, repository_root: Path):
     numbered = re.match(r"^(\d+)-", path.name)
     if not numbered:
         raise Refused(
-            f"{path} is not named for an issue, so nothing pairs it with "
-            "one. A paired file carries its issue's number wherever it "
+            f"{path} is not named for an issue, so it is not filed under "
+            "one. A filed GHI-MD carries its issue's number wherever it "
             "sits. To file a new issue from this file, use the create "
             "verb.", 64)
     relative = relative_to_root(path, repository_root)
     if not writable_relative_path(relative):
         raise Refused(
-            f"{relative} is not a path this tool writes. A paired file "
-            f"lives directly in {PAIRED_DIRECTORY}/ before its system's "
+            f"{relative} is not a path this tool writes. A filed GHI-MD "
+            f"lives directly in {GHI_MD_DIRECTORY}/ before its system's "
             f"code starts and directly in {SYSTEM_DIRECTORY}/<system>/ "
             "after, and in neither a queue nor an archive below them "
             "(docs/issues/46-ghi-info-agent-design.md § Where the tool may "
@@ -1270,7 +1275,7 @@ def refuse_on_an_earlier_edit_still_open(repo: str, number: int,
     THE FILE, NOT THE ISSUE, decides. Every edit of every file of one issue
     shares the `ghi-<number>-edit-` branch prefix, so the prefix alone
     would refuse an author editing the second of an issue's files while the
-    first waits — issue 3 has four paired files on main. Those are
+    first waits — issue 3 has four filed GHI-MDs on main. Those are
     different documents and different lines, and merging both drops
     nothing. So the open pull request's own file list is what is compared,
     against the paths this run writes: where the file lands, and on a move
@@ -1342,7 +1347,7 @@ def create_pull_request_for_edit_branch(repo: str, branch: str, number: int,
     says a file is reaching main for the first time, and this one says an
     edit is following a file already there."""
     body = (f"An edit to the GHI-MD for issue #{number}, landed by "
-            "`scripts/ghi-issue-write.py`.\n\nUnder link-only the "
+            "`scripts/ghi-issue-write.py`.\n\nAs a link-only-GHI, the "
             "issue's title and body are derived from main's copy of its "
             "files, so this has to land before either follows. Prose "
             "under `docs/`, silent to reviewers by CLAUDE.md's "
@@ -1364,12 +1369,13 @@ def moved_from_path_on_main(number: int, relative: str,
     `source_path_on_main`, which answers this for `create`, cannot answer it
     here. There the source and the destination are different paths, so the
     source's own path is the answer; here they are one path, and the
-    question is which OTHER path main pairs with this issue. A paired file
+    question is which OTHER path main files under this issue. A filed GHI-MD
     carries its issue's number in its name wherever it sits, and the move
     changes the directory and not the name, so the name is the match."""
     name = Path(relative).name
     return next((path
-                 for path in paired_paths(number, repository_root, runner)
+                 for path in ghi_md_paths_for_issue(number, repository_root,
+                                                    runner)
                  if path != relative and Path(path).name == name), None)
 
 
@@ -1526,7 +1532,8 @@ def land_edit(repo: str, number: int, title: str, relative: str, staged: str,
         # A move, not a copy, as create's step 4 is. The author moved this
         # file into its system's directory and main still holds it where it
         # was: leaving that behind would put the same document at two paths
-        # the moment this merges, and paired_paths would then link it twice.
+        # the moment this merges, and ghi_md_paths_for_issue would then link it
+        # twice.
         # Refused above when main's copy there has moved on, because this
         # line is a deletion of it.
         if moved_from:
@@ -1592,7 +1599,7 @@ def read_issue(repo: str, number: int, relative: str, runner):
             raise Refused(
                 f"Refused: {repo} has no issue {number}, and {relative} is "
                 "named for it.\n\n"
-                "Rename the file for the issue it is paired with, if it has "
+                "Rename the file for the issue it is filed under, if it has "
                 "one.\n"
                 "If it has no issue yet, file one with the create verb, from "
                 "a copy whose name carries no number — create refuses a file "
@@ -1605,7 +1612,7 @@ def read_issue(repo: str, number: int, relative: str, runner):
         raise Refused(
             f"Refused: {number} is a pull request in {repo}, not an issue, "
             f"and {relative} is named for it.\n\n"
-            "Rename the file for the issue it is paired with, if it has "
+            "Rename the file for the issue it is filed under, if it has "
             "one.\n"
             "If it has no issue yet, file one with the create verb, from a "
             "copy whose name carries no number — create refuses a file "
@@ -1636,7 +1643,7 @@ def issue_title_after_this_edit(document_before_this_edit, heading: str,
     tool's edit verb](https://github.com/nedschorus/nedschorus/pull/596).
     In `create` the two are one thing: the issue is filed under the
     heading. In `edit` they are not, and the docstring's own measurement
-    says how far apart — 2026-09-21, of the 26 paired files on main, 25
+    says how far apart — 2026-09-21, of the 26 filed GHI-MDs on main, 25
     have a heading their issue's title does not match. An in-place edit of
     docs/issues/3-slice-6-review-evidence-not-built.md landed an `issue:`
     line naming issue 3 "Slice 6, the review-evidence check", which is that
@@ -1646,7 +1653,7 @@ def issue_title_after_this_edit(document_before_this_edit, heading: str,
     link, which a heading-built line would have nested inside another.
 
     AFTER THIS RUN, not as GitHub holds it now, because step 4 may change
-    it: where the heading did change and the issue has one paired file, the
+    it: where the heading did change and the issue has one filed GHI-MD, the
     title follows the heading, and a line citing the old title would be
     stale the moment this landed — and the next rerun would see a file
     differing from main's copy and land a second edit to put it right. The
@@ -1664,12 +1671,13 @@ def sync_title_on_heading_change(repo: str, number: int,
     """Step 4. The design's trigger is a CHANGE — "when the edit changes the
     file's first heading" — not a mismatch between the issue's title and the
     file's heading, and the difference is not academic. Measured 2026-09-21
-    over the paired corpus on main, the 26 files `paired_paths` returns: 25
+    over the filed corpus on main, the 26 files `ghi_md_paths_for_issue`
+    returns: 25
     of them have a heading that differs from their issue's title, so a tool
     that made the title match a heading would rename most issues the first
     time anybody edited one.
 
-    An issue with more than one paired file is left alone even when the
+    An issue with more than one filed GHI-MD is left alone even when the
     heading did change: issue 3 has four files with four headings, and
     nothing in the pairing says which of them names the issue. The design's
     sentence was written for the common shape it also states — most issues
@@ -1687,7 +1695,7 @@ def sync_title_on_heading_change(repo: str, number: int,
         return
     if len(paths) > 1:
         report(f"the heading changed, but issue {number} has {len(paths)} "
-               "paired files and nothing says which one names it, so the "
+               "filed GHI-MDs and nothing says which one names it, so the "
                "title is left alone")
         return
     if issue.get("title") == title:
@@ -1700,7 +1708,7 @@ def sync_title_on_heading_change(repo: str, number: int,
 def relink_body_from_main(repo: str, number: int, relative: str, on_main,
                           paths, issue, runner, report) -> bool:
     """Step 5, which is create's step 5 for a file that already exists: the
-    body is one link per paired file on main, and is rewritten only when it
+    body is one link per filed GHI-MD on main, and is rewritten only when it
     does not already say that."""
     if on_main is None:
         report(f"step 5 not done: {relative} is not on main. Rerun this "
@@ -1735,7 +1743,7 @@ def edit(path: Path, repo: str, repository_root: Path, runner, report):
 
     runner(["git", "fetch", "origin", "main"], cwd=str(repository_root))
     on_main = blob_at("origin/main", relative, repository_root, runner)
-    paths = paired_paths(number, repository_root, runner)
+    paths = ghi_md_paths_for_issue(number, repository_root, runner)
     # Where main still holds this document when the author moved it, and
     # main's copy there. Asked only when main has nothing at the author's
     # path — where it does, this is an edit in place and a same-named file
@@ -1836,7 +1844,7 @@ def main(argv=None):
         help="validate the file and print what would be filed, touching "
              "neither GitHub nor git")
     editor = sub.add_parser(
-        "edit", help="land an edit to a paired GHI-MD, after which the "
+        "edit", help="land an edit to a filed GHI-MD, after which the "
                      "issue's title and body follow it")
     editor.add_argument("path")
     editor.add_argument("--repo", default=DEFAULT_REPO)
@@ -1859,7 +1867,7 @@ def main(argv=None):
             text, title = validate(path)
             report(f"would file: {title}")
             report(f"pairing key: {pairing_key(text)}")
-            report(f"would land at: {PAIRED_DIRECTORY}/<number>-"
+            report(f"would land at: {GHI_MD_DIRECTORY}/<number>-"
                    f"{slug(title)}.md")
             return 0
         if not path.is_file():
@@ -1878,7 +1886,7 @@ def main(argv=None):
             report(f"would edit issue {number} from {relative}")
             report(f"the file's heading is: {title}")
             report("the issue's title changes only if this edit changed "
-                   "that heading and the issue has one paired file")
+                   "that heading and the issue has one filed GHI-MD")
             return 0
         edit(path, arguments.repo, root, run, report)
         return 0

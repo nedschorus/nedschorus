@@ -44,7 +44,7 @@ frozen head pushed the branch and opened the pull request before learning
 that, then exited 1; the fixed tool exits 64 having run nothing but the
 read, and still exits 1 when gh fails for any other reason. gh's own words
 for such a number were read from the real repository. And the listing the
-paired-path cases assert against is origin/main's own tree, read at that
+filed-path cases assert against is origin/main's own tree, read at that
 commit and cut to the entries that decide the question.
 
 The fourth round's, 2026-09-22, are the same rule again, and each was run
@@ -52,7 +52,8 @@ through the FIXED tool against a repository with a bare remote and `gh`
 stubbed before it was written down. What the frozen head did in each is
 the review's own reproduction, cited here rather than repeated.
 
-A queue note named for an issue — `paired_paths` refuses to link one and
+A queue note named for an issue — `ghi_md_paths_for_issue` refuses to link one
+and
 `writable_relative_path` used to accept it, so the frozen head landed the
 note and renamed the issue after THAT file's heading. The two are one
 function now, and a case over main's own tree asserts they cannot answer
@@ -120,7 +121,7 @@ def check(case_name, condition, detail=""):
 # commit, and a case that wants a failed resolution overrides the key.
 MAIN_COMMIT = "5f0fd4c5ebc6a44d8d9acbf9cccf83a6b78de43d"
 MAIN_COMMIT_CALL = "git rev-parse --verify origin/main"
-PAIRED_LISTING_CALL = f"git ls-tree -r --name-only {MAIN_COMMIT} docs/issues/"
+GHI_MD_LISTING_CALL = f"git ls-tree -r --name-only {MAIN_COMMIT} docs/issues/"
 
 
 class Completed:
@@ -151,7 +152,7 @@ class Recorder:
     matches `run`'s so a case may assert on either.
 
     Resolving origin/main is answered for every case, because every create
-    does it before reading main and a case that has nothing paired there
+    does it before reading main and a case that has nothing filed there
     still makes the call. A case that wants that resolution to fail passes
     its own answer under the same key."""
 
@@ -267,7 +268,7 @@ def run_cases(scratch: Path):
         except tool.Refused as refusal:
             check(case_name, refusal.code == expected, f"code {refusal.code}")
 
-    already = written(scratch, "570-already-paired.md", "# Paired\n")
+    already = written(scratch, "570-already-filed.md", "# Filed\n")
     try:
         tool.validate(already)
         check("a file already named for an issue is refused", False, "accepted")
@@ -421,7 +422,7 @@ def run_cases(scratch: Path):
     # It corrects itself the next time the tool writes to it, and only while
     # the rewriter finds the line by its key rather than by the shape of its
     # value. (Measured 2026-09-21: of the 50 paths under docs/issues/ on
-    # main, 25 are paired and none carries an `issue:` line at all, the
+    # main, 25 are filed and none carries an `issue:` line at all, the
     # create verb having filed nothing that has merged yet. So there is
     # nothing to correct today and everything to correct tomorrow.)
     old_shape = ("---\nissue: [A title](https://github.com/nedschorus/"
@@ -472,13 +473,13 @@ def run_cases(scratch: Path):
         "gh issue list": Completed("[]"),
         "gh issue create": Completed(
             "https://github.com/nedschorus/nedschorus/issues/570\n"),
-        # A file main has under a paired name, and not this source. Read
+        # A file main has under a filed name, and not this source. Read
         # as a failure — which is what this answered until 2026-09-22 — the
         # listed path below cannot be read at all, and the run stops.
         "git show": Completed("---\nissue: [x](https://example.invalid/1)\n"
                               "---\n\n# Someone else's file\n"),
         "git ls-remote": Completed(""),
-        PAIRED_LISTING_CALL: Completed("docs/issues/570-a.md\n"),
+        GHI_MD_LISTING_CALL: Completed("docs/issues/570-a.md\n"),
         "gh pr create": Completed("pr\n"),
     }, None)
     tool.create(source, REPO, scratch, reader, quiet)
@@ -500,7 +501,7 @@ def run_cases(scratch: Path):
             "https://github.com/nedschorus/nedschorus/issues/570\n"),
         "git show": Completed("", returncode=1),
         "git ls-remote": Completed(""),
-        PAIRED_LISTING_CALL: Completed(""),
+        GHI_MD_LISTING_CALL: Completed(""),
         "git ls-tree": Completed("for-frontmatter.md\n"),
         "gh pr create": Completed("pr\n"),
     })
@@ -616,7 +617,7 @@ def run_cases(scratch: Path):
     # A finished filing leaves no key anywhere and a source the tool did not
     # move is still on disk, so the key alone lets a rerun file a second
     # issue. Main is asked instead, forward: what would this source become
-    # if it were filed under the number each paired file carries.
+    # if it were filed under the number each filed GHI-MD carries.
 
     LISTING = (LANDED + "\n"
                + "docs/issues/571-a-statusline-that-drops-its-branch-name.md\n"
@@ -650,7 +651,7 @@ def run_cases(scratch: Path):
     # between the listing and the reads, and a path listed from one commit
     # is then read from another. Resolved once, both name the same tree.
     check("and the listing and its reads are pinned to the one commit",
-          already_landed.ran(PAIRED_LISTING_CALL)
+          already_landed.ran(GHI_MD_LISTING_CALL)
           and already_landed.ran(f"git show {MAIN_COMMIT}:{LANDED}"),
           str(already_landed.commands()))
     ordered = already_landed.commands()
@@ -679,7 +680,7 @@ def run_cases(scratch: Path):
           refused_wrongly or str(landed_elsewhere.commands()))
 
     # `docs/issues/` also holds the queue, whose files carry no number and
-    # belong to no issue. Read as paired, one would be compared under a
+    # belong to no issue. Read as filed, one would be compared under a
     # number that does not exist.
     queue_only = Recorder({
         "gh issue list": Completed("[]"),
@@ -691,14 +692,14 @@ def run_cases(scratch: Path):
         "gh pr create": Completed("pr\n"),
     })
     refused_wrongly = refusal_from_creating(source, queue_only)
-    check("a queue file beside the paired ones is not read as paired",
+    check("a queue file beside the filed ones is not read as filed",
           not refused_wrongly and queue_only.count("gh issue create") == 1
           and not queue_only.ran(":docs/issues/queue/"),
           refused_wrongly or str(queue_only.commands()))
 
     # `-r` descends, so a numbered file in a subdirectory is listed too, and
-    # it is named for its issue without being paired with it: step 4 lands
-    # every file it files as a direct child of docs/issues/. Read as paired,
+    # it is named for its issue without being filed under it: step 4 lands
+    # every file it files as a direct child of docs/issues/. Read as filed,
     # each one cost a `git show` every create — 11 of them on main as it
     # stood on 2026-09-22 — and this source would be refused under a number
     # no file on main holds it under.
@@ -714,7 +715,7 @@ def run_cases(scratch: Path):
         "gh pr create": Completed("pr\n"),
     })
     refused_wrongly = refusal_from_creating(source, nested_number)
-    check("a numbered file below docs/issues/ is not read as paired",
+    check("a numbered file below docs/issues/ is not read as filed",
           not refused_wrongly
           and nested_number.count("gh issue create") == 1
           and not nested_number.ran(":docs/issues/queue/")
@@ -892,10 +893,10 @@ def run_cases(scratch: Path):
     })
     try:
         tool.create(landed, REPO, scratch, filed_already, quiet)
-        check("a paired file whose filing finished is still refused", False,
+        check("a filed GHI-MD whose filing finished is still refused", False,
               "it was accepted")
     except tool.Refused as refusal:
-        check("a paired file whose filing finished is still refused",
+        check("a filed GHI-MD whose filing finished is still refused",
               refusal.code == 64 and not filed_already.ran("gh issue edit"),
               f"code {refusal.code}, {filed_already.commands()}")
 
@@ -915,10 +916,10 @@ def run_cases(scratch: Path):
     try:
         tool.create(scratch / "999-not-on-disk.md", REPO, scratch, absent,
                     quiet)
-        check("a paired path with no file is refused for the file", False,
+        check("a filed path with no file is refused for the file", False,
               "it was accepted")
     except tool.Refused as refusal:
-        check("a paired path with no file is refused for the file",
+        check("a filed path with no file is refused for the file",
               refusal.code == 64 and not absent.ran("gh issue view"),
               f"code {refusal.code}, {absent.commands()}")
 
@@ -976,7 +977,7 @@ def run_cases(scratch: Path):
               str(nothing_written.commands()))
 
     # --- Step 5's git raises instead of reading a failure as an answer ----
-    # A failed fetch and a main with nothing paired leave the same empty
+    # A failed fetch and a main with nothing filed leave the same empty
     # list, and the report then tells the author no file is on main yet —
     # which, the fetch having failed, the run cannot know. The exit codes
     # here are git's own: 128 from a fetch whose remote is not there, 128
@@ -1011,12 +1012,12 @@ def run_cases(scratch: Path):
               refusal.code == 1 and not failed_list.ran("gh issue edit"),
               f"code {refusal.code}, {failed_list.commands()}")
 
-    nothing_paired = Recorder({"git ls-tree": Completed("")})
-    check("but a main with nothing paired is still an answer, not a failure",
-          tool.link_body(REPO, 570, scratch, nothing_paired, quiet,
+    nothing_filed = Recorder({"git ls-tree": Completed("")})
+    check("but a main with nothing filed is still an answer, not a failure",
+          tool.link_body(REPO, 570, scratch, nothing_filed, quiet,
                          LANDED) is False
-          and not nothing_paired.ran("gh issue edit"),
-          str(nothing_paired.commands()))
+          and not nothing_filed.ran("gh issue edit"),
+          str(nothing_filed.commands()))
 
     # --- Where the checkout is looked for ---------------------------------
     # Through the shared `run`, so that function's docstring is true of this
@@ -1095,7 +1096,7 @@ MOVED_HEADING_TEXT = FILE_TEXT.replace(EDIT_TITLE, MOVED_HEADING_TITLE)
 OTHER_SEAT_TEXT = FILE_TEXT + "\nAnother seat measured this on 2026-09-21.\n"
 
 # The issue's title as GitHub holds it, which is not the file's heading —
-# the state 25 of the 26 paired files on main are in, measured 2026-09-21.
+# the state 25 of the 26 filed GHI-MDs on main are in, measured 2026-09-21.
 # The file's `issue:` line cites the issue, so it has to carry this.
 ISSUE_TITLE_ON_GITHUB = "Statusline: branch name lost after a rebase"
 
@@ -1115,9 +1116,9 @@ def earlier_edit_pull_request(*paths):
         "files": [{"path": path} for path in paths]}]))
 
 
-def paired(scratch: Path, name=EDIT_NAME, text=FILE_TEXT,
-           directory="docs/issues"):
-    """A file where a paired file lives, which is where edit insists on
+def filed_ghi_md(scratch: Path, name=EDIT_NAME, text=FILE_TEXT,
+                 directory="docs/issues"):
+    """A file where a filed GHI-MD lives, which is where edit insists on
     finding one."""
     holder = scratch / directory
     holder.mkdir(parents=True, exist_ok=True)
@@ -1151,9 +1152,9 @@ def run_edit_cases(scratch: Path):
     staged = staged_form()
     one_link = tool.links_body(REPO, [EDIT_RELATIVE])
 
-    # --- Where a paired file may be, and what makes it paired ------------
+    # --- Where a filed GHI-MD may be, and what makes it filed ------------
 
-    check("a paired file under docs/issues/ is where it belongs",
+    check("a filed GHI-MD under docs/issues/ is where it belongs",
           tool.writable_relative_path(EDIT_RELATIVE))
     check("so is one under its system's own directory",
           tool.writable_relative_path(
@@ -1163,7 +1164,8 @@ def run_edit_cases(scratch: Path):
     check("and neither is one somewhere else entirely",
           not tool.writable_relative_path("docs/drafts/570-contract.md"))
 
-    # DIRECTLY IN, the same rule paired_paths applies, because they are now
+    # DIRECTLY IN, the same rule ghi_md_paths_for_issue applies, because they
+    # are now
     # the same function. This one took any depth under docs/issues/ and any
     # depth from three down under nc-systems/ until 2026-09-21, so the verb
     # would land a file the issue's body cannot link — and take its title
@@ -1181,23 +1183,25 @@ def run_edit_cases(scratch: Path):
               "nc-systems/statusline/tests/570-contract-test.md"))
 
     text, title, number, relative = tool.validate_edit(
-        paired(scratch), scratch)
+        filed_ghi_md(scratch), scratch)
     check("the issue number comes from the file's name",
           number == 570 and relative == EDIT_RELATIVE and title == EDIT_TITLE,
           f"{number} {relative} {title!r}")
 
-    check("a paired file in its system's directory validates too",
+    check("a filed GHI-MD in its system's directory validates too",
           tool.validate_edit(
-              paired(scratch, name="570-contract.md",
-                     directory="nc-systems/statusline"), scratch)[2] == 570)
+              filed_ghi_md(scratch, name="570-contract.md",
+                           directory="nc-systems/statusline"),
+              scratch)[2] == 570)
 
     for case_name, target in [
             ("a file not named for an issue is refused",
-             paired(scratch, name="notes.md")),
-            ("a paired file outside the writable paths is refused",
-             paired(scratch, directory="docs/drafts")),
-            ("a paired file with no heading is refused",
-             paired(scratch, name="571-no-heading.md", text="no heading\n")),
+             filed_ghi_md(scratch, name="notes.md")),
+            ("a filed GHI-MD outside the writable paths is refused",
+             filed_ghi_md(scratch, directory="docs/drafts")),
+            ("a filed GHI-MD with no heading is refused",
+             filed_ghi_md(scratch, name="571-no-heading.md",
+                          text="no heading\n")),
             ("a missing file is refused", scratch / "docs" / "absent.md")]:
         try:
             tool.validate_edit(target, scratch)
@@ -1208,15 +1212,16 @@ def run_edit_cases(scratch: Path):
     # The file most often at an unwritable path is a queue note, and this
     # refusal used to end "Move this file to one of those two places" —
     # which, followed on a queue note, makes it one of the issue's files:
-    # step 5 links it, and main keeps the copy under queue/, paired_paths
+    # step 5 links it, and main keeps the copy under queue/,
+    # ghi_md_paths_for_issue
     # skipping that directory, so nothing removes it. One document, two
     # paths. `create`'s refusal sends the agent holding that same note HERE
     # to edit the issue's own file, so the two now say the same thing.
 
     try:
         tool.validate_edit(
-            paired(scratch, name="570-note.md",
-                   directory="docs/issues/queue"), scratch)
+            filed_ghi_md(scratch, name="570-note.md",
+                         directory="docs/issues/queue"), scratch)
         check("a queue note is refused", False, "it was accepted")
     except tool.Refused as note_refusal:
         check("a queue note is not told to move itself into the issue's "
@@ -1253,10 +1258,10 @@ def run_edit_cases(scratch: Path):
         "docs/issues/5700-unrelated.md\n"
         "docs/issues/571-another.md\n")})
     check("the file set spans docs/issues/ and the system directories",
-          tool.paired_paths(570, scratch, listing)
+          tool.ghi_md_paths_for_issue(570, scratch, listing)
           == ["docs/issues/570-design.md",
               "nc-systems/statusline/570-contract.md"],
-          str(tool.paired_paths(570, scratch, listing)))
+          str(tool.ghi_md_paths_for_issue(570, scratch, listing)))
     check("and git is asked for both of them, recursively, since a "
           "system's own directory is a level below the tree named",
           ran_with(listing, "git ls-tree", "-r", "docs/issues/",
@@ -1272,7 +1277,7 @@ def run_edit_cases(scratch: Path):
     # Re-confirmed by the user 2026-09-21.
     #
     # The listing below is origin/main's own tree, read on 2026-09-21 and
-    # cut to the entries that decide the question — the paired names
+    # cut to the entries that decide the question — the filed names
     # directly under docs/issues/, the same issues' numbers under its
     # queue/ and archived/ subdirectories, and a system's own directory.
     # `create`'s step 5 calls this same function, so a rule that descended
@@ -1296,28 +1301,29 @@ def run_edit_cases(scratch: Path):
     main_tree = Recorder({"git ls-tree": Completed(MAIN_TREE)})
     check("issue 3's files are the four directly under docs/issues/, which "
           "is the count the ruling's own worked example gives",
-          tool.paired_paths(3, scratch, main_tree) == [
+          tool.ghi_md_paths_for_issue(3, scratch, main_tree) == [
               "docs/issues/3-credential-work-measured-state-and-rulings.md",
               "docs/issues/3-dismiss-stale-reviews-experiment-design.md",
               "docs/issues/3-main-gatekeeper-build-slice-plan.md",
               "docs/issues/3-slice-6-review-evidence-not-built.md"],
-          str(tool.paired_paths(3, scratch, main_tree)))
+          str(tool.ghi_md_paths_for_issue(3, scratch, main_tree)))
     check("the queue is not part of an issue's file set: issue 18 has one "
           "file on main, not two",
-          tool.paired_paths(18, scratch, main_tree)
+          tool.ghi_md_paths_for_issue(18, scratch, main_tree)
           == ["docs/issues/18-write-test-plan-riders-and-test-evidence"
               "-rules.md"],
-          str(tool.paired_paths(18, scratch, main_tree)))
+          str(tool.ghi_md_paths_for_issue(18, scratch, main_tree)))
     check("and issue 45 one, not three",
-          tool.paired_paths(45, scratch, main_tree)
+          tool.ghi_md_paths_for_issue(45, scratch, main_tree)
           == ["docs/issues/45-remote-named-agent-launch-and-reattach.md"],
-          str(tool.paired_paths(45, scratch, main_tree)))
-    check("nor is the archive: issue 43 has no paired file on main at all, "
+          str(tool.ghi_md_paths_for_issue(45, scratch, main_tree)))
+    check("nor is the archive: issue 43 has no filed GHI-MD on main at all, "
           "so there is nothing for its body to link",
-          tool.paired_paths(43, scratch, main_tree) == [],
-          str(tool.paired_paths(43, scratch, main_tree)))
+          tool.ghi_md_paths_for_issue(43, scratch, main_tree) == [],
+          str(tool.ghi_md_paths_for_issue(43, scratch, main_tree)))
 
-    # And it is ONE rule, not two that agree today. `paired_paths` says
+    # And it is ONE rule, not two that agree today. `ghi_md_paths_for_issue`
+    # says
     # which files an issue's body links; `writable_relative_path` says
     # which files this verb may land. They were separate and they
     # disagreed, which is how a queue note got landed and its heading made
@@ -1328,7 +1334,7 @@ def run_edit_cases(scratch: Path):
     disagreed = [
         line for line in numbered_on_main
         if tool.writable_relative_path(line)
-        != (line in tool.paired_paths(
+        != (line in tool.ghi_md_paths_for_issue(
             int(Path(line).name.split("-")[0]), scratch,
             Recorder({"git ls-tree": Completed(MAIN_TREE)})))]
     check("every <number>-* path on main that the body links is a path "
@@ -1340,16 +1346,16 @@ def run_edit_cases(scratch: Path):
         "nc-systems/statusline/570-contract.md\n"
         "nc-systems/statusline/tests/570-contract-test.md\n"
         "nc-systems/570-loose.md\n")})
-    check("a system's own directory is one level down, so a paired name "
+    check("a system's own directory is one level down, so a filed name "
           "buried deeper under it is not the issue's file, and neither is "
           "one loose in the system tree",
-          tool.paired_paths(570, scratch, deeper)
+          tool.ghi_md_paths_for_issue(570, scratch, deeper)
           == ["nc-systems/statusline/570-contract.md"],
-          str(tool.paired_paths(570, scratch, deeper)))
+          str(tool.ghi_md_paths_for_issue(570, scratch, deeper)))
 
     # --- The happy path: the file differs from main, so it lands ---------
 
-    source = paired(scratch)
+    source = filed_ghi_md(scratch)
     landing = Recorder({
         f"git show origin/main:{EDIT_RELATIVE}": Completed("# Older\n"),
         "git merge-base": Completed(BASE_REVISION + "\n"),
@@ -1433,7 +1439,7 @@ def run_edit_cases(scratch: Path):
     # The issue, by title, as CLAUDE.md says to cite one. It was built from
     # the file's first HEADING, which is the title only in `create`, where
     # the issue is filed under the heading. Here the two part company on 25
-    # of the 26 paired files on main, and each of an issue's files would
+    # of the 26 filed GHI-MDs on main, and each of an issue's files would
     # have cited it under that file's own heading — four different wrong
     # names for issue 3. The case above passes either way: its heading
     # changed and its issue has one file, so the title follows the heading
@@ -1468,7 +1474,7 @@ def run_edit_cases(scratch: Path):
         "gh issue view": issue_json(ISSUE_TITLE_ON_GITHUB, one_link),
         "git ls-tree": Completed(EDIT_RELATIVE + "\n"),
     })
-    tool.edit(paired(scratch, text=MOVED_HEADING_TEXT), REPO, scratch,
+    tool.edit(filed_ghi_md(scratch, text=MOVED_HEADING_TEXT), REPO, scratch,
               renaming, quiet)
     check("while an edit that renames the issue cites the name the issue "
           "ends this run with, not the one it started with — the line "
@@ -1490,7 +1496,7 @@ def run_edit_cases(scratch: Path):
         "git ls-tree": Completed(
             EDIT_RELATIVE + "\ndocs/issues/570-test-design.md\n"),
     })
-    tool.edit(paired(scratch, text=MOVED_HEADING_TEXT), REPO, scratch,
+    tool.edit(filed_ghi_md(scratch, text=MOVED_HEADING_TEXT), REPO, scratch,
               several_citing, quiet)
     check("and an issue with several files, whose title follows no one "
           "file's heading, is cited by its own title even where this "
@@ -1501,19 +1507,20 @@ def run_edit_cases(scratch: Path):
 
     # Put the author's file back the way the cases below expect it: the two
     # above wrote a changed heading over it.
-    source = paired(scratch)
+    source = filed_ghi_md(scratch)
 
     # --- A file the author moved into its system's directory -------------
     # The move § Where the tool may write allows: out of docs/issues/ once
     # the system's code starts. Main still holds the file where it was, and
     # a commit that only adds the new path leaves the document at two paths
-    # the moment it merges — after which paired_paths returns both and step
+    # the moment it merges — after which ghi_md_paths_for_issue returns both
+    # and step
     # 5 links the same document twice.
 
     # 128 is what git answers for a path that is not in the tree asked of,
     # measured; the older cases above say 1, which blob_at reads the same
     # way — it asks only whether the call succeeded.
-    moved_source = paired(scratch, directory="nc-systems/statusline")
+    moved_source = filed_ghi_md(scratch, directory="nc-systems/statusline")
     moved = Recorder({
         f"git show origin/main:{MOVED_RELATIVE}": Completed("",
                                                             returncode=128),
@@ -1542,7 +1549,7 @@ def run_edit_cases(scratch: Path):
           and moved.commands().index("git rm --quiet")
           < moved.commands().index("git commit --quiet"),
           str(moved.commands()))
-    check("while the issue's other paired file, which this edit did not "
+    check("while the issue's other filed GHI-MD, which this edit did not "
           "move, is left where it is",
           not ran_with(moved, "git rm", "570-test-design.md"),
           str(moved.calls))
@@ -1581,8 +1588,8 @@ def run_edit_cases(scratch: Path):
     # this verb is how both arrive, so a refusal would block the legitimate
     # one and a deletion on suspicion would delete a file nobody moved.
 
-    renamed_source = paired(scratch, name=RENAMED_NAME,
-                            directory="nc-systems/statusline")
+    renamed_source = filed_ghi_md(scratch, name=RENAMED_NAME,
+                                  directory="nc-systems/statusline")
     renamed = Recorder({
         f"git show origin/main:{RENAMED_RELATIVE}": Completed(
             "", returncode=128),
@@ -1615,7 +1622,7 @@ def run_edit_cases(scratch: Path):
     # 2026-09-22, item 8 of the walk
     # ghi-write-session-open-rulings-and-concerns.
 
-    renamed_in_place = paired(scratch, name=RENAMED_NAME)
+    renamed_in_place = filed_ghi_md(scratch, name=RENAMED_NAME)
     renamed_in_place_relative = f"docs/issues/{RENAMED_NAME}"
     in_place = Recorder({
         f"git show origin/main:{renamed_in_place_relative}": Completed(
@@ -1646,8 +1653,8 @@ def run_edit_cases(scratch: Path):
     # is the changed file. The comparison is against main's copy at the path
     # the file moved from.
 
-    moved_heading_source = paired(scratch, directory="nc-systems/statusline",
-                                  text=MOVED_HEADING_TEXT)
+    moved_heading_source = filed_ghi_md(
+        scratch, directory="nc-systems/statusline", text=MOVED_HEADING_TEXT)
     moved_heading = Recorder({
         f"git show origin/main:{MOVED_RELATIVE}": Completed("",
                                                             returncode=128),
@@ -1683,7 +1690,7 @@ def run_edit_cases(scratch: Path):
         "gh issue view": issue_json("A title nobody derived", one_link),
         "git ls-tree": Completed(EDIT_RELATIVE + "\n"),
     })
-    tool.edit(paired(scratch, directory="nc-systems/statusline"), REPO,
+    tool.edit(filed_ghi_md(scratch, directory="nc-systems/statusline"), REPO,
               scratch, moved_same_heading, quiet)
     check("while a move that left the heading alone renames nothing, "
           "however far the issue's title is from that heading",
@@ -1747,8 +1754,8 @@ def run_edit_cases(scratch: Path):
         "git ls-tree": Completed(EDIT_RELATIVE + "\n"),
     })
     try:
-        tool.edit(paired(scratch, directory="nc-systems/statusline"), REPO,
-                  scratch, moved_conflict, quiet)
+        tool.edit(filed_ghi_md(scratch, directory="nc-systems/statusline"),
+                  REPO, scratch, moved_conflict, quiet)
         check("a move whose old path another seat changed is refused", False,
               "it proceeded")
     except tool.Refused as refusal:
@@ -1911,8 +1918,8 @@ def run_edit_cases(scratch: Path):
         "git ls-tree": Completed(EDIT_RELATIVE + "\n"),
     })
     try:
-        tool.edit(paired(scratch, directory="nc-systems/statusline"), REPO,
-                  scratch, moved_second_edit, quiet)
+        tool.edit(filed_ghi_md(scratch, directory="nc-systems/statusline"),
+                  REPO, scratch, moved_second_edit, quiet)
         check("a move whose old path an open edit still holds is refused "
               "too, that path being where this run deletes main's copy",
               False, "it proceeded")
@@ -2217,8 +2224,8 @@ def run_edit_cases(scratch: Path):
         ASK: Completed("verdict: too-similar #13\n"),
     })
     try:
-        tool.edit(paired(scratch, directory="nc-systems/statusline"), REPO,
-                  scratch, moved_to_land, quiet)
+        tool.edit(filed_ghi_md(scratch, directory="nc-systems/statusline"),
+                  REPO, scratch, moved_to_land, quiet)
         check("and so is a move, which main has nothing at the author's "
               "path to compare with",
               False, "it proceeded unasked")
@@ -2273,7 +2280,7 @@ def run_edit_cases(scratch: Path):
             EDIT_RELATIVE + "\ndocs/issues/570-test-design.md\n"),
     })
     tool.edit(source, REPO, scratch, several, quiet)
-    check("an issue with several paired files is not renamed after one of "
+    check("an issue with several filed GHI-MDs is not renamed after one of "
           "them, even when that one's heading changed",
           not ran_with(several, "gh issue edit", "--title"),
           str(several.commands()))
@@ -2295,7 +2302,7 @@ def run_edit_cases(scratch: Path):
     check("an unmigrated prose body is left as it stands, not overwritten",
           not ran_with(prose, "gh issue edit", "--body"),
           str(prose.commands()))
-    check("and not refused either, since every paired issue on main is in "
+    check("and not refused either, since every filed issue on main is in "
           "that state and a refusal would shut the verb out of all of them",
           prose_refusal is None and prose_finished,
           f"refused: {str(prose_refusal)[:120]}" if prose_refusal
