@@ -4,7 +4,7 @@
 
 **How to use it.** Read the objective for what the project is trying to be, and read this for one way a piece of it might work. A design that departs from a section here is not blocked and should say why it departs. A design that contradicts the objective is blocked, because the objective's standing decisions are ruled.
 
-**If a section here seems wrong, stale, or at odds with the objective**, that is worth reporting rather than working around. An agent the user is directing raises it in its own session. An agent he is not directing reaches him through the liaison, or by filing a GitHub issue labelled `draft`, which is his review queue in the issue world.
+**If a section here seems wrong, stale, or at odds with the objective**, that is worth reporting rather than working around. An agent the user is directing raises it in its own session. An agent he is not directing reaches him by filing a GitHub issue labelled `draft`, which is his review queue in the issue world.
 
 **Provenance.** Split on 2026-09-04 from the architecture document at docs/cross-project/nedschorus-ai-native-software-development.md, which this same change deletes; it is readable in git history at the commit before its deletion. The split was made under the rulings of the walk whose minutes are kept in the log-store rather than on main (user-ruled 2026-09-08) at `nedlern@ned-box:/home/nedlern/nedschorus-logs/walk/2026-09-03-ai-native-architecture-overview-decisions-minutes.md`. The text below is as it was written, except where those rulings renamed something.
 
