@@ -119,10 +119,26 @@ with tempfile.TemporaryDirectory(prefix="cold-read-record-ship-test-") as scratc
     check("the store's root gained a README saying what the store is",
           (store_root / "README.md").is_file()
           and "log-store" in (store_root / "README.md").read_text(encoding="utf-8"))
-    check("the README points at the wiki page for the naming rules "
-          "rather than restating them",
-          "nedschorus-file-naming-and-location-standards.md"
-          in (store_root / "README.md").read_text(encoding="utf-8"))
+    # The README lists each kind with its owner and nothing else (user-ruled
+    # 2026-09-27, walk file-naming-page-revision-2026-09-23, item 9): every
+    # owner it names by path must exist, and no naming rule may come back.
+    readme_text = (store_root / "README.md").read_text(encoding="utf-8")
+    check("the README lists all six kinds",
+          all(f"- `{kind}/` -- " in readme_text
+              for kind in ("cold-read-records", "sanity-check-records", "walk",
+                           "transcripts", "seats", "analysis")), readme_text)
+    readme_owner_paths = [token for token in readme_text.split("`")
+                          if token.endswith(".py") and "/" in token]
+    repository_root = SYSTEM_DIRECTORY.parent.parent
+    check("every program the README names as an owner exists in the repository",
+          readme_owner_paths
+          and all((repository_root / path).is_file() for path in readme_owner_paths),
+          repr(readme_owner_paths))
+    check("the README restates no naming rule and no longer points at the "
+          "file-naming wiki page",
+          "triage.md" not in readme_text and "YYYY" not in readme_text
+          and "nedschorus-file-naming-and-location-standards.md" not in readme_text,
+          readme_text)
     check("the line names the store path the files went to",
           demo.name in result.stdout and "2 file(s) added" in result.stdout, result.stdout)
 

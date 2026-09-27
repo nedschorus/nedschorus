@@ -304,20 +304,24 @@ with tempfile.TemporaryDirectory(prefix="seat-shared-file-ship-test-") as scratc
     # --- The README is refreshed, not appended to ---------------------------
     # This program used to add a `seats/` bullet to a README that lacked one.
     # The README stopped listing the kinds on 2026-09-19 (user-ruled, walk
-    # file-naming-and-location-standards-cold-read-findings, item 5), so there
-    # is no list to add to. Both shippers now write the same pointer text, and
-    # the case that matters is that they do not fight: an old README with a
-    # kind list is replaced, not extended, whichever program gets there first.
+    # file-naming-and-location-standards-cold-read-findings, item 5), and lists
+    # them again, each naming only its owner, since 2026-09-27 (user-ruled,
+    # walk file-naming-page-revision-2026-09-23, item 9), with the `seats/`
+    # line inside STORE_README. Both shippers write that one text, and the case
+    # that matters is that they do not fight: an old README is replaced, not
+    # extended, whichever program gets there first.
     readme = store_root / "README.md"
     readme.write_text("# nedschorus-logs\n\n- `cold-read-records/` -- runs.\n",
                       encoding="utf-8")
     result = ship(local_destination, str(good), "--seat", "late-seat")
     text = readme.read_text(encoding="utf-8")
-    check("a README listing the old kinds is replaced by the pointer, "
+    check("a README listing the old kinds is replaced by STORE_README, "
           "not appended to",
           text == record_shipper.STORE_README, text)
-    check("the pointer names the wiki page that holds the naming rules",
-          "nedschorus-file-naming-and-location-standards.md" in text, text)
+    check("the README's one `seats/` line names this program as its owner",
+          text.count("`seats/`") == 1
+          and "- `seats/` -- " in text
+          and "scripts/seat-shared-file-ship.py" in text, text)
     before = text
     ship(local_destination, str(good), "--seat", "late-seat-2")
     check("a README that already matches is left alone",
@@ -335,9 +339,9 @@ with tempfile.TemporaryDirectory(prefix="seat-shared-file-ship-test-") as scratc
           result.returncode == 0
           and born_here_text == record_shipper.STORE_README,
           result.stdout + result.stderr + repr(born_here_text[:200]))
-    check("the README it writes is the pointer, naming no kinds at all",
-          "nedschorus-file-naming-and-location-standards.md" in born_here_text
-          and "`seats/`" not in born_here_text, born_here_text)
+    check("the README it writes carries the `seats/` line once, from "
+          "STORE_README, with no bullet of this program's own",
+          born_here_text.count("`seats/`") == 1, born_here_text)
 
     # --- The README text is in ONE program, not two ------------------------
     # This suite used to check that a `seats/` bullet in both programs had not

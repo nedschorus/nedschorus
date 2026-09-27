@@ -521,16 +521,21 @@ with tempfile.TemporaryDirectory(prefix="walk-files-ship-test-") as scratch_name
           destination.copy_host is None and destination.citation_host == "nedlern@ned-box"
           and str(destination.walk_path) == RULED_WALK_PATH, str(destination))
 
-    # --- The README the record shipper writes is a pointer, not a kind list --
+    # --- The README the record shipper writes names walk/'s owners only -----
     # It listed `walk/` and this program's five files until 2026-09-19, and
     # went stale at every ruling that changed them (user-ruled, walk
-    # file-naming-and-location-standards-cold-read-findings, item 5). What a
-    # walk's files are called is the walk-me-through skill's, and the wiki
-    # page the README points at is what records it.
-    check("the store README points at the wiki page instead of listing the kinds",
-          "nedschorus-file-naming-and-location-standards.md"
-          in module.shipper.STORE_README
-          and "`walk/`" not in module.shipper.STORE_README,
+    # file-naming-and-location-standards-cold-read-findings, item 5). It lists
+    # the kinds again since 2026-09-27, each naming only its owner (user-ruled,
+    # walk file-naming-page-revision-2026-09-23, item 9): what a walk's files
+    # are called stays the walk-me-through skill's, so no ending may appear.
+    check("the store README's walk/ line names the walk-me-through skill and "
+          "this program, and none of the walk files' endings",
+          "- `walk/` -- " in module.shipper.STORE_README
+          and "walk-me-through skill" in module.shipper.STORE_README
+          and "scripts/walk-files-ship.py" in module.shipper.STORE_README
+          and not any(ending in module.shipper.STORE_README
+                      for ending in ("-draft.md", "-suggestions.md",
+                                     "-minutes.md", "-dispositions.md")),
           module.shipper.STORE_README)
 
 print()

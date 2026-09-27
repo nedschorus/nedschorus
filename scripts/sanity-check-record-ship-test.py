@@ -106,11 +106,11 @@ with tempfile.TemporaryDirectory(prefix="sanity-check-record-ship-test-") as scr
     check("a cell's scratch directory ships with the reports",
           (shipped_dir / "scratch" / "cut-claude" / "notes.md").is_file(),
           sorted(str(p.relative_to(shipped_dir)) for p in shipped_dir.rglob("*")))
-    check("the store's README points at the wiki page rather than naming "
-          "this kind, which it listed until 2026-09-19",
-          "nedschorus-file-naming-and-location-standards.md"
+    check("the store's README lists this kind with this program as its owner",
+          "- `sanity-check-records/` -- " in (store / "README.md").read_text(encoding="utf-8")
+          and "scripts/sanity-check-record-ship.py"
           in (store / "README.md").read_text(encoding="utf-8"),
-          (store / "README.md").read_text(encoding="utf-8")[:400])
+          (store / "README.md").read_text(encoding="utf-8")[:1200])
 
     # --- The second ship sends only finding-dispositions.md -------------------
     # What the runner's closing line promises the requesting agent.
