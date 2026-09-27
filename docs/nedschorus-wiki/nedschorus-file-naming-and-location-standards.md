@@ -14,8 +14,8 @@ The naming and location convention for this project's files. Where internal or e
 ## Desired locations or file names for various components
 
 - **Skill prompt, the text a skill's own reviewer or cell runs**
-  - **Location:** .claude/skills/<skill name>/prompts/
-  - **Naming:** <pass>.md, named for the pass it drives
+  - **Location:** nc-systems/skills/<skill name>/
+  - **Naming:** <pass>-prompt.md, named for the pass it drives
 - **Hook**
   - **Location:** .claude/hooks/
   - **Naming:** <what it guards>.py 
@@ -29,11 +29,11 @@ The naming and location convention for this project's files. Where internal or e
   - **Naming:** <subject>-instructions.md,  <subject>-first-prompt.md, or <subject>-adversarial-prompt.md
 - **Wiki page**
   - **Location:** Pre-approved drafts in docs/nedschorus-wiki/queue/  Approved pages in docs/nedschorus-wiki/
-  - **Naming:** nedschorus-<subject>.md, which all eight pages on main follow
+  - **Naming:** nedschorus-<subject>.md, which every page on main follows
 - **GHI-MD, the description document paired with each GitHub issue**
   - **Location:** docs/issues/
   - **Naming:** <issue number>-<multi-part-name>.md
-- **Design document, including GHI-MDs**
+- **Design document, including a GHI-MD that is a design**
   - **Location:** Before a GHI is created, `docs/issues/queue/`. Once the GHI is issued, `docs/issues/`, where it is refined in place until its code lands and is then pinned to what landed. When that code has its own directory on main, the design moves there and the GHI's link is updated; a design whose code is a single script stays in `docs/issues/`.
   - **Naming:** `<multi-part-name>-design.md` before a GHI is issued; `<issue number>-<multi-part-name>-design.md` once it is issued; `<multi-part-name>-design.md` again once it moves beside its code. The `-design` ending stays in all three, though not every GHI has a design.
 - **Other system or subsystem MDs**
@@ -41,10 +41,10 @@ The naming and location convention for this project's files. Where internal or e
   - **Naming:** <subject>.md
 - **Program, in Python or shell**
   - **Location:** `nc-systems/<system-name>/` for a system's own; `nc-systems/general-tools/` for one that belongs to no system
-  - **Naming:** `<multi-part-name>.py` or `<multi-part-name>.sh`; a launcher people type as a command has no extension
+  - **Naming:** `<multi-part-name>.py` or `<multi-part-name>.sh`; a launcher people type as a command, such as `launch-claude-mac`, has no extension
 - **Draft of a kind that has no queue**
   - **Location:** docs/drafts/
-  - **Naming:** <subject>-draft.md,  <subject>-candidate marks a version frozen for reviewers. Candidates move to the log-store after they have been processed. 
+  - **Naming:** `<subject>-draft.md`; a version frozen for reviewers is `<subject>-candidate.md`. Candidates move to the log-store after they have been processed. 
 
 ## Filename suffixes
 
