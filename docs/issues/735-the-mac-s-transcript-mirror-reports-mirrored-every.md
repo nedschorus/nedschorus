@@ -38,6 +38,7 @@ The ned-box half of the mirror is not affected. ned-box's own copy of merge-lane
 ## Cause
 
 Not yet known. What is known:
+- **openrsync rewrites each grown file every hour, with its old content.** On ned-box, `stat -c '%w'` shows that the 20:17Z run on 2026-09-27 created six Mac copies anew, between 13:17:03 and 13:17:05 PDT. The cold-read-research file above has inode 2311422. Each copy has the Mac source's current mtime, and a size and content that still end on 2026-09-24. Found by `mac-claude` reviewing this file's pull request, and re-measured by merge-lane-2. So the files are not being skipped: something in how openrsync rebuilds a changed file writes out the old content.
 - The Mac's rsync is `/usr/bin/rsync`, which is openrsync (`rsync_vanished_exit_code`, `scripts/transcript-mirror-to-log-store.py:106-121`).
 - The command is `rsync -a --timeout …`, built at line 155. It never uses `--delete` or `--inplace`.
 - The program trusts an exit of 0, and prints "mirrored" with counts of files. It never compares sizes or content (lines 201-214), so a run that copies nothing new looks the same as a run that copies everything.
