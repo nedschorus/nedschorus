@@ -11,11 +11,14 @@ takes no direct push. This is the program that does it. Designed in
 docs/issues/46-ghi-info-agent-design.md § The GHI write path; that design is
 the authority and this docstring does not restate it.
 
-WHAT IS AND IS NOT IN THIS SLICE. `create` and `edit`. The comment operation
-and the PreToolUse hook that redirects raw `gh issue create`/`edit` into
-this tool are each their own slice, unbuilt. So today an author calls this
-program by name, and nothing stops a raw `gh issue create` alongside it,
-which is the accepted cooperative posture the design states.
+WHAT IS AND IS NOT IN THIS SLICE. `create` and `edit`. There is no comment
+operation and there will be none: what would have been a comment goes into
+the GHI-MD, through `edit` (user-ruled 2026-09-24, item 4 of the meta-walk
+reboot-test-meta-walk-2026-09-23: "But I don't want comments as agents
+forget to read them. Better to update the ghi-Md"). The PreToolUse hook
+.claude/hooks/ghi-issue-write-redirect.py refuses a hand-typed
+`gh issue comment`, `gh issue create` or body edit on this repository and
+sends the author here.
 
 THE SEQUENCE, and what makes each step safe to run twice:
 
