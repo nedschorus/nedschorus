@@ -106,6 +106,27 @@ class ThrowawayRepository:
 
 REFUSAL_FIRST_INSTRUCTION = "Commit under this seat's own name, not as "
 
+# The whole refusal, line for line, with the refused identity as {identity}.
+# Every line is an instruction, or an instruction under a stated condition;
+# the reasons live in the hook's header (CLAUDE.md, user-ruled 2026-09-18).
+EXPECTED_REFUSAL_LINES = [
+    "Commit under this seat's own name, not as {identity}.",
+    "If this session is a seat, relaunch it with launch-claude-mac or"
+    " launch-claude-ubuntu, then commit again.",
+    "If you cannot relaunch, set the identity in the same command as the"
+    " commit: GIT_AUTHOR_NAME=<seat> GIT_AUTHOR_EMAIL=<seat>@nedschorus.invalid"
+    " GIT_COMMITTER_NAME=<seat> GIT_COMMITTER_EMAIL=<seat>@nedschorus.invalid"
+    " git commit ...",
+    "If you are amending a commit made under the user's address by mistake,"
+    " add --reset-author to that same command.",
+    "If you are amending a commit the user wrote, leave it and make a new"
+    " commit on top instead.",
+    "Do not change user.name or user.email in git config.",
+    "If the user is committing by hand, commit from a terminal outside the"
+    " Claude session, adding -c user.name=<name> -c user.email=<address> after"
+    " git if the clone's identity is unconfigured-agent.",
+]
+
 
 def refused(completed):
     return (completed.returncode != 0
@@ -239,6 +260,50 @@ def run_cases(scratch: Path):
           refused(completed) and repository.head() == before,
           (completed.returncode, completed.stderr.strip()))
 
+    # --- Amending a commit that went out under the user's address. --amend
+    # keeps the amended commit's author, so the refusal's same-command
+    # identity alone is refused again, and adding --reset-author, as the
+    # refusal's amend line says, commits as the seat (mac-claude's finding
+    # in merge-lane-2's review 5298511609 of PR "The commit guard's refusal
+    # is instructions only"). --------------------------------------------
+    repository = ThrowawayRepository(scratch, "amend-user-authored")
+    repository.attempt_commit({}, "a.txt", "--author=Edward Lerner <junk@lerner1.com>")
+    with open(repository.root / "a.txt", "a") as handle:
+        handle.write("more\n")
+    repository.git({}, "add", "a.txt")
+    before = repository.head()
+    completed = repository.attempt(
+        {**FAKE_SESSION, **SEAT_IDENTITY}, "commit", "--quiet", "--amend", "--no-edit")
+    check("amending a user-authored commit under the same-command identity alone is refused",
+          refused(completed) and repository.head() == before,
+          (completed.returncode, completed.stderr.strip()))
+    completed = repository.attempt(
+        {**FAKE_SESSION, **SEAT_IDENTITY}, "commit", "--quiet", "--amend",
+        "--no-edit", "--reset-author")
+    check("adding --reset-author, as the refusal says, amends it under the seat's name",
+          completed.returncode == 0
+          and repository.head_author_and_committer()
+          == "seat-g <seat-g@nedschorus.invalid>|seat-g <seat-g@nedschorus.invalid>",
+          (completed.stderr.strip(), repository.head_author_and_committer()))
+
+    # --- Outside a session, under the tripwire, the user's hand commit with
+    # the -c form the refusal's last line gives carries his name as both
+    # author and committer; without it, it would go out as the tripwire. -
+    repository = ThrowawayRepository(scratch, "hand-commit-under-tripwire",
+                                     config_name=TRIPWIRE_NAME,
+                                     config_email=TRIPWIRE_EMAIL)
+    with open(repository.root / "a.txt", "a") as handle:
+        handle.write("line\n")
+    repository.git({}, "add", "a.txt")
+    completed = repository.attempt(
+        {}, "-c", "user.name=Edward Lerner", "-c", "user.email=junk@lerner1.com",
+        "commit", "--quiet", "-m", "A change")
+    check("under the tripwire, the user's -c hand commit carries his name as author and committer",
+          completed.returncode == 0
+          and repository.head_author_and_committer()
+          == "Edward Lerner <junk@lerner1.com>|Edward Lerner <junk@lerner1.com>",
+          (completed.stderr.strip(), repository.head_author_and_committer()))
+
     # --- A merge commit runs pre-merge-commit, which runs the same check.
     repository = ThrowawayRepository(scratch, "merge")
     repository.git({}, "checkout", "--quiet", "-b", "side")
@@ -279,7 +344,18 @@ def run_cases(scratch: Path):
           in completed.stderr, completed.stderr)
     check("the refusal tells a user committing by hand to use a terminal outside the session",
           "If the user is committing by hand, commit from a terminal outside"
-          " the Claude session." in completed.stderr, completed.stderr)
+          " the Claude session" in completed.stderr, completed.stderr)
+    check("the refusal tells a user committing by hand under the tripwire to pass -c",
+          "adding -c user.name=<name> -c user.email=<address> after git if the"
+          " clone's identity is unconfigured-agent." in completed.stderr,
+          completed.stderr)
+    check("the refusal says to add --reset-author when amending a mistaken commit",
+          "If you are amending a commit made under the user's address by mistake,"
+          " add --reset-author to that same command." in completed.stderr,
+          completed.stderr)
+    check("the refusal says to commit on top when amending a commit the user wrote",
+          "If you are amending a commit the user wrote, leave it and make a new"
+          " commit on top instead." in completed.stderr, completed.stderr)
     # Instruction only (CLAUDE.md): every line is an instruction, or an
     # instruction under a stated condition, never a status or a reason.
     refusal_lines = [line for line in completed.stderr.splitlines() if line.strip()]
@@ -287,6 +363,16 @@ def run_cases(scratch: Path):
           bool(refusal_lines) and all(
               line.startswith(("Commit ", "If ", "Do not "))
               for line in refusal_lines),
+          refusal_lines)
+    # A line can open as an instruction and still carry a reason after it
+    # (the old "Do not change user.name or user.email in git config: every
+    # seat on this machine shares that file."), which the line-start check
+    # above cannot see: mutation M4 in merge-lane-2's review 5298511609
+    # restored exactly that and passed. So the refusal is pinned line for
+    # line; a reason added anywhere changes a line and fails here.
+    check("the refusal is exactly its instruction lines, nothing appended",
+          refusal_lines == [line.format(identity="Edward Lerner <junk@lerner1.com>")
+                            for line in EXPECTED_REFUSAL_LINES],
           refusal_lines)
 
 

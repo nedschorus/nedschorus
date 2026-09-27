@@ -50,7 +50,8 @@
 #
 # THE TRIPWIRE IS A SEPARATE, LATER STEP, taken only on the user's go after
 # every live seat has been relaunched by a launcher that carries the exports
-# above. A seat launched before then commits with whatever the shared config
+# above (user-ruled 2026-09-27, the reboot-test meta-walk item 15: the seat
+# that holds the step asks him once more before writing either config). A seat launched before then commits with whatever the shared config
 # holds, so writing the tripwire first would stop every such seat at its
 # next commit. The step, once per clone:
 #   Mac:     git -C /Users/el/Projects/nedschorus config user.name unconfigured-agent
@@ -58,18 +59,37 @@
 #   ned-box: git -C /home/nedlern/Projects/nedschorus config user.name unconfigured-agent
 #            git -C /home/nedlern/Projects/nedschorus config user.email unconfigured-agent@nedschorus.invalid
 # It also means a commit the user types by hand in a clone would be authored
-# unconfigured-agent, since the clone's config outranks ~/.gitconfig; he
-# would pass --author or `git -c user.name=... -c user.email=...` for one.
+# unconfigured-agent, since the clone's config outranks ~/.gitconfig, and
+# outside a session this hook does not run to catch it. So the refusal's last
+# line tells him to add `-c user.name=<name> -c user.email=<address>` after
+# git when the clone's identity is the tripwire (Codex P2 in merge-lane-2's
+# review 5298511609 of PR "The commit guard's refusal is instructions only",
+# https://github.com/nedschorus/nedschorus/pull/701). The -c form rather than
+# --author because -c sets the committer too; --author alone would leave the
+# commit committed by unconfigured-agent. Before the tripwire is written the
+# line's condition is simply false, so the one wording holds on both sides.
 #
 # The user's own commits inside a session are refused too. A commit the user
 # types into a Claude session with the `!` prefix runs in the session's
 # environment, carrying CLAUDE_CODE_SESSION_ID, so under his own address it is
-# refused like an agent's. That is the hook's behaviour as built, not yet a
-# ruling: whether such a commit should be exempt was put to the user
-# 2026-09-24, after merge-lane-2's review of PR "Each seat commits under its
-# own name, and no agent commits as the user"
-# (https://github.com/nedschorus/nedschorus/pull/694). Until he rules, the
-# refusal tells him to commit from a terminal outside the session.
+# refused like an agent's. The user ruled it stays that way, with no
+# exemption: he commits from a plain terminal (user-ruled 2026-09-27, the
+# reboot-test meta-walk item 16, after merge-lane-2's review of PR "Each seat
+# commits under its own name, and no agent commits as the user",
+# https://github.com/nedschorus/nedschorus/pull/694). Nothing marks a command
+# the user typed apart from one an agent ran, so an exemption would have
+# nothing to key on.
+#
+# Amending. `git commit --amend` keeps the amended commit's author unless
+# --reset-author is given, and git hands that author to this hook, so the
+# same-command identity alone is refused again when the commit being amended
+# carries the user's address (mac-claude's finding in the same review;
+# reproduced 2026-09-27 in a throwaway repository: refused without
+# --reset-author, committed as the seat for both author and committer with
+# it). Two cases need different instructions. A commit that went out under
+# the user's address by mistake, the 2026-09-22 leak's kind, is the agent's
+# own work and --reset-author puts the right name on it. A commit the user
+# really wrote keeps his name, so the agent leaves it and commits on top.
 #
 # Why the refusal says to set the identity in the same command as the commit:
 # the agent's Bash tool starts every call in a fresh shell, so an `export` in
@@ -105,6 +125,8 @@ done
 echo "Commit under this seat's own name, not as $refused_identity." >&2
 echo "If this session is a seat, relaunch it with launch-claude-mac or launch-claude-ubuntu, then commit again." >&2
 echo "If you cannot relaunch, set the identity in the same command as the commit: GIT_AUTHOR_NAME=<seat> GIT_AUTHOR_EMAIL=<seat>@nedschorus.invalid GIT_COMMITTER_NAME=<seat> GIT_COMMITTER_EMAIL=<seat>@nedschorus.invalid git commit ..." >&2
+echo "If you are amending a commit made under the user's address by mistake, add --reset-author to that same command." >&2
+echo "If you are amending a commit the user wrote, leave it and make a new commit on top instead." >&2
 echo "Do not change user.name or user.email in git config." >&2
-echo "If the user is committing by hand, commit from a terminal outside the Claude session." >&2
+echo "If the user is committing by hand, commit from a terminal outside the Claude session, adding -c user.name=<name> -c user.email=<address> after git if the clone's identity is unconfigured-agent." >&2
 exit 1
