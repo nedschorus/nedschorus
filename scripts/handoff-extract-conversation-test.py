@@ -300,6 +300,73 @@ with tempfile.TemporaryDirectory() as workspace:
     check("injected records are counted", skips["injected"] == 5, str(skips))
     check("acknowledgements are counted", skips["acknowledgement"] == 1, str(skips))
 
+    # --- Slash commands typed with words ----------------------------------
+    # The record shapes are copied from real transcripts: a skill command
+    # (merge-lane, 2026-09-01T03:16:53Z — queued while the agent worked, then
+    # delivered as a tagged user record followed by the skill's isMeta body),
+    # a built-in command (opens with <command-name>, indented, answered by
+    # local-command-stdout), and commands with no words. Before the fix every
+    # one of them was dropped as injected, words included.
+    typed_words = "what is standing with me. or any other qeustions"
+    slash = [
+        {"type": "queue-operation", "operation": "enqueue",
+         "content": f"/walk-me-through {typed_words}"},
+        user_record("<command-message>walk-me-through</command-message>\n"
+                    "<command-name>/walk-me-through</command-name>\n"
+                    f"<command-args>{typed_words}</command-args>",
+                    origin={"kind": "human"}),
+        user_record([{"type": "text", "text": "Base directory for this skill: "
+                      "/x/.claude/skills/walk-me-through\n\n# Walk me through"}],
+                    isMeta=True),
+        assistant_record("Item 1 of 3: the first thing standing with you"),
+        user_record("<command-name>/model</command-name>\n"
+                    "            <command-message>model</command-message>\n"
+                    "            <command-args>opus</command-args>"),
+        user_record("<local-command-stdout>Set model to opus</local-command-stdout>"),
+        user_record("<command-message>handoff</command-message>\n"
+                    "<command-name>/handoff</command-name>",
+                    origin={"kind": "human"}),
+        user_record("<command-name>/compact</command-name>\n"
+                    "            <command-message>compact</command-message>\n"
+                    "            <command-args></command-args>"),
+        user_record("<command-message>walk-me-through</command-message>\n"
+                    "<command-name>/walk-me-through</command-name>\n"
+                    "<command-args>these - 1 did you measure</command-args>"),
+        user_record("<command-message>walk-me-through</command-message>\n"
+                    "<command-name>/walk-me-through</command-name>\n"
+                    "<command-args>sent by another seat</command-args>",
+                    origin={"kind": "peer"}),
+        {"type": "attachment", "attachment": {
+            "type": "queued_command", "origin": {"kind": "human"},
+            "prompt": "Still confused. /walk-me-through item 3"}},
+        assistant_record("Item 3, retold as one story"),
+    ]
+    path = write_transcript(workspace, "slash.jsonl", slash)
+    turns, skips = extractor.read_dialog_turns(path)
+    kept = [turn["text"] for turn in turns]
+    users = [turn["text"] for turn in turns if turn["voice"] == "user"]
+    check("a skill command's words are carried as one user turn",
+          users.count(f"/walk-me-through {typed_words}") == 1, str(users))
+    check("a built-in command's words are carried",
+          "/model opus" in users, str(users))
+    check("a command recorded before origin existed is carried",
+          "/walk-me-through these - 1 did you measure" in users, str(users))
+    check("the skill's expanded body stays out",
+          not any("Base directory for this skill" in text for text in kept), str(kept)[:200])
+    check("a command with no words stays out",
+          not any(text.startswith(("/handoff", "/compact", "<command-")) for text in kept),
+          str(kept))
+    check("a command of non-human origin stays out",
+          not any("sent by another seat" in text for text in kept), str(kept))
+    check("a slash command inside a queued message is carried once",
+          users.count("Still confused. /walk-me-through item 3") == 1, str(users))
+    check("the queued copy of a command is not carried a second time",
+          sum(typed_words in text for text in kept) == 1, str(kept))
+    check("the answer to a carried command survives",
+          "Item 1 of 3: the first thing standing with you" in kept, str(kept))
+    check("bare, non-human and stdout records are counted as injected",
+          skips["injected"] == 4, str(skips))
+
     # A tool-bearing record between a notification and the next assistant text
     # means the agent did real work — its short conclusion is a report the
     # successor needs, not the notification's ack (review finding: it was

@@ -25,7 +25,8 @@ the current working directory); otherwise a search for <session-id>.jsonl
 across every project directory. Latest-by-modification-time is never used:
 a second session in the same worktree makes that a race.
 
-Kept verbatim: user prompts and assistant display text. Dropped: tool
+Kept verbatim: user prompts and assistant display text; a slash command the
+user typed with words is kept as "/command words". Dropped: tool
 calls and their results, thinking blocks, system and harness records,
 subagent turns (isSidechain), and harness-injected pseudo-prompts with the
 short agent acknowledgements that answer them — none of which the successor
@@ -42,6 +43,7 @@ found, 4 transcript unusable (empty, unparseable, or boundary not found).
 
 import argparse
 import json
+import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -71,7 +73,10 @@ MINIMUM_DIALOG_WORDS = 1000
 # user-record words the old filter kept, 59% were injected, task-notifications
 # alone 860 records — displacing exactly the dialog the tail exists to carry.
 # <bash-input> is deliberately absent: those are commands the user personally
-# typed via the "!" prefix.
+# typed via the "!" prefix. A slash command the user typed WITH words also
+# opens with <command-message> or <command-name>; typed_slash_command carries
+# it as "/command words" before this list is consulted, so only a bare command
+# falls here.
 INJECTED_TEXT_PREFIXES = (
     "<task-notification>",
     "<command-message>",
@@ -307,10 +312,58 @@ def dialog_turn_from_record(record):
     content = (record.get("message") or {}).get("content")
     if record_type == "user" and isinstance(content, str):
         text = content.strip()
+        command = typed_slash_command(text, record)
+        if command:
+            return {"voice": "user", "text": command}
     else:
         text = joined_text_blocks(content).strip()
 
     return {"voice": record_type, "text": text} if text else None
+
+
+def typed_slash_command(text: str, record):
+    """Return "/command words" for a slash command the user typed with words,
+    or None for any other record.
+
+    The harness stores a typed slash command as a user record wrapped in tags,
+    so it opens with an INJECTED_TEXT_PREFIXES entry and the whole record was
+    dropped as injected, the user's words with it:
+
+      <command-message>walk-me-through</command-message>
+      <command-name>/walk-me-through</command-name>
+      <command-args>what is standing with me. ...</command-args>
+
+    A built-in command such as /model or /compact opens with <command-name>
+    instead. Measured 2026-09-27 over the Mac's transcripts: 134 commands
+    carried words (76 /walk-me-through, 2 /cold-read, 47 /model, 8 /effort,
+    1 /compact) and the extractor carried none of them as a user turn, so a
+    successor never saw what the user asked a walk to cover. A skill's
+    expanded body arrives as a separate isMeta record and stays out; a
+    command with no words stays dropped as injected, as before.
+
+    Only human origin is carried, the queued_command rule above. A record
+    with no origin is carried too: built-in command records never carry one
+    (80 of them, the latest 2026-09-23), and skill command records had none
+    until the harness added it (13, all before the first human-origin one on
+    2026-08-29). The user typed all of those.
+    """
+    if not text.startswith(("<command-message>", "<command-name>")):
+        return None
+    origin = record.get("origin")
+    if isinstance(origin, dict) and origin.get("kind") != "human":
+        return None
+    words = re.search(r"<command-args>(.*?)</command-args>", text, re.S)
+    if not words or not words.group(1).strip():
+        return None
+    name = re.search(r"<command-name>(.*?)</command-name>", text, re.S)
+    if name and name.group(1).strip():
+        command_name = name.group(1).strip()
+    else:
+        message = re.search(r"<command-message>(.*?)</command-message>", text, re.S)
+        if not message or not message.group(1).strip():
+            return None
+        command_name = "/" + message.group(1).strip().lstrip("/")
+    return f"{command_name} {words.group(1).strip()}"
 
 
 def first_line_of(text: str) -> str:
