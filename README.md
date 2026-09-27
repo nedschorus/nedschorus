@@ -36,12 +36,12 @@ Two kinds of agent, each defined in the glossary, `docs/nedschorus-wiki/nedschor
 |---|---|
 | `docs/nedschorus-wiki/` | Standing knowledge, kept current (Obsidian vault). |
 | `docs/issues/<n>-<slug>.md` | Working documents, one per GitHub issue, disposed when the issue closes. |
-| `docs/cross-project/` | Artifacts both systems read, including the founding documents and specifications. |
+| `docs/cross-project/` | Specifications and plans both systems read. |
 | `~/.claude/handoffs/` | Session handoffs, one file per agent-seat, on each machine only and never committed. |
 | `nc-queue/` | User-requested notes awaiting their initial walk — verbatim, unreviewed, 90-day TTL; dispersed to durable homes at the walk. |
 | `docs/nedschorus-wiki/queue/`, `docs/issues/queue/` | Destination-rooted queues: wiki-bound doctrine and GHI-MD-bound documents awaiting the user's drain (promote / edit / demote / drop). |
 | `nc-systems/` | The project's built systems, one directory each with its program, design document and tests: `handoff/` (session reincarnation, the handoff-supervisor and the handoff writer) and `main-gatekeeper/` (the program meant to be the only way a change reaches main, dormant until activated). |
-| `entry-manifest.md` | The ledger of everything imported from the legacy system. |
+| `entry-manifest.md` | The founding-era record of the six files migrated from the legacy system; no longer appended. |
 | Issues labeled `draft` | Draft issues awaiting the user's drain — same format as every issue, walkable; no work ever waits on one, and nothing requiring the user's admission takes effect without it. |
 
 ## Working in a fresh clone

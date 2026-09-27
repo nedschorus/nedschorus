@@ -18,7 +18,7 @@ review identity, and the machine accounts each host runs as.
 
 | account | what it is | org standing |
 |---|---|---|
-| `nedlern` | the human owner's own account. Mac seats authenticate as this by default, because it is what `gh` is logged in as on the Mac. | owner |
+| `nedlern` | the human owner's own account, and what `gh` is logged in as on the Mac. Seats launched by `scripts/launch-claude-mac` act as `mac-claude` instead. | owner |
 | `ned-review-merge` | merge-lane-2's identity: it reviews other seats' pull requests, approves them, and merges. Formerly the org's second owner, renamed and demoted to member on 2026-08-19. | member |
 | `mac-claude` | the independent reviewer identity. It reviews and approves work merge-lane-2 itself authored — work `ned-review-merge` may not approve, because GitHub refuses an approving review from a pull request's author. | member since 2026-08-24 |
 | `mac-codex` | Mac-side Codex worker. No credential yet. | member (invited 2026-08-24; measured a member 2026-09-23 — listed by the organization's members API, absent from its pending invitations and outside collaborators) |
@@ -42,8 +42,8 @@ box's GitHub account is `ubuntu-claude` and the Mac's Unix user is `el`. A bare
 |---|---|---|---|
 | `nedlern` | this Mac, `gh`'s own store (keychain) | classic | 2027-08-24 |
 | `ned-review-merge` | `~/.config/nedschorus/ned-review-merge.token` | fine-grained | 2027-08-20 |
-| `mac-claude` | `~/.config/nedschorus/mac-claude.token` | fine-grained | 2027-08-25 |
-| `ubuntu-claude` | the Ubuntu box, `gh`'s own store | classic | 2027-08-24 |
+| `mac-claude` | `~/.config/nedschorus/mac-claude.token`, on this Mac and on ned-box | fine-grained | 2027-08-25 |
+| `ubuntu-claude` | ned-box: `~/.config/nedschorus/ubuntu-claude.token`, which seats launched by `scripts/launch-claude-ubuntu` use; a classic token also remains in `gh`'s own store there | fine-grained (the file); classic (`gh`'s store) | 2027-09-24 (the file); 2027-08-24 (`gh`'s store) |
 
 Token files are mode 600.
 
