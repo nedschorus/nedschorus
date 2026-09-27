@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Tests for scripts/ghi-issue-write.py, the GHI write tool's create and
-edit verbs.
+edit operations.
 
 Run: python3 scripts/ghi-issue-write-test.py
 Prints one line per case and exits non-zero if any case fails.
@@ -25,7 +25,7 @@ repository, with a bare remote and `gh` stubbed, before being written down:
 filed, merged, head branch deleted, source moved, pushed without a pull
 request, and a destination holding a file that is not this one.
 
-The edit verb's move states were produced the same way on 2026-09-21: a
+The edit operation's move states were produced the same way on 2026-09-21: a
 file moved into its system's directory while another seat landed a change
 at the path it moved from, a move that also renamed the file, and a move
 whose first heading changed. The first of those was run through the tool
@@ -58,7 +58,7 @@ and
 note and renamed the issue after THAT file's heading. The two are one
 function now, and a case over main's own tree asserts they cannot answer
 differently; the fixed tool refuses the note with 64, and `create`'s
-refusal no longer sends an agent holding one to a verb that refuses it
+refusal no longer sends an agent holding one to an operation that refuses it
 too.
 
 A second edit of one file, made while the first is still open — the frozen
@@ -275,18 +275,18 @@ def run_cases(scratch: Path):
     except tool.Refused as refusal:
         check("a file already named for an issue is refused",
               refusal.code == 64, f"code {refusal.code}")
-        # This refusal used to say "use the edit verb" and nothing else,
+        # This refusal used to say "use the edit operation" and nothing else,
         # and create sends every `<number>-*` file here. Main holds ten
         # queue notes named for issues and an archived draft named for
-        # one, and the edit verb writes none of those paths: an agent
+        # one, and the edit operation writes none of those paths: an agent
         # holding one was sent from a refusal to a refusal. Each line now
         # carries the condition it applies under.
-        check("and it says where the edit verb writes, so the agent "
-              "holding a queue note is not sent to a verb that refuses it "
-              "too",
+        check("and it says where the edit operation writes, so the agent "
+              "holding a queue note is not sent to an operation that "
+              "refuses it too",
               "docs/issues/" in str(refusal)
               and "nc-systems/<system>/" in str(refusal)
-              and "edit verb" in str(refusal), str(refusal))
+              and "edit operation" in str(refusal), str(refusal))
         check("and it says what to do with a file that is a new issue "
               "rather than one of that issue's files",
               "a copy whose name carries no number" in str(refusal),
@@ -423,7 +423,7 @@ def run_cases(scratch: Path):
     # the rewriter finds the line by its key rather than by the shape of its
     # value. (Measured 2026-09-21: of the 50 paths under docs/issues/ on
     # main, 25 are filed and none carries an `issue:` line at all, the
-    # create verb having filed nothing that has merged yet. So there is
+    # create operation having filed nothing that has merged yet. So there is
     # nothing to correct today and everything to correct tomorrow.)
     old_shape = ("---\nissue: [A title](https://github.com/nedschorus/"
                  "nedschorus/issues/570)\nstatus: draft\n---\n\n# T\n")
@@ -635,8 +635,8 @@ def run_cases(scratch: Path):
     except tool.Refused as refusal:
         check("a source already on main under an issue is refused",
               refusal.code == 64, f"code {refusal.code}")
-        check("and the refusal names the landed path and the edit verb",
-              LANDED in str(refusal) and "edit verb" in str(refusal),
+        check("and the refusal names the landed path and the edit operation",
+              LANDED in str(refusal) and "edit operation" in str(refusal),
               str(refusal))
         check("and it files nothing, lands nothing and asks ghi-info nothing",
               not already_landed.ran("gh issue create")
@@ -757,8 +757,8 @@ def run_cases(scratch: Path):
     # out of the one case neither check sees — an edited source rerun after
     # the merge — so the words are the guard and the case pins all of them.
     INSTRUCTION = ("Wait for the merge, then apply your edit to the landed "
-                   "file with the edit verb, and do not rerun create on this "
-                   "file.")
+                   "file with the edit operation, and do not rerun create on "
+                   "this file.")
     edited = written(scratch, "edited-mid-filing.md",
                      FILE_TEXT.replace("Body.", "Body, edited."))
 
@@ -1054,10 +1054,11 @@ def run_cases(scratch: Path):
     # stay argparse's; only the code moves. These reach neither git nor gh.
 
     for case_name, argv in [
-            ("no verb at all is a bad invocation, not argparse's 2", []),
+            ("no operation at all is a bad invocation, not argparse's 2", []),
             ("an unknown flag is a bad invocation", ["--bogus"]),
-            ("a verb missing its path is a bad invocation", ["create"]),
-            ("an unknown verb is a bad invocation", ["frobnicate", "x.md"])]:
+            ("an operation missing its path is a bad invocation", ["create"]),
+            ("an unknown operation is a bad invocation",
+             ["frobnicate", "x.md"])]:
         complaint = io.StringIO()
         try:
             with contextlib.redirect_stderr(complaint):
@@ -1070,7 +1071,7 @@ def run_cases(scratch: Path):
                   repr(complaint.getvalue()[:120]))
 
 
-# --- The edit verb ------------------------------------------------------
+# --- The edit operation -------------------------------------------------
 #
 # Same fake-subprocess method as the create cases: each case asserts what
 # the tool WOULD run. Edit adds two commands create never makes — `git
@@ -1129,7 +1130,7 @@ def filed_ghi_md(scratch: Path, name=EDIT_NAME, text=FILE_TEXT,
 
 def staged_form(number=570, title=EDIT_TITLE, text=FILE_TEXT):
     """What the tool lands: the author's file with the issue line it
-    derives. Every comparison the edit verb makes is against this, not
+    derives. Every comparison the edit operation makes is against this, not
     against the author's text, or a file whose only difference was the line
     the tool itself writes would land over and over."""
     return tool.with_issue_frontmatter(text, REPO, number, title)
@@ -1167,12 +1168,12 @@ def run_edit_cases(scratch: Path):
     # DIRECTLY IN, the same rule ghi_md_paths_for_issue applies, because they
     # are now
     # the same function. This one took any depth under docs/issues/ and any
-    # depth from three down under nc-systems/ until 2026-09-21, so the verb
-    # would land a file the issue's body cannot link — and take its title
-    # from that file's heading.
+    # depth from three down under nc-systems/ until 2026-09-21, so the
+    # operation would land a file the issue's body cannot link — and take its
+    # title from that file's heading.
 
     check("a queue note named for an issue is not one of the issue's "
-          "files, so it is not a path this verb writes either",
+          "files, so it is not a path this operation writes either",
           not tool.writable_relative_path(
               "docs/issues/queue/18-write-test-plan-agent-native-riders.md"))
     check("nor is an archived draft named for one",
@@ -1228,7 +1229,7 @@ def run_edit_cases(scratch: Path):
               "own directory, which would give the issue a second copy of "
               "one document",
               "Move this file" not in str(note_refusal), str(note_refusal))
-        check("it is told to run the verb on the issue's own file, as "
+        check("it is told to run the operation on the issue's own file, as "
               "create's refusal tells its holder",
               "run this command on the issue's own file" in str(note_refusal),
               str(note_refusal))
@@ -1325,7 +1326,7 @@ def run_edit_cases(scratch: Path):
     # And it is ONE rule, not two that agree today. `ghi_md_paths_for_issue`
     # says
     # which files an issue's body links; `writable_relative_path` says
-    # which files this verb may land. They were separate and they
+    # which files this operation may land. They were separate and they
     # disagreed, which is how a queue note got landed and its heading made
     # an issue's title. Over main's own tree, they answer together.
 
@@ -1338,8 +1339,8 @@ def run_edit_cases(scratch: Path):
             int(Path(line).name.split("-")[0]), scratch,
             Recorder({"git ls-tree": Completed(MAIN_TREE)})))]
     check("every <number>-* path on main that the body links is a path "
-          "this verb writes, and every one it drops is a path this verb "
-          "refuses",
+          "this operation writes, and every one it drops is a path this "
+          "operation refuses",
           not disagreed, str(disagreed))
 
     deeper = Recorder({"git ls-tree": Completed(
@@ -1582,11 +1583,11 @@ def run_edit_cases(scratch: Path):
           not in_place.ran("git rm"), str(in_place.commands()))
 
     # --- A move that also RENAMED the file -------------------------------
-    # The moved-from path is found by the file's name, so a rename misses
-    # that match. It is reported rather than guarded: a renamed file and a
-    # new second document for the issue are the same state on main, and
-    # this verb is how both arrive, so a refusal would block the legitimate
-    # one and a deletion on suspicion would delete a file nobody moved.
+    # The moved-from path is found by the file's name, so a rename misses that
+    # match. It is reported rather than guarded: a renamed file and a new
+    # second document for the issue are the same state on main, and this
+    # operation is how both arrive, so a refusal would block the legitimate one
+    # and a deletion on suspicion would delete a file nobody moved.
 
     renamed_source = filed_ghi_md(scratch, name=RENAMED_NAME,
                                   directory="nc-systems/statusline")
@@ -2303,7 +2304,8 @@ def run_edit_cases(scratch: Path):
           not ran_with(prose, "gh issue edit", "--body"),
           str(prose.commands()))
     check("and not refused either, since every filed issue on main is in "
-          "that state and a refusal would shut the verb out of all of them",
+          "that state and a refusal would shut the operation out of all of "
+          "them",
           prose_refusal is None and prose_finished,
           f"refused: {str(prose_refusal)[:120]}" if prose_refusal
           else "the run did not report itself finished")
@@ -2350,9 +2352,9 @@ def run_edit_cases(scratch: Path):
         check("a file named for an issue that does not exist is refused",
               refusal.code == 64, f"code {refusal.code}")
         check("and the refusal names the file, the repository with no such "
-              "issue, and the verb that files one",
+              "issue, and the operation that files one",
               EDIT_RELATIVE in str(refusal) and REPO in str(refusal)
-              and "create verb" in str(refusal), str(refusal)[:300])
+              and "create operation" in str(refusal), str(refusal)[:300])
     check("and the number is tested before anything is fetched, "
           "adjudicated, pushed or opened",
           not no_such_issue.ran("git fetch")

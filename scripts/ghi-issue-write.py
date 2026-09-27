@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """File a GitHub issue from its GHI-MD, then make the issue's body the links
 to that issue's files; and land an edit to one of those files, after which
-the issue follows it. The `create` and `edit` verbs of the GHI write tool.
+the issue follows it. The `create` and `edit` operations of the GHI write tool.
 
 WHAT THIS IS. The user ruled on 2026-09-15 that a GHI's body is the link to
 its GHI-MD and nothing else: one copy of every fact, GitHub
@@ -11,7 +11,7 @@ takes no direct push. This is the program that does it. Designed in
 docs/issues/46-ghi-info-agent-design.md § The GHI write path; that design is
 the authority and this docstring does not restate it.
 
-WHAT IS AND IS NOT IN THIS SLICE. `create` and `edit`. The comment verb
+WHAT IS AND IS NOT IN THIS SLICE. `create` and `edit`. The comment operation
 and the PreToolUse hook that redirects raw `gh issue create`/`edit` into
 this tool are each their own slice, unbuilt. So today an author calls this
 program by name, and nothing stops a raw `gh issue create` alongside it,
@@ -89,7 +89,7 @@ the second question is asked of the same read of the open issues: an issue
 whose body still carries the pairing key prefix is a filing in flight, and
 its title is the heading it was filed from. A source whose first heading
 matches one of those is refused, and the refusal names the issue, names the
-pull request to wait for, and sends the edit to the edit verb. Known
+pull request to wait for, and sends the edit to the edit operation. Known
 residual, accepted on 2026-09-21 rather than guarded: an author who changes
 the heading itself mid-filing matches neither check, and that refusal's
 wording is what keeps them out of it.
@@ -99,8 +99,8 @@ refspec, so nothing is created in the filing checkout that could outlive the
 run: a branch made with `git worktree add -b` survives `git worktree
 remove --force`, and the next run's add then fails on the name.
 
-Both of those hold of the edit verb's step 3 as much as of create's step 4:
-it asks GitHub about its branch, and its worktree leaves no branch behind.
+Both of those hold of the edit operation's step 3 as much as of create's step
+4: it asks GitHub about its branch, and its worktree leaves no branch behind.
 It did neither until the review of PR [Build the GHI write tool's edit
 verb](https://github.com/nedschorus/nedschorus/pull/596), where the cost was
 measured — an edit's branch name is derived from the file's content, so one
@@ -113,7 +113,7 @@ So a filed GHI-MD — one whose name carries an issue number — is accepted as
 the resume entry point when that issue's body is still a placeholder, and
 the run finishes at step 5. When the body is no longer a placeholder the
 filing is done, and the refusal at step 1 stands: changing a filed GHI-MD is
-the edit verb's work.
+the edit operation's work.
 
 WHERE THE GIT WORK HAPPENS. In a throwaway worktree cut from a just-fetched
 origin/main, removed afterwards. The user ruled this on 2026-09-20, in place
@@ -242,7 +242,7 @@ A MOVE THAT ALSO RENAMED IS REPORTED, NOT GUESSED AT. The moved-from path
 is found by the file's name, which a move keeps and a rename does not.
 There is no second rule to fall back on: a file the author renamed and a
 new second document for the same issue are the same state on main — no
-copy at this path, other files of the issue present — and this verb is how
+copy at this path, other files of the issue present — and this operation is how
 both arrive. A tool that deleted on suspicion would delete a file nobody
 moved, which is the discard the check above exists to stop. So the run says
 what main still holds and lands the file; the author lands the removal.
@@ -259,12 +259,12 @@ push, so the run that pushes nothing passes both.
 
 A PROSE BODY IS LEFT ALONE, NOT RELINKED AND NOT REFUSED. The design says
 that until an issue is migrated it keeps its prose body and is read as it
-stands, and measurement says that is every issue this verb can reach:
+stands, and measurement says that is every issue this operation can reach:
 2026-09-21, all 21 issues with a filed GHI-MD on main still carry the prose
 body they were filed with, migrating them being its own build-slice. So step
 5 writes only over a body this tool wrote — its link list, or create's
 placeholder — reports what it found otherwise, and finishes. Refusing
-instead would shut the verb out of the whole existing corpus, and refusing
+instead would shut the operation out of the whole existing corpus, and refusing
 AFTER the file had landed would refuse an author work that had already
 happened.
 
@@ -509,9 +509,9 @@ def validate(path: Path):
     title to generate, and a file already at a filed path belongs to an
     issue that exists.
 
-    THE FILED-NAME REFUSAL SAYS WHERE THE EDIT VERB WRITES, not merely
-    that the edit verb exists, because the two verbs met at a dead end
-    otherwise. This check sends every `<number>-*` file to `edit`, and
+    THE FILED-NAME REFUSAL SAYS WHERE THE EDIT OPERATION WRITES, not merely
+    that the edit operation exists, because the two operations met at a dead
+    end otherwise. This check sends every `<number>-*` file to `edit`, and
     `edit` writes only a file sitting DIRECTLY in docs/issues/ or directly
     in a system's own directory. Main holds ten queue notes named for
     issues under docs/issues/queue/ and an archived draft under
@@ -539,9 +539,9 @@ def validate(path: Path):
             "this check does not depend on the directory.\n"
             f"Directly in {GHI_MD_DIRECTORY}/, or directly in "
             f"{SYSTEM_DIRECTORY}/<system>/: change this file with the edit "
-            "verb.\n"
+            "operation.\n"
             "Anywhere else, a queue note or an archived draft included: the "
-            "edit verb writes no such path, so run it on the issue's own "
+            "edit operation writes no such path, so run it on the issue's own "
             "file in one of those two places instead.\n"
             "To file this material as a new issue of its own: run create "
             "again on a copy whose name carries no number.", 64)
@@ -612,7 +612,7 @@ def refuse_if_filing_is_in_flight(repo: str, issues, title: str, runner):
             "still a placeholder.\n"
             f"{where}\n"
             "Wait for the merge, then apply your edit to the landed file "
-            "with the edit verb, and do not rerun create on this file.",
+            "with the edit operation, and do not rerun create on this file.",
             64)
 
 
@@ -783,7 +783,7 @@ def refuse_if_already_landed_on_main(repo: str, text: str, title: str,
             raise Refused(
                 f"This file is already on main as {landed}, filed as issue "
                 f"[{title}](https://github.com/{repo}/issues/{number}).\n"
-                f"Edit {landed} with the edit verb instead of rerunning "
+                f"Edit {landed} with the edit operation instead of rerunning "
                 "create on this file.", 64)
 
 
@@ -1057,7 +1057,7 @@ def create(path: Path, repo: str, repository_root: Path, runner, report):
     return number, finished
 
 
-# --- The edit verb ------------------------------------------------------
+# --- The edit operation -------------------------------------------------
 
 
 def relative_to_root(path: Path, repository_root: Path) -> str:
@@ -1077,7 +1077,7 @@ def writable_relative_path(relative: str) -> bool:
     THE SAME TWO PLACES `ghi_md_paths_for_issue` RETURNS, and now the same
     predicate:
     that function calls this one, so the files an issue's body is built
-    from and the files this verb will land are one set. They were two
+    from and the files this operation will land are one set. They were two
     rules until the review of PR [Build the GHI write tool's edit
     verb](https://github.com/nedschorus/nedschorus/pull/596), where this
     one took any depth under docs/issues/ and any depth from three down
@@ -1124,8 +1124,8 @@ def is_derived_body(body: str) -> bool:
 
 
 def validate_edit(path: Path, repository_root: Path):
-    """Step 1 of `edit`, which is `create`'s check inverted: this verb wants
-    a file that is already filed, and refuses one that is not rather than
+    """Step 1 of `edit`, which is `create`'s check inverted: this operation
+    wants a file that is already filed, and refuses one that is not rather than
     filing it.
 
     THE UNWRITABLE-PATH REFUSAL DOES NOT SAY "MOVE IT", because the file
@@ -1154,7 +1154,7 @@ def validate_edit(path: Path, repository_root: Path):
             f"{path} is not named for an issue, so it is not filed under "
             "one. A filed GHI-MD carries its issue's number wherever it "
             "sits. To file a new issue from this file, use the create "
-            "verb.", 64)
+            "operation.", 64)
     relative = relative_to_root(path, repository_root)
     if not writable_relative_path(relative):
         raise Refused(
@@ -1388,15 +1388,15 @@ def report_no_moved_from_match(number: int, relative: str, paths, report):
     paths that step 5 then links twice.
 
     REPORTED RATHER THAN GUARDED, and the choice is forced rather than
-    cautious. This verb is also how a genuinely new SECOND document reaches
-    an issue that already has one, and from main's tree the two states are
-    the same: no copy at this path, other files of the issue present. A
+    cautious. This operation is also how a genuinely new SECOND document
+    reaches an issue that already has one, and from main's tree the two states
+    are the same: no copy at this path, other files of the issue present. A
     refusal would block the legitimate one. Nothing on main says which of an
     issue's files a new path was renamed from, so a tool that picked one to
-    delete would be guessing, which is what the conflict check exists to
-    stop. Being wrong the reported way costs a document at two paths —
-    visible in the body, fixable by a commit. Being wrong the guessing way
-    costs another seat's file.
+    delete would be guessing, which is what the conflict check exists to stop.
+    Being wrong the reported way costs a document at two paths — visible in the
+    body, fixable by a commit. Being wrong the guessing way costs another
+    seat's file.
 
     The title is left alone for the same reason: with no predecessor named,
     nothing says the heading changed.
@@ -1601,9 +1601,9 @@ def read_issue(repo: str, number: int, relative: str, runner):
                 "named for it.\n\n"
                 "Rename the file for the issue it is filed under, if it has "
                 "one.\n"
-                "If it has no issue yet, file one with the create verb, from "
-                "a copy whose name carries no number — create refuses a file "
-                "already named for an issue.\n\n"
+                "If it has no issue yet, file one with the create operation, "
+                "from a copy whose name carries no number — create refuses a "
+                "file already named for an issue.\n\n"
                 f"gh said: {said}", 64)
         raise Refused(f"gh issue view failed: {said}", 1)
     issue = json.loads(current.stdout or "{}")
@@ -1614,8 +1614,8 @@ def read_issue(repo: str, number: int, relative: str, runner):
             f"and {relative} is named for it.\n\n"
             "Rename the file for the issue it is filed under, if it has "
             "one.\n"
-            "If it has no issue yet, file one with the create verb, from a "
-            "copy whose name carries no number — create refuses a file "
+            "If it has no issue yet, file one with the create operation, "
+            "from a copy whose name carries no number — create refuses a file "
             "already named for an issue.\n\n"
             f"gh answered with {url}", 64)
     return issue
@@ -1835,7 +1835,7 @@ def main(argv=None):
                     "issue's body the links to that issue's files; or land "
                     "an edit to one of those files, after which the issue "
                     "follows it.")
-    sub = parser.add_subparsers(dest="verb", required=True)
+    sub = parser.add_subparsers(dest="operation", required=True)
     creator = sub.add_parser("create", help="file a new issue from a GHI-MD")
     creator.add_argument("path")
     creator.add_argument("--repo", default=DEFAULT_REPO)
@@ -1861,7 +1861,7 @@ def main(argv=None):
             print(line)
 
     try:
-        if arguments.verb == "create" and arguments.dry_run:
+        if arguments.operation == "create" and arguments.dry_run:
             # The one path that needs no checkout: a file outside one can
             # still be validated, and create's own root lookup comes later.
             text, title = validate(path)
@@ -1878,7 +1878,7 @@ def main(argv=None):
             # caller gets a traceback where a refusal is the honest reply.
             raise Refused(f"no such file: {path}", 64)
         root = repository_root_of(path.parent)
-        if arguments.verb == "create":
+        if arguments.operation == "create":
             create(path, arguments.repo, root, run, report)
             return 0
         if arguments.dry_run:
