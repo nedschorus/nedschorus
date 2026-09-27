@@ -9,10 +9,11 @@ capture. No fixture here was typed. Where a case needs a value the captures do
 not hold together — a merged pull request reads mergeStateStatus UNKNOWN, so a
 passing case must be given CLEAN — the suite changes that one field and takes
 the value's spelling from another capture that holds it (CLEAN from cli/cli
-14475, DIRTY from nedschorus 600, isDraft true from cli/cli 14507). Where a case
-needs a review channel as it stood earlier, it serves a leading slice of the
-captured channel: GitHub returns reviews oldest first, so a prefix is the channel
-as it read before the next review was posted.
+14475, DIRTY from nedschorus 600, isDraft true from cli/cli 14507, and an
+edited comment's updated_at from the next comment in pytorch 114309's inline
+capture). Where a case needs a review or inline channel as it stood earlier, it
+serves a leading slice of the captured channel: GitHub returns both oldest
+first, so a prefix is the channel as it read before the next item was posted.
 
 The pagination cases are the regression tests for the worst finding, F1: the
 gate read one page of 30 items per channel. Their channels are pytorch/pytorch
@@ -62,6 +63,26 @@ Case LANE 662 replays the first, and the mutation that counts the pin turns it
 red. merge-lane-2's scan of merged pull requests 540 to 701 found none where
 another account approved after the merge account, so the case Codex describes
 has not occurred.
+
+AN INLINE COMMENT POSTED WITH A REVIEW THE CALLER WROTE OR READ IS READ AT THAT
+REVIEW'S TIME. GHI "The merge gate refuses a merge when the merge account's own
+review carries inline comments stamped a second later",
+https://github.com/nedschorus/nedschorus/issues/729. On PR 722, "A handoff's
+worktree cleaner stopped at its time bound is counted and leaves no process
+running", ned-review-merge's COMMENTED review read 20:43:02Z and its three
+inline comments 20:43:03Z, so every reviewed-since F2 accepts counted them as
+new. Case LANE 722 replays merge-lane-2's call on the review channel as it stood
+then, before the body-only review merge-lane-2 posted to get past the gate. It
+refused before the fix, and the mutation that reads every comment at its own
+timestamp again turns it red. pytorch 114309's pin, malfet's approval, is the
+same shape from another account, and shows why the gate does not test
+updated_at == created_at: its two comments were drafted minutes before the
+approval and updated a second after it, and nobody edited them. The F6 case
+beside it changes only one of those comments' updated_at, to make it an edit
+after reviewed-since, and it must still count. A comment keeps its own time when
+its review is any other account's, or the merge account's posted after
+reviewed-since: the 722 case at the approval and the pytorch case at drisspg's
+review hold that.
 
 The mutation section reruns named cases against a mutated COPY of the gate in a
 scratch directory, one mutation per fix, and requires each to go red. The file
@@ -160,11 +181,14 @@ def arranged_state(state_capture, **fields):
     return path
 
 
-def channel_prefix(channel_capture, through_id):
-    """The captured channel as it stood when the item with through_id was the newest."""
+def channel_prefix(channel_capture, through_id, changed_fields=None):
+    """The captured channel as it stood when the item with through_id was the newest.
+    changed_fields, {item id: {field: value}}, changes only those fields of those items."""
     items = channel_items(captured(channel_capture))
     ids = [item["id"] for item in items]
     kept = items[:ids.index(through_id) + 1]
+    for item_id, fields in (changed_fields or {}).items():
+        kept[ids.index(item_id)].update(fields)
     path = Path(tempfile.mkstemp(dir=scratch, suffix="-channel.json")[1])
     path.write_text(json.dumps(kept))
     return path
@@ -379,6 +403,94 @@ def case_lane_662_since_taken_before_its_own_approval(gate):
     routes.update(QUIET_ISSUE)
     run = run_gate(gate, "662", own["commit_id"], "2026-09-23T00:54:38Z", routes)
     return passed_pinned_to(run, "662", own["commit_id"]), run.summary()
+
+
+PR_722_REVIEWS = "nedschorus-nedschorus-722-reviews-channel-paginated.json"
+PR_722_PIN = 5331934885          # mac-claude's approval, 20:31:51Z
+PR_722_OWN_REVIEW = 5331991574   # ned-review-merge's COMMENTED review, 20:43:02Z
+
+
+def pr_722_routes():
+    """PR 722 as merge-lane-2 gated it: the review channel through the merge
+    account's COMMENTED review, before the body-only review it then posted to get
+    past the gate; the inline channel holds that review's three comments, all
+    stamped 20:43:03Z."""
+    routes = {"state": {"stdout_file": str(arranged_state(
+        "nedschorus-nedschorus-722-pr-view-state.json", mergeStateStatus=CLEAN))}}
+    routes.update(channel_routes("reviews", channel_prefix(PR_722_REVIEWS, PR_722_OWN_REVIEW)))
+    routes.update(captured_channel_routes("inline", "nedschorus-nedschorus-722-inline-channel"))
+    routes.update(captured_channel_routes("issue", "nedschorus-nedschorus-722-issue-channel"))
+    return routes
+
+
+def case_lane_722_merge_accounts_inline_comments_stamped_a_second_later(gate):
+    """reviewed-since is the merge account's own review, the latest F2 accepts.
+    Its inline comments are read at that review's time, so they are not new."""
+    pin = review(PR_722_REVIEWS, PR_722_PIN)
+    own = review(PR_722_REVIEWS, PR_722_OWN_REVIEW)
+    run = run_gate(gate, "722", pin["commit_id"], own["submitted_at"], pr_722_routes())
+    return passed_pinned_to(run, "722", pin["commit_id"]), run.summary()
+
+
+def case_722_since_at_the_approval_counts_the_merge_accounts_inline_comments(gate):
+    """reviewed-since at the approval: the merge account's review was posted
+    after it, so its three comments keep their own time and are new."""
+    pin = review(PR_722_REVIEWS, PR_722_PIN)
+    run = run_gate(gate, "722", pin["commit_id"], pin["submitted_at"], pr_722_routes())
+    return refused_with(run, "722", "3 NEW inline comment(s)"), run.summary()
+
+
+PYTORCH_114309_REVIEWS = "pytorch-pytorch-114309-reviews-channel-paginated.json"
+PYTORCH_114309_INLINE = "pytorch-pytorch-114309-inline-channel-paginated.json"
+PYTORCH_114309_PIN = 1782038232              # malfet's approval, 2023-12-14T15:16:51Z
+PYTORCH_114309_PIN_COMMENTS = (1426852272, 1426857166)   # both updated 15:16:52Z
+PYTORCH_114309_COMMENT_AFTER_THE_PIN = 1427016379        # xinyazhang's, 17:20:06Z
+
+
+def pytorch_114309_at_the_pin_routes(changed_inline_fields=None):
+    """pytorch 114309's review and inline channels as they stood when malfet's
+    approval, the pin, was posted: each through that review's last item. No
+    comment in the inline slice has a latest timestamp after the pin except the
+    pin's own two."""
+    routes = {"state": {"stdout_file": str(arranged_state(
+        "pytorch-pytorch-114309-pr-view-state.json", mergeStateStatus=CLEAN))}}
+    routes.update(channel_routes("reviews", channel_prefix(PYTORCH_114309_REVIEWS,
+                                                           PYTORCH_114309_PIN)))
+    routes.update(channel_routes("inline", channel_prefix(
+        PYTORCH_114309_INLINE, PYTORCH_114309_PIN_COMMENTS[-1], changed_inline_fields)))
+    routes.update(QUIET_ISSUE)
+    return routes
+
+
+def case_pytorch_114309_pins_inline_comments_stamped_a_second_later(gate):
+    """Another account's pin, reviewed-since at the pin: its two comments,
+    created minutes earlier and updated a second after it, are not new."""
+    pin = review(PYTORCH_114309_REVIEWS, PYTORCH_114309_PIN)
+    run = run_gate(gate, "114309", pin["commit_id"], pin["submitted_at"],
+                   pytorch_114309_at_the_pin_routes())
+    return passed_pinned_to(run, "114309", pin["commit_id"]), run.summary()
+
+
+def case_f6_pins_inline_comment_edited_after_since(gate):
+    """The same, with one of the pin's comments edited after reviewed-since: only
+    its updated_at is changed, to the next captured comment's. It is new."""
+    pin = review(PYTORCH_114309_REVIEWS, PYTORCH_114309_PIN)
+    edited_at = next(item["updated_at"] for item in channel_items(captured(PYTORCH_114309_INLINE))
+                     if item["id"] == PYTORCH_114309_COMMENT_AFTER_THE_PIN)
+    routes = pytorch_114309_at_the_pin_routes(
+        {PYTORCH_114309_PIN_COMMENTS[-1]: {"updated_at": edited_at}})
+    run = run_gate(gate, "114309", pin["commit_id"], pin["submitted_at"], routes)
+    return refused_with(run, "114309", "1 NEW inline comment(s)"), run.summary()
+
+
+def case_pytorch_114309_another_accounts_review_keeps_its_comments_time(gate):
+    """reviewed-since at drisspg's COMMENTED review (18:46:23Z), whose comment is
+    updated 18:46:24Z. drisspg is neither the pin nor the merge account, so the
+    comment keeps its own time: 21 comments are new, not 20."""
+    pin = review(PYTORCH_114309_REVIEWS, PYTORCH_114309_PIN)
+    since = review(PYTORCH_114309_REVIEWS, 1765876183)["submitted_at"]
+    run = run_gate(gate, "114309", pin["commit_id"], since, pytorch_114309_at_the_pin_routes())
+    return refused_with(run, "114309", "21 NEW inline comment(s)"), run.summary()
 
 
 def case_f2_since_at_another_accounts_later_review(gate):
@@ -681,6 +793,16 @@ CASES = [
      case_f2_since_at_another_accounts_later_review),
     ("LANE: PR 662 as merge-lane-2 gated it, reviewed-since taken before its own approval, passes",
      case_lane_662_since_taken_before_its_own_approval),
+    ("LANE: PR 722 as merge-lane-2 gated it, the merge account's inline comments stamped a second "
+     "after its review, passes", case_lane_722_merge_accounts_inline_comments_stamped_a_second_later),
+    ("PR 722 with reviewed-since at the approval counts the merge account's later inline comments",
+     case_722_since_at_the_approval_counts_the_merge_accounts_inline_comments),
+    ("pytorch 114309's pin by another account, its inline comments stamped a second after it, passes",
+     case_pytorch_114309_pins_inline_comments_stamped_a_second_later),
+    ("F6 the pin's inline comment edited after reviewed-since is new activity",
+     case_f6_pins_inline_comment_edited_after_since),
+    ("an inline comment of another account's review at reviewed-since keeps its own time",
+     case_pytorch_114309_another_accounts_review_keeps_its_comments_time),
     ("B1 an inline comment beyond the first page of 30 is counted", case_b1_inline_beyond_first_page),
     ("B1 an issue comment beyond the first page of 30 is counted", case_b1_issue_beyond_first_page),
     ("B1 a review beyond the first page of 30 is counted", case_b1_reviews_beyond_first_page),
@@ -788,6 +910,16 @@ MUTATIONS = [
      [case_b6_merge_accounts_later_findings]),
     ("F6 by created_at alone", [("[.created_at, .updated_at]", "[.created_at]")],
      [case_b7_edited_comment]),
+    ("every inline comment read at its own latest timestamp, none at its review's",
+     [("then $review_at else $latest end", "then $latest else $latest end")],
+     [case_lane_722_merge_accounts_inline_comments_stamped_a_second_later,
+      case_pytorch_114309_pins_inline_comments_stamped_a_second_later]),
+    ("an inline comment edited after its review read at its review's time",
+     [("$review_at != null and $latest <= $review_at + 1", "$review_at != null")],
+     [case_f6_pins_inline_comment_edited_after_since]),
+    ("every account's reviews' inline comments read at the review's time",
+     [("select((.id == $approval_id or .user.login == $merge_account)", "select((true)")],
+     [case_pytorch_114309_another_accounts_review_keeps_its_comments_time]),
     ("the boundary moved to at-or-after",
      [("\n                   > ($since | fromdateiso8601))]",
        "\n                   >= ($since | fromdateiso8601))]")],

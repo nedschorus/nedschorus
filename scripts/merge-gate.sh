@@ -82,6 +82,47 @@
 # WHY COMMENTS ARE READ BY THEIR LATEST TIMESTAMP (F6). created_at alone missed a
 # comment EDITED after the review to add a finding.
 #
+# WHY AN INLINE COMMENT POSTED WITH A REVIEW THE CALLER WROTE OR READ IS READ AT
+# THAT REVIEW'S TIME. GHI "The merge gate refuses a merge when the merge
+# account's own review carries inline comments stamped a second later",
+# https://github.com/nedschorus/nedschorus/issues/729. GitHub stamps an inline
+# comment posted as part of a review with its own clock, which can read one
+# second after the review's submitted_at. On PR "A handoff's worktree cleaner
+# stopped at its time bound is counted and leaves no process running"
+# (https://github.com/nedschorus/nedschorus/pull/722) the merge account's
+# COMMENTED review read 20:43:02Z and its three inline comments 20:43:03Z. F2
+# bounds SINCE at that review, so no accepted SINCE was later than the
+# comments, they always counted as new, and the merge could never pass.
+#
+# So an inline comment is read at its review's submitted_at, instead of its own
+# latest timestamp, when all of these hold:
+#   - its pull_request_review_id is the pinned approval, or a review by the
+#     merge account;
+#   - that review was submitted at or before SINCE, so it is a review the caller
+#     demonstrably wrote or read;
+#   - the comment's latest timestamp is no later than one second after that
+#     review's submitted_at, so it is the comment as posted with the review and
+#     not a later edit.
+# Every other inline comment keeps its own latest timestamp: a comment from any
+# other account's review, from a merge-account review or pin submitted after
+# SINCE, or edited after its review was posted. That last keeps F6: an approver
+# who edits its approval's comment afterwards to add a finding is still counted.
+#
+# The one-second allowance, and why the test is not updated_at == created_at,
+# come from every captured inline channel (merge-gate-test-captured-github-
+# responses/): a comment posted with its review has a latest timestamp equal to
+# the review's submitted_at or one second after it, while its created_at can be
+# minutes or hours earlier, because a comment drafted in a pending review keeps
+# its draft time as created_at and takes the submission time as updated_at.
+# pytorch/pytorch 114309's pinned approval (15:16:51Z) has two such comments,
+# created 370 and 155 seconds earlier and updated at 15:16:52Z. Every larger gap
+# in the captures, 6 seconds to 15 minutes, is an edit. What the allowance
+# accepts: an edit made within one second of posting the review reads as
+# unedited.
+#
+# The comment is re-dated, not dropped, so the SINCE comparison stays the one
+# comparison every inline comment goes through.
+#
 # UNSTABLE REMAINS ON THE ALLOW-LIST (F7) and is deliberately NOT changed here.
 # It permits merging with red non-required checks, which may be intended; it was
 # not demonstrated as a false pass and changing it is the user's ruling, not this
@@ -179,8 +220,23 @@ inline_raw=$(gh api "repos/$REPO/pulls/$PR/comments" --paginate)
 issue_raw=$(gh api "repos/$REPO/issues/$PR/comments" --paginate)
 [ $? -eq 0 ] || fail "could not read the issue comment channel"
 
-inline=$(jq -s --arg since "$SINCE" \
-  '[.[][] | select(([.created_at, .updated_at] | map(select(. != null)) | max | fromdateiso8601)
+# The reviews whose inline comments are read at the review's own time, by id:
+# the pin and the merge account's reviews, submitted at or before SINCE. See the
+# header, "WHY AN INLINE COMMENT POSTED WITH A REVIEW THE CALLER WROTE OR READ".
+reviews_read_by_caller=$(jq -s -c --arg merge_account "$MERGE_ACCOUNT" --arg since "$SINCE" \
+    --argjson approval_id "$approval_id" \
+  '[.[][] | select((.id == $approval_id or .user.login == $merge_account)
+                   and .submitted_at != null
+                   and (.submitted_at | fromdateiso8601) <= ($since | fromdateiso8601))
+          | {key: (.id | tostring), value: (.submitted_at | fromdateiso8601)}]
+   | from_entries' <<<"$reviews_raw")
+[ $? -eq 0 ] || cannot "could not parse the review channel"
+
+inline=$(jq -s --arg since "$SINCE" --argjson reviews_read_by_caller "$reviews_read_by_caller" \
+  '[.[][] | ([.created_at, .updated_at] | map(select(. != null)) | max | fromdateiso8601) as $latest
+          | $reviews_read_by_caller[.pull_request_review_id | tostring] as $review_at
+          | (if $review_at != null and $latest <= $review_at + 1 then $review_at else $latest end) as $posted
+          | select($posted
                    > ($since | fromdateiso8601))] | length' <<<"$inline_raw")
 [ $? -eq 0 ] || cannot "could not parse the inline comment channel"
 issue=$(jq -s --arg since "$SINCE" \
