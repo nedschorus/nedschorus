@@ -20,8 +20,8 @@ The naming and location convention for this project's files. Where internal or e
   - **Location:** .claude/hooks/
   - **Naming:** <what it guards>.py 
 - **Tests, test-designs, component-contracts**
-  - **Location:** in a `tests/` subdirectory when the code sits in a directory of its own, such as `nc-systems/main-gatekeeper/tests/` or `scripts/design-to-main/tests/`; beside the script it tests when the script sits loose in `scripts/` or `.claude/hooks/`, for example `scripts/cold-read-grid-test.py`.
-  - **Test Names:** <multi-part-name>-test.extension: example scripts/cold-read-grid-test.py
+  - **Location:** in a `tests/` subdirectory when the code sits in a directory of its own, such as `nc-systems/main-gatekeeper/tests/` or `scripts/design-to-main/tests/`; beside the script it tests when the script sits loose in `scripts/` or `.claude/hooks/`, for example `scripts/dangling-path-citation-check-test.py`.
+  - **Test Names:** <multi-part-name>-test.extension: example scripts/dangling-path-citation-check-test.py
   - **Test-Design Name:** <multi-part-name>-test-design.md
   - **Component-contract Name:** its design's name with `-design.md` replaced by `-contract.md`, beside its design
 - **Agent Instructions, agent's first prompt, adversarial prompt**
@@ -29,7 +29,7 @@ The naming and location convention for this project's files. Where internal or e
   - **Naming:** <subject>-instructions.md,  <subject>-first-prompt.md, or <subject>-adversarial-prompt.md
 - **Wiki page**
   - **Location:** Pre-approved drafts in docs/nedschorus-wiki/queue/  Approved pages in docs/nedschorus-wiki/
-  - **Naming:** nedschorus-<subject>.md, which all seven pages on main follow
+  - **Naming:** nedschorus-<subject>.md, which all eight pages on main follow
 - **GHI-MD, the description document paired with each GitHub issue**
   - **Location:** docs/issues/
   - **Naming:** <issue number>-<multi-part-name>.md
@@ -42,21 +42,18 @@ The naming and location convention for this project's files. Where internal or e
 - **Program, in Python or shell**
   - **Location:** `nc-systems/<system-name>/` for a system's own; `nc-systems/general-tools/` for one that belongs to no system
   - **Naming:** `<multi-part-name>.py` or `<multi-part-name>.sh`; a launcher people type as a command has no extension
-- **MDs for walks**
-  - **Location:** nc-walks/, then nc-walks/archived/ once walked
-  - **Naming:** <YYYY-MM-DD>-<slug>.md
 - **Draft of a kind that has no queue**
   - **Location:** docs/drafts/
-  - **Naming:** <subject>-draft.md,  <subject>-candidate marks a version frozen for reviwers. Candidates move to the log-store after they have been processed. 
+  - **Naming:** <subject>-draft.md,  <subject>-candidate marks a version frozen for reviewers. Candidates move to the log-store after they have been processed. 
 
-## Filename suffixes  [would be nice to have a 1 sentence solid definition for each of these]
+## Filename suffixes
 
-* -log for text or MD log files
-* -report for text or MD reports 
-* -capture for text or MD captures
-* -draft for text or MD drafts
-* -records for text or MD records 
-* -analysis for analytics text or MD files 
+* `-log`: a record of what a program or session did, in time order.
+* `-report`: a finished account written for a reader, such as a reviewer's findings.
+* `-capture`: a verbatim copy of something seen, such as terminal output or a web page.
+* `-draft`: a document still being written, not yet put to review.
+* `-candidate`: a version frozen for reviewers to read.
+* `-analysis`: a study of data, with its method and conclusions.
 
-Typically files of these types are preserved in the log-store, but not in main or git. 
+Most files with these endings are kept in the log-store rather than in git; a draft in a queue directory, and a report that belongs to a GHI, are committed.
 
