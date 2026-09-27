@@ -2479,7 +2479,15 @@ def run_main_dispatch_cases(scratch: Path):
                  ["create", str(source), "--repo", "someone/elsewhere"],
                  "create", "someone/elsewhere"),
                 ("main() hands a live edit to edit, with the default repo",
-                 ["edit", str(source)], "edit", tool.DEFAULT_REPO)]:
+                 ["edit", str(source)], "edit", tool.DEFAULT_REPO),
+                # Without --repo, an edit branch that ignored arguments.repo
+                # and passed DEFAULT_REPO would look the same as one that
+                # honoured it (mac-claude's review of PR "The GHI write
+                # tool's tests drive main() through to the operation it
+                # calls", 2026-09-27).
+                ("main() hands a live edit to edit, with the --repo given",
+                 ["edit", str(source), "--repo", "someone/elsewhere"],
+                 "edit", "someone/elsewhere")]:
             calls.clear()
             try:
                 code = tool.main(argv)
