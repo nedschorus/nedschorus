@@ -6,6 +6,18 @@ issue: "[The Mac's transcript mirror reports \"mirrored\" every hour while grown
 
 Agent-filed by merge-lane-2 on 2026-09-27, from a reproduced finding. The reproduction is first; the cause is not yet known, and the next action is to find it on the Mac.
 
+## Outcome (2026-09-27): not a defect, closed
+
+The mirror never failed. Everything below was measured while the Mac's transcripts were still waiting for their next hourly run. The record is kept as it was written; read it with this outcome.
+
+- **The Mac's files did not grow for three days.** The usage limit left every Mac session idle from 2026-09-24 until the user came back on 2026-09-27. The cold-read-research seat read its own transcript on the Mac. Line 1655 is stamped 2026-09-24T21:34:15Z and ends at byte 5,417,539, which is exactly where ned-box's copy stopped. Line 1656 is stamped 2026-09-27T20:20:28Z, three minutes after the 20:17Z run. The 71 identical hourly runs had nothing new to copy.
+- **The first run after the files grew copied them.** After the 21:17Z run, ned-box's copy of that file is 7,986,940 bytes, with its newest record at 21:09:20Z. Copies of reboot-test's, fleet-restart-at-login's and merge-lane-backlog's sessions came across in the same run.
+- **The "rewrote with old content" reading below was wrong.** The six copies born at 20:17Z carry mtimes between 19:31Z and 20:11Z, with the sizes they had on 2026-09-24. The Mac's files had been touched, with their mtimes moving but not their content, as the sessions came back. rsync saw a changed mtime and wrote the same content again under the new one.
+- **The Mac-side "larger file" measurement** was taken at about 20:55Z, after the file began to grow at 20:20Z and before the next run at 21:17Z. It measured the hourly schedule's normal lag of up to 57 minutes.
+- **Nothing on the Mac changed between the two runs.** cold-read-research checked: no restart (boot 2026-09-18T18:12:30Z), the same `/usr/bin/rsync`, no change to the mirror script, and no manual mirror run.
+
+What remains true: the log-store copy of a Mac transcript can be up to an hour behind. A check for a ruling given in the last hour has to wait for the next :17 run.
+
 ## Reproduction
 
 `scripts/transcript-mirror-to-log-store.py` runs hourly at :17 from cron on the Mac. It copies `~/.claude/projects/` to `nedlern@ned-box:/home/nedlern/nedschorus-logs/transcripts/mac/projects/`.
