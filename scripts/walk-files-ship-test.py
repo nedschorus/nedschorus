@@ -9,9 +9,11 @@ Two modes, as nc-systems/cold-read/tests/cold-read-record-ship-test.py has them.
 destination override names a scratch directory and the real rsync on this
 machine does the copy, so add-only, replace and the README are exercised for
 real. REMOTE: the override is the ruled scp-form destination and stub `ssh` and
-`rsync` binaries on PATH record what they were asked. Nothing here touches
-ned-box. The walk lives in a scratch directory, docs/walk/ being gitignored,
-which is what the path form of the argument is for.
+`rsync` binaries on PATH record what they were asked; one remote case's
+stand-in ssh instead runs the remote script under sh against a scratch store
+named by a stand-in host. Nothing here touches ned-box or the log-store.
+The walk lives in a scratch directory, docs/walk/ being gitignored, which is
+what the path form of the argument is for.
 
 Run: python3 scripts/walk-files-ship-test.py   (exit 0 = all passed)
 """
@@ -446,6 +448,63 @@ with tempfile.TemporaryDirectory(prefix="walk-files-ship-test-") as scratch_name
           len(rsync_calls) == 1
           and any(pathlib.Path(a).name == f"{WALK}.md" for a in rsync_calls[0]),
           str(rsync_calls))
+
+    # Remote mode, a `sha256sum` that fails on a file the store holds (the
+    # Codex review cell's question in the merge review of PR "The walk-files
+    # shipper replaces a walk text the walk only added to",
+    # https://github.com/nedschorus/nedschorus/pull/653). The
+    # stand-in ssh RUNS the remote script under sh, so the loop the program
+    # builds is what is tested, against a scratch store named by a stand-in
+    # host; the stand-in sha256sum on PATH fails on the stored walk text and
+    # hashes anything else; the stand-in rsync copies for real, so an
+    # overwrite would show in the store. The stored walk text differs from the
+    # local one and is not its prefix: listed, it is refused; missing from the
+    # listing, it reads as not stored and is copied over.
+    stubs_running_the_listing = scratch / "stub-bin-running-the-listing"
+    stubs_running_the_listing.mkdir()
+    for binary, text in (
+            ("ssh", STUB_RECORDER + "import subprocess\n"
+                    "sys.exit(subprocess.run(['sh', '-c', sys.argv[-1]]).returncode)\n"),
+            ("sha256sum", "#!/usr/bin/env python3\n"
+                          "import hashlib, os, sys\n"
+                          "for path in [a for a in sys.argv[1:] if a != '--']:\n"
+                          "    if os.path.basename(path) == os.environ['WALK_SHIP_TEST_SHA256SUM_FAILS_ON']:\n"
+                          "        print(f'sha256sum: {path}: Permission denied', file=sys.stderr)\n"
+                          "        sys.exit(1)\n"
+                          "    with open(path, 'rb') as opened:\n"
+                          "        print(f'{hashlib.sha256(opened.read()).hexdigest()}  {path}')\n"),
+            ("rsync", STUB_RECORDER + "import shutil\n"
+                      "directory = sys.argv[-1].partition(':')[2]\n"
+                      "for source in [a for a in sys.argv[1:-1] if os.path.isfile(a)]:\n"
+                      "    shutil.copyfile(source, os.path.join(directory, os.path.basename(source)))\n")):
+        stub = stubs_running_the_listing / binary
+        stub.write_text(text, encoding="utf-8")
+        stub.chmod(0o755)
+    listing_store = scratch / "listing-store"
+    (listing_store / "walk").mkdir(parents=True)
+    stored_walk_text_it_cannot_hash = "# walk\n\n## Item 1 of 2, as the store holds it\n"
+    (listing_store / "walk" / f"{WALK}.md").write_text(stored_walk_text_it_cannot_hash,
+                                                       encoding="utf-8")
+    argv_log_listing = scratch / "argv-listing.jsonl"
+    result = ship(f"stand-in-store-host:{listing_store}/cold-read-records", str(walk_text),
+                  extra_env={
+                      "PATH": f"{stubs_running_the_listing}{os.pathsep}{os.environ.get('PATH', '')}",
+                      "WALK_SHIP_TEST_ARGV_LOG": str(argv_log_listing),
+                      "WALK_SHIP_TEST_SHA256SUM_FAILS_ON": f"{WALK}.md"})
+    calls = [json.loads(line) for line in argv_log_listing.read_text().splitlines()]
+    check("a sha256sum that fails on a stored file is FAILED with exit 1 and one line "
+          "saying nothing shipped, never read as that file not being stored",
+          result.returncode == 1 and result.stdout.startswith("FAILED:")
+          and "unshipped" in result.stdout and one_line(result.stdout),
+          result.stdout + result.stderr)
+    check("a sha256sum that fails on a stored file: its own error is passed on stderr",
+          f"sha256sum: {listing_store}/walk/{WALK}.md: Permission denied" in result.stderr,
+          result.stderr)
+    check("a sha256sum that fails on a stored file: no rsync is run and the store's "
+          "walk text is untouched",
+          not any(c[0].endswith("rsync") for c in calls)
+          and (listing_store / "walk" / f"{WALK}.md").read_text(encoding="utf-8")
+          == stored_walk_text_it_cannot_hash, str(calls))
 
     # --- On ned-box the copy is local and the citation still names the host --
     spec = importlib.util.spec_from_file_location("walk_files_ship", SHIP)

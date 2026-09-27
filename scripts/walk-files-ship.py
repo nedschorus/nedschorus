@@ -260,7 +260,14 @@ def store_digests_and_sizes(copy_host, targets: list):
     process). One round trip remotely: for each target that is a file, the
     sha256sum line sha256sum itself prints, and a size line of this program's
     own. An unreachable host is the process's non-zero return with a dict of
-    None."""
+    None, and so is a stored file sha256sum cannot hash: the remote loop exits
+    1 at it. Without that exit the loop went on, its last `printf` made the
+    script exit 0, and the file was missing from the listing, which the caller
+    reads as not stored, so an add-only file in the store was copied over.
+    Raised by the Codex review cell as a question in the 2026-09-22 merge
+    review of PR "The walk-files shipper replaces a walk text the walk only
+    added to" (https://github.com/nedschorus/nedschorus/pull/653); fixed under
+    item 7 of the merge-lane-2 meta-walk, user-ruled 2026-09-24."""
     if copy_host is None:
         stored = {}
         for target in targets:
@@ -275,7 +282,7 @@ def store_digests_and_sizes(copy_host, targets: list):
     # backslash-n included, and `wc -c` reads the file rather than being given
     # its name, so no padded count and no name reach the line.
     size_line_format = STORE_LISTING_SIZE_LINE_PREFIX + "%s  %s" + "\\n"
-    script = (f'for f in {quoted}; do if [ -f "$f" ]; then sha256sum -- "$f"; '
+    script = (f'for f in {quoted}; do if [ -f "$f" ]; then sha256sum -- "$f" || exit 1; '
               f'printf {shlex.quote(size_line_format)} "$(wc -c < "$f")" "$f"; '
               f'fi; done')
     completed = subprocess.run(shipper.SSH_COMMAND + [copy_host, script],
