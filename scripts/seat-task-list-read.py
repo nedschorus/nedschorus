@@ -85,16 +85,6 @@ same rule covers a task file that cannot be read: it is named, and the run
 exits non-zero, because a silently dropped task is a task the reader will
 never learn exists.
 
-WHAT THIS DOES NOT CHANGE. A task list is seat-local working state that does
-not outlive the worktree (user-ruled 2026-09-11, queued at
-docs/nedschorus-wiki/queue/task-list-is-not-durable-state-draft.md: "Tasks
-only survive as long as the worktree - these should be incorporated in GHIs
-or their paired design files. Or perhaps in a queue."). Readable is not
-durable. Anything carrying pending state that must outlive the seat still
-belongs in a GHI, its paired document, or a queue file. This program makes
-working state legible to whoever was handed a citation; it is not a reason to
-keep state here.
-
 READ ONLY. Nothing here writes, moves or deletes a task, on either machine.
 The harness owns the store; an agent changes its own tasks through the task
 tools. The one thing written anywhere is ned-box's archive, unpacked into a
