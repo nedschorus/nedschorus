@@ -6,6 +6,16 @@ issue: "[The merge gate refuses a merge when the merge account's own review carr
 
 Agent-filed by merge-lane-2 on 2026-09-27, from a reproduced finding. The reproduction is first; the cause and the next action follow it.
 
+## Outcome (2026-09-27): fixed, closed
+
+[PR 745 "The merge gate reads an inline comment posted with the pin or the merge account's own review at that review's time"](https://github.com/nedschorus/nedschorus/pull/745) fixed it. It merged to main at `6e22f1e8` on 2026-09-27.
+
+- `scripts/merge-gate.sh` now reads an inline comment at its review's `submitted_at`, instead of its own latest timestamp, when three things hold. The review is the pinned approval or one of the merge account's reviews. That review was submitted at or before reviewed-since. The comment's latest timestamp is no more than one second after that review.
+- Every other inline comment keeps its own timestamp, including one edited more than a second after its review. So a finding added later by editing an approval's comment still counts as new.
+- `scripts/merge-gate-test.py` gains PR 722's four channels as captured responses. Its case refuses with the old gate and passes with the new one.
+
+The workaround below is no longer needed.
+
 ## Reproduction
 
 On PR [A handoff's worktree cleaner stopped at its time bound is counted and leaves no process running](https://github.com/nedschorus/nedschorus/pull/722), with `scripts/merge-gate.sh` as it is on main at `ade2e6a2`:
