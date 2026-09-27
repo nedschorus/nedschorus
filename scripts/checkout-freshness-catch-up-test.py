@@ -733,6 +733,55 @@ with tempfile.TemporaryDirectory() as reference_fetch_scratch:
 
 
 # ---------------------------------------------------------------------------
+# A blocked reference whose fetch starts or stops failing is reported again.
+# The skip line's once-per-reason key was the blocker list alone, so while
+# the same blocker stayed, the fetch note it carries never reached the user
+# (PR 666's review, merge-lane-2, item 1).
+# ---------------------------------------------------------------------------
+
+with tempfile.TemporaryDirectory() as blocked_reference_fetch_scratch:
+    tmp = Path(blocked_reference_fetch_scratch)
+    origin = tmp / "origin-repo"
+    origin.mkdir()
+    git(["init", "-q", "-b", "main"], origin)
+    configure_identity(origin)
+    commit_file(origin, "shared.txt", "first\n", "first commit")
+    reference = tmp / "reference-clone"
+    git(["clone", "-q", str(origin), str(reference)], tmp)
+    configure_identity(reference)
+    commit_file(origin, "advance.txt", "one\n", "advance")
+    (reference / "shared.txt").write_text("dirty\n", encoding="utf-8")
+
+    blocked = run_catch_up(["--cwd", str(reference)])
+    check("a blocked reference off a good fetch is reported once, with no fetch note",
+          "left alone" in display_text(blocked)
+          and "uncommitted tracked change" in display_text(blocked)
+          and "fetch failed" not in display_text(blocked), display_text(blocked))
+    check("the same blocker off a good fetch is not reported again",
+          display_text(run_catch_up(["--cwd", str(reference)])) == "")
+
+    git(["remote", "set-url", "origin", str(tmp / "no-such-remote")], reference)
+    failing = run_catch_up(["--cwd", str(reference)])
+    check("the same blocker is reported again when its fetch starts failing, naming the failed fetch",
+          "left alone" in display_text(failing)
+          and "uncommitted tracked change" in display_text(failing)
+          and "fetch failed at" in display_text(failing),
+          failing.stdout + failing.stderr)
+    check("and not again while the fetch keeps failing",
+          display_text(run_catch_up(["--cwd", str(reference)])) == "")
+
+    git(["remote", "set-url", "origin", str(origin)], reference)
+    recovered = run_catch_up(["--cwd", str(reference)])
+    check("the same blocker is reported again when the fetch works again, without the note",
+          "left alone" in display_text(recovered)
+          and "uncommitted tracked change" in display_text(recovered)
+          and "fetch failed" not in display_text(recovered),
+          recovered.stdout + recovered.stderr)
+    check("the reference was never moved while it was blocked",
+          not (reference / "advance.txt").exists())
+
+
+# ---------------------------------------------------------------------------
 # changed_here_versus_main: the line names what MOVED, never a fixed list of
 # categories. The first draft asserted "your tests, hooks, skills and documents
 # here are older than main" at every printing; on the seat that built it, ten

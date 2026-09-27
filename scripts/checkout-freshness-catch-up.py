@@ -845,7 +845,12 @@ def fast_forward_reference_checkout(reference: Path, interval_seconds: int,
     2026-09-17, backlog-recheck walk item 1, fix 11). Its reason key is the
     constant "fetch failed", not the failure's time, so a network that stays
     down is reported once rather than at every fetch interval; the key is
-    cleared by the next run that is 0 behind off a fetch that worked.
+    cleared by the next run that is 0 behind off a fetch that worked. The
+    skip line's key is its blockers plus "fetch failed" while the fetch is
+    failing, so the same blockers are reported again when the fetch starts or
+    stops failing; with the blockers alone, a failure that began after the
+    blockers were reported never reached the user (PR 666's review, 2026-09-23,
+    item 1; fix ruled 2026-09-24, meta-walk item 7).
     """
     git_dir = git_directory(reference)
     if git_dir is None:
@@ -894,7 +899,7 @@ def fast_forward_reference_checkout(reference: Path, interval_seconds: int,
         real_blockers.append(f"{ahead} local commit(s) main does not have")
     if real_blockers:
         stamp["last_action"] = f"reference skipped: {'; '.join(real_blockers)}"
-        report_reason(real_blockers,
+        report_reason(real_blockers + (["fetch failed"] if fetch_note else []),
                       f"catch-up: reference checkout {reference} is {behind} behind and was "
                       f"left alone — {'; '.join(real_blockers)}{fetch_note}")
         write_stamp(stamp_path, stamp)
