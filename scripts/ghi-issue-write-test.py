@@ -2442,10 +2442,66 @@ def run_edit_cases(scratch: Path):
               "Superseded-by" not in str(refusal), str(refusal))
 
 
+# --- main() hands a live create or edit to its operation ------------------
+#
+# Every case above calls `create` or `edit` directly, or drives main() only
+# as far as a refusal or a dry run. So nothing ran the dispatch every live
+# run passes through: with `arguments.verb` put back on that line after the
+# attribute became `operation`, all 222 cases still passed (merge-lane-2's
+# review of PR "The GHI write tool calls create and edit operations, not
+# verbs", 2026-09-27). These cases drive main() with a real argv and a real
+# file, with the checkout lookup and both operations replaced by recorders:
+# what is under test is which operation main() calls, with what, not what
+# the operation then does, which the cases above cover.
+
+def run_main_dispatch_cases(scratch: Path):
+    source = scratch / "docs" / "issues" / EDIT_NAME
+    source.parent.mkdir(parents=True)
+    source.write_text(f"# {EDIT_TITLE}\n")
+    calls = []
+
+    def looked_up(path, runner=None):
+        calls.append(("repository_root_of", path))
+        return scratch
+
+    def operation_recorder(name):
+        def recorded(path, repo, root, runner, report):
+            calls.append((name, path, repo, root, runner))
+        return recorded
+
+    saved = (tool.repository_root_of, tool.create, tool.edit)
+    tool.repository_root_of = looked_up
+    tool.create = operation_recorder("create")
+    tool.edit = operation_recorder("edit")
+    try:
+        for case_name, argv, operation, repo in [
+                ("main() hands a live create to create",
+                 ["create", str(source), "--repo", "someone/elsewhere"],
+                 "create", "someone/elsewhere"),
+                ("main() hands a live edit to edit, with the default repo",
+                 ["edit", str(source)], "edit", tool.DEFAULT_REPO)]:
+            calls.clear()
+            try:
+                code = tool.main(argv)
+            except Exception as crash:  # the dispatch itself broke
+                check(case_name, False, f"{type(crash).__name__}: {crash}")
+                continue
+            called = [call for call in calls
+                      if call[0] != "repository_root_of"]
+            check(case_name,
+                  code == 0 and called == [(operation, source.resolve(), repo,
+                                            scratch, tool.run)],
+                  f"code {code}, {calls}")
+    finally:
+        tool.repository_root_of, tool.create, tool.edit = saved
+
+
 def main():
     import tempfile
     with tempfile.TemporaryDirectory(prefix="ghi-issue-write-test-") as name:
         run_cases(Path(name))
+    with tempfile.TemporaryDirectory(prefix="ghi-issue-main-test-") as name:
+        run_main_dispatch_cases(Path(name))
     # A checkout of its own: the reconsidered marker lives at the root of
     # one and is consumed by the write it passes, so two groups sharing a
     # directory would share that.
