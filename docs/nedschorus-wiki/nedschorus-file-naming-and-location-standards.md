@@ -59,5 +59,5 @@ A file in a queue directory is named as it will be at its home, apart from the i
 * `-candidate`: a version frozen for reviewers to read.
 * `-analysis`: a study of data, with its method and conclusions.
 
-Most files with these suffixes are kept in the log-store rather than in git; a draft in a queue directory, and a report that belongs to a GHI, are committed. The log-store's `README.md` names the program or skill that owns each of its directories, and that owner names the files.
+Most files with these suffixes are kept in the log-store rather than in git; a draft in a queue directory, and a report that belongs to a GHI, are committed. The log-store's `README.md`, `nedlern@ned-box:/home/nedlern/nedschorus-logs/README.md`, names the program or skill that owns each of its directories, and that owner names the files.
 
