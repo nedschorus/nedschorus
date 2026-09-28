@@ -415,13 +415,18 @@ BOX_QUERY_RETRY_SECONDS = 5.0
 # only when a seat home of that name exists — fleet-anchor, the box's tmux
 # keep-alive session, has none. A seat's after-exit shell keeps its session
 # name and counts: that is where the user typed exit, and the window belongs
-# there. The listing is the one launch-claude-ubuntu's usage() prints.
+# there. The listing is the one launch-claude-ubuntu's usage() prints. A seat
+# home is ~/agents/<name> on the box, always: launch-claude-ubuntu reads no
+# agents-root variable (user-ruled 2026-09-22), and nothing sets
+# NEDSCHORUS_AGENTS_ROOT on the box, so the listing reads none either
+# (user-ruled 2026-09-28T16:37:05Z, closing question 1 of merge-lane-2's walk
+# merge-lane-2-meta-walk-open-items-2026-09-23).
 LIST_LIVE_BOX_SEATS_REMOTE_COMMAND = (
     'for seat_socket_path in "${TMUX_TMPDIR:-/tmp}/tmux-$(id -u)"/*; do '
     '[ -S "$seat_socket_path" ] || continue; '
     'tmux -S "$seat_socket_path" list-sessions -F "#{session_name}" 2>/dev/null; '
     'done | sort -u | while read -r seat_name; do '
-    '[ -d "${NEDSCHORUS_AGENTS_ROOT:-$HOME/agents}/$seat_name" ] && echo "$seat_name"; '
+    '[ -d "$HOME/agents/$seat_name" ] && echo "$seat_name"; '
     'done; true'
 )
 
@@ -517,8 +522,11 @@ def recovery_command_for_seat(seat: str, handoff_directory: Path,
     step 3): the recovery tool itself refuses that flag anywhere else, so it
     is passed only on darwin. The handoff directory is passed through so a
     run against a test directory recovers against that directory too; the
-    agents root is not, because this program has no argument for it — both
-    programs resolve ${NEDSCHORUS_AGENTS_ROOT:-~/agents} the same way."""
+    agents root is not, because this program has no argument for it, and
+    the recovery tool resolves it as the machine's launcher does:
+    ${NEDSCHORUS_AGENTS_ROOT:-~/agents} on the Mac, and always ~/agents on
+    the box, reading no variable there — the ~/agents the box listing above
+    reads (user-ruled 2026-09-28T16:37:05Z)."""
     command = [sys.executable, str(RECOVERY_TOOL_PATH), seat,
                "--handoff-dir", str(handoff_directory)]
     if platform == "darwin":

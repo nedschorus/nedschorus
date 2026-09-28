@@ -994,8 +994,14 @@ with tempfile.TemporaryDirectory() as temporary:
           (default_alias, overridden_alias))
     check("the remote listing keeps only names with a seat home, so fleet-anchor is not a seat",
           "list-sessions" in restart.LIST_LIVE_BOX_SEATS_REMOTE_COMMAND
-          and '[ -d "${NEDSCHORUS_AGENTS_ROOT:-$HOME/agents}/$seat_name" ]'
+          and '[ -d "$HOME/agents/$seat_name" ]'
           in restart.LIST_LIVE_BOX_SEATS_REMOTE_COMMAND)
+    # User-ruled 2026-09-28T16:37:05Z: a box seat's home is always
+    # ~/agents/<name>, since launch-claude-ubuntu reads no agents-root
+    # variable (user-ruled 2026-09-22), so the box listing reads none either.
+    check("the remote listing reads no agents-root variable: a box seat home is ~/agents",
+          "NEDSCHORUS_AGENTS_ROOT" not in restart.LIST_LIVE_BOX_SEATS_REMOTE_COMMAND,
+          restart.LIST_LIVE_BOX_SEATS_REMOTE_COMMAND)
 
     handoffs = root / "box-no-live-seats"
     write_state(handoffs, "mac-seat", STOP - timedelta(days=3))

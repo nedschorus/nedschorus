@@ -93,6 +93,26 @@ launcher it drives is the local one (launch-claude-mac on the Mac; on the
 box the same recovery drives the supervisor's launcher conventions there).
 Recovering box seats from the Mac is `ssh ned` plus this script there.
 
+Agents root: on the Mac a seat's directory is <root>/<name>, the root being
+--agents-root, else $NEDSCHORUS_AGENTS_ROOT, else ~/agents, as
+launch-claude-mac resolves it. Off macOS — where launcher_path() is None — it
+is always ~/agents/<name>: --agents-root is refused (exit 2, nothing read or
+launched) and the variable is ignored. A box seat is always ~/agents/<name>
+because launch-claude-ubuntu reads no agents-root variable (user-ruled
+2026-09-22, in merge-lane-2's walk
+merge-lane-2-questions-concerns-and-suggestions-2026-09-22). A root chosen
+here anyway split the recovery: the automatic launch seated <root>/<name>,
+while the by-hand command printed when that launch fails runs
+launch-claude-ubuntu, which seats ~/agents/<name>, not the seat that was
+assessed. Raised by ned-review-merge's inline question 4088153045 on PR
+[The ubuntu launcher reads no agents-root variable: a box seat is always ~/agents/<name>](https://github.com/nedschorus/nedschorus/pull/684);
+the user answered "Y" at 2026-09-28T16:37:05Z, closing question 1 of
+merge-lane-2's walk merge-lane-2-meta-walk-open-items-2026-09-23, to refuse
+the flag off macOS as resupervise-seat.py refuses it with --machine ubuntu.
+The variable is ignored there too, so the box listing in
+restart-live-seats-at-login.py, which reads ~/agents, and this tool agree on
+where a box seat lives by rule rather than because nothing sets it.
+
 Usage:
   recover-crashed-seats.py <seat-name>... [--dry-run] [--ignite-fallback]
                            [--open-iterm-window-per-seat]
@@ -203,14 +223,16 @@ BOOT_RECOVERY_IGNITION_MARKER = "(Recovered at supervisor boot:"
 
 
 def default_agents_root() -> Path:
-    """${NEDSCHORUS_AGENTS_ROOT:-~/agents}, as launch-claude-mac resolves it.
-    Resolving differently means, on a machine where that variable is set,
-    assessing ~/agents while every seat lives elsewhere — recovery then
-    refuses on "no seat directory" (PR #131 round-4 review note; user-ruled
-    2026-08-22: allowed overrides must work). launch-claude-ubuntu reads no
-    such variable (user-ruled 2026-09-22, merge-lane-2's walk): a box seat
-    is always ~/agents/<name>, and nothing sets the variable on the box, so
-    this read gives ~/agents there too."""
+    """${NEDSCHORUS_AGENTS_ROOT:-~/agents} on the Mac, as launch-claude-mac
+    resolves it. Resolving differently means, on a machine where that
+    variable is set, assessing ~/agents while every seat lives elsewhere —
+    recovery then refuses on "no seat directory" (PR #131 round-4 review
+    note; user-ruled 2026-08-22: allowed overrides must work). Off macOS it
+    is ~/agents whatever the variable holds: launch-claude-ubuntu reads no
+    such variable, so a box seat is always ~/agents/<name> (see the module
+    docstring's "Agents root" paragraph)."""
+    if not agents_root_is_movable_on_this_machine():
+        return Path("~/agents").expanduser()
     return Path(os.environ.get("NEDSCHORUS_AGENTS_ROOT") or "~/agents").expanduser()
 
 
@@ -715,6 +737,14 @@ def launcher_path():
         # by a relative path.
         return Path(__file__).resolve().with_name("launch-claude-mac")
     return None
+
+
+def agents_root_is_movable_on_this_machine() -> bool:
+    """Whether a seat's agents root may be chosen here: on the Mac only,
+    where launch-claude-mac reads NEDSCHORUS_AGENTS_ROOT. Off macOS, where
+    launcher_path() is None, a seat is always ~/agents/<name>; see the
+    module docstring's "Agents root" paragraph for the rulings."""
+    return launcher_path() is not None
 
 
 def compose_supervisor_arguments_for_seat_launch(handoff_directory: Path,
@@ -1738,7 +1768,9 @@ def main(argv=None) -> int:
                         help="skip the transcript resume; launch fresh reading the "
                              "newest dialog extract (degraded mode, #120)")
     parser.add_argument("--agents-root", default="",
-                        help="seat home root (default ~/agents)")
+                        help="seat home root, macOS only (default "
+                             "$NEDSCHORUS_AGENTS_ROOT, else ~/agents); off macOS a "
+                             "seat is always ~/agents/<name>")
     parser.add_argument("--handoff-dir", default="",
                         help="handoff directory (default ~/.claude/handoffs)")
     parser.add_argument("--projects-root", default="",
@@ -1747,6 +1779,13 @@ def main(argv=None) -> int:
                         help="launch each recovered seat attached, in its own iTerm "
                              "window (macOS only; nedschorus#242 change 6)")
     arguments = parser.parse_args(argv)
+
+    # Before anything is read or launched; see the module docstring's
+    # "Agents root" paragraph for why.
+    if arguments.agents_root and not agents_root_is_movable_on_this_machine():
+        print("recover-crashed-seats: off macOS, re-run without --agents-root.",
+              file=sys.stderr)
+        return 2
 
     agents_root = (Path(arguments.agents_root).expanduser() if arguments.agents_root
                    else default_agents_root())

@@ -39,6 +39,13 @@ _spec = importlib.util.spec_from_file_location("recover_crashed_seats", SCRIPT_P
 recovery = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(recovery)
 
+# Every case points recovery at a scratch agents root, through --agents-root
+# or NEDSCHORUS_AGENTS_ROOT, and off macOS recovery refuses the one and
+# ignores the other. So the suite runs with the root movable on every
+# machine; the "AGENTS ROOT:" cases put the real predicate back to test it.
+real_agents_root_is_movable_on_this_machine = recovery.agents_root_is_movable_on_this_machine
+recovery.agents_root_is_movable_on_this_machine = lambda: True
+
 failures = []
 skips = []
 passes = []
@@ -2120,10 +2127,18 @@ with tempfile.TemporaryDirectory() as temporary:
 
     # Round-4 review note (user-ruled 2026-08-22: allowed overrides must
     # work): default_agents_root resolves the same way the launchers do —
-    # ${NEDSCHORUS_AGENTS_ROOT:-~/agents}. Resolving differently assesses a
-    # root no seat lives in, and recovery refuses on "no seat directory".
+    # ${NEDSCHORUS_AGENTS_ROOT:-~/agents} on the Mac, as launch-claude-mac
+    # does. Resolving differently assesses a root no seat lives in, and
+    # recovery refuses on "no seat directory". Off macOS launch-claude-ubuntu
+    # reads no such variable (user-ruled 2026-09-22), so neither does
+    # recovery there (user-ruled 2026-09-28T16:37:05Z). Both machines are
+    # pinned through launcher_path, with the real predicate put back.
     saved_root = os.environ.get("NEDSCHORUS_AGENTS_ROOT")
+    launcher_path_before_agents_root_cases = recovery.launcher_path
     try:
+        patch("agents_root_is_movable_on_this_machine",
+              real_agents_root_is_movable_on_this_machine)
+        patch("launcher_path", lambda: Path("/fake/scripts/launch-claude-mac"))
         os.environ["NEDSCHORUS_AGENTS_ROOT"] = str(root / "custom-agents")
         check("default_agents_root honors NEDSCHORUS_AGENTS_ROOT",
               recovery.default_agents_root() == root / "custom-agents",
@@ -2132,11 +2147,68 @@ with tempfile.TemporaryDirectory() as temporary:
         check("an empty NEDSCHORUS_AGENTS_ROOT falls back to ~/agents (the :- rule)",
               recovery.default_agents_root() == Path("~/agents").expanduser(),
               recovery.default_agents_root())
+        patch("launcher_path", lambda: None)
+        os.environ["NEDSCHORUS_AGENTS_ROOT"] = str(root / "custom-agents")
+        check("AGENTS ROOT: off macOS, default_agents_root ignores NEDSCHORUS_AGENTS_ROOT",
+              recovery.default_agents_root() == Path("~/agents").expanduser(),
+              recovery.default_agents_root())
     finally:
+        patch("launcher_path", launcher_path_before_agents_root_cases)
+        patch("agents_root_is_movable_on_this_machine", lambda: True)
         if saved_root is None:
             os.environ.pop("NEDSCHORUS_AGENTS_ROOT", None)
         else:
             os.environ["NEDSCHORUS_AGENTS_ROOT"] = saved_root
+
+    # User-ruled 2026-09-28T16:37:05Z, closing PR 684's question: off macOS
+    # --agents-root is refused, as resupervise-seat.py refuses it for a box
+    # seat — exit 2, one instruction line on stderr, nothing assessed,
+    # launched or logged. On the Mac the flag still moves the root.
+    workspace = Workspace(root / "agents-root-flag")
+    all_dead()
+    seat_directories_launched = []
+    launch_seat_before_agents_root_cases = recovery.launch_seat
+    wait_before_agents_root_cases = recovery.wait_for_the_seat_to_come_up
+    try:
+        patch("agents_root_is_movable_on_this_machine",
+              real_agents_root_is_movable_on_this_machine)
+        patch("launch_seat",
+              lambda name, seat_directory, *_, **__:
+                  seat_directories_launched.append(seat_directory) or 0)
+        seat_comes_up()
+        agents_root_flag_arguments = [
+            workspace.name, "--agents-root", str(workspace.agents_root),
+            "--handoff-dir", str(workspace.handoffs),
+            "--projects-root", str(workspace.projects)]
+        patch("launcher_path", lambda: None)
+        refusal_output, refusal_errors = io.StringIO(), io.StringIO()
+        with redirect_stdout(refusal_output), redirect_stderr(refusal_errors):
+            try:
+                exit_code = recovery.main(agents_root_flag_arguments)
+            except SystemExit as stop_request:
+                exit_code = stop_request.code
+        check("AGENTS ROOT: off macOS, --agents-root is refused with exit 2 and one "
+              "instruction line, nothing launched or logged",
+              exit_code == 2
+              and refusal_errors.getvalue()
+              == "recover-crashed-seats: off macOS, re-run without --agents-root.\n"
+              and refusal_output.getvalue() == ""
+              and not seat_directories_launched
+              and not (workspace.handoffs / "recover-crashed-seats-log.txt").exists(),
+              (exit_code, refusal_errors.getvalue(), refusal_output.getvalue(),
+               seat_directories_launched))
+        patch("launcher_path", lambda: Path("/fake/scripts/launch-claude-mac"))
+        seat_directories_launched.clear()
+        with redirect_stdout(io.StringIO()):
+            exit_code = recovery.main(agents_root_flag_arguments)
+        check("AGENTS ROOT: on macOS, --agents-root still chooses the seat launched",
+              exit_code == 0 and seat_directories_launched == [workspace.seat_directory],
+              (exit_code, seat_directories_launched))
+    finally:
+        patch("launcher_path", launcher_path_before_agents_root_cases)
+        patch("agents_root_is_movable_on_this_machine", lambda: True)
+        patch("launch_seat", launch_seat_before_agents_root_cases)
+        patch("wait_for_the_seat_to_come_up", wait_before_agents_root_cases)
 
     # User-ruled 2026-08-22: recovery's verdicts are durably logged. The
     # printed reports otherwise live only in the operator's scrollback, and
