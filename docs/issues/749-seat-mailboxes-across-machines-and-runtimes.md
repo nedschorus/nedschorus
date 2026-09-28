@@ -114,7 +114,7 @@ No cross-session tool call exists anywhere in the path, so the permission-mode p
 
 **The design (NEW).** A Codex seat is launched as an app server on a per-seat Unix socket with its TUI attached over `--remote`, its launcher writing the socket path and thread id beside the socket on that seat's own machine — never into `mailbox-root`, which only a seat's correspondents write. One small waker, `scripts/codex-mailbox-turn-start-waker.py`, runs on the same machine, watches the seat-mailbox for growth as the Claude waiter does, and calls `turn/start` on that thread with the added bytes. Codex then reads, acts, and appends its own `received:` receipt like any other seat. If the socket is gone or `turn/start` is refused, the waker stops and prints why on that seat's terminal; it does not retry, and a relaunch writes a fresh thread id over the stale one. Borrowed from [murmur's wake-native documentation](https://github.com/alexfrmn/murmur/blob/main/docs/wake-native.md), which limits the same arrangement to managed `--remote` sessions — the same limit, honestly held.
 
-No Codex seat exists today: Codex runs here only as non-interactive cells (`scripts/cold-read-codex-cell.py`, `scripts/code-review-codex-cell.py`), so this half is specified now and built when the first one is created. Sending **to** a Claude seat **from** Codex needs none of it: Codex appends to a file.
+No Codex seat exists today: Codex runs here only as non-interactive cells (`nc-systems/cold-read/cold-read-codex-cell.py`, `scripts/code-review-codex-cell.py`), so this half is specified now and built when the first one is created. Sending **to** a Claude seat **from** Codex needs none of it: Codex appends to a file.
 
 ## 6. When a machine or a seat is down
 
