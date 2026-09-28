@@ -624,14 +624,28 @@ def status_means_built(status: str) -> bool:
     return False
 
 
-def carries_landing_pin(text: str, repository_root: pathlib.Path) -> bool:
-    """Whether a design carries the pinned line a landing appends, naming a
-    commit this repository holds."""
+def landing_pin_commits(text: str, repository_root: pathlib.Path) -> list:
+    """The sha of each pinned line in a document that names a commit this
+    repository holds, in document order, as written in the brackets.
+
+    A pinned line whose sha names no commit here is left out: see A PINNED
+    LINE COUNTS ONLY WHEN ITS COMMIT RESOLVES in the docstring. Each landing
+    appends its line, so the last sha is the newest pin.
+    nc-systems/handoff/handoff-supervisor.py imports this to read the commit
+    an overview is pinned to.
+    """
+    commits = []
     for line in text.splitlines():
         pinned = LANDING_PIN_COMMIT.match(line.strip())
         if pinned and names_a_commit(pinned.group(1), repository_root):
-            return True
-    return False
+            commits.append(pinned.group(1))
+    return commits
+
+
+def carries_landing_pin(text: str, repository_root: pathlib.Path) -> bool:
+    """Whether a design carries the pinned line a landing appends, naming a
+    commit this repository holds."""
+    return bool(landing_pin_commits(text, repository_root))
 
 
 def repository_relative_name(found: pathlib.Path, repository_root: pathlib.Path):
