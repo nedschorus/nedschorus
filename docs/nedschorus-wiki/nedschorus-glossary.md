@@ -32,7 +32,7 @@ A term used by one system alone is defined in that system's glossary, not here. 
 - **fresh-agent** — a minimal-context agent: one that has read only its agent-instructions, the documents selected for it to read, and (recursively) the documents linked from the selected documents.
 - **fresh-reader** — a fresh-agent, or a person, reading a document with no context beyond the document and what it links. This project's durable documents, wiki pages, skills and designs, the documents of lasting value, are written for fresh-readers rather than for the user, to enable parallelism and increase reliability.
 - **GHI** — GitHub issue
-- **ghi-info** — the GHI knowledge agent: before filing or editing an issue, an agent asks it which issues to read, with `scripts/ghi-info-ask.py`, and gets back a list.
+- **ghi-info** — the GHI knowledge agent: before filing or editing an issue, an agent asks it which issues to read, with `scripts/ghi-info-ask.py`.
 - **GHI-MD** — the MD file used to explain a GitHub issue.
 - **ghi-md-pairing-key** — the hash of the GHI-MD being filed, which create-GHI writes into the GHI's placeholder body. It is the only thing by which a rerun finds the GHI an interrupted run already made, and it is of the content rather than the path because filing moves the GHI-MD (user-ruled 2026-09-20). It lives only as long as the placeholder: the last step replaces the body with links, and the key goes with it.
 - **ghi-write-tool** — `scripts/ghi-issue-write.py`, the program whose operations are create-GHI and edit-GHI.
