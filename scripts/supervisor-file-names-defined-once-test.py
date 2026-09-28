@@ -63,6 +63,11 @@ reading lines is worse than either, because the two halves exempt and count
 different things; suffix_definition_assignments() below is now the one
 answer both halves use.
 
+Which constants are the suffix constants is read from the supervisor's tree
+too, by module_level_suffix_constant_names(), so a fourth one added under a
+new name is hunted from the moment it exists (2026-09-28). Only their values,
+SPELLED_OUT_NAMES, are typed here, and a case compares them with the tree.
+
 What counts as composing a name, and so fails -- the same four shapes for
 each of the three names:
 
@@ -137,10 +142,14 @@ COMPOSING_HELPERS = ("supervisor_state_path", "supervisor_lock_path",
 # until the rename after that.
 SPELLED_OUT_NAMES = ("-supervisor-state.json", "-supervisor.lock",
                      "-handoff.md")
-# The constants that hold them.
-SUFFIX_CONSTANTS = frozenset({"SUPERVISOR_STATE_FILE_SUFFIX",
-                              "SUPERVISOR_LOCK_FILE_SUFFIX",
-                              "HANDOFF_FILE_SUFFIX"})
+# The names of the constants that hold them are not typed here: they are read
+# out of handoff-supervisor.py below, as SUFFIX_CONSTANTS. These three are the
+# floor that reading must reach, checked before any other case, so a reading
+# that finds nothing cannot pass by hunting nothing. A constant added under a
+# new name needs no entry here.
+SUFFIX_CONSTANT_NAMES_FLOOR = ("SUPERVISOR_STATE_FILE_SUFFIX",
+                               "SUPERVISOR_LOCK_FILE_SUFFIX",
+                               "HANDOFF_FILE_SUFFIX")
 
 failures = []
 
@@ -151,6 +160,86 @@ def check(case_name, condition, detail=""):
     else:
         print(f"FAIL  {case_name}: {detail}")
         failures.append(case_name)
+
+
+def module_level_suffix_constant_names(tree):
+    """The names of the suffix constants a module defines, from its tree alone:
+    every module-level assignment with a value whose target is a name ending
+    in _SUFFIX, plain or annotated, whatever the value is.
+
+    Until 2026-09-28 these names were a hand-typed set beside
+    SPELLED_OUT_NAMES, and the pull request [The name guard reads the
+    supervisor's constants instead of its own
+    copy](https://github.com/nedschorus/nedschorus/pull/599) anchored only
+    the values. A constant added under a new name was then invisible to every
+    case: the seat merge-lane-2 added a fourth *_SUFFIX constant to the
+    supervisor and built a file name from it by hand, and the suite exited 0,
+    while changing a known constant's value exited 1. The case is not hypothetical: the pull
+    request [The handoff file's name is defined
+    once](https://github.com/nedschorus/nedschorus/pull/579) added
+    HANDOFF_FILE_SUFFIX as the third constant, and both lists had to be
+    updated by hand. User-approved 2026-09-28, walk
+    open-items-this-seat-holds-2026-09-24, item 7.
+
+    Nothing here is seeded from a list of known names; the fixture case below
+    pins that with names the supervisor has never defined.
+
+    THE VALUE IS NOT REQUIRED TO BE A STRING LITERAL. A new constant written
+    X_SUFFIX = "-a" + ".log" would otherwise not be found, and a name built
+    from it by hand would pass exactly as the fourth constant did. Found, its
+    value is read by defined_suffix_values(), which counts a value it cannot
+    read and fails with the remedy for that.
+
+    MODULE-LEVEL ONLY: a _SUFFIX name in a class body or a function is not a
+    constant another program imports. A copy of a known name there is still
+    counted, by suffix_definition_assignments(), which walks the whole tree.
+    Tuple unpacking, `A_SUFFIX, B_SUFFIX = ...`, is out of scope for the same
+    reason as the shapes the module docstring lists: no agent has written it.
+
+    Called on handoff-supervisor.py alone, never on every production script.
+    Six other production scripts define *_SUFFIX constants of their own for
+    other files (WALK_DRAFT_SUFFIX, SEAT_NAME_SUFFIX and more, counted
+    2026-09-28), and reading them in would fail "the suffix constants are
+    defined in one script" on each.
+    """
+    names = set()
+    for node in tree.body:
+        if isinstance(node, ast.Assign):
+            targets = node.targets
+        elif isinstance(node, ast.AnnAssign) and node.value is not None:
+            targets = [node.target]
+        else:
+            continue
+        names.update(target.id for target in targets
+                     if isinstance(target, ast.Name)
+                     and target.id.endswith("_SUFFIX"))
+    return frozenset(names)
+
+
+# Parsed here, before any case, because every function below reads
+# SUFFIX_CONSTANTS -- the fixture cases included.
+supervisor_tree = ast.parse(SUPERVISOR_SCRIPT.read_text(encoding="utf-8"),
+                            filename=str(SUPERVISOR_SCRIPT))
+SUFFIX_CONSTANTS = module_level_suffix_constant_names(supervisor_tree)
+
+# Asked first: the fixtures and every case after them hunt these names, and
+# with any of them missing each of those can pass by finding nothing. The
+# fixtures use HANDOFF_FILE_SUFFIX and SUPERVISOR_LOCK_FILE_SUFFIX, so when
+# either is missing here they fail too, reading as broken guard logic when
+# the cause is this one -- measured 2026-09-28 by renaming
+# HANDOFF_FILE_SUFFIX in a copy of the supervisor, which failed seven of them.
+suffix_constant_names_below_floor = sorted(
+    set(SUFFIX_CONSTANT_NAMES_FLOOR) - SUFFIX_CONSTANTS)
+check("the supervisor's syntax tree yields at least the three known suffix "
+      "constants",
+      not suffix_constant_names_below_floor,
+      f"{suffix_constant_names_below_floor} not found among the module-level "
+      f"*_SUFFIX assignments of {SUPERVISOR_SCRIPT.name}, which gave "
+      f"{sorted(SUFFIX_CONSTANTS)} -- if you renamed or removed a constant "
+      f"there, make the same change to SUFFIX_CONSTANT_NAMES_FLOOR here; if "
+      f"it is still in use, define it there as a module-level assignment "
+      f"whose name ends in _SUFFIX; fix this case before any fixture case "
+      f"below that also fails")
 
 
 def production_scripts():
@@ -569,6 +658,29 @@ check("fixture: a chained definition is two bindings on one line, named "
       "leave that one at module level",
       f"{chained_definitions}, {chained_clause}")
 
+# None of the names found here is defined in handoff-supervisor.py, so a
+# reading seeded from, or filtered through, a list of known names fails this.
+SUFFIX_CONSTANT_NAMES_BESIDE_DECOYS = fixture_tree("""\
+    PROBE_STATE_FILE_SUFFIX = "-probe-state.json"
+    PROBE_LOG_FILE_SUFFIX: str = "-probe.log"
+    PROBE_COMPUTED_FILE_SUFFIX = "-probe" + ".txt"
+    PROBE_FIRST_SUFFIX = PROBE_SECOND_SUFFIX = "-probe"
+    PROBE_SCRIPT_FILE_NAME = "probe.py"
+    PROBE_DECLARED_ONLY_SUFFIX: str
+    class ProbeSettings:
+        PROBE_CLASS_ATTRIBUTE_SUFFIX = "-probe-class.md"
+    def probe():
+        PROBE_FUNCTION_LOCAL_SUFFIX = "-probe-local.md"
+    """)
+check("fixture: the suffix constant names are every module-level *_SUFFIX "
+      "assignment, and nothing else",
+      module_level_suffix_constant_names(SUFFIX_CONSTANT_NAMES_BESIDE_DECOYS)
+      == {"PROBE_STATE_FILE_SUFFIX", "PROBE_LOG_FILE_SUFFIX",
+          "PROBE_COMPUTED_FILE_SUFFIX", "PROBE_FIRST_SUFFIX",
+          "PROBE_SECOND_SUFFIX"},
+      str(sorted(module_level_suffix_constant_names(
+          SUFFIX_CONSTANT_NAMES_BESIDE_DECOYS))))
+
 
 scripts_read = production_scripts()
 composing = []
@@ -598,7 +710,9 @@ check("no production script composes any of the three file names itself",
       "composed at " + ", ".join(composing) + " -- call "
       "supervisor_state_path(), supervisor_lock_path(), "
       "supervisor_state_paths(), handoff_file_path() or "
-      "handoff_file_paths() instead")
+      "handoff_file_paths() instead; for a suffix none of them composes, "
+      "write a helper in " + SUPERVISOR_SCRIPT.name + ", add it to "
+      "COMPOSING_HELPERS here, and call it instead")
 
 check("every composing helper was found in the syntax tree",
       sorted(helpers_found) == sorted(COMPOSING_HELPERS),
@@ -606,8 +720,6 @@ check("every composing helper was found in the syntax tree",
       f"{sorted(COMPOSING_HELPERS)}; a helper that is renamed must be renamed "
       f"in COMPOSING_HELPERS here, or its body stops being checked")
 
-supervisor_tree = ast.parse(SUPERVISOR_SCRIPT.read_text(encoding="utf-8"),
-                            filename=str(SUPERVISOR_SCRIPT))
 supervisor_defined_names = defined_suffix_values(supervisor_tree)
 
 # Counted by target, so a constant defined twice is named as a duplicate
@@ -661,9 +773,14 @@ check("the names this guard hunts are the supervisor's own, not a stale copy",
       + (f", and {unreadable_definitions} more whose value is not a plain "
          f"string literal, which this guard cannot read -- write the value as "
          f"a plain string literal" if unreadable_definitions else "")
-      + (f"; SPELLED_OUT_NAMES here says {sorted(SPELLED_OUT_NAMES)} -- mirror "
-         f"a rename into SPELLED_OUT_NAMES, or this guard hunts a name nothing "
-         f"uses" if readable_values_contradict_spelled_out_names
+      # "Added" became a cause on 2026-09-28, when the constant names began to
+      # be read from the tree: a constant under a new name now reaches
+      # readable_definitions, and told only to "mirror a rename", an agent
+      # would go looking for a value that was never renamed.
+      + (f"; SPELLED_OUT_NAMES here says {sorted(SPELLED_OUT_NAMES)} -- if a "
+         f"value was renamed, rename it in SPELLED_OUT_NAMES; if a suffix "
+         f"constant was added, add its value to SPELLED_OUT_NAMES"
+         if readable_values_contradict_spelled_out_names
          and not duplicated_constants else ""))
 
 check("the suffix constants are defined in one script",
