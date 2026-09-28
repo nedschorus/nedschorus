@@ -4,51 +4,50 @@ The naming and location convention for this project's files. Where internal or e
 
 ## Terms this page uses
 
-`docs/nedschorus-wiki/nedschorus-glossary.md` defines the project-terms. `.claude/skills/skills-glossary.md` and `docs/design-to-main/design-to-main-glossary.md` define some additional terms. We avoid spaces in directory and file names, using a hyphen, `-`, instead.
+`docs/nedschorus-wiki/nedschorus-glossary.md` defines the project-terms. `.claude/skills/skills-glossary.md` and `docs/design-to-main/design-to-main-glossary.md` define the system-terms of the skills and of design-to-main. We avoid spaces in directory and file names, using a hyphen, `-`, instead.
 
 - **stem**: a filename without its extension.
 - **suffix**, on this page: the last hyphen-separated part of the filename
-  stem, such as `-draft`, not the extension `.md`.
-- **slug**: a title written in lowercase with hyphens for spaces, used in a file name; `superpowers-extracts` in `2026-07-31-superpowers-extracts.md`.
+  stem, written with its hyphen, such as `-draft`, not the extension `.md`.
 
 ## Desired locations or file names for various components
 
-Files already on main stay where they are until the one-directory-per-system GHI moves them; a new file goes where this page says, creating the directory if needed, except a skill prompt, which stays in `.claude/skills/<skill name>/prompts/` until the instruction-file guard covers `nc-systems/skills/`.
+Files already on main stay where they are until GHI [Rationalize the repository layout: group components by owning system under nc-systems/, and a hook dispatcher](https://github.com/nedschorus/nedschorus/issues/224) moves them; a new file goes where this page says, creating the directory if needed, except a skill prompt, which stays in `.claude/skills/<skill name>/prompts/` until `.claude/hooks/instruction-file-guard.py` covers `nc-systems/skills/`.
 
-A file in a queue directory is named as it will be at its home, so the queue-drain moves it with `git mv`; a GHI-MD gains its issue number then, when its issue is filed.
+A file in a queue directory is named as it will be at its home, apart from the issue number a GHI-MD gains when its GHI is filed, so promoting it is a `git mv`.
 
 - **Skill prompt, the text a skill's own reviewer or cell runs**
-  - **Location:** nc-systems/skills/<skill name>/
-  - **Naming:** <pass>-prompt.md, named for the pass it drives
+  - **Location:** `nc-systems/skills/<skill name>/`
+  - **Naming:** `<pass>-prompt.md`, named for the pass it drives
 - **Hook**
-  - **Location:** .claude/hooks/
-  - **Naming:** <what it guards>.py 
+  - **Location:** `.claude/hooks/`
+  - **Naming:** `<what it guards>.py`
 - **Tests, test-designs, component-contracts**
   - **Location:** a test goes in a `tests/` subdirectory when the code sits in a directory of its own, such as `nc-systems/main-gatekeeper/tests/` or `scripts/design-to-main/tests/`; beside the script it tests when the script sits loose in `scripts/` or `.claude/hooks/`, for example `scripts/dangling-path-citation-check-test.py`.
-  - **Test Names:** <multi-part-name>-test.extension: example scripts/dangling-path-citation-check-test.py
-  - **Test-Design Name:** <multi-part-name>-test-design.md
+  - **Test Names:** `<multi-part-name>-test.<extension>`, for example `scripts/dangling-path-citation-check-test.py`
+  - **Test-Design Name:** `<multi-part-name>-test-design.md`
   - **Test-Design Location:** beside its design
   - **Component-contract Name:** its design's name with `-design.md` replaced by `-contract.md`, beside its design
-- **Agent Instructions, agent's first prompt, adversarial prompt**
-  - **Location:** docs/agents/;  Drafts in docs/agents/queue
-  - **Naming:** <subject>-instructions.md,  <subject>-first-prompt.md, or <subject>-adversarial-prompt.md
+- **agent-instructions kept in `docs/agents/`: instructions, initial-agent-instructions, adversarial prompt**
+  - **Location:** `docs/agents/`; awaiting approval, `docs/agents/queue/`
+  - **Naming:** `<subject>-instructions.md`, `<subject>-first-prompt.md`, or `<subject>-adversarial-prompt.md`
 - **Wiki page**
-  - **Location:** Pre-approved drafts in docs/nedschorus-wiki/queue/  Approved pages in docs/nedschorus-wiki/
-  - **Naming:** nedschorus-<subject>.md, which every page on main follows
-- **GHI-MD, the description document paired with each GitHub issue**
-  - **Location:** docs/issues/
-  - **Naming:** <issue number>-<multi-part-name>.md
+  - **Location:** awaiting approval, `docs/nedschorus-wiki/queue/`; approved, `docs/nedschorus-wiki/`
+  - **Naming:** `nedschorus-<subject>.md`, which every page on main follows
+- **GHI-MD, an MD file that explains a GitHub issue**
+  - **Location:** `docs/issues/`; a GHI-MD that is a design moves as the next entry says
+  - **Naming:** `<issue number>-<multi-part-name>.md`
 - **Design document, including a GHI-MD that is a design**
-  - **Location:** Before a GHI is created, `docs/issues/queue/`. Once the GHI is issued, `docs/issues/`, where it is refined in place until its code lands and is then pinned to what landed. When that code has its own directory on main, the design moves there and the GHI's link is updated; a design whose code is a single script stays in `docs/issues/`.
-  - **Naming:** `<multi-part-name>-design.md` before a GHI is issued; `<issue number>-<multi-part-name>-design.md` once it is issued; `<multi-part-name>-design.md` again once it moves beside its code. The `-design` ending stays in all three, though not every GHI has a design.
+  - **Location:** Before its GHI is filed, `docs/issues/queue/`. Once its GHI is filed, `docs/issues/`, where it is refined in place until its code lands; from then it is not refined again, and each landing appends a pinned line carrying the landing commit. When that code has its own directory on main, the design moves there and the GHI's link is updated; a design whose code is a single script stays in `docs/issues/`.
+  - **Naming:** `<multi-part-name>-design.md` before its GHI is filed; `<issue number>-<multi-part-name>-design.md` once it is filed; `<multi-part-name>-design.md` again once it moves beside its code. The `-design` suffix stays in all three, though not every GHI has a design.
 - **Other system or subsystem MDs**
   - **Location:** `nc-systems/<system-name>/`, with a subsystem in a subdirectory of its system's directory. A skill keeps only its `SKILL.md` in `.claude/skills/<skill name>/`; the rest of it lives in `nc-systems/skills/<skill name>/`.
-  - **Naming:** <subject>.md
+  - **Naming:** `<subject>.md`
 - **Program, in Python or shell**
   - **Location:** `nc-systems/<system-name>/` for a system's own; `nc-systems/general-tools/` for one that belongs to no system
   - **Naming:** `<multi-part-name>.py` or `<multi-part-name>.sh`; a launcher people type as a command, such as `launch-claude-mac`, has no extension
 - **Draft of a kind that has no queue**
-  - **Location:** docs/drafts/
+  - **Location:** `docs/drafts/`
   - **Naming:** `<subject>-draft.md`; a version frozen for reviewers is `<subject>-candidate.md`. Candidates move to the log-store's `seats/<seat name>/` once the work they served has landed on main. 
 
 ## Filename suffixes
@@ -60,5 +59,5 @@ A file in a queue directory is named as it will be at its home, so the queue-dra
 * `-candidate`: a version frozen for reviewers to read.
 * `-analysis`: a study of data, with its method and conclusions.
 
-Most files with these endings are kept in the log-store rather than in git; a draft in a queue directory, and a report that belongs to a GHI, are committed. The log-store's `README.md` names the program or skill that owns each of its directories, and that owner names the files.
+Most files with these suffixes are kept in the log-store rather than in git; a draft in a queue directory, and a report that belongs to a GHI, are committed. The log-store's `README.md` names the program or skill that owns each of its directories, and that owner names the files.
 
