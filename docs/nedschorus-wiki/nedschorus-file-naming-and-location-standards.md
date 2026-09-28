@@ -13,6 +13,10 @@ The naming and location convention for this project's files. Where internal or e
 
 ## Desired locations or file names for various components
 
+Files already on main stay where they are until the one-directory-per-system GHI moves them; a new file goes where this page says, creating the directory if needed, except a skill prompt, which stays in `.claude/skills/<skill name>/prompts/` until the instruction-file guard covers `nc-systems/skills/`.
+
+A file in a queue directory is named as it will be at its home, so the queue-drain moves it with `git mv`; a GHI-MD gains its issue number then, when its issue is filed.
+
 - **Skill prompt, the text a skill's own reviewer or cell runs**
   - **Location:** nc-systems/skills/<skill name>/
   - **Naming:** <pass>-prompt.md, named for the pass it drives
@@ -20,9 +24,10 @@ The naming and location convention for this project's files. Where internal or e
   - **Location:** .claude/hooks/
   - **Naming:** <what it guards>.py 
 - **Tests, test-designs, component-contracts**
-  - **Location:** in a `tests/` subdirectory when the code sits in a directory of its own, such as `nc-systems/main-gatekeeper/tests/` or `scripts/design-to-main/tests/`; beside the script it tests when the script sits loose in `scripts/` or `.claude/hooks/`, for example `scripts/dangling-path-citation-check-test.py`.
+  - **Location:** a test goes in a `tests/` subdirectory when the code sits in a directory of its own, such as `nc-systems/main-gatekeeper/tests/` or `scripts/design-to-main/tests/`; beside the script it tests when the script sits loose in `scripts/` or `.claude/hooks/`, for example `scripts/dangling-path-citation-check-test.py`.
   - **Test Names:** <multi-part-name>-test.extension: example scripts/dangling-path-citation-check-test.py
   - **Test-Design Name:** <multi-part-name>-test-design.md
+  - **Test-Design Location:** beside its design
   - **Component-contract Name:** its design's name with `-design.md` replaced by `-contract.md`, beside its design
 - **Agent Instructions, agent's first prompt, adversarial prompt**
   - **Location:** docs/agents/;  Drafts in docs/agents/queue
@@ -44,7 +49,7 @@ The naming and location convention for this project's files. Where internal or e
   - **Naming:** `<multi-part-name>.py` or `<multi-part-name>.sh`; a launcher people type as a command, such as `launch-claude-mac`, has no extension
 - **Draft of a kind that has no queue**
   - **Location:** docs/drafts/
-  - **Naming:** `<subject>-draft.md`; a version frozen for reviewers is `<subject>-candidate.md`. Candidates move to the log-store after they have been processed. 
+  - **Naming:** `<subject>-draft.md`; a version frozen for reviewers is `<subject>-candidate.md`. Candidates move to the log-store's `seats/<seat name>/` once the work they served has landed on main. 
 
 ## Filename suffixes
 
@@ -55,5 +60,5 @@ The naming and location convention for this project's files. Where internal or e
 * `-candidate`: a version frozen for reviewers to read.
 * `-analysis`: a study of data, with its method and conclusions.
 
-Most files with these endings are kept in the log-store rather than in git; a draft in a queue directory, and a report that belongs to a GHI, are committed.
+Most files with these endings are kept in the log-store rather than in git; a draft in a queue directory, and a report that belongs to a GHI, are committed. The log-store's `README.md` names the program or skill that owns each of its directories, and that owner names the files.
 
