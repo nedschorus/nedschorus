@@ -909,8 +909,6 @@ def file_an_output_line_names(line, corpus_root):
     is tried against the corpus, longest first: in `helper-test.py:1:needle`,
     `helper` may be a file too, and the line is not its.
     """
-    if "\0" in line:
-        return line.split("\0", 1)[0]
     if os.path.isfile(os.path.join(corpus_root, line)):
         return line
     for separator in reversed(list(re.finditer(r"[:-]", line))):

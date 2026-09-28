@@ -650,6 +650,16 @@ check("a file found under two overlapping roots is skipped under both "
       overlapping_roots.signals,
       f"{overlapping_roots.control}: the control prints ./sub/a.txt and "
       f"sub/a.txt, and the agent's grep skipped both")
+null_separated_corpus = a_committed_scratch_repository(
+    {"build/out.txt": "needle\n"}, "build/\n", tracked=[])
+check("a -Z line, the file name ended by a NUL, is kept: the agent's grep "
+      "hands -Z to the system grep, which reads ignored files",
+      check_module.lines_the_agents_grep_could_read(
+          ["./build/out.txt\0needle"], null_separated_corpus,
+          ["grep", "-rZ", "needle", "."]) == ["./build/out.txt\0needle"],
+      "GNU grep -rZ prints ./build/out.txt, a NUL, then the match; Claude "
+      "Code's grep function runs the system grep for -Z, which does not skip "
+      "the gitignored build/")
 flags_and_operands = getattr(check_module, "grep_flags_and_file_operands", None)
 check("an option's argument and the pattern are not file operands",
       flags_and_operands is not None and flags_and_operands(
