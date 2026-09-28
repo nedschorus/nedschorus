@@ -105,16 +105,19 @@ NOT STRIPPED, and why, measured the same day the same way:
 Everything else in the environment is passed through unchanged, so a suite
 that reads a variable of its own still gets it.
 
+THIS PROGRAM'S OWN git calls (`rev-parse`, `ls-files`, `status`) are run
+with the same environment (user-ruled 2026-09-28, walk
+merge-lane-2-meta-walk-open-items-2026-09-23, item 11). Measured
+2026-09-22: with GIT_DIR set, `git -C <top> ls-files` listed the other
+repository's files and exited 0, so the suite list itself was wrong while
+`rev-parse --show-toplevel` still answered <top>.
+
 WHAT THIS DOES NOT COVER, stated because it is the case that caused the
 2026-09-22 damage: a suite a person or an agent runs DIRECTLY is not
 launched by this program and is not protected by this. The durable answer is
 nedschorus#639's "Next action" item 2 — a scratch repository that asserts
 itself after `git init` — which is an open design question across 21 files
-and is not this change. Nor does this cover this program's OWN git calls:
-measured 2026-09-22, with GIT_DIR set, `git -C <top> ls-files` lists the
-other repository's files and exits 0, so the suite list itself can be wrong
-while `rev-parse --show-toplevel` still answers <top>. Reported with
-nedschorus#639 rather than fixed here.
+and is not this change.
 
 SKIPPED CASES are reported from text, because no exit code carries them: a
 suite that skips a case still exits 0. Measured 2026-09-21: no suite uses
@@ -206,6 +209,7 @@ class CouldNotRun(Exception):
 
 def git(checkout, *arguments):
     return subprocess.run(["git", "-C", str(checkout), *arguments],
+                          env=environment_without_git_redirecting_variables(),
                           capture_output=True, text=True, check=False)
 
 
