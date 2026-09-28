@@ -116,12 +116,12 @@ def make_victim_repository(root, suite_path):
     it. Given a committing identity of its own in its local config, because
     overwriting that is the part of nedschorus#639 that outlives the run.
 
-    It tracks `suite_path` under that name because the program's own
-    `git ls-files` resolves through GIT_DIR too, so the suite list it reads is
-    the victim's. That is the 2026-09-22 incident's own shape — a second clone
-    of the same project, with the same paths in it — and it is what lets this
-    case reach the thing it is about, which is the environment the program
-    launches a suite WITH."""
+    It tracks `suite_path`. The case about the environment a suite is
+    launched WITH passes the checkout's own suite path, the 2026-09-22
+    incident's own shape — a second clone of the same project, with the same
+    paths in it. The case about the program's own git calls passes a path the
+    checkout does not track, so a suite list read from the victim instead of
+    the checkout shows in what runs."""
     victim = root / "victim"
     victim.mkdir()
     git(victim, "init", "-q", "-b", "main")
@@ -444,14 +444,44 @@ with tempfile.TemporaryDirectory() as scratch:
     check("the suite still exits 0, so none of the above is read off a failure",
           result.returncode == 0, (result.returncode, result.stdout, result.stderr))
 
+# --- The program's own git calls: no git redirection either ------------------
+# nedschorus#639, the program's half. The program's OWN process is given an
+# ambient GIT_DIR naming a victim repository that tracks a suite the checkout
+# does not. The program's own `rev-parse`, `ls-files` and `status` must still
+# read the checkout it was given: the suites listed and run are the
+# checkout's, and so is the commit its first line names.
+#
+# Against the program without this change, this case fails with the victim's
+# suite listed and FAIL (it is not on disk in the checkout), the checkout's
+# own suite never run, and the first line naming the victim's commit.
+SUITE_ONLY_THE_CHECKOUT_TRACKS = "the-checkout-s-own-test.py"
+SUITE_ONLY_THE_VICTIM_TRACKS = "the-victim-s-own-test.py"
+with tempfile.TemporaryDirectory() as scratch:
+    root = pathlib.Path(scratch)
+    repo = make_repo(root, {SUITE_ONLY_THE_CHECKOUT_TRACKS: PASSES})
+    victim = make_victim_repository(root, SUITE_ONLY_THE_VICTIM_TRACKS)
+    checkout_commit = git(repo, "rev-parse", "HEAD").stdout.strip()
+    result = run(root, environment_extra={"GIT_DIR": str(victim / ".git")})
+    out = lines(result.stdout)
+    check("with an ambient GIT_DIR, the suites the program lists and runs are the checkout's",
+          ran(root) == [SUITE_ONLY_THE_CHECKOUT_TRACKS]
+          and not any(SUITE_ONLY_THE_VICTIM_TRACKS in line for line in out),
+          (ran(root), result.stdout, result.stderr))
+    check("with an ambient GIT_DIR, the first line names the checkout's own commit",
+          bool(out) and out[0].startswith(
+              f"run-all-test-suites: {repo.resolve()} at {checkout_commit} "
+              f"(tracked files match that commit); 1 suites listed by git;"),
+          (checkout_commit, out[:1]))
+    check("with an ambient GIT_DIR, a checkout whose suites all pass exits 0",
+          result.returncode == 0, (result.returncode, result.stdout, result.stderr))
+
 # --- Which variables are stripped, and which are deliberately kept -----------
-# The five beyond GIT_DIR cannot be driven through a whole run: each of them
-# also redirects the program's OWN `git ls-files` and `rev-parse`, so a run
-# carrying them refuses at exit 2 before any suite is launched (measured
-# 2026-09-22; the program's docstring records it as a limit). They are pinned
-# here at the seam they act on instead. GIT_NAMESPACE and
-# GIT_CEILING_DIRECTORIES are checked as KEPT, because deciding against them
-# was a measured decision and widening the list later should trip a case.
+# The five beyond GIT_DIR are pinned here at the seam they act on rather than
+# each driven through a whole run: the program's own git calls and every
+# suite it launches take their environment from this one function.
+# GIT_NAMESPACE and GIT_CEILING_DIRECTORIES are checked as KEPT, because
+# deciding against them was a measured decision and widening the list later
+# should trip a case.
 module = load_program_module()
 every_variable = {
     "GIT_DIR": "/elsewhere/.git", "GIT_WORK_TREE": "/elsewhere",
