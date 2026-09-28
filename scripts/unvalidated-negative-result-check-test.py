@@ -219,10 +219,48 @@ check("a path:line match whose text starts with a space is a result",
       f"{indented_match.empty_kind} {indented_match.signals}: grep -rn over "
       f"indented source prints `path:N:    text`, which a program's "
       f"complaint never opens with")
+absolute_indented_match = judge(
+    'grep -rn "No such file" /Users/el/x/ | head -5; false', exit_code=1,
+    stderr_was_captured=False,
+    stdout='/Users/el/x/notes.md:3:    see No such file or directory\n')
+check("an absolute path:line match whose text starts with a space is a result",
+      not absolute_indented_match.applicable,
+      f"{absolute_indented_match.empty_kind} "
+      f"{absolute_indented_match.signals}")
+missing_on_ned_box = judge("fd needle .", exit_code=127,
+                           stdout="/bin/bash: line 1: fd: command not found\n",
+                           stderr_was_captured=False)
+check("ned-box's shell, which names itself /bin/bash, reports a missing "
+      "search program",
+      "search-program-missing-on-this-machine" in missing_on_ned_box.signals
+      and "exit-status-reports-an-error-not-an-absence" in
+      missing_on_ned_box.signals,
+      f"{missing_on_ned_box.applicable} {missing_on_ned_box.signals}: "
+      f"ned-box's Bash tool opens every complaint of its shell with "
+      f"`/bin/bash: line 1: `")
+failed_cd_on_ned_box = judge(
+    "cd md-review-records/x/ && for f in a b; do grep -n needle $f "
+    "| head -3; done", exit_code=1,
+    stdout="/bin/bash: line 1: cd: md-review-records/x/: No such file or "
+           "directory\n", stderr_was_captured=False)
+check("a failed cd ahead of a search on ned-box leaves an empty result",
+      failed_cd_on_ned_box.applicable and failed_cd_on_ned_box.fires,
+      f"{failed_cd_on_ned_box.applicable} {failed_cd_on_ned_box.signals}: "
+      f"the shape of prof's ned-box session of 2026-08-28")
+by_its_path = judge("/usr/bin/grep -rn needle missing/", exit_code=2,
+                    stdout="/usr/bin/grep: missing/: No such file or "
+                           "directory\n", stderr_was_captured=False)
+check("a search program run by its path reports its own error",
+      "exit-status-reports-an-error-not-an-absence" in by_its_path.signals,
+      f"{by_its_path.applicable} {by_its_path.signals}")
 for complaint in (
         "grep: missing/: No such file or directory",
         "bash: line 1: rg: command not found",
         "zsh:1: command not found: rg",
+        "/bin/bash: line 1: fd: command not found",
+        "/bin/bash: line 1: cd: md-review-records/x/: No such file or directory",
+        "/usr/bin/grep: missing/: No such file or directory",
+        "./find-it.sh: line 3: rg: command not found",
         "zsh: command not found: rg",
         "(eval):1: command not found: timeout",
         "(eval):cd:1: no such file or directory: /tmp/gone",
@@ -572,6 +610,55 @@ check("a search root in another repository has that repository's "
       from_elsewhere.signals,
       f"{from_elsewhere.control}: the search named an absolute directory "
       f"outside the corpus root's repository")
+
+no_file_names_corpus = a_committed_scratch_repository(
+    {"ignored/path.txt": "x\n", "src.txt": "ignored/path.txt\n"},
+    "ignored/\n", tracked=["src.txt"])
+without_file_names = judge(
+    "grep -rh 'old/path.txt' .", exit_code=1, stdout="",
+    control_corpus_root=no_file_names_corpus)
+check("with -h a matched line is text, even text that spells an ignored path",
+      without_file_names.control and
+      without_file_names.control["matched"] == ["ignored/path.txt"],
+      f"{without_file_names.control}: the agent's grep prints "
+      f"ignored/path.txt, matched in src.txt")
+one_named_file = judge(
+    "grep 'old/path.txt' src.txt", exit_code=1, stdout="",
+    control_corpus_root=no_file_names_corpus)
+check("over one named file a matched line is text, and is kept",
+      one_named_file.control and
+      one_named_file.control["matched"] == ["ignored/path.txt"],
+      f"{one_named_file.control}: grep prints no file name for one file")
+pattern_names_a_directory = judge(
+    'grep -rn "old/docs" .', exit_code=1, stdout="",
+    control_corpus_root=a_committed_scratch_repository(
+        {"docs/x.log": "see docs here\n"}, "*.log\n", tracked=[]))
+check("a weakened pattern that names a directory is not taken for a search "
+      "root",
+      "weakened-pattern-control-run-found-matches" not in
+      pattern_names_a_directory.signals,
+      f"{pattern_names_a_directory.control}: the top .gitignore's *.log "
+      f"rule applies to docs/x.log, as the agent's grep applies it")
+overlapping_roots = judge(
+    'grep -rn "x/needle" . sub', exit_code=1, stdout="",
+    control_corpus_root=a_committed_scratch_repository(
+        {"sub/.gitignore": "a.txt\n", "sub/a.txt": "needle\n"}, "",
+        tracked=["sub/.gitignore"]))
+check("a file found under two overlapping roots is skipped under both "
+      "spellings",
+      "weakened-pattern-control-run-found-matches" not in
+      overlapping_roots.signals,
+      f"{overlapping_roots.control}: the control prints ./sub/a.txt and "
+      f"sub/a.txt, and the agent's grep skipped both")
+flags_and_operands = getattr(check_module, "grep_flags_and_file_operands", None)
+check("an option's argument and the pattern are not file operands",
+      flags_and_operands is not None and flags_and_operands(
+          ["grep", "-rn", "--exclude-dir", "docs", "-m", "5", "needle",
+           "src", "lib"])[1] == ["src", "lib"] and flags_and_operands(
+          ["grep", "-rne", "needle", "-A3", "src"])[1] == ["src"] and
+      flags_and_operands(["grep", "-r", "--", "-x", "."])[1] == ["."],
+      "a word after --exclude-dir or -m is that option's, not a directory "
+      "to search")
 
 count_corpus = in_a_scratch_corpus({"a.py": "needle\n", "b.py": "nothing\n"})
 spelled_by_ugrep = judge(

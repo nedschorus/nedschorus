@@ -235,16 +235,25 @@ read as a count, over a search whose output was indeed empty.
 
 The review of the pull request that made those fixes, PR "The empty-search
 check's measurement is redone over today's transcripts, and every firing is
-sorted" (https://github.com/nedschorus/nedschorus/pull/763), found five more,
-all fixed on 2026-09-28 with cases that fail without them: a match in
-`helper-test.py` was taken for an ignored file `helper` and dropped; the
-ignore filter asked git's index and the corpus root's repository, where
-ugrep reads the .gitignore files alone -- so a force-added file, a tree
-outside any repository and a search root in another repository were read
-differently; a zero count was compared by its path's spelling (`a.py:0`
-against `./a.py:0`); and a `path:N:` match line whose text starts with a
-space was taken for a complaint. Replayed over both machines' transcripts
-of that day, the fixes change no firing, so the numbers above stand.
+sorted" (https://github.com/nedschorus/nedschorus/pull/763), found more in two
+rounds, all fixed on 2026-09-28 with cases that fail without them. The
+first: a match in `helper-test.py` was taken for an ignored file `helper`
+and dropped; the ignore filter asked git's index and the corpus root's
+repository, where ugrep reads the .gitignore files alone -- so a force-added
+file, a tree outside any repository and a search root in another repository
+were read differently; a zero count was compared by its path's spelling
+(`a.py:0` against `./a.py:0`); and a `path:N:` match line whose text starts
+with a space was taken for a complaint. The second, both from narrowing
+what the first round fixed: a complaint from a program run by its path was
+no longer set aside -- and ned-box's Bash tool opens every complaint of its
+shell `/bin/bash: line 1: `, so a missing search program there went
+unreported; and a line printed without a file name (`-h`, or one named
+file) was credited to an ignored file whose path its text spelled. Two
+lesser ones went with them: a weakened pattern naming a directory was taken
+for a search root, and a file under two overlapping roots was skipped under
+one spelling only. Replayed over both machines' transcripts of that day and
+over the log-store's mirrors of both, the check fires on the same pairs as
+before either round, so the numbers above stand.
 
 NOT WIRED TO ANYTHING. This ships as a program with its tests. Whether it fires
 automatically -- in a hook, in the cold-read grid, in a reviewer's brief -- is a
@@ -374,19 +383,25 @@ PROGRAM_NOT_FOUND = re.compile(
 #
 # A line is a complaint only where it opens the way a program's complaint
 # opens: a program's name, a colon and a space (`grep: `, `ls: `, `bash: `,
-# `ugrep: warning: `); a shell's name with a line number (`zsh:1: `); or
-# Claude Code's `(eval):1: ` and `(eval):cd:1: `. A program's name holds no
-# `/` and no `.`, and only a shell puts a line number after it. A search's
-# matched line opens with its line number (`3:find: /tmp/x: Permission
-# denied`) or its path and line number (`run.log:3:...`,
-# `scripts/x.py:372:    r"...No such file..."`), so it stays a result, even
-# where its text starts with a space. Until 2026-09-28 the phrase could sit
-# anywhere in the line, and a ned-box loop that printed ten grep results
-# quoting `find: ...: Permission denied` was judged empty and fired (the
-# review's finding at :321; see REVIEW FINDINGS in the docstring).
+# `ugrep: warning: `), run by its path or not (`/bin/bash: `, which is how
+# ned-box's Bash tool opens every complaint of its shell, `/usr/bin/grep: `);
+# bash's `NAME: line N: ` for any NAME (`./find-it.sh: line 3: `); a shell's
+# name with a line number (`zsh:1: `); or Claude Code's `(eval):1: ` and
+# `(eval):cd:1: `. A program's own name holds no `.`, and only a shell puts
+# a line number straight after it. A search's matched line opens with its
+# line number (`3:find: /tmp/x: Permission denied`) or its path and line
+# number (`run.log:3:...`, `scripts/x.py:372:    r"...No such file..."`), so
+# it stays a result, even where its text starts with a space; only `grep -r`
+# without `-n` over a file with no `.` in its name can still print a result
+# that opens like a complaint. Until 2026-09-28 the phrase could sit anywhere
+# in the line, and a ned-box loop that printed ten grep results quoting
+# `find: ...: Permission denied` was judged empty and fired (the review's
+# finding at :321; see REVIEW FINDINGS in the docstring).
 DIAGNOSTIC_LINE = re.compile(
-    r"^(?:\(eval\)(?::\w+)?:\d+|(?:zsh|bash|sh|dash|ksh)(?::\d+)?"
-    r"|[^\s:/.\d][^\s:/.]*):\s[^\n]*?"
+    r"^(?:\(eval\)(?::\w+)?:\d+"
+    r"|(?:[^\s:]*/)?(?:zsh|bash|sh|dash|ksh)(?::\d+)?"
+    r"|[^\s:]+: line \d+"
+    r"|(?:[^\s:]*/)?[^\s:/.\d][^\s:/.]*):\s[^\n]*?"
     r"(?:command not found|No such file or directory|Permission denied"
     r"|Is a directory|cannot open|unrecognized option|invalid option"
     r"|unknown option|Connection refused|Could not resolve hostname"
@@ -894,6 +909,8 @@ def file_an_output_line_names(line, corpus_root):
     is tried against the corpus, longest first: in `helper-test.py:1:needle`,
     `helper` may be a file too, and the line is not its.
     """
+    if "\0" in line:
+        return line.split("\0", 1)[0]
     if os.path.isfile(os.path.join(corpus_root, line)):
         return line
     for separator in reversed(list(re.finditer(r"[:-]", line))):
@@ -946,6 +963,63 @@ def gitignore_rules_ignoring(relative_paths, search_root):
     return ignored
 
 
+# grep's options that take the next word as their argument, when written on
+# their own: that word is neither the pattern nor a file.
+GREP_SHORT_OPTIONS_TAKING_AN_ARGUMENT = frozenset("efmABCdD")
+GREP_LONG_OPTIONS_TAKING_AN_ARGUMENT = frozenset({
+    "--regexp", "--file", "--max-count", "--after-context", "--before-context",
+    "--context", "--directories", "--devices", "--include", "--exclude",
+    "--exclude-dir", "--exclude-from", "--label", "--binary-files"})
+
+
+def grep_flags_and_file_operands(control_tokens):
+    """(the one-letter and long flags given, the file operands) of a grep argv.
+
+    An option's argument is not an operand, and the pattern -- the first
+    operand, unless `-e` or `-f` gave it -- is not a file. A word that names a
+    directory is a search root only where it is a file operand, so a weakened
+    pattern such as `docs` is never taken for one.
+    """
+    flags = []
+    operands = []
+    pattern_given_by_an_option = False
+    index = 1
+    while index < len(control_tokens):
+        token = control_tokens[index]
+        index += 1
+        if token == "--":
+            operands.extend(control_tokens[index:])
+            break
+        if token.startswith("--"):
+            name = token.split("=", 1)[0]
+            flags.append(token if "=" in token else name)
+            if name in ("--regexp", "--file"):
+                pattern_given_by_an_option = True
+            if name in GREP_LONG_OPTIONS_TAKING_AN_ARGUMENT and "=" not in token:
+                if name == "--directories" and index < len(control_tokens):
+                    flags.append(f"--directories={control_tokens[index]}")
+                index += 1
+            continue
+        if token.startswith("-") and token != "-":
+            for position, letter in enumerate(token[1:], start=1):
+                flags.append(letter)
+                if letter in "ef":
+                    pattern_given_by_an_option = True
+                if letter in GREP_SHORT_OPTIONS_TAKING_AN_ARGUMENT:
+                    argument = token[position + 1:]
+                    if not argument and index < len(control_tokens):
+                        argument = control_tokens[index]
+                        index += 1
+                    if letter == "d":
+                        flags.append(f"--directories={argument}")
+                    break
+            continue
+        operands.append(token)
+    if not pattern_given_by_an_option and operands:
+        operands = operands[1:]
+    return flags, operands
+
+
 def lines_the_agents_grep_could_read(lines, corpus_root, control_tokens):
     """The output lines that do not come from a file the agent's grep skipped.
 
@@ -957,29 +1031,52 @@ def lines_the_agents_grep_could_read(lines, corpus_root, control_tokens):
     `*.log` files included; a file named on the command line is read whatever
     ignores it; a .gitignore outside any repository is obeyed; and a tracked
     file a .gitignore lists is skipped.
+
+    Only a search that walked a directory can have skipped anything, and a
+    line is credited to a file only where the search printed file names: with
+    `-h`, or over files named one by one, a line is the matched text, and text
+    that spells an ignored file's path is still a match.
     """
+    flags, operands = grep_flags_and_file_operands(control_tokens)
     root = os.path.abspath(corpus_root)
+    recursive = any(flag in ("r", "R", "--recursive", "--dereference-recursive",
+                             "--directories=recurse") for flag in flags)
+    directories = [operand for operand in operands
+                   if os.path.isdir(os.path.join(root, operand))]
+    if not recursive or (operands and not directories):
+        return lines
+    names_files = True
+    for flag in flags:
+        if flag in ("h", "--no-filename"):
+            names_files = False
+        elif flag in ("H", "--with-filename"):
+            names_files = True
+    if any(flag in ("l", "L", "--files-with-matches", "--files-without-match")
+           for flag in flags):
+        names_files = True
+    if not names_files:
+        return lines
+    search_roots = sorted(
+        {os.path.normpath(os.path.join(root, directory))
+         for directory in directories} or {root}, key=len, reverse=True)
     named = {line: file_an_output_line_names(line, corpus_root)
              for line in lines}
-    search_roots = sorted(
-        {os.path.normpath(os.path.join(root, token))
-         for token in control_tokens[1:]
-         if not token.startswith("-") and os.path.isdir(os.path.join(root, token))}
-        or {root}, key=len, reverse=True)
+    explicit_files = set(operands) - set(directories)
     by_search_root = {}
     for path in {path for path in named.values()
-                 if path and path not in control_tokens}:
+                 if path and path not in explicit_files}:
         found_at = os.path.normpath(os.path.join(root, path))
         for search_root in search_roots:
             if path_is_at_or_below(found_at, search_root):
-                by_search_root.setdefault(search_root, {})[
-                    os.path.relpath(found_at, search_root)] = path
+                # One file can be spelled twice, once under each of two
+                # overlapping roots (`grep -rn x . sub`); both spellings go.
+                by_search_root.setdefault(search_root, {}).setdefault(
+                    os.path.relpath(found_at, search_root), set()).add(path)
                 break
     skipped = set()
     for search_root, paths in by_search_root.items():
         for relative in gitignore_rules_ignoring(sorted(paths), search_root):
-            if relative in paths:
-                skipped.add(paths[relative])
+            skipped.update(paths.get(relative, ()))
     return [line for line in lines if named[line] not in skipped]
 
 
