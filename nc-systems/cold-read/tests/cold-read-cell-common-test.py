@@ -1192,6 +1192,55 @@ with tempfile.TemporaryDirectory() as scratch:
     check("the Claude cell keeps CLAUDE.md: no --setting-sources",
           "--setting-sources" not in claude_argv, repr(claude_argv))
 
+    # No credential file is readable (user-ruled 2026-09-28): Claude Code's
+    # own deny rules, in the absolute `//` form -- a rule without it is
+    # relative to the working directory and blocked 1 of 3 canaries.
+    passed_deny_rules = (json.loads(passed_settings).get("permissions", {}).get("deny", [])
+                         if passed_settings.startswith("{") else [])
+    check("the Claude cell denies reading every credential path",
+          set(passed_deny_rules) >= {"Read(~/.config/nedschorus/**)", "Read(~/.ssh/**)",
+                                     "Read(//**/*.token)", "Read(//**/.env)"},
+          repr(passed_deny_rules))
+
+    # The Codex cell, the same rule in Codex's terms: a named permission
+    # profile extending :workspace, which Codex will not combine with
+    # --sandbox. On Linux the profile names the files found at launch, so a
+    # canary under /tmp -- where this scratch directory is -- must appear.
+    shutil.rmtree(repository)
+    repository = build_scratch_repository(scratch)
+    report = report_path_for(repository, "codex-denies-credentials", "codex")
+    credential_canary = repository / "codex-credential-canary.token"
+    credential_canary.write_text("CANARY-NOT-A-SECRET-common-test\n", encoding="utf-8")
+    received_argv_path = scratch / "codex-denies-credentials-argv.json"
+    result = run_codex_cell(
+        repository, stubs,
+        {"*": {"report": "STUB REVIEW: one restatement\n",
+               "dump_argv": str(received_argv_path)}},
+        report,
+    )
+    codex_argv = (json.loads(received_argv_path.read_text(encoding="utf-8"))
+                  if received_argv_path.is_file() else [])
+    codex_overrides = [codex_argv[index + 1] for index, argument in enumerate(codex_argv[:-1])
+                       if argument == "-c"]
+    denied_table = next((override.split("=", 1)[1] for override in codex_overrides
+                         if override.startswith("permissions.cold-read-no-credentials.filesystem=")),
+                        "")
+    home = str(Path.home())
+    expected_denials = [f'"{home}/.config/nedschorus"="deny"', f'"{home}/.ssh"="deny"']
+    expected_denials += ([f'"{credential_canary}"="deny"'] if sys.platform.startswith("linux")
+                         else ['"/**/*.token"="deny"', '"/**/.env"="deny"'])
+    check("a Codex cell's run reaches the runtime at all",
+          result.returncode == 0, f"exit {result.returncode}; stderr={result.stderr!r}")
+    check("the Codex cell runs under no --sandbox, which Codex will not combine with a profile",
+          "--sandbox" not in codex_argv, repr(codex_argv))
+    check("the Codex cell selects the credential-denying profile, extending :workspace",
+          'default_permissions="cold-read-no-credentials"' in codex_overrides
+          and 'permissions.cold-read-no-credentials.extends=":workspace"' in codex_overrides,
+          repr(codex_overrides))
+    check("the Codex cell's profile denies every credential path",
+          all(denial in denied_table for denial in expected_denials),
+          f"expected {expected_denials} in {denied_table!r}")
+
     # The Codex `deep` tier. Max beat xhigh by 46 net findings measured per
     # cell, but the grid is a union and there it is worth ten findings of 331
     # and three points of worst-target recall. This is the slowest of the

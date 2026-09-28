@@ -59,6 +59,21 @@ already dirty when the run starts, so "dirty afterwards too" says nothing,
 while "this file holds something else now" says the reviewer wrote it
 (nedschorus#167).
 
+WHY A PERMISSION PROFILE, NOT `--sandbox workspace-write`. No reviewer opens
+a credential file (user-ruled 2026-09-28; the rule and why are beside
+CREDENTIAL_DIRECTORIES in nc-systems/cold-read/cold-read-cell-common.py).
+`--sandbox workspace-write` lets a reviewer read anything, so the cell runs
+under a named permission profile instead: it extends Codex's `:workspace`
+profile, which writes where workspace-write did, and denies the credential
+directories and file names. Codex refuses the two together, so `--sandbox`
+is gone. Measured 2026-09-28 with canary files, on both machines: under
+workspace-write the reviewer read all three canaries; under the profile it
+read none, still read README.md, and wrote its report. Codex expands a deny
+pattern with ripgrep before it starts on Linux, and aborts when any
+directory under the pattern's prefix is unreadable (ned-box's home holds
+one), so on Linux the profile lists the files credential_files_found_now()
+finds; on macOS it takes the patterns.
+
 WHY THE CODEX MEMORY STORE IS OFF FOR REVIEW CELLS: written once, in
 scripts/code-review-codex-cell.py's docstring, under that heading.
 
@@ -75,6 +90,7 @@ nothing else in the cold-read-cell depends on it.
 """
 
 import importlib.util
+import json
 import pathlib
 import sys
 
@@ -146,6 +162,31 @@ TIER_TO_REASONING_EFFORT = {
 }
 
 
+# The profile's name, as it appears in the reviewer's session.
+CREDENTIAL_DENYING_PERMISSION_PROFILE = "cold-read-no-credentials"
+
+
+def credential_denying_permission_profile_arguments(platform: str = sys.platform) -> list:
+    """The `-c` overrides that run the reviewer under a profile extending
+    `:workspace` and denying every credential path; see the docstring.
+
+    Values are TOML: a quoted key per path, so a path is escaped the way
+    JSON escapes a string, which TOML's basic strings share.
+    """
+    denied = [str(directory) for directory in common.CREDENTIAL_DIRECTORIES]
+    if platform.startswith("linux"):
+        denied += common.credential_files_found_now()
+    else:
+        denied += [f"/**/{pattern}" for pattern in common.CREDENTIAL_FILE_NAME_PATTERNS]
+    table = "{" + ",".join(f'{json.dumps(path)}="deny"' for path in denied) + "}"
+    name = CREDENTIAL_DENYING_PERMISSION_PROFILE
+    return [
+        "-c", f'default_permissions="{name}"',
+        "-c", f'permissions.{name}.extends=":workspace"',
+        "-c", f"permissions.{name}.filesystem={table}",
+    ]
+
+
 def invocation_builder(effort: str):
     """The one thing that differs between the two cold-read-cells.
 
@@ -158,7 +199,7 @@ def invocation_builder(effort: str):
     def build_invocation(model: str, prompt: str):
         command = [
             "codex", "exec",
-            "--sandbox", "workspace-write",
+            *credential_denying_permission_profile_arguments(),
             "--disable", "memories",
             "-C", str(common.REPO_ROOT),
         ]

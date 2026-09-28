@@ -201,7 +201,22 @@ DISALLOWED_TOOLS = "Bash"
 # Measured 2026-09-18 in a detached checkout of main: without this setting
 # the write guard blocked a reviewer's Write; with it the Write went through,
 # and the reviewer still gave the glossary path CLAUDE.md names.
-SETTINGS = json.dumps({"disableAllHooks": True})
+#
+# No credential file is readable (user-ruled 2026-09-28; the rule and why are
+# beside CREDENTIAL_DIRECTORIES in the common module). A Read deny rule also
+# keeps a denied file out of Grep and Glob. The leading `//` makes a pattern
+# absolute: without it a rule is relative to the working directory, and
+# `Read(**/*.token)` blocked 1 of 3 canary files where `Read(//**/*.token)`
+# blocked all 3 (measured 2026-09-28 on the Mac, and on ned-box: Claude Code
+# answered "File is in a directory that is denied by your permission
+# settings" for each canary and still read README.md).
+CREDENTIAL_READ_DENY_RULES = (
+    [f"Read(~/{directory.relative_to(pathlib.Path.home())}/**)"
+     for directory in common.CREDENTIAL_DIRECTORIES]
+    + [f"Read(//**/{pattern})" for pattern in common.CREDENTIAL_FILE_NAME_PATTERNS]
+)
+SETTINGS = json.dumps({"disableAllHooks": True,
+                       "permissions": {"deny": CREDENTIAL_READ_DENY_RULES}})
 
 
 def invocation_builder(effort: str):

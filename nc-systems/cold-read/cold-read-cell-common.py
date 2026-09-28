@@ -221,6 +221,62 @@ class CellRefusal(Exception):
         self.exit_code = exit_code
 
 
+# THE FILES NO REVIEWER OPENS: credentials (user-ruled 2026-09-28, item 1 of
+# the walk what-a-cold-read-reviewer-may-read-2026-09-28, "Y"). That day a
+# cold-read-fast-read reviewed a page that names two GitHub token files by
+# path; the reviewer's prompt tells it to read whatever the document
+# references by an explicit path, so it opened both, and they went to the
+# model's vendor with its context. The prompts now say not to, and every
+# launcher enforces it in its runtime's own terms, from these constants:
+#   - the directories are withheld whole;
+#   - the file names are withheld wherever the runtime's sandbox can match a
+#     pattern, and, where it can only take exact paths (bwrap, and Codex on
+#     Linux), at every path credential_files_found_now() finds at launch.
+# A keychain item is not listed: every agent-binary logs in through the
+# keychain, and withholding it logs them out (measured 2026-09-28 on the
+# Mac, all three). The Claude reviewer has no shell to reach it.
+CREDENTIAL_DIRECTORIES = (
+    pathlib.Path.home() / ".config" / "nedschorus",
+    pathlib.Path.home() / ".ssh",
+)
+CREDENTIAL_FILE_NAME_PATTERNS = ("*.token", ".env")
+
+# Where credential_files_found_now() looks. The home holds every credential
+# the fleet stores; /tmp is where a scratch copy would sit; the repository is
+# listed for a checkout outside the home. Measured on ned-box 2026-09-28: the
+# home and /tmp together take under a second, and hold 39 such files.
+CREDENTIAL_FILE_SCAN_ROOTS = (pathlib.Path.home(), pathlib.Path("/tmp"), REPO_ROOT)
+
+
+def credential_files_found_now() -> list:
+    """Every file named like a credential under CREDENTIAL_FILE_SCAN_ROOTS,
+    outside CREDENTIAL_DIRECTORIES (which are withheld whole), as strings.
+
+    For a sandbox that takes exact paths rather than patterns. A file created
+    after this runs is not in the list; the directories are covered whatever
+    appears in them. `find` rather than a Python walk because it is several
+    times faster over a large home, and its complaints about directories this
+    user cannot read (ned-box's home holds one) are the expected case, so
+    its stderr and exit status are not read.
+    """
+    name_tests = []
+    for pattern in CREDENTIAL_FILE_NAME_PATTERNS:
+        name_tests += (["-o"] if name_tests else []) + ["-name", pattern]
+    roots = []
+    for root in CREDENTIAL_FILE_SCAN_ROOTS:
+        if root.is_dir() and not any(root == kept or kept in root.parents
+                                     for kept in roots):
+            roots.append(root)
+    completed = subprocess.run(
+        ["find", *map(str, roots), "-xdev", "(", *name_tests, ")", "-type", "f"],
+        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, check=False)
+    return sorted(
+        path for path in set(completed.stdout.splitlines())
+        if path and not any(directory == pathlib.Path(path)
+                            or directory in pathlib.Path(path).parents
+                            for directory in CREDENTIAL_DIRECTORIES))
+
+
 class BadInvocationArgumentParser(argparse.ArgumentParser):
     """argparse's own command-line errors join EXIT_BAD_INVOCATION.
 
