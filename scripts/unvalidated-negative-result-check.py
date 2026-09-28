@@ -126,9 +126,10 @@ THE SIGNALS.
       where its glob character stood outside quotes, so `--include "*.py"`
       is passed on as `*.py`. A `grep` is re-run over what the agent's own
       `grep` read -- Claude Code's shell function, which runs ugrep and
-      skips version-control directories, binary files and files git
-      ignores -- so a match found only in `.git/logs/HEAD` or a gitignored
-      build output is not a match. The
+      skips version-control directories, binary files, and files that a
+      .gitignore at or below the directory it walked ignores, in a
+      repository or not, tracked or not -- so a match found only in
+      `.git/logs/HEAD` or a gitignored build output is not a match. The
       control runs only where the whole command is one bare search -- one
       pipeline of one stage, with no shell punctuation (a pipe, a redirect,
       `;`, `&&`, backticks or `$(`) -- because a stage fed by a pipe read the
@@ -232,6 +233,19 @@ and :593, a question -- whether a zero count should be read only from a
 command that asked for a count. Its one instance is an `echo "exit:$?"` line
 read as a count, over a search whose output was indeed empty.
 
+The review of the pull request that made those fixes, PR "The empty-search
+check's measurement is redone over today's transcripts, and every firing is
+sorted" (https://github.com/nedschorus/nedschorus/pull/763), found five more,
+all fixed on 2026-09-28 with cases that fail without them: a match in
+`helper-test.py` was taken for an ignored file `helper` and dropped; the
+ignore filter asked git's index and the corpus root's repository, where
+ugrep reads the .gitignore files alone -- so a force-added file, a tree
+outside any repository and a search root in another repository were read
+differently; a zero count was compared by its path's spelling (`a.py:0`
+against `./a.py:0`); and a `path:N:` match line whose text starts with a
+space was taken for a complaint. Replayed over both machines' transcripts
+of that day, the fixes change no firing, so the numbers above stand.
+
 NOT WIRED TO ANYTHING. This ships as a program with its tests. Whether it fires
 automatically -- in a hook, in the cold-read grid, in a reviewer's brief -- is a
 separate decision for the user, to be made after reading the measurement.
@@ -286,6 +300,7 @@ import re
 import shlex
 import subprocess
 import sys
+import tempfile
 
 PROGRAM = "unvalidated-negative-result-check"
 
@@ -359,16 +374,19 @@ PROGRAM_NOT_FOUND = re.compile(
 #
 # A line is a complaint only where it opens the way a program's complaint
 # opens: a program's name, a colon and a space (`grep: `, `ls: `, `bash: `,
-# `ugrep: warning: `), the same with a line number (`zsh:1: `), or Claude
-# Code's `(eval):1: ` and `(eval):cd:1: `. A search's matched line opens with
-# its line number (`3:find: /tmp/x: Permission denied`) or its path and line
-# number (`run.log:3:...`), with no space after the colon, so it stays a
-# result. Until 2026-09-28 the phrase could sit anywhere in the line, and a
-# ned-box loop that printed ten grep results quoting `find: ...: Permission
-# denied` was judged empty and fired (the review's finding at :321; see
-# REVIEW FINDINGS in the docstring).
+# `ugrep: warning: `); a shell's name with a line number (`zsh:1: `); or
+# Claude Code's `(eval):1: ` and `(eval):cd:1: `. A program's name holds no
+# `/` and no `.`, and only a shell puts a line number after it. A search's
+# matched line opens with its line number (`3:find: /tmp/x: Permission
+# denied`) or its path and line number (`run.log:3:...`,
+# `scripts/x.py:372:    r"...No such file..."`), so it stays a result, even
+# where its text starts with a space. Until 2026-09-28 the phrase could sit
+# anywhere in the line, and a ned-box loop that printed ten grep results
+# quoting `find: ...: Permission denied` was judged empty and fired (the
+# review's finding at :321; see REVIEW FINDINGS in the docstring).
 DIAGNOSTIC_LINE = re.compile(
-    r"^(?:\(eval\)(?::\w+)?:\d+|[^\s:\d][^\s:]*(?::\d+)?):\s[^\n]*?"
+    r"^(?:\(eval\)(?::\w+)?:\d+|(?:zsh|bash|sh|dash|ksh)(?::\d+)?"
+    r"|[^\s:/.\d][^\s:/.]*):\s[^\n]*?"
     r"(?:command not found|No such file or directory|Permission denied"
     r"|Is a directory|cannot open|unrecognized option|invalid option"
     r"|unknown option|Connection refused|Could not resolve hostname"
@@ -873,11 +891,12 @@ def file_an_output_line_names(line, corpus_root):
 
     A `-l` line is a path; a match line is a path followed by `:` (a match) or
     `-` (a context line). Paths in this project hold hyphens, so each candidate
-    is tried against the corpus, shortest first.
+    is tried against the corpus, longest first: in `helper-test.py:1:needle`,
+    `helper` may be a file too, and the line is not its.
     """
     if os.path.isfile(os.path.join(corpus_root, line)):
         return line
-    for separator in re.finditer(r"[:-]", line):
+    for separator in reversed(list(re.finditer(r"[:-]", line))):
         head = line[:separator.start()]
         if head and os.path.isfile(os.path.join(corpus_root, head)):
             return head
@@ -888,58 +907,79 @@ def path_is_at_or_below(path, directory):
     return path == directory or path.startswith(directory.rstrip(os.sep) + os.sep)
 
 
+def gitignore_rules_ignoring(relative_paths, search_root):
+    """The paths, relative to search_root, that a .gitignore at or below it ignores.
+
+    Handed an empty repository of its own, the search root as its work tree,
+    and --no-index, git answers from the .gitignore files alone. Like ugrep's
+    --ignore-files, it then does not ask whether the search root is in a
+    repository, which one, or whether a file is tracked. The empty repository
+    is made in the system temp directory and removed at once. Git's global
+    configuration is kept out, and a rule from any file that is not a
+    .gitignore inside the work tree -- info/exclude, a global excludes file --
+    is not counted, because ugrep reads neither.
+    """
+    environment = {key: value for key, value in os.environ.items()
+                   if not key.startswith("GIT_")}
+    environment.update(GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1")
+    try:
+        with tempfile.TemporaryDirectory(prefix=f"{PROGRAM}-") as empty:
+            subprocess.run(["git", "init", "-q", "--bare", empty],
+                           env=environment, capture_output=True, check=True,
+                           timeout=60)
+            finished = subprocess.run(
+                ["git", f"--git-dir={empty}", f"--work-tree={search_root}",
+                 "check-ignore", "--no-index", "--verbose", "--stdin", "-z"],
+                cwd=search_root, env=environment,
+                input="\0".join(relative_paths) + "\0",
+                capture_output=True, text=True, timeout=60)
+    except (OSError, subprocess.SubprocessError):
+        return set()
+    fields = finished.stdout.split("\0")
+    ignored = set()
+    for index in range(0, len(fields) - 3, 4):
+        source, _line, pattern, path = fields[index:index + 4]
+        if pattern.startswith("!") or os.path.isabs(source) or \
+                os.path.basename(source) != ".gitignore":
+            continue
+        ignored.add(path)
+    return ignored
+
+
 def lines_the_agents_grep_could_read(lines, corpus_root, control_tokens):
     """The output lines that do not come from a file the agent's grep skipped.
 
     ugrep's --ignore-files reads only the .gitignore files it meets while
     walking down from each directory it was given, so a file is skipped only
-    where the rule that ignores it sits in a .gitignore at or below the search
-    root it was found under. Measured 2026-09-28: `grep -rn needle ledgers/`
-    read every file in a `ledgers/` that the repository's top .gitignore
-    ignores, `*.log` files included, and a file named on the command line is
-    read whatever ignores it. git's info/exclude and global excludes are not
-    .gitignore files, and ugrep never reads them.
+    where a rule in a .gitignore at or below the search root it was found
+    under ignores it. Measured 2026-09-28: `grep -rn needle ledgers/` read
+    every file in a `ledgers/` that the repository's top .gitignore ignores,
+    `*.log` files included; a file named on the command line is read whatever
+    ignores it; a .gitignore outside any repository is obeyed; and a tracked
+    file a .gitignore lists is skipped.
     """
-    root = os.path.realpath(corpus_root)
+    root = os.path.abspath(corpus_root)
     named = {line: file_an_output_line_names(line, corpus_root)
              for line in lines}
-    search_roots = [os.path.realpath(os.path.join(root, token))
-                    for token in control_tokens[1:]
-                    if not token.startswith("-")
-                    and os.path.isdir(os.path.join(root, token))] or [root]
-    candidates = sorted({path for path in named.values()
-                         if path and path not in control_tokens})
+    search_roots = sorted(
+        {os.path.normpath(os.path.join(root, token))
+         for token in control_tokens[1:]
+         if not token.startswith("-") and os.path.isdir(os.path.join(root, token))}
+        or {root}, key=len, reverse=True)
+    by_search_root = {}
+    for path in {path for path in named.values()
+                 if path and path not in control_tokens}:
+        found_at = os.path.normpath(os.path.join(root, path))
+        for search_root in search_roots:
+            if path_is_at_or_below(found_at, search_root):
+                by_search_root.setdefault(search_root, {})[
+                    os.path.relpath(found_at, search_root)] = path
+                break
     skipped = set()
-    if candidates:
-        try:
-            # A corpus outside a repository has nothing for git to ignore:
-            # rev-parse fails there, and nothing is skipped.
-            top = subprocess.run(
-                ["git", "rev-parse", "--show-toplevel"], cwd=corpus_root,
-                capture_output=True, text=True, timeout=60)
-            finished = subprocess.run(
-                ["git", "check-ignore", "--verbose", "--stdin", "-z"],
-                cwd=corpus_root, input="\0".join(candidates) + "\0",
-                capture_output=True, text=True, timeout=60)
-            fields = finished.stdout.split("\0") if top.returncode == 0 else []
-            top_directory = os.path.realpath(top.stdout.strip())
-        except (OSError, subprocess.SubprocessError):
-            fields = []
-        for index in range(0, len(fields) - 3, 4):
-            # The path comes back as it was given, relative to the corpus;
-            # the rule's source comes back relative to the repository's top.
-            source, _line, pattern, path = fields[index:index + 4]
-            if pattern.startswith("!") or \
-                    os.path.basename(source) != ".gitignore":
-                continue
-            rule_directory = os.path.dirname(
-                os.path.normpath(os.path.join(top_directory, source)))
-            found_at = os.path.normpath(os.path.join(root, path))
-            containing = [search_root for search_root in search_roots
-                          if path_is_at_or_below(found_at, search_root)]
-            if containing and path_is_at_or_below(
-                    rule_directory, max(containing, key=len)):
-                skipped.add(path)
+    for search_root, paths in by_search_root.items():
+        for relative in gitignore_rules_ignoring(sorted(paths), search_root):
+            if relative in paths:
+                skipped.add(paths[relative])
     return [line for line in lines if named[line] not in skipped]
 
 
@@ -994,8 +1034,18 @@ def run_control(stage, pattern, corpus_root, zero_inputs):
                 "matched": matched[:5],
             }
         if control_shape == "zero-count-lines" and zero_inputs:
-            control_zero = set(zero_counted_inputs(finished.stdout))
-            recovered = [path for path in zero_inputs if path not in control_zero]
+            # Compared by the file each line names, not by its spelling: the
+            # agent's ugrep prints `a.py:0` where the system grep prints
+            # `./a.py:0`, and a path the control did not count is not
+            # recovered.
+            control_counts = {}
+            for line in finished.stdout.splitlines():
+                match = COUNT_LINE.match(line.strip())
+                if match:
+                    control_counts[os.path.normpath(match.group("path"))] = \
+                        int(match.group("count"))
+            recovered = [path for path in zero_inputs
+                         if control_counts.get(os.path.normpath(path), 0) > 0]
             if recovered:
                 return {
                     "weakening": name,

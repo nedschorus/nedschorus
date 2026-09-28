@@ -209,6 +209,16 @@ check("a printed result that quotes a find complaint mid-line is a result",
       not looped_complaints.applicable,
       f"{looped_complaints.empty_kind} {looped_complaints.signals}: the "
       f"ned-box shape that fired on 2026-09-24")
+indented_match = judge(
+    'grep -rn "No such file or directory" scripts/ | head -5; false',
+    exit_code=1, stderr_was_captured=False,
+    stdout='scripts/unvalidated-negative-result-check.py:372:    '
+           'r"(?:command not found|No such file or directory"\n')
+check("a path:line match whose text starts with a space is a result",
+      not indented_match.applicable,
+      f"{indented_match.empty_kind} {indented_match.signals}: grep -rn over "
+      f"indented source prints `path:N:    text`, which a program's "
+      f"complaint never opens with")
 for complaint in (
         "grep: missing/: No such file or directory",
         "bash: line 1: rg: command not found",
@@ -503,6 +513,85 @@ check("a control run from a subdirectory applies only the .gitignore files "
       f"{from_a_subdirectory.control}: git names the top .gitignore relative "
       f"to the repository's top, not to the corpus, and its *.log rule is "
       f"above the search root; deeper/.gitignore's *.tmp rule is not")
+
+
+def a_committed_scratch_repository(files, ignore_rules, tracked, force_added=()):
+    """A committed scratch repository: files, a .gitignore, and what is tracked."""
+    directory = in_a_scratch_corpus(dict(files, **{".gitignore": ignore_rules}))
+    git_in_scratch_repository(directory, "init", "-q")
+    git_in_scratch_repository(directory, "add", ".gitignore", *tracked)
+    if force_added:
+        git_in_scratch_repository(directory, "add", "-f", *force_added)
+    git_in_scratch_repository(directory, "commit", "-qm", "scratch")
+    return directory
+
+
+hyphen_neighbour = judge(
+    'grep -rn "x/needle" .', exit_code=1, stdout="",
+    control_corpus_root=a_committed_scratch_repository(
+        {"helper": "unrelated\n", "helper-test.py": "needle\n"},
+        "helper\n", tracked=["helper-test.py"]))
+check("a match in helper-test.py is not taken for the ignored file helper",
+      "weakened-pattern-control-run-found-matches" in hyphen_neighbour.signals
+      and hyphen_neighbour.control and
+      hyphen_neighbour.control["matched"] == ["./helper-test.py:1:needle"],
+      f"{hyphen_neighbour.control}: the agent's grep prints "
+      f"helper-test.py:1:needle here; the longest prefix naming a file is the "
+      f"file the line came from")
+force_added = judge(
+    'grep -rn "x/needle" .', exit_code=1, stdout="",
+    control_corpus_root=a_committed_scratch_repository(
+        {"forced.txt": "needle\n"}, "forced.txt\n", tracked=[],
+        force_added=["forced.txt"]))
+check("a tracked file that a .gitignore lists is skipped, as the agent's "
+      "grep skips it",
+      "weakened-pattern-control-run-found-matches" not in force_added.signals,
+      f"{force_added.control}: ugrep's --ignore-files reads the rules, not "
+      f"git's index")
+outside_any_repository = judge(
+    'grep -rn "scripts/old-helper.py" .', exit_code=1, stdout="",
+    control_corpus_root=in_a_scratch_corpus({
+        ".gitignore": "build/\n",
+        "build/out.txt": "copied from scripts/old-helper.py\n"}))
+check("a .gitignore outside any repository is obeyed, as the agent's grep "
+      "obeys it",
+      "weakened-pattern-control-run-found-matches" not in
+      outside_any_repository.signals,
+      f"{outside_any_repository.control}: an extracted tree with no .git still "
+      f"has its .gitignore read by ugrep")
+another_repository = a_committed_scratch_repository(
+    {"build/out.txt": "copied from scripts/old-helper.py\n"}, "build/\n",
+    tracked=[])
+from_elsewhere = judge(
+    f'grep -rn "scripts/old-helper.py" {another_repository}', exit_code=1,
+    stdout="",
+    control_corpus_root=a_committed_scratch_repository({}, "", tracked=[]))
+check("a search root in another repository has that repository's "
+      ".gitignore obeyed",
+      "weakened-pattern-control-run-found-matches" not in
+      from_elsewhere.signals,
+      f"{from_elsewhere.control}: the search named an absolute directory "
+      f"outside the corpus root's repository")
+
+count_corpus = in_a_scratch_corpus({"a.py": "needle\n", "b.py": "nothing\n"})
+spelled_by_ugrep = judge(
+    'grep -rc "x/needle" .', exit_code=0, stdout="a.py:0\nb.py:0\n",
+    control_corpus_root=count_corpus)
+check("a zero count the weakened search really recovers fires, whatever the "
+      "path's spelling",
+      spelled_by_ugrep.control and spelled_by_ugrep.control["matched"] == [
+          "a.py: counted 0 by the original, matched by the weakened search"],
+      f"{spelled_by_ugrep.control}: the agent's ugrep prints a.py:0 where "
+      f"the system grep prints ./a.py:1")
+nothing_recovered = judge(
+    'grep -rc "x/absent" .', exit_code=0, stdout="a.py:0\nb.py:0\n",
+    control_corpus_root=count_corpus)
+check("a zero count the weakened search does not recover is silent, whatever "
+      "the path's spelling",
+      "weakened-pattern-control-run-found-matches" not in
+      nothing_recovered.signals,
+      f"{nothing_recovered.control}: ./a.py:0 and a.py:0 are one file counted "
+      f"zero twice")
 
 
 # --------------------------------------------- reading a session transcript
