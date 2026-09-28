@@ -188,6 +188,92 @@ check("a program off PATH but present as a shell function does not fire",
       "perfectly; PATH is not evidence of absence and is not consulted")
 
 
+# ------------------------- a matched line that quotes an error is a result
+
+quoted_complaints = judge(
+    'grep -n "Permission denied" run.log | head -5; false', exit_code=1,
+    stdout="3:find: /tmp/x: Permission denied\n"
+           "7:find: /tmp/y: Permission denied\n",
+    stderr_was_captured=False)
+check("grep -n lines that quote an error message are results, not complaints",
+      not quoted_complaints.applicable,
+      f"{quoted_complaints.empty_kind} {quoted_complaints.signals}: the "
+      f"result held two matches, so it is not empty")
+looped_complaints = judge(
+    'for i in 1 2; do grep -c needle run$i.log | head -1; done; cat .',
+    exit_code=1,
+    stdout="run1 exit=3   ned-box checkouts: find in /tmp/timeshift-x exited "
+           "1: find: '/tmp/timeshift-x': Permission denied\n",
+    stderr_was_captured=False)
+check("a printed result that quotes a find complaint mid-line is a result",
+      not looped_complaints.applicable,
+      f"{looped_complaints.empty_kind} {looped_complaints.signals}: the "
+      f"ned-box shape that fired on 2026-09-24")
+indented_match = judge(
+    'grep -rn "No such file or directory" scripts/ | head -5; false',
+    exit_code=1, stderr_was_captured=False,
+    stdout='scripts/unvalidated-negative-result-check.py:372:    '
+           'r"(?:command not found|No such file or directory"\n')
+check("a path:line match whose text starts with a space is a result",
+      not indented_match.applicable,
+      f"{indented_match.empty_kind} {indented_match.signals}: grep -rn over "
+      f"indented source prints `path:N:    text`, which a program's "
+      f"complaint never opens with")
+absolute_indented_match = judge(
+    'grep -rn "No such file" /Users/el/x/ | head -5; false', exit_code=1,
+    stderr_was_captured=False,
+    stdout='/Users/el/x/notes.md:3:    see No such file or directory\n')
+check("an absolute path:line match whose text starts with a space is a result",
+      not absolute_indented_match.applicable,
+      f"{absolute_indented_match.empty_kind} "
+      f"{absolute_indented_match.signals}")
+missing_on_ned_box = judge("fd needle .", exit_code=127,
+                           stdout="/bin/bash: line 1: fd: command not found\n",
+                           stderr_was_captured=False)
+check("ned-box's shell, which names itself /bin/bash, reports a missing "
+      "search program",
+      "search-program-missing-on-this-machine" in missing_on_ned_box.signals
+      and "exit-status-reports-an-error-not-an-absence" in
+      missing_on_ned_box.signals,
+      f"{missing_on_ned_box.applicable} {missing_on_ned_box.signals}: "
+      f"ned-box's Bash tool opens every complaint of its shell with "
+      f"`/bin/bash: line 1: `")
+failed_cd_on_ned_box = judge(
+    "cd md-review-records/x/ && for f in a b; do grep -n needle $f "
+    "| head -3; done", exit_code=1,
+    stdout="/bin/bash: line 1: cd: md-review-records/x/: No such file or "
+           "directory\n", stderr_was_captured=False)
+check("a failed cd ahead of a search on ned-box leaves an empty result",
+      failed_cd_on_ned_box.applicable and failed_cd_on_ned_box.fires,
+      f"{failed_cd_on_ned_box.applicable} {failed_cd_on_ned_box.signals}: "
+      f"the shape of prof's ned-box session of 2026-08-28")
+by_its_path = judge("/usr/bin/grep -rn needle missing/", exit_code=2,
+                    stdout="/usr/bin/grep: missing/: No such file or "
+                           "directory\n", stderr_was_captured=False)
+check("a search program run by its path reports its own error",
+      "exit-status-reports-an-error-not-an-absence" in by_its_path.signals,
+      f"{by_its_path.applicable} {by_its_path.signals}")
+for complaint in (
+        "grep: missing/: No such file or directory",
+        "bash: line 1: rg: command not found",
+        "zsh:1: command not found: rg",
+        "/bin/bash: line 1: fd: command not found",
+        "/bin/bash: line 1: cd: md-review-records/x/: No such file or directory",
+        "/usr/bin/grep: missing/: No such file or directory",
+        "./find-it.sh: line 3: rg: command not found",
+        "zsh: command not found: rg",
+        "(eval):1: command not found: timeout",
+        "(eval):cd:1: no such file or directory: /tmp/gone",
+        "ugrep: warning: /tmp/gone/*.md: No such file or directory",
+        "ls: cannot access '/tmp/gone': No such file or directory",
+        "find: '/tmp/x': Permission denied",
+        "ssh: Could not resolve hostname ned-box: Name or service not known",
+        "fatal: not a git repository (or any of the parent directories): .git",
+        "usage: grep [-abcdDEFGHhIiJLlMmnOopqRSsUVvwXxZz] [pattern] [file ...]"):
+    check(f"a program's complaint is still set aside: {complaint[:40]}",
+          check_module.split_diagnostics(complaint) == ("", complaint))
+
+
 # --------------------------------------------------------- exit statuses
 
 check("grep's 2, which means it errored, fires",
@@ -356,6 +442,253 @@ check("an anchored pattern weakens to an unanchored one",
 check("a literal head before a regex element is dropped",
       any(name == "literal head dropped"
           for name, _ in check_module.weaken_pattern("^### [0-9]\\+\\.")))
+
+# A glob the shell left alone is left alone. `--include "*.py"` reaches grep
+# as `*.py`; expanding it made `b.py` the pattern and the weakened pattern a
+# file name, and failure 4's shape went silent on how one option was spelled.
+quoted_include_corpus = in_a_scratch_corpus({
+    "a.py": "x = 1\n", "b.py": "y = 2\n",
+    "tools/composed.py": 'MODULE = with_name("handoff-supervisor.py")\n',
+})
+for spelling in ('--include "*.py"', "--include '*.py'", '--include="*.py"'):
+    quoted_include = judge(
+        f'grep -rn {spelling} "scripts/handoff-supervisor.py" .', exit_code=1,
+        stdout="", control_corpus_root=quoted_include_corpus)
+    check(f"a quoted glob, {spelling}, is passed on as the shell passed it",
+          "weakened-pattern-control-run-found-matches" in quoted_include.signals,
+          f"{quoted_include.signals} {quoted_include.control}")
+words_of = getattr(check_module, "shell_words_marking_globs", None)
+check("a word is expanded only where its glob character stood outside quotes",
+      words_of is not None and words_of("grep -c x '*.py' *.md a\\*b") == [
+          ("grep", None), ("-c", None), ("x", None), ("*.py", None),
+          ("*.md", "*.md"), ("a*b", None)],
+      "the shell expands *.md; '*.py' and a\\*b reach grep as written")
+
+
+def git_in_scratch_repository(directory, *arguments):
+    """Run git in a scratch repository, never in the checkout around it."""
+    environment = {key: value for key, value in os.environ.items()
+                   if not key.startswith("GIT_")}
+    subprocess.run(["git", "-c", "user.email=test@example.invalid",
+                    "-c", "user.name=test", *arguments], cwd=directory,
+                   env=environment, check=True, capture_output=True)
+
+
+def a_repository_that_moved_a_file(extra_tracked_files):
+    """A scratch repository whose history, and nothing the agent reads,
+    names scripts/old-helper.py: two commit messages in .git/logs/HEAD, a
+    gitignored build output, and a binary file."""
+    directory = in_a_scratch_corpus({"scripts/old-helper.py": "print(1)\n"})
+    git_in_scratch_repository(directory, "init", "-q")
+    git_in_scratch_repository(directory, "add", ".")
+    git_in_scratch_repository(directory, "commit", "-qm", "add scripts/old-helper.py")
+    git_in_scratch_repository(directory, "mv", "scripts/old-helper.py", "scripts/new-helper.py")
+    git_in_scratch_repository(directory, "commit", "-qm", "move scripts/old-helper.py away")
+    root = pathlib.Path(directory)
+    (root / ".gitignore").write_text("build/\n", encoding="utf-8")
+    (root / "build").mkdir()
+    (root / "build" / "out.txt").write_text(
+        "copied from scripts/old-helper.py\n", encoding="utf-8")
+    (root / "blob.bin").write_bytes(b"\0\1scripts/old-helper.py\0\2")
+    for name, body in extra_tracked_files.items():
+        (root / name).parent.mkdir(parents=True, exist_ok=True)
+        (root / name).write_text(body, encoding="utf-8")
+    git_in_scratch_repository(directory, "add", ".")
+    git_in_scratch_repository(directory, "commit", "-qm", "ignore build output")
+    return directory
+
+
+history_only = judge(
+    'grep -rn "scripts/old-helper.py" .', exit_code=1, stdout="",
+    control_corpus_root=a_repository_that_moved_a_file({}))
+check("the control reads only what the agent's grep read: not .git/, not "
+      "gitignored files, not binary files",
+      "weakened-pattern-control-run-found-matches" not in history_only.signals,
+      f"{history_only.control}: the agent's grep is Claude Code's ugrep "
+      f"function, which skips all three, so it could not have found these")
+composed_reference = judge(
+    'grep -rn "scripts/old-helper.py" .', exit_code=1, stdout="",
+    control_corpus_root=a_repository_that_moved_a_file({
+        "tools/composed.py": 'HELPER = with_name("old-helper.py")\n'}))
+check("the same repository holding a composed reference still fires, on that "
+      "reference alone",
+      "weakened-pattern-control-run-found-matches" in
+      composed_reference.signals and composed_reference.control and
+      all("tools/composed.py" in line
+          for line in composed_reference.control["matched"]),
+      str(composed_reference.control))
+ledgers_repository = a_repository_that_moved_a_file({})
+(pathlib.Path(ledgers_repository) / ".gitignore").write_text(
+    "build/\nledgers/\n*.log\n", encoding="utf-8")
+(pathlib.Path(ledgers_repository) / "ledgers").mkdir()
+(pathlib.Path(ledgers_repository) / "ledgers" / "walk.log").write_text(
+    'HELPER = with_name("old-helper.py")\n', encoding="utf-8")
+ignored_but_named = judge(
+    'grep -rn "scripts/old-helper.py" ledgers/', exit_code=1, stdout="",
+    control_corpus_root=ledgers_repository)
+check("a gitignored directory named as the search root is read, as the "
+      "agent's grep reads it",
+      "weakened-pattern-control-run-found-matches" in ignored_but_named.signals,
+      f"{ignored_but_named.control}: ugrep applies only the .gitignore files "
+      f"at or below the directory it was given, so the top .gitignore's "
+      f"ledgers/ and *.log rules do not apply inside ledgers/")
+(pathlib.Path(ledgers_repository) / "deeper" / "inner").mkdir(parents=True)
+(pathlib.Path(ledgers_repository) / "deeper" / ".gitignore").write_text(
+    "*.tmp\n", encoding="utf-8")
+(pathlib.Path(ledgers_repository) / "deeper" / "inner" / "kept.log").write_text(
+    'HELPER = with_name("old-helper.py")\n', encoding="utf-8")
+(pathlib.Path(ledgers_repository) / "deeper" / "inner" / "skipped.tmp").write_text(
+    'HELPER = with_name("old-helper.py")\n', encoding="utf-8")
+from_a_subdirectory = judge(
+    'grep -rn "scripts/old-helper.py" .', exit_code=1, stdout="",
+    control_corpus_root=str(pathlib.Path(ledgers_repository) / "deeper"))
+check("a control run from a subdirectory applies only the .gitignore files "
+      "at or below it, as the agent's grep does",
+      "weakened-pattern-control-run-found-matches" in
+      from_a_subdirectory.signals and from_a_subdirectory.control and
+      [line.split(":", 1)[0] for line in from_a_subdirectory.control["matched"]]
+      == ["./inner/kept.log"],
+      f"{from_a_subdirectory.control}: git names the top .gitignore relative "
+      f"to the repository's top, not to the corpus, and its *.log rule is "
+      f"above the search root; deeper/.gitignore's *.tmp rule is not")
+
+
+def a_committed_scratch_repository(files, ignore_rules, tracked, force_added=()):
+    """A committed scratch repository: files, a .gitignore, and what is tracked."""
+    directory = in_a_scratch_corpus(dict(files, **{".gitignore": ignore_rules}))
+    git_in_scratch_repository(directory, "init", "-q")
+    git_in_scratch_repository(directory, "add", ".gitignore", *tracked)
+    if force_added:
+        git_in_scratch_repository(directory, "add", "-f", *force_added)
+    git_in_scratch_repository(directory, "commit", "-qm", "scratch")
+    return directory
+
+
+hyphen_neighbour = judge(
+    'grep -rn "x/needle" .', exit_code=1, stdout="",
+    control_corpus_root=a_committed_scratch_repository(
+        {"helper": "unrelated\n", "helper-test.py": "needle\n"},
+        "helper\n", tracked=["helper-test.py"]))
+check("a match in helper-test.py is not taken for the ignored file helper",
+      "weakened-pattern-control-run-found-matches" in hyphen_neighbour.signals
+      and hyphen_neighbour.control and
+      hyphen_neighbour.control["matched"] == ["./helper-test.py:1:needle"],
+      f"{hyphen_neighbour.control}: the agent's grep prints "
+      f"helper-test.py:1:needle here; the longest prefix naming a file is the "
+      f"file the line came from")
+force_added = judge(
+    'grep -rn "x/needle" .', exit_code=1, stdout="",
+    control_corpus_root=a_committed_scratch_repository(
+        {"forced.txt": "needle\n"}, "forced.txt\n", tracked=[],
+        force_added=["forced.txt"]))
+check("a tracked file that a .gitignore lists is skipped, as the agent's "
+      "grep skips it",
+      "weakened-pattern-control-run-found-matches" not in force_added.signals,
+      f"{force_added.control}: ugrep's --ignore-files reads the rules, not "
+      f"git's index")
+outside_any_repository = judge(
+    'grep -rn "scripts/old-helper.py" .', exit_code=1, stdout="",
+    control_corpus_root=in_a_scratch_corpus({
+        ".gitignore": "build/\n",
+        "build/out.txt": "copied from scripts/old-helper.py\n"}))
+check("a .gitignore outside any repository is obeyed, as the agent's grep "
+      "obeys it",
+      "weakened-pattern-control-run-found-matches" not in
+      outside_any_repository.signals,
+      f"{outside_any_repository.control}: an extracted tree with no .git still "
+      f"has its .gitignore read by ugrep")
+another_repository = a_committed_scratch_repository(
+    {"build/out.txt": "copied from scripts/old-helper.py\n"}, "build/\n",
+    tracked=[])
+from_elsewhere = judge(
+    f'grep -rn "scripts/old-helper.py" {another_repository}', exit_code=1,
+    stdout="",
+    control_corpus_root=a_committed_scratch_repository({}, "", tracked=[]))
+check("a search root in another repository has that repository's "
+      ".gitignore obeyed",
+      "weakened-pattern-control-run-found-matches" not in
+      from_elsewhere.signals,
+      f"{from_elsewhere.control}: the search named an absolute directory "
+      f"outside the corpus root's repository")
+
+no_file_names_corpus = a_committed_scratch_repository(
+    {"ignored/path.txt": "x\n", "src.txt": "ignored/path.txt\n"},
+    "ignored/\n", tracked=["src.txt"])
+without_file_names = judge(
+    "grep -rh 'old/path.txt' .", exit_code=1, stdout="",
+    control_corpus_root=no_file_names_corpus)
+check("with -h a matched line is text, even text that spells an ignored path",
+      without_file_names.control and
+      without_file_names.control["matched"] == ["ignored/path.txt"],
+      f"{without_file_names.control}: the agent's grep prints "
+      f"ignored/path.txt, matched in src.txt")
+one_named_file = judge(
+    "grep 'old/path.txt' src.txt", exit_code=1, stdout="",
+    control_corpus_root=no_file_names_corpus)
+check("over one named file a matched line is text, and is kept",
+      one_named_file.control and
+      one_named_file.control["matched"] == ["ignored/path.txt"],
+      f"{one_named_file.control}: grep prints no file name for one file")
+pattern_names_a_directory = judge(
+    'grep -rn "old/docs" .', exit_code=1, stdout="",
+    control_corpus_root=a_committed_scratch_repository(
+        {"docs/x.log": "see docs here\n"}, "*.log\n", tracked=[]))
+check("a weakened pattern that names a directory is not taken for a search "
+      "root",
+      "weakened-pattern-control-run-found-matches" not in
+      pattern_names_a_directory.signals,
+      f"{pattern_names_a_directory.control}: the top .gitignore's *.log "
+      f"rule applies to docs/x.log, as the agent's grep applies it")
+overlapping_roots = judge(
+    'grep -rn "x/needle" . sub', exit_code=1, stdout="",
+    control_corpus_root=a_committed_scratch_repository(
+        {"sub/.gitignore": "a.txt\n", "sub/a.txt": "needle\n"}, "",
+        tracked=["sub/.gitignore"]))
+check("a file found under two overlapping roots is skipped under both "
+      "spellings",
+      "weakened-pattern-control-run-found-matches" not in
+      overlapping_roots.signals,
+      f"{overlapping_roots.control}: the control prints ./sub/a.txt and "
+      f"sub/a.txt, and the agent's grep skipped both")
+null_separated_corpus = a_committed_scratch_repository(
+    {"build/out.txt": "needle\n"}, "build/\n", tracked=[])
+check("a -Z line, the file name ended by a NUL, is kept: the agent's grep "
+      "hands -Z to the system grep, which reads ignored files",
+      check_module.lines_the_agents_grep_could_read(
+          ["./build/out.txt\0needle"], null_separated_corpus,
+          ["grep", "-rZ", "needle", "."]) == ["./build/out.txt\0needle"],
+      "GNU grep -rZ prints ./build/out.txt, a NUL, then the match; Claude "
+      "Code's grep function runs the system grep for -Z, which does not skip "
+      "the gitignored build/")
+flags_and_operands = getattr(check_module, "grep_flags_and_file_operands", None)
+check("an option's argument and the pattern are not file operands",
+      flags_and_operands is not None and flags_and_operands(
+          ["grep", "-rn", "--exclude-dir", "docs", "-m", "5", "needle",
+           "src", "lib"])[1] == ["src", "lib"] and flags_and_operands(
+          ["grep", "-rne", "needle", "-A3", "src"])[1] == ["src"] and
+      flags_and_operands(["grep", "-r", "--", "-x", "."])[1] == ["."],
+      "a word after --exclude-dir or -m is that option's, not a directory "
+      "to search")
+
+count_corpus = in_a_scratch_corpus({"a.py": "needle\n", "b.py": "nothing\n"})
+spelled_by_ugrep = judge(
+    'grep -rc "x/needle" .', exit_code=0, stdout="a.py:0\nb.py:0\n",
+    control_corpus_root=count_corpus)
+check("a zero count the weakened search really recovers fires, whatever the "
+      "path's spelling",
+      spelled_by_ugrep.control and spelled_by_ugrep.control["matched"] == [
+          "a.py: counted 0 by the original, matched by the weakened search"],
+      f"{spelled_by_ugrep.control}: the agent's ugrep prints a.py:0 where "
+      f"the system grep prints ./a.py:1")
+nothing_recovered = judge(
+    'grep -rc "x/absent" .', exit_code=0, stdout="a.py:0\nb.py:0\n",
+    control_corpus_root=count_corpus)
+check("a zero count the weakened search does not recover is silent, whatever "
+      "the path's spelling",
+      "weakened-pattern-control-run-found-matches" not in
+      nothing_recovered.signals,
+      f"{nothing_recovered.control}: ./a.py:0 and a.py:0 are one file counted "
+      f"zero twice")
 
 
 # --------------------------------------------- reading a session transcript
