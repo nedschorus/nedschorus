@@ -64,3 +64,14 @@ Measured against main at `5f0fd4c` on 2026-09-22 — **58 items**:
 
 - **Nothing has to move.** Relocating all four directories would rewrite 138 citations across 91 files (`nc-queue/` 21 in 16, `docs/issues/queue/` 44 in 34, the wiki queue 26 in 19, `docs/drafts/` 47 in 22). Each sits beside what it feeds, and no agent is recorded as failing to find one.
 - **The drafts are pre-walk drafts, not GHI-MDs** — a GHI-MD lives in `docs/issues/` named by its number. Of the 9, four are named by an issue and five by none; two are for work that has since landed.
+
+## `nc-queue/` retires from main (user-ruled 2026-09-27)
+
+Ruled at item 11 of the walk `file-naming-page-revision-2026-09-23`, his word "You y" (minutes: `nedlern@ned-box:/home/nedlern/nedschorus-logs/walk/file-naming-page-revision-2026-09-23-minutes.md`), on his standing ruling that temporaries must not be in main.
+
+- **Why now.** Every note is processed. The four still unwalked on 2026-09-22 were ruled at items 6 to 8 of the walk `queue-and-drafts-drain-2026-09-22` and archived on main by 2026-09-27. `nc-queue/` holds only its `README.md` and `archived/`, 11 notes.
+- **What moves.** All of `nc-queue/` goes to the log-store, under `seats/`.
+- **What stops naming it, in the same commit** (the drain's execution rule, item 1 of the drain walk): the handoff supervisor's queue scrub in `nc-systems/handoff/handoff-supervisor.py`, which expires notes after 90 days and reports the queue at each handoff, and its test suite; CLAUDE.md's review-scope bullet and its copy in `docs/agents/pr-reviewer-instructions.md`, held identical by `scripts/pr-reviewer-instructions-copies-test.py`; the project glossary; and the rest of the 31 files on main that cite `nc-queue` (`git grep -l nc-queue origin/main -- . ':!nc-queue'`, 2026-09-28). CLAUDE.md's edit needs the user's approval marker.
+- **Where a new requested note waits.** Untracked in `docs/drafts/` while the user reads it, and in the log-store once processed: the candidate rule on `docs/nedschorus-wiki/nedschorus-file-naming-and-location-standards.md`.
+- **This supersedes "Nothing has to move", above, for `nc-queue/` only.** That finding measured whether agents could find the queues; this ruling keeps temporaries out of main.
+- **Built by the MD-skills seat.**
