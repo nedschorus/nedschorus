@@ -17,7 +17,9 @@ The cycle, per reincarnation:
   5. Print one queue-status line — to the console only. It does not ride
      the initial agent instructions (user-ruled 2026-08-29: "Also useless is the
      reminder there are files in the queues. Thats what queues are for.").
-  6. Launch the successor with the initial agent instructions.
+  6. Launch the successor with the initial agent instructions. Beside the
+     branch sync's line they carry one line per system whose code moved on
+     main past its overview's pinned commit (overview_refresh_due_lines).
   7. Keep the current and previous handoff and extract; delete older ones.
 
 The handoff file the agent writes (simple `key: value` lines):
@@ -111,6 +113,19 @@ _agent_binary_update_under_lock_spec = importlib.util.spec_from_file_location(
 agent_binary_update_under_lock = importlib.util.module_from_spec(
     _agent_binary_update_under_lock_spec)
 _agent_binary_update_under_lock_spec.loader.exec_module(agent_binary_update_under_lock)
+
+# The reader of the pinned line a landing appends to a design or an overview,
+# "**Pinned to what landed:** commit [<sha>](...)": which lines count and which
+# sha each names, including the rule that a sha naming no commit the repository
+# holds does not count. Read through it, never re-parsed here, so a pinned line
+# means one thing to the stale-citation check and to overview_refresh_due_lines.
+# Loading it runs no git: its own drift-lint import happens only in its main().
+_stale_code_citation_check_spec = importlib.util.spec_from_file_location(
+    "stale_code_citation_check",
+    SCRIPTS_DIRECTORY / "stale-code-citation-check.py")
+stale_code_citation_check = importlib.util.module_from_spec(
+    _stale_code_citation_check_spec)
+_stale_code_citation_check_spec.loader.exec_module(stale_code_citation_check)
 
 # The first turn a resumed session gets when no first prompt was given. One
 # definition, because two paths reach it: --resume-session-id, which only
@@ -260,6 +275,35 @@ BRANCH_STATE_INSTRUCTION = (
     "open pull requests, check their state with `gh`: merge-lane-2 reviews "
     "and merges them; when one has a review with findings, dispatch a forked "
     "subagent to fix it — never extend a head you've already announced."
+)
+
+# Where the overview of the system in nc-systems/<system>/ lives. No map from
+# a system to its overview existed when this was written, so the one overview
+# on main, docs/nedschorus-wiki/nedschorus-handoff-system-overview.md, is the
+# pattern; see overview_refresh_due_lines.
+SYSTEM_OVERVIEW_PATH_TEMPLATE = "docs/nedschorus-wiki/nedschorus-{system}-system-overview.md"
+
+# How long each git call of overview_refresh_due_lines that reads a ref, a tree
+# or an overview gets before it is given up on. Read from the module inside
+# that function rather than bound as a default argument, so a case can lower
+# it, as PROCESS_COMMAND_LINE_READ_TIMEOUT_SECONDS is.
+OVERVIEW_REFRESH_CHECK_GIT_TIMEOUT_SECONDS = 15
+
+# Appended to each overview-refresh-due report in the successor's first
+# prompt, the way BRANCH_STATE_INSTRUCTION is appended to the branch sync's.
+# A template, like ORPHANED_SUBAGENT_ROSTER_SENTENCE_TEMPLATE, because the
+# overview, the command listing the commits and the commit to pin are computed
+# per system. The pinned line it asks for is the one
+# scripts/stale-code-citation-check.py reads, prefix included, so a refresh
+# that follows it empties the range this check reports. Why each part is
+# there is in overview_refresh_due_lines's docstring.
+OVERVIEW_REFRESH_DUE_INSTRUCTION_TEMPLATE = (
+    " — Dispatch a subagent to refresh {overview_path} against the commits "
+    "`{commit_listing_command}` lists, as "
+    "docs/issues/670-refresh-design-when-a-system-s-code-lands.md defines a "
+    "refresh, and to append to it the pinned line "
+    "`{landing_pin_prefix}{main_commit}](<commit url>) on <YYYY-MM-DD> — "
+    "<what landed>`."
 )
 
 # The pointer at the script that composed the prompt, carried by every set of
@@ -1055,7 +1099,8 @@ def spawned_subagent_roster_from(handoff_fields: dict) -> list:
 
 def build_ignition_prompt(extract_path: Path, handoff_fields: dict,
                           predecessor_session_directory: Optional[Path] = None,
-                          branch_sync_report: str = "") -> str:
+                          branch_sync_report: str = "",
+                          overview_refresh_due: tuple = ()) -> str:
     """Compose the successor's first prompt.
 
     The prompt is tuned like a CLAUDE.md file (user-ruled 2026-08-29: "we
@@ -1092,6 +1137,11 @@ def build_ignition_prompt(extract_path: Path, handoff_fields: dict,
     gets no branch-state segment at all rather than an invented one: every
     sentence here is ruled wording, and a placeholder would be wording the
     user never saw.
+
+    overview_refresh_due is overview_refresh_due_lines's result, computed at
+    the same launch site after the sync: one whole line per system whose code
+    moved past its overview's pinned commit. Each goes right after the
+    branch-state line, and none goes anywhere when there are none.
     """
     next_step = next_step_from(handoff_fields)
     lines = [
@@ -1103,6 +1153,7 @@ def build_ignition_prompt(extract_path: Path, handoff_fields: dict,
     ]
     if branch_sync_report:
         lines.append(branch_sync_report + BRANCH_STATE_INSTRUCTION)
+    lines.extend(overview_refresh_due)
     roster = spawned_subagent_roster_from(handoff_fields)
     if roster:
         # The sentence and the reasoning behind its wording live with
@@ -1147,10 +1198,12 @@ class DialogIgnitionPlan:
     # without one still composes; the supervisor always passes it.
     predecessor_session_directory: Optional[Path] = None
 
-    def compose(self, branch_sync_report: str) -> str:
+    def compose(self, branch_sync_report: str,
+                overview_refresh_due: tuple = ()) -> str:
         return build_ignition_prompt(self.extract_path, self.handoff_fields,
                                      self.predecessor_session_directory,
-                                     branch_sync_report=branch_sync_report)
+                                     branch_sync_report=branch_sync_report,
+                                     overview_refresh_due=overview_refresh_due)
 
 
 @dataclass
@@ -1167,7 +1220,8 @@ class BootRecoveryIgnitionPlan:
     """
     next_step: str
 
-    def compose(self, branch_sync_report: str) -> str:
+    def compose(self, branch_sync_report: str,
+                overview_refresh_due: tuple = ()) -> str:
         prompt = (
             f"{self.next_step}\n\n(Recovered at supervisor boot: the previous "
             "session's dialog extract is unavailable; this next-step and the "
@@ -1175,6 +1229,8 @@ class BootRecoveryIgnitionPlan:
         )
         if branch_sync_report:
             prompt += " " + branch_sync_report + BRANCH_STATE_INSTRUCTION
+        for line in overview_refresh_due:
+            prompt += " " + line
         return prompt
 
 
@@ -1301,6 +1357,171 @@ def sync_working_branch_with_main(working_directory: Path) -> str:
     behind = run_git_here(["rev-list", "--count", "HEAD..origin/main"],
                           working_directory, timeout=30).stdout.strip() or "?"
     return f"branch sync: {branch} is {ahead} ahead of main and {behind} behind{fetch_note}"
+
+
+def overview_refresh_due_lines(working_directory: Path) -> tuple:
+    """One line for the successor's first prompt per system whose code moved
+    on main after the commit its overview is pinned to. Never raises.
+
+    Each line is a report, `overview refresh due: <system> — <n> commit(s)
+    under nc-systems/<system>/ since its overview's pinned commit, in
+    <pinned>..<main>`, followed by OVERVIEW_REFRESH_DUE_INSTRUCTION_TEMPLATE
+    filled in for that system: composed the way the branch-state line is, and
+    placed right after it.
+
+    RULED. The user, 2026-09-23, item 14 of the walk
+    what-a-design-becomes-when-its-code-lands-2026-09-22, whose minutes are
+      nedlern@ned-box:/home/nedlern/nedschorus-logs/walk/what-a-design-becomes-when-its-code-lands-2026-09-22-minutes.md
+    "Yes - this goes into the handoff supervisor and ultimately into the
+    (next) reincarnated agent." It
+    compares each system's last commit under nc-systems/<system>/ with the
+    commit pinned in that system's overview, and a stale system gets a line
+    beside the branch-sync line. Approved for building with "Y" on
+    2026-09-28, item 8 of the fleet-restart-at-login seat's walk
+    open-items-this-seat-holds-2026-09-24. What a refresh is, and the pinned
+    line it appends, are GHI [refresh-design: when a system's code lands,
+    bring its design, build-slice plan and overview into line — removing,
+    never revising](https://github.com/nedschorus/nedschorus/issues/670), whose
+    GHI-MD the instruction names because the refresh is not yet built as a
+    skill.
+
+    WHY HERE AND NOT IN A HOOK. It runs once per reincarnation, only where an
+    ignition plan is composed, so it needs no record of what it has already
+    said. The walk first placed it in scripts/checkout-freshness-catch-up.py,
+    which is a Stop hook and would repeat the line at every turn boundary
+    until the refresh landed.
+
+    THE PINNED COMMIT is read with scripts/stale-code-citation-check.py's
+    landing_pin_commits, the one reader of the line "**Pinned to what
+    landed:** commit [<sha>](...)". A pinned line whose sha names no commit
+    this repository holds does not count, which is that reader's rule (PR [A
+    pinned line counts as a landing only when it names a commit the
+    repository holds](https://github.com/nedschorus/nedschorus/pull/717)); an
+    overview with no pinned line that counts is skipped, with no line and no
+    error. Of several that count, the last is taken: each refresh appends one.
+
+    THE OVERVIEW OF A SYSTEM is found by SYSTEM_OVERVIEW_PATH_TEMPLATE, from
+    the directory's name. No map existed: the only statements of which
+    overview belongs to which system were prose, the glossary's
+    handoff-system entry and handoff-design.md's pointer, and on main at
+    f8d899a the handoff overview was the only file whose name ends in
+    -overview.md. GHI [overview-write skill: how an overview of a system is
+    written and checked before it lands](https://github.com/nedschorus/nedschorus/issues/168)
+    asks that an overview's name say what it overviews and end in -overview;
+    the wiki's pages are named nedschorus-<subject>.md. An overview filed
+    under another name is not found, and reads as a system with no overview.
+
+    MAIN, NOT THE SEAT'S HEAD. The systems, the overview and the commits are
+    all read at origin/main, which sync_working_branch_with_main fetched just
+    before this runs: a refresh brings the overview into line with what
+    LANDED, and a seat whose branch carries its own unmerged commits under
+    nc-systems/ would otherwise report them. Without an origin/main there is
+    nothing to report, and the branch-sync line already says so.
+
+    A RANGE, NOT AN IDENTITY. As the refresh-design GHI records the ruling, the
+    check compares a system's last commit under nc-systems/<system>/ with the
+    commit pinned in its overview, but the two are rarely the same object: a pin
+    names what a landing merged, and on main at f8d899a the handoff design's
+    pin, 40afb38, is a merge commit, while `git log -1 -- nc-systems/handoff/`
+    answers with the commit the merge brought in. So the test is whether
+    `git log --no-merges <pinned>..origin/main` lists any commit under the
+    system, which is also the range the refresh-design GHI above gives a
+    refresh, and a refresh "over an empty commit range does nothing".
+
+    MARKDOWN UNDER THE SYSTEM DOES NOT COUNT. Every refresh appends a pinned
+    line to the system's design, and the design lives in nc-systems/<system>/,
+    so counting it would make each refresh's own commit fall inside the next
+    range and the line would never go away. Measured on main at f8d899a over
+    40afb38..origin/main under nc-systems/handoff/: six commits, two of which
+    touch only handoff-design.md -- one of them the commit of PR [Four landed
+    designs are pinned to what landed, and shed their build
+    status](https://github.com/nedschorus/nedschorus/pull/675) that wrote its
+    pinned line; four once *.md is excluded. This departs from the ruling's
+    words and is stated in the pull request that built it.
+
+    WHAT IT DOES NOT COVER. The refresh-design GHI's first refresh by hand
+    found that a
+    half-migrated system keeps parts outside nc-systems/<system>/: the
+    handoff system's extractor, hook and recovery programs are still in
+    scripts/. The ruling names nc-systems/<system>/ and this reads only that;
+    commits to those parts do not make the overview due.
+
+    Every failure passes over the system it happened on and is printed to
+    the console, and nothing in it stops a launch: the line is advice to the
+    successor, and a supervisor that raised here would leave the seat dark.
+    A failure before any system is read -- origin/main's commit or its list
+    of systems -- gives no line at all. Both halves were asked by the round-1
+    reviews, 2026-09-28, of PR [A reincarnated seat is told when a system's
+    overview has fallen behind its
+    code](https://github.com/nedschorus/nedschorus/pull/764), which built
+    this: origin/main's short name was once read by a
+    second call after the one that verified it, and when that second call
+    failed the empty name turned the range into `<pinned>..`, which git reads
+    as `<pinned>..HEAD`, the seat's own branch; and the `git show` of one
+    overview was guarded only by the handler around the whole loop, so its
+    timeout ended the loop and a later system that was due got no line.
+    """
+    timeout = OVERVIEW_REFRESH_CHECK_GIT_TIMEOUT_SECONDS
+    try:
+        # One call both verifies origin/main and names it, so the name can
+        # never be missing while the check goes on.
+        resolved = run_git_here(
+            ["rev-parse", "--verify", "--quiet", "--short", "origin/main^{commit}"],
+            working_directory, timeout=timeout)
+        main_commit = resolved.stdout.strip()
+        if resolved.returncode != 0 or not main_commit:
+            return ()
+        listed = run_git_here(["ls-tree", "-d", "--name-only", "origin/main", "nc-systems/"],
+                              working_directory, timeout=timeout)
+    except Exception as error:  # the launch goes on; see the docstring
+        print(f"handoff-supervisor: overview check stopped: "
+              f"{type(error).__name__}: {error}")
+        return ()
+    lines = []
+    for system_directory in listed.stdout.splitlines():
+        system = system_directory.rsplit("/", 1)[-1]
+        try:
+            overview_path = SYSTEM_OVERVIEW_PATH_TEMPLATE.format(system=system)
+            shown = subprocess.run(
+                ["git", "show", f"origin/main:{overview_path}"],
+                cwd=str(working_directory), capture_output=True, check=False,
+                timeout=timeout)
+            if shown.returncode != 0:
+                continue  # this system has no overview
+            pinned_commits = stale_code_citation_check.landing_pin_commits(
+                shown.stdout.decode("utf-8", errors="replace"), working_directory)
+            if not pinned_commits:
+                continue  # its overview names no commit this repository holds
+            pinned_commit = pinned_commits[-1]
+            commit_range = f"{pinned_commit}..{main_commit}"
+            pathspecs = [f"nc-systems/{system}/", f":(exclude)nc-systems/{system}/*.md"]
+            moved = run_git_here(["log", "--no-merges", "--format=%h", commit_range,
+                                  "--", *pathspecs], working_directory)
+            if moved.returncode != 0:
+                print(f"handoff-supervisor: overview check for {system} passed over: "
+                      f"git log {commit_range} failed: "
+                      f"{moved.stderr.strip() or 'no detail'}")
+                continue
+            count = len(moved.stdout.split())
+            if not count:
+                continue
+            commit_listing_command = (
+                f"git log --no-merges {commit_range} -- "
+                + " ".join(f"'{pathspec}'" if ":(" in pathspec else pathspec
+                           for pathspec in pathspecs))
+            lines.append(
+                f"overview refresh due: {system} — {count} commit(s) under "
+                f"nc-systems/{system}/ since its overview's pinned commit, in "
+                f"{commit_range}"
+                + OVERVIEW_REFRESH_DUE_INSTRUCTION_TEMPLATE.format(
+                    overview_path=overview_path,
+                    commit_listing_command=commit_listing_command,
+                    landing_pin_prefix=stale_code_citation_check.LANDING_PIN_PREFIX,
+                    main_commit=main_commit))
+        except Exception as error:  # this system only; see the docstring
+            print(f"handoff-supervisor: overview check for {system} passed over: "
+                  f"{type(error).__name__}: {error}")
+    return tuple(lines)
 
 
 def remove_finished_worktrees_at_handoff(
@@ -2080,8 +2301,14 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
                 # Here, not where the plan was made: the sync above is what
                 # produces the branch-state line the prompt carries, and it
                 # cannot run earlier — the retiring session still owned the
-                # tree when the plan was composed.
-                prompt = ignition_plan.compose(branch_sync_report)
+                # tree when the plan was composed. The overview check reads
+                # origin/main, which that sync has just fetched, and runs only
+                # here, once per reincarnation: see overview_refresh_due_lines.
+                overview_refresh_due = overview_refresh_due_lines(
+                    settings.working_directory)
+                for line in overview_refresh_due:
+                    print(f"handoff-supervisor: {line}")
+                prompt = ignition_plan.compose(branch_sync_report, overview_refresh_due)
                 ignition_plan = None
             # Read after the sync: where the file sits in the seat's own
             # checkout, the sync may just have brought it forward.

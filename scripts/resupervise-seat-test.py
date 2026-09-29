@@ -221,7 +221,8 @@ def run_missing_launcher_case(workspace: Path):
     # Both are resolved from the repository root, so the isolated copy needs
     # the repository's SHAPE around it rather than two files beside it.
     # The supervisor also imports the agent-binary update lock from scripts/
-    # (2026-09-22), so that module is copied beside the first.
+    # (2026-09-22), so that module is copied beside the first, and the
+    # pinned-line reader in stale-code-citation-check.py (2026-09-28).
     supervisor_home = workspace / "nc-systems" / "handoff"
     supervisor_home.mkdir(parents=True)
     (supervisor_home / "handoff-supervisor.py").write_text(
@@ -229,7 +230,8 @@ def run_missing_launcher_case(workspace: Path):
     scripts_home = workspace / "scripts"
     scripts_home.mkdir(parents=True, exist_ok=True)
     for supervisor_import in ("seat-transcript-worth-resuming.py",
-                              "agent-binary-update-under-lock.py"):
+                              "agent-binary-update-under-lock.py",
+                              "stale-code-citation-check.py"):
         (scripts_home / supervisor_import).write_text(
             RESUPERVISE_SCRIPT.with_name(supervisor_import)
             .read_text(encoding="utf-8"), encoding="utf-8")

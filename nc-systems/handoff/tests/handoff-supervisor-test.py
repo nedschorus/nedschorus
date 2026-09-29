@@ -1478,6 +1478,370 @@ def run_branch_sync_cases(workspace: Path):
           "nothing to pull" in report, report)
 
 
+# The overview-refresh-due instruction, word for word. A template: the
+# overview, the command and the commit are filled in per system.
+EXPECTED_OVERVIEW_REFRESH_DUE_INSTRUCTION_TEMPLATE = (
+    " — Dispatch a subagent to refresh {overview_path} against the commits "
+    "`{commit_listing_command}` lists, as "
+    "docs/issues/670-refresh-design-when-a-system-s-code-lands.md defines a "
+    "refresh, and to append to it the pinned line "
+    "`{landing_pin_prefix}{main_commit}](<commit url>) on <YYYY-MM-DD> — "
+    "<what landed>`."
+)
+
+
+def expected_widget_overview_refresh_due_line(pinned: str, main: str, count: int) -> str:
+    """The whole line for the fixture system `widget`, spelled out, so a
+    change to the report, the template or the command fails the pin."""
+    return (
+        f"overview refresh due: widget — {count} commit(s) under nc-systems/widget/ "
+        f"since its overview's pinned commit, in {pinned}..{main} — Dispatch a "
+        "subagent to refresh docs/nedschorus-wiki/nedschorus-widget-system-overview.md "
+        f"against the commits `git log --no-merges {pinned}..{main} -- nc-systems/widget/ "
+        "':(exclude)nc-systems/widget/*.md'` lists, as "
+        "docs/issues/670-refresh-design-when-a-system-s-code-lands.md defines a "
+        "refresh, and to append to it the pinned line `**Pinned to what landed:** "
+        f"commit [{main}](<commit url>) on <YYYY-MM-DD> — <what landed>`.")
+
+
+def overview_refresh_due_or_missing(directory: Path):
+    """overview_refresh_due_lines's result, or the string "missing" against a
+    supervisor that has no such function, so each case FAILS cleanly there
+    instead of crashing the suite."""
+    due = getattr(supervisor, "overview_refresh_due_lines", None)
+    return "missing" if due is None else due(directory)
+
+
+def run_overview_refresh_due_cases(workspace: Path):
+    """overview_refresh_due_lines against real repositories, one fixture
+    repository whose origin/main is moved by hand the way the branch sync's
+    fetch would move it.
+
+    Ruled 2026-09-23 (item 14 of the walk
+    what-a-design-becomes-when-its-code-lands-2026-09-22): when a system's
+    code under nc-systems/<system>/ has moved on main past the commit pinned
+    in its overview, the successor's first prompt says so beside the
+    branch-sync line. The cases the build was asked for: moved past (the line,
+    naming the system and the range), current (no line), no pin (skipped, no
+    error), and a pin naming a commit the repository does not hold, which the
+    pinned-line reader's rule counts as no pin.
+    """
+    root = workspace / "overview-refresh-due"
+    root.mkdir()
+    check("a directory that is not a checkout reports no overview refresh",
+          overview_refresh_due_or_missing(root) == (),
+          repr(overview_refresh_due_or_missing(root)))
+
+    repository = root / "repository"
+    repository.mkdir()
+    git_in(["init", "--quiet", "--initial-branch=main"], repository)
+    git_in(["config", "user.name", "fixture"], repository)
+    git_in(["config", "user.email", "fixture@nedschorus.invalid"], repository)
+
+    def commit(texts_by_path, message):
+        for relative, text in texts_by_path.items():
+            path = repository / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text, encoding="utf-8")
+        git_in(["add", "-A"], repository)
+        git_in(["commit", "--quiet", "-m", message], repository)
+        return git_in(["rev-parse", "HEAD"], repository).stdout.strip()
+
+    def publish():
+        # What the branch sync's fetch leaves behind: origin/main at this commit.
+        git_in(["update-ref", "refs/remotes/origin/main", "HEAD"], repository)
+        return git_in(["rev-parse", "--short", "HEAD"], repository).stdout.strip()
+
+    def pinned_line(sha):
+        # As every pinned line on main writes it: seven hex characters in the
+        # brackets and the full sha in the link.
+        return (f"**Pinned to what landed:** commit [{sha[:7]}]"
+                f"(https://github.com/nedschorus/nedschorus/commit/{sha}) on "
+                "2026-09-28 — the widget as it landed.")
+
+    widget_overview = "docs/nedschorus-wiki/nedschorus-widget-system-overview.md"
+    landed = commit({"nc-systems/widget/widget.py": "print('widget')\n"}, "the widget lands")
+    commit({widget_overview: "# The widget: an overview\n\nIt widgets.\n\n"
+            + pinned_line(landed) + "\n"}, "the widget's overview, pinned")
+
+    check("a repository with no origin/main reports no overview refresh",
+          overview_refresh_due_or_missing(repository) == (),
+          repr(overview_refresh_due_or_missing(repository)))
+
+    publish()
+    check("a system whose overview is pinned to its last code commit gets no line",
+          overview_refresh_due_or_missing(repository) == (),
+          repr(overview_refresh_due_or_missing(repository)))
+
+    # The seat's own branch carrying a commit main does not have: what landed
+    # is what a refresh follows, so an unlanded commit makes nothing due.
+    commit({"nc-systems/widget/widget.py": "print('unlanded')\n"}, "the seat's own work")
+    check("a commit on the seat's branch that main does not have makes nothing due",
+          overview_refresh_due_or_missing(repository) == (),
+          repr(overview_refresh_due_or_missing(repository)))
+    git_in(["reset", "--quiet", "--hard", "HEAD~1"], repository)
+
+    # A refresh appends its pinned line to the design, and the design lives
+    # under nc-systems/<system>/: were Markdown there counted, every refresh's
+    # own commit would make the overview due again, forever.
+    commit({"nc-systems/widget/widget-design.md": "# Design\n\n" + pinned_line(landed) + "\n",
+            "nc-systems/widget/tests/widget-notes.md": "notes\n"},
+           "the widget's design is pinned, and a note beside its tests")
+    publish()
+    check("a commit that changes only Markdown under the system makes nothing due",
+          overview_refresh_due_or_missing(repository) == (),
+          repr(overview_refresh_due_or_missing(repository)))
+
+    grown = commit({"nc-systems/widget/widget.py": "print('widget, grown')\n"},
+                   "the widget grows")
+    main = publish()
+    expected = expected_widget_overview_refresh_due_line(landed[:7], main, 1)
+    due = overview_refresh_due_or_missing(repository)
+    check("a system whose code moved past its overview's pinned commit gets one line, "
+          "naming the system and the range, exactly",
+          due == (expected,), f"{due!r}\nexpected: {expected!r}")
+    listed = git_in(["log", "--no-merges", "--format=%H", f"{landed[:7]}..{main}", "--",
+                     "nc-systems/widget/", ":(exclude)nc-systems/widget/*.md"],
+                    repository).stdout.split()
+    check("the command the line hands the successor lists exactly the commit that moved",
+          listed == [grown], str(listed))
+
+    # Systems that are skipped, beside the one that is due. gadget's overview
+    # names its commit only in prose, the form the handoff overview used before
+    # its pinned line; sprocket has no overview; gizmo's pinned line names a
+    # well-formed sha this repository holds no commit for, and a pinned line
+    # counts only when its commit resolves.
+    absent = "abc1234"
+    commit({"nc-systems/gadget/gadget.py": "print('gadget')\n",
+            "docs/nedschorus-wiki/nedschorus-gadget-system-overview.md":
+                f"# The gadget\n\nChecked against the code at commit [{landed[:7]}] "
+                "on 2026-09-28.\n",
+            "nc-systems/sprocket/sprocket.py": "print('sprocket')\n",
+            "nc-systems/gizmo/gizmo.py": "print('gizmo')\n",
+            "docs/nedschorus-wiki/nedschorus-gizmo-system-overview.md":
+                "# The gizmo\n\n" + f"**Pinned to what landed:** commit [{absent}]"
+                f"(https://github.com/nedschorus/nedschorus/commit/{absent}) on "
+                "2026-09-28 — the gizmo.\n"},
+           "three systems land, none with a pinned line that counts")
+    main = publish()
+    expected = expected_widget_overview_refresh_due_line(landed[:7], main, 1)
+    due = overview_refresh_due_or_missing(repository)
+    check("systems whose overview has no pinned line, or no overview at all, are "
+          "skipped without error",
+          due == (expected,), f"{due!r}\nexpected: {expected!r}")
+    # The first condition proves the fixture holds no commit by that name.
+    absent_names_no_commit = subprocess.run(
+        ["git", "rev-parse", "--verify", "--quiet", absent + "^{commit}"],
+        cwd=str(repository), capture_output=True, check=False).returncode != 0
+    check("a pinned line naming a commit the repository does not hold counts as no pin",
+          absent_names_no_commit and due != "missing"
+          and not any("gizmo" in line for line in due),
+          repr(due))
+
+    # Each refresh appends a pinned line, so the last one is the overview's pin.
+    commit({widget_overview: "# The widget: an overview\n\nIt widgets.\n\n"
+            + pinned_line(landed) + "\n\n" + pinned_line(grown) + "\n"},
+           "the widget's overview is refreshed and pinned again")
+    publish()
+    check("of several pinned lines, the last is the overview's pin",
+          overview_refresh_due_or_missing(repository) == (),
+          repr(overview_refresh_due_or_missing(repository)))
+
+    # The two failures the round-1 reviews of the pull request that built this
+    # asked about (2026-09-28). The widget moves again first, so a line is due
+    # and each failure has something to lose.
+    commit({"nc-systems/widget/widget.py": "print('widget, grown again')\n"},
+           "the widget grows again")
+    main = publish()
+    expected = expected_widget_overview_refresh_due_line(grown[:7], main, 1)
+    due = overview_refresh_due_or_missing(repository)
+    check("a system that moves past its latest pin is due again",
+          due == (expected,), f"{due!r}\nexpected: {expected!r}")
+
+    # origin/main verified but its short name unreadable: an empty name would
+    # make the range `<pinned>..`, which git reads against the seat's HEAD.
+    real_run_git_here = supervisor.run_git_here
+
+    def run_git_here_that_cannot_name_a_commit(arguments, working_directory, timeout=60):
+        if arguments[0] == "rev-parse" and "--short" in arguments:
+            return subprocess.CompletedProcess(arguments, 1, "", "stub: timed out")
+        return real_run_git_here(arguments, working_directory, timeout=timeout)
+
+    supervisor.run_git_here = run_git_here_that_cannot_name_a_commit
+    try:
+        due = overview_refresh_due_or_missing(repository)
+    finally:
+        supervisor.run_git_here = real_run_git_here
+    check("when origin/main's commit cannot be named, no line is given, never a "
+          "range read against the seat's HEAD",
+          due == (), repr(due))
+
+    # A read of one system's overview that hangs. aardvark sorts before widget,
+    # so ending the loop there would lose widget's line.
+    commit({"nc-systems/aardvark/aardvark.py": "print('aardvark')\n"}, "the aardvark lands")
+    main = publish()
+    expected = expected_widget_overview_refresh_due_line(grown[:7], main, 1)
+    real_git = shutil.which("git")
+    stub_directory = root / "git-that-hangs-on-one-overview"
+    stub_directory.mkdir()
+    stub_git = stub_directory / "git"
+    stub_git.write_text(
+        "#!/bin/sh\n"
+        'case "$*" in\n'
+        '  *"show origin/main:docs/nedschorus-wiki/nedschorus-aardvark-system-overview.md"*)\n'
+        "    exec sleep 30 ;;\n"
+        "esac\n"
+        f'exec "{real_git}" "$@"\n',
+        encoding="utf-8")
+    stub_git.chmod(0o755)
+    original_path = os.environ.get("PATH", "")
+    had_timeout = hasattr(supervisor, "OVERVIEW_REFRESH_CHECK_GIT_TIMEOUT_SECONDS")
+    original_timeout = getattr(supervisor, "OVERVIEW_REFRESH_CHECK_GIT_TIMEOUT_SECONDS", None)
+    supervisor.OVERVIEW_REFRESH_CHECK_GIT_TIMEOUT_SECONDS = 1
+    console = io.StringIO()
+    os.environ["PATH"] = f"{stub_directory}{os.pathsep}{original_path}"
+    try:
+        with contextlib.redirect_stdout(console):
+            due = overview_refresh_due_or_missing(repository)
+    finally:
+        os.environ["PATH"] = original_path
+        if had_timeout:
+            supervisor.OVERVIEW_REFRESH_CHECK_GIT_TIMEOUT_SECONDS = original_timeout
+        else:
+            del supervisor.OVERVIEW_REFRESH_CHECK_GIT_TIMEOUT_SECONDS
+    check("a read of one system's overview that times out passes over that system "
+          "only, and a later system that is due still gets its line",
+          due == (expected,), f"{due!r}\nexpected: {expected!r}\n{console.getvalue()}")
+    check("the system passed over is named on the console with the cause",
+          "handoff-supervisor: overview check for aardvark passed over: TimeoutExpired"
+          in console.getvalue(), console.getvalue())
+
+
+def run_overview_refresh_due_prompt_cases(workspace: Path):
+    """Where the overview-refresh-due line goes: right after the branch-state
+    line, at both call sites that compose it, and nothing appended."""
+    check("the overview-refresh-due instruction is word for word what was built",
+          getattr(supervisor, "OVERVIEW_REFRESH_DUE_INSTRUCTION_TEMPLATE", None)
+          == EXPECTED_OVERVIEW_REFRESH_DUE_INSTRUCTION_TEMPLATE,
+          repr(getattr(supervisor, "OVERVIEW_REFRESH_DUE_INSTRUCTION_TEMPLATE", None)))
+    # The convention finds the one overview on main, and that overview carries
+    # a pinned line the reader counts: without one the check reports nothing
+    # for the handoff system, silently.
+    handoff_overview = REPOSITORY_ROOT / getattr(
+        supervisor, "SYSTEM_OVERVIEW_PATH_TEMPLATE", "missing").format(system="handoff")
+    check("the overview path convention names the handoff system's overview",
+          handoff_overview.is_file(), str(handoff_overview))
+    reader = getattr(supervisor, "stale_code_citation_check", None)
+    check("the handoff overview carries a pinned line the pinned-line reader counts",
+          reader is not None and handoff_overview.is_file()
+          and bool(reader.landing_pin_commits(
+              handoff_overview.read_text(encoding="utf-8"), REPOSITORY_ROOT)),
+          str(handoff_overview))
+
+    line = expected_widget_overview_refresh_due_line("1111111", "2222222", 3)
+    branch_state_line = (
+        "branch sync: fixture-branch is 3 commit(s) behind main — If this "
+        "branch has never been pushed, rebase it onto origin/main before your "
+        "first substantive action and rerun the tests for what you touched. "
+        "If it is pushed, leave it as it is, and start new work on a branch "
+        "from origin/main. If this seat has "
+        "open pull requests, check their state with `gh`: merge-lane-2 reviews "
+        "and merges them; when one has a review with findings, dispatch a "
+        "forked subagent to fix it — never extend a head you've already announced.")
+    fields = {"written-at": "2026-09-28T17:20:00Z", "next-step": "finish the supervisor"}
+    try:
+        prompt = supervisor.build_ignition_prompt(
+            Path("/tmp/dialog-0002.md"), fields,
+            branch_sync_report="branch sync: fixture-branch is 3 commit(s) behind main",
+            overview_refresh_due=(line,))
+    except TypeError:
+        prompt = ""
+    expected_rest = " " + line + "\n\nThen take the next step:\nfinish the supervisor"
+    check("the overview-refresh-due line follows the branch-state line, exactly, and "
+          "nothing is appended at the call site",
+          nothing_is_appended_to(prompt, branch_state_line, expected_rest),
+          "rest after the branch-state line: "
+          + repr(prompt.split("already announced.", 1)[-1])
+          + "; expected: " + repr(expected_rest))
+    try:
+        plan_prompt = supervisor.DialogIgnitionPlan(Path("/tmp/dialog-0002.md"), fields).compose(
+            "branch sync: fixture-branch is 3 commit(s) behind main", (line,))
+    except TypeError:
+        plan_prompt = "compose takes no overview lines"
+    check("the dialog plan hands its overview lines to the prompt it composes",
+          plan_prompt == prompt and prompt != "", repr(plan_prompt))
+    try:
+        boot_recovery_prompt = supervisor.BootRecoveryIgnitionPlan(
+            "finish the supervisor").compose(
+                "branch sync: fixture-branch is 3 commit(s) behind main", (line,))
+    except TypeError:
+        boot_recovery_prompt = ""
+    check("the boot-recovery prompt is its next step, the recovery note, the "
+          "branch-state line and the overview-refresh-due line, exactly",
+          boot_recovery_prompt == (
+              "finish the supervisor\n\n(Recovered at supervisor boot: the previous "
+              "session's dialog extract is unavailable; this next-step and the "
+              "repository are your whole context.) " + branch_state_line + " " + line),
+          repr(boot_recovery_prompt))
+
+    # End to end: a supervisor igniting a seat whose checkout has a system due
+    # hands the successor the line, after the branch-state instruction, and
+    # prints it on its console.
+    seat = workspace / "overview-refresh-due-seat"
+    seat.mkdir()
+    git_in(["init", "--quiet", "--initial-branch=main"], seat)
+    git_in(["config", "user.name", "fixture"], seat)
+    git_in(["config", "user.email", "fixture@nedschorus.invalid"], seat)
+    (seat / "nc-systems" / "widget").mkdir(parents=True)
+    (seat / "nc-systems" / "widget" / "widget.py").write_text("print(1)\n", encoding="utf-8")
+    git_in(["add", "-A"], seat)
+    git_in(["commit", "--quiet", "-m", "the widget lands"], seat)
+    landed = git_in(["rev-parse", "HEAD"], seat).stdout.strip()
+    (seat / "docs" / "nedschorus-wiki").mkdir(parents=True)
+    (seat / "docs" / "nedschorus-wiki" / "nedschorus-widget-system-overview.md").write_text(
+        f"# The widget\n\n**Pinned to what landed:** commit [{landed[:7]}]"
+        f"(https://github.com/nedschorus/nedschorus/commit/{landed}) on 2026-09-28 "
+        "— the widget.\n", encoding="utf-8")
+    (seat / "nc-systems" / "widget" / "widget.py").write_text("print(2)\n", encoding="utf-8")
+    git_in(["add", "-A"], seat)
+    git_in(["commit", "--quiet", "-m", "the overview is pinned and the widget grows"], seat)
+    git_in(["update-ref", "refs/remotes/origin/main", "HEAD"], seat)
+    main = git_in(["rev-parse", "--short", "HEAD"], seat).stdout.strip()
+    expected = expected_widget_overview_refresh_due_line(landed[:7], main, 1)
+
+    handoff_directory = workspace / "overview-refresh-due-handoffs"
+    handoff_directory.mkdir()
+    (handoff_directory / "refreshdue-handoff.md").write_text(
+        "written-at: 2026-09-28T00:00:00Z\nnext-step: resume the audit\nrestart-counter: 5\n",
+        encoding="utf-8")
+    supervisor.write_supervisor_state(
+        handoff_directory / "refreshdue-supervisor-state.json",
+        {"consumed_counter": 4, "launched_session_id": "no-such-session", "generation": 4})
+    record_path = handoff_directory / "launch-record.txt"
+    stub_agent = handoff_directory / "stub-agent"
+    stub_agent.write_text(
+        "#!/bin/sh\n"
+        "exec >/dev/null 2>&1\n"
+        "for launched_prompt; do :; done\n"
+        f"printf '%s\\n' \"$launched_prompt\" > '{record_path}'\n"
+        "exit 0\n",
+        encoding="utf-8")
+    stub_agent.chmod(0o755)
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT_PATH), "--agent", "refreshdue", "--cd", str(seat),
+         "--handoff-dir", str(handoff_directory), "--agent-command", str(stub_agent),
+         "--agent-update-timeout-seconds", "0"],
+        capture_output=True, text=True, check=False, stdin=subprocess.DEVNULL, timeout=60)
+    launched = record_path.read_text(encoding="utf-8") if record_path.is_file() else ""
+    check("an ignited successor's prompt carries the overview-refresh-due line after "
+          "the branch-state instruction",
+          expected in launched and "already announced." in launched
+          and launched.index("already announced.") < launched.index(expected),
+          f"{result.returncode} {launched[-900:]!r} {result.stdout[-600:]}")
+    check("the supervisor prints the overview-refresh-due line on its console",
+          f"handoff-supervisor: {expected}" in result.stdout, result.stdout[-900:])
+
+
 def run_no_seat_recycle_refusal_case(workspace: Path):
     """A handoff arriving at a supervisor with no terminal must not reincarnate:
     the successor would inherit this stdio and die at its first need for
@@ -3178,6 +3542,8 @@ def run_retiring_session_id_from_the_handoff_cases(workspace: Path, recent: str)
 with tempfile.TemporaryDirectory() as temporary_directory:
     recent_timestamp = run_offline_cases(Path(temporary_directory))
     run_branch_sync_cases(Path(temporary_directory))
+    run_overview_refresh_due_cases(Path(temporary_directory))
+    run_overview_refresh_due_prompt_cases(Path(temporary_directory))
     run_exit_handoff_cases(Path(temporary_directory))
     run_adoption_cases(Path(temporary_directory))
     run_dont_restart_without_a_terminal_case(Path(temporary_directory))
