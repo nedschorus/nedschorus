@@ -42,7 +42,7 @@ A file in a queue directory is named as it will be at its home, apart from the i
   - **Naming:** `<multi-part-name>-design.md` before its GHI is filed; `<issue number>-<multi-part-name>-design.md` once it is filed; `<multi-part-name>-design.md` again once it moves to its code's `docs/`. The `-design` suffix stays in all three, though not every GHI has a design.
 - **Other system or subsystem MDs**
   - **Location:** `nc-systems/<system-name>/docs/`, beside the system's `tests/`. A subsystem, which has a subdirectory of its system's directory, keeps its MDs in that subdirectory's `docs/`. A skill keeps only its `SKILL.md` in `.claude/skills/<skill name>/`; the rest of it lives in `nc-systems/skills/<skill name>/`, its MDs other than its prompts in that directory's `docs/`. Project MDs that belong to no one system stay in the top-level `docs/`, as the entries above say.
-  - **Naming:** `<subject>.md`
+  - **Naming:** `<system-name>-<subject>.md`; for a skill, `<skill name>-<subject>.md`
 - **Program, in Python or shell**
   - **Location:** `nc-systems/<system-name>/` for a system's own; `nc-systems/general-tools/` for one that belongs to no system
   - **Naming:** `<multi-part-name>.py` or `<multi-part-name>.sh`; a launcher people type as a command, such as `launch-claude-mac`, has no extension
