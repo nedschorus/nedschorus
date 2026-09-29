@@ -6,6 +6,14 @@ issue: "[The handoff-supervisor resumes a session that died without a handoff, i
 
 The handoff-supervisor stops when its session dies without writing a handoff. The seat then stays dark until a person notices. This issue carries the user's ruling of 2026-09-21 that the supervisor should resume the session itself, choosing by how the session died, under a bounded retry budget.
 
+## Outcome
+
+Done by PR [The handoff-supervisor resumes a session that died without a handoff](https://github.com/nedschorus/nedschorus/pull/651), merged 2026-09-22 as that pull request's merge commit [aff81ae4](https://github.com/nedschorus/nedschorus/commit/aff81ae4a60d275087e773722a5a5f1a27bd199f).
+
+The budget it built is 1, not the 2 this issue asks for below: `CONSECUTIVE_RESUMES_WITHOUT_NEW_WORK_BUDGET = 1` in `nc-systems/handoff/handoff-supervisor.py`. The user ruled on 2026-09-22: "If resume doesn't work, then dont try again".
+
+Closed 2026-09-29 by the user's "y" at walk open-items-this-seat-holds-2026-09-24, item 13.
+
 ## What happens today
 
 `nc-systems/handoff/handoff-supervisor.py` line 1702, reached when `wait_for_handoff` returns `None`: the supervisor records the child's exit code and time in its state file, prints `session ended without a handoff; supervisor stopping`, and returns 0.
@@ -60,12 +68,7 @@ The budget is the only genuinely new concept. Search receipt for that claim: `gr
 
 ## Next action
 
-Build it on a branch cut from current main, as one pull request:
-
-1. A constant for the budget and a pure classification function taking an exit code and returning resume-or-stop with a reason, so the table above is testable without a process.
-2. Wire the in-loop death path to resume — set the resume prompt, mark the next launch as a resume, and continue the loop without advancing the generation, since it is the same conversation.
-3. Track consecutive resumes, resetting when the transcript has grown since the last resume.
-4. Tests for each exit class in the table, for the budget stopping the loop, for the budget resetting after real work, and for the no-terminal refusal.
+None. The issue is closed; see Outcome.
 
 ## Related
 
