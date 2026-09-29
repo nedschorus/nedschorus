@@ -189,6 +189,8 @@ EDIT_BODY_REFUSAL = (
 )
 EDIT_TITLE_REFUSAL = (
     "Do not set this project's issue titles with gh issue edit.\n"
+    "If the issue has more than one GHI-MD, or its GHI-MD's first heading "
+    "already reads the title you want, stop and tell the user.\n"
     "Change the first heading of the issue's GHI-MD, docs/issues/<number>-*.md, "
     "then land it with: python3 scripts/ghi-issue-write.py edit <path>\n"
     "To change only labels, assignees or the milestone, run gh issue edit "

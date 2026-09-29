@@ -232,6 +232,14 @@ for text in REFUSAL_TEXTS:
               and "because" not in line and "ruled" not in line
               and "2026" not in line, line)
 
+# edit-GHI retitles only an issue with one filed GHI-MD, and only when the
+# edit changes its heading, so the title refusal sends the agent to the user
+# in the other two cases.
+check("the title refusal stops when edit-GHI cannot retitle",
+      "If the issue has more than one GHI-MD, or its GHI-MD's first heading "
+      "already reads the title you want, stop and tell the user."
+      in guard.EDIT_TITLE_REFUSAL.splitlines(), guard.EDIT_TITLE_REFUSAL)
+
 # Non-Bash tools and empty or unreadable payloads pass without a word.
 for tool_name in ("Edit", "Write"):
     check(f"a {tool_name} call passes", decision_for("gh issue comment 1 -b x",
