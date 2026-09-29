@@ -125,6 +125,54 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     result = run_hook(decoy, workspace, str(worktree / ".claude" / "hooks" / "some-hook.py"))
     check("a worktree's own .claude machinery is still blocked", result.returncode == 2)
 
+    # Reusable prompts (2026-09-29): a file named -prompt.md or -instructions.md
+    # anywhere in a checkout, except where drafts and working files are written.
+    result = run_hook(decoy, workspace, str(workspace / "docs" / "agents" / "fleet-instructions.md"))
+    check("a seat brief in docs/agents/ is blocked", result.returncode == 2)
+    check("the block says it is a reusable prompt", "reusable prompt" in result.stderr, result.stderr)
+    check("the block sends a one-off prompt to the scratchpad", "scratchpad" in result.stderr,
+          result.stderr)
+    result = run_hook(decoy, workspace, str(workspace / "docs" / "agents" / "seat-first-prompt.md"))
+    check("a first prompt in docs/agents/ is blocked", result.returncode == 2)
+    skills = workspace / "nc-systems" / "skills" / "cold-read"
+    result = run_hook(decoy, workspace, str(skills / "defect-hunt-prompt.md"))
+    check("a skill prompt under nc-systems/skills/ is blocked", result.returncode == 2)
+    result = run_hook(decoy, workspace, str(skills / "docs" / "cold-read-cell-instructions.md"))
+    check("a skill's instructions in its docs/ are blocked", result.returncode == 2)
+    result = run_hook(decoy, workspace, str(workspace / "nc-systems" / "handoff" / "handoff-prompt.md"))
+    check("a program's prompt beside it is blocked", result.returncode == 2)
+    result = run_hook(decoy, workspace,
+                      str(worktree / "docs" / "agents" / "fleet-instructions.md"))
+    check("a reusable prompt inside a worktree checkout is still blocked", result.returncode == 2)
+    result = run_hook(decoy, workspace, str(skills / "cold-read-grid.py"))
+    check("a skill's code passes", result.returncode == 0, result.stderr)
+    result = run_hook(decoy, workspace, str(skills / "docs" / "cold-read-design.md"))
+    check("a skill's design passes", result.returncode == 0, result.stderr)
+    result = run_hook(decoy, workspace, str(skills / "defect-hunt.md"))
+    check("a prompt without either ending passes (guarded by name only)",
+          result.returncode == 0, result.stderr)
+    result = run_hook(decoy, workspace, str(workspace / "docs" / "prompt-writing-notes.md"))
+    check("a file merely mentioning prompt passes", result.returncode == 0, result.stderr)
+    result = run_hook(decoy, workspace, str(workspace / "docs" / "agents" / "queue" / "new-instructions.md"))
+    check("a draft in docs/agents/queue/ passes", result.returncode == 0, result.stderr)
+    result = run_hook(decoy, workspace, str(workspace / "docs" / "issues" / "queue" / "x-prompt.md"))
+    check("a draft in docs/issues/queue/ passes", result.returncode == 0, result.stderr)
+    result = run_hook(decoy, workspace, str(workspace / "nc-queue" / "x-prompt.md"))
+    check("a note in nc-queue/ passes", result.returncode == 0, result.stderr)
+    result = run_hook(decoy, workspace, str(workspace / "docs" / "drafts" / "x-instructions.md"))
+    check("a draft in docs/drafts/ passes", result.returncode == 0, result.stderr)
+    result = run_hook(decoy, workspace, str(workspace / ".claude" / "jobs" / "ab12" / "tmp" / "x-prompt.md"))
+    check("a background job's scratch prompt passes", result.returncode == 0, result.stderr)
+    outside = tmp / "scratchpad-outside-any-checkout"
+    outside.mkdir()
+    result = run_hook(decoy, workspace, str(outside / "subagent-prompt.md"))
+    check("a one-off prompt outside any checkout passes", result.returncode == 0, result.stderr)
+    marker = workspace / ".walk-approved"
+    marker.write_text("y\n", encoding="utf-8")
+    result = run_hook(decoy, workspace, str(workspace / "docs" / "agents" / "fleet-instructions.md"))
+    check("an approved change to a reusable prompt passes once", result.returncode == 0, result.stderr)
+    check("the marker is consumed by the prompt's pass", not marker.exists())
+
     result = run_hook(decoy, workspace, "")
     check("a payload without a file path passes", result.returncode == 0)
 
