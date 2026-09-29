@@ -6,6 +6,16 @@ issue: "[recover-crashed-seats: a recovered seat's supervisor runs from whicheve
 
 A seat that `scripts/recover-crashed-seats.py` brings back runs its handoff-supervisor from whichever checkout the recovery program was run from: a seat's own worktree, a topic worktree, anything. That supervisor then runs that checkout's code for the rest of its life, and it stops the seat at its next handoff if that checkout is later removed.
 
+## Outcome
+
+The user ruled on 2026-09-29, at walk open-items-this-seat-holds-2026-09-24, item 12. He answered "y" to: "always run the supervisor from the machine's reference clone, `~/Projects/nedschorus`, as the login restart already does".
+
+PR [A recovered seat's supervisor runs from the reference clone, not from the checkout the recovery ran from](https://github.com/nedschorus/nedschorus/pull/778) built it. It merged at 2026-09-29T18:19:07Z as merge commit [Merge pull request #778 from nedschorus/recovered-seat-supervisor-runs-from-reference-clone](https://github.com/nedschorus/nedschorus/commit/45a77f90738d946792e1029d7a40919274cb754c), which closed this issue.
+
+Both launch paths now take the supervisor from the durable checkout, `--checkout`, default `~/Projects/nedschorus`, whichever checkout the recovery runs from: on the Mac through that checkout's `launch-claude-mac`, and off macOS through a tmux command that names that checkout's supervisor. When the file a launch needs is missing there, nothing is launched and the seat is reported REFUSED, which counts as not recovered.
+
+The reviews left one question open: `scripts/restart-live-seats-at-login.py` passes no `--checkout`, so a login restart installed with `--checkout` naming another checkout would still launch its seats from `~/Projects/nedschorus`; no install does that today, since on 2026-09-29 the Mac's launch agent and ned-box's systemd unit both name `~/Projects/nedschorus`.
+
 ## Reproduction
 
 Measured 2026-09-22 on both machines at main as of that day, the merge commit of PR [The task viewer's refusal names only the machines it read](https://github.com/nedschorus/nedschorus/pull/656), in scratch state only: two copies of the program (`git archive` of that commit) at two different paths, a scratch `HOME` with a stub `claude` on `PATH`, scratch agents, handoff and projects roots, and a scratch seat `item4reprocanary` on its own tmux socket. The recovery was a real run, not a dry run. It ran once from copy A; then the scratch seat's tmux server was killed and the recovery ran again from copy B.
@@ -52,7 +62,7 @@ A seat's own worktree carries the same risk in a milder form. On this Mac on 202
 
 ## Next action
 
-The user decides where a recovered seat's supervisor should run from. One option is the machine's reference clone (`~/Projects/nedschorus`), which the login restart already uses. Another is a warning or refusal when the recovery program runs from any other checkout. Then build the choice on a branch cut from main, with a test in `scripts/recover-crashed-seats-test.py` that pins the supervisor path on both launch branches.
+None. The issue is closed; see Outcome.
 
 ## Relations
 
