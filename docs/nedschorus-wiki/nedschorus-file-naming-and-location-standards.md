@@ -38,10 +38,10 @@ A file in a queue directory is named as it will be at its home, apart from the i
   - **Location:** `docs/issues/`; a GHI-MD that is a design moves as the next entry says
   - **Naming:** `<issue number>-<multi-part-name>.md`
 - **Design document, including a GHI-MD that is a design**
-  - **Location:** Before its GHI is filed, `docs/issues/queue/`. Once its GHI is filed, `docs/issues/`, where it is refined in place until its code lands; from then it is not refined again, and each landing appends a pinned line carrying the landing commit. When its code lands, the design moves to the directory its code is in, its system's directory or `nc-systems/general-tools/`, and the GHI's link is updated.
-  - **Naming:** `<multi-part-name>-design.md` before its GHI is filed; `<issue number>-<multi-part-name>-design.md` once it is filed; `<multi-part-name>-design.md` again once it moves beside its code. The `-design` suffix stays in all three, though not every GHI has a design.
+  - **Location:** Before its GHI is filed, `docs/issues/queue/`. Once its GHI is filed, `docs/issues/`, where it is refined in place until its code lands; from then it is not refined again, and each landing appends a pinned line carrying the landing commit. When its code lands, the design moves to the `docs/` subdirectory of the directory its code is in, `nc-systems/<system-name>/docs/` or `nc-systems/general-tools/docs/`, and the GHI's link is updated.
+  - **Naming:** `<multi-part-name>-design.md` before its GHI is filed; `<issue number>-<multi-part-name>-design.md` once it is filed; `<multi-part-name>-design.md` again once it moves to its code's `docs/`. The `-design` suffix stays in all three, though not every GHI has a design.
 - **Other system or subsystem MDs**
-  - **Location:** `nc-systems/<system-name>/`, with a subsystem in a subdirectory of its system's directory. A skill keeps only its `SKILL.md` in `.claude/skills/<skill name>/`; the rest of it lives in `nc-systems/skills/<skill name>/`.
+  - **Location:** `nc-systems/<system-name>/docs/`, beside the system's `tests/`. A subsystem, which has a subdirectory of its system's directory, keeps its MDs in that subdirectory's `docs/`. A skill keeps only its `SKILL.md` in `.claude/skills/<skill name>/`; the rest of it lives in `nc-systems/skills/<skill name>/`, its MDs other than its prompts in that directory's `docs/`. Project MDs that belong to no one system stay in the top-level `docs/`, as the entries above say.
   - **Naming:** `<subject>.md`
 - **Program, in Python or shell**
   - **Location:** `nc-systems/<system-name>/` for a system's own; `nc-systems/general-tools/` for one that belongs to no system
