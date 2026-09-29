@@ -1110,15 +1110,53 @@ def main():
         captured["command"] = list(command)
         return subprocess.CompletedProcess(list(command), 0, "", "")
 
+    # The credential lists are pointed at a scratch home for the call, so the
+    # profile's denials name paths in it and the real home is neither scanned
+    # nor named in a failure line.
+    credential_scratch = tempfile.TemporaryDirectory()
+    scratch_home = pathlib.Path(credential_scratch.name)
+    (scratch_home / ".config" / "nedschorus").mkdir(parents=True)
+    login_canary = scratch_home / ".codex" / "auth.json"
+    login_canary.parent.mkdir(parents=True)
+    login_canary.write_text("CANARY-NOT-A-SECRET-sanity-check-attacks-test\n", encoding="utf-8")
+    shared = runner_memories.common
+    real_lists = (shared.CREDENTIAL_DIRECTORIES, shared.REVIEWER_PROGRAM_LOGIN_FILES,
+                  shared.credential_files_found_now)
     try:
         runner_memories.subprocess.run = capture_command
+        shared.CREDENTIAL_DIRECTORIES = (scratch_home / ".config" / "nedschorus",
+                                         scratch_home / ".ssh")
+        shared.REVIEWER_PROGRAM_LOGIN_FILES = {"codex": (login_canary,)}
+        shared.credential_files_found_now = lambda: []
         runner_memories.run_codex("a prompt no model ever sees")
     finally:
         runner_memories.subprocess.run = real_subprocess_run
+        (shared.CREDENTIAL_DIRECTORIES, shared.REVIEWER_PROGRAM_LOGIN_FILES,
+         shared.credential_files_found_now) = real_lists
     codex_command = captured.get("command", [])
     check("run_codex launches codex with memories disabled",
           ("--disable", "memories") in list(zip(codex_command, codex_command[1:])),
           f"composed command was {codex_command}")
+
+    # No credential file is readable (user-ruled 2026-09-29): a permission
+    # profile extending :workspace with network on, which Codex will not
+    # combine with --sandbox, in place of workspace-write plus network.
+    codex_overrides = [codex_command[index + 1] for index, argument
+                       in enumerate(codex_command[:-1]) if argument == "-c"]
+    denied_table = next((override.split("=", 1)[1] for override in codex_overrides
+                         if override.startswith("permissions.sanity-check-no-credentials.filesystem=")),
+                        "")
+    check("run_codex runs under no --sandbox, which Codex will not combine with a profile",
+          "--sandbox" not in codex_command, f"composed command was {codex_command}")
+    check("run_codex runs under the credential-denying profile, extending :workspace, network on",
+          'default_permissions="sanity-check-no-credentials"' in codex_overrides
+          and 'permissions.sanity-check-no-credentials.extends=":workspace"' in codex_overrides
+          and "permissions.sanity-check-no-credentials.network.enabled=true" in codex_overrides,
+          repr(codex_overrides))
+    check("run_codex's profile denies the credential directory and a reviewer program's login file",
+          f'"{scratch_home}/.config/nedschorus"="deny"' in denied_table
+          and f'"{login_canary}"="deny"' in denied_table, denied_table)
+    credential_scratch.cleanup()
 
     # The claude cells must launch with Write in the tool set: each is given a
     # scratch directory and told to keep its notes and drafts there

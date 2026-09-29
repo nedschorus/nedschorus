@@ -119,8 +119,9 @@ Running a sanity-check, and reading its output:
   described above. Expect hits on every run: the off-limits list must name
   the design's paths to forbid them, and those paths are coined names.
 - Every review agent may reach the internet to check facts, and every one may
-  write: claude agents carry web tools plus Write, codex agents run
-  workspace-write with network on. Where they may write is instructed, not
+  write: claude agents carry web tools plus Write, codex agents run under a
+  permission profile that writes where workspace-write did, with network on,
+  and denies every credential file. Where they may write is instructed, not
   enforced — each prompt names that agent's scratch directory and confines it
   there. Withholding the tools was never the protection it looked like: on
   2026-08-21 a claude agent wrote a file to the worktree while carrying no
@@ -173,6 +174,7 @@ import pathlib
 import re
 import subprocess
 import sys
+import importlib.util
 import tempfile
 import threading
 
@@ -182,6 +184,12 @@ RECORDS_ROOT = REPO_ROOT / RECORDS_DIRECTORY_NAME
 # The record reaches the log-store by program, not by an agent remembering to
 # run one (nedschorus#392), the way nc-systems/cold-read/cold-read-grid.py ships its own.
 RECORD_SHIPPER = REPO_ROOT / "scripts" / "sanity-check-record-ship.py"
+_common_spec = importlib.util.spec_from_file_location(
+    "cold_read_cell_common", REPO_ROOT / "nc-systems" / "cold-read" / "cold-read-cell-common.py")
+common = importlib.util.module_from_spec(_common_spec)
+_common_spec.loader.exec_module(common)
+# The Codex cells' permission profile, as it appears in their sessions.
+CODEX_CREDENTIAL_DENYING_PERMISSION_PROFILE = "sanity-check-no-credentials"
 
 # The sanctioned working space, one directory per cell, inside the run's own
 # record directory: <record dir>/scratch/<audit>-<runtime>/. See
@@ -480,11 +488,16 @@ def run_codex(prompt: str) -> tuple:
     # blocks even DNS, measured that day). Disk writes are possible here and
     # confined by the prompt to the cell's own scratch directory; run_cell's
     # worktree check detects strays outside it — containment over prevention,
-    # the house doctrine.
+    # the house doctrine. Both come from a permission profile extending
+    # `:workspace` with network on, which also denies every credential file
+    # (user-ruled 2026-09-29, item 8 of the walk
+    # what-a-cold-read-reviewer-may-read-2026-09-28, "y"): the builder the
+    # cold-read Codex cell uses, in nc-systems/cold-read/cold-read-cell-common.py.
     last_message_path = pathlib.Path(tempfile.mkstemp(suffix=".md", prefix="attack-cell-")[1])
     command = [
         "codex", "exec",
-        "--sandbox", "workspace-write",
+        *common.codex_credential_denying_permission_profile_arguments(
+            CODEX_CREDENTIAL_DENYING_PERMISSION_PROFILE, ":workspace", network=True),
         # Codex's machine-wide memory store off for this cell: an audit cell
         # must be naive, not carrying forward what Codex concluded reviewing
         # this project before, and these automated runs should not deposit
@@ -493,7 +506,6 @@ def run_codex(prompt: str) -> tuple:
         # scripts/code-review-codex-cell.py's docstring, under the heading
         # WHY THE CODEX MEMORY STORE IS OFF FOR REVIEW CELLS
         "--disable", "memories",
-        "-c", "sandbox_workspace_write.network_access=true",
         "-C", str(REPO_ROOT),
         "--output-last-message", str(last_message_path),
         "-m", CODEX_MODEL,

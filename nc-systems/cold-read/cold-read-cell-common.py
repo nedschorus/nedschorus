@@ -93,6 +93,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import json
 import os
 import pathlib
 import re
@@ -322,6 +323,45 @@ def credential_files_found_now() -> list:
         if path and not any(directory == pathlib.Path(path)
                             or directory in pathlib.Path(path).parents
                             for directory in CREDENTIAL_DIRECTORIES))
+
+
+def codex_credential_denying_permission_profile_arguments(
+        profile_name: str, extends: str, platform: str = sys.platform,
+        network: bool = False) -> list:
+    """The `-c` overrides that run `codex exec` under the permission profile
+    `profile_name`, extending Codex's built-in `extends` (`:workspace` or
+    `:read-only`) and denying every credential path. The one builder for
+    every program in this repository that runs Codex over a document or a
+    diff (user-ruled 2026-09-29, item 8 of the walk
+    what-a-cold-read-reviewer-may-read-2026-09-28, "y"). Why each part is
+    there -- the profile instead of `--sandbox`, exact paths on Linux and
+    patterns on macOS, /tmp read-only on Linux only -- is in
+    nc-systems/cold-read/cold-read-codex-cell.py's docstring. /tmp is made
+    read-only only under `:workspace`, the one base that makes it writable.
+    `network` switches on network access in the profile, which denies it by
+    default. The filesystem table comes last.
+
+    Values are TOML: a quoted key per path, so a path is escaped the way
+    JSON escapes a string, which TOML's basic strings share.
+    """
+    entries = ({":slash_tmp": "read", ":tmpdir": "read"}
+               if platform.startswith("linux") and extends == ":workspace" else {})
+    denied = credential_directories_present()
+    denied += reviewer_program_login_files(only_present=True)
+    if platform.startswith("linux"):
+        denied += credential_files_found_now()
+    else:
+        denied += [f"/**/{pattern}" for pattern in CREDENTIAL_FILE_NAME_PATTERNS]
+    entries.update((path, "deny") for path in denied)
+    table = "{" + ",".join(f"{json.dumps(path)}={json.dumps(access)}"
+                           for path, access in entries.items()) + "}"
+    arguments = [
+        "-c", f'default_permissions="{profile_name}"',
+        "-c", f'permissions.{profile_name}.extends="{extends}"',
+    ]
+    if network:
+        arguments += ["-c", f"permissions.{profile_name}.network.enabled=true"]
+    return arguments + ["-c", f"permissions.{profile_name}.filesystem={table}"]
 
 
 class BadInvocationArgumentParser(argparse.ArgumentParser):

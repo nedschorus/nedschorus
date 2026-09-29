@@ -12,7 +12,14 @@ must not drift are pinned:
   - the sandbox, read-only AT THE PARENT LEVEL -- this machine's Codex
     config defaults to workspace-write, so a reviewer that forgets this
     flag can write (the nested `review` parser rejects --sandbox; parent
-    placement is the accepted form, verified on codex-cli 0.147.0);
+    placement is the accepted form, verified on codex-cli 0.147.0). It is a
+    permission profile extending Codex's `:read-only`, not `--sandbox
+    read-only`, because the profile also denies every credential file
+    (user-ruled 2026-09-29, item 8 of the walk
+    what-a-cold-read-reviewer-may-read-2026-09-28, "y"); Codex refuses the
+    two together. The profile comes from the builder the cold-read Codex
+    cell uses, codex_credential_denying_permission_profile_arguments in
+    nc-systems/cold-read/cold-read-cell-common.py;
   - the base, as a SHA the caller resolved -- `--base origin/main` drifts
     under a moving remote, so the review's subject is recorded exactly;
   - the output, captured to a file the caller names;
@@ -195,9 +202,20 @@ Usage:
 """
 
 import argparse
+import importlib.util
 import pathlib
 import subprocess
 import sys
+
+_common_spec = importlib.util.spec_from_file_location(
+    "cold_read_cell_common",
+    pathlib.Path(__file__).resolve().parent.parent
+    / "nc-systems" / "cold-read" / "cold-read-cell-common.py")
+common = importlib.util.module_from_spec(_common_spec)
+_common_spec.loader.exec_module(common)
+
+# The reviewer's permission profile, as it appears in its session.
+CREDENTIAL_DENYING_PERMISSION_PROFILE = "code-review-no-credentials"
 
 # One place to update as models change, matching cold-read-codex-cell.py's
 # `deep` tier (user-picked 2026-08-03; xhigh "OK for codex" same date;
@@ -277,7 +295,10 @@ def main(argv=None) -> int:
     scope_flag = ["--base", subject_sha] if arguments.base else ["--commit", subject_sha]
     command = [
         "codex", "exec",
-        "--sandbox", "read-only",       # parent level; the nested parser rejects it
+        # Read-only and no credential file, at the parent level; the nested
+        # parser rejects both --sandbox and a profile placed after `review`.
+        *common.codex_credential_denying_permission_profile_arguments(
+            CREDENTIAL_DENYING_PERMISSION_PROFILE, ":read-only"),
         "--disable", "memories",        # a naive cell, not one carrying earlier reviews
         "review",
         *scope_flag,
