@@ -1262,10 +1262,19 @@ with tempfile.TemporaryDirectory() as scratch:
     # :workspace makes /tmp and $TMPDIR writable roots, and Codex's Linux
     # sandbox then creates /tmp/.git, /tmp/.codex and /tmp/.agents on the real
     # disk; /tmp/.git makes the instruction-file guard take /tmp for a
-    # checkout (review 5346166603).
-    check("the Codex cell's profile keeps /tmp and $TMPDIR read-only",
-          '":slash_tmp"="read"' in denied_table and '":tmpdir"="read"' in denied_table,
-          denied_table)
+    # checkout (review 5346166603). On macOS no mount points are made, and a
+    # read-only $TMPDIR breaks every zsh here-document, so there they stay
+    # writable.
+    temp_directories_read_only = ('":slash_tmp"="read"' in denied_table
+                                  and '":tmpdir"="read"' in denied_table)
+    temp_directories_named = ('":slash_tmp"' in denied_table
+                              or '":tmpdir"' in denied_table)
+    if sys.platform.startswith("linux"):
+        check("on Linux the Codex cell's profile keeps /tmp and $TMPDIR read-only",
+              temp_directories_read_only, denied_table)
+    else:
+        check("on macOS the Codex cell's profile leaves /tmp and $TMPDIR writable",
+              not temp_directories_named, denied_table)
 
     # The Codex `deep` tier. Max beat xhigh by 46 net findings measured per
     # cell, but the grid is a union and there it is worth ten findings of 331
