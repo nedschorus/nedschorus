@@ -1268,21 +1268,41 @@ with tempfile.TemporaryDirectory() as scratch:
     # calling the builder with the platform named, so ned-box checks the
     # macOS profile and the Mac checks the Linux one. The Linux profile's
     # home scan is replaced by an empty list for the call: the scan is not
-    # what is checked, and on a Mac home it runs for minutes.
+    # what is checked, and on a Mac home it runs for minutes. The scan's
+    # stand-in returns one path, so the Linux table's file denials are checked
+    # on the Mac too. The credential directories are pointed at the scratch
+    # home for the call, so the real home's paths never reach a failure line
+    # (review 5347451780); the module computed them from the real HOME at import.
     real_scan = codex_module.common.credential_files_found_now
-    codex_module.common.credential_files_found_now = lambda: []
+    real_directories = codex_module.common.CREDENTIAL_DIRECTORIES
+    codex_module.common.credential_files_found_now = lambda: [str(home_canary)]
+    codex_module.common.CREDENTIAL_DIRECTORIES = (scratch_home / ".config" / "nedschorus",
+                                                  scratch_home / ".ssh")
     try:
         profile_tables = {
             platform: codex_module.credential_denying_permission_profile_arguments(platform)[-1]
             for platform in ("linux", "darwin")}
     finally:
         codex_module.common.credential_files_found_now = real_scan
+        codex_module.common.CREDENTIAL_DIRECTORIES = real_directories
     check("the Linux profile keeps /tmp and $TMPDIR read-only",
           '":slash_tmp"="read"' in profile_tables["linux"]
           and '":tmpdir"="read"' in profile_tables["linux"], profile_tables["linux"])
     check("the macOS profile leaves /tmp and $TMPDIR writable",
           '":slash_tmp"' not in profile_tables["darwin"]
           and '":tmpdir"' not in profile_tables["darwin"], profile_tables["darwin"])
+    scratch_credential_directory_denial = f'"{home}/.config/nedschorus"="deny"'
+    check("the Linux profile denies the credential directory and each file the scan found",
+          scratch_credential_directory_denial in profile_tables["linux"]
+          and f'"{home_canary}"="deny"' in profile_tables["linux"], profile_tables["linux"])
+    check("the macOS profile denies the credential directory, *.token and .env anywhere",
+          scratch_credential_directory_denial in profile_tables["darwin"]
+          and '"/**/*.token"="deny"' in profile_tables["darwin"]
+          and '"/**/.env"="deny"' in profile_tables["darwin"], profile_tables["darwin"])
+    check("neither platform's profile names the real home's credential directories",
+          not any(str(directory) in profile_tables[platform]
+                  for directory in real_directories for platform in ("linux", "darwin")),
+          "a table names a real credential directory")
 
     # The Codex `deep` tier. Max beat xhigh by 46 net findings measured per
     # cell, but the grid is a union and there it is worth ten findings of 331
