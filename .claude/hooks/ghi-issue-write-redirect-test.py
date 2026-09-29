@@ -102,6 +102,19 @@ REFUSED = [
      guard.EDIT_BODY_REFUSAL),
     ("edit attaching a file to the body", "gh issue edit 46 --attach shot.png",
      guard.EDIT_BODY_REFUSAL),
+    ("edit changing only the title", 'gh issue edit 46 --title "New title"',
+     guard.EDIT_TITLE_REFUSAL),
+    ("edit with -t", 'gh issue edit 46 -t "New title"', guard.EDIT_TITLE_REFUSAL),
+    ("edit with --title=", "gh issue edit 46 --title=New", guard.EDIT_TITLE_REFUSAL),
+    ("edit with an attached -t value", "gh issue edit 46 -tNew",
+     guard.EDIT_TITLE_REFUSAL),
+    ("edit with a title and a label",
+     'gh issue edit 46 --title "T" --add-label draft', guard.EDIT_TITLE_REFUSAL),
+    ("a title whose value looks like -b",
+     'gh issue edit 46 --title "-b is a flag"', guard.EDIT_TITLE_REFUSAL),
+    ("edit with a title naming this repository",
+     'gh issue edit 46 -R nedschorus/nedschorus --title "T"',
+     guard.EDIT_TITLE_REFUSAL),
     ("delete", "gh issue delete 46 --yes", guard.DELETE_REFUSAL),
     ("the second command of a pipeline", "true | gh issue comment 46 -b x",
      guard.COMMENT_REFUSAL),
@@ -152,8 +165,8 @@ ALLOWED = [
     ("edit removing a label and adding an assignee",
      "gh issue edit 46 --remove-label draft --add-assignee @me"),
     ("edit setting the milestone", "gh issue edit 46 -m v1"),
-    ("edit changing only the title", 'gh issue edit 46 --title "New title"'),
-    ("a title whose value looks like -b", 'gh issue edit 46 --title "-b is a flag"'),
+    ("edit changing the title on another repository",
+     'gh issue edit 5 --repo cli/cli --title "New title"'),
     ("a label whose value looks like --body", 'gh issue edit 46 --add-label "--body"'),
     ("comment deleting the last comment", "gh issue comment 46 --delete-last --yes"),
     ("comment on another repository", "gh issue comment 5 -R cli/cli -b report",
@@ -207,10 +220,11 @@ for name, command in ALLOWED:
 # reason (user-ruled 2026-09-18). A line starts with an imperative or with
 # the condition it applies under.
 REFUSAL_TEXTS = [guard.COMMENT_REFUSAL, guard.CREATE_REFUSAL,
-                 guard.EDIT_BODY_REFUSAL, guard.DELETE_REFUSAL,
+                 guard.EDIT_BODY_REFUSAL, guard.EDIT_TITLE_REFUSAL,
+                 guard.DELETE_REFUSAL,
                  guard.STATE_CHANGE_COMMENT_REFUSAL.format(subcommand="close")]
 OPENING_WORDS = ("Do not", "Put", "If", "Write", "Edit", "To change", "Close",
-                 "Run", "Record")
+                 "Run", "Record", "Change")
 for text in REFUSAL_TEXTS:
     for line in text.splitlines():
         check(f"refusal line is an instruction: {line[:48]}",
