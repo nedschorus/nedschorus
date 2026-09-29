@@ -8,10 +8,11 @@ WHAT IT REFUSES, all on this project's repository only:
 - `gh issue create` and its alias `gh issue new`;
 - `gh issue edit` carrying `--body`, `--body-file` or `--attach`, the flags
   that change an issue's body;
+- `gh issue edit` carrying `--title`, the flag that changes an issue's title;
 - `gh issue delete`.
 Everything else passes: `view`, `list`, `status`, `close` and `reopen`
 without a comment, and `edit` changing only labels, assignees, milestones,
-projects, relationships, type or title.
+projects, relationships or type.
 
 THE RULINGS IT CARRIES.
 - No comments (user-ruled 2026-09-24, item 4 of the meta-walk
@@ -43,18 +44,27 @@ DECISIONS, and where they depart from the design of record:
 - Hard-block: no override lane. The design ended every refusal with the
   soft-block reconsider line (user-ruled 2026-08-11). Here none of the refused
   forms has a case where the raw command is right after reconsidering: a
-  comment's content belongs in the GHI-MD (ruled 2026-09-24), a new issue or a
-  new body goes through the tool, and a delete is always a close. The
+  comment's content belongs in the GHI-MD (ruled 2026-09-24), a new issue, a
+  new body or a new title goes through the tool, and a delete is always a
+  close. The
   reconsider lane that matters, second-guessing a duplicate verdict, lives in
   the tool itself with its own marker `.ghi-issue-write-reconsidered`. This
   hook does not share that marker: the tool treats any marker present as
   consent to skip its duplicate check, so a marker written to pass this hook
   would silently disarm the tool. When the tool cannot do the write, the
   refusal sends the agent to the user.
-- Title-only edits pass, as the design's "Non-body edits (labels,
-  title-only, milestones) pass through" says. The tool retitles an issue when
-  its GHI-MD's heading changes; a hand retitle is the design's accepted
-  residual. Flagged in the pull request for the user to reverse.
+- Title edits are refused, reversing for titles the design's "Non-body
+  edits (labels, title-only, milestones) pass through". The user approved it
+  with "Y" on 2026-09-29, item 6 of the walk
+  ghi-write-skill-link-only-rewalk-2026-09-28 (minutes:
+  nedlern@ned-box:/home/nedlern/nedschorus-logs/walk/ghi-write-skill-link-only-rewalk-2026-09-28-minutes.md).
+  edit-GHI retitles an issue from its GHI-MD's first heading, so a title
+  changed by hand no longer matches the file, and the next edit-GHI run that
+  changes that heading sets the title from the file again; merge-lane-2
+  raised this in its review of this hook. Refusing `--title` leaves the
+  title one source, the GHI-MD's first heading, and the refusal sends the
+  agent there. A title edit that also carries a body flag gets the body
+  refusal, which names `--title` among the flags to drop.
 - `gh issue comment --delete-last` passes: it removes a comment, which is
   the direction the ruling wants, and refusing it defends against nothing.
 - Another repository passes. `-R`/`--repo`, `GH_REPO=` in front of the
@@ -174,7 +184,17 @@ EDIT_BODY_REFUSAL = (
     "Edit the issue's GHI-MD, docs/issues/<number>-*.md, then land it with: "
     "python3 scripts/ghi-issue-write.py edit <path>\n"
     "To change only labels, assignees or the milestone, run gh issue edit "
-    "without --body, --body-file and --attach.\n"
+    "without --title, --body, --body-file and --attach.\n"
+    "If the issue has no GHI-MD, stop and tell the user."
+)
+EDIT_TITLE_REFUSAL = (
+    "Do not set this project's issue titles with gh issue edit.\n"
+    "If the issue has more than one GHI-MD, or its GHI-MD's first heading "
+    "already reads the title you want, stop and tell the user.\n"
+    "Change the first heading of the issue's GHI-MD, docs/issues/<number>-*.md, "
+    "then land it with: python3 scripts/ghi-issue-write.py edit <path>\n"
+    "To change only labels, assignees or the milestone, run gh issue edit "
+    "without --title, --body, --body-file and --attach.\n"
     "If the issue has no GHI-MD, stop and tell the user."
 )
 DELETE_REFUSAL = (
@@ -340,6 +360,8 @@ def refusal_for(subcommand, arguments, repository_from_environment):
     if subcommand == "edit":
         if EDIT_BODY_FLAGS & set(flags):
             return EDIT_BODY_REFUSAL
+        if "--title" in flags:
+            return EDIT_TITLE_REFUSAL
         return None
     if subcommand == "delete":
         return DELETE_REFUSAL
