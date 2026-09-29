@@ -119,7 +119,6 @@ nothing else in the cold-read-cell depends on it.
 """
 
 import importlib.util
-import json
 import pathlib
 import sys
 
@@ -197,28 +196,11 @@ CREDENTIAL_DENYING_PERMISSION_PROFILE = "cold-read-no-credentials"
 
 def credential_denying_permission_profile_arguments(platform: str = sys.platform) -> list:
     """The `-c` overrides that run the reviewer under a profile extending
-    `:workspace` and denying every credential path; see the docstring.
-
-    Values are TOML: a quoted key per path, so a path is escaped the way
-    JSON escapes a string, which TOML's basic strings share.
-    """
-    entries = ({":slash_tmp": "read", ":tmpdir": "read"}
-               if platform.startswith("linux") else {})
-    denied = common.credential_directories_present()
-    denied += common.reviewer_program_login_files(only_present=True)
-    if platform.startswith("linux"):
-        denied += common.credential_files_found_now()
-    else:
-        denied += [f"/**/{pattern}" for pattern in common.CREDENTIAL_FILE_NAME_PATTERNS]
-    entries.update((path, "deny") for path in denied)
-    table = "{" + ",".join(f"{json.dumps(path)}={json.dumps(access)}"
-                           for path, access in entries.items()) + "}"
-    name = CREDENTIAL_DENYING_PERMISSION_PROFILE
-    return [
-        "-c", f'default_permissions="{name}"',
-        "-c", f'permissions.{name}.extends=":workspace"',
-        "-c", f"permissions.{name}.filesystem={table}",
-    ]
+    `:workspace` and denying every credential path; see the docstring. Built
+    by the shared builder, which the sanity check's attacks and the Codex
+    code reviewer use too."""
+    return common.codex_credential_denying_permission_profile_arguments(
+        CREDENTIAL_DENYING_PERMISSION_PROFILE, ":workspace", platform)
 
 
 def invocation_builder(effort: str):

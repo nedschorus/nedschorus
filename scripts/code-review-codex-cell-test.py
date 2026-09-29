@@ -146,6 +146,14 @@ def git(repo, *arguments):
     return completed.stdout
 
 
+def scratch_home_for(stub_directory):
+    """The HOME every run of the cell gets: a scratch directory beside the
+    stub directory."""
+    home = stub_directory.parent / "scratch-home"
+    home.mkdir(parents=True, exist_ok=True)
+    return home
+
+
 def run_cell(stub_directory, stub_body, *arguments):
     """Run the cell with a stub codex first on PATH.
 
@@ -159,6 +167,9 @@ def run_cell(stub_directory, stub_body, *arguments):
     stub.chmod(0o755)
     environment = dict(os.environ)
     environment["PATH"] = f"{stub_directory}{os.pathsep}{environment.get('PATH', '')}"
+    # A scratch home, so the credential profile names paths in it and the
+    # launch never scans or names the real home's credential files.
+    environment["HOME"] = str(scratch_home_for(stub_directory))
     return subprocess.run(
         [sys.executable, str(CELL_SCRIPT), *arguments],
         capture_output=True, text=True, check=False, env=environment,
@@ -363,6 +374,13 @@ with tempfile.TemporaryDirectory() as scratch:
     # takes a value, so finding both words somewhere in argv would also pass
     # for a command that disabled something else entirely.
     argv_report = scratch / "argv-report.md"
+    # A credential directory and a reviewer program's login file in the
+    # scratch home, for the credential profile checked below.
+    scratch_home = scratch_home_for(stubs)
+    (scratch_home / ".config" / "nedschorus").mkdir(parents=True, exist_ok=True)
+    login_canary = scratch_home / ".codex" / "auth.json"
+    login_canary.parent.mkdir(parents=True, exist_ok=True)
+    login_canary.write_text("CANARY-NOT-A-SECRET-code-review-codex-cell-test\n", encoding="utf-8")
     result = run_cell(stubs, STUB_CODEX_RECORDS_ARGV,
                       "--commit", head_sha, "--repo", str(checkout),
                       "--output", str(argv_report))
@@ -376,6 +394,27 @@ with tempfile.TemporaryDirectory() as scratch:
     check("codex is launched with the memory store disabled",
           ("--disable", "memories") in list(zip(launched_command, launched_command[1:])),
           f"composed command was {launched_command}")
+
+    # --- No credential file is readable (user-ruled 2026-09-29) -----------
+    # A permission profile extending :read-only, which Codex will not combine
+    # with --sandbox, placed before `review` as the nested parser requires.
+    overrides_before_review = (
+        [launched_command[index + 1] for index, argument
+         in enumerate(launched_command[:launched_command.index("review")])
+         if argument == "-c"]
+        if "review" in launched_command else [])
+    denied_table = next((override.split("=", 1)[1] for override in overrides_before_review
+                         if override.startswith("permissions.code-review-no-credentials.filesystem=")),
+                        "")
+    check("codex runs under no --sandbox, which Codex will not combine with a profile",
+          "--sandbox" not in launched_command, f"composed command was {launched_command}")
+    check("codex runs under the credential-denying profile, extending :read-only, before `review`",
+          'default_permissions="code-review-no-credentials"' in overrides_before_review
+          and 'permissions.code-review-no-credentials.extends=":read-only"' in overrides_before_review,
+          repr(overrides_before_review))
+    check("the profile denies the credential directory and a reviewer program's login file",
+          f'"{scratch_home}/.config/nedschorus"="deny"' in denied_table
+          and f'"{login_canary}"="deny"' in denied_table, denied_table)
 
 print()
 if failures:
