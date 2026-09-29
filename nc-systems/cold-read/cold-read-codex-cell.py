@@ -76,14 +76,22 @@ finds; on macOS it takes the patterns. Only credential directories that
 exist are listed: Codex on Linux turns a missing one into an empty file on
 the real disk.
 
-WHY /tmp IS READ-ONLY IN THE PROFILE. `:workspace` makes /tmp and $TMPDIR
-writable roots, and Codex's Linux sandbox mounts its protected names `.git`,
-`.codex` and `.agents` read-only inside every writable root, creating any
-that are missing on the real disk. `/tmp/.git` then made every seat's
-instruction-file guard take /tmp for a checkout (review 5346166603,
-2026-09-29: three of the guard's test cases failed on ned-box). The profile
-sets `:slash_tmp` and `:tmpdir` to read, as the old sandbox mode never
-created them. Measured 2026-09-29 on ned-box with `codex exec` running a
+WHY /tmp IS READ-ONLY IN THE PROFILE ON LINUX, AND ONLY THERE. `:workspace`
+makes /tmp and $TMPDIR writable roots, and Codex's Linux sandbox mounts its
+protected names `.git`, `.codex` and `.agents` read-only inside every
+writable root, creating any that are missing on the real disk. `/tmp/.git`
+then made every seat's instruction-file guard take /tmp for a checkout
+(review 5346166603, 2026-09-29: three of the guard's test cases failed on
+ned-box). On Linux the profile sets `:slash_tmp` and `:tmpdir` to read, as
+the old sandbox mode never created them. On macOS it leaves them writable:
+the Mac's sandbox makes no mount points, and there a read-only $TMPDIR broke
+every shell here-document, since zsh writes one to a temp file ("can't
+create temp file for here document: operation not permitted", measured
+2026-09-29 through this cell). Codex reviewers write here-documents: 52 of
+4,813 tool calls in the Mac's Codex sessions that name cold-read-records
+since 2026-09-01, 14 of them writing into that directory. On ned-box, bash
+5.3 and dash ran both a small and a 100 KB here-document under the
+read-only profile. Measured 2026-09-29 on ned-box with `codex exec` running a
 shell command in a scratch repository, and with this cell against canary
 files in a scratch checkout: nothing appeared under /tmp, and the reviewer
 still wrote its report. The checkout itself is still a writable root, so a
@@ -190,7 +198,8 @@ def credential_denying_permission_profile_arguments(platform: str = sys.platform
     Values are TOML: a quoted key per path, so a path is escaped the way
     JSON escapes a string, which TOML's basic strings share.
     """
-    entries = {":slash_tmp": "read", ":tmpdir": "read"}
+    entries = ({":slash_tmp": "read", ":tmpdir": "read"}
+               if platform.startswith("linux") else {})
     denied = common.credential_directories_present()
     if platform.startswith("linux"):
         denied += common.credential_files_found_now()
