@@ -315,13 +315,14 @@ with tempfile.TemporaryDirectory() as scratch:
                           if ".filesystem=" in argument), "")
     real_home = Path.home().resolve()
     repository_root = CELL_SCRIPT.parents[2]
+    profile_keys = re.findall(r'"([^"]+)"=', profile_table)
     real_home_paths = [
-        path for path in re.findall(r'"([^"]+)"=', profile_table)
+        path for path in profile_keys
         if not path.startswith(":") and not path.startswith("/**")
         and (Path(path) == real_home or real_home in Path(path).parents)
         and repository_root not in Path(path).parents]
     check("the cell's permission profile reached codex",
-          bool(profile_table), repr(received_argv[:6]))
+          bool(profile_table) and bool(profile_keys), repr(received_argv[:6]))
     check("the permission profile names no path in the real home",
           not real_home_paths, repr(real_home_paths))
 
