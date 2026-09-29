@@ -289,6 +289,11 @@ SYSTEM_OVERVIEW_PATH_TEMPLATE = "docs/nedschorus-wiki/nedschorus-{system}-system
 # it, as PROCESS_COMMAND_LINE_READ_TIMEOUT_SECONDS is.
 OVERVIEW_REFRESH_CHECK_GIT_TIMEOUT_SECONDS = 15
 
+# How long overview_refresh_due_lines's one `gh pr list`, which asks for the
+# open pull requests and the files each changes, gets before it is given up on.
+# Read from the module inside that function, as the git timeout above is.
+OVERVIEW_REFRESH_CHECK_GH_TIMEOUT_SECONDS = 30
+
 # Appended to each overview-refresh-due report in the successor's first
 # prompt, the way BRANCH_STATE_INSTRUCTION is appended to the branch sync's.
 # A template, like ORPHANED_SUBAGENT_ROSTER_SENTENCE_TEMPLATE, because the
@@ -1361,7 +1366,8 @@ def sync_working_branch_with_main(working_directory: Path) -> str:
 
 def overview_refresh_due_lines(working_directory: Path) -> tuple:
     """One line for the successor's first prompt per system whose code moved
-    on main after the commit its overview is pinned to. Never raises.
+    on main after the commit its overview is pinned to, unless an open pull
+    request already changes that overview. Never raises.
 
     Each line is a report, `overview refresh due: <system> — <n> commit(s)
     under nc-systems/<system>/ since its overview's pinned commit, in
@@ -1460,6 +1466,30 @@ def overview_refresh_due_lines(working_directory: Path) -> tuple:
     as `<pinned>..HEAD`, the seat's own branch; and the `git show` of one
     overview was guarded only by the handler around the whole loop, so its
     timeout ended the loop and a later system that was due got no line.
+
+    NOT WHILE AN OPEN PULL REQUEST ALREADY CHANGES THE OVERVIEW. RULED. The
+    user, 2026-09-29, item 11 of the walk
+    open-items-this-seat-holds-2026-09-24, his word "y", on: "I recommend the
+    refresh gets smart in the same way: it does nothing while an open pull
+    request already refreshes that overview. No owner is needed. It would be
+    its own small pull request after PR 764." The "same way" is his ruling of
+    2026-09-22, "the refresh skill should be smart enough to do nothing if
+    nothing needs to be done", and the same day he ruled "no owner, because it
+    is idempotent", so every seat makes this check and none is singled out.
+    Why: every seat gets the line, and the first refresh pull request can take
+    hours to merge. Until it does, main still carries the old pin, so every
+    seat replaced in those hours would get the line too and send its own
+    refresh: several pull requests changing one file, conflicting with each
+    other. So once at least one system is due, and never otherwise, one
+    `gh pr list` asks GitHub for the open pull requests and the files each
+    changes; a due system whose overview an open pull request changes gets no
+    line, and the console names that pull request. Any open pull request that
+    changes the overview counts, not only a refresh: nothing marks a pull
+    request as a refresh, and any change to the overview conflicts with one.
+    When GitHub cannot be asked -- `gh` missing, a nonzero exit, a timeout, or
+    output that does not parse -- every due line is given and the console
+    says why: a refresh never asked for is worse than a duplicate. The same
+    holds for an open pull request beyond the first 200 `gh` lists.
     """
     timeout = OVERVIEW_REFRESH_CHECK_GIT_TIMEOUT_SECONDS
     try:
@@ -1477,7 +1507,7 @@ def overview_refresh_due_lines(working_directory: Path) -> tuple:
         print(f"handoff-supervisor: overview check stopped: "
               f"{type(error).__name__}: {error}")
         return ()
-    lines = []
+    due = []  # (system, overview_path, line) for each system that is due
     for system_directory in listed.stdout.splitlines():
         system = system_directory.rsplit("/", 1)[-1]
         try:
@@ -1509,7 +1539,7 @@ def overview_refresh_due_lines(working_directory: Path) -> tuple:
                 f"git log --no-merges {commit_range} -- "
                 + " ".join(f"'{pathspec}'" if ":(" in pathspec else pathspec
                            for pathspec in pathspecs))
-            lines.append(
+            due.append((system, overview_path,
                 f"overview refresh due: {system} — {count} commit(s) under "
                 f"nc-systems/{system}/ since its overview's pinned commit, in "
                 f"{commit_range}"
@@ -1517,10 +1547,45 @@ def overview_refresh_due_lines(working_directory: Path) -> tuple:
                     overview_path=overview_path,
                     commit_listing_command=commit_listing_command,
                     landing_pin_prefix=stale_code_citation_check.LANDING_PIN_PREFIX,
-                    main_commit=main_commit))
+                    main_commit=main_commit)))
         except Exception as error:  # this system only; see the docstring
             print(f"handoff-supervisor: overview check for {system} passed over: "
                   f"{type(error).__name__}: {error}")
+    if not due:
+        return ()
+    try:
+        answered = subprocess.run(
+            ["gh", "pr", "list", "--repo", "nedschorus/nedschorus", "--state", "open",
+             "--json", "url,title,files", "--limit", "200"],
+            capture_output=True, text=True, check=False,
+            timeout=OVERVIEW_REFRESH_CHECK_GH_TIMEOUT_SECONDS)
+        if answered.returncode != 0:
+            unanswered = (f"gh exited {answered.returncode}: "
+                          + ((answered.stderr.strip().splitlines() or ["no detail"])[0]))
+        else:
+            unanswered = None
+            changing_pull_request_by_path = {}
+            for pull_request in json.loads(answered.stdout):
+                title_and_url = (pull_request["title"], pull_request["url"])
+                for changed_file in pull_request["files"]:
+                    changing_pull_request_by_path.setdefault(
+                        changed_file["path"], title_and_url)
+    except Exception as error:  # every due line is given; see the docstring
+        unanswered = f"{type(error).__name__}: {error}"
+    if unanswered is not None:
+        print(f"handoff-supervisor: overview check could not ask GitHub which open "
+              f"pull requests change an overview, so every due line is given: "
+              f"{unanswered}")
+        return tuple(line for _, _, line in due)
+    lines = []
+    for system, overview_path, line in due:
+        if overview_path not in changing_pull_request_by_path:
+            lines.append(line)
+            continue
+        title, url = changing_pull_request_by_path[overview_path]
+        print(f"handoff-supervisor: overview check for {system} withheld its line: "
+              f"the open pull request \"{title}\" ({url}) already changes "
+              f"{overview_path}")
     return tuple(lines)
 
 
