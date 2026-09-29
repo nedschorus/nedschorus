@@ -28,7 +28,7 @@ says how an agent creates a topic branch. That procedure belongs in this skill.
 
 ## What the skill owns
 
-Getting a change to main. Three parts:
+Getting a change to main. Four parts:
 
 1. **Disposition of a durable file** — revise an existing document on the
    subject (the default) or write a new one. Assigned by the founding plan.
@@ -55,6 +55,46 @@ Getting a change to main. Three parts:
    should not be. Near-miss on 2026-09-01: four topic branches were created in
    a row and each named `origin/main` explicitly; the short form would have
    produced the failure.
+4. **Recording the outcome on the issue the pull request finishes**, which
+   nothing in the path to main triggers today:
+
+   > A pull request that finishes an issue also edits that issue's GHI-MD, in
+   > the same pull request. The edit adds an `## Outcome` section saying what
+   > was done and by which pull request, and sets `## Next action` to none.
+   > So when "Closes" closes the issue at merge, its text already says what
+   > happened.
+
+   This is the completion edit `.claude/skills/ghi-write/SKILL.md` already
+   requires — "Completion is an edit too: record the outcome in the GHI-MD,
+   then close the issue with its reason" — given the moment that triggers it.
+   Ruled by the user on 2026-09-29, in walk
+   open-items-this-seat-holds-2026-09-24, item 14, with his word "y". The item
+   said: "Nothing in the path to main says 'the issue this pull request
+   finishes now gets its outcome'", and recommended adding that duty to this
+   skill.
+
+   Why: finished work gets recorded somewhere, a commit message or a design's
+   header, but not on the issue, so a reader who trusts the issue acts on a
+   picture weeks stale.
+
+   - The open-issue sweep walked on 2026-09-21
+     (`nedlern@ned-box:/home/nedlern/nedschorus-logs/walk/open-issue-sweep-into-piles.md`,
+     items 1 and 3) found ten GHIs whose finished work their own text never
+     recorded: eight finished and still open, and two still open whose landed
+     half was invisible on the GHI.
+   - Two more since. GHI [The handoff-supervisor resumes a session that died without a handoff, instead of stopping the seat](https://github.com/nedschorus/nedschorus/issues/613)
+     was built by PR [The handoff-supervisor resumes a session that died without a handoff](https://github.com/nedschorus/nedschorus/pull/651),
+     merged 2026-09-22, and closed only on 2026-09-29. GHI [recover-crashed-seats.py: the six changes ruled 2026-09-02 — exit record, process-identity liveness, parking marker, verified restart, by-hand resume, window](https://github.com/nedschorus/nedschorus/issues/242)
+     says in its opening paragraph that change 6 is built — PR [recover-crashed-seats: --open-iterm-window-per-seat launches a recovered seat attached, in its own window](https://github.com/nedschorus/nedschorus/pull/319),
+     merged 2026-09-11 — yet its numbered list still gives change 6 without
+     "Done".
+   - On 2026-09-29, PR [A recovered seat's supervisor runs from the reference clone, not from the checkout the recovery ran from](https://github.com/nedschorus/nedschorus/pull/778)
+     closed GHI [recover-crashed-seats: a recovered seat's supervisor runs from whichever checkout the recovery was run from, and stops at its next handoff once that checkout is removed](https://github.com/nedschorus/nedschorus/issues/659)
+     automatically through its "Closes" line. It changed only the two
+     scripts, so the closed issue's GHI-MD still said under `## Next action`
+     that the user decides. Its Outcome was added by hand afterwards, in PR
+     [GHI-MD edit for issue 659: recover-crashed-seats: a recovered seat's supervisor runs from whichever checkout the recovery was run from, and stops at its next handoff once that checkout is removed](https://github.com/nedschorus/nedschorus/pull/780),
+     still open when this was written.
 
 ## Architecture: code-prompt-code
 
