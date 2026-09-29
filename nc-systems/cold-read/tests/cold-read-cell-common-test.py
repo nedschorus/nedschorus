@@ -1264,17 +1264,25 @@ with tempfile.TemporaryDirectory() as scratch:
     # disk; /tmp/.git makes the instruction-file guard take /tmp for a
     # checkout (review 5346166603). On macOS no mount points are made, and a
     # read-only $TMPDIR breaks every zsh here-document, so there they stay
-    # writable.
-    temp_directories_read_only = ('":slash_tmp"="read"' in denied_table
-                                  and '":tmpdir"="read"' in denied_table)
-    temp_directories_named = ('":slash_tmp"' in denied_table
-                              or '":tmpdir"' in denied_table)
-    if sys.platform.startswith("linux"):
-        check("on Linux the Codex cell's profile keeps /tmp and $TMPDIR read-only",
-              temp_directories_read_only, denied_table)
-    else:
-        check("on macOS the Codex cell's profile leaves /tmp and $TMPDIR writable",
-              not temp_directories_named, denied_table)
+    # writable. Both platforms' profiles are built here on every machine, by
+    # calling the builder with the platform named, so ned-box checks the
+    # macOS profile and the Mac checks the Linux one. The Linux profile's
+    # home scan is replaced by an empty list for the call: the scan is not
+    # what is checked, and on a Mac home it runs for minutes.
+    real_scan = codex_module.common.credential_files_found_now
+    codex_module.common.credential_files_found_now = lambda: []
+    try:
+        profile_tables = {
+            platform: codex_module.credential_denying_permission_profile_arguments(platform)[-1]
+            for platform in ("linux", "darwin")}
+    finally:
+        codex_module.common.credential_files_found_now = real_scan
+    check("the Linux profile keeps /tmp and $TMPDIR read-only",
+          '":slash_tmp"="read"' in profile_tables["linux"]
+          and '":tmpdir"="read"' in profile_tables["linux"], profile_tables["linux"])
+    check("the macOS profile leaves /tmp and $TMPDIR writable",
+          '":slash_tmp"' not in profile_tables["darwin"]
+          and '":tmpdir"' not in profile_tables["darwin"], profile_tables["darwin"])
 
     # The Codex `deep` tier. Max beat xhigh by 46 net findings measured per
     # cell, but the grid is a union and there it is worth ten findings of 331
