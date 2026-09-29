@@ -216,14 +216,14 @@ def ensure_seat_directory(destination: SeatsStoreDestination, seat: str):
     THIS PROGRAM USED TO APPEND A `seats/` BULLET to a README that lacked
     one, placing it inside the list of kinds. The README stopped listing the
     kinds on 2026-09-19 (user-ruled, walk
-    file-naming-and-location-standards-cold-read-findings, item 5): what each
-    subdirectory holds and how its files are named lives in
-    docs/nedschorus-wiki/nedschorus-file-naming-and-location-standards.md
-    instead, because a restatement here went stale at every ruling. With no
-    list of kinds there is no bullet to place, and appending one would have
-    started a fight: this program would add it, the record shipper would see
-    the text differ from STORE_README and write the pointer back, on every
-    shipment either made.
+    file-naming-and-location-standards-cold-read-findings, item 5), and lists
+    them again, each naming only its owner, since 2026-09-27 (user-ruled, walk
+    file-naming-page-revision-2026-09-23, item 9). The `seats/` line is in
+    STORE_README itself, so this program still appends nothing: the README is
+    written from STORE_README verbatim, and a bullet added here would start a
+    fight, this program adding it and the record shipper seeing the text
+    differ from STORE_README and writing it back, on every shipment either
+    made.
 
     The stdin encoding is pinned to UTF-8, as it is in the record shipper's
     `ensure_store`, because the remote script counts the bytes it receives

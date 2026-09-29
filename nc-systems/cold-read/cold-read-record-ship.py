@@ -83,9 +83,9 @@ with the design:
      nothing is lost by waiting for it.
 
 The store's directories are created on first use, and a README.md at the
-store's root is written when absent -- it says what the store is and that
-cold-read-records dated before 2026-09-08 predate the frozen cold-read-target
--- from the text in this file.
+store's root is rewritten from STORE_README in this file whenever it differs:
+it says what the store is, how to cite a file in it, and which program or
+skill owns each kind.
 
 WHO CALLS IT. nc-systems/cold-read/cold-read-grid.py at the end of every run, whatever the
 outcome; the agent after writing triage.md (the cold-read skill's step
@@ -178,8 +178,8 @@ EXIT_BAD_INVOCATION = 64
 # The note at the door of the log-store, written into it by this program.
 #
 # AGENT-FACING TEXT, so it is instruction and nothing else: what the store is,
-# how to cite a file in it, where the naming rules are, and what to edit to
-# change this file. No dates, no ruling citations, no account of why it reads
+# how to cite a file in it, which program or skill owns each kind, and what to
+# edit to change this file. No dates, no ruling citations, no account of why it reads
 # this way -- those live here and in `refresh_store_readme` below, where a
 # maintainer reads them (user-ruled 2026-09-18, on the force-push guard's
 # refusal, in CLAUDE.md).
@@ -188,12 +188,17 @@ EXIT_BAD_INVOCATION = 64
 # went stale at each ruling that changed one, and when the cold-read-records'
 # triage file was renamed from dispositions.md to triage.md a reader following
 # this text would have looked for the old name, not found it, and reported a
-# finished triage as unfinished. The rules now live in the wiki page it points
-# at; what the store is and how to cite a file in it do not change
-# (user-ruled 2026-09-19, walk
-# file-naming-and-location-standards-cold-read-findings, item 5). The
-# 2026-09-07 ruling that made the store at all is "separate the system from
-# its logs".
+# finished triage as unfinished. So on 2026-09-19 it became a pointer to the
+# file-naming wiki page instead (user-ruled, walk
+# file-naming-and-location-standards-cold-read-findings, item 5).
+#
+# It lists the kinds again, each naming ONLY its owner, never a naming rule
+# (user-ruled 2026-09-27, walk file-naming-page-revision-2026-09-23, item 9).
+# The user's rewrite of that wiki page dropped the kinds, because he did not
+# want the page to copy the systems' own conventions and drift from them, so
+# the pointer pointed at nothing. An owner changes far less often than a
+# naming rule, and the naming rule stays with the owner. The 2026-09-07
+# ruling that made the store at all is "separate the system from its logs".
 STORE_README = """\
 # nedschorus-logs
 
@@ -204,9 +209,20 @@ kind.
 Cite a file here with its host, in the form scp takes:
 `nedlern@ned-box:/home/nedlern/nedschorus-logs/<kind>/<path>`.
 
-What each subdirectory holds, and how its files are named, is not written
-here. Read it in the nedschorus repository, which this machine also clones:
-docs/nedschorus-wiki/nedschorus-file-naming-and-location-standards.md
+What each kind holds and how its files are named is decided by its owner,
+in the nedschorus repository, which this machine also clones:
+
+- `cold-read-records/` -- cold-read-records, named by
+  `nc-systems/cold-read/cold-read-record-names.py`
+- `sanity-check-records/` -- the /sanity-check skill's records, shipped by
+  `scripts/sanity-check-record-ship.py`
+- `walk/` -- approval-walk files, named by the walk-me-through skill, shipped
+  by `scripts/walk-files-ship.py`
+- `transcripts/` -- session transcripts, mirrored by
+  `scripts/transcript-mirror-to-log-store.py`
+- `seats/` -- a seat's shared files, shipped by
+  `scripts/seat-shared-file-ship.py`
+- `analysis/` -- analyses, placed by hand
 
 To change this file, edit STORE_README in
 nc-systems/cold-read/cold-read-record-ship.py. The next shipment rewrites this file
