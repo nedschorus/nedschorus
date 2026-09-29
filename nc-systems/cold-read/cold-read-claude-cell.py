@@ -164,8 +164,12 @@ TIER_TO_REASONING_EFFORT = {
 
 # The reviewer reads the cold-read-target and writes one file: its report.
 # Write is present because the report is a file now — the common module
-# explains why writes are detected rather than blocked.
-ALLOWED_TOOLS = "Read,Grep,Glob,Write"
+# explains why writes are detected rather than blocked. WebFetch is present
+# because a web page the document links to is part of what the reviewer
+# reads, and the reviewer fetches it itself (user-ruled 2026-09-29, items 3
+# and 5 of the walk what-a-cold-read-reviewer-may-read-2026-09-28, "y"); it
+# reads pages, never a file on the machine.
+ALLOWED_TOOLS = "Read,Grep,Glob,Write,WebFetch"
 
 # Bash is DENIED, which is not the same as leaving it out of ALLOWED_TOOLS
 # above (measured 2026-09-14). A cold-read-cell inherits the machine's

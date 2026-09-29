@@ -20,8 +20,8 @@ WHAT IS PINNED HERE.
 
   - The invocation is the Claude leg's own, because the judge imports that
     launcher rather than repeating it: `claude -p --model --effort
-    --output-format text --allowedTools Read,Grep,Glob,Write`, with the
-    prompt on stdin.
+    --output-format text --allowedTools Read,Grep,Glob,Write,WebFetch`, with
+    the prompt on stdin.
 
   - THE PROMPT COMES FROM --prompt-file, WHICH IS REQUIRED. This cell holds
     no prompt of its own: the judge's instructions are prose the user reads
@@ -258,7 +258,7 @@ with tempfile.TemporaryDirectory() as scratch:
           and argv[argv.index("--model") + 1] == "claude-fable-5-1"
           and argv[argv.index("--effort") + 1] == "xhigh"
           and argv[argv.index("--output-format") + 1] == "text"
-          and argv[argv.index("--allowedTools") + 1] == "Read,Grep,Glob,Write",
+          and argv[argv.index("--allowedTools") + 1] == "Read,Grep,Glob,Write,WebFetch",
           repr(argv))
     prompt = prompt_dump.read_text(encoding="utf-8") if prompt_dump.is_file() else ""
     check("the prompt names the restater class and the report path",

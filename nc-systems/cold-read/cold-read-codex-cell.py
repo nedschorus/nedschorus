@@ -78,7 +78,12 @@ the real disk. The reviewer programs' login files that exist are denied
 too, Codex's own `~/.codex/auth.json` included: the Codex CLI reads its login
 outside the profile, which governs only the model's commands, and a cell
 denying it still answered, on both machines (user-ruled and measured
-2026-09-29).
+2026-09-29). The profile switches network access on, which it denies by
+default: a web page the document links to is part of what the reviewer
+reads, and the reviewer fetches it itself (user-ruled 2026-09-29, items 3
+and 5 of the walk what-a-cold-read-reviewer-may-read-2026-09-28). Measured
+that day on both machines: the reviewer fetched a public GitHub issue page,
+HTTP 200, and still could not read a credential canary.
 
 WHY /tmp IS READ-ONLY IN THE PROFILE ON LINUX, AND ONLY THERE. `:workspace`
 makes /tmp and $TMPDIR writable roots, and Codex's Linux sandbox mounts its
@@ -200,7 +205,7 @@ def credential_denying_permission_profile_arguments(platform: str = sys.platform
     by the shared builder, which the sanity check's attacks and the Codex
     code reviewer use too."""
     return common.codex_credential_denying_permission_profile_arguments(
-        CREDENTIAL_DENYING_PERMISSION_PROFILE, ":workspace", platform)
+        CREDENTIAL_DENYING_PERMISSION_PROFILE, ":workspace", platform, network=True)
 
 
 def invocation_builder(effort: str):

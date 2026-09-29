@@ -1180,10 +1180,10 @@ with tempfile.TemporaryDirectory() as scratch:
           and set(claude_argv[claude_argv.index("--disallowedTools") + 1].split(","))
           == {"Bash", "Monitor"},
           repr(claude_argv))
-    check("the Claude cell still allows the four tools the reviewer needs",
+    check("the Claude cell allows the five tools the reviewer needs, WebFetch for linked pages",
           "--allowedTools" in claude_argv
           and claude_argv[claude_argv.index("--allowedTools") + 1]
-          == "Read,Grep,Glob,Write",
+          == "Read,Grep,Glob,Write,WebFetch",
           repr(claude_argv))
 
     # Every hook off, for the reviewer's session only (user-ruled
@@ -1273,6 +1273,11 @@ with tempfile.TemporaryDirectory() as scratch:
     check("the Codex cell selects the credential-denying profile, extending :workspace",
           'default_permissions="cold-read-no-credentials"' in codex_overrides
           and 'permissions.cold-read-no-credentials.extends=":workspace"' in codex_overrides,
+          repr(codex_overrides))
+    # Network on: the reviewer fetches the pages a document links to itself
+    # (user-ruled 2026-09-29).
+    check("the Codex cell's profile switches network access on",
+          "permissions.cold-read-no-credentials.network.enabled=true" in codex_overrides,
           repr(codex_overrides))
     check("the Codex cell's profile denies every credential path",
           all(denial in denied_table for denial in expected_denials),
