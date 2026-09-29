@@ -1647,6 +1647,75 @@ def run_overview_refresh_due_cases(workspace: Path):
           overview_refresh_due_or_missing(repository) == (),
           repr(overview_refresh_due_or_missing(repository)))
 
+    # The two failures the round-1 reviews of the pull request that built this
+    # asked about (2026-09-28). The widget moves again first, so a line is due
+    # and each failure has something to lose.
+    commit({"nc-systems/widget/widget.py": "print('widget, grown again')\n"},
+           "the widget grows again")
+    main = publish()
+    expected = expected_widget_overview_refresh_due_line(grown[:7], main, 1)
+    due = overview_refresh_due_or_missing(repository)
+    check("a system that moves past its latest pin is due again",
+          due == (expected,), f"{due!r}\nexpected: {expected!r}")
+
+    # origin/main verified but its short name unreadable: an empty name would
+    # make the range `<pinned>..`, which git reads against the seat's HEAD.
+    real_run_git_here = supervisor.run_git_here
+
+    def run_git_here_that_cannot_name_a_commit(arguments, working_directory, timeout=60):
+        if arguments[0] == "rev-parse" and "--short" in arguments:
+            return subprocess.CompletedProcess(arguments, 1, "", "stub: timed out")
+        return real_run_git_here(arguments, working_directory, timeout=timeout)
+
+    supervisor.run_git_here = run_git_here_that_cannot_name_a_commit
+    try:
+        due = overview_refresh_due_or_missing(repository)
+    finally:
+        supervisor.run_git_here = real_run_git_here
+    check("when origin/main's commit cannot be named, no line is given, never a "
+          "range read against the seat's HEAD",
+          due == (), repr(due))
+
+    # A read of one system's overview that hangs. aardvark sorts before widget,
+    # so ending the loop there would lose widget's line.
+    commit({"nc-systems/aardvark/aardvark.py": "print('aardvark')\n"}, "the aardvark lands")
+    main = publish()
+    expected = expected_widget_overview_refresh_due_line(grown[:7], main, 1)
+    real_git = shutil.which("git")
+    stub_directory = root / "git-that-hangs-on-one-overview"
+    stub_directory.mkdir()
+    stub_git = stub_directory / "git"
+    stub_git.write_text(
+        "#!/bin/sh\n"
+        'case "$*" in\n'
+        '  *"show origin/main:docs/nedschorus-wiki/nedschorus-aardvark-system-overview.md"*)\n'
+        "    exec sleep 30 ;;\n"
+        "esac\n"
+        f'exec "{real_git}" "$@"\n',
+        encoding="utf-8")
+    stub_git.chmod(0o755)
+    original_path = os.environ.get("PATH", "")
+    had_timeout = hasattr(supervisor, "OVERVIEW_REFRESH_CHECK_GIT_TIMEOUT_SECONDS")
+    original_timeout = getattr(supervisor, "OVERVIEW_REFRESH_CHECK_GIT_TIMEOUT_SECONDS", None)
+    supervisor.OVERVIEW_REFRESH_CHECK_GIT_TIMEOUT_SECONDS = 1
+    console = io.StringIO()
+    os.environ["PATH"] = f"{stub_directory}{os.pathsep}{original_path}"
+    try:
+        with contextlib.redirect_stdout(console):
+            due = overview_refresh_due_or_missing(repository)
+    finally:
+        os.environ["PATH"] = original_path
+        if had_timeout:
+            supervisor.OVERVIEW_REFRESH_CHECK_GIT_TIMEOUT_SECONDS = original_timeout
+        else:
+            del supervisor.OVERVIEW_REFRESH_CHECK_GIT_TIMEOUT_SECONDS
+    check("a read of one system's overview that times out passes over that system "
+          "only, and a later system that is due still gets its line",
+          due == (expected,), f"{due!r}\nexpected: {expected!r}\n{console.getvalue()}")
+    check("the system passed over is named on the console with the cause",
+          "handoff-supervisor: overview check for aardvark passed over: TimeoutExpired"
+          in console.getvalue(), console.getvalue())
+
 
 def run_overview_refresh_due_prompt_cases(workspace: Path):
     """Where the overview-refresh-due line goes: right after the branch-state

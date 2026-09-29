@@ -283,6 +283,12 @@ BRANCH_STATE_INSTRUCTION = (
 # pattern; see overview_refresh_due_lines.
 SYSTEM_OVERVIEW_PATH_TEMPLATE = "docs/nedschorus-wiki/nedschorus-{system}-system-overview.md"
 
+# How long each git call of overview_refresh_due_lines that reads a ref, a tree
+# or an overview gets before it is given up on. Read from the module inside
+# that function rather than bound as a default argument, so a case can lower
+# it, as PROCESS_COMMAND_LINE_READ_TIMEOUT_SECONDS is.
+OVERVIEW_REFRESH_CHECK_GIT_TIMEOUT_SECONDS = 15
+
 # Appended to each overview-refresh-due report in the successor's first
 # prompt, the way BRANCH_STATE_INSTRUCTION is appended to the branch sync's.
 # A template, like ORPHANED_SUBAGENT_ROSTER_SENTENCE_TEMPLATE, because the
@@ -1443,22 +1449,43 @@ def overview_refresh_due_lines(working_directory: Path) -> tuple:
     Every failure passes over the system it happened on and is printed to
     the console, and nothing in it stops a launch: the line is advice to the
     successor, and a supervisor that raised here would leave the seat dark.
+    A failure before any system is read -- origin/main's commit or its list
+    of systems -- gives no line at all. Both halves were asked by the round-1
+    reviews, 2026-09-28, of PR [A reincarnated seat is told when a system's
+    overview has fallen behind its
+    code](https://github.com/nedschorus/nedschorus/pull/764), which built
+    this: origin/main's short name was once read by a
+    second call after the one that verified it, and when that second call
+    failed the empty name turned the range into `<pinned>..`, which git reads
+    as `<pinned>..HEAD`, the seat's own branch; and the `git show` of one
+    overview was guarded only by the handler around the whole loop, so its
+    timeout ended the loop and a later system that was due got no line.
     """
-    lines = []
+    timeout = OVERVIEW_REFRESH_CHECK_GIT_TIMEOUT_SECONDS
     try:
-        if run_git_here(["rev-parse", "--verify", "--quiet", "origin/main^{commit}"],
-                        working_directory, timeout=15).returncode != 0:
+        # One call both verifies origin/main and names it, so the name can
+        # never be missing while the check goes on.
+        resolved = run_git_here(
+            ["rev-parse", "--verify", "--quiet", "--short", "origin/main^{commit}"],
+            working_directory, timeout=timeout)
+        main_commit = resolved.stdout.strip()
+        if resolved.returncode != 0 or not main_commit:
             return ()
-        main_commit = run_git_here(["rev-parse", "--short", "origin/main"],
-                                   working_directory, timeout=15).stdout.strip()
         listed = run_git_here(["ls-tree", "-d", "--name-only", "origin/main", "nc-systems/"],
-                              working_directory, timeout=15)
-        for system_directory in listed.stdout.splitlines():
-            system = system_directory.rsplit("/", 1)[-1]
+                              working_directory, timeout=timeout)
+    except Exception as error:  # the launch goes on; see the docstring
+        print(f"handoff-supervisor: overview check stopped: "
+              f"{type(error).__name__}: {error}")
+        return ()
+    lines = []
+    for system_directory in listed.stdout.splitlines():
+        system = system_directory.rsplit("/", 1)[-1]
+        try:
             overview_path = SYSTEM_OVERVIEW_PATH_TEMPLATE.format(system=system)
             shown = subprocess.run(
                 ["git", "show", f"origin/main:{overview_path}"],
-                cwd=str(working_directory), capture_output=True, check=False, timeout=15)
+                cwd=str(working_directory), capture_output=True, check=False,
+                timeout=timeout)
             if shown.returncode != 0:
                 continue  # this system has no overview
             pinned_commits = stale_code_citation_check.landing_pin_commits(
@@ -1491,9 +1518,9 @@ def overview_refresh_due_lines(working_directory: Path) -> tuple:
                     commit_listing_command=commit_listing_command,
                     landing_pin_prefix=stale_code_citation_check.LANDING_PIN_PREFIX,
                     main_commit=main_commit))
-    except Exception as error:  # the launch goes on; see the docstring
-        print(f"handoff-supervisor: overview check stopped: "
-              f"{type(error).__name__}: {error}")
+        except Exception as error:  # this system only; see the docstring
+            print(f"handoff-supervisor: overview check for {system} passed over: "
+                  f"{type(error).__name__}: {error}")
     return tuple(lines)
 
 
