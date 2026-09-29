@@ -76,9 +76,10 @@ both machines.
     file name.
   - Linux: `bwrap` over the whole filesystem, with an empty tmpfs mounted
     over each credential directory and /dev/null bound over each file
-    credential_files_found_now() finds at launch. bwrap takes exact paths,
-    not patterns, so a credential file created after launch outside those
-    directories is not covered.
+    credential_files_found_now() finds at launch in the home and the
+    repository. bwrap takes exact paths, not patterns, so a credential file
+    outside those directories that is created after launch, or sits outside
+    the home and the repository, is not covered.
 With no such sandbox on the machine, this program refuses before agy runs:
 agy is never run unguarded.
 
@@ -176,9 +177,8 @@ def credential_sandbox_prefix(platform: str = sys.platform) -> list:
     if platform == "darwin":
         return ["sandbox-exec", "-p", sandbox_exec_profile()]
     prefix = ["bwrap", "--dev-bind", "/", "/"]
-    for directory in common.CREDENTIAL_DIRECTORIES:
-        if directory.is_dir():
-            prefix += ["--tmpfs", str(directory)]
+    for directory in common.credential_directories_present():
+        prefix += ["--tmpfs", directory]
     for path in common.credential_files_found_now():
         prefix += ["--ro-bind", "/dev/null", path]
     return prefix

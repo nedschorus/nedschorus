@@ -72,7 +72,24 @@ read none, still read README.md, and wrote its report. Codex expands a deny
 pattern with ripgrep before it starts on Linux, and aborts when any
 directory under the pattern's prefix is unreadable (ned-box's home holds
 one), so on Linux the profile lists the files credential_files_found_now()
-finds; on macOS it takes the patterns.
+finds; on macOS it takes the patterns. Only credential directories that
+exist are listed: Codex on Linux turns a missing one into an empty file on
+the real disk.
+
+WHY /tmp IS READ-ONLY IN THE PROFILE. `:workspace` makes /tmp and $TMPDIR
+writable roots, and Codex's Linux sandbox mounts its protected names `.git`,
+`.codex` and `.agents` read-only inside every writable root, creating any
+that are missing on the real disk. `/tmp/.git` then made every seat's
+instruction-file guard take /tmp for a checkout (review 5346166603,
+2026-09-29: three of the guard's test cases failed on ned-box). The profile
+sets `:slash_tmp` and `:tmpdir` to read, as the old sandbox mode never
+created them. Measured 2026-09-29 on ned-box with `codex exec` running a
+shell command in a scratch repository, and with this cell against canary
+files in a scratch checkout: nothing appeared under /tmp, and the reviewer
+still wrote its report. The checkout itself is still a writable root, so a
+Codex cold read on Linux can leave empty `.codex` and `.agents` directories
+at the checkout's root (seen once, in the scratch repository, not in the
+checkout); git ignores empty directories, and nothing reads them.
 
 WHY THE CODEX MEMORY STORE IS OFF FOR REVIEW CELLS: written once, in
 scripts/code-review-codex-cell.py's docstring, under that heading.
@@ -173,12 +190,15 @@ def credential_denying_permission_profile_arguments(platform: str = sys.platform
     Values are TOML: a quoted key per path, so a path is escaped the way
     JSON escapes a string, which TOML's basic strings share.
     """
-    denied = [str(directory) for directory in common.CREDENTIAL_DIRECTORIES]
+    entries = {":slash_tmp": "read", ":tmpdir": "read"}
+    denied = common.credential_directories_present()
     if platform.startswith("linux"):
         denied += common.credential_files_found_now()
     else:
         denied += [f"/**/{pattern}" for pattern in common.CREDENTIAL_FILE_NAME_PATTERNS]
-    table = "{" + ",".join(f'{json.dumps(path)}="deny"' for path in denied) + "}"
+    entries.update((path, "deny") for path in denied)
+    table = "{" + ",".join(f"{json.dumps(path)}={json.dumps(access)}"
+                           for path, access in entries.items()) + "}"
     name = CREDENTIAL_DENYING_PERMISSION_PROFILE
     return [
         "-c", f'default_permissions="{name}"',

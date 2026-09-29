@@ -180,7 +180,15 @@ ALLOWED_TOOLS = "Read,Grep,Glob,Write"
 # Denying Bash returns the cold-read-cell to the four tools this program
 # chose for it; smoke-checked 2026-09-15, the cold-read-cell answers from
 # the Read tool instead.
-DISALLOWED_TOOLS = "Bash"
+#
+# Monitor is denied too, because it runs shell commands as well: with Bash
+# alone denied, a session launched with this cell's flags ran `echo` through
+# Monitor, and so did a subagent it spawned; with Monitor denied as well,
+# neither had any command-running tool (measured 2026-09-29, claude 2.1.280,
+# after review 5346123311 found Monitor running `head`). The credential rule
+# relies on this: a keychain item is kept from the reviewer by the reviewer
+# having no command to read it with.
+DISALLOWED_TOOLS = "Bash,Monitor"
 
 # Every hook is switched off for the reviewer's session, and only for it: the
 # seat that started the cold read keeps its own. A reviewer runs inside this

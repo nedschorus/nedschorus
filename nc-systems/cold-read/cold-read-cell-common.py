@@ -234,18 +234,38 @@ class CellRefusal(Exception):
 #     Linux), at every path credential_files_found_now() finds at launch.
 # A keychain item is not listed: every agent-binary logs in through the
 # keychain, and withholding it logs them out (measured 2026-09-28 on the
-# Mac, all three). The Claude reviewer has no shell to reach it.
+# Mac, all three). The Claude reviewer has no command-running tool to reach
+# it: Bash and Monitor are both denied (see the Claude launcher). The Codex
+# and agy reviewers have shells.
 CREDENTIAL_DIRECTORIES = (
     pathlib.Path.home() / ".config" / "nedschorus",
     pathlib.Path.home() / ".ssh",
 )
 CREDENTIAL_FILE_NAME_PATTERNS = ("*.token", ".env")
 
-# Where credential_files_found_now() looks. The home holds every credential
-# the fleet stores; /tmp is where a scratch copy would sit; the repository is
-# listed for a checkout outside the home. Measured on ned-box 2026-09-28: the
-# home and /tmp together take under a second, and hold 39 such files.
-CREDENTIAL_FILE_SCAN_ROOTS = (pathlib.Path.home(), pathlib.Path("/tmp"), REPO_ROOT)
+
+def credential_directories_present() -> list:
+    """The CREDENTIAL_DIRECTORIES that exist now, as strings. A Linux sandbox
+    that is told to mask a missing path creates it on the real disk as its
+    mount point -- Codex left empty mode-0444 files at a scratch home's
+    `.ssh` and `.config` (review 5346166603, 2026-09-29) -- and a missing
+    directory holds nothing to protect."""
+    return [str(directory) for directory in CREDENTIAL_DIRECTORIES
+            if directory.is_dir()]
+
+# Where credential_files_found_now() looks: the home, which holds every
+# credential the fleet stores, and the repository, for a checkout outside the
+# home. Not /tmp. A sandbox that takes exact paths needs every listed path to
+# still exist when it starts, or it recreates the path on the real disk as a
+# mount point (bwrap: the directories and an empty mode-0444 file) or stops
+# (Codex: "Can't mkdir parents"), per review 5346123311, 2026-09-29. /tmp is
+# where the test suites create and delete credential-named fixtures during
+# every sweep: on ned-box on 2026-09-29 all 31 of its matches sat in one
+# merge-gate-test fixture directory, and the home held 5, none of them
+# fixtures. A file deleted between the scan and the sandbox's start is still
+# recreated; nothing deletes the home's credential files as a matter of
+# course.
+CREDENTIAL_FILE_SCAN_ROOTS = (pathlib.Path.home(), REPO_ROOT)
 
 
 def credential_files_found_now() -> list:
