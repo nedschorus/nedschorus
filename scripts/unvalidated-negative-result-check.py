@@ -166,8 +166,7 @@ raised:
 EVERY FIRING SORTED, 2026-09-28, each on first-hand evidence -- `git grep` at
 the commit the checkout was on, a re-run without `2>/dev/null` over files that
 have not changed since, the session's own neighbouring commands -- and on what
-the agent did next. The table, a reason and a transcript citation for each, is
-nedlern@ned-box:/home/nedlern/nedschorus-logs/empty-search-check/empty-search-check-firings-sorted-2026-09-28.md.
+the agent did next.
 
        4  REAL: the empty result could not have found what the agent was
               looking for, and the agent went on as if it had searched. Two
