@@ -1717,6 +1717,173 @@ def run_overview_refresh_due_cases(workspace: Path):
           in console.getvalue(), console.getvalue())
 
 
+def run_overview_refresh_withheld_while_pull_request_open_cases(workspace: Path):
+    """A due system's line is withheld while an open pull request already
+    changes its overview, and given as before when GitHub cannot be asked.
+
+    Ruled 2026-09-29 (item 11 of the walk open-items-this-seat-holds-2026-09-24,
+    "y"): the refresh does nothing while an open pull request already refreshes
+    that overview. A fake `gh` on PATH answers each case and records every call.
+    """
+    root = workspace / "overview-refresh-withheld"
+    root.mkdir()
+    repository = root / "repository"
+    repository.mkdir()
+    git_in(["init", "--quiet", "--initial-branch=main"], repository)
+    git_in(["config", "user.name", "fixture"], repository)
+    git_in(["config", "user.email", "fixture@nedschorus.invalid"], repository)
+
+    def commit(texts_by_path, message):
+        for relative, text in texts_by_path.items():
+            path = repository / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text, encoding="utf-8")
+        git_in(["add", "-A"], repository)
+        git_in(["commit", "--quiet", "-m", message], repository)
+        return git_in(["rev-parse", "HEAD"], repository).stdout.strip()
+
+    def publish():
+        git_in(["update-ref", "refs/remotes/origin/main", "HEAD"], repository)
+        return git_in(["rev-parse", "--short", "HEAD"], repository).stdout.strip()
+
+    def pinned_line(sha, system):
+        return (f"**Pinned to what landed:** commit [{sha[:7]}]"
+                f"(https://github.com/nedschorus/nedschorus/commit/{sha}) on "
+                f"2026-09-28 — the {system} as it landed.")
+
+    fake_gh_count = [0]
+
+    def due_with_a_fake_gh(body, gh_timeout=None, without_gh=False):
+        """overview_refresh_due_lines's result, its console, and the calls the
+        fake `gh` recorded. body is the fake's shell after it records the call.
+        without_gh puts only git on PATH, so no `gh` is found at all."""
+        fake_gh_count[0] += 1
+        directory = root / f"fake-gh-{fake_gh_count[0]}"
+        directory.mkdir()
+        calls = directory / "calls"
+        if without_gh:
+            (directory / "git").symlink_to(shutil.which("git"))
+            search_path = str(directory)
+        else:
+            fake_gh = directory / "gh"
+            fake_gh.write_text(
+                '#!/bin/sh\nprintf "%s\\n" "$*" >> "' + str(calls) + '"\n' + body + "\n",
+                encoding="utf-8")
+            fake_gh.chmod(0o755)
+            search_path = f"{directory}{os.pathsep}{os.environ.get('PATH', '')}"
+        original_path = os.environ.get("PATH", "")
+        had_timeout = hasattr(supervisor, "OVERVIEW_REFRESH_CHECK_GH_TIMEOUT_SECONDS")
+        original_timeout = getattr(supervisor, "OVERVIEW_REFRESH_CHECK_GH_TIMEOUT_SECONDS", None)
+        if gh_timeout is not None:
+            supervisor.OVERVIEW_REFRESH_CHECK_GH_TIMEOUT_SECONDS = gh_timeout
+        console = io.StringIO()
+        os.environ["PATH"] = search_path
+        try:
+            with contextlib.redirect_stdout(console):
+                due = overview_refresh_due_or_missing(repository)
+        finally:
+            os.environ["PATH"] = original_path
+            if had_timeout:
+                supervisor.OVERVIEW_REFRESH_CHECK_GH_TIMEOUT_SECONDS = original_timeout
+            elif hasattr(supervisor, "OVERVIEW_REFRESH_CHECK_GH_TIMEOUT_SECONDS"):
+                del supervisor.OVERVIEW_REFRESH_CHECK_GH_TIMEOUT_SECONDS
+        recorded = calls.read_text(encoding="utf-8").splitlines() if calls.exists() else []
+        return due, console.getvalue(), recorded
+
+    def gh_answering(pull_requests):
+        answer = root / f"answer-{uuid.uuid4().hex}.json"
+        answer.write_text(json.dumps(pull_requests), encoding="utf-8")
+        return f"cat '{answer}'"
+
+    widget_overview = "docs/nedschorus-wiki/nedschorus-widget-system-overview.md"
+    gadget_overview = "docs/nedschorus-wiki/nedschorus-gadget-system-overview.md"
+    landed = commit({"nc-systems/widget/widget.py": "print('widget')\n"}, "the widget lands")
+    commit({widget_overview: "# The widget\n\n" + pinned_line(landed, "widget") + "\n"},
+           "the widget's overview, pinned")
+    publish()
+
+    due, console, calls = due_with_a_fake_gh(gh_answering([]))
+    check("when no system is due, gh is never asked",
+          due == () and calls == [], f"{due!r} {calls!r}\n{console}")
+
+    commit({"nc-systems/widget/widget.py": "print('widget, grown')\n"}, "the widget grows")
+    main = publish()
+    expected = expected_widget_overview_refresh_due_line(landed[:7], main, 1)
+    refresh_title = "The widget overview is refreshed against what landed"
+    refresh_url = "https://github.com/nedschorus/nedschorus/pull/9001"
+
+    due, console, calls = due_with_a_fake_gh(gh_answering([
+        {"url": refresh_url, "title": refresh_title,
+         "files": [{"path": widget_overview}, {"path": "nc-systems/widget/widget-design.md"}]}]))
+    check("a due system whose overview an open pull request changes gets no line",
+          due == (), f"{due!r}\n{console}")
+    check("the console names the system and the open pull request that changes its "
+          "overview",
+          f"handoff-supervisor: overview check for widget withheld its line: the open "
+          f"pull request \"{refresh_title}\" ({refresh_url}) already changes "
+          f"{widget_overview}" in console, console)
+    check("gh is asked once, for the open pull requests and the files each changes",
+          calls == ["pr list --repo nedschorus/nedschorus --state open "
+                    "--json url,title,files --limit 200"], repr(calls))
+
+    due, console, calls = due_with_a_fake_gh(gh_answering([
+        {"url": refresh_url, "title": "The widget grows a second handle",
+         "files": [{"path": "nc-systems/widget/widget.py"},
+                   {"path": "docs/nedschorus-wiki/nedschorus-glossary.md"}]}]))
+    check("an open pull request that changes other files only leaves the line given",
+          due == (expected,), f"{due!r}\nexpected: {expected!r}\n{console}")
+
+    due, console, calls = due_with_a_fake_gh(
+        "echo 'gh: To get started with GitHub CLI, please run:  gh auth login' >&2\n"
+        "echo 'second line of complaint' >&2\nexit 4")
+    check("when gh exits nonzero, the line is given",
+          due == (expected,), f"{due!r}\nexpected: {expected!r}\n{console}")
+    check("when gh exits nonzero, the console says so, with gh's first line",
+          "handoff-supervisor: overview check could not ask GitHub which open pull "
+          "requests change an overview, so every due line is given: gh exited 4: "
+          "gh: To get started with GitHub CLI, please run:  gh auth login\n" in console,
+          console)
+
+    due, console, calls = due_with_a_fake_gh("", without_gh=True)
+    check("when gh is absent, the line is given",
+          due == (expected,), f"{due!r}\nexpected: {expected!r}\n{console}")
+    check("when gh is absent, the console says so",
+          "so every due line is given: FileNotFoundError" in console, console)
+
+    due, console, calls = due_with_a_fake_gh("echo 'this is not json'")
+    check("when gh's output does not parse, the line is given and the console says so",
+          due == (expected,)
+          and "so every due line is given: JSONDecodeError" in console,
+          f"{due!r}\nexpected: {expected!r}\n{console}")
+
+    due, console, calls = due_with_a_fake_gh("exec sleep 30", gh_timeout=1)
+    check("when gh times out, the line is given and the console says so",
+          due == (expected,)
+          and "so every due line is given: TimeoutExpired" in console,
+          f"{due!r}\nexpected: {expected!r}\n{console}")
+
+    # Two systems due, one of them with an open pull request changing its
+    # overview: only the other system's line is given.
+    gadget_landed = commit({"nc-systems/gadget/gadget.py": "print('gadget')\n"},
+                           "the gadget lands")
+    commit({gadget_overview: "# The gadget\n\n" + pinned_line(gadget_landed, "gadget") + "\n"},
+           "the gadget's overview, pinned")
+    commit({"nc-systems/gadget/gadget.py": "print('gadget, grown')\n"}, "the gadget grows")
+    main = publish()
+    expected = expected_widget_overview_refresh_due_line(landed[:7], main, 1)
+    gadget_title = "The gadget overview is refreshed against what landed"
+    gadget_url = "https://github.com/nedschorus/nedschorus/pull/9002"
+    due, console, calls = due_with_a_fake_gh(gh_answering([
+        {"url": gadget_url, "title": gadget_title, "files": [{"path": gadget_overview}]}]))
+    check("of two due systems, only the one whose overview no open pull request "
+          "changes gets its line",
+          due == (expected,), f"{due!r}\nexpected: {expected!r}\n{console}")
+    check("the console names the system whose line was withheld, and its pull request",
+          f"overview check for gadget withheld its line: the open pull request "
+          f"\"{gadget_title}\" ({gadget_url})" in console
+          and "overview check for widget withheld" not in console, console)
+
+
 def run_overview_refresh_due_prompt_cases(workspace: Path):
     """Where the overview-refresh-due line goes: right after the branch-state
     line, at both call sites that compose it, and nothing appended."""
@@ -3543,6 +3710,7 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     recent_timestamp = run_offline_cases(Path(temporary_directory))
     run_branch_sync_cases(Path(temporary_directory))
     run_overview_refresh_due_cases(Path(temporary_directory))
+    run_overview_refresh_withheld_while_pull_request_open_cases(Path(temporary_directory))
     run_overview_refresh_due_prompt_cases(Path(temporary_directory))
     run_exit_handoff_cases(Path(temporary_directory))
     run_adoption_cases(Path(temporary_directory))
