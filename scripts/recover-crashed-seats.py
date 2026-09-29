@@ -113,11 +113,32 @@ The variable is ignored there too, so the box listing in
 restart-live-seats-at-login.py, which reads ~/agents, and this tool agree on
 where a box seat lives by rule rather than because nothing sets it.
 
+Checkout: a seat this tool launches runs its supervisor from the durable
+checkout — --checkout, default ~/Projects/nedschorus, the name and default the
+login restart's install scripts give it — whichever checkout this tool itself
+runs from. On the Mac it runs that checkout's launch-claude-mac, which takes
+the supervisor from its own checkout; off macOS the tmux command names that
+checkout's supervisor, as launch-claude-ubuntu does. Until 2026-09-29 both
+came from this tool's own checkout, so a recovery run by hand from a worktree
+left the seat's supervisor running that worktree's code for the rest of its
+life, and the seat stopped at its next handoff once the worktree was removed,
+because at every handoff the supervisor runs the conversation extractor from
+its own checkout (GHI [recover-crashed-seats: a recovered seat's supervisor runs from whichever checkout the recovery was run from, and stops at its next handoff once that checkout is removed](https://github.com/nedschorus/nedschorus/issues/659)).
+The user answered "y" on 2026-09-29, walk
+open-items-this-seat-holds-2026-09-24, item 12, to: "The choices: always run
+the supervisor from the machine's reference clone, `~/Projects/nedschorus`, as
+the login restart already does; or warn or refuse when recovery runs from any
+other checkout. I recommend the reference clone. It is the one checkout that
+is never removed, and the login restart already relies on it." So when the
+file a launch needs is missing from the durable checkout — launch-claude-mac
+on the Mac, the supervisor elsewhere — the seat is refused and nothing is
+launched, never launched from this tool's own checkout instead.
+
 Usage:
   recover-crashed-seats.py <seat-name>... [--dry-run] [--ignite-fallback]
-                           [--open-iterm-window-per-seat]
+                           [--open-iterm-window-per-seat] [--checkout DIR]
   recover-crashed-seats.py --all [--dry-run] [--ignite-fallback]
-                           [--open-iterm-window-per-seat]
+                           [--open-iterm-window-per-seat] [--checkout DIR]
 
 --all assesses every seat with a home under the agents root. --dry-run
 reports every decision and launches nothing. --open-iterm-window-per-seat
@@ -139,17 +160,23 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-# The supervisor's path, defined once because this file needs it twice: the
-# import just below loads it as a module, and launch_seat's box branch names
-# it in the tmux command it hand-composes. Both were siblings of this script
-# until the supervisor moved into nc-systems/handoff/ on 2026-09-20; the
-# import was re-pathed then and the tmux command was not, so off macOS --
-# where launcher_path() is None and that branch is the only one -- recovery
-# launched a session that ran a file that no longer existed, and every
-# recovered seat was reported LAUNCHED BUT DID NOT COME UP. One name here is
-# what makes a third move a single edit.
-SUPERVISOR_SCRIPT = (Path(__file__).resolve().parent.parent
-                     / "nc-systems" / "handoff" / "handoff-supervisor.py")
+# The supervisor's path within a checkout, defined once because this file
+# needs it twice: the import just below loads this checkout's copy as a
+# module, and launch_seat's box branch names the durable checkout's copy in
+# the tmux command it hand-composes (see the module docstring's "Checkout"
+# paragraph). Both were siblings of this script until the supervisor moved
+# into nc-systems/handoff/ on 2026-09-20; the import was re-pathed then and
+# the tmux command was not, so off macOS -- where launcher_path() is None and
+# that branch is the only one -- recovery launched a session that ran a file
+# that no longer existed, and every recovered seat was reported LAUNCHED BUT
+# DID NOT COME UP. One name here is what makes a third move a single edit.
+SUPERVISOR_SCRIPT_WITHIN_A_CHECKOUT = Path("nc-systems") / "handoff" / "handoff-supervisor.py"
+SUPERVISOR_SCRIPT = Path(__file__).resolve().parent.parent / SUPERVISOR_SCRIPT_WITHIN_A_CHECKOUT
+LAUNCH_CLAUDE_MAC_WITHIN_A_CHECKOUT = Path("scripts") / "launch-claude-mac"
+# The checkout a launched seat's supervisor runs from, whichever checkout this
+# program runs from (see the module docstring's "Checkout" paragraph). main()
+# rebinds it from --checkout when that is given.
+durable_checkout = Path("~/Projects/nedschorus").expanduser()
 
 _supervisor_spec = importlib.util.spec_from_file_location(
     "handoff_supervisor", SUPERVISOR_SCRIPT
@@ -727,16 +754,25 @@ def newest_dialog_extract(handoff_directory: Path, name: str):
 
 
 def launcher_path():
-    """The local machine's seat launcher. Box recovery runs this script ON
+    """The local machine's seat launcher, the durable checkout's (see the
+    module docstring's "Checkout" paragraph). Box recovery runs this script ON
     the box, where the Mac launcher is absent — launch-claude-ubuntu is a
     Mac-side wrapper that drives the box over ssh, so it is not the box-local
     answer; there, the launch is composed directly (see launch_seat)."""
     if sys.platform == "darwin":
         # Absolute, because an iTerm window's command starts in / with a bare
-        # PATH (--open-iterm-window-per-seat), and this script is usually run
-        # by a relative path.
-        return Path(__file__).resolve().with_name("launch-claude-mac")
+        # PATH (--open-iterm-window-per-seat); main() absolutizes --checkout.
+        return durable_checkout / LAUNCH_CLAUDE_MAC_WITHIN_A_CHECKOUT
     return None
+
+
+def durable_checkout_file_a_launch_here_runs() -> Path:
+    """The file in the durable checkout that a launch on this machine runs:
+    launch-claude-mac where there is a launcher, and off macOS the supervisor
+    launch_seat's box branch names."""
+    if launcher_path() is None:
+        return durable_checkout / SUPERVISOR_SCRIPT_WITHIN_A_CHECKOUT
+    return durable_checkout / LAUNCH_CLAUDE_MAC_WITHIN_A_CHECKOUT
 
 
 def agents_root_is_movable_on_this_machine() -> bool:
@@ -793,8 +829,9 @@ def launch_seat(name: str, seat_directory: Path, handoff_directory: Path,
     checkout prep, and transition socket selection). On the box — where the
     only launcher is the Mac-side ssh wrapper — the supervisor is started
     directly in a per-seat tmux session, mirroring what launch-claude-ubuntu
-    composes remotely; the update/prep steps are skipped, which recovery can
-    afford (the seat ran this checkout minutes before the crash).
+    composes remotely, the durable checkout's supervisor included; the
+    update/prep steps are skipped, which recovery can afford (the seat ran
+    that checkout minutes before the crash).
 
     The supervisor is always told the handoff directory this recovery
     assessed with (PR #131 review round 3, codex finding A: without it the
@@ -858,7 +895,7 @@ def launch_seat(name: str, seat_directory: Path, handoff_directory: Path,
         f"GIT_AUTHOR_EMAIL={shlex.quote(f'{name}@nedschorus.invalid')} "
         f"GIT_COMMITTER_NAME={shlex.quote(name)} "
         f"GIT_COMMITTER_EMAIL={shlex.quote(f'{name}@nedschorus.invalid')}; "
-        f"python3 {SUPERVISOR_SCRIPT} "
+        f"python3 {shlex.quote(str(durable_checkout / SUPERVISOR_SCRIPT_WITHIN_A_CHECKOUT))} "
         f"--agent {shlex.quote(name)} --cd {shlex.quote(str(seat_directory))} "
         f"{supervisor_arguments}"
     )
@@ -1385,6 +1422,15 @@ def recover_seat(name: str, agents_root: Path, handoff_directory: Path,
     own (the user accepted that cost)."""
     verdict, detail = assess_seat(name, agents_root, handoff_directory, projects_root,
                                   retired_pane_process_ids=retired_pane_process_ids or ())
+    # Before every branch that can launch, the leftover-shell question
+    # included, so no shell is closed for a launch that cannot happen; never a
+    # launch from this program's own checkout instead (the module docstring's
+    # "Checkout" paragraph). A seat already running or refused launches
+    # nothing, and keeps its own line.
+    if verdict not in ("seat-already-running", "refuse"):
+        needed = durable_checkout_file_a_launch_here_runs()
+        if not needed.is_file():
+            return f"{name}: REFUSED — {needed} does not exist, so nothing was launched"
     seat_directory = agents_root / name
     launch = open_seat_in_iterm_window if open_iterm_window else launch_seat
     in_window = " in a new iTerm window" if open_iterm_window else ""
@@ -1778,7 +1824,14 @@ def main(argv=None) -> int:
     parser.add_argument("--open-iterm-window-per-seat", action="store_true",
                         help="launch each recovered seat attached, in its own iTerm "
                              "window (macOS only; nedschorus#242 change 6)")
+    parser.add_argument("--checkout", default="",
+                        help="the durable checkout whose launcher and supervisor a "
+                             "launched seat runs (default ~/Projects/nedschorus)")
     arguments = parser.parse_args(argv)
+
+    if arguments.checkout:
+        global durable_checkout
+        durable_checkout = Path(os.path.abspath(Path(arguments.checkout).expanduser()))
 
     # Before anything is read or launched; see the module docstring's
     # "Agents root" paragraph for why.
