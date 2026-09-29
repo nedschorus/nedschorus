@@ -16,8 +16,12 @@ Publishing is outward-facing, and the vault holds the project's own doctrine —
 
 ## Next action
 
-The user decides whether and when to host the vault, and what it may expose. Until then nothing is built. Queued as `draft` for the drain.
+None. The user answered on 2026-09-29, below; the issue is closed as not planned.
 
 ## Search receipt
 
 `scripts/ghi-info-ask.py` asked 2026-09-18 with `--include-closed` whether any issue covers publishing or hosting the vault: none does. The only other publishing issue, GHI [Open-source publishing and community strategy](https://github.com/nedschorus/nedschorus/issues/4), is about the project's public site and syndication and predates the vault.
+
+## Outcome
+
+Ruled by the user on 2026-09-29, at item 17 of the queue-drain walk queue-and-drafts-drain-2026-09-22: "Let's not use obsidian publish, at least not now." The vault stays on the Mac, over `docs/nedschorus-wiki/` in the reference checkout, and nothing is hosted. If hosting comes up again, a new issue is filed from his word; this one stays closed.
