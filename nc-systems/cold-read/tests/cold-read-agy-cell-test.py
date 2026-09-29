@@ -31,6 +31,15 @@ WHAT IS PINNED HERE.
   - --model and --effort override the tier map and are stamped as what ran,
     the way they do on the other legs.
 
+  - No credential file can be read from inside the cell (user-ruled
+    2026-09-28). The stub is run by the launcher inside the machine's real
+    sandbox -- sandbox-exec on macOS, bwrap on Linux -- and tries to read a
+    `.token` file, a `.env` file and an ordinary file beside them: the first
+    two come back without their content, the third with it. The same stub
+    run directly reads all three, which is what shows the check can fail.
+    With no sandbox program on PATH the launcher refuses, exit 64, and never
+    starts agy.
+
 Each case builds a throwaway git repository holding a copy of the cell
 scripts, as nc-systems/cold-read/tests/cold-read-cell-common-test.py does, and runs the launcher
 inside it with the stub first on PATH. The stub is driven by
@@ -103,6 +112,14 @@ if "near_miss" in step:
     sibling = report_path.parent.parent / (report_path.parent.name[:-1] + "X")
     sibling.mkdir(parents=True, exist_ok=True)
     (sibling / report_path.name).write_text(step["near_miss"], encoding="utf-8")
+if "read_paths" in step:
+    reads = {}
+    for path in step["read_paths"]:
+        try:
+            reads[path] = pathlib.Path(path).read_text(encoding="utf-8")
+        except OSError as error:
+            reads[path] = "UNREADABLE: " + str(error)
+    pathlib.Path(step["dump_reads"]).write_text(json.dumps(reads), encoding="utf-8")
 if "stdout" in step:
     sys.stdout.write(step["stdout"])
 sys.exit(step.get("exit", 0))
@@ -146,14 +163,20 @@ def report_path_for(repository, case_slug):
             / f"{record_directory_name}--agy-fast-clarify-fast.md")
 
 
-def run_agy_cell(repository, stub_directory, plan, report_path, *arguments,
-                 tier="fast"):
+def install_stub_agy(stub_directory):
     stub_directory.mkdir(parents=True, exist_ok=True)
     stub = stub_directory / "agy"
     stub.write_text(STUB_AGY, encoding="utf-8")
     stub.chmod(0o755)
+    return stub
+
+
+def run_agy_cell(repository, stub_directory, plan, report_path, *arguments,
+                 tier="fast", path_override=None):
+    install_stub_agy(stub_directory)
     environment = dict(os.environ)
-    environment["PATH"] = f"{stub_directory}{os.pathsep}{environment.get('PATH', '')}"
+    environment["PATH"] = (path_override if path_override is not None else
+                           f"{stub_directory}{os.pathsep}{environment.get('PATH', '')}")
     environment["COLD_READ_AGY_CELL_TEST_STUB_PLAN"] = json.dumps(plan)
     environment["COLD_READ_AGY_CELL_TEST_STUB_REPORT_PATH"] = str(report_path)
     return subprocess.run(
@@ -308,6 +331,72 @@ with tempfile.TemporaryDirectory() as scratch:
           result.returncode == 0
           and " model=gemini-3.8-flash-high " in stamp and " effort=high " in stamp,
           f"exit {result.returncode}; stamp={stamp!r}; stderr={result.stderr!r}")
+
+    # --- No credential file is readable from inside the cell -------------
+    # The canaries sit inside the scratch repository, so they are under a
+    # directory the Linux launcher scans as well as under the macOS pattern.
+    repository = build_scratch_repository(scratch)
+    report = report_path_for(repository, "credential-files")
+    canary_directory = repository / "credential-canaries"
+    canary_directory.mkdir()
+    canary_text = "CANARY-NOT-A-SECRET-cold-read-agy-cell-test\n"
+    token_canary = canary_directory / "probe.token"
+    env_canary = canary_directory / ".env"
+    ordinary_file = canary_directory / "ordinary.txt"
+    for canary in (token_canary, env_canary, ordinary_file):
+        canary.write_text(canary_text, encoding="utf-8")
+    read_step = {"report": "STUB AGY REVIEW: canaries\n",
+                 "read_paths": [str(token_canary), str(env_canary), str(ordinary_file)]}
+
+    # The control: the stub on its own reads every one of them.
+    direct_reads_dump = scratch / "credential-reads-direct.json"
+    stub = install_stub_agy(stubs)
+    direct_environment = dict(os.environ)
+    direct_environment["COLD_READ_AGY_CELL_TEST_STUB_PLAN"] = json.dumps(
+        {"*": dict(read_step, dump_reads=str(direct_reads_dump))})
+    direct_environment["COLD_READ_AGY_CELL_TEST_STUB_REPORT_PATH"] = str(
+        scratch / "credential-direct-report.md")
+    subprocess.run([str(stub), "--model", "any"], env=direct_environment,
+                   capture_output=True, text=True, check=False)
+    direct_reads = (json.loads(direct_reads_dump.read_text(encoding="utf-8"))
+                    if direct_reads_dump.is_file() else {})
+    check("the control: the stub run directly reads the .token and .env canaries",
+          all(direct_reads.get(str(path)) == canary_text
+              for path in (token_canary, env_canary)),
+          repr(direct_reads))
+
+    cell_reads_dump = scratch / "credential-reads-in-cell.json"
+    result = run_agy_cell(repository, stubs,
+                          {"*": dict(read_step, dump_reads=str(cell_reads_dump))},
+                          report)
+    cell_reads = (json.loads(cell_reads_dump.read_text(encoding="utf-8"))
+                  if cell_reads_dump.is_file() else {})
+    check("a cell whose agy tries the canaries still exits 0",
+          result.returncode == 0, f"exit {result.returncode}; stderr={result.stderr!r}")
+    check("inside the cell, a .token file's content cannot be read",
+          str(token_canary) in cell_reads
+          and "CANARY" not in cell_reads[str(token_canary)], repr(cell_reads))
+    check("inside the cell, a .env file's content cannot be read",
+          str(env_canary) in cell_reads
+          and "CANARY" not in cell_reads[str(env_canary)], repr(cell_reads))
+    check("inside the cell, an ordinary file beside them is still read",
+          cell_reads.get(str(ordinary_file)) == canary_text, repr(cell_reads))
+
+    # --- No sandbox program on PATH: refused, agy never started ------------
+    repository = build_scratch_repository(scratch)
+    report = report_path_for(repository, "no-sandbox")
+    argv_dump = scratch / "no-sandbox-argv.json"
+    result = run_agy_cell(repository, stubs,
+                          {"*": {"report": "STUB AGY REVIEW\n",
+                                 "dump_argv": str(argv_dump)}},
+                          report, path_override=str(stubs))
+    check("with no sandbox program on PATH the cell is refused with exit 64",
+          result.returncode == 64, f"exit {result.returncode}; stderr={result.stderr!r}")
+    check("the refusal names the sandbox program it needs",
+          ("sandbox-exec" if sys.platform == "darwin" else "bwrap") in result.stderr,
+          repr(result.stderr))
+    check("with no sandbox program, agy is never started",
+          not argv_dump.exists() and not report.exists(), repr(result.stderr))
 
 print()
 if failures:

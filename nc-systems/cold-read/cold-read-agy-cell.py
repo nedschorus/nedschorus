@@ -22,7 +22,7 @@ chain failed to produce one, including the case where `agy` never started
 because the binary is not on PATH (the common module names that on stderr
 and lets the chain advance, so a 1 always means "no review was produced");
 64 this program refused the invocation and never launched agy, naming its
-own fix. 64 rather than the conventional 2 for the reason written beside
+own fix -- including when this machine has no sandbox to run agy in. 64 rather than the conventional 2 for the reason written beside
 EXIT_BAD_INVOCATION in nc-systems/cold-read/cold-read-cell-common.py, which every
 cold-read-cell shares.
 
@@ -63,6 +63,26 @@ even a short document restates every section and then reports two more
 sections, so the two do not overlap in length. A run whose stdout falls under
 the threshold with no file written fails, as on the other legs.
 
+AGY RUNS INSIDE THE OPERATING SYSTEM'S SANDBOX, because nothing inside agy
+keeps a reviewer from reading a credential file (user-ruled 2026-09-28; the
+rule and why are beside CREDENTIAL_DIRECTORIES in
+nc-systems/cold-read/cold-read-cell-common.py). Measured 2026-09-28 with
+canary files: unguarded, agy read all three canaries, on the Mac and on
+ned-box; its own `--sandbox` switch still let it read all three; inside the
+sandbox below it read none, still read README.md, and wrote its report, on
+both machines.
+  - macOS: `sandbox-exec` with a profile that denies reading or writing the
+    credential directories and any path whose name matches a credential
+    file name.
+  - Linux: `bwrap` over the whole filesystem, with an empty tmpfs mounted
+    over each credential directory and /dev/null bound over each file
+    credential_files_found_now() finds at launch in the home and the
+    repository. bwrap takes exact paths, not patterns, so a credential file
+    outside those directories that is created after launch, or sits outside
+    the home and the repository, is not covered.
+With no such sandbox on the machine, this program refuses before agy runs:
+agy is never run unguarded.
+
 WHY THIS LEG'S STAMP CARRIES NO `tokens=` FIELD. The Antigravity CLI prints
 no "tokens used" line the way the Codex CLI does, so the field is omitted
 rather than filled with a zero; if it starts printing one, the shared parser in
@@ -71,6 +91,8 @@ nc-systems/cold-read/cold-read-cell-common.py picks it up with no change here.
 
 import importlib.util
 import pathlib
+import re
+import shutil
 import sys
 
 _common_spec = importlib.util.spec_from_file_location(
@@ -128,6 +150,40 @@ def stdout_is_a_review(runtime_stdout: str) -> str:
     return ""
 
 
+def credential_sandbox_program(platform: str = sys.platform):
+    """The program agy runs inside on this platform, or None where there is
+    none this launcher knows."""
+    if platform == "darwin":
+        return "sandbox-exec"
+    if platform.startswith("linux"):
+        return "bwrap"
+    return None
+
+
+def sandbox_exec_profile() -> str:
+    """The macOS profile: allow everything, then deny the credential paths.
+    A file-name pattern becomes a regex on the path's tail: `*.token` any
+    path ending `.token`, `.env` any path whose last component is `.env`."""
+    rules = [f'(subpath "{directory}")' for directory in common.CREDENTIAL_DIRECTORIES]
+    for pattern in common.CREDENTIAL_FILE_NAME_PATTERNS:
+        tail = (re.escape(pattern[1:]) if pattern.startswith("*")
+                else "/" + re.escape(pattern))
+        rules.append(f'(regex #"{tail}$")')
+    return "(version 1)(allow default)(deny file-read* file-write* " + "".join(rules) + ")"
+
+
+def credential_sandbox_prefix(platform: str = sys.platform) -> list:
+    """The argv that goes in front of `agy`; see the docstring."""
+    if platform == "darwin":
+        return ["sandbox-exec", "-p", sandbox_exec_profile()]
+    prefix = ["bwrap", "--dev-bind", "/", "/"]
+    for directory in common.credential_directories_present():
+        prefix += ["--tmpfs", directory]
+    for path in common.credential_files_found_now():
+        prefix += ["--ro-bind", "/dev/null", path]
+    return prefix
+
+
 def invocation_builder(effort: str):
     """The one thing that differs between the cold-read-cells.
 
@@ -139,6 +195,7 @@ def invocation_builder(effort: str):
     """
     def build_invocation(model: str, prompt: str):
         command = [
+            *credential_sandbox_prefix(),
             "agy",
             "--add-dir", str(common.REPO_ROOT),
             "--dangerously-skip-permissions",
@@ -153,6 +210,16 @@ def invocation_builder(effort: str):
 
 
 def main() -> int:
+    sandbox = credential_sandbox_program()
+    if sandbox is None or shutil.which(sandbox) is None:
+        needed = sandbox or "sandbox-exec (macOS) or bwrap (Linux)"
+        print(f"{PROGRAM}: refused before agy started: agy runs only inside {needed}, "
+              "which is not on PATH.\n"
+              f"{PROGRAM}: install {needed} on this machine and rerun "
+              "(Ubuntu: sudo apt install bubblewrap).\n"
+              f"{PROGRAM}: if you cannot install it, run this cold read on the Mac.",
+              file=sys.stderr)
+        return common.EXIT_BAD_INVOCATION
     return common.run_cell(
         program=PROGRAM, runtime="agy", description=__doc__,
         model_help="explicit Antigravity model id (effort suffix included, "
