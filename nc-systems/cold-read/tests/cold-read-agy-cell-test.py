@@ -362,7 +362,12 @@ with tempfile.TemporaryDirectory() as scratch:
     token_canary = scratch_home / "projects" / "probe.token"
     env_canary = scratch_home / "projects" / ".env"
     ordinary_file = scratch_home / "projects" / "ordinary.txt"
-    credential_canaries = (nedschorus_canary, ssh_canary, token_canary, env_canary)
+    # The scratch repository is outside the scratch home, so on Linux only
+    # the repository scan root reaches these two.
+    repository_token_canary = repository / "credential-canaries" / "probe.token"
+    repository_env_canary = repository / "credential-canaries" / ".env"
+    credential_canaries = (nedschorus_canary, ssh_canary, token_canary, env_canary,
+                           repository_token_canary, repository_env_canary)
     for canary in (*credential_canaries, ordinary_file):
         canary.parent.mkdir(parents=True, exist_ok=True)
         canary.write_text(canary_text, encoding="utf-8")
@@ -381,7 +386,7 @@ with tempfile.TemporaryDirectory() as scratch:
                    capture_output=True, text=True, check=False)
     direct_reads = (json.loads(direct_reads_dump.read_text(encoding="utf-8"))
                     if direct_reads_dump.is_file() else {})
-    check("the control: the stub run directly reads all four credential canaries",
+    check("the control: the stub run directly reads all six credential canaries",
           all(direct_reads.get(str(path)) == canary_text
               for path in credential_canaries),
           repr(direct_reads))
@@ -397,7 +402,9 @@ with tempfile.TemporaryDirectory() as scratch:
     for label, canary in (("a file in .config/nedschorus/", nedschorus_canary),
                           ("a file in .ssh/", ssh_canary),
                           ("a .token file", token_canary),
-                          ("a .env file", env_canary)):
+                          ("a .env file", env_canary),
+                          ("a .token file in the repository", repository_token_canary),
+                          ("a .env file in the repository", repository_env_canary)):
         check(f"inside the cell, {label} cannot be read",
               str(canary) in cell_reads
               and "CANARY" not in cell_reads[str(canary)], repr(cell_reads))
