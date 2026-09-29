@@ -1512,6 +1512,29 @@ def overview_refresh_due_or_missing(directory: Path):
     return "missing" if due is None else due(directory)
 
 
+def write_gh_answering_no_open_pull_requests(directory: Path) -> Path:
+    """Write into directory a fake `gh` that answers an empty list of open pull
+    requests, and return directory, for the front of PATH. A case whose system
+    is due reaches the supervisor's `gh pr list`; with this first on PATH it
+    never asks the real GitHub."""
+    directory.mkdir()
+    fake_gh = directory / "gh"
+    fake_gh.write_text("#!/bin/sh\nprintf '[]\\n'\n", encoding="utf-8")
+    fake_gh.chmod(0o755)
+    return directory
+
+
+@contextlib.contextmanager
+def gh_answering_no_open_pull_requests_first_on_path(directory: Path):
+    original_path = os.environ.get("PATH", "")
+    os.environ["PATH"] = (f"{write_gh_answering_no_open_pull_requests(directory)}"
+                          f"{os.pathsep}{original_path}")
+    try:
+        yield
+    finally:
+        os.environ["PATH"] = original_path
+
+
 def run_overview_refresh_due_cases(workspace: Path):
     """overview_refresh_due_lines against real repositories, one fixture
     repository whose origin/main is moved by hand the way the branch sync's
@@ -1994,11 +2017,15 @@ def run_overview_refresh_due_prompt_cases(workspace: Path):
         "exit 0\n",
         encoding="utf-8")
     stub_agent.chmod(0o755)
+    no_open_pull_requests = write_gh_answering_no_open_pull_requests(
+        handoff_directory / "gh-answering-no-open-pull-requests")
     result = subprocess.run(
         [sys.executable, str(SCRIPT_PATH), "--agent", "refreshdue", "--cd", str(seat),
          "--handoff-dir", str(handoff_directory), "--agent-command", str(stub_agent),
          "--agent-update-timeout-seconds", "0"],
-        capture_output=True, text=True, check=False, stdin=subprocess.DEVNULL, timeout=60)
+        capture_output=True, text=True, check=False, stdin=subprocess.DEVNULL, timeout=60,
+        env={**os.environ,
+             "PATH": f"{no_open_pull_requests}{os.pathsep}{os.environ.get('PATH', '')}"})
     launched = record_path.read_text(encoding="utf-8") if record_path.is_file() else ""
     check("an ignited successor's prompt carries the overview-refresh-due line after "
           "the branch-state instruction",
@@ -3709,7 +3736,9 @@ def run_retiring_session_id_from_the_handoff_cases(workspace: Path, recent: str)
 with tempfile.TemporaryDirectory() as temporary_directory:
     recent_timestamp = run_offline_cases(Path(temporary_directory))
     run_branch_sync_cases(Path(temporary_directory))
-    run_overview_refresh_due_cases(Path(temporary_directory))
+    with gh_answering_no_open_pull_requests_first_on_path(
+            Path(temporary_directory) / "gh-answering-no-open-pull-requests"):
+        run_overview_refresh_due_cases(Path(temporary_directory))
     run_overview_refresh_withheld_while_pull_request_open_cases(Path(temporary_directory))
     run_overview_refresh_due_prompt_cases(Path(temporary_directory))
     run_exit_handoff_cases(Path(temporary_directory))
