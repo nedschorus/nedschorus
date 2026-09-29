@@ -91,6 +91,28 @@
             "timeout": 30
           }
         ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/scripts/empty-search-runs-locator-hook.py",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PostToolUseFailure": [
+      {
+        "matcher": "Bash|Read",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/scripts/empty-search-runs-locator-hook.py",
+            "timeout": 10
+          }
+        ]
       }
     ]
   },
