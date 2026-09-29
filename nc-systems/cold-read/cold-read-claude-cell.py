@@ -218,10 +218,15 @@ DISALLOWED_TOOLS = "Bash,Monitor"
 # blocked all 3 (measured 2026-09-28 on the Mac, and on ned-box: Claude Code
 # answered "File is in a directory that is denied by your permission
 # settings" for each canary and still read README.md).
+#
+# The reviewer programs' login files, Claude's own included: Claude Code reads
+# its login outside the model's tools, so denying the Read tool leaves it
+# logged in. An absolute path takes one `/` more to make the `//` form.
 CREDENTIAL_READ_DENY_RULES = (
     [f"Read(~/{directory.relative_to(pathlib.Path.home())}/**)"
      for directory in common.CREDENTIAL_DIRECTORIES]
     + [f"Read(//**/{pattern})" for pattern in common.CREDENTIAL_FILE_NAME_PATTERNS]
+    + [f"Read(/{path})" for path in common.reviewer_program_login_files()]
 )
 SETTINGS = json.dumps({"disableAllHooks": True,
                        "permissions": {"deny": CREDENTIAL_READ_DENY_RULES}})

@@ -1159,11 +1159,15 @@ with tempfile.TemporaryDirectory() as scratch:
     repository = build_scratch_repository(scratch)
     report = report_path_for(repository, "claude-denies-bash", "claude")
     received_argv_path = scratch / "claude-denies-bash-argv.json"
+    # HOME is a scratch home, so the login-file rules below name paths in it
+    # and no real login path reaches a failure line.
+    claude_scratch_home = scratch / "claude-scratch-home"
+    claude_scratch_home.mkdir(parents=True, exist_ok=True)
     result = run_claude_cell(
         repository, stubs,
         {"*": {"report": "STUB REVIEW: one restatement\n",
                "dump_argv": str(received_argv_path)}},
-        report,
+        report, environment_overrides={"HOME": str(claude_scratch_home)},
     )
     claude_argv = json.loads(received_argv_path.read_text(encoding="utf-8"))
     check("a Claude cell's run reaches the runtime at all",
@@ -1205,6 +1209,16 @@ with tempfile.TemporaryDirectory() as scratch:
           set(passed_deny_rules) >= {"Read(~/.config/nedschorus/**)", "Read(~/.ssh/**)",
                                      "Read(//**/*.token)", "Read(//**/.env)"},
           repr(passed_deny_rules))
+    # Every reviewer program's login file, Claude's own included (user-ruled
+    # 2026-09-29): Claude Code reads its own login outside the Read tool,
+    # so the rule leaves it logged in (measured on both machines).
+    claude_login_rules = {f"Read(/{claude_scratch_home / relative})" for relative in (
+        ".claude/.credentials.json", ".codex/auth.json",
+        ".gemini/jetski-standalone-oauth-token", ".gemini/oauth_creds.json",
+        ".gemini/antigravity-cli/antigravity-oauth-token")}
+    check("the Claude cell denies reading every reviewer program's login file, its own included",
+          set(passed_deny_rules) >= claude_login_rules,
+          f"missing {sorted(claude_login_rules - set(passed_deny_rules))}")
 
     # The Codex cell, the same rule in Codex's terms: a named permission
     # profile extending :workspace, which Codex will not combine with
@@ -1222,7 +1236,14 @@ with tempfile.TemporaryDirectory() as scratch:
     credential_canary = repository / "codex-credential-canary.token"
     home_canary = scratch_home / "projects" / "codex-home-canary.token"
     unscanned_canary = scratch / "neither-home-nor-repository" / "codex-unscanned-canary.token"
-    for canary in (credential_canary, home_canary, unscanned_canary):
+    # Three reviewer programs' login files, Codex's own included; agy's
+    # oauth_creds.json is left absent, and must not be named, since Codex on
+    # Linux turns a missing denied path into a file on the real disk.
+    login_canaries = [scratch_home / ".claude" / ".credentials.json",
+                      scratch_home / ".codex" / "auth.json",
+                      scratch_home / ".gemini" / "antigravity-cli" / "antigravity-oauth-token"]
+    absent_login_file = scratch_home / ".gemini" / "oauth_creds.json"
+    for canary in (credential_canary, home_canary, unscanned_canary, *login_canaries):
         canary.parent.mkdir(parents=True, exist_ok=True)
         canary.write_text("CANARY-NOT-A-SECRET-common-test\n", encoding="utf-8")
     received_argv_path = scratch / "codex-denies-credentials-argv.json"
@@ -1241,6 +1262,7 @@ with tempfile.TemporaryDirectory() as scratch:
                         "")
     home = str(scratch_home)
     expected_denials = [f'"{home}/.config/nedschorus"="deny"']
+    expected_denials += [f'"{login}"="deny"' for login in login_canaries]
     expected_denials += ([f'"{credential_canary}"="deny"', f'"{home_canary}"="deny"']
                          if sys.platform.startswith("linux")
                          else ['"/**/*.token"="deny"', '"/**/.env"="deny"'])
@@ -1259,6 +1281,8 @@ with tempfile.TemporaryDirectory() as scratch:
           f'"{home}/.ssh"' not in denied_table, denied_table)
     check("the Codex cell's profile names no file outside the home and the repository",
           str(unscanned_canary) not in denied_table, denied_table)
+    check("the Codex cell's profile names no login file that does not exist",
+          str(absent_login_file) not in denied_table, denied_table)
     # :workspace makes /tmp and $TMPDIR writable roots, and Codex's Linux
     # sandbox then creates /tmp/.git, /tmp/.codex and /tmp/.agents on the real
     # disk; /tmp/.git makes the instruction-file guard take /tmp for a
@@ -1275,9 +1299,13 @@ with tempfile.TemporaryDirectory() as scratch:
     # (review 5347451780); the module computed them from the real HOME at import.
     real_scan = codex_module.common.credential_files_found_now
     real_directories = codex_module.common.CREDENTIAL_DIRECTORIES
+    real_login_files = codex_module.common.REVIEWER_PROGRAM_LOGIN_FILES
     codex_module.common.credential_files_found_now = lambda: [str(home_canary)]
     codex_module.common.CREDENTIAL_DIRECTORIES = (scratch_home / ".config" / "nedschorus",
                                                   scratch_home / ".ssh")
+    codex_module.common.REVIEWER_PROGRAM_LOGIN_FILES = {
+        "claude": (login_canaries[0],), "codex": (login_canaries[1],),
+        "agy": (login_canaries[2], absent_login_file)}
     try:
         profile_tables = {
             platform: codex_module.credential_denying_permission_profile_arguments(platform)[-1]
@@ -1285,6 +1313,7 @@ with tempfile.TemporaryDirectory() as scratch:
     finally:
         codex_module.common.credential_files_found_now = real_scan
         codex_module.common.CREDENTIAL_DIRECTORIES = real_directories
+        codex_module.common.REVIEWER_PROGRAM_LOGIN_FILES = real_login_files
     check("the Linux profile keeps /tmp and $TMPDIR read-only",
           '":slash_tmp"="read"' in profile_tables["linux"]
           and '":tmpdir"="read"' in profile_tables["linux"], profile_tables["linux"])
@@ -1303,6 +1332,10 @@ with tempfile.TemporaryDirectory() as scratch:
           not any(str(directory) in profile_tables[platform]
                   for directory in real_directories for platform in ("linux", "darwin")),
           "a table names a real credential directory")
+    check("both platforms' profiles deny each login file that exists",
+          all(f'"{login}"="deny"' in profile_tables[platform]
+              for login in login_canaries for platform in ("linux", "darwin")),
+          repr(profile_tables))
 
     # The Codex `deep` tier. Max beat xhigh by 46 net findings measured per
     # cell, but the grid is a union and there it is worth ten findings of 331

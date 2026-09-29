@@ -80,6 +80,11 @@ both machines.
     repository. bwrap takes exact paths, not patterns, so a credential file
     outside those directories that is created after launch, or sits outside
     the home and the repository, is not covered.
+Both also withhold Claude's and Codex's login files (user-ruled 2026-09-29),
+not agy's own: agy runs whole inside the sandbox, and masking its own login
+would log it out. Measured 2026-09-29 on both machines: inside the sandbox
+agy could not read canaries at those paths, still read its own, and stayed
+logged in with the real files masked.
 With no such sandbox on the machine, this program refuses before agy runs:
 agy is never run unguarded.
 
@@ -165,6 +170,8 @@ def sandbox_exec_profile() -> str:
     A file-name pattern becomes a regex on the path's tail: `*.token` any
     path ending `.token`, `.env` any path whose last component is `.env`."""
     rules = [f'(subpath "{directory}")' for directory in common.CREDENTIAL_DIRECTORIES]
+    rules += [f'(literal "{path}")'
+              for path in common.reviewer_program_login_files(except_program="agy")]
     for pattern in common.CREDENTIAL_FILE_NAME_PATTERNS:
         tail = (re.escape(pattern[1:]) if pattern.startswith("*")
                 else "/" + re.escape(pattern))
@@ -179,7 +186,9 @@ def credential_sandbox_prefix(platform: str = sys.platform) -> list:
     prefix = ["bwrap", "--dev-bind", "/", "/"]
     for directory in common.credential_directories_present():
         prefix += ["--tmpfs", directory]
-    for path in common.credential_files_found_now():
+    for path in (common.credential_files_found_now()
+                 + common.reviewer_program_login_files(except_program="agy",
+                                                       only_present=True)):
         prefix += ["--ro-bind", "/dev/null", path]
     return prefix
 
