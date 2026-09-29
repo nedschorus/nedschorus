@@ -45,6 +45,12 @@ _spec.loader.exec_module(recovery)
 # machine; the "AGENTS ROOT:" cases put the real predicate back to test it.
 real_agents_root_is_movable_on_this_machine = recovery.agents_root_is_movable_on_this_machine
 recovery.agents_root_is_movable_on_this_machine = lambda: True
+# A launched seat runs the durable checkout's launcher and supervisor, which
+# --checkout names (GHI 659). The suite points it at the checkout under test,
+# so the real launcher and supervisor the cases drive are this checkout's,
+# never the machine's reference clone; the "CHECKOUT:" cases name a scratch
+# one through --checkout.
+recovery.durable_checkout = SCRIPT_PATH.resolve().parent.parent
 
 failures = []
 skips = []
@@ -2209,6 +2215,112 @@ with tempfile.TemporaryDirectory() as temporary:
         patch("agents_root_is_movable_on_this_machine", lambda: True)
         patch("launch_seat", launch_seat_before_agents_root_cases)
         patch("wait_for_the_seat_to_come_up", wait_before_agents_root_cases)
+
+    # GHI [recover-crashed-seats: a recovered seat's supervisor runs from
+    # whichever checkout the recovery was run from, and stops at its next
+    # handoff once that checkout is removed]
+    # (https://github.com/nedschorus/nedschorus/issues/659), user-ruled
+    # 2026-09-29: a launched seat's supervisor runs from the durable checkout,
+    # whichever checkout the recovery runs from. The program under test runs
+    # from checkout A, this one; --checkout names a scratch checkout B, and
+    # the launch must name B's launcher on the Mac and B's supervisor off
+    # macOS. Driven through main(), where --checkout is read.
+    checkout_b = root / "checkout-b"
+    (checkout_b / "scripts").mkdir(parents=True)
+    (checkout_b / "scripts" / "launch-claude-mac").write_text("#!/bin/sh\nexit 0\n",
+                                                             encoding="utf-8")
+    (checkout_b / "nc-systems" / "handoff").mkdir(parents=True)
+    (checkout_b / "nc-systems" / "handoff" / "handoff-supervisor.py").write_text(
+        "", encoding="utf-8")
+    checkout_without_launcher_or_supervisor = root / "checkout-without-launcher-or-supervisor"
+    checkout_without_launcher_or_supervisor.mkdir()
+
+    def recover_through_main_with_checkout(workspace, checkout):
+        output = io.StringIO()
+        with redirect_stdout(output), redirect_stderr(io.StringIO()):
+            try:
+                exit_code = recovery.main([workspace.name, "--checkout", str(checkout),
+                                           "--agents-root", str(workspace.agents_root),
+                                           "--handoff-dir", str(workspace.handoffs),
+                                           "--projects-root", str(workspace.projects)])
+            except SystemExit as stop_request:
+                exit_code = stop_request.code
+        return exit_code, output.getvalue()
+
+    durable_checkout_before_checkout_cases = recovery.durable_checkout
+    launch_seat_before_checkout_cases = recovery.launch_seat
+    wait_before_checkout_cases = recovery.wait_for_the_seat_to_come_up
+    launcher_path_before_checkout_cases = recovery.launcher_path
+    run_before_checkout_cases = recovery.subprocess.run
+    run_tmux_before_checkout_cases = recovery.run_tmux
+    try:
+        patch("launch_seat", real_launch_seat)
+        seat_comes_up()
+        if sys.platform == "darwin":
+            workspace = Workspace(root / "checkout-mac")
+            all_dead()
+            mac_launch_commands = []
+            recovery.subprocess.run = (
+                lambda command, env=None, check=False:
+                    mac_launch_commands.append(command) or subprocess.CompletedProcess(command, 0))
+            exit_code, output = recover_through_main_with_checkout(workspace, checkout_b)
+            recovery.subprocess.run = run_before_checkout_cases
+            check("CHECKOUT: on the Mac, a recovery run from checkout A launches checkout B's "
+                  "launch-claude-mac",
+                  exit_code == 0 and len(mac_launch_commands) == 1
+                  and mac_launch_commands[0][0]
+                  == str(checkout_b / "scripts" / "launch-claude-mac"),
+                  (exit_code, output, mac_launch_commands))
+        else:
+            skip("CHECKOUT: on the Mac, a recovery run from checkout A launches checkout B's "
+                 "launch-claude-mac",
+                 "macOS only: launcher_path() is None off macOS")
+
+        workspace = Workspace(root / "checkout-box")
+        all_dead()
+        box_tmux_commands = []
+
+        def capture_box_tmux(*arguments_after_tmux, socket_name=None):
+            box_tmux_commands.append(arguments_after_tmux)
+            return subprocess.CompletedProcess(arguments_after_tmux, 0)
+        patch("launcher_path", lambda: None)
+        patch("run_tmux", capture_box_tmux)
+        exit_code, output = recover_through_main_with_checkout(workspace, checkout_b)
+        patch("launcher_path", launcher_path_before_checkout_cases)
+        patch("run_tmux", run_tmux_before_checkout_cases)
+        box_supervisor = next(
+            (token for command in box_tmux_commands for token in shlex.split(command[-1])
+             if token.endswith("handoff-supervisor.py")), None)
+        check("CHECKOUT: off macOS, a recovery run from checkout A runs checkout B's supervisor",
+              exit_code == 0
+              and box_supervisor
+              == str(checkout_b / "nc-systems" / "handoff" / "handoff-supervisor.py"),
+              (exit_code, output, box_supervisor))
+
+        # The file missing from the durable checkout is never taken from this
+        # program's own checkout instead: the seat is refused, naming the
+        # path, and the run exits nonzero. This machine's own branch.
+        workspace = Workspace(root / "checkout-missing")
+        all_dead()
+        capture_launches(workspace)
+        expected_missing_path = checkout_without_launcher_or_supervisor / (
+            "scripts/launch-claude-mac" if sys.platform == "darwin"
+            else "nc-systems/handoff/handoff-supervisor.py")
+        exit_code, output = recover_through_main_with_checkout(
+            workspace, checkout_without_launcher_or_supervisor)
+        check("CHECKOUT: a durable checkout without the file a launch needs refuses the seat, "
+              "naming the path, launches nothing, and exits nonzero",
+              exit_code == 1
+              and f"{workspace.name}: REFUSED — {expected_missing_path} does not exist" in output
+              and workspace.launches == [],
+              (exit_code, output, workspace.launches))
+    finally:
+        recovery.durable_checkout = durable_checkout_before_checkout_cases
+        recovery.subprocess.run = run_before_checkout_cases
+        patch("launch_seat", launch_seat_before_checkout_cases)
+        patch("wait_for_the_seat_to_come_up", wait_before_checkout_cases)
+        patch("launcher_path", launcher_path_before_checkout_cases)
+        patch("run_tmux", run_tmux_before_checkout_cases)
 
     # User-ruled 2026-08-22: recovery's verdicts are durably logged. The
     # printed reports otherwise live only in the operator's scrollback, and
