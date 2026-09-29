@@ -74,7 +74,11 @@ directory under the pattern's prefix is unreadable (ned-box's home holds
 one), so on Linux the profile lists the files credential_files_found_now()
 finds; on macOS it takes the patterns. Only credential directories that
 exist are listed: Codex on Linux turns a missing one into an empty file on
-the real disk.
+the real disk. The reviewer programs' login files that exist are denied
+too, Codex's own `~/.codex/auth.json` included: the Codex CLI reads its login
+outside the profile, which governs only the model's commands, and a cell
+denying it still answered, on both machines (user-ruled and measured
+2026-09-29).
 
 WHY /tmp IS READ-ONLY IN THE PROFILE ON LINUX, AND ONLY THERE. `:workspace`
 makes /tmp and $TMPDIR writable roots, and Codex's Linux sandbox mounts its
@@ -201,6 +205,7 @@ def credential_denying_permission_profile_arguments(platform: str = sys.platform
     entries = ({":slash_tmp": "read", ":tmpdir": "read"}
                if platform.startswith("linux") else {})
     denied = common.credential_directories_present()
+    denied += common.reviewer_program_login_files(only_present=True)
     if platform.startswith("linux"):
         denied += common.credential_files_found_now()
     else:

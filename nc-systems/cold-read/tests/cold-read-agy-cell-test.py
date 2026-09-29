@@ -39,8 +39,10 @@ WHAT IS PINNED HERE.
     directory covers them; a `.token` file; a `.env` file; and an ordinary
     file beside them. The first four come back without their content, the
     fifth with it. The same stub run directly reads all five, which is what
-    shows the check can fail. With no sandbox program on PATH the launcher
-    refuses, exit 64, and never starts agy.
+    shows the check can fail. Claude's and Codex's login files in the scratch
+    home are kept out too, and agy's own is still read, since masking it
+    would log agy out (user-ruled 2026-09-29). With no sandbox program on
+    PATH the launcher refuses, exit 64, and never starts agy.
 
   - Every case runs the launcher with HOME at that scratch home, so no run
     of this suite scans or masks the real home's credential files.
@@ -366,13 +368,21 @@ with tempfile.TemporaryDirectory() as scratch:
     # the repository scan root reaches these two.
     repository_token_canary = repository / "credential-canaries" / "probe.token"
     repository_env_canary = repository / "credential-canaries" / ".env"
+    # The other reviewer programs' login files are credentials too; agy's own
+    # is not masked, because agy runs whole inside the sandbox and would lose
+    # its login (user-ruled 2026-09-29).
+    claude_login_canary = scratch_home / ".claude" / ".credentials.json"
+    codex_login_canary = scratch_home / ".codex" / "auth.json"
+    agy_login_canary = scratch_home / ".gemini" / "antigravity-cli" / "antigravity-oauth-token"
     credential_canaries = (nedschorus_canary, ssh_canary, token_canary, env_canary,
-                           repository_token_canary, repository_env_canary)
-    for canary in (*credential_canaries, ordinary_file):
+                           repository_token_canary, repository_env_canary,
+                           claude_login_canary, codex_login_canary)
+    for canary in (*credential_canaries, ordinary_file, agy_login_canary):
         canary.parent.mkdir(parents=True, exist_ok=True)
         canary.write_text(canary_text, encoding="utf-8")
     read_step = {"report": "STUB AGY REVIEW: canaries\n",
-                 "read_paths": [str(path) for path in (*credential_canaries, ordinary_file)]}
+                 "read_paths": [str(path) for path in
+                                (*credential_canaries, ordinary_file, agy_login_canary)]}
 
     # The control: the stub on its own reads every one of them.
     direct_reads_dump = scratch / "credential-reads-direct.json"
@@ -386,7 +396,7 @@ with tempfile.TemporaryDirectory() as scratch:
                    capture_output=True, text=True, check=False)
     direct_reads = (json.loads(direct_reads_dump.read_text(encoding="utf-8"))
                     if direct_reads_dump.is_file() else {})
-    check("the control: the stub run directly reads all six credential canaries",
+    check("the control: the stub run directly reads all eight credential canaries",
           all(direct_reads.get(str(path)) == canary_text
               for path in credential_canaries),
           repr(direct_reads))
@@ -404,12 +414,16 @@ with tempfile.TemporaryDirectory() as scratch:
                           ("a .token file", token_canary),
                           ("a .env file", env_canary),
                           ("a .token file in the repository", repository_token_canary),
-                          ("a .env file in the repository", repository_env_canary)):
+                          ("a .env file in the repository", repository_env_canary),
+                          ("Claude's login file", claude_login_canary),
+                          ("Codex's login file", codex_login_canary)):
         check(f"inside the cell, {label} cannot be read",
               str(canary) in cell_reads
               and "CANARY" not in cell_reads[str(canary)], repr(cell_reads))
     check("inside the cell, an ordinary file beside them is still read",
           cell_reads.get(str(ordinary_file)) == canary_text, repr(cell_reads))
+    check("inside the cell, agy's own login file is still read",
+          cell_reads.get(str(agy_login_canary)) == canary_text, repr(cell_reads))
 
     # --- No sandbox program on PATH: refused, agy never started ------------
     repository = build_scratch_repository(scratch)

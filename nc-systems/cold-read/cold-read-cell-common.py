@@ -243,6 +243,33 @@ CREDENTIAL_DIRECTORIES = (
 )
 CREDENTIAL_FILE_NAME_PATTERNS = ("*.token", ".env")
 
+# The reviewer programs' own login files are credentials too (user-ruled
+# 2026-09-29, item 6 of the same walk, "y"). They are listed by program
+# because agy runs whole inside its sandbox: masking its own login file
+# logs it out, so agy's launcher masks only the others'. Claude and Codex
+# read their own login outside the model's tools, so their launchers deny
+# every login file, their own included. On the Mac Claude's login is a
+# keychain item and its file here is absent; the keychain stays the gap
+# described above.
+REVIEWER_PROGRAM_LOGIN_FILES = {
+    "claude": (pathlib.Path.home() / ".claude" / ".credentials.json",),
+    "codex": (pathlib.Path.home() / ".codex" / "auth.json",),
+    "agy": (pathlib.Path.home() / ".gemini" / "jetski-standalone-oauth-token",
+            pathlib.Path.home() / ".gemini" / "oauth_creds.json",
+            pathlib.Path.home() / ".gemini" / "antigravity-cli" / "antigravity-oauth-token"),
+}
+
+
+def reviewer_program_login_files(except_program: str = None,
+                                 only_present: bool = False) -> list:
+    """Every reviewer program's login file but `except_program`'s own, as
+    strings. `only_present` keeps the files that exist now, for a sandbox
+    that takes exact paths: on Linux one told to mask a missing path creates
+    it on the real disk (see credential_directories_present)."""
+    return [str(path) for program, paths in REVIEWER_PROGRAM_LOGIN_FILES.items()
+            if program != except_program
+            for path in paths if not only_present or path.is_file()]
+
 
 def credential_directories_present() -> list:
     """The CREDENTIAL_DIRECTORIES that exist now, as strings. A Linux sandbox
