@@ -53,13 +53,18 @@ covered in nc-systems/cold-read/tests/cold-read-cell-common-test.py.
 
 Every case runs the cell with a stub `codex` first on PATH, so no model is
 ever called: the stub is the seam that lets the cell's own logic be tested
-without the model, the money, or the wait.
+without the model, the money, or the wait. Every case also runs it with HOME
+at a scratch home, so the cell's credential scan and the permission profile
+it hands codex name no path in the real home (checked on the successful
+path, from the argv the stub was given).
 
 Run: python3 nc-systems/cold-read/tests/cold-read-codex-cell-test.py
 """
 
 import importlib.util
+import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -84,6 +89,11 @@ CODEX_LOGGED_OUT_LINE = (
 # reworded.
 STUB_CODEX_WRITES_REPORT = """#!/usr/bin/env python3
 import os, sys
+if os.environ.get("COLD_READ_CODEX_CELL_TEST_STUB_ARGV_PATH"):
+    import json
+    with open(os.environ["COLD_READ_CODEX_CELL_TEST_STUB_ARGV_PATH"], "w",
+              encoding="utf-8") as argv_handle:
+        json.dump(sys.argv, argv_handle)
 with open(os.environ["COLD_READ_CODEX_CELL_TEST_STUB_REPORT_PATH"], "w",
           encoding="utf-8") as handle:
     handle.write("STUB CODEX CELL REPORT\\n")
@@ -113,7 +123,7 @@ def check(case_name, condition, detail=""):
         failures.append(case_name)
 
 
-def run_cell(stub_directory, stub_body, report_path, *arguments):
+def run_cell(stub_directory, stub_body, report_path, *arguments, argv_path=None):
     """Run the cell as a subprocess with a stub codex first on PATH.
 
     A subprocess, not an import of main(): the exit code is the subject
@@ -124,9 +134,14 @@ def run_cell(stub_directory, stub_body, report_path, *arguments):
     stub = stub_directory / "codex"
     stub.write_text(stub_body, encoding="utf-8")
     stub.chmod(0o755)
+    scratch_home = stub_directory.parent / "scratch-home"
+    scratch_home.mkdir(parents=True, exist_ok=True)
     environment = dict(os.environ)
+    environment["HOME"] = str(scratch_home)
     environment["PATH"] = f"{stub_directory}{os.pathsep}{environment.get('PATH', '')}"
     environment["COLD_READ_CODEX_CELL_TEST_STUB_REPORT_PATH"] = str(report_path)
+    if argv_path is not None:
+        environment["COLD_READ_CODEX_CELL_TEST_STUB_ARGV_PATH"] = str(argv_path)
     return subprocess.run(
         [sys.executable, str(CELL_SCRIPT), "--report", str(report_path), *arguments],
         capture_output=True, text=True, check=False, env=environment,
@@ -277,8 +292,10 @@ with tempfile.TemporaryDirectory() as scratch:
 
     # --- The successful path, which must keep working ----------------------
     report.unlink(missing_ok=True)
+    argv_dump = scratch / "successful-cell-argv.json"
     result = run_cell(stubs, STUB_CODEX_WRITES_REPORT, report,
-                      "--cell", "restate", "--tier", "deep", "--target", str(target))
+                      "--cell", "restate", "--tier", "deep", "--target", str(target),
+                      argv_path=argv_dump)
     check("a cell whose codex succeeds exits 0",
           result.returncode == 0, f"exit {result.returncode}; stderr={result.stderr!r}")
     report_text = report.read_text(encoding="utf-8") if report.is_file() else ""
@@ -287,6 +304,26 @@ with tempfile.TemporaryDirectory() as scratch:
           and "STUB CODEX CELL REPORT" in report_text, repr(report_text[:200]))
     check("the successful cell prints nothing to stdout",
           result.stdout == "", repr(result.stdout[:200]))
+    # The permission profile names what the credential scan found. Run with
+    # the real HOME, it names the real ~/.config/nedschorus and ~/.ssh, and
+    # on Linux every credential-named file in the real home; run with the
+    # scratch home it names nothing there. Paths inside the repository are
+    # the repository scan root's, and are left out of the comparison.
+    received_argv = (json.loads(argv_dump.read_text(encoding="utf-8"))
+                     if argv_dump.is_file() else [])
+    profile_table = next((argument for argument in received_argv
+                          if ".filesystem=" in argument), "")
+    real_home = Path.home().resolve()
+    repository_root = CELL_SCRIPT.parents[2]
+    real_home_paths = [
+        path for path in re.findall(r'"([^"]+)"=', profile_table)
+        if not path.startswith(":") and not path.startswith("/**")
+        and (Path(path) == real_home or real_home in Path(path).parents)
+        and repository_root not in Path(path).parents]
+    check("the cell's permission profile reached codex",
+          bool(profile_table), repr(received_argv[:6]))
+    check("the permission profile names no path in the real home",
+          not real_home_paths, repr(real_home_paths))
 
 print()
 if failures:
