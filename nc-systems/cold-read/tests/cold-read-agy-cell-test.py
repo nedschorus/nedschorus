@@ -33,12 +33,17 @@ WHAT IS PINNED HERE.
 
   - No credential file can be read from inside the cell (user-ruled
     2026-09-28). The stub is run by the launcher inside the machine's real
-    sandbox -- sandbox-exec on macOS, bwrap on Linux -- and tries to read a
-    `.token` file, a `.env` file and an ordinary file beside them: the first
-    two come back without their content, the third with it. The same stub
-    run directly reads all three, which is what shows the check can fail.
-    With no sandbox program on PATH the launcher refuses, exit 64, and never
-    starts agy.
+    sandbox -- sandbox-exec on macOS, bwrap on Linux -- and tries to read
+    five canaries in a scratch home: one in `.config/nedschorus/` and one in
+    `.ssh/`, neither named like a credential, so only the rule for the
+    directory covers them; a `.token` file; a `.env` file; and an ordinary
+    file beside them. The first four come back without their content, the
+    fifth with it. The same stub run directly reads all five, which is what
+    shows the check can fail. With no sandbox program on PATH the launcher
+    refuses, exit 64, and never starts agy.
+
+  - Every case runs the launcher with HOME at that scratch home, so no run
+    of this suite scans or masks the real home's credential files.
 
 Each case builds a throwaway git repository holding a copy of the cell
 scripts, as nc-systems/cold-read/tests/cold-read-cell-common-test.py does, and runs the launcher
@@ -171,10 +176,20 @@ def install_stub_agy(stub_directory):
     return stub
 
 
+def scratch_home_for(stub_directory):
+    """The HOME every launcher run gets: a scratch directory beside the stub
+    directory, so the launcher's credential scan and sandbox see it and not
+    the real home."""
+    home = stub_directory.parent / "scratch-home"
+    home.mkdir(parents=True, exist_ok=True)
+    return home
+
+
 def run_agy_cell(repository, stub_directory, plan, report_path, *arguments,
                  tier="fast", path_override=None):
     install_stub_agy(stub_directory)
     environment = dict(os.environ)
+    environment["HOME"] = str(scratch_home_for(stub_directory))
     environment["PATH"] = (path_override if path_override is not None else
                            f"{stub_directory}{os.pathsep}{environment.get('PATH', '')}")
     environment["COLD_READ_AGY_CELL_TEST_STUB_PLAN"] = json.dumps(plan)
@@ -333,20 +348,26 @@ with tempfile.TemporaryDirectory() as scratch:
           f"exit {result.returncode}; stamp={stamp!r}; stderr={result.stderr!r}")
 
     # --- No credential file is readable from inside the cell -------------
-    # The canaries sit inside the scratch repository, so they are under a
-    # directory the Linux launcher scans as well as under the macOS pattern.
+    # The canaries sit in the scratch home the launcher is given as HOME.
+    # The two in the credential directories carry no credential suffix, so
+    # only the directory rule -- bwrap's --tmpfs, sandbox-exec's subpath --
+    # keeps them out; the .token and .env files are kept out by the file
+    # rule -- the launch-time scan of the home on Linux, the pattern on macOS.
     repository = build_scratch_repository(scratch)
     report = report_path_for(repository, "credential-files")
-    canary_directory = repository / "credential-canaries"
-    canary_directory.mkdir()
+    scratch_home = scratch_home_for(stubs)
     canary_text = "CANARY-NOT-A-SECRET-cold-read-agy-cell-test\n"
-    token_canary = canary_directory / "probe.token"
-    env_canary = canary_directory / ".env"
-    ordinary_file = canary_directory / "ordinary.txt"
-    for canary in (token_canary, env_canary, ordinary_file):
+    nedschorus_canary = scratch_home / ".config" / "nedschorus" / "probe-canary"
+    ssh_canary = scratch_home / ".ssh" / "id_canary"
+    token_canary = scratch_home / "projects" / "probe.token"
+    env_canary = scratch_home / "projects" / ".env"
+    ordinary_file = scratch_home / "projects" / "ordinary.txt"
+    credential_canaries = (nedschorus_canary, ssh_canary, token_canary, env_canary)
+    for canary in (*credential_canaries, ordinary_file):
+        canary.parent.mkdir(parents=True, exist_ok=True)
         canary.write_text(canary_text, encoding="utf-8")
     read_step = {"report": "STUB AGY REVIEW: canaries\n",
-                 "read_paths": [str(token_canary), str(env_canary), str(ordinary_file)]}
+                 "read_paths": [str(path) for path in (*credential_canaries, ordinary_file)]}
 
     # The control: the stub on its own reads every one of them.
     direct_reads_dump = scratch / "credential-reads-direct.json"
@@ -360,9 +381,9 @@ with tempfile.TemporaryDirectory() as scratch:
                    capture_output=True, text=True, check=False)
     direct_reads = (json.loads(direct_reads_dump.read_text(encoding="utf-8"))
                     if direct_reads_dump.is_file() else {})
-    check("the control: the stub run directly reads the .token and .env canaries",
+    check("the control: the stub run directly reads all four credential canaries",
           all(direct_reads.get(str(path)) == canary_text
-              for path in (token_canary, env_canary)),
+              for path in credential_canaries),
           repr(direct_reads))
 
     cell_reads_dump = scratch / "credential-reads-in-cell.json"
@@ -373,12 +394,13 @@ with tempfile.TemporaryDirectory() as scratch:
                   if cell_reads_dump.is_file() else {})
     check("a cell whose agy tries the canaries still exits 0",
           result.returncode == 0, f"exit {result.returncode}; stderr={result.stderr!r}")
-    check("inside the cell, a .token file's content cannot be read",
-          str(token_canary) in cell_reads
-          and "CANARY" not in cell_reads[str(token_canary)], repr(cell_reads))
-    check("inside the cell, a .env file's content cannot be read",
-          str(env_canary) in cell_reads
-          and "CANARY" not in cell_reads[str(env_canary)], repr(cell_reads))
+    for label, canary in (("a file in .config/nedschorus/", nedschorus_canary),
+                          ("a file in .ssh/", ssh_canary),
+                          ("a .token file", token_canary),
+                          ("a .env file", env_canary)):
+        check(f"inside the cell, {label} cannot be read",
+              str(canary) in cell_reads
+              and "CANARY" not in cell_reads[str(canary)], repr(cell_reads))
     check("inside the cell, an ordinary file beside them is still read",
           cell_reads.get(str(ordinary_file)) == canary_text, repr(cell_reads))
 
