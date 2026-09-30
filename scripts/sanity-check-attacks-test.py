@@ -1112,10 +1112,13 @@ def main():
 
     # The credential lists are pointed at a scratch home for the call, so the
     # profile's denials name paths in it and the real home is neither scanned
-    # nor named in a failure line.
+    # nor named in a failure line. The credential directories are re-rooted
+    # from the real list rather than listed here, so a directory dropped from
+    # CREDENTIAL_DIRECTORIES drops out of the profile.
     credential_scratch = tempfile.TemporaryDirectory()
     scratch_home = pathlib.Path(credential_scratch.name)
     (scratch_home / ".config" / "nedschorus").mkdir(parents=True)
+    (scratch_home / ".config" / "gh").mkdir(parents=True)
     login_canary = scratch_home / ".codex" / "auth.json"
     login_canary.parent.mkdir(parents=True)
     login_canary.write_text("CANARY-NOT-A-SECRET-sanity-check-attacks-test\n", encoding="utf-8")
@@ -1124,8 +1127,9 @@ def main():
                   shared.credential_files_found_now)
     try:
         runner_memories.subprocess.run = capture_command
-        shared.CREDENTIAL_DIRECTORIES = (scratch_home / ".config" / "nedschorus",
-                                         scratch_home / ".ssh")
+        shared.CREDENTIAL_DIRECTORIES = tuple(
+            scratch_home / directory.relative_to(pathlib.Path.home())
+            for directory in real_lists[0])
         shared.REVIEWER_PROGRAM_LOGIN_FILES = {"codex": (login_canary,)}
         shared.credential_files_found_now = lambda: []
         runner_memories.run_codex("a prompt no model ever sees")
@@ -1153,8 +1157,9 @@ def main():
           and 'permissions.sanity-check-no-credentials.extends=":workspace"' in codex_overrides
           and "permissions.sanity-check-no-credentials.network.enabled=true" in codex_overrides,
           repr(codex_overrides))
-    check("run_codex's profile denies the credential directory and a reviewer program's login file",
+    check("run_codex's profile denies the credential directories and a reviewer program's login file",
           f'"{scratch_home}/.config/nedschorus"="deny"' in denied_table
+          and f'"{scratch_home}/.config/gh"="deny"' in denied_table
           and f'"{login_canary}"="deny"' in denied_table, denied_table)
     credential_scratch.cleanup()
 

@@ -374,10 +374,12 @@ with tempfile.TemporaryDirectory() as scratch:
     # takes a value, so finding both words somewhere in argv would also pass
     # for a command that disabled something else entirely.
     argv_report = scratch / "argv-report.md"
-    # A credential directory and a reviewer program's login file in the
-    # scratch home, for the credential profile checked below.
+    # Two credential directories, `gh`'s login directory one of them, and a
+    # reviewer program's login file in the scratch home, for the credential
+    # profile checked below.
     scratch_home = scratch_home_for(stubs)
     (scratch_home / ".config" / "nedschorus").mkdir(parents=True, exist_ok=True)
+    (scratch_home / ".config" / "gh").mkdir(parents=True, exist_ok=True)
     login_canary = scratch_home / ".codex" / "auth.json"
     login_canary.parent.mkdir(parents=True, exist_ok=True)
     login_canary.write_text("CANARY-NOT-A-SECRET-code-review-codex-cell-test\n", encoding="utf-8")
@@ -426,8 +428,9 @@ with tempfile.TemporaryDirectory() as scratch:
           not [override for override in overrides_before_review
                if override.startswith(("default_permissions=", "permissions."))],
           repr(overrides_before_review))
-    check("the profile denies the credential directory and a reviewer program's login file",
+    check("the profile denies the credential directories and a reviewer program's login file",
           f'"{scratch_home}/.config/nedschorus"="deny"' in denied_table
+          and f'"{scratch_home}/.config/gh"="deny"' in denied_table
           and f'"{login_canary}"="deny"' in denied_table, denied_table)
 
 print()

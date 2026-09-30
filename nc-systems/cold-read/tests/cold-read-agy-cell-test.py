@@ -34,15 +34,16 @@ WHAT IS PINNED HERE.
   - No credential file can be read from inside the cell (user-ruled
     2026-09-28). The stub is run by the launcher inside the machine's real
     sandbox -- sandbox-exec on macOS, bwrap on Linux -- and tries to read
-    five canaries in a scratch home: one in `.config/nedschorus/` and one in
-    `.ssh/`, neither named like a credential, so only the rule for the
-    directory covers them; a `.token` file; a `.env` file; and an ordinary
-    file beside them. The first four come back without their content, the
-    fifth with it. The same stub run directly reads all five, which is what
-    shows the check can fail. Claude's and Codex's login files in the scratch
-    home are kept out too, and agy's own is still read, since masking it
-    would log agy out (user-ruled 2026-09-29). With no sandbox program on
-    PATH the launcher refuses, exit 64, and never starts agy.
+    six canaries in a scratch home: one in `.config/nedschorus/`, one in
+    `gh`'s login directory `.config/gh/` and one in `.ssh/`, none named like
+    a credential, so only the rule for the directory covers them; a `.token`
+    file; a `.env` file; and an ordinary file beside them. The first five
+    come back without their content, the sixth with it. The same stub run
+    directly reads all six, which is what shows the check can fail.
+    Claude's and Codex's login files in the scratch home are kept out too,
+    and agy's own is still read, since masking it would log agy out
+    (user-ruled 2026-09-29). With no sandbox program on PATH the launcher
+    refuses, exit 64, and never starts agy.
 
   - Every case runs the launcher with HOME at that scratch home, so no run
     of this suite scans or masks the real home's credential files.
@@ -360,6 +361,7 @@ with tempfile.TemporaryDirectory() as scratch:
     scratch_home = scratch_home_for(stubs)
     canary_text = "CANARY-NOT-A-SECRET-cold-read-agy-cell-test\n"
     nedschorus_canary = scratch_home / ".config" / "nedschorus" / "probe-canary"
+    gh_canary = scratch_home / ".config" / "gh" / "hosts.yml"
     ssh_canary = scratch_home / ".ssh" / "id_canary"
     token_canary = scratch_home / "projects" / "probe.token"
     env_canary = scratch_home / "projects" / ".env"
@@ -374,7 +376,8 @@ with tempfile.TemporaryDirectory() as scratch:
     claude_login_canary = scratch_home / ".claude" / ".credentials.json"
     codex_login_canary = scratch_home / ".codex" / "auth.json"
     agy_login_canary = scratch_home / ".gemini" / "antigravity-cli" / "antigravity-oauth-token"
-    credential_canaries = (nedschorus_canary, ssh_canary, token_canary, env_canary,
+    credential_canaries = (nedschorus_canary, gh_canary, ssh_canary,
+                           token_canary, env_canary,
                            repository_token_canary, repository_env_canary,
                            claude_login_canary, codex_login_canary)
     for canary in (*credential_canaries, ordinary_file, agy_login_canary):
@@ -396,7 +399,7 @@ with tempfile.TemporaryDirectory() as scratch:
                    capture_output=True, text=True, check=False)
     direct_reads = (json.loads(direct_reads_dump.read_text(encoding="utf-8"))
                     if direct_reads_dump.is_file() else {})
-    check("the control: the stub run directly reads all eight credential canaries",
+    check("the control: the stub run directly reads all nine credential canaries",
           all(direct_reads.get(str(path)) == canary_text
               for path in credential_canaries),
           repr(direct_reads))
@@ -410,6 +413,7 @@ with tempfile.TemporaryDirectory() as scratch:
     check("a cell whose agy tries the canaries still exits 0",
           result.returncode == 0, f"exit {result.returncode}; stderr={result.stderr!r}")
     for label, canary in (("a file in .config/nedschorus/", nedschorus_canary),
+                          ("a file in gh's login directory .config/gh/", gh_canary),
                           ("a file in .ssh/", ssh_canary),
                           ("a .token file", token_canary),
                           ("a .env file", env_canary),

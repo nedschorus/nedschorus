@@ -305,7 +305,7 @@ with tempfile.TemporaryDirectory() as scratch:
     check("the successful cell prints nothing to stdout",
           result.stdout == "", repr(result.stdout[:200]))
     # The permission profile names what the credential scan found. Run with
-    # the real HOME, it names the real ~/.config/nedschorus and ~/.ssh, and
+    # the real HOME, it names the real home's credential directories, and
     # on Linux every credential-named file in the real home; run with the
     # scratch home it names nothing there. Paths inside the repository are
     # the repository scan root's, and are left out of the comparison.

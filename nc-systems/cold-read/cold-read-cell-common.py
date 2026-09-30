@@ -238,8 +238,14 @@ class CellRefusal(Exception):
 # Mac, all three). The Claude reviewer has no command-running tool to reach
 # it: Bash and Monitor are both denied (see the Claude launcher). The Codex
 # and agy reviewers have shells.
+# `gh`'s login directory, ~/.config/gh, is withheld too (user-ruled
+# 2026-09-30T03:58:27Z, "approved", merge-lane-2's ned-box session
+# 6fb379eb-7f48-47c1-b747-962c6b4da543): on ned-box its hosts.yml holds a
+# GitHub token, and a Codex reviewer with network on could reach GitHub as
+# the machine's account (review 5360059724, 2026-09-30).
 CREDENTIAL_DIRECTORIES = (
     pathlib.Path.home() / ".config" / "nedschorus",
+    pathlib.Path.home() / ".config" / "gh",
     pathlib.Path.home() / ".ssh",
 )
 CREDENTIAL_FILE_NAME_PATTERNS = ("*.token", ".env")
