@@ -953,6 +953,79 @@ def run_cases(scratch: Path):
         except tool.Refused as refusal:
             check(case_name, False, f"refused: {refusal}")
 
+    # ghi-info-ask.py exits 2 or 3, message on stderr, when ghi-info replies
+    # out-of-scope or escalate: instead of a list (user-ruled 2026-09-29).
+    # The write fails open as for any missing verdict, and the report says
+    # what ghi-info said instead of "did not answer".
+    for case_name, exit_code, first_line in [
+            ("an out-of-scope reply lets the write proceed and says so", 2,
+             "Not a question about GitHub issues: ghi-info reports which "
+             "issues relate to a subject."),
+            ("an escalate: reply lets the write proceed and says so", 3,
+             "ghi-info found a ruling of the user's that it cannot tell "
+             "still applies: the 2026-09-19 ruling on #46 may not hold")]:
+        lines = []
+        replied = Recorder({ASK: Completed(
+            "", returncode=exit_code,
+            stderr=first_line + "\nsecond line of the message\n")})
+        try:
+            tool.adjudicate(REPO, "t", FILE_TEXT, scratch, replied,
+                            lines.append)
+            check(case_name,
+                  lines == [f"adjudication skipped: ghi-info gave no "
+                            f"verdict: {first_line}"], lines)
+        except tool.Refused as refusal:
+            check(case_name, False, f"refused: {refusal}")
+
+    # On the locked path ghi-info-ask.py writes its seat-checkout refresh line
+    # or its reincarnation line to stderr before the message, and the Mac
+    # relay copies them through; the report still carries the message.
+    for leading_line in [
+            "ghi-info-ask: refreshed the seat checkout 1 commit(s) to "
+            "origin/main",
+            "ghi-info-ask: reincarnating the session — 40 closes since birth"]:
+        for exit_code, first_line in [
+                (2, "Not a question about GitHub issues: ghi-info reports "
+                    "which issues relate to a subject."),
+                (3, "ghi-info found a ruling of the user's that it cannot "
+                    "tell still applies: the 2026-09-19 ruling on #46 may "
+                    "not hold")]:
+            case_name = (f"exit {exit_code} after the line "
+                         f"{leading_line[:40]!r} reports the message")
+            lines = []
+            replied = Recorder({ASK: Completed(
+                "", returncode=exit_code,
+                stderr=leading_line + "\n" + first_line +
+                "\nsecond line of the message\n")})
+            try:
+                tool.adjudicate(REPO, "t", FILE_TEXT, scratch, replied,
+                                lines.append)
+                check(case_name,
+                      lines == [f"adjudication skipped: ghi-info gave no "
+                                f"verdict: {first_line}"], lines)
+            except tool.Refused as refusal:
+                check(case_name, False, f"refused: {refusal}")
+
+    ask_spec = TOOL.spec_from_file_location(
+        "ghi_info_ask_for_exit_codes",
+        Path(__file__).resolve().with_name("ghi-info-ask.py"))
+    ask_module = TOOL.module_from_spec(ask_spec)
+    ask_spec.loader.exec_module(ask_module)
+    check("the tool's copy of ghi-info-ask.py's two no-list exit codes "
+          "matches that program's",
+          tool.GHI_INFO_ASK_REPLIED_WITHOUT_A_LIST_EXIT_CODES
+          == (ask_module.EXIT_NOT_ABOUT_ISSUES,
+              ask_module.EXIT_RULING_QUESTION),
+          tool.GHI_INFO_ASK_REPLIED_WITHOUT_A_LIST_EXIT_CODES)
+    check("the tool's copy of ghi-info-ask.py's two messages' openings "
+          "matches that program's",
+          tool.GHI_INFO_ASK_NO_LIST_MESSAGE_OPENINGS
+          == (ask_module.NOT_ABOUT_ISSUES_MESSAGE.splitlines()[0].split(
+                  ":")[0] + ":",
+              ask_module.RULING_QUESTION_MESSAGE_TEMPLATE.split(
+                  "{sentence}")[0].rstrip()),
+          tool.GHI_INFO_ASK_NO_LIST_MESSAGE_OPENINGS)
+
     marker = scratch / tool.RECONSIDERED_MARKER_NAME
     marker.write_text("I checked #13 and it is a different matter.\n")
     passed = Recorder({ASK: Completed("verdict: too-similar #13\n")})

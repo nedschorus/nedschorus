@@ -7,12 +7,37 @@ filing or editing an issue, to learn what already covers the ground.
 Usage:
   ghi-info-ask.py "<question>" [--include-closed]
 
-Prints the reading list ghi-info returns (or its escalate:/out-of-scope
-reply, passed through verbatim) to stdout and exits 0. On any failure —
-gh unreachable, the box unreachable, ghi-info's own run erroring or timing
-out — prints one line to stderr and exits 1. A failed ask never blocks a
-write (design's own words): the caller's job is to fall down the ghi-write
-skill's fallback ladder, not to treat exit 1 as fatal.
+Exit codes:
+  0  the reading list ghi-info returns, printed to stdout
+  1  a failed ask — gh unreachable, the box unreachable, ghi-info's own run
+     erroring or timing out: one line on stderr. A failed ask never blocks a
+     write (design's own words): the caller's job is to fall down the
+     ghi-write skill's fallback ladder, not to treat exit 1 as fatal.
+  2  ghi-info replied `out-of-scope`: the question was not about issues.
+     NOT_ABOUT_ISSUES_MESSAGE on stderr, nothing on stdout.
+  3  ghi-info replied `escalate: <sentence>`: it found a ruling of the
+     user's it may not judge. RULING_QUESTION_MESSAGE, carrying that
+     sentence, on stderr, nothing on stdout.
+
+Why 2 and 3 are not passed through (user-ruled 2026-09-29, walk
+SKILL-ghi-write-2026-09-29-4, item 1 revised, "y"). Until then the two
+replies went to stdout verbatim with exit 0, as if they were answers. The
+user, reading the /ghi-write sentences proposed to explain them: "Not great.
+Out-of-scope is not helpful response. I think better wording would be "Not a
+query re GHIs") It should respond with a error like - "GHI-info reports
+which issues relate to a querry" or something like tha. Also escalate or
+whatever the other response is makes no sense either." And, on a first
+wording of the ruling message: "this doesn't make sense - that a newer one
+may override". The two messages are the approved text, word for word, and
+replace the /ghi-write sentences that would have explained the bare replies.
+Exit codes of their own, rather than 1, because 1 sends a caller down the
+fallback ladder, which is wrong for both: one wants the question reworded,
+the other wants the user.
+
+ghi-info itself still replies with the bare strings: they are the protocol
+between its prompt and this script (COLD_START_PROMPT_TEMPLATE), and the
+design's § Prompts gives them verbatim. What changed is what reaches the
+caller.
 
 Seat and machine: ghi-info lives ONLY on the Ubuntu box, at ~/agents/ghi-info
 there — its mirror, session id, and reincarnation counters all live in that
@@ -238,9 +263,41 @@ def compose_drift_notice(unexpected_closed) -> str:
 
 def is_passthrough_reply(text: str) -> bool:
     """escalate:/out-of-scope replies are not reading lists (design step 4);
-    the post-check does not apply to them, and neither does drift recheck."""
+    the post-check does not apply to them, and neither does drift recheck.
+    main() turns them into caller_message_for_passthrough_reply's messages."""
     stripped = text.strip().lower()
     return stripped.startswith("escalate:") or stripped == "out-of-scope"
+
+
+# What main() hands the caller in place of the two bare replies, and the exit
+# code each carries. The text is the user's approved wording (module docstring,
+# "Why 2 and 3 are not passed through"); change it only by his walk.
+# `<your subject>` and `<terms>` are placeholders the caller fills in.
+EXIT_NOT_ABOUT_ISSUES = 2
+EXIT_RULING_QUESTION = 3
+NOT_ABOUT_ISSUES_MESSAGE = (
+    "Not a question about GitHub issues: ghi-info reports which issues relate to a subject.\n"
+    'Ask again as: scripts/ghi-info-ask.py "Which issues cover <your subject>?"\n'
+    "If that is refused too, search yourself: gh issue list --repo nedschorus/nedschorus "
+    '--state all --search "<terms>"')
+RULING_QUESTION_MESSAGE_TEMPLATE = (
+    "ghi-info found a ruling of the user's that it cannot tell still applies: {sentence}\n"
+    "Ask the user whether that ruling still applies, and put the question on your task list.\n"
+    "Do not file or edit the issue until he answers.")
+
+
+def caller_message_for_passthrough_reply(text: str):
+    """(message, exit code) for an out-of-scope or escalate: reply, or None
+    for any other reply. The escalate: sentence is carried over as ghi-info
+    wrote it, with the prefix and surrounding whitespace removed."""
+    stripped = text.strip()
+    if stripped.lower() == "out-of-scope":
+        return NOT_ABOUT_ISSUES_MESSAGE, EXIT_NOT_ABOUT_ISSUES
+    if stripped.lower().startswith("escalate:"):
+        sentence = stripped[len("escalate:"):].strip()
+        return (RULING_QUESTION_MESSAGE_TEMPLATE.format(sentence=sentence),
+                EXIT_RULING_QUESTION)
+    return None
 
 
 def reply_answers_the_question(text: str) -> bool:
@@ -814,6 +871,11 @@ def main(argv=None) -> int:
     if answer is None:
         print(f"ghi-info-ask: {error}", file=sys.stderr)
         return 1
+    passthrough = caller_message_for_passthrough_reply(answer)
+    if passthrough is not None:
+        message, exit_code = passthrough
+        print(message, file=sys.stderr)
+        return exit_code
     print(answer)
     return 0
 
