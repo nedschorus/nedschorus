@@ -640,10 +640,24 @@ with tempfile.TemporaryDirectory() as tmp:
 
 # Order and the skip flag. The design ruled local snapshots first: no network,
 # no privilege, and they answer "I deleted it minutes ago" outright.
+#
+# These two cases run before the file settles which machine it is on (further
+# down), so each names the Mac itself. Left to the machine's own answer, a run
+# on ned-box walked the real log-store copy of the Mac's transcripts, 3,235
+# files on 2026-09-30. While they run the machine answers ned-box, so a case
+# that stops naming the Mac fails on either machine, not only on the box.
+running_on_ned_box_before_the_order_cases = getattr(finder, "running_on_ned_box", None)
+finder.running_on_ned_box = lambda: True
+mac_transcripts_copies_walked = []
+newest_transcript_write_before_the_order_cases = getattr(finder, "_newest_transcript_write", None)
+if newest_transcript_write_before_the_order_cases is not None:
+    finder._newest_transcript_write = lambda copy_dir: mac_transcripts_copies_walked.append(str(copy_dir))
+
 skip_local = FakeRunner([("rev-parse --git-dir", (128, "", "not a git repository"))])
 reports = finder.build_report("a/b.md", "/not-a-repo", "/nonexistent-transcripts", "",
                               "/mnt/backup/timeshift/snapshots", finder.DEFAULT_BOX_SEARCH_ROOTS,
-                              skip={"localsnapshots", "box", "timemachine"}, runner=skip_local)
+                              skip={"localsnapshots", "box", "timemachine"}, runner=skip_local, on_ned_box=False)
+skip_local_report_lines = [line for r in reports for line in r.lines]
 check("--skip localsnapshots drops the surface and lists no snapshots",
       not any(r.surface == "local snapshots" for r in reports)
       and not any("listlocalsnapshots" in c for c in skip_local.calls),
@@ -653,13 +667,27 @@ order_probe = FakeRunner([LISTS_SNAPSHOTS, MOUNTS_FINE, RELEASES_FINE, ("test -e
                           ("rev-parse --git-dir", (128, "", "not a git repository"))])
 reports = finder.build_report("/private/tmp/x/b.md", "/not-a-repo", "/nonexistent-transcripts", "",
                               "/mnt/backup/timeshift/snapshots", finder.DEFAULT_BOX_SEARCH_ROOTS,
-                              skip={"box", "timemachine"}, runner=order_probe)
+                              skip={"box", "timemachine"}, runner=order_probe, on_ned_box=False)
+order_probe_report_lines = [line for r in reports for line in r.lines]
 check("local snapshots are searched first, before git",
       [r.surface for r in reports][:2] == ["local snapshots", "git"], str([r.surface for r in reports]))
 check("... and without waiting on a date hint from git, which they take none of",
       order_probe.calls.index("tmutil listlocalsnapshots /System/Volumes/Data")
       < order_probe.calls.index("git -C /not-a-repo rev-parse --git-dir"),
       str(order_probe.calls))
+
+mac_transcripts_copy_under_log_store = os.path.join(
+    *getattr(finder, "MAC_TRANSCRIPTS_COPY_UNDER_LOG_STORE", ("transcripts", "mac", "projects")))
+check("the two cases above name the Mac, so on ned-box neither reaches the log-store copy of the Mac's transcripts",
+      not mac_transcripts_copies_walked
+      and not any(mac_transcripts_copy_under_log_store in text
+                  for text in skip_local.calls + order_probe.calls
+                  + skip_local_report_lines + order_probe_report_lines),
+      "walked %s; calls %s; lines %s" % (mac_transcripts_copies_walked, skip_local.calls + order_probe.calls,
+                                         skip_local_report_lines + order_probe_report_lines))
+finder.running_on_ned_box = running_on_ned_box_before_the_order_cases
+if newest_transcript_write_before_the_order_cases is not None:
+    finder._newest_transcript_write = newest_transcript_write_before_the_order_cases
 
 check("the report column is wide enough for 'local snapshots' to keep the statuses aligned",
       finder.SurfaceReport("local snapshots", FOUND).render().index(FOUND)
@@ -1746,13 +1774,14 @@ class RunsBashAndGrepHere(FakeRunner):
 
 
 def run_as_if_on(machine_is_ned_box, wanted, box, runner, snapshot_root=None,
-                 skip=("localsnapshots", "git", "reflog", "logstore", "timemachine")):
+                 skip=("localsnapshots", "git", "reflog", "logstore", "timemachine"),
+                 log_store_root=NO_LOG_STORE_ON_THIS_MACHINE):
     """build_report as main() calls it, with this machine's name answered as given."""
     finder.running_on_ned_box = lambda: machine_is_ned_box
     try:
         return finder.build_report(wanted, "/not-a-repo", str(Path(box, ".claude", "projects")), "nedlern@ned-box",
                                    snapshot_root or str(Path(box, "snapshots")), ("/seat-a",), skip=set(skip),
-                                   runner=runner, log_store_root=NO_LOG_STORE_ON_THIS_MACHINE)
+                                   runner=runner, log_store_root=log_store_root)
     finally:
         finder.running_on_ned_box = lambda: False
 
@@ -1782,10 +1811,13 @@ with tempfile.TemporaryDirectory() as tmp:
           by_surface["timeshift"].status == NOT_FOUND
           and by_surface["timeshift"].lines == ["searched every snapshot under %s on ned-box" % Path(box, "snapshots")],
           "%s %s" % (by_surface["timeshift"].status, by_surface["timeshift"].lines))
-    check("on the box: transcripts names ned-box, and says the Mac was not searched and why",
+    check("on the box, with no log-store copy of the Mac's transcripts: transcripts names ned-box, says the Mac "
+          "was not searched and why, and names the copy it looked for",
           by_surface["transcripts"].lines
           == ["ned-box: searched %s, no transcript mentions it" % Path(box, ".claude", "projects"),
-              "the Mac: not searched — no route from ned-box to the Mac is documented"],
+              "the Mac: not searched — no route from ned-box to the Mac is documented",
+              "the Mac's log-store copy, %s, does not exist, so it was not searched either"
+              % Path(NO_LOG_STORE_ON_THIS_MACHINE, "transcripts", "mac", "projects")],
           str(by_surface["transcripts"].lines))
     summary = finder.render_summary(reports)
     check("on the box: nothing found still exits 3, and the summary names transcripts alone, for the Mac",
@@ -1837,6 +1869,127 @@ with tempfile.TemporaryDirectory() as tmp:
           [(r.status, r.lines) for r in reports]
           == [(UNAVAILABLE, ["the search on ned-box did not complete (exit 255) — bash: oops"])],
           str([(r.status, r.lines) for r in reports]))
+
+# THE MAC'S HALF OF TRANSCRIPTS, ON THE BOX: the log-store's copy of the Mac's
+# transcripts is grepped in place. A copy grepped in full counts as searched;
+# one that is missing, holds no transcript, or makes grep fail does not.
+import shlex  # noqa: E402
+
+ONLY_TRANSCRIPTS = ("localsnapshots", "git", "reflog", "logstore", "timeshift", "timemachine")
+
+
+class CopyGrepFails(RunsBashAndGrepHere):
+    """grep over the one directory named fails as an unreadable tree does; everything else runs for real."""
+
+    def __init__(self, cwd, failing_dir):
+        RunsBashAndGrepHere.__init__(self, [], cwd)
+        self.failing_dir = str(failing_dir)
+
+    def __call__(self, argv, timeout=None, cwd=None):
+        if argv[0] == "grep" and argv[-1] == self.failing_dir:
+            self.calls.append(" ".join(argv))
+            return 2, "", "grep: %s/p: Permission denied\n" % self.failing_dir
+        return RunsBashAndGrepHere.__call__(self, argv, timeout, cwd)
+
+
+with tempfile.TemporaryDirectory() as tmp:
+    box = Path(tmp, "box")
+    box_projects = Path(box, ".claude", "projects", "p")
+    box_projects.mkdir(parents=True)
+    Path(box_projects, "quiet.jsonl").write_text('{"text": "nothing relevant"}\n')
+    store = Path(tmp, "store")
+    copy = Path(store, "transcripts", "mac", "projects")
+    mac_session = Path(copy, "-Users-el-agents-x", "mac-session.jsonl")
+    mac_session.parent.mkdir(parents=True)
+    mac_session.write_text('{"text": "wrote mac/only.md here"}\n')
+    written = time.time() - 600
+    os.utime(mac_session, (written, written))
+
+    on_box = RunsBashAndGrepHere([], box)
+    reports = run_as_if_on(True, "mac/only.md", box, on_box, skip=ONLY_TRANSCRIPTS, log_store_root=str(store))
+    transcripts = reports[0]
+    check("on the box: a Mac transcript in the log-store copy is FOUND, named as the Mac's copy",
+          transcripts.status == FOUND
+          and "the Mac, from its log-store copy: 1 session transcript(s) mention it" in transcripts.lines
+          and ("    " + str(mac_session)) in transcripts.lines,
+          "%s %s" % (transcripts.status, transcripts.lines))
+    check("on the box: ... its recovery command reads the copy in place",
+          transcripts.recovery == ["grep -o '.\\{0,400\\}mac/only.md.\\{0,2000\\}' %s | head"
+                                   % shlex.quote(str(mac_session))],
+          str(transcripts.recovery))
+    check("on the box: ... the copy is grepped in place, and nothing goes over ssh",
+          any(c.startswith("grep -rl") and c.endswith(str(copy)) for c in on_box.calls)
+          and not any(c.startswith("ssh") for c in on_box.calls),
+          str(on_box.calls))
+
+    on_box = RunsBashAndGrepHere([], box)
+    reports = run_as_if_on(True, "nowhere/c.md", box, on_box, skip=ONLY_TRANSCRIPTS, log_store_root=str(store))
+    transcripts = reports[0]
+    age_line = ("the copy's newest transcript was last written on the Mac at %s UTC, 10 min before this search; "
+                "a Mac transcript written after the copy's last mirror pass is not in it"
+                % time.strftime("%Y-%m-%d %H:%M", time.gmtime(written)))
+    check("on the box: a copy grepped in full and empty is NOT FOUND, with the copy's measured age",
+          transcripts.status == NOT_FOUND
+          and transcripts.lines == ["ned-box: searched %s, no transcript mentions it" % Path(box, ".claude", "projects"),
+                                    "the Mac, from its log-store copy: searched %s, no transcript mentions it" % copy,
+                                    age_line],
+          "%s %s" % (transcripts.status, transcripts.lines))
+    check("on the box: ... so transcripts leaves 'Could NOT search', and a run of that surface alone exits 1",
+          finder.exit_status(reports) == finder.EXIT_NOT_FOUND_EVERYWHERE
+          and "Could NOT search" not in finder.render_summary(reports),
+          "exit %s\n%s" % (finder.exit_status(reports), finder.render_summary(reports)))
+
+    empty_store = Path(tmp, "empty-store")
+    empty_copy = Path(empty_store, "transcripts", "mac", "projects")
+    Path(empty_copy, "p").mkdir(parents=True)
+    Path(empty_copy, "p", "notes.txt").write_text("a mention outside any transcript: nowhere/c.md\n")
+    reports = run_as_if_on(True, "nowhere/c.md", box, RunsBashAndGrepHere([], box), skip=ONLY_TRANSCRIPTS,
+                           log_store_root=str(empty_store))
+    check("on the box: a copy holding no session transcript is UNAVAILABLE, keeping the not-searched line",
+          reports[0].status == UNAVAILABLE
+          and reports[0].lines[1:] == ["the Mac: not searched — no route from ned-box to the Mac is documented",
+                                       "the Mac's log-store copy, %s, holds no session transcript, so it was not "
+                                       "searched either" % empty_copy],
+          "%s %s" % (reports[0].status, reports[0].lines))
+
+    reports = run_as_if_on(True, "nowhere/c.md", box, CopyGrepFails(box, copy), skip=ONLY_TRANSCRIPTS,
+                           log_store_root=str(store))
+    check("on the box: a copy grep that fails is UNAVAILABLE, keeps the not-searched line, and quotes grep",
+          reports[0].status == UNAVAILABLE
+          and reports[0].lines[1:] == ["the Mac: not searched — no route from ned-box to the Mac is documented",
+                                       "the Mac's log-store copy, %s: grep failed (exit 2) — grep: %s/p: "
+                                       "Permission denied" % (copy, copy)],
+          "%s %s" % (reports[0].status, reports[0].lines))
+
+    on_mac = FakeRunner([("ssh", (1, "", ""))])
+    reports = run_as_if_on(False, "mac/only.md", box, on_mac, skip=ONLY_TRANSCRIPTS, log_store_root=str(store))
+    check("on the Mac: the log-store copy is never read, even where its path exists; the two halves are "
+          "this Mac's own and the box's over ssh",
+          not any(str(copy) in c for c in on_mac.calls)
+          and not any("log-store copy" in l for l in reports[0].lines)
+          and reports[0].lines[0].startswith("this Mac: ")
+          and any(l.startswith("the box (nedlern@ned-box)") for l in reports[0].lines),
+          "%s %s" % (on_mac.calls, reports[0].lines))
+
+age_words = getattr(finder, "_age_in_words", lambda seconds: None)
+check("the copy's age reads in minutes under two hours, in hours under two days, and in days after",
+      [age_words(s) for s in (-5, 59, 60, 7199, 7200, 172799, 172800)]
+      == ["0 min", "0 min", "1 min", "119 min", "2 h", "47 h", "2 days"],
+      str([age_words(s) for s in (-5, 59, 60, 7199, 7200, 172799, 172800)]))
+
+mirror_spec = importlib.util.spec_from_file_location(
+    "transcript_mirror_to_log_store", MODULE_PATH.with_name("transcript-mirror-to-log-store.py"))
+mirror = importlib.util.module_from_spec(mirror_spec)
+mirror_spec.loader.exec_module(mirror)
+copy_parts = getattr(finder, "MAC_TRANSCRIPTS_COPY_UNDER_LOG_STORE", None)
+_, mirror_transcripts_root = mirror.split_destination(mirror.LOG_STORE_TRANSCRIPTS_DESTINATION)
+check("the Mac's copy is where the mirror writes it: <log-store>/transcripts/<the Mac's name>/<projects' name>",
+      copy_parts is not None and len(copy_parts) == 3
+      and str(mirror_transcripts_root) == os.path.join(finder.DEFAULT_LOG_STORE_ROOT, copy_parts[0])
+      and copy_parts[1] == mirror.MACHINE_NAME_ELSEWHERE
+      and (copy_parts[2], Path(".claude", "projects")) in [(name, Path(path)) for name, path in mirror.SOURCES]
+      and Path(finder.DEFAULT_TRANSCRIPTS_DIR) == Path("~", ".claude", "projects"),
+      "%s %s %s" % (copy_parts, mirror_transcripts_root, mirror.SOURCES))
 
 check("the machine test is the locator's: the host name before its first dot is ned-box",
       callable(real_running_on_ned_box)

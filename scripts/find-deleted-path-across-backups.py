@@ -53,7 +53,7 @@ THE SEVEN SURFACES, in the order they are searched:
                     AND on the box. A file's content often survives in the
                     transcript of the session that wrote or read it, even when
                     every copy on disk is gone. Run on the box, it greps the
-                    box's own and says the Mac's were not searched.
+                    box's own and the log-store's copy of the Mac's.
   6. Timeshift    — snapshots on ned-box at /mnt/backup/timeshift/snapshots.
                     Ordinary world-readable directories: no privilege needed.
                     Searched over ssh from the Mac, in place on the box.
@@ -196,11 +196,37 @@ Timeshift when it runs on ned-box, because it reaches "the box" by ssh to
 itself", reproduced by merge-lane-2). On the box, Timeshift now runs the same
 probe script through a local bash, the shell that ssh ran it under, and
 transcripts keeps its local grep, which there is the box's, and sends no
-second grep over ssh to the same directory. The Mac's transcripts are then not
-searched, for the reason the locator gives, so transcripts stays UNAVAILABLE
-and a run on the box that finds nothing still exits 3, naming transcripts
-alone. Which machine this is is the locator's test, the host name before its
-first dot against NED_BOX_HOSTNAME, decided once in build_report.
+second grep over ssh to the same directory. Which machine this is is the
+locator's test, the host name before its first dot against NED_BOX_HOSTNAME,
+decided once in build_report.
+
+THE MAC'S HALF OF TRANSCRIPTS, ON THE BOX, is the log-store's copy of the
+Mac's ~/.claude/projects, which transcript-mirror-to-log-store.py keeps under
+MAC_TRANSCRIPTS_COPY_UNDER_LOG_STORE. Until 2026-09-30 the box reported the
+Mac's transcripts as not searched, for the locator's reason that no route from
+the box to the Mac is documented, so every run on the box that found nothing
+exited 3. The user ruled that day (walk
+merge-lane-mac-helper-open-decisions-2026-09-30, loose end 3) that a run on the
+box greps that copy instead. A copy that is grepped in full counts as searched,
+by the rule every copy-based surface here already follows: the log-store,
+Timeshift and both snapshot surfaces each answer for the copy they hold, and
+NOT FOUND there means "this copy does not have it", not "it never existed".
+UNAVAILABLE stays what it means everywhere else: a part that could not be read.
+So a copy that is missing, holds no transcript, or makes grep fail keeps the
+old "not searched" line and stays UNAVAILABLE, while a copy searched and empty
+is NOT FOUND, so transcripts leaves the box's "Could NOT search" line. A run
+on the box that finds nothing still exits 3: local snapshots and Time Machine
+are the Mac's and stay UNAVAILABLE there (measured on ned-box 2026-09-30:
+"Could NOT search: local snapshots, time machine").
+
+What the copy cannot hold is a Mac transcript written after its last mirror
+pass, and nothing on the box records when that pass was: `rsync -a` keeps
+each file's time from the Mac. So the line after the search says when the
+copy's newest transcript was last written on the Mac, measured from the copy
+itself, never an assumed schedule, and says that anything newer is not in it.
+A Mac that is asleep or off writes no transcripts, so its copy stays complete
+however old that time is; a Mac that is awake but whose mirror has stopped is
+the case that line exists to expose.
 --box-ssh-host and --skip box keep their meaning: the first names the box only
 for the Mac's ssh, and the second still leaves Timeshift out.
 
@@ -319,6 +345,12 @@ DEFAULT_TRANSCRIPTS_DIR = "~/.claude/projects"
 # The log-store: where seats ship what git does not carry. It exists on the
 # box only; the Mac reaches it over ssh.
 DEFAULT_LOG_STORE_ROOT = "/home/nedlern/nedschorus-logs"
+# Where, under the log-store, transcript-mirror-to-log-store.py keeps its copy
+# of the Mac's ~/.claude/projects: transcripts/<machine>/projects, the Mac's
+# machine name there being "mac". A run on the box greps it for the Mac's half
+# of the transcripts surface (RUN ON NED-BOX ITSELF); the test suite holds
+# these parts to the mirror's own constants.
+MAC_TRANSCRIPTS_COPY_UNDER_LOG_STORE = ("transcripts", "mac", "projects")
 # How many log-store matches the report lists; the count of the rest follows.
 LOG_STORE_HITS_SHOWN = 10
 
@@ -1422,7 +1454,8 @@ _LOG_STORE_NAME_PROBE = "\n".join([
 # Surface 5 — agent transcripts, on this Mac and on the box
 # --------------------------------------------------------------------------
 
-def search_transcripts(wanted, transcripts_dir, box_ssh_host, runner=run_command, on_ned_box=False):
+def search_transcripts(wanted, transcripts_dir, box_ssh_host, runner=run_command, on_ned_box=False,
+                       mac_copy_dir=None):
     """Grep session JSONL for the path string, locally and on the box.
 
     A transcript holds what a tool call returned, so a file read by any agent
@@ -1432,7 +1465,8 @@ def search_transcripts(wanted, transcripts_dir, box_ssh_host, runner=run_command
     rewrite.
 
     `on_ned_box`: the local grep is then the box's, so nothing goes over ssh,
-    and the Mac's half is reported as not searched (RUN ON NED-BOX ITSELF).
+    and the Mac's half is the log-store's copy of the Mac's transcripts,
+    `mac_copy_dir`, grepped in place (RUN ON NED-BOX ITSELF).
     """
     lines = []
     recovery = []
@@ -1465,8 +1499,7 @@ def search_transcripts(wanted, transcripts_dir, box_ssh_host, runner=run_command
             statuses.append(UNAVAILABLE)
 
     if on_ned_box:
-        lines.append("the Mac: not searched — %s" % locator.MAC_NOT_REACHABLE_FROM_NED_BOX)
-        statuses.append(UNAVAILABLE)
+        statuses.append(_search_mac_transcripts_copy(wanted, mac_copy_dir, runner, lines, recovery))
     elif box_ssh_host:
         code, out, stderr = runner(
             ["ssh", "-o", "ConnectTimeout=10", "-o", "BatchMode=yes", box_ssh_host, _box_transcript_grep_script(wanted)],
@@ -1505,6 +1538,89 @@ def search_transcripts(wanted, transcripts_dir, box_ssh_host, runner=run_command
         lines.append("(a session's own transcript matches merely because the path was typed in it —")
         lines.append(" check that a hit actually contains the CONTENT before calling it recovered)")
     return SurfaceReport("transcripts", _combine(statuses), lines, recovery)
+
+
+def _search_mac_transcripts_copy(wanted, copy_dir, runner, lines, recovery):
+    """The Mac's half of the transcripts surface on the box: the log-store's copy.
+
+    Appends this half's lines (and a recovery command on a hit) and returns
+    its status. The copy counts as searched: see RUN ON NED-BOX ITSELF for
+    why, and for what its age line is there to say. A copy that is missing,
+    holds no transcript, or cannot be grepped keeps the line a run on the box
+    printed before the copy was searched, and stays UNAVAILABLE.
+    """
+    not_searched = "the Mac: not searched — %s" % locator.MAC_NOT_REACHABLE_FROM_NED_BOX
+    if copy_dir is None:
+        lines.append(not_searched)
+        return UNAVAILABLE
+    copy_dir = Path(copy_dir)
+    if not copy_dir.is_dir():
+        lines.append(not_searched)
+        lines.append("the Mac's log-store copy, %s, does not exist, so it was not searched either" % copy_dir)
+        return UNAVAILABLE
+    newest = _newest_transcript_write(copy_dir)
+    if newest is None:
+        lines.append(not_searched)
+        lines.append("the Mac's log-store copy, %s, holds no session transcript, so it was not searched either"
+                     % copy_dir)
+        return UNAVAILABLE
+
+    here = "the Mac, from its log-store copy"
+    code, out, stderr = runner(
+        ["grep", "-rl", "--include=*.jsonl", "-F", wanted, str(copy_dir)],
+        timeout=LONG_TIMEOUT_SECONDS,
+    )
+    hits = [h for h in out.splitlines() if h.strip()]
+    if hits:
+        lines.append("%s: %d session transcript(s) mention it" % (here, len(hits)))
+        for hit in hits[:5]:
+            lines.append("    " + hit)
+        if len(hits) > 5:
+            lines.append("    ... and %d more" % (len(hits) - 5))
+        recovery.append("grep -o '.\\{0,400\\}%s.\\{0,2000\\}' %s | head" % (wanted, shlex.quote(hits[0])))
+        status = FOUND
+    elif code in (0, 1):
+        lines.append("%s: searched %s, no transcript mentions it" % (here, copy_dir))
+        status = NOT_FOUND
+    else:
+        first_error = stderr.strip().splitlines()[0] if stderr.strip() else "no error text"
+        lines.append(not_searched)
+        lines.append("the Mac's log-store copy, %s: grep failed (exit %s) — %s" % (copy_dir, code, first_error))
+        return UNAVAILABLE
+    lines.append("the copy's newest transcript was last written on the Mac at %s UTC, %s before this search; "
+                 "a Mac transcript written after the copy's last mirror pass is not in it"
+                 % (time.strftime("%Y-%m-%d %H:%M", time.gmtime(newest)), _age_in_words(time.time() - newest)))
+    return status
+
+
+def _newest_transcript_write(copy_dir):
+    """The newest modification time among the copy's *.jsonl files, or None
+    when it holds none. The mirror's `rsync -a` keeps each file's time from
+    the Mac, so this is when the Mac last wrote the newest transcript the
+    copy holds; the copy's last pass may be later, and nothing on the box
+    records when it was."""
+    newest = None
+    for directory, _, files in os.walk(copy_dir):
+        for base in files:
+            if not base.endswith(".jsonl"):
+                continue
+            try:
+                written = os.stat(os.path.join(directory, base)).st_mtime
+            except OSError:
+                continue
+            if newest is None or written > newest:
+                newest = written
+    return newest
+
+
+def _age_in_words(seconds):
+    """A span as a reader says it: minutes under two hours, hours under two days, else days."""
+    seconds = max(0, int(seconds))
+    if seconds < 2 * 3600:
+        return "%d min" % (seconds // 60)
+    if seconds < 2 * 86400:
+        return "%d h" % (seconds // 3600)
+    return "%d days" % (seconds // 86400)
 
 
 def _box_transcript_grep_script(wanted):
@@ -2343,7 +2459,11 @@ def build_report(wanted, repo, transcripts_dir, box_ssh_host, snapshot_root, sea
         # which sends nothing over ssh.
         finished(search_log_store(wanted, log_store_root, box_ssh_host, runner))
     if "transcripts" not in skip:
-        finished(search_transcripts(wanted, transcripts_dir, box_ssh_host, runner, on_ned_box=on_ned_box))
+        # On the box, the Mac's half is the log-store's copy of its transcripts,
+        # read in place (THE MAC'S HALF OF TRANSCRIPTS, ON THE BOX).
+        mac_copy_dir = os.path.join(log_store_root, *MAC_TRANSCRIPTS_COPY_UNDER_LOG_STORE) if on_ned_box else None
+        finished(search_transcripts(wanted, transcripts_dir, box_ssh_host, runner, on_ned_box=on_ned_box,
+                                    mac_copy_dir=mac_copy_dir))
     if "box" not in skip and "timeshift" not in skip:
         finished(search_timeshift(wanted, box_ssh_host, snapshot_root, search_roots, runner, on_ned_box=on_ned_box))
     if "timemachine" not in skip:
