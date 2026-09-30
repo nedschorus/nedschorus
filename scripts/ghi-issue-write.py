@@ -23,7 +23,8 @@ sends the author here.
 THE SEQUENCE, and what makes each step safe to run twice:
 
   1. Validate   the file exists, opens with a heading, and is not already
-                filed under an issue whose filing finished.
+                filed under an issue whose filing finished; a new filing's
+                heading carries no date or file path.
   2. Adjudicate ask ghi-info whether an open issue already covers this.
                 Fail-open: unreachable means the write proceeds.
   3. File       gh issue create, title from the file's first heading, body a
@@ -152,7 +153,8 @@ its name wherever it sits — and does four things:
                 refused on the same conflict the landing is, and it is made
                 only where main holds the file under the same name.
   4. Title      when the edit CHANGED the file's first heading, and the
-                issue has one filed GHI-MD.
+                issue has one filed GHI-MD; such a heading is refused
+                before step 3 if it carries a date or a file path.
   5. Link       the body to the filed GHI-MDs on main, as create's step 5
                 writes it in the first place.
 
@@ -291,7 +293,8 @@ Exit codes:
   64  the caller's input is wrong: no such file, no heading, filed when
       create wants it unfiled or unfiled when edit wants it filed,
       already on main under an issue, a filing of the same heading already
-      in flight, a path this tool does not write, a name carrying a number
+      in flight, a heading about to become a title that carries a date or
+      a file path, a path this tool does not write, a name carrying a number
       that names no issue — one no issue has, or one a pull request has, or
       a bad command line. argparse's own errors are given this code rather
       than its 2, which this list has no entry for and a caller could not
@@ -408,6 +411,82 @@ def first_heading(file_text: str) -> str:
             return line.strip().lstrip("#").strip()
     return ""
 
+
+
+# A date as this project writes one, 2026-09-30. Only the full ISO form: it
+# is the form every dated title on the repository carries, and a bare year
+# or a version number is not a date a title goes stale by.
+ISO_DATE_IN_HEADING = re.compile(r"(?<!\d)\d{4}-\d{2}-\d{2}(?!\d)")
+# The last segment of a path that names a file: a dot, then an extension
+# that starts with a letter, so "v1.3" and "3.8" are not read as one.
+FILE_EXTENSION_AT_END = re.compile(r"\.[A-Za-z][A-Za-z0-9]*$")
+# Punctuation a heading wraps round a path, stripped before the path is
+# judged. The dot is stripped from the end only, below, so a leading one,
+# as in .claude/, survives.
+PUNCTUATION_AROUND_A_HEADING_WORD = "`'\"()[]{},;:!?"
+
+
+def date_or_file_path_in_heading(heading: str, repository_root: Path) -> str:
+    """The first date or file path in a heading, or "" when it carries
+    neither.
+
+    A GHI's title is the file's first heading, and it names the work in full
+    words and nothing else: its status, ruling, date, provenance or path go
+    in the text below it (user-ruled 2026-09-30, item 4 of the walk
+    open-questions-concerns-and-recommendations-2026-09-30, "y"; the
+    /ghi-write skill's step 4 says so). Of the four, a date and a path are
+    the two a program can tell from ordinary words, so those are the two
+    refused; status and rulings are left to the skill. Both go stale while
+    the title is cited everywhere: 15 of the 138 issue titles on
+    2026-09-30 carried a date and 11 a path, and three of those paths no
+    longer exist on main.
+
+    NARROW ON PURPOSE, because a false refusal stops a filing. A date is the
+    full ISO form. A path is a word holding a slash that is also one of:
+    rooted at the home directory (`~/`); absolute with at least two
+    segments, so a slash command such as /cold-read passes; opened by an
+    entry at the repository's root, such as docs/ or nc-systems/; or ended
+    by a file extension. Measured over the 138 titles on 2026-09-30, that
+    passes every slashed word that is not a path — turn/start, red/green,
+    A/B, README/principles, missing-origin/main, /save-MD-as-draft — and a
+    program named without its directory, such as recover-crashed-seats.py,
+    carries no slash and passes too."""
+    date = ISO_DATE_IN_HEADING.search(heading)
+    if date:
+        return date.group(0)
+    root_entries = ({entry.name for entry in repository_root.iterdir()}
+                    - {".git"}) if repository_root.is_dir() else set()
+    for word in heading.split():
+        candidate = word.strip(PUNCTUATION_AROUND_A_HEADING_WORD).rstrip(".")
+        if "/" not in candidate:
+            continue
+        segments = [segment for segment in candidate.split("/") if segment]
+        if not segments:
+            continue
+        if (candidate.startswith("~/")
+                or (candidate.startswith("/") and len(segments) >= 2)
+                or (not candidate.startswith("/")
+                    and segments[0] in root_entries)
+                or FILE_EXTENSION_AT_END.search(segments[-1])):
+            return candidate
+    return ""
+
+
+def refuse_heading_with_date_or_file_path(heading: str,
+                                          repository_root: Path):
+    """Refuses, before anything is filed or landed, a heading that is about
+    to become an issue's title while carrying a date or a file path — see
+    `date_or_file_path_in_heading` for what counts and why. Called by
+    `create` for a new filing and by `edit` only when the edit changed the
+    heading and the title will follow it, so an issue already filed under
+    such a title can still be edited, and a filing resumed after an earlier
+    run is never refused for a title GitHub already holds."""
+    if date_or_file_path_in_heading(heading, repository_root):
+        raise Refused(
+            "Remove the date or file path from this file's first heading; "
+            "the heading becomes the issue's title.\n"
+            "Put the date or path in the text below the heading.\n"
+            "Then rerun the same command.", 64)
 
 def slug(title: str) -> str:
     words = re.sub(r"[^a-z0-9]+", " ", title.lower()).split()
@@ -1074,6 +1153,7 @@ def create(path: Path, repo: str, repository_root: Path, runner, report):
         # document or one of the two cases the key cannot see. Both are
         # asked before adjudication, which is fail-open and can take
         # minutes: a run that must be refused should not spend them.
+        refuse_heading_with_date_or_file_path(title, repository_root)
         refuse_if_filing_is_in_flight(repo, issues, title, runner)
         refuse_if_already_landed_on_main(repo, text, title, repository_root,
                                          runner)
@@ -1795,6 +1875,12 @@ def edit(path: Path, repo: str, repository_root: Path, runner, report):
     # author's path, and a moved file is not there until its merge.
     document_before_this_edit = (on_main if on_main is not None
                                  else moved_from_on_main)
+    # A heading this edit changed becomes the title under the same two
+    # conditions step 4 renames on, so it is judged here, before anything
+    # is landed; an unchanged heading is the title the issue already has.
+    if (heading_changed_in_this_edit(document_before_this_edit, title)
+            and len(paths) <= 1):
+        refuse_heading_with_date_or_file_path(title, repository_root)
     # What lands: the author's file carrying the `issue:` line this tool
     # derives. Built here and not at the top of the run, because that line
     # cites the issue by TITLE, and the title is GitHub's — the one this
