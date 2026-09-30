@@ -7,9 +7,7 @@ a pointed-at rule gets skipped, a paraphrased one drifts.)
 
 ## Review scope: code blocks, prose does not
 
-Ruled by the user 2026-08-30, after a one-file deletion PR cost four review rounds and
-five hours on prose findings alone. Code needs reviewers; prose already has reviewers,
-including the user.
+Code needs reviewers; prose already has reviewers, including the user.
 
 - **Code is reviewed adversarially and blocks.** The class follows the CONTENT, not the
   file it sits in: `scripts/`, `.claude/hooks/`, `.claude/settings.json`, and every shell
