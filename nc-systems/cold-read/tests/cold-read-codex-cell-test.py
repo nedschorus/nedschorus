@@ -325,6 +325,15 @@ with tempfile.TemporaryDirectory() as scratch:
           bool(profile_table) and bool(profile_keys), repr(received_argv[:6]))
     check("the permission profile names no path in the real home",
           not real_home_paths, repr(real_home_paths))
+    # The reviewer fetches the pages a document links to, and Codex's web
+    # tool answers from a cache unless told otherwise; see the cell's
+    # docstring.
+    web_search_settings = [received_argv[index + 1]
+                           for index, argument in enumerate(received_argv[:-1])
+                           if argument == "-c"
+                           and received_argv[index + 1].startswith("web_search=")]
+    check("the cell asks codex for live web search",
+          web_search_settings == ['web_search="live"'], repr(web_search_settings))
 
 print()
 if failures:
