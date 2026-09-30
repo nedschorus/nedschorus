@@ -15,6 +15,11 @@ ned-box or the real checkouts.
 LOCATE_FILE_COPIES_PROGRAM_UNDER_TEST names a different copy of the program
 to test; a mutation run points it at a copy with one guard removed.
 
+The backup search the program runs when it finds nothing is a stand-in too,
+named through LOCATE_FILE_COPIES_ACROSS_MACHINES_BACKUP_SEARCH_PROGRAM: it
+records how it was started and answers as each case asks. The real one takes
+over a minute and reaches ned-box, so no case runs it except for --help.
+
 Run: python3 scripts/locate-file-copies-across-machines-test.py   (exit 0 = all passed)
 """
 
@@ -69,6 +74,42 @@ while arguments[index] == "-o":
 command = " ".join(arguments[index + 1:])
 sys.exit(subprocess.run(["sh", "-c", command]).returncode)
 """
+
+# The backup search's stand-in. It records its arguments, its current
+# directory and every GIT_ variable it was given, then answers in the shape
+# the real one prints -- a header, a surface, a summary line -- with the exit
+# code FAKE_BACKUP_SEARCH_MODE asks for, or dies before its summary.
+STAND_IN_BACKUP_SEARCH = """import json, os, signal, sys
+with open(os.environ["FAKE_BACKUP_SEARCH_LOG"], "a") as log:
+    log.write(json.dumps({
+        "argv": sys.argv[1:], "cwd": os.getcwd(),
+        "git_variables": sorted(key for key in os.environ
+                                if key.startswith("GIT_"))}) + "\\n")
+mode = os.environ.get("FAKE_BACKUP_SEARCH_MODE", "not-found")
+print("Searching every history this fleet keeps for: " + sys.argv[1])
+print(flush=True)
+if mode == "killed":
+    os.kill(os.getpid(), signal.SIGKILL)
+if mode == "raises":
+    raise RuntimeError("stand-in backup search failed")
+if mode == "found":
+    print("transcripts     FOUND")
+    print()
+    print("Recoverable from: transcripts.")
+    sys.exit(0)
+if mode == "incomplete":
+    print("time machine    UNAVAILABLE")
+    print()
+    print("No surface that could be searched has it.")
+    print("Could NOT search: time machine -- see each one's line above.")
+    sys.exit(3)
+print("local snapshots NOT FOUND")
+print()
+print("No surface that could be searched has it.")
+sys.exit(1)
+"""
+BACKUP_SEARCH_VARIABLE = "LOCATE_FILE_COPIES_ACROSS_MACHINES_BACKUP_SEARCH_PROGRAM"
+BACKUP_SEARCH_HEADER = "No copy was found, so the backup search runs now"
 
 failures = []
 
@@ -182,12 +223,15 @@ def make_stand_in_bin(base):
     ssh.write_text(STAND_IN_SSH, encoding="utf-8")
     ssh.chmod(0o755)
     (bin_dir / "python3").symlink_to(sys.executable)
+    (bin_dir / "backup-search-stand-in.py").write_text(
+        STAND_IN_BACKUP_SEARCH, encoding="utf-8")
     return bin_dir
 
 
-def program_environment(base, mode="ok", plan=None):
+def program_environment(base, mode="ok", plan=None, backup_mode="not-found"):
     """The environment one run of the program gets: the plan, the stand-in
-    ssh first on PATH, and no variable that points git elsewhere."""
+    ssh first on PATH, the stand-in backup search, and no variable that
+    points git elsewhere."""
     environment = dict(os.environ)
     for variable in GIT_REDIRECTING_VARIABLES:
         environment.pop(variable, None)
@@ -195,18 +239,36 @@ def program_environment(base, mode="ok", plan=None):
     environment["PATH"] = f"{base / 'stand-in-bin'}{os.pathsep}{environment['PATH']}"
     environment["FAKE_SSH_MODE"] = mode
     environment["FAKE_SSH_ARGV_LOG"] = str(base / "ssh-argv.log")
+    environment[BACKUP_SEARCH_VARIABLE] = str(
+        base / "stand-in-bin" / "backup-search-stand-in.py")
+    environment["FAKE_BACKUP_SEARCH_MODE"] = backup_mode
+    environment["FAKE_BACKUP_SEARCH_LOG"] = str(base / "backup-search-runs.log")
     environment["PYTHONDONTWRITEBYTECODE"] = "1"
     return environment
 
 
-def run(base, query, mode="ok", plan=None, cwd=None):
+def run(base, query, mode="ok", plan=None, cwd=None, backup_mode="not-found",
+        extra_environment=None):
     """(exit code, stdout, stderr) of one run of the program, from `cwd`
     (`base` by default)."""
-    environment = program_environment(base, mode, plan)
+    environment = program_environment(base, mode, plan, backup_mode)
+    environment.update(extra_environment or {})
     result = subprocess.run([sys.executable, str(PROGRAM), query],
                             capture_output=True, text=True, cwd=cwd or base,
                             env=environment, timeout=120)
     return result.returncode, result.stdout, result.stderr
+
+
+def backup_search_runs(base):
+    """What the stand-in backup search recorded, one dict per run, and
+    empties the record for the next case."""
+    record = base / "backup-search-runs.log"
+    if not record.exists():
+        return []
+    runs = [json.loads(line) for line in
+            record.read_text(encoding="utf-8").splitlines()]
+    record.unlink()
+    return runs
 
 
 CANDIDATES_HEADING = "Candidates only, not counted as found"
@@ -444,20 +506,150 @@ with scratch() as directory:
           stdout)
     check("a root that does not exist is shown as absent, not as a failure",
           f"{base / 'absent-root'} (absent)" in stdout, stdout)
-    backup_search = PROGRAM.resolve().parent / "find-deleted-path-across-backups.py"
-    check("nothing found names the backup search as the next command, run "
-          "with python3 by its absolute path",
-          f"Nothing was found: run next `python3 {backup_search} "
-          "nothing-anywhere.md`" in stdout, stdout)
-    if backup_search.is_file():
-        helped = subprocess.run([sys.executable, str(backup_search), "--help"],
-                                capture_output=True, text=True, cwd="/")
-        check("the command as printed runs from any directory",
-              helped.returncode == 0, helped.stderr)
+    runs = backup_search_runs(base)
+    check("nothing found runs the backup search once (the other machine's "
+          "half never runs it), on the bare name, without its git surfaces "
+          "and without --repo, from /",
+          [(one["argv"], one["cwd"]) for one in runs]
+          == [(["nothing-anywhere.md", "--skip", "git", "--skip", "reflog"],
+               "/")], runs)
+    order = [stdout.find(marker) for marker in (
+        "\nTook ", "do not say the file does not exist", BACKUP_SEARCH_HEADER,
+        "Searching every history this fleet keeps for: nothing-anywhere.md",
+        "No surface that could be searched has it.")]
+    check("the backup search's output follows this program's whole answer, "
+          "closing lines included, and ends with its summary line",
+          -1 not in order and order == sorted(order), stdout)
+    check("a backup search that searched everywhere adds no closing line",
+          stdout.rstrip().endswith("No surface that could be searched has it."),
+          stdout)
+    backup_search = SCRIPTS_DIR / "find-deleted-path-across-backups.py"
+    helped = subprocess.run([sys.executable, str(backup_search), "--help"],
+                            capture_output=True, text=True, cwd="/")
+    choices = re.search(r"--skip \{([a-z,]+)\}", helped.stdout)
+    check("the real backup search starts from / and takes --skip for each "
+          "git surface the program leaves out",
+          helped.returncode == 0 and choices is not None
+          and set(program.BACKUP_SEARCH_SURFACES_ALREADY_SEARCHED)
+          <= set(choices.group(1).split(",")),
+          helped.stdout + helped.stderr)
     check("nothing found tells the agent to say where it looked, not that "
           "the file does not exist",
           "say where you looked" in stdout
           and "do not say the file does not exist" in stdout, stdout)
+
+# --- When nothing is found, the backup search runs next ---------------------------
+with scratch() as directory:
+    base = pathlib.Path(directory)
+    make_stand_in_bin(base)
+    plan = make_plan(base)
+    write(base / "mac" / "agents" / "seat-a" / "docs" / "present-note.md", "here")
+    code, stdout, stderr = run(base, "present-note.md", plan=plan)
+    check("a copy that is found does not run the backup search",
+          code == 0 and not backup_search_runs(base)
+          and BACKUP_SEARCH_HEADER not in stdout, stdout + stderr)
+
+    def handed(query, **keywords):
+        """(exit code, everything printed, what the backup search recorded)
+        for one run that finds nothing."""
+        code, stdout, stderr = run(base, query, plan=plan, **keywords)
+        return code, stdout + stderr, backup_search_runs(base)
+
+    skips = ["--skip", "git", "--skip", "reflog"]
+    code, output, runs = handed(str(base / "mac" / "private" / "tmp" / "wt-gone"
+                                    / "docs" / "gone-draft.md"))
+    check("a path is handed to the backup search absolute, in its canonical "
+          "spelling",
+          code == 1 and [one["argv"] for one in runs]
+          == [[str(base / "mac" / "tmp" / "wt-gone" / "docs" / "gone-draft.md"),
+               *skips]], (runs, output))
+    seat = base / "mac" / "agents" / "seat-a"
+    code, output, runs = handed("docs/never-written.md", cwd=seat)
+    check("a relative query is handed to it as the absolute path it names, "
+          "never relative to a repository",
+          code == 1 and [one["argv"] for one in runs]
+          == [[os.path.join(os.path.realpath(seat), "docs", "never-written.md"),
+               *skips]], (runs, output))
+    log_store_path = base / "box" / "logs" / "seats" / "x" / "gone-record.md"
+    code, output, runs = handed(str(log_store_path))
+    check("a log-store path is handed to it as it is, with git and its reflog "
+          "left out",
+          code == 1 and [one["argv"] for one in runs]
+          == [[str(log_store_path), *skips]], (runs, output))
+    code, output, runs = handed("never-anywhere.md", extra_environment={
+        "GIT_DIR": str(base / "no-such-git-dir"),
+        "GIT_COMMON_DIR": str(base / "no-such-git-dir"),
+        "GIT_WORK_TREE": str(base)})
+    check("the backup search starts with none of the variables that point git "
+          "at another repository, and the answer is still exit 1",
+          code == 1 and len(runs) == 1
+          and not set(runs[0]["git_variables"]) & set(GIT_REDIRECTING_VARIABLES),
+          (runs, output))
+
+    code, output, runs = handed("never-anywhere.md", backup_mode="found")
+    check("when the backup search finds it, the exit code stays this "
+          "program's own, and the last line says to check the content before "
+          "calling it recoverable",
+          code == 1 and output.rstrip().splitlines()[-1].startswith(
+              "The backup search found it: before you say it can be "
+              "recovered, check that the place a FOUND line names holds the "
+              "file's content"), output)
+    code, output, runs = handed("never-anywhere.md", backup_mode="incomplete")
+    check("when the backup search could not search a place, the last line "
+          "says to tell the user which, and why",
+          code == 1 and output.rstrip().splitlines()[-1].startswith(
+              "Tell the user which places the backup search could NOT "
+              "search, and why"), output)
+    code, output, runs = handed("never-anywhere.md", backup_mode="raises")
+    check("a backup search that raises before its summary line did not "
+          "finish, and its error is shown",
+          code == 1 and "RuntimeError: stand-in backup search failed" in output
+          and "The backup search did not finish (it exited 1 before its "
+              "summary line)" in output, output)
+    code, output, runs = handed("never-anywhere.md", backup_mode="killed")
+    check("a backup search killed before its summary line did not finish, and "
+          "the signal is named",
+          code == 1 and "The backup search did not finish (it was stopped by "
+                        "signal 9 before its summary line)" in output, output)
+    code, output, runs = handed("never-anywhere.md", extra_environment={
+        BACKUP_SEARCH_VARIABLE: str(base / "no-such-program.py")})
+    check("a backup search that cannot start did not finish, and the last "
+          "line says not to call the file missing",
+          code == 1 and "The backup search did not finish (it exited 2 before "
+                        "its summary line)" in output
+          and "do not say the file does not exist"
+          in output.rstrip().splitlines()[-1], output)
+    code, output, runs = handed("never-anywhere.md", mode="unreachable")
+    check("with ned-box unreachable the answer is exit 3, and the backup "
+          "search still runs",
+          code == 3 and len(runs) == 1 and BACKUP_SEARCH_HEADER in output,
+          output)
+
+# --- The backup search's own words, which the program reads ---------------------
+backup_search_spec = importlib.util.spec_from_file_location(
+    "find_deleted_path_across_backups_under_test",
+    SCRIPTS_DIR / "find-deleted-path-across-backups.py")
+backup_search = importlib.util.module_from_spec(backup_search_spec)
+backup_search_spec.loader.exec_module(backup_search)
+summaries = [backup_search.render_summary(reports).splitlines()[0]
+             for reports in (
+                 [backup_search.SurfaceReport("git", backup_search.FOUND,
+                                              ["a"], ["b"])],
+                 [backup_search.SurfaceReport("git", backup_search.NOT_FOUND,
+                                              ["a"])],
+                 [backup_search.SurfaceReport("time machine",
+                                              backup_search.UNAVAILABLE,
+                                              ["a"])],
+                 [])]
+check("every summary the backup search prints begins as this program "
+      "expects it to",
+      all(line.startswith(program.BACKUP_SEARCH_SUMMARY_OPENINGS)
+          for line in summaries), summaries)
+check("the backup search's found and could-not-search-everywhere exit codes "
+      "are the ones this program reads",
+      (backup_search.EXIT_FOUND, backup_search.EXIT_INCOMPLETE)
+      == (program.BACKUP_SEARCH_FOUND_EXIT, program.BACKUP_SEARCH_INCOMPLETE_EXIT),
+      (backup_search.EXIT_FOUND, backup_search.EXIT_INCOMPLETE))
 
 # --- A surface that fails does not read as "not found" --------------------------
 with scratch() as directory:
@@ -662,12 +854,12 @@ with scratch() as directory:
           "candidate-probe-notes.md" in other and "candidate-probe-old.md" in other
           and CANDIDATES_HEADING in stdout and not same,
           stdout)
-    check("candidates alone print the instruction to check their content and "
-          "the next step",
+    check("candidates alone print the instruction to check their content, "
+          "and the backup search runs",
           "No copy named candidate-probe.md was found: the files above are "
           "candidates only; check a candidate's content before you say it is "
           "the file." in stdout
-          and "Run next `python3 " in stdout
+          and BACKUP_SEARCH_HEADER in stdout
           and "do not say the file does not exist" in stdout, stdout)
     code, stdout, stderr = run(base, "candidate-probe.md", "unreachable",
                                make_plan(base))
@@ -1222,10 +1414,10 @@ with scratch() as directory:
           and str(seat_b / "CLAUDE.local.md") in other
           and "/box/agents/seat-c/CLAUDE.local.md" in other, stdout + stderr)
     check("the candidate is marked as a file git does not track, and the "
-          "agent is told to check its content and what to run next",
+          "agent is told to check its content, and the backup search runs",
           "(15 bytes, not tracked by git)" in other
           and "check a candidate's content before you say it is the file"
-          in stdout and "Run next `python3 " in stdout, stdout)
+          in stdout and BACKUP_SEARCH_HEADER in stdout, stdout)
     code, stdout, stderr = run(base, str(seat_b / "CLAUDE.local.md"),
                                plan=plan)
     check("an untracked file is found at its own path",
