@@ -16,8 +16,8 @@ The user approved building this locator on 2026-09-23 (walk
 "merge-lane-mac-helper-open-items-and-questions-2026-09-23", item 4.1, "Y").
 It is the fast first step: it answers "where is it now?" in a couple of
 seconds. scripts/find-deleted-path-across-backups.py is the slow second step,
-for a file that no longer exists anywhere, and this program names it when it
-finds nothing.
+for a file that no longer exists anywhere, and this program runs it when it
+finds nothing (WHEN NOTHING IS FOUND, below).
 
 WHAT IT SEARCHES. By name only, never by content. The query is a file name or
 a path; its last component's stem (the name without its final suffix) is
@@ -237,9 +237,49 @@ searched and why, and the time the search took.
 The closing lines are instructions to the agent that ran it, one per line,
 each with the condition it applies under, as CLAUDE.md requires of text a
 program hands an agent at the moment it must act: tell the user when ned-box
-could not be reached, with the remedy (CLAUDE.md also requires that); run the
-backup search when nothing was found; report where it looked rather than that
-the file does not exist.
+could not be reached, with the remedy (CLAUDE.md also requires that); report
+where it looked rather than that the file does not exist.
+
+WHEN NOTHING IS FOUND, THE BACKUP SEARCH RUNS NEXT. Until 2026-09-30 this
+program printed scripts/find-deleted-path-across-backups.py as the command to
+run next. The user ruled on 2026-09-29 that it runs it itself (walk
+"merge-lane-mac-helper-open-items-and-questions-2026-09-23", the follow-up to
+item 17, "y"). It starts only after this program's own answer, closing lines
+included, has been printed, and only when that answer has no copy, so a copy
+that is found still answers in a couple of seconds.
+  - It runs as a program, never imported: it imports this file for
+    split_host and KNOWN_HOST_HOMES, and each loading the other would never
+    end.
+  - It is given the query as this program placed it: a bare name as it is,
+    any other path in its canonical spelling. A query reaches it only when no
+    copy is at that path, on disk or in any clone's history (a commit that
+    deleted the path, or one only a reflog names, is a copy found), so it
+    asks about a file git never tracked there, which is found only at its own
+    path (A FILE GIT DOES NOT TRACK, above). Each backup surface tests an
+    absolute path exactly and matches a relative one as a suffix anywhere,
+    which is how another seat's file would be taken for this one. So no
+    --repo is passed: the backup search starts in `/` with
+    GIT_REDIRECTING_VARIABLES removed, where git names no repository and the
+    path is not rewritten relative to one.
+  - Its git and git reflog surfaces are left out (--skip git --skip reflog).
+    The git surface here read every commit a branch or a reflog reaches, in
+    every clone on both machines; the backup search's read one repository.
+    Given an absolute path outside that repository, they could only report
+    that they could not search it, as they did for a log-store path while the
+    command was printed instead (measured while PR "The older lost-file tool
+    reads a path as it is cited, and a FOUND stands alone" was built).
+  - Its output is passed on line by line as it comes. It prints each place
+    the moment that place answers, so a run killed part way keeps what it had
+    printed. It took 72 s on the Mac on 2026-09-30, with the Time Machine
+    disk not connected.
+  - It does not change the exit code. Its transcripts surface finds every
+    path the asking session typed: on 2026-09-30 it answered "Recoverable
+    from: transcripts." and exited 0 for a name no file ever had, on the
+    asking session's own transcript. Its answer is shown, and a closing line
+    says what to do with it.
+  - A run that ends without the backup search's summary line did not finish
+    (it was killed, it could not start, or it raised), and the closing line
+    says so: the places it had not printed were never searched.
 
 EXIT CODES.
     0  at least one copy was found, as FOUND MEANS above defines it (a
@@ -253,11 +293,15 @@ EXIT CODES.
        was searched
 A failed surface never reads as "not found": that is why 3 exists apart
 from 1. A candidate never reads as "found": that is why 1 and 3 allow them.
+The code is this program's own search's: the backup search that runs after
+a 1 or a 3 never changes it (WHEN NOTHING IS FOUND, above).
 
 TESTS. scripts/locate-file-copies-across-machines-test.py. The surfaces are
 injectable through the LOCATE_FILE_COPIES_ACROSS_MACHINES_PLAN environment
 variable, a JSON plan of the same shape as `production_plan()` returns, and
 the suite puts a stand-in `ssh` on PATH for the other machine.
+LOCATE_FILE_COPIES_ACROSS_MACHINES_BACKUP_SEARCH_PROGRAM names a stand-in for
+the backup search.
 """
 
 from __future__ import annotations
@@ -294,10 +338,23 @@ GIT_REDIRECTING_VARIABLES = (
 
 PLAN_ENVIRONMENT_VARIABLE = "LOCATE_FILE_COPIES_ACROSS_MACHINES_PLAN"
 THIS_MACHINE_JSON_FLAG = "--this-machine-json"
-# The backup search, beside this program in the same checkout. It is printed
-# as `python3 <absolute path>`, because the file is not executable (mode
-# 100644 on main) and an agent may be in any directory when it runs it.
+# The backup search, beside this program in the same checkout, run when
+# nothing is found (WHEN NOTHING IS FOUND in the module docstring). It is run
+# by this program's own interpreter, because the file is not executable (mode
+# 100644 on main). BACKUP_SEARCH_PROGRAM_VARIABLE names another program to run
+# in its place: the suite's stand-in.
 BACKUP_SEARCH_PROGRAM_NAME = "find-deleted-path-across-backups.py"
+BACKUP_SEARCH_PROGRAM_VARIABLE = (
+    "LOCATE_FILE_COPIES_ACROSS_MACHINES_BACKUP_SEARCH_PROGRAM")
+# Its surfaces that the git surface here has already covered.
+BACKUP_SEARCH_SURFACES_ALREADY_SEARCHED = ("git", "reflog")
+# How its summary line begins (render_summary there), the last line it
+# prints: a run that printed neither did not finish. Then the exit codes it
+# says it found the file with, and could not search everywhere with.
+BACKUP_SEARCH_SUMMARY_OPENINGS = (
+    "Recoverable from: ", "No surface that could be searched has it.")
+BACKUP_SEARCH_FOUND_EXIT = 0
+BACKUP_SEARCH_INCOMPLETE_EXIT = 3
 
 # A match larger than this is listed but not hashed, so it is never collapsed
 # with an identical copy. Hashing is the only part of a search whose cost
@@ -1375,26 +1432,15 @@ def render(query, target, results, not_searched, elapsed):
         instructions.append("To see the entries not shown, run again with "
                             "more of the name.")
     if not found:
-        backup_search = pathlib.Path(__file__).resolve().parent / \
-            BACKUP_SEARCH_PROGRAM_NAME
-        command = (f"`python3 {shlex.quote(str(backup_search))} "
-                   f"{shlex.quote(query)}`")
         if other:
-            instructions += [
+            instructions.append(
                 f"No copy {wanted_label} was found: the files above are "
                 f"candidates only; check a candidate's content before you "
-                f"say it is the file.",
-                f"Run next {command}, which searches git history and the "
-                f"backups.",
-            ]
-        else:
-            instructions.append(
-                f"Nothing was found: run next {command}, which searches git "
-                f"history and the backups.")
-        instructions += [
+                f"say it is the file.")
+        instructions.append(
             "When you report this, say where you looked (the Searched lines "
-            "above); do not say the file does not exist.",
-        ]
+            "above, and the places the backup search below prints); do not "
+            "say the file does not exist.")
     if instructions:
         lines += [""] + instructions
     if found:
@@ -1404,6 +1450,61 @@ def render(query, target, results, not_searched, elapsed):
     else:
         code = 1
     return "\n".join(lines) + "\n", code
+
+
+def write_text(text):
+    """`text` on stdout, flushed at once. A path that is not valid UTF-8
+    prints with a replacement character rather than stopping the whole
+    answer with an encoding error."""
+    sys.stdout.write(text.encode("utf-8", "surrogateescape")
+                     .decode("utf-8", "replace"))
+    sys.stdout.flush()
+
+
+def run_backup_search_after_nothing_found(query):
+    """Run the backup search on `query`, a bare name or an absolute path in
+    its canonical spelling, as WHEN NOTHING IS FOUND in the module docstring
+    sets out, passing its output on line by line as it comes. Returns the
+    closing lines for what it answered."""
+    program = (os.environ.get(BACKUP_SEARCH_PROGRAM_VARIABLE)
+               or str(pathlib.Path(__file__).resolve().parent
+                      / BACKUP_SEARCH_PROGRAM_NAME))
+    command = [sys.executable, program, query]
+    for surface in BACKUP_SEARCH_SURFACES_ALREADY_SEARCHED:
+        command += ["--skip", surface]
+    write_text("\nNo copy was found, so the backup search runs now, without "
+               "its git surfaces, which the git search above covered:\n"
+               f"  $ {shlex.join(command)}\n\n")
+    try:
+        process = subprocess.Popen(
+            command, stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            env=environment_without_git_redirecting_variables())
+    except OSError as error:
+        return [f"The backup search could not start ({error}): tell the user "
+                f"it did not run, and do not say the file does not exist."]
+    summary_printed = False
+    for line in process.stdout:
+        text = line.decode("utf-8", "replace")
+        write_text(text)
+        summary_printed = summary_printed or text.startswith(
+            BACKUP_SEARCH_SUMMARY_OPENINGS)
+    code = process.wait()
+    if not summary_printed:
+        how = (f"it was stopped by signal {-code}" if code < 0
+               else f"it exited {code}")
+        return [f"The backup search did not finish ({how} before its summary "
+                f"line): tell the user that the places it did not print were "
+                f"not searched, and do not say the file does not exist."]
+    if code == BACKUP_SEARCH_FOUND_EXIT:
+        return ["The backup search found it: before you say it can be "
+                "recovered, check that the place a FOUND line names holds the "
+                "file's content, since a transcript matches whenever the path "
+                "was only typed in it."]
+    if code == BACKUP_SEARCH_INCOMPLETE_EXIT:
+        return ["Tell the user which places the backup search could NOT "
+                "search, and why: its Could NOT search line names them."]
+    return []
 
 
 def main(argv=None) -> int:
@@ -1477,10 +1578,12 @@ def main(argv=None) -> int:
     target = query_target(query, *layouts_and_spellings(plan))
     text, code = render(query, target, results, not_searched,
                         time.monotonic() - started_at)
-    # A path that is not valid UTF-8 prints with a replacement character
-    # rather than stopping the whole answer with an encoding error.
-    sys.stdout.write(text.encode("utf-8", "surrogateescape")
-                     .decode("utf-8", "replace"))
+    write_text(text)
+    if code != 0:
+        closing = run_backup_search_after_nothing_found(
+            target.get("canonical", target["path"]))
+        if closing:
+            write_text("\n" + "\n".join(closing) + "\n")
     return code
 
 
