@@ -640,10 +640,24 @@ with tempfile.TemporaryDirectory() as tmp:
 
 # Order and the skip flag. The design ruled local snapshots first: no network,
 # no privilege, and they answer "I deleted it minutes ago" outright.
+#
+# These two cases run before the file settles which machine it is on (further
+# down), so each names the Mac itself. Left to the machine's own answer, a run
+# on ned-box walked the real log-store copy of the Mac's transcripts, 3,235
+# files on 2026-09-30. While they run the machine answers ned-box, so a case
+# that stops naming the Mac fails on either machine, not only on the box.
+running_on_ned_box_before_the_order_cases = getattr(finder, "running_on_ned_box", None)
+finder.running_on_ned_box = lambda: True
+mac_transcripts_copies_walked = []
+newest_transcript_write_before_the_order_cases = getattr(finder, "_newest_transcript_write", None)
+if newest_transcript_write_before_the_order_cases is not None:
+    finder._newest_transcript_write = lambda copy_dir: mac_transcripts_copies_walked.append(str(copy_dir))
+
 skip_local = FakeRunner([("rev-parse --git-dir", (128, "", "not a git repository"))])
 reports = finder.build_report("a/b.md", "/not-a-repo", "/nonexistent-transcripts", "",
                               "/mnt/backup/timeshift/snapshots", finder.DEFAULT_BOX_SEARCH_ROOTS,
-                              skip={"localsnapshots", "box", "timemachine"}, runner=skip_local)
+                              skip={"localsnapshots", "box", "timemachine"}, runner=skip_local, on_ned_box=False)
+skip_local_report_lines = [line for r in reports for line in r.lines]
 check("--skip localsnapshots drops the surface and lists no snapshots",
       not any(r.surface == "local snapshots" for r in reports)
       and not any("listlocalsnapshots" in c for c in skip_local.calls),
@@ -653,13 +667,27 @@ order_probe = FakeRunner([LISTS_SNAPSHOTS, MOUNTS_FINE, RELEASES_FINE, ("test -e
                           ("rev-parse --git-dir", (128, "", "not a git repository"))])
 reports = finder.build_report("/private/tmp/x/b.md", "/not-a-repo", "/nonexistent-transcripts", "",
                               "/mnt/backup/timeshift/snapshots", finder.DEFAULT_BOX_SEARCH_ROOTS,
-                              skip={"box", "timemachine"}, runner=order_probe)
+                              skip={"box", "timemachine"}, runner=order_probe, on_ned_box=False)
+order_probe_report_lines = [line for r in reports for line in r.lines]
 check("local snapshots are searched first, before git",
       [r.surface for r in reports][:2] == ["local snapshots", "git"], str([r.surface for r in reports]))
 check("... and without waiting on a date hint from git, which they take none of",
       order_probe.calls.index("tmutil listlocalsnapshots /System/Volumes/Data")
       < order_probe.calls.index("git -C /not-a-repo rev-parse --git-dir"),
       str(order_probe.calls))
+
+mac_transcripts_copy_under_log_store = os.path.join(
+    *getattr(finder, "MAC_TRANSCRIPTS_COPY_UNDER_LOG_STORE", ("transcripts", "mac", "projects")))
+check("the two cases above name the Mac, so on ned-box neither reaches the log-store copy of the Mac's transcripts",
+      not mac_transcripts_copies_walked
+      and not any(mac_transcripts_copy_under_log_store in text
+                  for text in skip_local.calls + order_probe.calls
+                  + skip_local_report_lines + order_probe_report_lines),
+      "walked %s; calls %s; lines %s" % (mac_transcripts_copies_walked, skip_local.calls + order_probe.calls,
+                                         skip_local_report_lines + order_probe_report_lines))
+finder.running_on_ned_box = running_on_ned_box_before_the_order_cases
+if newest_transcript_write_before_the_order_cases is not None:
+    finder._newest_transcript_write = newest_transcript_write_before_the_order_cases
 
 check("the report column is wide enough for 'local snapshots' to keep the statuses aligned",
       finder.SurfaceReport("local snapshots", FOUND).render().index(FOUND)
