@@ -11,9 +11,11 @@ diagnosis to run when that fires.
 Prints one line per case and exits non-zero if any case fails.
 """
 
+import atexit
 import contextlib
 import dataclasses
 import fcntl
+import functools
 import importlib.util
 import inspect
 import io
@@ -21,6 +23,7 @@ import json
 import os
 import shutil
 import signal
+import socket
 import subprocess
 import sys
 import tempfile
@@ -45,6 +48,22 @@ supervisor = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(supervisor)
 
 failures = []
+
+# No case may reach ned-box. On the Mac from noon Pacific, every launch that
+# composes a successor's first prompt runs memory_review_due_lines, which reads
+# ned-box over ssh, and many cases here launch the real supervisor. This ssh,
+# first on PATH for this process and every process it starts, refuses at once,
+# so those launches give no memory line. The memory-review cases put an ssh of
+# their own ahead of it.
+SSH_THAT_NEVER_REACHES_NED_BOX_DIRECTORY = Path(
+    tempfile.mkdtemp(prefix="ssh-that-never-reaches-ned-box-"))
+atexit.register(shutil.rmtree, SSH_THAT_NEVER_REACHES_NED_BOX_DIRECTORY, True)
+(SSH_THAT_NEVER_REACHES_NED_BOX_DIRECTORY / "ssh").write_text(
+    "#!/bin/sh\necho 'ssh: this test suite never reaches ned-box' >&2\nexit 255\n",
+    encoding="utf-8")
+(SSH_THAT_NEVER_REACHES_NED_BOX_DIRECTORY / "ssh").chmod(0o755)
+os.environ["PATH"] = (f"{SSH_THAT_NEVER_REACHES_NED_BOX_DIRECTORY}{os.pathsep}"
+                      f"{os.environ.get('PATH', '')}")
 
 
 def check(case_name, condition, detail=""):
@@ -2036,6 +2055,379 @@ def run_overview_refresh_due_prompt_cases(workspace: Path):
           f"handoff-supervisor: {expected}" in result.stdout, result.stdout[-900:])
 
 
+# The memory-review-due instruction, word for word. A template: the mark
+# command's path and the two stores are filled in.
+EXPECTED_MEMORY_REVIEW_DUE_INSTRUCTION_TEMPLATE = (
+    " — Run `python3 {mark_script} started` first. Then walk the user through "
+    "every entry of both memory stores, {mac_memory_store} on the Mac and "
+    "{ned_box_memory_store}, one entry at a time with the /walk-me-through "
+    "skill, asking him for each whether to keep it, move it into CLAUDE.md or "
+    "a skill, or delete it; write or delete nothing in either store without "
+    "his approval. When the walk closes, run `python3 {mark_script} done`."
+)
+
+DAILY_MEMORY_REVIEW_MARK_SCRIPT_PATH = SYSTEM_DIRECTORY / "daily-memory-review-mark.py"
+
+# 12:00 in America/Los_Angeles on 2026-09-30, which is PDT, UTC-7.
+MEMORY_REVIEW_PACIFIC_NOON = datetime(2026, 9, 30, 19, 0, tzinfo=timezone.utc)
+
+# The fake ssh's default: skip the options, record the host, and run the
+# command it was handed here, as ned-box would run it.
+SSH_THAT_RUNS_THE_COMMAND_HERE = 'exec /bin/sh -c "$1"'
+
+
+def expected_memory_review_due_line(mac_store, ned_box_store, mac_entries,
+                                    ned_box_entries, since) -> str:
+    """The whole line, spelled out, so a change to the report, the template or
+    a path fails the pin."""
+    mark = DAILY_MEMORY_REVIEW_MARK_SCRIPT_PATH
+    return (
+        f"memory review due: the Mac's memory store holds {mac_entries} and "
+        f"ned-box's holds {ned_box_entries}, {since} — Run `python3 {mark} started` "
+        "first. Then walk the user through every entry of both memory stores, "
+        f"{mac_store}/ on the Mac and nedlern@ned-box:{ned_box_store}/, one entry "
+        "at a time with the /walk-me-through skill, asking him for each whether to "
+        "keep it, move it into CLAUDE.md or a skill, or delete it; write or delete "
+        "nothing in either store without his approval. When the walk closes, run "
+        f"`python3 {mark} done`.")
+
+
+def memory_review_due_or_missing(now):
+    """memory_review_due_lines's result at now, or the string "missing" against
+    a supervisor that has no such function, so each case FAILS cleanly there
+    instead of crashing the suite."""
+    due = getattr(supervisor, "memory_review_due_lines", None)
+    return "missing" if due is None else due(now=now)
+
+
+@contextlib.contextmanager
+def local_time_zone(name: str):
+    """The machine's own zone, for this process, is name."""
+    saved = os.environ.get("TZ")
+    os.environ["TZ"] = name
+    time.tzset()
+    try:
+        yield
+    finally:
+        if saved is None:
+            os.environ.pop("TZ", None)
+        else:
+            os.environ["TZ"] = saved
+        time.tzset()
+
+
+class MemoryReviewFixture:
+    """Two fixture stores and a marks directory stand in for the real ones,
+    through daily_memory_review_mark's constants; an ssh first on PATH records
+    the host of each call and runs its body; and the machine is named, so the
+    cases mean the same on ned-box as on the Mac."""
+
+    def __init__(self, root: Path):
+        self.root = root
+        self.mac_store = root / "mac-memory-store"
+        self.ned_box_store = root / "ned-box-memory-store"
+        self.marks = root / "daily-memory-review-marks"
+        self.mark_module = getattr(supervisor, "daily_memory_review_mark", None)
+        self.fake_ssh_count = 0
+
+    @contextlib.contextmanager
+    def in_place(self, ssh_body=SSH_THAT_RUNS_THE_COMMAND_HERE, read_timeout=None,
+                 hostname="a-mac-that-is-not-ned-box", mac_store=None, ned_box_store=None):
+        """Yields the file the fake ssh records its calls' hosts in."""
+        self.fake_ssh_count += 1
+        directory = self.root / f"fake-ssh-{self.fake_ssh_count}"
+        directory.mkdir()
+        calls = directory / "calls"
+        fake_ssh = directory / "ssh"
+        fake_ssh.write_text(
+            '#!/bin/sh\nwhile [ "$1" = "-o" ]; do shift 2; done\n'
+            'printf "%s\\n" "$1" >> "' + str(calls) + '"\nshift\n' + ssh_body + "\n",
+            encoding="utf-8")
+        fake_ssh.chmod(0o755)
+        missing = object()
+        saved = []
+
+        def replace(owner, name, value):
+            saved.append((owner, name, getattr(owner, name, missing)))
+            setattr(owner, name, value)
+
+        if self.mark_module is not None:
+            replace(self.mark_module, "MAC_MEMORY_STORE_DIRECTORY", str(mac_store or self.mac_store))
+            replace(self.mark_module, "NED_BOX_MEMORY_STORE_DIRECTORY",
+                    str(ned_box_store or self.ned_box_store))
+            replace(self.mark_module, "DAILY_MEMORY_REVIEW_MARKS_DIRECTORY", str(self.marks))
+        if read_timeout is not None:
+            replace(supervisor, "MEMORY_REVIEW_CHECK_READ_TIMEOUT_SECONDS", read_timeout)
+        replace(socket, "gethostname", lambda: hostname)
+        original_path = os.environ.get("PATH", "")
+        os.environ["PATH"] = f"{directory}{os.pathsep}{original_path}"
+        try:
+            yield calls
+        finally:
+            os.environ["PATH"] = original_path
+            for owner, name, value in reversed(saved):
+                if value is missing:
+                    delattr(owner, name)
+                else:
+                    setattr(owner, name, value)
+
+    def due_at(self, now, **in_place_options):
+        """memory_review_due_lines's result at now, its console, and the hosts
+        the fake ssh was called for."""
+        console = io.StringIO()
+        with self.in_place(**in_place_options) as calls, contextlib.redirect_stdout(console):
+            due = memory_review_due_or_missing(now)
+        recorded = calls.read_text(encoding="utf-8").splitlines() if calls.exists() else []
+        return due, console.getvalue(), recorded
+
+    def mark(self, kind, now):
+        """Write a mark with the mark program itself, as the seat would."""
+        if self.mark_module is None:
+            return
+        with self.in_place(), contextlib.redirect_stdout(io.StringIO()), \
+                contextlib.redirect_stderr(io.StringIO()):
+            self.mark_module.main([kind], now=now)
+
+
+def run_memory_review_due_cases(workspace: Path):
+    """memory_review_due_lines against fixture stores and marks, at chosen
+    moments, with ned-box played by an ssh that runs its command here.
+
+    Ruled 2026-09-30 (item 3 of the walk
+    eight-deferrals-with-no-trigger-2026-09-29, "y"): from noon Pacific, a Mac
+    supervisor's successor is asked for the day's review of both machines'
+    memory stores, unless today's review has started or is done, or neither
+    store changed since the last one was done.
+    """
+    root = workspace / "memory-review-due"
+    root.mkdir()
+    fixture = MemoryReviewFixture(root)
+    for store in (fixture.mac_store, fixture.ned_box_store):
+        store.mkdir()
+        (store / "MEMORY.md").write_text("- [An entry](an-entry.md) — the index\n",
+                                         encoding="utf-8")
+    (fixture.mac_store / "mac-entry-one.md").write_text("one\n", encoding="utf-8")
+    (fixture.mac_store / "mac-entry-two.md").write_text("two\n", encoding="utf-8")
+    (fixture.ned_box_store / "ned-box-entry.md").write_text("box\n", encoding="utf-8")
+    noon = MEMORY_REVIEW_PACIFIC_NOON
+    day = timedelta(days=1)
+
+    def line(since):
+        return expected_memory_review_due_line(
+            fixture.mac_store, fixture.ned_box_store, "2 entries", "1 entry", since)
+
+    never_done = "and no review is recorded as done"
+
+    due, console, calls = fixture.due_at(noon - timedelta(minutes=1))
+    check("MEMORY REVIEW: before noon Pacific, no line is given and nothing is read",
+          due == () and calls == [], f"{due!r} {calls!r}\n{console}")
+
+    due, console, calls = fixture.due_at(noon)
+    check("MEMORY REVIEW: from noon Pacific with no marks, the line is given, exactly",
+          due == (line(never_done),), f"{due!r}\nexpected: {line(never_done)!r}\n{console}")
+    check("MEMORY REVIEW: ned-box's store and the marks are read in one ssh call to "
+          "nedlern@ned-box", calls == ["nedlern@ned-box"], repr(calls))
+
+    # The zone is named: under Tokyo's zone, 19:00Z is 04:00 and 10:00Z is
+    # 19:00 on the machine's clock, while in Pacific time they are noon and 03:00.
+    with local_time_zone("Asia/Tokyo"):
+        at_pacific_noon, _, _ = fixture.due_at(noon)
+        at_pacific_three_in_the_morning, _, _ = fixture.due_at(noon - timedelta(hours=9))
+    check("MEMORY REVIEW: noon is read in America/Los_Angeles, not in the machine's zone",
+          at_pacific_noon == (line(never_done),) and at_pacific_three_in_the_morning == (),
+          f"{at_pacific_noon!r} {at_pacific_three_in_the_morning!r}")
+
+    empty_mac_store = root / "empty-mac-memory-store"
+    empty_ned_box_store = root / "empty-ned-box-memory-store"
+    for store in (empty_mac_store, empty_ned_box_store):
+        store.mkdir()
+        (store / "MEMORY.md").write_text("", encoding="utf-8")
+    due, console, calls = fixture.due_at(noon, mac_store=empty_mac_store,
+                                         ned_box_store=empty_ned_box_store)
+    check("MEMORY REVIEW: with no marks and no entry in either store, no line is given",
+          due == (), f"{due!r}\n{console}")
+
+    # Started today: no line for the rest of the Pacific day, which at 03:00Z
+    # the next morning in UTC still is.
+    fixture.mark("started", noon + timedelta(minutes=5))
+    due, console, calls = fixture.due_at(noon + timedelta(hours=1))
+    check("MEMORY REVIEW: after noon with a started mark for today, no line is given",
+          due == (), f"{due!r}\n{console}")
+    due, console, calls = fixture.due_at(noon + timedelta(hours=8))
+    check("MEMORY REVIEW: today is the Pacific date, not the UTC one",
+          due == (), f"{due!r}\n{console}")
+
+    # A seat that died mid-walk left only yesterday's started mark: the next
+    # noon asks again.
+    due, console, calls = fixture.due_at(noon + day)
+    check("MEMORY REVIEW: a started mark from an earlier day keeps nothing quiet at "
+          "the next noon", due == (line(never_done),),
+          f"{due!r}\nexpected: {line(never_done)!r}\n{console}")
+
+    # Done today: no line for the rest of the day, even once a store changes.
+    fixture.mark("done", noon + day + timedelta(minutes=30))
+    due, console, calls = fixture.due_at(noon + day + timedelta(hours=1))
+    check("MEMORY REVIEW: after noon with a done mark for today, no line is given",
+          due == (), f"{due!r}\n{console}")
+    (fixture.ned_box_store / "ned-box-entry.md").write_text("box, edited\n", encoding="utf-8")
+    due, console, calls = fixture.due_at(noon + day + timedelta(hours=2))
+    check("MEMORY REVIEW: a done mark for today keeps the day quiet after a store changes",
+          due == (), f"{due!r}\n{console}")
+    (fixture.ned_box_store / "ned-box-entry.md").write_text("box\n", encoding="utf-8")
+
+    due, console, calls = fixture.due_at(noon + 2 * day)
+    check("MEMORY REVIEW: stores unchanged since the last done mark give no line",
+          due == (), f"{due!r}\n{console}")
+
+    (fixture.mac_store / "mac-entry-two.md").write_text("two, edited\n", encoding="utf-8")
+    due, console, calls = fixture.due_at(noon + 2 * day + timedelta(minutes=1))
+    changed = line("changed since the review done on 2026-10-01")
+    check("MEMORY REVIEW: a store changed since the last done mark gives the line, "
+          "naming that review's date", due == (changed,),
+          f"{due!r}\nexpected: {changed!r}\n{console}")
+
+    # Each failure below has a due line to lose.
+    due, console, calls = fixture.due_at(
+        noon + 2 * day + timedelta(minutes=2),
+        ssh_body="echo 'ssh: connect to host ned-box port 22: No route to host' >&2\n"
+                 "echo 'second line of complaint' >&2\nexit 255")
+    check("MEMORY REVIEW: when ned-box cannot be reached, no line is given",
+          due == (), f"{due!r}\n{console}")
+    check("MEMORY REVIEW: when ned-box cannot be reached, the console says why, in one line",
+          console == "handoff-supervisor: memory review check gave no line: "
+          "DailyMemoryReviewReadOrWriteFailed: ssh nedlern@ned-box exited 255: ssh: "
+          "connect to host ned-box port 22: No route to host\n", console)
+
+    due, console, calls = fixture.due_at(noon + 2 * day + timedelta(minutes=3),
+                                         ssh_body="exec sleep 30", read_timeout=1)
+    check("MEMORY REVIEW: when the ssh read times out, no line is given and the console "
+          "says why", due == ()
+          and "memory review check gave no line: DailyMemoryReviewReadOrWriteFailed: ssh "
+          "nedlern@ned-box timed out after 1 s" in console, f"{due!r}\n{console}")
+
+    due, console, calls = fixture.due_at(noon + 2 * day + timedelta(minutes=4),
+                                         hostname="ned-box")
+    check("MEMORY REVIEW: running on ned-box, no line is given and nothing is read",
+          due == () and calls == [] and console == "", f"{due!r} {calls!r}\n{console}")
+
+
+def run_memory_review_due_prompt_cases(workspace: Path):
+    """Where the memory-review-due line goes: right after the branch-state line
+    and the overview lines, at both call sites that compose it, and nothing
+    appended; and the launch site hands it to the successor."""
+    check("MEMORY REVIEW: the instruction is word for word what was built",
+          getattr(supervisor, "MEMORY_REVIEW_DUE_INSTRUCTION_TEMPLATE", None)
+          == EXPECTED_MEMORY_REVIEW_DUE_INSTRUCTION_TEMPLATE,
+          repr(getattr(supervisor, "MEMORY_REVIEW_DUE_INSTRUCTION_TEMPLATE", None)))
+    check("MEMORY REVIEW: the mark program the line names is the one beside the supervisor",
+          getattr(supervisor, "DAILY_MEMORY_REVIEW_MARK_PATH", None)
+          == DAILY_MEMORY_REVIEW_MARK_SCRIPT_PATH
+          and DAILY_MEMORY_REVIEW_MARK_SCRIPT_PATH.is_file(),
+          repr(getattr(supervisor, "DAILY_MEMORY_REVIEW_MARK_PATH", None)))
+
+    overview_line = expected_widget_overview_refresh_due_line("1111111", "2222222", 3)
+    memory_line = expected_memory_review_due_line(
+        Path("/fixture/mac-memory-store"), Path("/fixture/ned-box-memory-store"),
+        "2 entries", "1 entry", "and no review is recorded as done")
+    branch_sync_report = "branch sync: fixture-branch is 3 commit(s) behind main"
+    branch_state_line = (
+        branch_sync_report + " — If this "
+        "branch has never been pushed, rebase it onto origin/main before your "
+        "first substantive action and rerun the tests for what you touched. "
+        "If it is pushed, leave it as it is, and start new work on a branch "
+        "from origin/main. If this seat has "
+        "open pull requests, check their state with `gh`: merge-lane-2 reviews "
+        "and merges them; when one has a review with findings, dispatch a "
+        "forked subagent to fix it — never extend a head you've already announced.")
+    fields = {"written-at": "2026-09-30T19:20:00Z", "next-step": "finish the review"}
+    try:
+        prompt = supervisor.build_ignition_prompt(
+            Path("/tmp/dialog-0002.md"), fields, branch_sync_report=branch_sync_report,
+            overview_refresh_due=(overview_line,), memory_review_due=(memory_line,))
+    except TypeError:
+        prompt = ""
+    expected_rest = (" " + overview_line + " " + memory_line
+                     + "\n\nThen take the next step:\nfinish the review")
+    check("MEMORY REVIEW: the line follows the branch-state line and the overview line, "
+          "exactly, and nothing is appended at the call site",
+          nothing_is_appended_to(prompt, branch_state_line, expected_rest),
+          "rest after the branch-state line: "
+          + repr(prompt.split("already announced.", 1)[-1])
+          + "; expected: " + repr(expected_rest))
+    try:
+        plan_prompt = supervisor.DialogIgnitionPlan(Path("/tmp/dialog-0002.md"), fields).compose(
+            branch_sync_report, (overview_line,), (memory_line,))
+    except TypeError:
+        plan_prompt = "compose takes no memory review line"
+    check("MEMORY REVIEW: the dialog plan hands its memory review line to the prompt it "
+          "composes", plan_prompt == prompt and prompt != "", repr(plan_prompt))
+    recovery_note = ("\n\n(Recovered at supervisor boot: the previous session's dialog "
+                     "extract is unavailable; this next-step and the repository are your "
+                     "whole context.) ")
+    try:
+        boot_recovery_prompt = supervisor.BootRecoveryIgnitionPlan("finish the review").compose(
+            branch_sync_report, (overview_line,), (memory_line,))
+    except TypeError:
+        boot_recovery_prompt = ""
+    check("MEMORY REVIEW: the boot-recovery prompt is its next step, the recovery note, "
+          "the branch-state line, the overview line and the memory review line, exactly",
+          boot_recovery_prompt == ("finish the review" + recovery_note + branch_state_line
+                                   + " " + overview_line + " " + memory_line),
+          repr(boot_recovery_prompt))
+
+    # Through the launch site: a supervisor igniting from an unconsumed handoff
+    # at noon Pacific, with the real check against fixture stores, hands the
+    # successor the line after the overview line and prints it on its console.
+    root = workspace / "memory-review-due-launch"
+    root.mkdir()
+    fixture = MemoryReviewFixture(root)
+    for store in (fixture.mac_store, fixture.ned_box_store):
+        store.mkdir()
+        (store / "MEMORY.md").write_text("- [An entry](an-entry.md)\n", encoding="utf-8")
+    (fixture.mac_store / "mac-entry-one.md").write_text("one\n", encoding="utf-8")
+    (fixture.mac_store / "mac-entry-two.md").write_text("two\n", encoding="utf-8")
+    (fixture.ned_box_store / "ned-box-entry.md").write_text("box\n", encoding="utf-8")
+    launched_memory_line = expected_memory_review_due_line(
+        fixture.mac_store, fixture.ned_box_store, "2 entries", "1 entry",
+        "and no review is recorded as done")
+    handoff_directory = root / "handoffs"
+    handoff_directory.mkdir()
+    settings = supervisor.SupervisorSettings(
+        agent="memoryreviewdue", working_directory=root, handoff_directory=handoff_directory,
+        agent_command="unused-stub-agent", first_prompt="")
+    settings.handoff_path.write_text(
+        "written-at: 2026-09-30T00:00:00Z\nnext-step: resume the audit\nrestart-counter: 5\n",
+        encoding="utf-8")
+    supervisor.write_supervisor_state(
+        settings.state_path,
+        {"consumed_counter": 4, "launched_session_id": "no-such-session", "generation": 4})
+    launched_prompts = []
+
+    def launch_recording(agent_command, session_id, working_directory, prompt, **_):
+        launched_prompts.append(prompt)
+        return StubLaunchedSession(0)
+
+    real_memory_review_due_lines = getattr(supervisor, "memory_review_due_lines", None)
+    at_noon = (functools.partial(real_memory_review_due_lines, now=MEMORY_REVIEW_PACIFIC_NOON)
+               if real_memory_review_due_lines else (lambda: ()))
+    console = io.StringIO()
+    with fixture.in_place(), supervisor_names_replaced(
+            launch_agent_session=launch_recording,
+            sync_working_branch_with_main=lambda working_directory: branch_sync_report,
+            overview_refresh_due_lines=lambda working_directory: (overview_line,),
+            memory_review_due_lines=at_noon, TASKS_ROOT=root / "tasks",
+            stdin_isatty=False), contextlib.redirect_stdout(console):
+        supervisor.supervise_sessions(settings)
+    check("MEMORY REVIEW: an ignited successor's prompt carries the line after the "
+          "branch-state line and the overview line, exactly",
+          launched_prompts == ["resume the audit" + recovery_note + branch_state_line
+                               + " " + overview_line + " " + launched_memory_line],
+          f"{launched_prompts!r}\n{console.getvalue()[-900:]}")
+    check("MEMORY REVIEW: the supervisor prints the line on its console",
+          f"handoff-supervisor: {launched_memory_line}\n" in console.getvalue(),
+          console.getvalue()[-900:])
+
+
 def run_no_seat_recycle_refusal_case(workspace: Path):
     """A handoff arriving at a supervisor with no terminal must not reincarnate:
     the successor would inherit this stdio and die at its first need for
@@ -3741,6 +4133,8 @@ with tempfile.TemporaryDirectory() as temporary_directory:
         run_overview_refresh_due_cases(Path(temporary_directory))
     run_overview_refresh_withheld_while_pull_request_open_cases(Path(temporary_directory))
     run_overview_refresh_due_prompt_cases(Path(temporary_directory))
+    run_memory_review_due_cases(Path(temporary_directory))
+    run_memory_review_due_prompt_cases(Path(temporary_directory))
     run_exit_handoff_cases(Path(temporary_directory))
     run_adoption_cases(Path(temporary_directory))
     run_dont_restart_without_a_terminal_case(Path(temporary_directory))

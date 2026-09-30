@@ -19,7 +19,9 @@ The cycle, per reincarnation:
      reminder there are files in the queues. Thats what queues are for.").
   6. Launch the successor with the initial agent instructions. Beside the
      branch sync's line they carry one line per system whose code moved on
-     main past its overview's pinned commit (overview_refresh_due_lines).
+     main past its overview's pinned commit (overview_refresh_due_lines),
+     and, on the Mac from noon Pacific, one line when the day's memory review
+     is due (memory_review_due_lines).
   7. Keep the current and previous handoff and extract; delete older ones.
 
 The handoff file the agent writes (simple `key: value` lines):
@@ -126,6 +128,18 @@ _stale_code_citation_check_spec = importlib.util.spec_from_file_location(
 stale_code_citation_check = importlib.util.module_from_spec(
     _stale_code_citation_check_spec)
 _stale_code_citation_check_spec.loader.exec_module(stale_code_citation_check)
+
+# What the daily memory review's line shares with the program that writes its
+# marks: where the two memory stores and the marks are, how a store is read,
+# the Pacific date, and the digest of both stores. Read through it, so the line
+# and the marks cannot disagree about any of them; see memory_review_due_lines.
+# It sits beside this file, and its path is also the command the line names.
+# Loading it runs nothing.
+DAILY_MEMORY_REVIEW_MARK_PATH = Path(__file__).resolve().with_name("daily-memory-review-mark.py")
+_daily_memory_review_mark_spec = importlib.util.spec_from_file_location(
+    "daily_memory_review_mark", DAILY_MEMORY_REVIEW_MARK_PATH)
+daily_memory_review_mark = importlib.util.module_from_spec(_daily_memory_review_mark_spec)
+_daily_memory_review_mark_spec.loader.exec_module(daily_memory_review_mark)
 
 # The first turn a resumed session gets when no first prompt was given. One
 # definition, because two paths reach it: --resume-session-id, which only
@@ -309,6 +323,29 @@ OVERVIEW_REFRESH_DUE_INSTRUCTION_TEMPLATE = (
     "refresh, and to append to it the pinned line "
     "`{landing_pin_prefix}{main_commit}](<commit url>) on <YYYY-MM-DD> — "
     "<what landed>`."
+)
+
+# The hour, in America/Los_Angeles, from which memory_review_due_lines looks
+# for a due review: the user's "starting at noon each day" (2026-09-30).
+MEMORY_REVIEW_DUE_FROM_PACIFIC_HOUR = 12
+
+# How long each read memory_review_due_lines makes gets before it is given up
+# on: ned-box's store and the marks over ssh, then the Mac's store. Read from
+# the module inside that function, as the overview check's timeouts are.
+MEMORY_REVIEW_CHECK_READ_TIMEOUT_SECONDS = 30
+
+# Appended to the memory-review-due report in the successor's first prompt,
+# as OVERVIEW_REFRESH_DUE_INSTRUCTION_TEMPLATE is to each overview report. A
+# template because the mark command's path and the two stores are filled in
+# from where they are defined. Why each part is there is in
+# memory_review_due_lines's docstring.
+MEMORY_REVIEW_DUE_INSTRUCTION_TEMPLATE = (
+    " — Run `python3 {mark_script} started` first. Then walk the user through "
+    "every entry of both memory stores, {mac_memory_store} on the Mac and "
+    "{ned_box_memory_store}, one entry at a time with the /walk-me-through "
+    "skill, asking him for each whether to keep it, move it into CLAUDE.md or "
+    "a skill, or delete it; write or delete nothing in either store without "
+    "his approval. When the walk closes, run `python3 {mark_script} done`."
 )
 
 # The pointer at the script that composed the prompt, carried by every set of
@@ -1105,7 +1142,8 @@ def spawned_subagent_roster_from(handoff_fields: dict) -> list:
 def build_ignition_prompt(extract_path: Path, handoff_fields: dict,
                           predecessor_session_directory: Optional[Path] = None,
                           branch_sync_report: str = "",
-                          overview_refresh_due: tuple = ()) -> str:
+                          overview_refresh_due: tuple = (),
+                          memory_review_due: tuple = ()) -> str:
     """Compose the successor's first prompt.
 
     The prompt is tuned like a CLAUDE.md file (user-ruled 2026-08-29: "we
@@ -1147,6 +1185,10 @@ def build_ignition_prompt(extract_path: Path, handoff_fields: dict,
     the same launch site after the sync: one whole line per system whose code
     moved past its overview's pinned commit. Each goes right after the
     branch-state line, and none goes anywhere when there are none.
+
+    memory_review_due is memory_review_due_lines's result, computed at the
+    same launch site: the one line asking for the day's memory review, or
+    nothing. It goes right after the overview lines.
     """
     next_step = next_step_from(handoff_fields)
     lines = [
@@ -1159,6 +1201,7 @@ def build_ignition_prompt(extract_path: Path, handoff_fields: dict,
     if branch_sync_report:
         lines.append(branch_sync_report + BRANCH_STATE_INSTRUCTION)
     lines.extend(overview_refresh_due)
+    lines.extend(memory_review_due)
     roster = spawned_subagent_roster_from(handoff_fields)
     if roster:
         # The sentence and the reasoning behind its wording live with
@@ -1204,11 +1247,13 @@ class DialogIgnitionPlan:
     predecessor_session_directory: Optional[Path] = None
 
     def compose(self, branch_sync_report: str,
-                overview_refresh_due: tuple = ()) -> str:
+                overview_refresh_due: tuple = (),
+                memory_review_due: tuple = ()) -> str:
         return build_ignition_prompt(self.extract_path, self.handoff_fields,
                                      self.predecessor_session_directory,
                                      branch_sync_report=branch_sync_report,
-                                     overview_refresh_due=overview_refresh_due)
+                                     overview_refresh_due=overview_refresh_due,
+                                     memory_review_due=memory_review_due)
 
 
 @dataclass
@@ -1226,7 +1271,8 @@ class BootRecoveryIgnitionPlan:
     next_step: str
 
     def compose(self, branch_sync_report: str,
-                overview_refresh_due: tuple = ()) -> str:
+                overview_refresh_due: tuple = (),
+                memory_review_due: tuple = ()) -> str:
         prompt = (
             f"{self.next_step}\n\n(Recovered at supervisor boot: the previous "
             "session's dialog extract is unavailable; this next-step and the "
@@ -1235,6 +1281,8 @@ class BootRecoveryIgnitionPlan:
         if branch_sync_report:
             prompt += " " + branch_sync_report + BRANCH_STATE_INSTRUCTION
         for line in overview_refresh_due:
+            prompt += " " + line
+        for line in memory_review_due:
             prompt += " " + line
         return prompt
 
@@ -1587,6 +1635,111 @@ def overview_refresh_due_lines(working_directory: Path) -> tuple:
               f"the open pull request \"{title}\" ({url}) already changes "
               f"{overview_path}")
     return tuple(lines)
+
+
+def memory_review_due_lines(now: Optional[datetime] = None) -> tuple:
+    """The one line for the successor's first prompt that asks for the day's
+    memory review, when it is due, or nothing. Never raises.
+
+    The line is a report, `memory review due: the Mac's memory store holds
+    <n> entries and ned-box's holds <m>, <since>`, followed by
+    MEMORY_REVIEW_DUE_INSTRUCTION_TEMPLATE: composed the way the overview
+    lines are, and placed right after them. now is the moment to judge, the
+    present when not given.
+
+    RULED. The user, 2026-09-30, item 3 of the walk
+    eight-deferrals-with-no-trigger-2026-09-29, in his own words: "Memory can
+    be useful in the short term, but unless it's drained regularly it becomes
+    counter productive. I think reviewing memory daily is the right approach,
+    assuming all agents share the same memory file." Then: "If I need to
+    review daily, the question is how to surface that. COuld we put something
+    in the reincarnation process, that surfaces a review of both computer's
+    memory file starting at noon each day. Once it's reviewed, it sleeps until
+    the next noon?" And to the design below: "y - use a subagent to build".
+    The issue is GHI [Memory: agents write freely, and each reincarnation
+    drains the new entries in a walk with the
+    user](https://github.com/nedschorus/nedschorus/issues/39).
+
+    DUE means all of these: this is the Mac; it is 12:00 or later in
+    America/Los_Angeles; neither a started nor a done mark exists for today's
+    Pacific date; and either store changed since the last done mark, that is,
+    daily_memory_review_mark's digest of both stores differs from the one the
+    last done recorded. Before any done exists, a store with at least one
+    entry counts as changed. The marks, the stores and the digest are defined
+    in nc-systems/handoff/daily-memory-review-mark.py, which writes the marks.
+
+    WHY HERE. Like overview_refresh_due_lines, it runs once per reincarnation,
+    only where an ignition plan is composed, and the marks are what let a
+    reviewed day sleep until the next noon.
+
+    NOON IN A NAMED ZONE. The user reads in Pacific time, so the hour and the
+    date are read in America/Los_Angeles, never in the machine's own zone.
+
+    ONLY ON THE MAC. The user reads on the Mac, and the Mac reaches ned-box's
+    store over ssh, while nothing gives ned-box a way back to the Mac's. So
+    only a Mac supervisor can see both stores, and on ned-box this gives
+    nothing.
+
+    THE INSTRUCTION. The started mark comes first, so a second seat
+    reincarnating mid-walk is not asked for the same review. Every entry of
+    both stores is walked one at a time with /walk-me-through, and for each
+    the user decides: keep it, move it into CLAUDE.md or a skill, or delete
+    it. The instruction repeats that nothing is written or deleted without his
+    approval, because CLAUDE.md requires his approval for every memory write.
+    The done mark records the digest the next noon compares against.
+
+    A SEAT THAT DIES MID-WALK leaves its started mark, which keeps every other
+    seat quiet until the next noon. That is deliberate, from the approved
+    design: the next noon asks again, since no done was recorded.
+
+    FAIL SAFE TO NO LINE. If ned-box cannot be reached, a read times out, or
+    anything else fails, there is no line and the console says why. A day
+    missed comes back at the next noon. ned-box's store and the marks are
+    read first, in one ssh call, and the Mac's store after it.
+    """
+    mark_module = daily_memory_review_mark
+    try:
+        if mark_module.this_machine_is_ned_box():
+            return ()
+        pacific_now = mark_module.pacific_time_of(now or datetime.now(timezone.utc))
+        if pacific_now.hour < MEMORY_REVIEW_DUE_FROM_PACIFIC_HOUR:
+            return ()
+        today = pacific_now.date().isoformat()
+        timeout = MEMORY_REVIEW_CHECK_READ_TIMEOUT_SECONDS
+        ned_box_store, review_marks = mark_module.read_memory_store_and_review_marks(
+            mark_module.NED_BOX_SSH_TARGET, mark_module.NED_BOX_MEMORY_STORE_DIRECTORY,
+            mark_module.DAILY_MEMORY_REVIEW_MARKS_DIRECTORY, timeout)
+        mac_store, _ = mark_module.read_memory_store_and_review_marks(
+            None, mark_module.MAC_MEMORY_STORE_DIRECTORY, "", timeout)
+    except Exception as error:  # no line, and the launch goes on; see the docstring
+        print(f"handoff-supervisor: memory review check gave no line: "
+              f"{type(error).__name__}: {error}")
+        return ()
+    if any(mark_module.daily_memory_review_mark_file_name(today, mark) in review_marks
+           for mark in mark_module.DAILY_MEMORY_REVIEW_MARK_KINDS):
+        return ()
+    mac_entries = mark_module.memory_store_entry_count(mac_store)
+    ned_box_entries = mark_module.memory_store_entry_count(ned_box_store)
+    last_done = mark_module.latest_done_mark(review_marks)
+    if last_done is None:
+        if not mac_entries and not ned_box_entries:
+            return ()
+        since = "and no review is recorded as done"
+    else:
+        done_date, done_digest = last_done
+        if mark_module.memory_stores_digest(mac_store, ned_box_store) == done_digest:
+            return ()
+        since = f"changed since the review done on {done_date}"
+
+    def entries(count):
+        return f"{count} entry" if count == 1 else f"{count} entries"
+
+    return (f"memory review due: the Mac's memory store holds {entries(mac_entries)} "
+            f"and ned-box's holds {entries(ned_box_entries)}, {since}"
+            + MEMORY_REVIEW_DUE_INSTRUCTION_TEMPLATE.format(
+                mark_script=DAILY_MEMORY_REVIEW_MARK_PATH,
+                mac_memory_store=mark_module.MAC_MEMORY_STORE_DIRECTORY + "/",
+                ned_box_memory_store=mark_module.ned_box_memory_store_citation()),)
 
 
 def remove_finished_worktrees_at_handoff(
@@ -2373,7 +2526,12 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
                     settings.working_directory)
                 for line in overview_refresh_due:
                     print(f"handoff-supervisor: {line}")
-                prompt = ignition_plan.compose(branch_sync_report, overview_refresh_due)
+                # Once per reincarnation as well: see memory_review_due_lines.
+                memory_review_due = memory_review_due_lines()
+                for line in memory_review_due:
+                    print(f"handoff-supervisor: {line}")
+                prompt = ignition_plan.compose(branch_sync_report, overview_refresh_due,
+                                               memory_review_due)
                 ignition_plan = None
             # Read after the sync: where the file sits in the seat's own
             # checkout, the sync may just have brought it forward.

@@ -2,6 +2,32 @@
 
 The working document of issue [Memory: agents write freely, and each reincarnation drains the new entries in a walk with the user](https://github.com/nedschorus/nedschorus/issues/39), which the issue body links to. It replaces that issue's original plan, two hooks echoing every memory read and write to the console, with the policy the user ruled on 2026-09-17 in the five-seat-briefs walk; those minutes are in the log-store, `nedlern@ned-box:/home/nedlern/nedschorus-logs/walk/five-seat-briefs-cold-read-findings-2026-09-16-minutes.md`, where CLAUDE.md's log rule puts walk files. The memory-maintenance thread of issue [Runtime-behavior research bundle: instruction compression + deliberate scrub, instruction precedence, output styles, context clearing, names reviewer, memory maintenance](https://github.com/nedschorus/nedschorus/issues/29) asks the wider research question; this settles the operating rule. Agent-seat, and the `fleet` seat's ownership of hooks and session machinery, are defined in `docs/nedschorus-wiki/nedschorus-agent-seat-model.md`; a seat's brief is the file `docs/agents/<seat>-instructions.md`.
 
+## Outcome
+
+PR [From noon Pacific, a reincarnated Mac seat is asked for the day's review of both memory stores](https://github.com/nedschorus/nedschorus/pulls?q=is%3Apr+head%3Areincarnated-seat-told-when-daily-memory-review-due) builds the daily review described in the next section. The link is a search for the pull request's branch, `reincarnated-seat-told-when-daily-memory-review-due`, because the pull request had no number when this was written. The line is `memory_review_due_lines` in `nc-systems/handoff/handoff-supervisor.py`, and the marks are written by `nc-systems/handoff/daily-memory-review-mark.py`.
+
+It builds only the daily review. The rest of the 2026-09-17 design below is not built: the read counts, the drain markers, the change to the instruction-file guard, and the change to CLAUDE.md's memory rule. Where the two differ, in the cadence and in the shape of the walk, the daily review is what runs.
+
+## What the user ruled, 2026-09-30: a daily review from noon
+
+On 2026-09-20 the build was deferred, in walk open-questions-concerns-and-recommendations-2026-09-19, item 4, until "the store passes a threshold the user names". That trigger is recorded in `docs/issues/39-memory-agents-write-freely-and-each-reincarnation-drains-former-issue-body.md`. On 2026-09-30, in walk eight-deferrals-with-no-trigger-2026-09-29, item 3, the user replaced it. His words:
+
+> Memory can be useful in the short term, but unless it's drained regularly it becomes counter productive. I think reviewing memory daily is the right approach, assuming all agents share the same memory file.
+
+> If I need to review daily, the question is how to surface that. COuld we put something in the reincarnation process, that surfaces a review of both computer's memory file starting at noon each day. Once it's reviewed, it sleeps until the next noon?
+
+He approved the design below with "y - use a subagent to build". His words are in the Mac transcript of that walk's session, `nedlern@ned-box:/home/nedlern/nedschorus-logs/transcripts/mac/projects/-Users-el-agents-fleet-restart-at-login/36b6881b-12b2-4e6c-b884-d324c99e5651.jsonl`.
+
+The design:
+
+1. **When it is checked.** Each time a supervisor writes a seat's first prompt after a reincarnation, it checks whether a review is due. It checks only from 12:00 in America/Los_Angeles, a zone it names rather than taking the machine's own.
+2. **When it is due.** No review has been marked started or done today, by the Pacific date, and one of the stores has changed since the last review was marked done. A store has changed when a digest of both stores' file names and contents differs from the digest recorded when that review was marked done. Until any review has been marked done, a store holding any entry counts as changed.
+3. **What the seat is told.** One line in its first prompt, built like the overview line: a report, then the instruction. The instruction says to mark the review started first, then walk the user through every entry of both stores, one at a time, with the /walk-me-through skill. For each entry he decides whether to keep it, move it into CLAUDE.md or a skill, or delete it, and nothing is written or deleted without his approval, as CLAUDE.md requires. When the walk closes, the seat marks the review done.
+4. **The marks.** One small file per mark in the log-store, under `nedlern@ned-box:/home/nedlern/nedschorus-logs/daily-memory-review-marks/`, named for the Pacific date. The done mark records the digest of both stores.
+5. **Only on the Mac.** The user reads on the Mac, and only the Mac can read both stores: it reaches ned-box's over ssh, and nothing gives ned-box a way back. So only the Mac's supervisors give the line.
+6. **Failures give no line.** If ned-box cannot be reached, or a read times out, there is no line, and the supervisor's console says why. A missed day comes back at the next noon.
+7. **A seat that dies mid-walk.** Its started mark keeps every other seat quiet until the next noon. That is deliberate.
+
 ## What the user ruled, 2026-09-17
 
 - **Agents may write memories without asking first.** His words, on memories: "I'm fine with agents writing memories, as long as they are maintained on reincarnation."
