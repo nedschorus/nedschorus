@@ -56,6 +56,31 @@ prescribed by a committed skill, rather than a write by the harness itself.
 That is a shade narrower than the sentence above, and is recorded rather than
 smoothed over.
 
+Reusable prompts are protected wherever they sit in a checkout (user-ruled
+2026-09-29, in the MD-skills seat's session: "Agents are bad at writing
+prose. We should guard changes to prompts, that is I should approve them, if
+they are reusable or not one offs."). A reusable prompt is recognized by name:
+a file ending `-prompt.md` or `-instructions.md`, the endings the file-naming
+page gives a skill prompt, an agent's initial-agent-instructions and its
+instructions. That covers the seat briefs, first prompts, reviewer
+instructions and sanity-checker prompts in docs/agents/, which nothing
+guarded before, and every skill prompt once the one-directory-per-system
+migration (GHI 224) moves it out of .claude/skills/ into nc-systems/skills/
+and renames it to carry the ending. The same ruling has that migration move
+the prompt text embedded in programs into `-prompt.md` files beside them,
+which is how this guard comes to cover it; a path guard cannot see a string
+inside code. It extends the user's 2026-09-23 ruling (walk
+file-naming-page-revision-2026-09-23, item 8) that guarded only the prompts
+and instruction text under nc-systems/skills/, by the same two endings, and
+left the code there to pull-request review.
+
+Four places are exempt, because what is written there is not yet, or never
+becomes, a reusable prompt: a file outside any checkout (a one-off prompt in
+an agent's scratchpad); a queue directory (`queue/` or `nc-queue/`) and
+`docs/drafts/`, where a draft waits for the user's walk, which is the
+approval; and the .claude/jobs/ and .claude/handoffs/ carve-outs below, which
+are working space.
+
 Transcripts stay protected, and that is collateral rather than intent: the
 `.jsonl` files sit under ~/.claude/projects/ beside the auto-memory, so no
 directory-level carve-out separates them. `.claude/handoffs/` has no such
@@ -77,6 +102,9 @@ from guard_approval_marker import consume_approval_marker  # noqa: E402
 
 PROTECTED_BASENAMES = ("CLAUDE.md", "CLAUDE.local.md")
 PROTECTED_DIRECTORY = ".claude"
+REUSABLE_PROMPT_SUFFIXES = ("-prompt.md", "-instructions.md")
+PROMPT_DRAFT_DIRECTORY_NAMES = ("queue", "nc-queue")
+PROMPT_EXEMPT_DIRECTORY_PREFIXES = (("docs", "drafts"), (".claude", "jobs"), (".claude", "handoffs"))
 APPROVAL_MARKER_NAME = ".walk-approved"
 
 MISSING_SESSION_DIRECTORY_DENY_MESSAGE = (
@@ -86,6 +114,17 @@ MISSING_SESSION_DIRECTORY_DENY_MESSAGE = (
     "then resubmit. The approval lane is deliberately closed here rather than falling back to "
     "the target file's own repository: that fallback would let a marker left lying in an "
     "unrelated checkout approve this write."
+)
+
+REUSABLE_PROMPT_DENY_MESSAGE = (
+    "Before modifying {path}, get the user's approval on your change: a reusable prompt, "
+    "a file named -prompt.md or -instructions.md in a checkout, changes only through the "
+    "user's walk. State the proposed change to the user and walk it with him. If he has "
+    "already approved this exact change, quote his exact approval words into {marker} at "
+    "the root of your session's own checkout, then resubmit your write or edit — the marker "
+    "is consumed by the one call it approves. If the prompt is a one-off, write it outside "
+    "the checkout, in your scratchpad. If it is a draft for his walk, write it in a queue "
+    "directory or docs/drafts/."
 )
 
 DENY_MESSAGE = (
@@ -146,6 +185,25 @@ def marker_root(payload: dict, file_path: str):
     return enclosing_repository_root(Path(file_path).parent)
 
 
+def is_reusable_prompt(file_path: str) -> bool:
+    """A file named as a reusable prompt, inside a checkout, and outside the
+    directories where drafts and working files are written."""
+    path = Path(file_path)
+    if not path.name.endswith(REUSABLE_PROMPT_SUFFIXES):
+        return False
+    root = enclosing_repository_root(path.parent)
+    if root is None:
+        return False
+    try:
+        directory_parts = path.resolve().relative_to(root).parts[:-1]
+    except ValueError:
+        return False
+    if any(part in PROMPT_DRAFT_DIRECTORY_NAMES for part in directory_parts):
+        return False
+    return not any(directory_parts[:len(prefix)] == prefix
+                   for prefix in PROMPT_EXEMPT_DIRECTORY_PREFIXES)
+
+
 def is_protected(file_path: str) -> bool:
     path = Path(file_path)
     if path.name in PROTECTED_BASENAMES:
@@ -176,7 +234,10 @@ def main() -> int:
     # file_path. This guard is registered on NotebookEdit, so reading only
     # file_path left every notebook write unguarded (PR #86's review).
     file_path = tool_input.get("file_path") or tool_input.get("notebook_path") or ""
-    if not file_path or not is_protected(file_path):
+    if not file_path:
+        return 0
+    reusable_prompt = is_reusable_prompt(file_path)
+    if not reusable_prompt and not is_protected(file_path):
         return 0
 
     session_directory = session_directory_of(payload)
@@ -189,7 +250,8 @@ def main() -> int:
     if root is not None and consume_approval_marker(root / APPROVAL_MARKER_NAME):
         return 0
 
-    print(DENY_MESSAGE.format(path=file_path, marker=APPROVAL_MARKER_NAME), file=sys.stderr)
+    deny_message = REUSABLE_PROMPT_DENY_MESSAGE if reusable_prompt else DENY_MESSAGE
+    print(deny_message.format(path=file_path, marker=APPROVAL_MARKER_NAME), file=sys.stderr)
     return 2
 
 
