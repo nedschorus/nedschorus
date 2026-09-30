@@ -292,6 +292,68 @@ def run_cases(scratch: Path):
               "a copy whose name carries no number" in str(refusal),
               str(refusal))
 
+    # --- A title names the work: no date, no file path ------------------
+    # User-ruled 2026-09-30, item 4 of the walk
+    # open-questions-concerns-and-recommendations-2026-09-30. The detector
+    # is read through getattr so that main's code, which has none, fails
+    # these cases by name instead of killing the suite.
+
+    date_or_path = getattr(tool, "date_or_file_path_in_heading", None)
+    (scratch / "docs").mkdir(exist_ok=True)
+    for case_name, heading, expected in [
+            ("a heading carrying an ISO date is caught",
+             "Sweep the bare words, under the 2026-09-15 rule", "2026-09-15"),
+            ("a path opened by an entry at the repository's root is caught",
+             "Rewrite the seat briefs under docs/agents; one ruled",
+             "docs/agents"),
+            ("a path ending in a file name is caught, its parenthesis "
+             "stripped",
+             "Founding program (plan: plans/founding-plan.md)",
+             "plans/founding-plan.md"),
+            ("a path under the home directory is caught",
+             "Reviewers never open ~/.config/gh", "~/.config/gh"),
+            ("an absolute path is caught",
+             "Move /home/nedlern/logs aside", "/home/nedlern/logs"),
+            ("a heading that only names the work passes",
+             "Build sanity-checker", ""),
+            ("a slash command passes",
+             "Four small skills: /save, /push, /save-MD-as-draft", ""),
+            ("a slashed pair that is not a path passes",
+             "Claude turn/start and turn/steer equivalents, A/B tested", ""),
+            ("a program named without its directory passes",
+             "recover-crashed-seats.py exits nonzero", ""),
+            ("a version number is not read as a file extension",
+             "Codex/Gemini 3.8 notes", "")]:
+        found = (date_or_path(heading, scratch) if date_or_path
+                 else "no detector")
+        check(case_name, found == expected, f"found {found!r}")
+
+    title_refusal_lines = [
+        "Remove the date or file path from this file's first heading; the "
+        "heading becomes the issue's title.",
+        "Put the date or path in the text below the heading.",
+        "Then rerun the same command."]
+    for case_name, heading in [
+            ("create refuses a dated heading before filing anything",
+             "Stamp the launch time (user-ruled 2026-08-27)"),
+            ("create refuses a heading carrying a file path before filing "
+             "anything",
+             "Ship the records: docs/ship-records.py and the runner")]:
+        titled = written(scratch, "titled.md",
+                         f"# {heading}\n\nBody.\n")
+        refusing = Recorder({"gh issue list": Completed("[]")})
+        try:
+            tool.create(titled, REPO, scratch, refusing, quiet)
+            check(case_name, False, "it filed")
+        except tool.Refused as refusal:
+            check(case_name,
+                  refusal.code == 64
+                  and str(refusal).splitlines() == title_refusal_lines
+                  and not refusing.ran("gh issue create")
+                  and not refusing.ran(ASK),
+                  f"code {refusal.code}: {refusal}; "
+                  f"{refusing.commands()}")
+
     # --- The happy path, which takes two runs ---------------------------
     # One run cannot both find its file on main and have something to
     # commit, and until 2026-09-21 this case answered `git ls-tree` with the
@@ -2358,6 +2420,69 @@ def run_edit_cases(scratch: Path):
           "them, even when that one's heading changed",
           not ran_with(several, "gh issue edit", "--title"),
           str(several.commands()))
+
+    # --- A changed heading that would carry a date or a path into the title
+    # Refused before anything lands, under the two conditions step 4
+    # renames on; an unchanged heading is the title the issue already has,
+    # and one of several files' headings becomes no title at all.
+
+    dated_heading = "A statusline that drops its branch name (ruled 2026-09-21)"
+    dated_text = FILE_TEXT.replace(EDIT_TITLE, dated_heading)
+    dated_source = filed_ghi_md(scratch, text=dated_text)
+    renamed_to_a_date = Recorder({
+        f"git show origin/main:{EDIT_RELATIVE}": Completed(staged),
+        "gh issue view": issue_json(EDIT_TITLE, one_link),
+        "git ls-tree": Completed(EDIT_RELATIVE + "\n"),
+    })
+    try:
+        tool.edit(dated_source, REPO, scratch, renamed_to_a_date, quiet)
+        check("an edit that changes the heading to a dated one is refused",
+              False, "it landed")
+    except tool.Refused as refusal:
+        check("an edit that changes the heading to a dated one is refused",
+              refusal.code == 64 and "file path" in str(refusal),
+              f"code {refusal.code}: {refusal}")
+    check("and nothing of it is adjudicated, landed or renamed",
+          not renamed_to_a_date.ran(ASK)
+          and not renamed_to_a_date.ran("git worktree add")
+          and not renamed_to_a_date.ran("gh pr create")
+          and not renamed_to_a_date.ran("gh issue edit"),
+          str(renamed_to_a_date.commands()))
+
+    already_dated = Recorder({
+        f"git show origin/main:{EDIT_RELATIVE}": Completed(
+            staged_form(text=dated_text, title=dated_heading)),
+        "gh issue view": issue_json(dated_heading, one_link),
+        "git ls-tree": Completed(EDIT_RELATIVE + "\n"),
+    })
+    try:
+        tool.edit(dated_source, REPO, scratch, already_dated, quiet)
+        check("an edit that leaves a dated heading as it was is not refused",
+              True)
+    except tool.Refused as refusal:
+        check("an edit that leaves a dated heading as it was is not refused",
+              False, f"code {refusal.code}: {refusal}")
+
+    several_dated = Recorder({
+        f"git show origin/main:{EDIT_RELATIVE}": Completed("# Older\n"),
+        "git merge-base": Completed(BASE_REVISION + "\n"),
+        f"git show {BASE_REVISION}:{EDIT_RELATIVE}": Completed("# Older\n"),
+        "git ls-remote": Completed(""),
+        "gh pr create": Completed("pr\n"),
+        "gh issue view": issue_json("An issue with several documents",
+                                    one_link),
+        "git ls-tree": Completed(
+            EDIT_RELATIVE + "\ndocs/issues/570-test-design.md\n"),
+    })
+    try:
+        tool.edit(dated_source, REPO, scratch, several_dated, quiet)
+        check("nor is a dated heading on one of several files, which no "
+              "title follows", several_dated.ran("gh pr create"),
+              str(several_dated.commands()))
+    except tool.Refused as refusal:
+        check("nor is a dated heading on one of several files, which no "
+              "title follows", False, f"code {refusal.code}: {refusal}")
+    filed_ghi_md(scratch)   # put the case file back for the cases below
 
     # --- A body nobody has migrated yet ----------------------------------
 
