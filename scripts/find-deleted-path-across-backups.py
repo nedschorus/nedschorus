@@ -158,6 +158,23 @@ surface names no device at all: mount_apfs takes the Data volume's fixed mount
 point, /System/Volumes/Data, directly as its source, so there is nothing to
 resolve and nothing to go stale.
 
+EVERY COMMAND THIS PROGRAM STARTS runs without the variables that point git at
+another repository, so `git -C <repo>` answers for the repository it names.
+`-C` changes git's directory, not its repository: a caller's GIT_DIR or
+GIT_COMMON_DIR still wins over it. Reproduced by merge-lane-2 on 2026-09-30 in
+a scratch fixture: with GIT_COMMON_DIR naming another clone, the git and
+reflog surfaces went UNAVAILABLE with "bad object", and a file git could
+recover exited 3 instead of 0. The locator has dropped the same variables from
+every git it runs since PR "Every git the locator runs ignores a caller's
+GIT_COMMON_DIR", and from this program when it starts it since PR "The
+locator runs the backup search itself when it finds nothing"; this covers a
+run by hand. User-ruled 2026-09-30 in merge-lane-2's session, under the
+2026-09-29 walk item 17 ruling, "If we are going to use it, it should work
+properly." The variables and the function that drops them are the locator's,
+used through the same import as its host rule: the locator keeps its own copy
+of that function only because it is sent whole to the other machine over ssh,
+and this program never is.
+
 Usage:
   python3 scripts/find-deleted-path-across-backups.py <path>
   python3 scripts/find-deleted-path-across-backups.py <path> --skip box
@@ -356,12 +373,16 @@ def run_command(argv, timeout=SHORT_TIMEOUT_SECONDS, cwd=None):
     """Run a command and return (returncode, stdout, stderr).
 
     Every external call in this file goes through here, so the tests can replace
-    one function instead of stubbing four programs.
+    one function instead of stubbing four programs. Each one runs with this
+    program's environment less the locator's GIT_REDIRECTING_VARIABLES, so a
+    git it starts answers for the repository it names (see EVERY COMMAND THIS
+    PROGRAM STARTS).
     """
     try:
         completed = subprocess.run(
             argv,
             cwd=cwd,
+            env=locator.environment_without_git_redirecting_variables(),
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             timeout=timeout,

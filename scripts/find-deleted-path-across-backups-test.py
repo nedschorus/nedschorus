@@ -990,6 +990,81 @@ check("the reflog surface on a non-repo is UNAVAILABLE, not NOT FOUND",
       report.status == UNAVAILABLE and report.surface == "git reflog", "%s %s" % (report.status, report.lines))
 
 # --------------------------------------------------------------------------
+# a caller's git redirect variables — every command runs without them
+# --------------------------------------------------------------------------
+
+# Imported here, not with the others, for the reason given at `import select`
+# below: an import added at the top moves the line run-all-test-suites cites.
+import json  # noqa: E402
+
+# Written out here rather than read from the program, so a name dropped from
+# the program's list fails a case instead of shrinking what the cases check.
+GIT_REDIRECT_VARIABLES_EXPECTED_DROPPED = (
+    "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY",
+    "GIT_COMMON_DIR", "GIT_ALTERNATE_OBJECT_DIRECTORIES")
+
+
+@contextlib.contextmanager
+def caller_environment_with(**variables):
+    """This process's environment with `variables` set, as a caller's shell
+    would hand them to the program; restored afterwards."""
+    saved = {name: os.environ.get(name) for name in variables}
+    os.environ.update(variables)
+    try:
+        yield
+    finally:
+        for name, value in saved.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
+
+
+with caller_environment_with(FIND_DELETED_PATH_TEST_UNRELATED_VARIABLE="kept",
+                             **{name: "/caller/set/%s" % name for name in GIT_REDIRECT_VARIABLES_EXPECTED_DROPPED}):
+    code, out, err = finder.run_command(
+        [sys.executable, "-c", "import json, os; print(json.dumps(dict(os.environ)))"])
+child_environment = json.loads(out) if code == 0 else {}
+check("run_command: a command it starts sees none of the six git redirect variables its caller set",
+      code == 0 and not [name for name in GIT_REDIRECT_VARIABLES_EXPECTED_DROPPED if name in child_environment],
+      "exit %s, still set: %s %s" % (code, [n for n in GIT_REDIRECT_VARIABLES_EXPECTED_DROPPED
+                                             if n in child_environment], err))
+check("run_command: ... and it keeps the rest of its caller's environment",
+      child_environment.get("FIND_DELETED_PATH_TEST_UNRELATED_VARIABLE") == "kept"
+      and child_environment.get("PATH") == os.environ.get("PATH"),
+      "%r %r" % (child_environment.get("FIND_DELETED_PATH_TEST_UNRELATED_VARIABLE"),
+                 child_environment.get("PATH")))
+
+
+def other_clone_fixture(tmp):
+    """A second repository that has never held a/b.md: the clone a caller's
+    redirect variable names instead of the one searched."""
+    other = Path(tmp, "other-clone")
+    other.mkdir()
+    git_clean("init", "-q", "-b", "main", cwd=other)
+    Path(other, "unrelated.md").write_text("unrelated\n")
+    git_clean("add", "unrelated.md", cwd=other)
+    git_clean("commit", "-q", "-m", "unrelated", cwd=other, date="2026-08-20T10:00:00")
+    return other
+
+
+for variable in ("GIT_COMMON_DIR", "GIT_DIR"):
+    with tempfile.TemporaryDirectory() as tmp:
+        repo = git_fixture_repo(tmp)
+        other = other_clone_fixture(tmp)
+        with caller_environment_with(**{variable: str(Path(other, ".git"))}):
+            report = finder.search_git("a/b.md", str(repo))
+            reflog_report = finder.search_git_reflog("a/b.md", str(repo))
+        check("real git: with %s naming another clone, the git surface still FINDS a file only the "
+              "searched repository's history holds" % variable,
+              report.status == FOUND and report.recovery and report.recovery[0].endswith(":a/b.md")
+              and report.recovery[0].startswith("git -C %s " % repo),
+              "%s %s %s" % (report.status, report.lines, report.recovery))
+        check("real git: with %s naming another clone, the reflog surface searches the repository asked "
+              "about: NOT FOUND, because every ref there already reaches the file" % variable,
+              reflog_report.status == NOT_FOUND, "%s %s" % (reflog_report.status, reflog_report.lines))
+
+# --------------------------------------------------------------------------
 # transcripts
 # --------------------------------------------------------------------------
 
