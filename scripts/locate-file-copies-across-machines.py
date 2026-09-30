@@ -270,7 +270,7 @@ that is found still answers in a couple of seconds.
     reads a path as it is cited, and a FOUND stands alone" was built). The
     line that starts the backup search says the git search above covered
     them only when this program's own answer was complete (exit 1); after an
-    exit 3, a clone or a machine it could not read is named above instead
+    exit 3, what it could not search is named above instead
     (PR "The locator runs the backup search itself when it finds nothing",
     review inline comment 4140421516).
   - Its output is passed on line by line as it comes. It prints each place
