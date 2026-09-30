@@ -110,6 +110,14 @@ sys.exit(1)
 """
 BACKUP_SEARCH_VARIABLE = "LOCATE_FILE_COPIES_ACROSS_MACHINES_BACKUP_SEARCH_PROGRAM"
 BACKUP_SEARCH_HEADER = "No copy was found, so the backup search runs now"
+# The whole header line, after an answer that searched everything (exit 1)
+# and after one that did not (exit 3): only the first may say the git search
+# covered what the skipped git surfaces would have read.
+BACKUP_SEARCH_HEADER_AFTER_COMPLETE_ANSWER = (
+    f"\n{BACKUP_SEARCH_HEADER}, without its git surfaces, which the git "
+    f"search above covered:\n")
+BACKUP_SEARCH_HEADER_AFTER_INCOMPLETE_ANSWER = (
+    f"\n{BACKUP_SEARCH_HEADER}, without its git surfaces:\n")
 
 failures = []
 
@@ -523,6 +531,9 @@ with scratch() as directory:
     check("a backup search that searched everywhere adds no closing line",
           stdout.rstrip().endswith("No surface that could be searched has it."),
           stdout)
+    check("after an answer that searched everything, the header says the git "
+          "search above covered the skipped git surfaces",
+          BACKUP_SEARCH_HEADER_AFTER_COMPLETE_ANSWER in stdout, stdout)
     backup_search = SCRIPTS_DIR / "find-deleted-path-across-backups.py"
     helped = subprocess.run([sys.executable, str(backup_search), "--help"],
                             capture_output=True, text=True, cwd="/")
@@ -624,6 +635,9 @@ with scratch() as directory:
           "search still runs",
           code == 3 and len(runs) == 1 and BACKUP_SEARCH_HEADER in output,
           output)
+    check("with ned-box unreachable, the header does not say the git search "
+          "above covered the skipped git surfaces",
+          BACKUP_SEARCH_HEADER_AFTER_INCOMPLETE_ANSWER in output, output)
 
 # --- The backup search's own words, which the program reads ---------------------
 backup_search_spec = importlib.util.spec_from_file_location(
@@ -1362,6 +1376,12 @@ with scratch() as directory:
           and f"\n  mac git: the worktrees {project / '.git'} lists could "
               f"not be read: fatal: stand-in worktree listing failure\n"
           in result.stdout.split("NOT searched", 1)[-1],
+          f"exit {result.returncode}\n{result.stdout}{result.stderr}")
+    # The case the review of PR "The locator runs the backup search itself
+    # when it finds nothing" reproduced (inline comment 4140421516).
+    check("when git cannot list that project's worktrees, the header does not "
+          "say the git search above covered the skipped git surfaces",
+          BACKUP_SEARCH_HEADER_AFTER_INCOMPLETE_ANSWER in result.stdout,
           f"exit {result.returncode}\n{result.stdout}{result.stderr}")
 
 with scratch() as directory:
