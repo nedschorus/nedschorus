@@ -1121,6 +1121,11 @@ check("a printed git recovery command begins with env, unsets each of the six gi
       and printed_git_tokens[1:-1:2] == ["-u"] * len(GIT_REDIRECT_VARIABLES_EXPECTED_DROPPED)
       and sorted(printed_git_tokens[2:-1:2]) == sorted(GIT_REDIRECT_VARIABLES_EXPECTED_DROPPED),
       finder.PRINTED_GIT_INVOCATION_WITHOUT_REDIRECTING_VARIABLES)
+check("the printed git recovery command's prefix is the locator's own constant, defined once for both programs",
+      finder.PRINTED_GIT_INVOCATION_WITHOUT_REDIRECTING_VARIABLES
+      is finder.locator.PRINTED_GIT_INVOCATION_WITHOUT_REDIRECTING_VARIABLES,
+      "%r / %r" % (finder.PRINTED_GIT_INVOCATION_WITHOUT_REDIRECTING_VARIABLES,
+                   finder.locator.PRINTED_GIT_INVOCATION_WITHOUT_REDIRECTING_VARIABLES))
 
 for variable in ("GIT_COMMON_DIR", "GIT_DIR"):
     with tempfile.TemporaryDirectory() as tmp:
