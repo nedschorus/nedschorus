@@ -80,6 +80,10 @@ both machines.
     repository. bwrap takes exact paths, not patterns, so a credential file
     outside those directories that is created after launch, or sits outside
     the home and the repository, is not covered.
+Neither sandbox cuts the network, so agy's own web tool still fetches the
+pages a document links to, which the reviewer reads (user-ruled 2026-09-29,
+items 3 and 5 of the walk what-a-cold-read-reviewer-may-read-2026-09-28;
+measured that day inside both sandboxes).
 Both also withhold Claude's and Codex's login files (user-ruled 2026-09-29),
 not agy's own: agy runs whole inside the sandbox, and masking its own login
 would log it out. Measured 2026-09-29 on both machines: inside the sandbox
