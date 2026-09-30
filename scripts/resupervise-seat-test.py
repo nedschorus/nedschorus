@@ -222,11 +222,15 @@ def run_missing_launcher_case(workspace: Path):
     # the repository's SHAPE around it rather than two files beside it.
     # The supervisor also imports the agent-binary update lock from scripts/
     # (2026-09-22), so that module is copied beside the first, and the
-    # pinned-line reader in stale-code-citation-check.py (2026-09-28).
+    # pinned-line reader in stale-code-citation-check.py (2026-09-28). The
+    # daily memory review's mark program (2026-09-30) sits beside the
+    # supervisor, so it is copied beside the supervisor's copy.
     supervisor_home = workspace / "nc-systems" / "handoff"
     supervisor_home.mkdir(parents=True)
-    (supervisor_home / "handoff-supervisor.py").write_text(
-        SUPERVISOR_SCRIPT.read_text(encoding="utf-8"), encoding="utf-8")
+    for supervisor_file in ("handoff-supervisor.py", "daily-memory-review-mark.py"):
+        (supervisor_home / supervisor_file).write_text(
+            SUPERVISOR_SCRIPT.with_name(supervisor_file).read_text(encoding="utf-8"),
+            encoding="utf-8")
     scripts_home = workspace / "scripts"
     scripts_home.mkdir(parents=True, exist_ok=True)
     for supervisor_import in ("seat-transcript-worth-resuming.py",
