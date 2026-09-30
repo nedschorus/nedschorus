@@ -299,13 +299,22 @@ def run_cases(scratch: Path):
     # these cases by name instead of killing the suite.
 
     date_or_path = getattr(tool, "date_or_file_path_in_heading", None)
-    (scratch / "docs").mkdir(exist_ok=True)
+    # What `git ls-tree -r --name-only HEAD` lists for the cases below: the
+    # detector judges a relative path and a file extension against the
+    # tracked tree, never against what a checkout's directory holds.
+    TRACKED = ["docs/agents/doctrine-instructions.md",
+               "docs/issues/412-build-sanity-checker.md",
+               "config/cold-read-tier-roster.json",
+               "nc-systems/cold-read/cold-read-grid.py",
+               "scripts/ghi-issue-write.py", "CLAUDE.md"]
     for case_name, heading, expected in [
             ("a heading carrying an ISO date is caught",
              "Sweep the bare words, under the 2026-09-15 rule", "2026-09-15"),
             ("a path opened by an entry at the repository's root is caught",
              "Rewrite the seat briefs under docs/agents; one ruled",
              "docs/agents"),
+            ("a root entry named alone is caught",
+             "Group the components under nc-systems/", "nc-systems/"),
             ("a path ending in a file name is caught, its parenthesis "
              "stripped",
              "Founding program (plan: plans/founding-plan.md)",
@@ -323,10 +332,41 @@ def run_cases(scratch: Path):
             ("a program named without its directory passes",
              "recover-crashed-seats.py exits nonzero", ""),
             ("a version number is not read as a file extension",
-             "Codex/Gemini 3.8 notes", "")]:
-        found = (date_or_path(heading, scratch) if date_or_path
-                 else "no detector")
+             "Codex/Gemini 3.8 notes", ""),
+            ("an ordinary word that is also a root entry passes",
+             "The config/state split", ""),
+            ("so does a root entry paired with a word it does not hold",
+             "Separate docs/code review", ""),
+            ("a product name with a dot passes, no tracked file ending so",
+             "Support Deno/Node.js", ""),
+            ("so does a site name", "Codex/claude.ai parity", ""),
+            ("and a pair of model versions", "Opus 4.x/5.x", "")]:
+        try:
+            found = (date_or_path(heading, TRACKED) if date_or_path
+                     else "no detector")
+        except Exception as failure:  # main's detector took a directory
+            found = f"raised {failure!r}"
         check(case_name, found == expected, f"found {found!r}")
+
+    # The verdict is the tracked tree's, so a directory only one checkout
+    # holds — merge-lane-2's walk-ledgers/, which git ignores — refuses
+    # nothing. Driven through create, whose signature main's code shares.
+    (scratch / "walk-ledgers").mkdir(exist_ok=True)
+    untracked_root = Recorder({
+        "gh issue list": Completed("[]"),
+        "git ls-tree -r --name-only HEAD": Completed("\n".join(TRACKED)),
+    })
+    untracked_heading = written(scratch, "untracked-root.md",
+                                "# Tidy the walk-ledgers/notes pile\n\nBody.\n")
+    try:
+        tool.create(untracked_heading, REPO, scratch, untracked_root, quiet)
+        refused = ""
+    except tool.Refused as refusal:
+        refused = str(refusal)
+    except Exception as failure:  # past the check, the stubs run out
+        refused = ""
+    check("a directory the checkout holds but git does not track is no "
+          "path", "file path" not in refused, refused)
 
     title_refusal_lines = [
         "Remove the date or file path from this file's first heading; the "
@@ -341,7 +381,10 @@ def run_cases(scratch: Path):
              "Ship the records: docs/ship-records.py and the runner")]:
         titled = written(scratch, "titled.md",
                          f"# {heading}\n\nBody.\n")
-        refusing = Recorder({"gh issue list": Completed("[]")})
+        refusing = Recorder({
+            "gh issue list": Completed("[]"),
+            "git ls-tree -r --name-only HEAD": Completed("\n".join(TRACKED)),
+        })
         try:
             tool.create(titled, REPO, scratch, refusing, quiet)
             check(case_name, False, "it filed")
@@ -353,6 +396,73 @@ def run_cases(scratch: Path):
                   and not refusing.ran(ASK),
                   f"code {refusal.code}: {refusal}; "
                   f"{refusing.commands()}")
+
+    # --- The heading is judged after the refusals the key cannot see -----
+    # Review of PR [GHI titles name the work](https://github.com/nedschorus/nedschorus/pull/829):
+    # judged first, a rerun on a source whose filing is in flight, or
+    # already on main, was told to change its heading, and the changed
+    # heading matched neither check, so the next rerun filed a second issue.
+
+    DATED = "A statusline that drops its branch name (ruled 2026-09-21)"
+    dated_file_text = FILE_TEXT.replace(
+        "A statusline that drops its branch name", DATED)
+    dated_in_flight = Recorder({
+        "gh issue list": Completed(
+            '[{"number": 570, "title": "' + DATED + '", '
+            '"body": "Filing in progress, pairing key ghipairOTHER."}]'),
+        "gh pr list": Completed(
+            '[{"number": 9, "title": "GHI-MD for issue 570: ' + DATED + '", '
+            '"url": "https://github.com/x/y/pull/9"}]'),
+    })
+    try:
+        tool.create(written(scratch, "dated-in-flight.md", dated_file_text),
+                    REPO, scratch, dated_in_flight, quiet)
+        check("a dated heading whose filing is in flight is told to wait, "
+              "not to change its heading", False, "it filed")
+    except tool.Refused as refusal:
+        check("a dated heading whose filing is in flight is told to wait, "
+              "not to change its heading",
+              "https://github.com/x/y/pull/9" in str(refusal)
+              and "file path" not in str(refusal), str(refusal))
+
+    dated_landed_path = f"docs/issues/570-{tool.slug(DATED)}.md"
+    dated_landed = Recorder({
+        "gh issue list": Completed("[]"),
+        "git ls-tree": Completed(dated_landed_path + "\n"),
+        "git show": Completed(
+            tool.with_issue_frontmatter(dated_file_text, REPO, 570, DATED)),
+    })
+    try:
+        tool.create(written(scratch, "dated-landed.md", dated_file_text),
+                    REPO, scratch, dated_landed, quiet)
+        check("a dated heading already on main is sent to the edit "
+              "operation, not told to change its heading", False, "it filed")
+    except tool.Refused as refusal:
+        check("a dated heading already on main is sent to the edit "
+              "operation, not told to change its heading",
+              dated_landed_path in str(refusal)
+              and "file path" not in str(refusal), str(refusal))
+
+    # --- The dry run answers as the real run does -----------------------
+    # Review of PR 829: the dry run validated alone and printed "would
+    # file" for a heading the real run refuses with 64.
+
+    for case_name, heading in [
+            ("create --dry-run refuses a dated heading as create does",
+             "Stamp the launch time (user-ruled 2026-08-27)"),
+            ("and a home-directory path, for a file outside any checkout",
+             "Reviewers never open ~/.config/gh")]:
+        dry = written(scratch, "dry-run.md", f"# {heading}\n\nBody.\n")
+        printed, complaint = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(printed), \
+                contextlib.redirect_stderr(complaint):
+            code = tool.main(["create", str(dry), "--dry-run",
+                              "--repo", REPO])
+        check(case_name,
+              code == 64 and "would file" not in printed.getvalue()
+              and complaint.getvalue().splitlines() == title_refusal_lines,
+              f"code {code}, {printed.getvalue()!r}, "
+              f"{complaint.getvalue()!r}")
 
     # --- The happy path, which takes two runs ---------------------------
     # One run cannot both find its file on main and have something to
@@ -2482,6 +2592,29 @@ def run_edit_cases(scratch: Path):
     except tool.Refused as refusal:
         check("nor is a dated heading on one of several files, which no "
               "title follows", False, f"code {refusal.code}: {refusal}")
+    # Step 4 renames only when the title is not already the heading, and
+    # the refusal now asks step 4's own question: a heading changed to the
+    # dated title the issue already holds renames nothing, so it is not
+    # refused (review of PR 829).
+    retitled_already = Recorder({
+        f"git show origin/main:{EDIT_RELATIVE}": Completed(staged),
+        "git merge-base": Completed(BASE_REVISION + "\n"),
+        f"git show {BASE_REVISION}:{EDIT_RELATIVE}": Completed(staged),
+        "git ls-remote": Completed(""),
+        "gh pr create": Completed("pr\n"),
+        "gh issue view": issue_json(dated_heading, one_link),
+        "git ls-tree": Completed(EDIT_RELATIVE + "\n"),
+    })
+    try:
+        tool.edit(dated_source, REPO, scratch, retitled_already, quiet)
+        check("a heading changed to the dated title the issue already holds "
+              "is not refused, since no rename follows",
+              retitled_already.ran("gh pr create"),
+              str(retitled_already.commands()))
+    except tool.Refused as refusal:
+        check("a heading changed to the dated title the issue already holds "
+              "is not refused, since no rename follows",
+              False, f"code {refusal.code}: {refusal}")
     filed_ghi_md(scratch)   # put the case file back for the cases below
 
     # --- A body nobody has migrated yet ----------------------------------
