@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Tests for scripts/transcript-mirror-to-log-store.py: the layout, the two
-sources, never --delete, the live-tree exits, the lock, and the remote
-invocation. LOCAL mode runs the real rsync into a scratch store; REMOTE mode
+sources, never --delete, the live-tree exits, the lock, the remote
+invocation, and --failures-only, the quiet mode cron runs it in. LOCAL mode runs the real rsync into a scratch store; REMOTE mode
 records what stub ssh and rsync were asked. Nothing here touches ned-box or
 the real ~/.claude: the source home is overridden too.
 
@@ -31,6 +31,8 @@ with open(os.environ["MIRROR_TEST_ARGV_LOG"], "a") as log:
     log.write(json.dumps(sys.argv) + "\\n")
 if sys.argv[0].endswith("ssh") and "wc -l" in " ".join(sys.argv):
     print(os.environ.get("MIRROR_TEST_STORE_COUNT", "0"))
+if sys.argv[0].endswith("rsync") and os.environ.get("MIRROR_TEST_RSYNC_STDERR"):
+    sys.stderr.write(os.environ["MIRROR_TEST_RSYNC_STDERR"] + "\\n")
 sys.exit(int(os.environ.get("MIRROR_TEST_RSYNC_EXIT", "0")) if sys.argv[0].endswith("rsync") else 0)
 """
 
@@ -58,13 +60,16 @@ def make_home(root: pathlib.Path) -> pathlib.Path:
     return home
 
 
-def run_mirror(home, destination, extra_env=None):
+def run_mirror(home, destination, extra_env=None, args=()):
     env = dict(os.environ)
     env[SOURCE_HOME_VARIABLE] = str(home)
     env[DESTINATION_VARIABLE] = destination
     env.update(extra_env or {})
-    return subprocess.run([sys.executable, str(MIRROR)], capture_output=True,
+    return subprocess.run([sys.executable, str(MIRROR), *args], capture_output=True,
                           text=True, check=False, env=env)
+
+
+QUIET = ("--failures-only",)
 
 
 with tempfile.TemporaryDirectory(prefix="transcript-mirror-test-") as scratch_name:
@@ -123,6 +128,25 @@ with tempfile.TemporaryDirectory(prefix="transcript-mirror-test-") as scratch_na
         result = run_mirror(home, str(store))
     check("a run that finds the lock held exits 3 and says so",
           result.returncode == 3 and "another run holds" in result.stdout, result.stdout)
+
+    # --failures-only: what cron runs every minute. A pass that mirrored
+    # prints nothing; the lock held by a slower run is expected and silent.
+    (home / ".claude" / "handoffs" / "MD-skills-dialog-0002.md").write_text("# dialog 2\n")
+    result = run_mirror(home, str(store), args=QUIET)
+    check("--failures-only: a pass that mirrored exits 0 and prints nothing on stdout or stderr",
+          result.returncode == 0 and result.stdout == "" and result.stderr == "",
+          repr(result.stdout + result.stderr))
+    check("--failures-only still mirrors: the new handoff reached the store",
+          (store / machine / "handoffs" / "MD-skills-dialog-0002.md").is_file())
+    result = run_mirror(bare_home, str(scratch / "store-bare"), args=QUIET)
+    check("--failures-only: a missing source directory is not a failure and prints nothing, exit 0",
+          result.returncode == 0 and result.stdout == "", result.stdout)
+    with lock_path.open("w") as held:
+        fcntl.flock(held, fcntl.LOCK_EX)
+        result = run_mirror(home, str(store), args=QUIET)
+    check("--failures-only: a run that finds the lock held exits 3 and prints nothing",
+          result.returncode == 3 and result.stdout == "" and result.stderr == "",
+          repr(result.stdout + result.stderr))
 
     # --- Remote mode, stub ssh and rsync ------------------------------------
     stubs = scratch / "stub-bin"
@@ -186,6 +210,38 @@ with tempfile.TemporaryDirectory(prefix="transcript-mirror-test-") as scratch_na
     check("rsync exit 255 is FAILED naming ned-box unreachable, exit 1",
           result.returncode == 1 and result.stdout.count("FAILED:") == 2
           and "ned-box unreachable" in result.stdout, result.stdout)
+    argv_log.unlink()
+    result = run_mirror(home, RULED_DESTINATION, dict(
+        remote_env, MIRROR_TEST_RSYNC_VERSION_LINE=GNU_VERSION_LINE, MIRROR_TEST_RSYNC_EXIT="24",
+        MIRROR_TEST_RSYNC_STDERR="file has vanished: stub"), QUIET)
+    quiet_calls = [json.loads(line) for line in argv_log.read_text().splitlines()]
+    check("--failures-only: remote files vanished mid-run is exit 0 with nothing printed, rsync's stderr included",
+          result.returncode == 0 and result.stdout == "" and result.stderr == "",
+          repr(result.stdout + result.stderr))
+    check("--failures-only: a pass that prints nothing does not ask ned-box for its file count",
+          not any(c[0].endswith("ssh") and "wc -l" in " ".join(c) for c in quiet_calls)
+          and sum(1 for c in quiet_calls if c[0].endswith("rsync")) == 2,
+          str(quiet_calls))
+    argv_log.unlink()
+    result = run_mirror(home, RULED_DESTINATION, dict(
+        remote_env, MIRROR_TEST_RSYNC_EXIT="255", MIRROR_TEST_RSYNC_STDERR="ssh: connect refused"), QUIET)
+    check("--failures-only: rsync exit 255 still prints both FAILED lines naming ned-box unreachable, exit 1",
+          result.returncode == 1 and result.stdout.count("FAILED:") == 2
+          and "ned-box unreachable" in result.stdout and "mirrored:" not in result.stdout,
+          result.stdout)
+    check("--failures-only: a failed rsync's stderr still reaches the log",
+          "ssh: connect refused" in result.stderr, repr(result.stderr))
+    argv_log.unlink()
+    result = run_mirror(home, RULED_DESTINATION, dict(
+        remote_env, MIRROR_TEST_RSYNC_VERSION_LINE=GNU_VERSION_LINE, MIRROR_TEST_RSYNC_EXIT="23"), QUIET)
+    check("--failures-only: GNU rsync exit 23 is still FAILED naming the exit, exit 1",
+          result.returncode == 1 and result.stdout.count("FAILED:") == 2
+          and "rsync exit 23" in result.stdout, result.stdout)
+    check("the documented cron lines run every minute with --failures-only, the Mac's under Homebrew python3",
+          "  Mac:     * * * * * /opt/homebrew/bin/python3 /Users/el/Projects/nedschorus/scripts/"
+          "transcript-mirror-to-log-store.py --failures-only >>" in MIRROR.read_text()
+          and "  ned-box: * * * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/scripts/"
+          "transcript-mirror-to-log-store.py --failures-only >>" in MIRROR.read_text())
     check("the destination constant in the script is the ruled one",
           f'LOG_STORE_TRANSCRIPTS_DESTINATION = "{RULED_DESTINATION}"' in MIRROR.read_text())
 
