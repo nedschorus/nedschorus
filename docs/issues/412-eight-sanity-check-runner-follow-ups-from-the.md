@@ -1,8 +1,8 @@
 ---
-issue: "[Eight sanity-check runner follow-ups from the /sanity-check skill's first sanity-check, for the drain to split](https://github.com/nedschorus/nedschorus/issues/412)"
+issue: "[Build sanity-checker](https://github.com/nedschorus/nedschorus/issues/412)"
 ---
 
-# Eight sanity-check runner follow-ups from the /sanity-check skill's first sanity-check, for the drain to split
+# Build sanity-checker
 
 ## What this is
 
@@ -29,7 +29,11 @@ Each removes a step an agent must remember or a signal an agent must discount by
 
 ## Next action
 
-The drain splits these into their own issues or closes them. Item 1 goes to the user first.
+The user ruled on this issue on 2026-09-30, at item 18 of the queue-drain's approval-walk queue-and-drafts-drain-2026-09-22 (cold-read-research seat), in the words "1 - approved." The runner is not yet ready for use, and these fixes are part of making it ready, so the issue stays open as their tracker, under the user's title "Build sanity-checker".
+
+- Item 1 goes to the user as a question first. A detached copy at the reviewed commit also freezes the target, so the user's answer decides how much of item 2 is still needed: a yes leaves only its other half, saving the request into the record; a no leaves item 2 whole, built like the rest.
+- Items 3, 4, 6, 7 and 8 are built as separate small pull requests, one fix each. Each is re-measured against main before it is built: the runner has changed since these were written, most recently in PR [The sanity check's Codex cells and the Codex code reviewer never open a credential file](https://github.com/nedschorus/nedschorus/pull/795).
+- Item 5 is done.
 
 ## Notes
 
