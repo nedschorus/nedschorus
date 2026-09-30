@@ -201,6 +201,19 @@ worktree case measures the same thing on each machine's git. A hit reports the
 newest commit that touched each matching path, and prints the `git show`
 command that reads the file's content there.
 
+EVERY GIT THIS PROGRAM RUNS answers for the repository it names, not for one
+the caller's environment names: `git ls-files` in a checkout, and
+`git worktree list` and `git log` against a clone's git directory, all run
+with GIT_REDIRECTING_VARIABLES removed from their environment. `--git-dir`
+overrides GIT_DIR but not GIT_COMMON_DIR or GIT_OBJECT_DIRECTORY. Measured
+2026-09-30 with git 2.56.0: with GIT_COMMON_DIR naming another clone's git
+directory, `git --git-dir <clone>/.git worktree list` listed the other clone's
+worktrees, and `git log --all` failed with "bad object", so the clone's
+history read as not searched. Only `git ls-files` dropped the variables before
+(PR 703 review 5307849568); the other two were found in walk
+"merge-lane-mac-helper-open-items-and-questions-2026-09-23", item 17, on
+2026-09-29.
+
 HOW THE OTHER MACHINE IS SEARCHED. From the Mac, ned-box is searched by
 running this same program there, sent over one ssh call on stdin
 (`python3 -`), with the surfaces to search passed on its command line. The
@@ -272,9 +285,9 @@ REMOTE_TIMEOUT_SECONDS = 30
 LOCAL_COMMAND_TIMEOUT_SECONDS = 30
 
 # The variables that point git at another repository. They are dropped from
-# the environment of every git this program runs in a checkout by its path,
-# so a caller's GIT_DIR cannot answer for the checkout asked about; the same
-# six scripts/run-all-test-suites.py strips.
+# the environment of every git this program runs, so a caller's GIT_DIR or
+# GIT_COMMON_DIR cannot answer for the repository asked about; the same six
+# scripts/run-all-test-suites.py strips.
 GIT_REDIRECTING_VARIABLES = (
     "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY",
     "GIT_COMMON_DIR", "GIT_ALTERNATE_OBJECT_DIRECTORIES")
@@ -584,18 +597,27 @@ def place_of_file(path, layout, spellings, this_git_dirs, cache):
     return root, "/".join(parts_of(os.path.relpath(path, root)))
 
 
+def environment_without_git_redirecting_variables():
+    """This program's environment, less GIT_REDIRECTING_VARIABLES, for every
+    git it runs. The same name and job as the function in
+    scripts/run-all-test-suites.py; it is not imported from there because
+    this program is sent whole to the other machine over ssh."""
+    return {key: value for key, value in os.environ.items()
+            if key not in GIT_REDIRECTING_VARIABLES}
+
+
 def tracked_in_checkout(root, relative_paths):
     """(the paths among `relative_paths` that git tracks in the checkout at
     `root`, failure or None). A root with no `.git` tracks nothing."""
     if not os.path.lexists(os.path.join(root, ".git")):
         return set(), None
-    environment = {key: value for key, value in os.environ.items()
-                   if key not in GIT_REDIRECTING_VARIABLES}
     command = ["git", "-C", root, "ls-files", "-z", "--",
                *[":(literal)" + path for path in relative_paths]]
     try:
-        result = subprocess.run(command, capture_output=True, env=environment,
-                                timeout=LOCAL_COMMAND_TIMEOUT_SECONDS)
+        result = subprocess.run(
+            command, capture_output=True,
+            env=environment_without_git_redirecting_variables(),
+            timeout=LOCAL_COMMAND_TIMEOUT_SECONDS)
     except subprocess.TimeoutExpired:
         return set(), (f"git ls-files in {root} did not finish within "
                        f"{LOCAL_COMMAND_TIMEOUT_SECONDS} s")
@@ -616,7 +638,9 @@ def worktrees_listed_by(git_dir):
     try:
         result = subprocess.run(
             ["git", "--git-dir", git_dir, "worktree", "list", "--porcelain"],
-            capture_output=True, timeout=LOCAL_COMMAND_TIMEOUT_SECONDS)
+            capture_output=True,
+            env=environment_without_git_redirecting_variables(),
+            timeout=LOCAL_COMMAND_TIMEOUT_SECONDS)
     except (subprocess.TimeoutExpired, OSError) as error:
         return [], str(error)
     if result.returncode != 0:
@@ -908,9 +932,10 @@ def parse_git_log(output: bytes, stem: str):
 def run_git_log(git_dir, stem, name):
     """(hits, failure, candidate paths cut by the cap) for one clone."""
     try:
-        result = subprocess.run(git_log_command(git_dir, stem),
-                                capture_output=True,
-                                timeout=LOCAL_COMMAND_TIMEOUT_SECONDS)
+        result = subprocess.run(
+            git_log_command(git_dir, stem), capture_output=True,
+            env=environment_without_git_redirecting_variables(),
+            timeout=LOCAL_COMMAND_TIMEOUT_SECONDS)
     except subprocess.TimeoutExpired:
         return [], (f"git log in {git_dir} did not finish within "
                     f"{LOCAL_COMMAND_TIMEOUT_SECONDS} s"), 0
