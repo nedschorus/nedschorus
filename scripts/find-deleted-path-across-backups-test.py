@@ -638,6 +638,12 @@ with tempfile.TemporaryDirectory() as tmp:
     check("local snapshots, real trees: a refused mount leaves nothing mounted behind",
           not os.path.lexists(mount_point), mount_point)
 
+# The log-store is on the box and nowhere else, so on the box itself the
+# default root exists and the surface would read it in place. Every case that
+# is not about the log-store names a root that exists on neither machine, so
+# the suite gives one answer wherever it runs.
+NO_LOG_STORE_ON_THIS_MACHINE = "/nonexistent-log-store-for-find-deleted-path-tests"
+
 # Order and the skip flag. The design ruled local snapshots first: no network,
 # no privilege, and they answer "I deleted it minutes ago" outright.
 #
@@ -656,7 +662,8 @@ if newest_transcript_write_before_the_order_cases is not None:
 skip_local = FakeRunner([("rev-parse --git-dir", (128, "", "not a git repository"))])
 reports = finder.build_report("a/b.md", "/not-a-repo", "/nonexistent-transcripts", "",
                               "/mnt/backup/timeshift/snapshots", finder.DEFAULT_BOX_SEARCH_ROOTS,
-                              skip={"localsnapshots", "box", "timemachine"}, runner=skip_local, on_ned_box=False)
+                              skip={"localsnapshots", "box", "timemachine"}, runner=skip_local, on_ned_box=False,
+                              log_store_root=NO_LOG_STORE_ON_THIS_MACHINE)
 skip_local_report_lines = [line for r in reports for line in r.lines]
 check("--skip localsnapshots drops the surface and lists no snapshots",
       not any(r.surface == "local snapshots" for r in reports)
@@ -667,7 +674,8 @@ order_probe = FakeRunner([LISTS_SNAPSHOTS, MOUNTS_FINE, RELEASES_FINE, ("test -e
                           ("rev-parse --git-dir", (128, "", "not a git repository"))])
 reports = finder.build_report("/private/tmp/x/b.md", "/not-a-repo", "/nonexistent-transcripts", "",
                               "/mnt/backup/timeshift/snapshots", finder.DEFAULT_BOX_SEARCH_ROOTS,
-                              skip={"box", "timemachine"}, runner=order_probe, on_ned_box=False)
+                              skip={"box", "timemachine"}, runner=order_probe, on_ned_box=False,
+                              log_store_root=NO_LOG_STORE_ON_THIS_MACHINE)
 order_probe_report_lines = [line for r in reports for line in r.lines]
 check("local snapshots are searched first, before git",
       [r.surface for r in reports][:2] == ["local snapshots", "git"], str([r.surface for r in reports]))
@@ -678,9 +686,10 @@ check("... and without waiting on a date hint from git, which they take none of"
 
 mac_transcripts_copy_under_log_store = os.path.join(
     *getattr(finder, "MAC_TRANSCRIPTS_COPY_UNDER_LOG_STORE", ("transcripts", "mac", "projects")))
-check("the two cases above name the Mac, so on ned-box neither reaches the log-store copy of the Mac's transcripts",
+check("the two cases above name the Mac and a log-store root that exists on neither machine, "
+      "so on ned-box neither reaches the log-store or its copy of the Mac's transcripts",
       not mac_transcripts_copies_walked
-      and not any(mac_transcripts_copy_under_log_store in text
+      and not any(mac_transcripts_copy_under_log_store in text or finder.DEFAULT_LOG_STORE_ROOT in text
                   for text in skip_local.calls + order_probe.calls
                   + skip_local_report_lines + order_probe_report_lines),
       "walked %s; calls %s; lines %s" % (mac_transcripts_copies_walked, skip_local.calls + order_probe.calls,
@@ -1231,12 +1240,8 @@ check("a box grep that fails is UNAVAILABLE and quotes grep",
                                            for l in report.lines),
       str(report.lines))
 
-# The log-store is on the box and nowhere else, so on the box itself the
-# default root exists and the surface would read it in place. Every case that
-# is not about the log-store names a root that exists on neither machine, so
-# the suite gives one answer wherever it runs; main() takes it from the
-# environment, as its other roots do.
-NO_LOG_STORE_ON_THIS_MACHINE = "/nonexistent-log-store-for-find-deleted-path-tests"
+# main() takes the log-store root from the environment, as its other roots
+# do, so the cases below that run main() get NO_LOG_STORE_ON_THIS_MACHINE too.
 os.environ["FIND_DELETED_PATH_LOG_STORE_ROOT"] = NO_LOG_STORE_ON_THIS_MACHINE
 
 # Which machine this is decides whether the box's transcripts and Timeshift
@@ -2505,7 +2510,7 @@ with tempfile.TemporaryDirectory() as tmp:
     real_roots_named = [root for root in (finder.DEFAULT_TIMESHIFT_SNAPSHOT_ROOT, finder.DEFAULT_LOG_STORE_ROOT,
                                           os.path.expanduser(finder.DEFAULT_TRANSCRIPTS_DIR))
                         if any(root in c for c in commands_the_child_would_start)]
-    check("streaming, real pipe: the child, on the box and never killed, would search Timeshift only under a root "
+    check("streaming child's command line: on the box and never killed, it would search Timeshift only under a root "
           "that exists on neither machine, and names no real Timeshift, log-store or transcripts root",
           len(timeshift_probes) == 1
           and ("ROOT=" + shlex.quote(no_timeshift_snapshot_root_on_either_machine)) in timeshift_probes[0]
