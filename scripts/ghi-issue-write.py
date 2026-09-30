@@ -341,6 +341,14 @@ ADJUDICATION_TIMEOUT_SECONDS = 420
 # one as a subprocess and loads nothing from it; ghi-issue-write-test.py
 # checks the two stay equal.
 GHI_INFO_ASK_REPLIED_WITHOUT_A_LIST_EXIT_CODES = (2, 3)
+# How each of those two exits' messages opens: NOT_ABOUT_ISSUES_MESSAGE's first
+# line, and RULING_QUESTION_MESSAGE_TEMPLATE up to its {sentence}. The message
+# is not the first line on stderr whenever the ask refreshed the seat checkout
+# or reincarnated the session first, so adjudicate finds it by these openings.
+# Copied for the same reason as the exit codes, and checked the same way.
+GHI_INFO_ASK_NO_LIST_MESSAGE_OPENINGS = (
+    "Not a question about GitHub issues:",
+    "ghi-info found a ruling of the user's that it cannot tell still applies:")
 
 RECONSIDER_LINE = (
     "If you believe this refusal is wrong, reconsider once against its stated "
@@ -661,7 +669,13 @@ def adjudicate(repo: str, title: str, text: str, repository_root: Path,
         # ghi-info answered, but with no verdict: the question was not about
         # issues, or it found a ruling it may not judge. Fail-open like any
         # other missing verdict, and say which, rather than "did not answer".
-        said = ((completed.stderr or "").strip().splitlines() or ["no detail"])[0]
+        # The ask's own progress lines can come first, so the message is found
+        # by its opening, falling back on the last line, where main() puts it.
+        stderr_lines = [line.strip() for line in
+                        (completed.stderr or "").splitlines() if line.strip()]
+        said = next((line for line in stderr_lines if line.startswith(
+            GHI_INFO_ASK_NO_LIST_MESSAGE_OPENINGS)),
+            stderr_lines[-1] if stderr_lines else "no detail")
         report(f"adjudication skipped: ghi-info gave no verdict: {said}")
         return
     if completed.returncode != 0:
