@@ -91,7 +91,7 @@ LEGALITY_CASES = [
     ("21", APPROVED, exit_from(T.IMPLEMENTATION_WRITING, T.V_EMITTED, coverage_types=("script",),
                               **WROTE_ITS_ARTIFACT)),
     ("22", APPROVED, exit_from(T.IMPLEMENTATION_WRITING, T.V_INPUT_QUICK_CHECK_FAILED,
-                               input_named=T.INPUT_COMPONENT_CONTRACT)),
+                               input_named=T.INPUT_DESIGN_CONTRACT)),
     ("23", APPROVED, exit_from(T.IMPLEMENTATION_WRITING, T.V_INPUT_QUICK_CHECK_FAILED,
                                input_named=T.INPUT_DESIGN)),
     ("24", IMPL_IS_SCRIPT, exit_from(T.IMPLEMENTATION_ACCEPTANCE_BY_AGENT, T.V_ADVANCE)),
@@ -111,7 +111,7 @@ LEGALITY_CASES = [
     ("31", IMPL_IS_PROMPT, exit_from(T.IMPLEMENTATION_ACCEPTANCE_BY_USER, T.V_DISCUSS)),
     ("32", APPROVED, exit_from(T.TEST_DESIGN_WRITING, T.V_EMITTED, **WROTE_ITS_ARTIFACT)),
     ("33", APPROVED, exit_from(T.TEST_DESIGN_WRITING, T.V_INPUT_QUICK_CHECK_FAILED,
-                               input_named=T.INPUT_COMPONENT_CONTRACT)),
+                               input_named=T.INPUT_DESIGN_CONTRACT)),
     ("34", APPROVED, exit_from(T.TEST_DESIGN_WRITING, T.V_INPUT_QUICK_CHECK_FAILED,
                                input_named=T.INPUT_DESIGN)),
     # Rows 35 to 37 (user-ruled 2026-09-14, the tenth walk, item 7): the
@@ -134,7 +134,7 @@ LEGALITY_CASES = [
     ("44", dict(APPROVED, counters={"test-design-corrections": 1}),
      exit_from(T.TEST_WRITING, T.V_INPUT_QUICK_CHECK_FAILED, input_named=T.INPUT_TEST_DESIGN)),
     ("45", APPROVED, exit_from(T.TEST_WRITING, T.V_INPUT_QUICK_CHECK_FAILED,
-                               input_named=T.INPUT_COMPONENT_CONTRACT)),
+                               input_named=T.INPUT_DESIGN_CONTRACT)),
     ("46", APPROVED, exit_from(T.TEST_WRITING, T.V_INPUT_QUICK_CHECK_FAILED,
                                input_named=T.INPUT_DESIGN)),
     ("47", dict(TESTS_ARE_SCRIPT, implementation_work_stream_position=T.READY_FOR_TEST_SUITE),
@@ -192,20 +192,20 @@ LEGALITY_CASES = [
     ("64", dict(counters={"implementation-writes": 3, "test-writes": 3, "arbitrator-rulings": 2}),
      exit_from(T.TEST_SUITE_ARBITRATING, T.V_REJECT_IMPLEMENTATION_AND_TESTS)),
     ("66", {}, exit_from(T.TEST_SUITE_ARBITRATING, T.V_REJECT_CONTRACT)),
-    # Row 67: a reject of, or a failed check against, the component-contract
+    # Row 67: a reject of, or a failed check against, the design-contract
     # with the contract-revisions counter at its ceiling, from any state.
     ("67", dict(IMPL_IS_SCRIPT, counters={"contract-revisions": 1}),
      exit_from(T.IMPLEMENTATION_ACCEPTANCE_BY_AGENT, T.V_REJECT_CONTRACT)),
     ("67", dict(APPROVED, counters={"contract-revisions": 1}),
      exit_from(T.IMPLEMENTATION_WRITING, T.V_INPUT_QUICK_CHECK_FAILED,
-               input_named=T.INPUT_COMPONENT_CONTRACT)),
+               input_named=T.INPUT_DESIGN_CONTRACT)),
     ("67", dict(APPROVED, counters={"contract-revisions": 1}),
      exit_from(T.TEST_DESIGN_WRITING, T.V_INPUT_QUICK_CHECK_FAILED,
-               input_named=T.INPUT_COMPONENT_CONTRACT)),
+               input_named=T.INPUT_DESIGN_CONTRACT)),
     ("67", dict(APPROVED, counters={"contract-revisions": 1}),
      exit_from(T.TEST_DESIGN_ACCEPTANCE_BY_AGENT, T.V_REJECT_CONTRACT)),
     ("67", dict(APPROVED, counters={"contract-revisions": 1}),
-     exit_from(T.TEST_WRITING, T.V_INPUT_QUICK_CHECK_FAILED, input_named=T.INPUT_COMPONENT_CONTRACT)),
+     exit_from(T.TEST_WRITING, T.V_INPUT_QUICK_CHECK_FAILED, input_named=T.INPUT_DESIGN_CONTRACT)),
     ("67", dict(TESTS_ARE_SCRIPT, counters={"contract-revisions": 1}),
      exit_from(T.TEST_ACCEPTANCE_BY_AGENT, T.V_REJECT_CONTRACT)),
     ("67", dict(counters={"contract-revisions": 1}),
@@ -316,7 +316,7 @@ ILLEGAL_CASES = [
     ("a reviewer failing a check against the contract at the ceiling: reviewers reject, they do not check inputs",
      dict(IMPL_IS_SCRIPT, counters={"contract-revisions": 1}),
      exit_from(T.IMPLEMENTATION_ACCEPTANCE_BY_AGENT, T.V_INPUT_QUICK_CHECK_FAILED,
-               input_named=T.INPUT_COMPONENT_CONTRACT)),
+               input_named=T.INPUT_DESIGN_CONTRACT)),
 ]
 
 

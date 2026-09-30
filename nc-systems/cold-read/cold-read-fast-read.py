@@ -18,7 +18,7 @@ the invocation itself was wrong (a --target that is not a file) and nothing
 was launched. When the cold-read-target belongs to a class the
 /cold-read skill's step 2 sends to the cold-read-full-run -- a skill or its
 prompt, a file under docs/agents/, a wiki file, a design, a test design, a
-component-contract -- the read also says that this fast read does not finish the
+design-contract -- the read also says that this fast read does not finish the
 review: one line on stderr and one line in the report (user-ruled 2026-09-17,
 item 4 of nedschorus#418, after a skill change merged on a fast read alone).
 It warns and never refuses, because the fast read is the cold-read-full-run's
@@ -197,19 +197,19 @@ FULL_RUN_DIRECTORIES_RELATIVE = (
     (pathlib.Path("docs") / "agents", "a file under docs/agents/"),
     (pathlib.Path("docs") / "nedschorus-wiki", "a wiki file"),
 )
-# Designs, test designs and component-contracts are named, not placed: this
+# Designs, test designs and design-contracts are named, not placed: this
 # project's designs live beside the issues, the cross-project specs and in
 # docs/design-to-main/, and the state-machine design names all three files
 # `<component>-design.md`, `<component>-contract.md` and
 # `<component>-test-design.md` (its section on where artifacts land). Step 2
-# and this program both use the glossary's term, component-contract. No
+# and this program both use the glossary's term, design-contract. No
 # directory is a design class: a directory entry for
 # docs/design-to-main/ once called that directory's glossary "a design", and a
 # design's glossary is not in step 2's list. The suffixes are matched whole, so
 # `-design-notes.md` -- notes about a design, not the design -- is not one.
 FULL_RUN_NAME_SUFFIXES = (
     ("-test-design.md", "a test design"),
-    ("-contract.md", "a component-contract"),
+    ("-contract.md", "a design-contract"),
     ("-design.md", "a design"),
 )
 # Step 1's own exceptions, which beat the classes above: a walk file, a

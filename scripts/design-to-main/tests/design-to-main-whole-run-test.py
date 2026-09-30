@@ -155,9 +155,9 @@ class WholeRunThatPasses(unittest.TestCase):
     def test_the_standard_package_carries_the_design_and_contract_paths(self):
         # Section 2: a state-package is the set of files the machine tells
         # the launched agent to read, and the standard-package is the
-        # design, the component-contract and the user-rulings file. Before
+        # design, the design-contract and the user-rulings file. Before
         # code exists the design is its issue's GHI-MD, as the invocation
-        # names it, and the component-contract sits beside it (section 9;
+        # names it, and the design-contract sits beside it (section 9;
         # user-ruled 2026-09-18), and that path is no longer derivable from
         # the component's name, so the package carries the path itself,
         # never a placeholder such as "the design".
@@ -1718,7 +1718,7 @@ class RecoveryFromTheLastCommit(unittest.TestCase):
 class TheDesignIsItsIssuesGhiMd(unittest.TestCase):
     """Section 9 after the user's ruling of 2026-09-18: before code exists
     the design is the GHI-MD the invocation names, refined in place, and
-    the component-contract sits beside it, named like it; there is no
+    the design-contract sits beside it, named like it; there is no
     `docs/designs/queue/`. After code starts both are in the component's
     directory, as before."""
 
@@ -1737,12 +1737,12 @@ class TheDesignIsItsIssuesGhiMd(unittest.TestCase):
             self.assertEqual(record.document_of_path("docs/issues/413-grid-failure-design.md"),
                              "design")
             self.assertEqual(record.document_of_path("docs/issues/413-grid-failure-contract.md"),
-                             "component-contract")
+                             "design-contract")
             self.assertEqual(record.document_of_path(
                 "%s/%s-design.md" % (fixture.COMPONENT_DIRECTORY, fixture.COMPONENT)), "design")
             self.assertEqual(record.document_of_path(
                 "%s/%s-contract.md" % (fixture.COMPONENT_DIRECTORY, fixture.COMPONENT)),
-                "component-contract")
+                "design-contract")
             self.assertNotEqual(record.document_of_path(
                 "docs/designs/queue/%s-design.md" % fixture.COMPONENT), "design")
         finally:

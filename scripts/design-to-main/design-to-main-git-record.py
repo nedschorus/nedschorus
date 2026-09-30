@@ -85,7 +85,7 @@ class TopicBranchGitRecord:
         self.component = component
         # The design's GHI-MD, repository-relative, as the invocation names
         # it: before code exists the design is refined there in place, and
-        # the component-contract sits beside it (section 9; user-ruled
+        # the design-contract sits beside it (section 9; user-ruled
         # 2026-09-18).
         self.design_path = str(design_path)
         # Where the topic branch is cut from (section 9: `origin/main`),
@@ -387,14 +387,14 @@ class TopicBranchGitRecord:
 
     def document_of_path(self, path):
         """Which of section 9's documents a changed path belongs to:
-        design, component-contract, test-design, tests, or implementation."""
+        design, design-contract, test-design, tests, or implementation."""
         component_dir = str(self.component_directory)
         if path in (self.design_path,
                     "%s/%s-design.md" % (component_dir, self.component)):
             return "design"
         if path in (tables.contract_path_beside_design(self.design_path),
                     "%s/%s-contract.md" % (component_dir, self.component)):
-            return "component-contract"
+            return "design-contract"
         if path == str(self.test_design_path):
             return "test-design"
         if path.startswith(component_dir + "/tests/"):

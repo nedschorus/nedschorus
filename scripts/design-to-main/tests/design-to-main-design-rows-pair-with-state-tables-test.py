@@ -129,15 +129,15 @@ FROM_CELL_PHRASE_A_REVIEWING_SUB_STATE_BY_AGENT = "a reviewing sub-state by agen
 FROM_CELLS_THE_MATCHER_CANNOT_READ = {
     # "Any state above" names states by the position of their rows in the
     # table, not by name: which of them can reject, or fail a check
-    # against, the component-contract is a person's to compare.
+    # against, the design-contract is a person's to compare.
     "67": "any state above",
 }
 
 # Trigger cells that name verdicts by a phrase rather than a backticked name.
 TRIGGER_CELL_PHRASES_NAMING_VERDICTS = {
     # Row 67: a reviewer's or the arbitrator's `reject contract`, and a
-    # writer's `input-quick-check-failed` against the component-contract.
-    "a reject of, or a failed check against, the component-contract":
+    # writer's `input-quick-check-failed` against the design-contract.
+    "a reject of, or a failed check against, the design-contract":
         (T.V_REJECT_CONTRACT, T.V_INPUT_QUICK_CHECK_FAILED),
 }
 
