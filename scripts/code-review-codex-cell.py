@@ -73,35 +73,87 @@ the checkout:
     still wrote its report. The child's `--permission-profile` held a deny
     entry for each credential path, root `read`, and nothing writable.
 
-Other parent-level overrides do reach the child: on ned-box, `-c
-model_reasoning_effort=high` placed before `review` became the child's
-effort. The permission profile is the one exception measured, which is why
-`--disable memories` stays at the parent level.
+One other parent-level override was measured, and it does reach the
+child: on ned-box, `-c model_reasoning_effort=high` placed before `review`
+became the child's effort. `--disable memories` stays at the parent level
+on the strength of that one measurement; whether the memories switch itself
+reaches the child has not been measured.
 
-To re-check on ned-box, read the `--permission-profile` of a
-`codex-linux-sandbox` child while the cell runs:
+To re-check on ned-box, read the `--permission-profile` of every
+`codex-linux-sandbox` child of this run while it runs. Pick the children by
+ancestry, not by `pgrep -n`, which takes the newest one on the whole
+machine: another Codex run -- a cold-read Codex cell, or the sanity check's
+attacks, both `:workspace` -- often overlaps a review on ned-box, and its
+child carries "write" entries. Nor by `--command-cwd`: the review's own
+children can run with `--command-cwd /`. Keep only the outer stage, whose
+ancestry reaches the cell with no `bwrap` or `codex-linux-sandbox` in
+between: each child execs `bwrap`, which starts a second
+`codex-linux-sandbox` inside the sandbox, and the reviewing model can run
+`codex-linux-sandbox` itself, with any profile it likes, as it did
+unprompted in two of three runs on a diff that named it. And poll fast: a
+child keeps the name `codex-linux-sandbox` only until it execs `bwrap`,
+about 15 ms, and a shell loop that ran one `ps` per ancestor per poll
+caught none of a review's children while another Codex run was live (both
+measured on ned-box, 2026-09-30). So a Python loop reads /proc in one
+pass, with no subprocess, about 5 ms per pass and 5 ms apart, keeps each
+outer child it catches, and takes the flag's value from the child's own
+argv, before the `--` that starts the command, which can itself contain
+the flag's name:
 
-    python3 scripts/code-review-codex-cell.py --base <merge base> --repo <detached worktree at the head> --output <report file>
-    # in a second shell, started before or while it runs; a sandbox child can
-    # live for under a second, so this waits for one. The brackets keep pgrep
-    # from matching a shell whose own command line holds this text.
-    until pid=$(pgrep -n -f '[c]odex-linux-sandbox'); do sleep 0.1; done
-    tr '\0' '\n' < "/proc/$pid/cmdline" | grep -A1 -- '--permission-profile'
+    python3 scripts/code-review-codex-cell.py --base <merge base> --repo <detached worktree at the head> --output <report file> &
+    python3 -c 'if 1:
+        import os, sys, time
+        cell = sys.argv[1]
+        def read(path):
+            try:
+                with open(path, "rb") as f: return f.read()
+            except OSError: return b""
+        def name(pid): return os.path.basename(read(f"/proc/{pid}/cmdline").split(b"\0")[0])
+        def stat(pid):  # the fields after the command name: state, ppid, ...
+            return read(f"/proc/{pid}/stat").rpartition(b")")[2].split()
+        def parent(pid): return (stat(pid)[1:2] or [b""])[0].decode()
+        seen, profiles = set(), set()
+        while stat(cell) and stat(cell)[0] != b"Z":
+            for pid in filter(str.isdigit, os.listdir("/proc")):
+                argv = read(f"/proc/{pid}/cmdline").split(b"\0")
+                if pid in seen or os.path.basename(argv[0]) != b"codex-linux-sandbox": continue
+                p, nested = parent(pid), False
+                while p not in ("", "0", "1", cell):
+                    nested = nested or name(p) in (b"bwrap", b"codex-linux-sandbox")
+                    p = parent(p)
+                if p != cell or nested: continue
+                seen.add(pid)
+                flags = argv[:argv.index(b"--")] if b"--" in argv else argv
+                i = flags.index(b"--permission-profile") + 1 if b"--permission-profile" in flags else 0
+                profiles.add(flags[i].decode() if 0 < i < len(flags) else "(no --permission-profile)")
+            time.sleep(0.005)
+        print("sandbox children of this run:", len(seen))
+        for profile in sorted(profiles): print(profile)' "$!"
 
-It must hold a "deny" entry for each credential path the builder lists,
-root "read", and no "write" entry. Two shapes appear during one review,
-one also carrying `minimal` `read`; both are this cell's profile. A "write"
-entry, or no "deny" entry, means the child has dropped the profile again.
+Each profile it prints must hold a "deny" entry for each credential path
+the builder lists, root "read", and no "write" entry. One or two shapes
+appear during one review, the second also carrying `minimal` `read`; each is
+this cell's profile. A "write" entry, no "deny" entry, or "(no
+--permission-profile)" means the child has dropped the profile again. The
+count should not be 0: in each of those three runs, 16 children started
+before the model ran any command. A count of 0 means the capture missed
+them; run it again.
 
 To re-check on either machine, the Mac included, which has no /proc: the
 child thread records the profile it ran under in its session file. A run
 leaves two rollouts under `$CODEX_HOME/sessions/` (default
-~/.codex/sessions/), and only the child's has a `turn_context` record.
-Right after the run, before another Codex session starts:
+~/.codex/sessions/), and only the child's has a `turn_context` record,
+whose `cwd` is the reviewed checkout. Every Codex run on the machine shares
+that directory, and overlapping runs are common, so pick the rollout by
+that `cwd` and by the run's start, not by recency:
 
-    grep -o '"active_permission_profile":{[^}]*}' $(ls -t ~/.codex/sessions/*/*/*/rollout-*.jsonl | head -2)
+    repo=$(cd <detached worktree at the head> && pwd -P); started=$(mktemp)
+    python3 scripts/code-review-codex-cell.py --base <merge base> --repo "$repo" --output <report file>
+    find "${CODEX_HOME:-$HOME/.codex}/sessions" -name 'rollout-*.jsonl' -newer "$started" -exec grep -h '"type":"turn_context"' {} + \
+      | grep -F "\"cwd\":\"$repo\"" | grep -o '"active_permission_profile":{[^}]*}' | sed 's/^"active_permission_profile"://' | sort -u
 
-It must print `{"id":"code-review-no-credentials","extends":":read-only"}`.
+It must print `{"id":"code-review-no-credentials","extends":":read-only"}`,
+and nothing else.
 With the profile before `review` it printed `{"id":":workspace"}` on
 ned-box, and nothing on the Mac, whose child recorded a workspace-write
 `sandbox_policy` instead.
@@ -178,10 +230,11 @@ asserted here. So the flag today pins a state the machine may already be in;
 what it guarantees is that the cell does not depend on which way the default
 happens to be pointing.
 
-Parent placement. The nested `review` parser also accepts --disable, and
-the parent placement is kept because a parent-level override does reach
-the review's child thread; the permission profile is the measured
-exception (WHERE THE PERMISSION PROFILE GOES, above).
+Parent placement. The nested `review` parser also accepts --disable. The
+parent placement is kept because the one other parent-level override
+measured, `model_reasoning_effort`, does reach the review's child thread;
+whether this switch does has not been measured (WHERE THE PERMISSION
+PROFILE GOES, above).
 
 The scope of that guarantee is these three committed launchers, not the
 machine. A seat that types `codex exec` by hand gets whatever the machine
