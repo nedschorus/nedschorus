@@ -2436,6 +2436,12 @@ check("a run that completes prints exactly the report it printed before streamin
 # agent's shell runs it, and a stand-in ssh that hangs, as a sleeping box does.
 # The child is killed with SIGTERM to its process group, which is what
 # `timeout` does.
+#
+# The child's running_on_ned_box() is its own and reads the real host name, so
+# on the box it searches Timeshift and the Mac's transcripts copy in place. It
+# is therefore given roots that exist on neither machine, on its command line
+# alone: no FIND_DELETED_PATH_* variable reaches it. Those roots, not the
+# kill's timing, are what keep it off the real backups.
 with tempfile.TemporaryDirectory() as tmp:
     repo = git_fixture_repo(tmp)
     fake_bin = Path(tmp, "fake-bin")
@@ -2443,12 +2449,18 @@ with tempfile.TemporaryDirectory() as tmp:
     Path(fake_bin, "ssh").write_text("#!/bin/sh\nexec sleep 60\n")
     os.chmod(str(Path(fake_bin, "ssh")), 0o755)
     Path(tmp, "transcripts").mkdir()
-    env = {k: v for k, v in os.environ.items() if k not in ("GIT_DIR", "GIT_WORK_TREE")}
+    no_timeshift_snapshot_root_on_either_machine = str(Path(tmp, "no-timeshift-snapshots"))
+    streaming_child_options = [
+        "a/b.md", "--repo", str(repo), "--transcripts-dir", str(Path(tmp, "transcripts")),
+        "--box-ssh-host", "a-box-that-never-answers",
+        "--log-store-root", NO_LOG_STORE_ON_THIS_MACHINE,
+        "--timeshift-snapshot-root", no_timeshift_snapshot_root_on_either_machine,
+        "--skip", "localsnapshots", "--skip", "timemachine"]
+    env = {k: v for k, v in os.environ.items()
+           if k not in ("GIT_DIR", "GIT_WORK_TREE") and not k.startswith("FIND_DELETED_PATH_")}
     env["PATH"] = str(fake_bin) + os.pathsep + env.get("PATH", "")
     child = subprocess.Popen(
-        [sys.executable, str(MODULE_PATH), "a/b.md", "--repo", str(repo), "--transcripts-dir", str(Path(tmp, "transcripts")),
-         "--box-ssh-host", "a-box-that-never-answers", "--log-store-root", NO_LOG_STORE_ON_THIS_MACHINE,
-         "--skip", "localsnapshots", "--skip", "timemachine"],
+        [sys.executable, str(MODULE_PATH)] + streaming_child_options,
         stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env, start_new_session=True)
     seen = b""
     deadline = time.monotonic() + 20
@@ -2471,6 +2483,36 @@ with tempfile.TemporaryDirectory() as tmp:
           and re.search(r"^git\s+FOUND$", printed, re.M) and re.search(r"^git reflog\s+NOT FOUND$", printed, re.M)
           and "Recoverable from" not in printed,
           repr(printed))
+
+    # The same command line as the child would run it on the box and never
+    # killed: main() in this process, with the child's environment and the
+    # box's answer to running_on_ned_box(), and a runner that records every
+    # command and starts none, so this check reaches no backup either.
+    streaming_child_commands_as_on_the_box = FakeRunner([])
+    environment_before_the_streaming_child_check = dict(os.environ)
+    running_on_ned_box_before_the_streaming_child_check = finder.running_on_ned_box
+    os.environ.clear()
+    os.environ.update(env)
+    finder.running_on_ned_box = lambda: True
+    try:
+        run_main(streaming_child_options, streaming_child_commands_as_on_the_box)
+    finally:
+        finder.running_on_ned_box = running_on_ned_box_before_the_streaming_child_check
+        os.environ.clear()
+        os.environ.update(environment_before_the_streaming_child_check)
+    commands_the_child_would_start = streaming_child_commands_as_on_the_box.calls
+    timeshift_probes = [c for c in commands_the_child_would_start if c.startswith("bash -c ")]
+    real_roots_named = [root for root in (finder.DEFAULT_TIMESHIFT_SNAPSHOT_ROOT, finder.DEFAULT_LOG_STORE_ROOT,
+                                          os.path.expanduser(finder.DEFAULT_TRANSCRIPTS_DIR))
+                        if any(root in c for c in commands_the_child_would_start)]
+    check("streaming, real pipe: the child, on the box and never killed, would search Timeshift only under a root "
+          "that exists on neither machine, and names no real Timeshift, log-store or transcripts root",
+          len(timeshift_probes) == 1
+          and ("ROOT=" + shlex.quote(no_timeshift_snapshot_root_on_either_machine)) in timeshift_probes[0]
+          and not os.path.exists(no_timeshift_snapshot_root_on_either_machine)
+          and not os.path.exists(NO_LOG_STORE_ON_THIS_MACHINE)
+          and not real_roots_named,
+          "real roots named: %s; commands: %s" % (real_roots_named, commands_the_child_would_start))
 
 
 # --------------------------------------------------------------------------
