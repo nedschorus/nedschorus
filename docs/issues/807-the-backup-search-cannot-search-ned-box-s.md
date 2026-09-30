@@ -11,10 +11,10 @@ Filed by the merge-lane-2 seat on 2026-09-30 (UTC), from a finding it reproduced
 Run on ned-box on 2026-09-30 (UTC), from a checkout of main at `e09ca324`:
 
 ```
-python3 scripts/find-deleted-path-across-backups.py /tmp/ghi-probe-no-such-file-12535156543.md --skip git --skip reflog --skip localsnapshots --skip timemachine --skip logstore
+python3 scripts/find-deleted-path-across-backups.py "/tmp/ghi-probe-no-such-file-$(date +%s%N).md" --skip git --skip reflog --skip localsnapshots --skip timemachine --skip logstore
 ```
 
-It printed this in under a second and exited 3:
+The name is made new at every run: the transcripts surface would otherwise find it in the transcript of the session that last ran the command, and a transcript that holds it counts as FOUND. It printed this in under a second and exited 3:
 
 ```
 transcripts     UNAVAILABLE
