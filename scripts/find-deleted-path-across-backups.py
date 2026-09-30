@@ -2180,8 +2180,15 @@ def _git_deletion_timestamp(wanted, repo, runner):
     comparison against a snapshot name is between two fixed-width strings in
     one coordinate system — snapshot names carry local time — with no
     timezone-offset parsing on the system python this file has to run under.
+
+    It runs at the top level, as _search_git_revisions' lookups do, because
+    `wanted` is relative to the top level: run from a subdirectory with --repo
+    ".", `../a/b.md` became a/b.md and was looked for as <subdirectory>/a/b.md,
+    so no deletion was found and the line stayed silent.
     """
-    code, out, _ = runner(["git", "-C", repo, "log", "--all", "--full-history", "-1",
+    code, out, _ = runner(["git", "-C", repo, "rev-parse", "--show-toplevel"])
+    top_level = out.strip() if code == 0 and out.strip() else repo
+    code, out, _ = runner(["git", "-C", top_level, "log", "--all", "--full-history", "-1",
                            "--diff-filter=D", "--date=format-local:%Y%m%d%H%M%S",
                            "--format=%cd", "--", wanted])
     if code != 0 or not out.strip():

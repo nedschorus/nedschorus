@@ -2530,6 +2530,20 @@ with tempfile.TemporaryDirectory() as tmp:
           finder._local_snapshot_probe_path("a/b.md", str(repo), finder.run_command)[0]
           == finder._below_data_volume(os.path.join(top_level, "a", "b.md")),
           str(finder._local_snapshot_probe_path("a/b.md", str(repo), finder.run_command)))
+    # PR 800's review comment 4139704743: the deletion lookup behind the spoken
+    # line reads the same top-level form, so it must run at the top level too.
+    os.chdir(str(subdirectory))
+    try:
+        stamp_from_subdirectory = finder._git_deletion_timestamp("a/b.md", ".", finder.run_command)
+        spoken_from_subdirectory = finder.speech_line_when_root_password_is_needed(
+            "a/b.md", missed + [tm_wall_report()], ".", (), finder.run_command)
+    finally:
+        os.chdir(directory_before)
+    check("cited query: ... and from that subdirectory, --repo ., the deletion lookup finds the 2026-08-14 12:00 deletion",
+          stamp_from_subdirectory == "20260814120000", repr(stamp_from_subdirectory))
+    check("cited query: ... so the password line still speaks there, bounded by that deletion",
+          spoken_from_subdirectory is not None and spoken_from_subdirectory.endswith("b.md"),
+          repr(spoken_from_subdirectory))
 
 # A FOUND stands alone: when the copy at the wanted path is newer than every
 # other name, nothing is listed beside it.
