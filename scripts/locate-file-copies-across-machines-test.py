@@ -1160,11 +1160,16 @@ with scratch() as directory:
         [sys.executable, str(PROGRAM),
          str(linked / "docs" / "linked-worktree-probe.md")],
         capture_output=True, text=True, cwd=base, env=environment, timeout=120)
+    # The failure line is matched whole. The query's own path begins with
+    # the project's (linked-project-wt), so "the project's path appears
+    # somewhere below NOT searched" held without the listing being named
+    # (PR 713 review 5308984025).
     check("when git cannot list that project's worktrees, the answer is not "
           "established, exit 3, and says which listing failed",
           result.returncode == 3
-          and "stand-in worktree listing failure" in result.stdout
-          and str(project) in result.stdout.split("NOT searched", 1)[-1],
+          and f"\n  mac git: the worktrees {project / '.git'} lists could "
+              f"not be read: fatal: stand-in worktree listing failure\n"
+          in result.stdout.split("NOT searched", 1)[-1],
           f"exit {result.returncode}\n{result.stdout}{result.stderr}")
 
 with scratch() as directory:
@@ -1513,6 +1518,64 @@ with scratch() as directory:
     check("with GIT_DIR pointing at another repository, the checkout's own "
           "answer is given: the file is not tracked there",
           tracked == set() and failure is None, (tracked, failure))
+
+# --- A clone's worktrees and history are its own, whatever GIT_COMMON_DIR says ---
+# `--git-dir` overrides GIT_DIR but not GIT_COMMON_DIR, so with it naming
+# another clone, `git worktree list` listed that clone's worktrees and
+# `git log --all` failed with "bad object" (walk
+# "merge-lane-mac-helper-open-items-and-questions-2026-09-23", item 17). The
+# variable is set on the calls themselves, and then on a whole run, since
+# run() drops it.
+with scratch() as directory:
+    base = pathlib.Path(directory).resolve()
+    make_stand_in_bin(base)
+    asked = base / "mac" / "Projects" / "common-dir-project"
+    commit_files(asked, {"README.md": "the asked clone"}, "Start")
+    asked_worktree = base / "mac" / "Projects" / "common-dir-project-wt"
+    git(asked, "worktree", "add", "-q", "-b", "topic", str(asked_worktree))
+    commit_files(asked, {"docs/common-dir-probe.md": "in the asked clone"})
+    git(asked, "rm", "-q", "docs/common-dir-probe.md")
+    git(asked, "commit", "-q", "-m", "Remove the common-dir probe")
+    decoy = base / "decoy-clone"
+    commit_files(decoy, {"README.md": "the decoy"}, "Decoy")
+    decoy_worktree = base / "decoy-clone-wt"
+    git(decoy, "worktree", "add", "-q", "-b", "decoy-topic", str(decoy_worktree))
+    saved = {name: os.environ.get(name) for name in GIT_REDIRECTING_VARIABLES}
+    os.environ["GIT_COMMON_DIR"] = str(decoy / ".git")
+    try:
+        worktrees, listing_failure = program.worktrees_listed_by(
+            str(asked / ".git"))
+        hits, log_failure, _ = program.run_git_log(
+            str(asked / ".git"), "common-dir-probe", "common-dir-probe.md")
+    finally:
+        for name, value in saved.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
+    check("with GIT_COMMON_DIR naming another clone, the worktrees listed are "
+          "the asked clone's own",
+          listing_failure is None
+          and sorted(worktrees) == sorted([str(asked), str(asked_worktree)]),
+          (worktrees, listing_failure))
+    check("with GIT_COMMON_DIR naming another clone, the asked clone's "
+          "history is searched",
+          log_failure is None
+          and [hit["path"] for hit in hits] == ["docs/common-dir-probe.md"],
+          (hits, log_failure))
+    environment = program_environment(base)
+    environment["GIT_COMMON_DIR"] = str(decoy / ".git")
+    result = subprocess.run(
+        [sys.executable, str(PROGRAM),
+         str(asked_worktree / "docs" / "common-dir-probe.md")],
+        capture_output=True, text=True, cwd=base, env=environment, timeout=120)
+    check("a whole run with GIT_COMMON_DIR naming another clone finds the "
+          "asked clone's commit at its linked worktree's path, exit 0",
+          result.returncode == 0
+          and "docs/common-dir-probe.md, deleted"
+          in sections(result.stdout)[0]
+          and "NOT searched" not in result.stdout,
+          f"exit {result.returncode}\n{result.stdout}{result.stderr}")
 
 # --- A worktree the main clone lists outside every root is searched ------------
 # PR 703 review 5299980640: an ad-hoc worktree directly under /tmp, such as
