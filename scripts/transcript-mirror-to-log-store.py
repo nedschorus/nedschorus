@@ -2,7 +2,8 @@
 """Mirror this machine's Claude Code transcripts and handoffs into the log-store on ned-box.
 
 Usage:
-  scripts/transcript-mirror-to-log-store.py          # one pass, one line per source
+  scripts/transcript-mirror-to-log-store.py                   # one pass, one line per source
+  scripts/transcript-mirror-to-log-store.py --failures-only   # one pass, only FAILED lines (cron)
 
 WHAT IT MIRRORS AND WHERE (user-ruled 2026-09-07, "I think we should backup
 our transcripts to the nedbox"; recorded on nedschorus#7). Two directories
@@ -43,15 +44,35 @@ which is why both are printed and neither is asserted), or a line opening
 FAILED naming the source and rsync's exit. Exit 0 when every source mirrored,
 1 when any failed, 3 when another run holds the lock.
 
-SCHEDULE. Hourly, by cron on both machines -- not launchd on the Mac: the
-project's escaped-bug dataset records that launchd never fires StartInterval
-jobs on this Mac (docs/working/research/escaped-bug-dataset-2026-07.md in
-the legacy repository; com.nedlern.agent-ping was the casualty). The lines,
+--failures-only prints the FAILED lines and nothing else, and passes rsync's
+stderr through only for a source that failed: a mirrored source, a missing
+source directory, files that vanished mid-run and a run held off by the lock
+all print nothing. The exits are the same. It is what cron runs, so the log
+holds failures only. It also skips the file counts, so a quiet pass makes no
+`find` over ssh on ned-box. The lock is silent because a run still going when
+the next minute's starts is expected: the first pass after a machine was off
+moves everything since. A stalled run does not hold the lock for long:
+every ssh it opens, rsync's included, gives up about a minute after ned-box
+stops answering (ServerAliveInterval 15, ServerAliveCountMax 4), as when the
+Mac sleeps mid-run, and rsync's --timeout ends a transfer that stops moving.
+The run then ends and frees the lock, and a directory preparation or rsync
+that ended that way prints its FAILED line.
+
+SCHEDULE. Every minute, by cron on both machines, so the store's copy of each
+machine's transcripts is at most about a minute behind (user-ruled
+2026-09-30; hourly before). A pass that finds little changed is cheap:
+measured on the Mac on 2026-09-30, a dry run over projects/ (4,421 files,
+3.3 GB, 12 changed) took 0.8 s, and over handoffs/ 0.7 s. Cron, not launchd
+on the Mac: the project's escaped-bug dataset records that launchd never
+fires StartInterval jobs on this Mac
+(docs/working/research/escaped-bug-dataset-2026-07.md in the legacy
+repository; com.nedlern.agent-ping was the casualty). Each machine runs its
+own `python3`: the Mac's Homebrew link and ned-box's system one. The lines,
 run from each machine's reference checkout, which the stop hook keeps on
 main:
 
-  Mac:     17 * * * * /opt/homebrew/opt/python@3.13/libexec/bin/python3 /Users/el/Projects/nedschorus/scripts/transcript-mirror-to-log-store.py >> /Users/el/.claude/transcript-mirror.log 2>&1
-  ned-box: 17 * * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/scripts/transcript-mirror-to-log-store.py >> /home/nedlern/.claude/transcript-mirror.log 2>&1
+  Mac:     * * * * * /opt/homebrew/bin/python3 /Users/el/Projects/nedschorus/scripts/transcript-mirror-to-log-store.py --failures-only >> /Users/el/.claude/transcript-mirror.log 2>&1
+  ned-box: * * * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/scripts/transcript-mirror-to-log-store.py --failures-only >> /home/nedlern/.claude/transcript-mirror.log 2>&1
 
 Cron's environment has no ssh agent; the Mac's key to ned-box carries no
 passphrase, checked 2026-09-07 with `env -i HOME=/Users/el PATH=/usr/bin:/bin
@@ -65,6 +86,7 @@ ssh on PATH (remote mode). TRANSCRIPT_MIRROR_SOURCE_HOME overrides the home
 directory the sources are read from, for the same tests.
 """
 
+import argparse
 import fcntl
 import functools
 import os
@@ -88,7 +110,11 @@ SOURCES = (
     ("handoffs", pathlib.Path(".claude") / "handoffs"),
 )
 
-SSH_COMMAND = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10"]
+# ServerAlive*: a connected ssh gives up about 60 s after the far end stops
+# answering -- a dead TCP session after the Mac slept mid-run -- instead of
+# hanging and holding the lock. rsync's -e transport is built from this list.
+SSH_COMMAND = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10",
+               "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=4"]
 RSYNC_IO_TIMEOUT_SECONDS = "300"
 # rsync: some source files vanished before they could be transferred. On a
 # live tree that is a session ending, not a failure. The code depends on
@@ -188,9 +214,11 @@ def count_files_in_store(host, path: pathlib.PurePosixPath):
         return None
 
 
-def mirror_one(host, machine_path: pathlib.PurePosixPath, name: str, source: pathlib.Path) -> int:
+def mirror_one(host, machine_path: pathlib.PurePosixPath, name: str, source: pathlib.Path,
+               failures_only: bool = False) -> int:
     if not source.is_dir():
-        print(f"mirrored: {name} — nothing to mirror, {source} is not a directory")
+        if not failures_only:
+            print(f"mirrored: {name} — nothing to mirror, {source} is not a directory")
         return EXIT_MIRRORED
     target = machine_path / name
     prepared = ensure_directory(host, target)
@@ -200,12 +228,15 @@ def mirror_one(host, machine_path: pathlib.PurePosixPath, name: str, source: pat
         return EXIT_FAILED
     completed = subprocess.run(rsync_command(host, source, target),
                                capture_output=True, text=True, check=False)
-    sys.stderr.write(completed.stderr)
     vanished = rsync_vanished_exit_code()
     if completed.returncode not in (0, vanished):
+        sys.stderr.write(completed.stderr)
         print(f"FAILED: {name} — rsync exit {completed.returncode}"
               f"{' (ned-box unreachable)' if completed.returncode == 255 else ''}")
         return EXIT_FAILED
+    if failures_only:
+        return EXIT_MIRRORED
+    sys.stderr.write(completed.stderr)
     note = " (some files vanished mid-run: a session ended)" \
         if completed.returncode == vanished else ""
     in_store = count_files_in_store(host, target)
@@ -214,7 +245,12 @@ def mirror_one(host, machine_path: pathlib.PurePosixPath, name: str, source: pat
     return EXIT_MIRRORED
 
 
-def main() -> int:
+def main(argv=None) -> int:
+    parser = argparse.ArgumentParser(
+        description="Mirror this machine's Claude Code transcripts and handoffs into the log-store.")
+    parser.add_argument("--failures-only", action="store_true",
+                        help="print FAILED lines only, for cron")
+    failures_only = parser.parse_args(argv).failures_only
     home = source_home()
     lock_path = home / ".claude" / LOCK_FILE_NAME
     lock_path.parent.mkdir(parents=True, exist_ok=True)
@@ -222,10 +258,11 @@ def main() -> int:
         try:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except OSError:
-            print(f"{PROGRAM}: another run holds {lock_path}; leaving it to finish")
+            if not failures_only:
+                print(f"{PROGRAM}: another run holds {lock_path}; leaving it to finish")
             return EXIT_LOCKED
         host, machine_path = destination_for_this_machine()
-        outcomes = [mirror_one(host, machine_path, name, home / relative)
+        outcomes = [mirror_one(host, machine_path, name, home / relative, failures_only)
                     for name, relative in SOURCES]
     return EXIT_FAILED if EXIT_FAILED in outcomes else EXIT_MIRRORED
 
