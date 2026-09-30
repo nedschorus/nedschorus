@@ -401,6 +401,25 @@ def record_directory_of(repository):
     return directories[-1] if directories else None
 
 
+def frozen_target_path_in_scratch_repository(repository, record_directory):
+    """Where the grid in `repository` froze TARGET_RELATIVE_PATH inside
+    `record_directory`, as frozen_target_path() itself answers it.
+
+    Loaded from the scratch repository's own copy of
+    nc-systems/cold-read/cold-read-record-names.py, not from this checkout's:
+    the function makes the target relative to its module's REPO_ROOT, so this
+    checkout's copy would find the scratch target outside its repository and
+    return the absolute-path fallback. The scratch copy is also the very file
+    the grid under test loaded."""
+    record_names_spec = importlib.util.spec_from_file_location(
+        "cold_read_record_names_in_scratch_repository",
+        repository / "nc-systems" / "cold-read" / "cold-read-record-names.py")
+    record_names = importlib.util.module_from_spec(record_names_spec)
+    record_names_spec.loader.exec_module(record_names)
+    return record_names.frozen_target_path(
+        repository / TARGET_RELATIVE_PATH, record_directory)
+
+
 with tempfile.TemporaryDirectory() as scratch:
     scratch = Path(scratch)
     stubs = scratch / "stub-bin"
@@ -672,7 +691,14 @@ with tempfile.TemporaryDirectory() as scratch:
         "COLD_READ_GRID_TEST_STUB_EDIT_PATH": str(repository / TARGET_RELATIVE_PATH),
         "COLD_READ_GRID_TEST_STUB_EDIT_FROZEN_COPY_WHEN_STOPPED": "1"})
     record_directory = record_directory_of(repository)
-    frozen_copy = (record_directory / "target" / TARGET_RELATIVE_PATH
+    # The frozen copy's path is asked of frozen_target_path(), never built
+    # here: a spelling rebuilt beside the function's diverged from it on the
+    # Mac, where /var is a symbolic link to /private/var, and that failed a
+    # correct run -- the blocking finding of 2026-09-22 on PR "The
+    # cold-read-cells read the frozen copy, which is what freezing meant":
+    # https://github.com/nedschorus/nedschorus/pull/636#discussion_r4075031001
+    # Calling the function inherits its rule instead of repeating it.
+    frozen_copy = (frozen_target_path_in_scratch_repository(repository, record_directory)
                    if record_directory else None)
     check("the reviewer did write the frozen copy as it was stopped",
           frozen_copy is not None and frozen_copy.is_file()
@@ -1255,7 +1281,7 @@ with tempfile.TemporaryDirectory() as scratch:
     repository = build_scratch_repository(scratch, "checkout-frozen-and-shipped")
     result = run_grid(repository, stubs)
     record_directory = record_directory_of(repository)
-    frozen = record_directory / "target" / TARGET_RELATIVE_PATH
+    frozen = frozen_target_path_in_scratch_repository(repository, record_directory)
     check("the target's bytes are frozen under target/ at its repository path",
           frozen.is_file() and frozen.read_bytes() == (repository / TARGET_RELATIVE_PATH).read_bytes(),
           f"{frozen} present={frozen.exists()}")
@@ -1342,7 +1368,8 @@ with tempfile.TemporaryDirectory() as scratch:
           f"exit {result.returncode}; {record_lines!r}")
     record_directory = record_directory_of(repository)
     check("the record, frozen target included, stays on disk for a later ship",
-          record_directory is not None and (record_directory / "target" / TARGET_RELATIVE_PATH).is_file())
+          record_directory is not None
+          and frozen_target_path_in_scratch_repository(repository, record_directory).is_file())
 
     # --- A changed target is still shipped: it is evidence -------------------
     repository = build_scratch_repository(scratch, "checkout-changed-still-shipped")
@@ -1354,7 +1381,7 @@ with tempfile.TemporaryDirectory() as scratch:
           result.returncode == 3 and record_lines and record_lines[0].startswith("record: shipped:"),
           f"exit {result.returncode}; {record_lines!r}")
     record_directory = record_directory_of(repository)
-    frozen = record_directory / "target" / TARGET_RELATIVE_PATH
+    frozen = frozen_target_path_in_scratch_repository(repository, record_directory)
     check("the frozen target is the launch-time text, not the edited one",
           frozen.is_file() and b"reviewer's own edit" not in frozen.read_bytes()
           and b"reviewer's own edit" in (repository / TARGET_RELATIVE_PATH).read_bytes())
@@ -1371,7 +1398,7 @@ with tempfile.TemporaryDirectory() as scratch:
                       {"COLD_READ_GRID_TEST_STUB_TARGET_LOG": str(target_log)})
     logged = target_log.read_text(encoding="utf-8").splitlines() if target_log.is_file() else []
     record_directory = record_directory_of(repository)
-    frozen = record_directory / "target" / TARGET_RELATIVE_PATH
+    frozen = frozen_target_path_in_scratch_repository(repository, record_directory)
     check("every cell was given a path, and there is one per cell",
           len(logged) == 6, f"{len(logged)} logged: {logged!r}")
     # Resolved before comparing: on macOS the scratch tree lives under /tmp,
@@ -1401,7 +1428,7 @@ with tempfile.TemporaryDirectory() as scratch:
                if prompt_log.is_file() else [])
     original = (repository / TARGET_RELATIVE_PATH).resolve()
     record_directory = record_directory_of(repository)
-    frozen = (record_directory / "target" / TARGET_RELATIVE_PATH).resolve()
+    frozen = frozen_target_path_in_scratch_repository(repository, record_directory).resolve()
 
     def names_path(prompt, path):
         # Either spelling: the grid resolves the target, the scratch path may
@@ -1439,7 +1466,7 @@ with tempfile.TemporaryDirectory() as scratch:
                       {"COLD_READ_GRID_TEST_STUB_EDIT_GIVEN_TARGET": "1",
                        **END_OF_RUN_COMPARISON_ONLY})
     record_directory = record_directory_of(repository)
-    frozen = record_directory / "target" / TARGET_RELATIVE_PATH
+    frozen = frozen_target_path_in_scratch_repository(repository, record_directory)
     check("an edit to the frozen copy is reported and the run exits 3",
           result.returncode == 3
           and result.stdout.count("TARGET CHANGED DURING RUN:") == 1,
