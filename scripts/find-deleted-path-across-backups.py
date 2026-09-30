@@ -52,9 +52,11 @@ THE SEVEN SURFACES, in the order they are searched:
   5. transcripts  — agent session JSONL under ~/.claude/projects, on this Mac
                     AND on the box. A file's content often survives in the
                     transcript of the session that wrote or read it, even when
-                    every copy on disk is gone.
+                    every copy on disk is gone. Run on the box, it greps the
+                    box's own and says the Mac's were not searched.
   6. Timeshift    — snapshots on ned-box at /mnt/backup/timeshift/snapshots.
                     Ordinary world-readable directories: no privilege needed.
+                    Searched over ssh from the Mac, in place on the box.
   7. Time Machine — snapshots on the Mac's EXTERNAL backup disk. Enumerating
                     them needs no privilege; READING INSIDE ONE NEEDS ROOT
                     (measured 2026-08-23: `sudo mount_apfs -o ro` refused
@@ -175,6 +177,25 @@ used through the same import as its host rule: the locator keeps its own copy
 of that function only because it is sent whole to the other machine over ssh,
 and this program never is.
 
+RUN ON NED-BOX ITSELF, the box's two surfaces are searched in place. Until
+2026-09-30 every run reached "the box" by `ssh nedlern@ned-box`, from the box
+too, where that ssh fails before logging in ("Host key verification failed.":
+nedlern there has no known_hosts entry for itself). So from the seats, which
+run on the box, Timeshift was never searched although its snapshots are on the
+box's own disk, and every run that found nothing ended "Could NOT search:
+transcripts, timeshift" (GHI "The backup search cannot search ned-box's
+Timeshift when it runs on ned-box, because it reaches "the box" by ssh to
+itself", reproduced by merge-lane-2). On the box, Timeshift now runs the same
+probe script through a local bash, the shell that ssh ran it under, and
+transcripts keeps its local grep, which there is the box's, and sends no
+second grep over ssh to the same directory. The Mac's transcripts are then not
+searched, for the reason the locator gives, so transcripts stays UNAVAILABLE
+and a run on the box that finds nothing still exits 3, naming transcripts
+alone. Which machine this is is the locator's test, the host name before its
+first dot against NED_BOX_HOSTNAME, decided once in build_report.
+--box-ssh-host and --skip box keep their meaning: the first names the box only
+for the Mac's ssh, and the second still leaves Timeshift out.
+
 Usage:
   python3 scripts/find-deleted-path-across-backups.py <path>
   python3 scripts/find-deleted-path-across-backups.py <path> --skip box
@@ -249,6 +270,7 @@ import importlib.util
 import os
 import re
 import shlex
+import socket
 import subprocess
 import sys
 import time
@@ -367,6 +389,15 @@ class SurfaceReport:
         for command in self.recovery:
             out.append("    $ " + command)
         return "\n".join(out)
+
+
+def running_on_ned_box(hostname=None):
+    """True on the box itself, by the locator's test: the host name before its
+    first dot is NED_BOX_HOSTNAME. `hostname` is for the tests; None reads this
+    machine's (see RUN ON NED-BOX ITSELF)."""
+    if hostname is None:
+        hostname = socket.gethostname()
+    return hostname.split(".")[0] == locator.NED_BOX_HOSTNAME
 
 
 def run_command(argv, timeout=SHORT_TIMEOUT_SECONDS, cwd=None):
@@ -1376,7 +1407,7 @@ _LOG_STORE_NAME_PROBE = "\n".join([
 # Surface 5 — agent transcripts, on this Mac and on the box
 # --------------------------------------------------------------------------
 
-def search_transcripts(wanted, transcripts_dir, box_ssh_host, runner=run_command):
+def search_transcripts(wanted, transcripts_dir, box_ssh_host, runner=run_command, on_ned_box=False):
     """Grep session JSONL for the path string, locally and on the box.
 
     A transcript holds what a tool call returned, so a file read by any agent
@@ -1384,14 +1415,18 @@ def search_transcripts(wanted, transcripts_dir, box_ssh_host, runner=run_command
     2026-08-23 ("you almost always can find missing stuff by looking in the
     agents jsonl"), and the only one of the four that survives a repo history
     rewrite.
+
+    `on_ned_box`: the local grep is then the box's, so nothing goes over ssh,
+    and the Mac's half is reported as not searched (RUN ON NED-BOX ITSELF).
     """
     lines = []
     recovery = []
     statuses = []
+    here = locator.NED_BOX_HOSTNAME if on_ned_box else "this Mac"
 
     local_dir = Path(os.path.expanduser(transcripts_dir))
     if not local_dir.is_dir():
-        lines.append("this Mac: %s does not exist" % local_dir)
+        lines.append("%s: %s does not exist" % (here, local_dir))
         statuses.append(UNAVAILABLE)
     else:
         code, out, _ = runner(
@@ -1400,7 +1435,7 @@ def search_transcripts(wanted, transcripts_dir, box_ssh_host, runner=run_command
         )
         hits = [h for h in out.splitlines() if h.strip()]
         if hits:
-            lines.append("this Mac: %d session transcript(s) mention it" % len(hits))
+            lines.append("%s: %d session transcript(s) mention it" % (here, len(hits)))
             for hit in hits[:5]:
                 lines.append("    " + hit)
             if len(hits) > 5:
@@ -1408,13 +1443,16 @@ def search_transcripts(wanted, transcripts_dir, box_ssh_host, runner=run_command
             recovery.append("grep -o '.\\{0,400\\}%s.\\{0,2000\\}' %s | head" % (wanted, shlex.quote(hits[0])))
             statuses.append(FOUND)
         elif code in (0, 1):
-            lines.append("this Mac: searched %s, no transcript mentions it" % local_dir)
+            lines.append("%s: searched %s, no transcript mentions it" % (here, local_dir))
             statuses.append(NOT_FOUND)
         else:
-            lines.append("this Mac: grep failed over %s" % local_dir)
+            lines.append("%s: grep failed over %s" % (here, local_dir))
             statuses.append(UNAVAILABLE)
 
-    if box_ssh_host:
+    if on_ned_box:
+        lines.append("the Mac: not searched — %s" % locator.MAC_NOT_REACHABLE_FROM_NED_BOX)
+        statuses.append(UNAVAILABLE)
+    elif box_ssh_host:
         code, out, stderr = runner(
             ["ssh", "-o", "ConnectTimeout=10", "-o", "BatchMode=yes", box_ssh_host, _box_transcript_grep_script(wanted)],
             timeout=LONG_TIMEOUT_SECONDS,
@@ -1475,7 +1513,7 @@ def _box_transcript_grep_script(wanted):
 # Surface 6 — Timeshift on the box
 # --------------------------------------------------------------------------
 
-def search_timeshift(wanted, box_ssh_host, snapshot_root, search_roots, runner=run_command):
+def search_timeshift(wanted, box_ssh_host, snapshot_root, search_roots, runner=run_command, on_ned_box=False):
     """Test the path under every Timeshift snapshot on the box.
 
     Timeshift stores a snapshot as an ordinary directory tree rooted at
@@ -1490,17 +1528,24 @@ def search_timeshift(wanted, box_ssh_host, snapshot_root, search_roots, runner=r
     fragment. The first version only ever tested <root>/<wanted>, so the
     documented fragment form ("dispositions.md") could not hit, and the
     surface said "searched every snapshot" for a file in every snapshot.
-    """
-    if not box_ssh_host:
-        return SurfaceReport("timeshift", UNAVAILABLE, ["not searched — no ssh host given (--skip box, or an empty --box-ssh-host)"])
 
-    code, out, stderr = runner(
-        ["ssh", "-o", "ConnectTimeout=10", "-o", "BatchMode=yes", box_ssh_host,
-         _timeshift_probe_script(wanted, snapshot_root, search_roots)],
-        timeout=LONG_TIMEOUT_SECONDS,
-    )
+    `on_ned_box`: the snapshots are on this machine, so the same script runs
+    through a local bash instead of ssh, and a hit is copied with cp
+    (RUN ON NED-BOX ITSELF).
+    """
+    script = _timeshift_probe_script(wanted, snapshot_root, search_roots)
+    if on_ned_box:
+        where = locator.NED_BOX_HOSTNAME
+        argv = ["bash", "-c", script]
+    elif not box_ssh_host:
+        return SurfaceReport("timeshift", UNAVAILABLE, ["not searched — no ssh host given (--skip box, or an empty --box-ssh-host)"])
+    else:
+        where = box_ssh_host
+        argv = ["ssh", "-o", "ConnectTimeout=10", "-o", "BatchMode=yes", box_ssh_host, script]
+
+    code, out, stderr = runner(argv, timeout=LONG_TIMEOUT_SECONDS)
     first_error = stderr.strip().splitlines()[0] if stderr.strip() else ""
-    if code == 255:
+    if code == 255 and not on_ned_box:
         return SurfaceReport(
             "timeshift",
             UNAVAILABLE,
@@ -1513,10 +1558,10 @@ def search_timeshift(wanted, box_ssh_host, snapshot_root, search_roots, runner=r
         return SurfaceReport(
             "timeshift",
             UNAVAILABLE,
-            ["the search on %s did not complete (exit %s) — %s" % (box_ssh_host, code, first_error or "no error text")],
+            ["the search on %s did not complete (exit %s) — %s" % (where, code, first_error or "no error text")],
         )
     if "NOROOT" in out:
-        return SurfaceReport("timeshift", UNAVAILABLE, ["%s does not exist on %s — is the backup drive mounted?" % (snapshot_root, box_ssh_host)])
+        return SurfaceReport("timeshift", UNAVAILABLE, ["%s does not exist on %s — is the backup drive mounted?" % (snapshot_root, where)])
 
     hits = sorted({line[4:].strip() for line in out.splitlines() if line.startswith("HIT ")}, reverse=True)
     unsearched = [line[10:].strip() for line in out.splitlines() if line.startswith("PROBEFAIL ")]
@@ -1526,12 +1571,12 @@ def search_timeshift(wanted, box_ssh_host, snapshot_root, search_roots, runner=r
                 "timeshift",
                 UNAVAILABLE,
                 ["find failed under %d snapshot director%s on %s, first: %s"
-                 % (len(unsearched), "y" if len(unsearched) == 1 else "ies", box_ssh_host, unsearched[0]),
+                 % (len(unsearched), "y" if len(unsearched) == 1 else "ies", where, unsearched[0]),
                  "the rest were searched and do not have it; those %d were not searched" % len(unsearched)],
             )
-        return SurfaceReport("timeshift", NOT_FOUND, ["searched every snapshot under %s on %s" % (snapshot_root, box_ssh_host)])
+        return SurfaceReport("timeshift", NOT_FOUND, ["searched every snapshot under %s on %s" % (snapshot_root, where)])
 
-    lines = ["%d snapshot(s) on %s still have it, newest first:" % (len(hits), box_ssh_host)]
+    lines = ["%d snapshot(s) on %s still have it, newest first:" % (len(hits), where)]
     for hit in hits[:5]:
         lines.append("    " + hit)
     if len(hits) > 5:
@@ -1539,7 +1584,10 @@ def search_timeshift(wanted, box_ssh_host, snapshot_root, search_roots, runner=r
     if unsearched:
         lines.append("(find failed under %d snapshot director%s, first: %s — those were not searched)"
                      % (len(unsearched), "y" if len(unsearched) == 1 else "ies", unsearched[0]))
-    recovery = ["scp %s:%s ." % (box_ssh_host, shlex.quote(hits[0]))]
+    if on_ned_box:
+        recovery = ["cp %s ." % shlex.quote(hits[0])]
+    else:
+        recovery = ["scp %s:%s ." % (box_ssh_host, shlex.quote(hits[0]))]
     return SurfaceReport("timeshift", FOUND, lines, recovery)
 
 
@@ -2241,7 +2289,10 @@ def _combine(statuses):
 
 def build_report(wanted, repo, transcripts_dir, box_ssh_host, snapshot_root, search_roots, skip=(),
                  runner=run_command, prompt_for_root=False, log_store_root=DEFAULT_LOG_STORE_ROOT,
-                 on_surface_done=None):
+                 on_surface_done=None, on_ned_box=None):
+    # `on_ned_box`: None decides by this machine's name (RUN ON NED-BOX ITSELF).
+    if on_ned_box is None:
+        on_ned_box = running_on_ned_box()
     reports = []
     newest_date_held = None
 
@@ -2277,9 +2328,9 @@ def build_report(wanted, repo, transcripts_dir, box_ssh_host, snapshot_root, sea
         # which sends nothing over ssh.
         finished(search_log_store(wanted, log_store_root, box_ssh_host, runner))
     if "transcripts" not in skip:
-        finished(search_transcripts(wanted, transcripts_dir, box_ssh_host, runner))
+        finished(search_transcripts(wanted, transcripts_dir, box_ssh_host, runner, on_ned_box=on_ned_box))
     if "box" not in skip and "timeshift" not in skip:
-        finished(search_timeshift(wanted, box_ssh_host, snapshot_root, search_roots, runner))
+        finished(search_timeshift(wanted, box_ssh_host, snapshot_root, search_roots, runner, on_ned_box=on_ned_box))
     if "timemachine" not in skip:
         finished(search_time_machine(wanted, newest_date_held, runner=runner,
                                      prompt_for_root=prompt_for_root))
