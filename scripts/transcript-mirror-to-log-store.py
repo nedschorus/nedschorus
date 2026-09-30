@@ -56,7 +56,26 @@ every ssh it opens, rsync's included, gives up about a minute after ned-box
 stops answering (ServerAliveInterval 15, ServerAliveCountMax 4), as when the
 Mac sleeps mid-run, and rsync's --timeout ends a transfer that stops moving.
 The run then ends and frees the lock, and a directory preparation or rsync
-that ended that way prints its FAILED line.
+that ended that way prints its FAILED line. One gap: openrsync's exit 23 is
+taken as files vanishing, so on the Mac any other partial transfer openrsync
+reports with 23 is silent too, its stderr dropped with the rest. The Mac's
+hourly log held no exit-23 run and no line from openrsync in 461 runs
+(measured 2026-09-30), so there is no sample to tell the two apart by their
+text.
+
+WHEN IT LAST RAN. The log cannot say: a healthy quiet run appends nothing.
+Every run rewrites the lock file, `~/.claude/.transcript-mirror.lock`
+(LOCK_FILE_NAME, opened for writing), as it starts, so its mtime is when
+cron last started the mirror on that machine: `stat -f %Sm
+~/.claude/.transcript-mirror.lock` on the Mac, `stat -c %y
+~/.claude/.transcript-mirror.lock` on ned-box. A time more than a few
+minutes old means cron has not started it since: the machine was off or
+asleep, or its cron line is gone. A run that started and failed also left a
+FAILED line in the log. The newest file in the store's copy is
+not a run clock: rsync -a keeps each file's own mtime, so it says when a
+transcript was last written, which can be hours ago on a healthy mirror while
+no session runs. Measured 2026-09-30 at 18:24Z: both lock files had been
+rewritten that minute, and both logs still dated from 17:17Z.
 
 SCHEDULE. Every minute, by cron on both machines, so the store's copy of each
 machine's transcripts is at most about a minute behind (user-ruled
