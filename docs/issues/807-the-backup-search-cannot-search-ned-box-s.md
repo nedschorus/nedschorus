@@ -4,7 +4,7 @@ issue: "[The backup search cannot search ned-box's Timeshift when it runs on ned
 
 # The backup search cannot search ned-box's Timeshift when it runs on ned-box, because it reaches "the box" by ssh to itself
 
-Filed by the merge-lane-2 seat on 2026-09-30 (UTC), from a finding it reproduced. The reproduction is first; the cause, what it causes and the next action follow it. A line number given without a file, such as `:257`, is in `scripts/find-deleted-path-across-backups.py`.
+Filed by the merge-lane-2 seat on 2026-09-30 (UTC), from a finding it reproduced. The reproduction is first; the cause, what it causes and the next action follow it, and the outcome comes last. A line number given without a file, such as `:257`, is in `scripts/find-deleted-path-across-backups.py`.
 
 ## Reproduction
 
@@ -57,3 +57,19 @@ To tell that it is on ned-box, use the locator's test, `socket.gethostname().spl
 Add a case to `scripts/find-deleted-path-across-backups-test.py`, which drives every surface through a stand-in runner, showing that a run on ned-box starts no ssh and still searches both surfaces.
 
 The alternative, making ned-box's ssh to itself succeed, changes machine configuration instead of code, and every search would still log in to ned-box from ned-box.
+
+## Outcome
+
+Fixed on 2026-09-30 by PR [On ned-box the backup search searches Timeshift and transcripts in place](https://github.com/nedschorus/nedschorus/pull/816), merged at `0fc689ba`. The user ruled that day that the merge-lane Mac seat, not merge-lane-2, would build the fix, and the Mac seat built it. The line numbers in the sections above are at `e09ca324`, where this issue was reproduced; the fix moved them.
+
+- **Fix.** `scripts/find-deleted-path-across-backups.py` tells ned-box by the locator's test, through a new `running_on_ned_box()`, decided once in `build_report`. On ned-box, `--box-ssh-host` is not used:
+  - Timeshift runs `_timeshift_probe_script` through a local `bash -c`, the shell ssh ran it under. Its lines name ned-box, and a hit is recovered with `cp` instead of `scp`. A probe that exits with anything but 0 reads "the search on ned-box did not complete (exit N)", never "unreachable".
+  - Transcripts keeps its local grep, labelled `ned-box:`, and sends nothing over ssh. It adds the line "the Mac: not searched — no route from ned-box to the Mac is documented", the locator's `MAC_NOT_REACHABLE_FROM_NED_BOX`.
+
+  The Mac's behaviour is unchanged.
+- **Exit codes on ned-box.** A file found anywhere still exits 0. A run that finds nothing still exits 3, by design, and now ends "Could NOT search: transcripts", not "transcripts, timeshift": Timeshift is searched, and transcripts stays incomplete because the Mac's transcripts cannot be searched from ned-box, which is the locator's rule too. `--skip box` leaves this unchanged: it skips ned-box's own Timeshift, and the Mac's transcripts are still unsearched.
+- **Measured on ned-box, read-only,** from copies of the merged program in a temporary directory, not from a checkout:
+  - the reproduction above prints timeshift NOT FOUND "on ned-box" and exits 3, naming transcripts alone;
+  - `/etc/hostname` is FOUND in 136 snapshots, with a `cp` recovery line;
+  - a bare-name Timeshift search took 3.0 s when it found the file (in 262 snapshots) and 2.2 s when it did not.
+- **Tests.** `scripts/find-deleted-path-across-backups-test.py` gains 15 cases, 12 of which fail against the program before the fix. Every case not about which machine the program runs on is pinned to the Mac's answer, so the suite gives one answer on either machine; it passes all 318 of its cases on ned-box.
