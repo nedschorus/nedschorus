@@ -692,10 +692,10 @@ git_found = FakeRunner([
 report = finder.search_git("md-review-records/x/dispositions.md", "/repo", git_found)
 check("git reports FOUND for a deleted path still in history", report.status == FOUND)
 check("git hands back a runnable recovery command",
-      any(c.startswith("git -C") and " show " in c for c in report.recovery),
+      any(c.startswith(finder.PRINTED_GIT_INVOCATION_WITHOUT_REDIRECTING_VARIABLES + " -C") and " show " in c for c in report.recovery),
       str(report.recovery))
 check("git cites the deletion's parent, which held the file, not the last commit that modified it",
-      report.recovery == ["git -C /repo show merge0123:md-review-records/x/dispositions.md"],
+      report.recovery == [finder.PRINTED_GIT_INVOCATION_WITHOUT_REDIRECTING_VARIABLES + " -C /repo show merge0123:md-review-records/x/dispositions.md"],
       str(report.recovery))
 check("git records the last date it HELD the file, not the last date it modified it",
       getattr(report, "newest_date_held", None) == "2026-08-14",
@@ -760,7 +760,7 @@ git_absolute = FakeRunner([
 ])
 report = finder.search_git("/repo/md-review-records/x/dispositions.md", "/repo", git_absolute)
 check("an absolute path inside the repository is searched by its repo-relative form",
-      report.status == FOUND and report.recovery == ["git -C /repo show abc123def:md-review-records/x/dispositions.md"],
+      report.status == FOUND and report.recovery == [finder.PRINTED_GIT_INVOCATION_WITHOUT_REDIRECTING_VARIABLES + " -C /repo show abc123def:md-review-records/x/dispositions.md"],
       "%s %s %s" % (report.status, report.lines, report.recovery))
 
 git_outside = FakeRunner([
@@ -821,7 +821,7 @@ with tempfile.TemporaryDirectory() as tmp:
                                check=True, stdout=subprocess.PIPE).stdout.decode().strip()
     report = finder.search_git("a/b.md", str(repo))
     check("real git: the commit cited is the merge whose tree last held the file",
-          report.status == FOUND and report.recovery == ["git -C %s show %s:a/b.md" % (repo, merge_sha[:9])],
+          report.status == FOUND and report.recovery == ["%s -C %s show %s:a/b.md" % (finder.PRINTED_GIT_INVOCATION_WITHOUT_REDIRECTING_VARIABLES, repo, merge_sha[:9])],
           "%s %s %s (merge is %s)" % (report.status, report.lines, report.recovery, merge_sha[:9]))
     check("real git: the date recorded is the merge's, 2026-08-14, not the modification's 2026-08-12",
           getattr(report, "newest_date_held", None) == "2026-08-14",
@@ -895,7 +895,7 @@ with tempfile.TemporaryDirectory() as tmp:
     report = finder.search_git_reflog("docs/drafts/pr-main-process-design.md", str(clone))
     check("real git: the reflog surface FINDS it, from a checkout whose own HEAD reflog never named it",
           report.status == FOUND and report.surface == "git reflog"
-          and report.recovery == ["git -C %s show %s:docs/drafts/pr-main-process-design.md" % (clone, draft_sha[:9])],
+          and report.recovery == ["%s -C %s show %s:docs/drafts/pr-main-process-design.md" % (finder.PRINTED_GIT_INVOCATION_WITHOUT_REDIRECTING_VARIABLES, clone, draft_sha[:9])],
           "%s %s %s (draft is %s)" % (report.status, report.lines, report.recovery, draft_sha[:9]))
     recovered = subprocess.run(report.recovery[0] if report.recovery else "false", shell=True,
                                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
@@ -974,7 +974,7 @@ with tempfile.TemporaryDirectory() as tmp:
 
     report = finder.search_git_reflog("only-draft.md", str(repo))
     check("real git: a reflog-only deletion whose parent is reflog-only too is FOUND at that parent",
-          report.status == FOUND and report.recovery == ["git -C %s show %s:only-draft.md" % (repo, draft_holder[:9])],
+          report.status == FOUND and report.recovery == ["%s -C %s show %s:only-draft.md" % (finder.PRINTED_GIT_INVOCATION_WITHOUT_REDIRECTING_VARIABLES, repo, draft_holder[:9])],
           "%s %s %s (holder is %s)" % (report.status, report.lines, report.recovery, draft_holder[:9]))
 
 reflog_git_fails = FakeRunner([
@@ -1075,11 +1075,46 @@ for variable in ("GIT_COMMON_DIR", "GIT_DIR"):
         check("real git: with %s naming another clone, the git surface still FINDS a file only the "
               "searched repository's history holds" % variable,
               report.status == FOUND and report.recovery and report.recovery[0].endswith(":a/b.md")
-              and report.recovery[0].startswith("git -C %s " % repo),
+              and report.recovery[0].startswith("%s -C %s " % (finder.PRINTED_GIT_INVOCATION_WITHOUT_REDIRECTING_VARIABLES, repo)),
               "%s %s %s" % (report.status, report.lines, report.recovery))
         check("real git: with %s naming another clone, the reflog surface searches the repository asked "
               "about: NOT FOUND, because every ref there already reaches the file" % variable,
               reflog_report.status == NOT_FOUND, "%s %s" % (reflog_report.status, reflog_report.lines))
+
+# The git recovery command is printed for a caller to run in a shell of their
+# own, which this program's run_command never touches, so it carries the
+# variables' removal in its own text.
+import shlex  # noqa: E402
+
+printed_git_tokens = shlex.split(finder.PRINTED_GIT_INVOCATION_WITHOUT_REDIRECTING_VARIABLES)
+check("a printed git recovery command begins with env, unsets each of the six git redirect variables once, "
+      "then runs git",
+      printed_git_tokens[:1] == ["env"] and printed_git_tokens[-1:] == ["git"]
+      and printed_git_tokens[1:-1:2] == ["-u"] * len(GIT_REDIRECT_VARIABLES_EXPECTED_DROPPED)
+      and sorted(printed_git_tokens[2:-1:2]) == sorted(GIT_REDIRECT_VARIABLES_EXPECTED_DROPPED),
+      finder.PRINTED_GIT_INVOCATION_WITHOUT_REDIRECTING_VARIABLES)
+
+for variable in ("GIT_COMMON_DIR", "GIT_DIR"):
+    with tempfile.TemporaryDirectory() as tmp:
+        repo = git_fixture_repo(tmp)
+        other = other_clone_fixture(tmp)
+        report = finder.search_git("a/b.md", str(repo))
+        printed = report.recovery[0] if report.recovery else ""
+        bare = "git" + printed[len(finder.PRINTED_GIT_INVOCATION_WITHOUT_REDIRECTING_VARIABLES):]
+        shell_environment = dict(os.environ, **{variable: str(Path(other, ".git"))})
+        as_printed = subprocess.run(["/bin/sh", "-c", printed], cwd=tmp, env=shell_environment,
+                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        without_prefix = subprocess.run(["/bin/sh", "-c", bare], cwd=tmp, env=shell_environment,
+                                        stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    check("real git: with %s naming another clone in the shell that runs it, the printed git recovery command "
+          "prints the file as the searched repository last held it" % variable,
+          printed.startswith(finder.PRINTED_GIT_INVOCATION_WITHOUT_REDIRECTING_VARIABLES + " -C ")
+          and as_printed.returncode == 0 and as_printed.stdout == b"v2\n",
+          "%r exit %s %r %r" % (printed, as_printed.returncode, as_printed.stdout, as_printed.stderr))
+    check("real git: ... and the same command without its env prefix exits 128 under %s, so the case above "
+          "measures what it claims" % variable,
+          without_prefix.returncode == 128,
+          "%r exit %s %r" % (bare, without_prefix.returncode, without_prefix.stderr))
 
 # --------------------------------------------------------------------------
 # transcripts
@@ -2744,7 +2779,8 @@ with tempfile.TemporaryDirectory() as tmp:
                                     "--skip", "transcripts", "--skip", "box", "--skip", "timemachine"],
                                    runner=recorded)
             text = captured.getvalue()
-            shown = [l.split("$ ", 1)[1] for l in text.splitlines() if l.strip().startswith("$ git ")]
+            shown = [l.split("$ ", 1)[1] for l in text.splitlines()
+                     if l.strip().startswith("$ %s " % finder.PRINTED_GIT_INVOCATION_WITHOUT_REDIRECTING_VARIABLES)]
             recovered = (subprocess.run(["sh", "-c", shown[0]], capture_output=True, text=True).stdout
                          if shown else "")
         finally:
