@@ -277,7 +277,7 @@ with tempfile.TemporaryDirectory() as temporary:
         ({"session_id": "sess-E", "result": "escalate: does the 2026-08-01 ruling on #13 still bind?"}, None),
     ])
     answer, error = ghi_ask.ask("q", False, seat7, "x/y")
-    check("an escalate: reply passes through verbatim, even mentioning #13",
+    check("ask() hands main() an escalate: reply as ghi-info wrote it, even mentioning #13",
           answer.startswith("escalate:"), answer)
     check("a passthrough reply triggers no drift recheck",
           len(claude_calls) == 2, claude_calls)
@@ -539,6 +539,84 @@ try:
               exit_code == 1 and "bootstrap" in err.getvalue()
               and str(missing) in err.getvalue(),
               err.getvalue())
+finally:
+    patch_module_function(ghi_ask.mirror_refresh, "refresh", mirror_orig)
+    patch("run_claude", run_claude_orig)
+
+
+# --- main(): out-of-scope and escalate: reach the caller as errors ---------
+# User-ruled 2026-09-29 (walk SKILL-ghi-write-2026-09-29-4, item 1 revised):
+# the two bare replies are no longer passed through on stdout with exit 0.
+# The expected text is typed out here rather than read from the module, so a
+# change to the approved wording fails this file.
+APPROVED_NOT_ABOUT_ISSUES_MESSAGE = (
+    "Not a question about GitHub issues: ghi-info reports which issues relate to a subject.\n"
+    'Ask again as: scripts/ghi-info-ask.py "Which issues cover <your subject>?"\n'
+    'If that is refused too, search yourself: gh issue list --repo nedschorus/nedschorus '
+    '--state all --search "<terms>"\n')
+ESCALATE_SENTENCE = ("the 2026-09-19 body ruling in #46 may not hold after "
+                     "the 2026-09-29 ruling in #783")
+APPROVED_RULING_QUESTION_MESSAGE = (
+    "ghi-info found a ruling of the user's that it cannot tell still applies: "
+    + ESCALATE_SENTENCE + "\n"
+    "Ask the user whether that ruling still applies, and put the question on your task list.\n"
+    "Do not file or edit the issue until he answers.\n")
+
+
+def main_with_reply(seat, reply_text):
+    """main() against an explicit seat whose ghi-info cold-starts and then
+    answers reply_text. Returns (exit code, stdout, stderr)."""
+    fake_refresh_queue([([1], {"1": issue(1)}, None)])
+    fake_claude_queue([
+        ({"session_id": "sess-P", "result": "(ack)"}, None),
+        ({"session_id": "sess-P", "result": reply_text}, None),
+    ])
+    out, err = io.StringIO(), io.StringIO()
+    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+        exit_code = ghi_ask.main(["q", "--seat-dir", str(seat), "--repo", "x/y"])
+    return exit_code, out.getvalue(), err.getvalue()
+
+
+mirror_orig = ghi_ask.mirror_refresh.refresh
+run_claude_orig = ghi_ask.run_claude
+try:
+    with tempfile.TemporaryDirectory() as temporary:
+        root = Path(temporary)
+
+        seat_scope = root / "seat-not-about-issues"
+        seat_scope.mkdir()
+        exit_code, out, err = main_with_reply(seat_scope, "out-of-scope")
+        check("an out-of-scope reply exits 2",
+              exit_code == ghi_ask.EXIT_NOT_ABOUT_ISSUES == 2, exit_code)
+        check("an out-of-scope reply prints the approved message on stderr, and only it",
+              err.endswith(APPROVED_NOT_ABOUT_ISSUES_MESSAGE)
+              and "out-of-scope" not in err, err)
+        check("an out-of-scope reply prints nothing on stdout", out == "", out)
+
+        seat_ruling = root / "seat-ruling-question"
+        seat_ruling.mkdir()
+        exit_code, out, err = main_with_reply(
+            seat_ruling, "escalate: " + ESCALATE_SENTENCE + "  ")
+        check("an escalate: reply exits 3",
+              exit_code == ghi_ask.EXIT_RULING_QUESTION == 3, exit_code)
+        check("an escalate: reply prints the approved message on stderr, carrying ghi-info's sentence",
+              err.endswith(APPROVED_RULING_QUESTION_MESSAGE)
+              and "escalate:" not in err, err)
+        check("an escalate: reply prints nothing on stdout", out == "", out)
+
+        seat_list = root / "seat-reading-list"
+        seat_list.mkdir()
+        exit_code, out, err = main_with_reply(seat_list, "read #1")
+        check("a reading list still prints on stdout with exit 0",
+              exit_code == 0 and out.strip() == "read #1", (exit_code, out, err))
+
+    check("any other reply has no caller message",
+          ghi_ask.caller_message_for_passthrough_reply("read #1, #2") is None
+          and ghi_ask.caller_message_for_passthrough_reply(
+              "Out-of-scope reasons are listed in #5") is None)
+    check("the two bare replies are still recognized case-insensitively",
+          ghi_ask.caller_message_for_passthrough_reply("OUT-OF-SCOPE")[1] == 2
+          and ghi_ask.caller_message_for_passthrough_reply("Escalate: x")[1] == 3)
 finally:
     patch_module_function(ghi_ask.mirror_refresh, "refresh", mirror_orig)
     patch("run_claude", run_claude_orig)
