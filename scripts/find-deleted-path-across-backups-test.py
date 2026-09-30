@@ -1171,6 +1171,17 @@ check("a box grep that fails is UNAVAILABLE and quotes grep",
 NO_LOG_STORE_ON_THIS_MACHINE = "/nonexistent-log-store-for-find-deleted-path-tests"
 os.environ["FIND_DELETED_PATH_LOG_STORE_ROOT"] = NO_LOG_STORE_ON_THIS_MACHINE
 
+# Which machine this is decides whether the box's transcripts and Timeshift
+# are searched over ssh (the Mac) or in place (the box itself). Every case
+# below that is not about that choice takes the Mac's answer, so the suite
+# gives one answer on either machine; the cases for the box set it themselves.
+# Forcing the box's answer in the program broke exactly the two --skip cases
+# that follow, so this line sits above them. getattr, so that this file still
+# runs its cases against a program without the test, the way they were shown
+# to fail without the change.
+real_running_on_ned_box = getattr(finder, "running_on_ned_box", None)
+finder.running_on_ned_box = lambda: False
+
 # --skip box exists because the box is asleep; the first version still sent
 # the transcripts grep over ssh (only the Timeshift call honoured the skip),
 # so the flag bought nothing but a ConnectTimeout wait.
@@ -1326,6 +1337,7 @@ class RunsLocallyRefusesSsh(FakeRunner):
 # cites this file's line 793 by number, and a line added above it moves it.
 import select  # noqa: E402
 import signal  # noqa: E402
+import socket  # noqa: E402
 import time  # noqa: E402
 
 
@@ -1668,6 +1680,136 @@ reports = finder.build_report("a/b.md", "/not-a-repo", "/nonexistent-transcripts
 check("the surfaces run in the docstring's order: the two fast new ones before transcripts and Timeshift",
       [r.surface for r in reports] == ["git", "git reflog", "log-store", "transcripts", "timeshift"],
       str([r.surface for r in reports]))
+
+# --------------------------------------------------------------------------
+# the box's own surfaces, searched on the box itself
+# --------------------------------------------------------------------------
+
+# GHI "The backup search cannot search ned-box's Timeshift when it runs on
+# ned-box, because it reaches "the box" by ssh to itself": from the box, the
+# ssh to nedlern@ned-box fails before logging in, so Timeshift was never
+# searched there and every run ended "Could NOT search: transcripts, timeshift".
+
+
+class RunsBashAndGrepHere(FakeRunner):
+    """Runs bash and grep for real, in `cwd`, and records every command.
+
+    Those are the two a run on the box starts for its own transcripts and
+    Timeshift; anything else, ssh included, answers from the table, so an
+    ssh that should not have been sent is recorded rather than attempted.
+    """
+
+    def __init__(self, table, cwd):
+        FakeRunner.__init__(self, table)
+        self.cwd = str(cwd)
+
+    def __call__(self, argv, timeout=None, cwd=None):
+        if argv[0] not in ("bash", "grep"):
+            return FakeRunner.__call__(self, argv, timeout, cwd)
+        self.calls.append(" ".join(argv))
+        return finder.run_command(argv, timeout=timeout or finder.SHORT_TIMEOUT_SECONDS, cwd=self.cwd)
+
+
+def run_as_if_on(machine_is_ned_box, wanted, box, runner, snapshot_root=None,
+                 skip=("localsnapshots", "git", "reflog", "logstore", "timemachine")):
+    """build_report as main() calls it, with this machine's name answered as given."""
+    finder.running_on_ned_box = lambda: machine_is_ned_box
+    try:
+        return finder.build_report(wanted, "/not-a-repo", str(Path(box, ".claude", "projects")), "nedlern@ned-box",
+                                   snapshot_root or str(Path(box, "snapshots")), ("/seat-a",), skip=set(skip),
+                                   runner=runner, log_store_root=NO_LOG_STORE_ON_THIS_MACHINE)
+    finally:
+        finder.running_on_ned_box = lambda: False
+
+
+with tempfile.TemporaryDirectory() as tmp:
+    box = Path(tmp, "box")
+    kept = Path(box, "snapshots", "2026-08-14_11-35-50", "localhost", "seat-a", "a")
+    kept.mkdir(parents=True)
+    Path(kept, "b.md").write_text("content Timeshift kept\n")
+    Path(box, "snapshots", "2026-08-13_10-00-00", "localhost", "seat-a").mkdir(parents=True)
+    projects = Path(box, ".claude", "projects", "p")
+    projects.mkdir(parents=True)
+    Path(projects, "quiet.jsonl").write_text('{"text": "nothing relevant"}\n')
+    Path(projects, "session.jsonl").write_text('{"text": "read a/b.md today"}\n')
+
+    on_box = RunsBashAndGrepHere([], box)
+    reports = run_as_if_on(True, "nowhere/c.md", box, on_box)
+    by_surface = {r.surface: r for r in reports}
+    check("on the box: no command is sent over ssh",
+          not any(c.startswith("ssh") for c in on_box.calls), str(on_box.calls))
+    check("on the box: the Timeshift probe runs in place, through bash",
+          any(c.startswith("bash -c ") and "ROOT=" in c for c in on_box.calls), str(on_box.calls))
+    check("on the box: the transcripts grep runs in place, over the box's own directory",
+          any(c.startswith("grep -rl") and c.endswith(str(Path(box, ".claude", "projects"))) for c in on_box.calls),
+          str(on_box.calls))
+    check("on the box: Timeshift is searched, and NOT FOUND after a real search on ned-box",
+          by_surface["timeshift"].status == NOT_FOUND
+          and by_surface["timeshift"].lines == ["searched every snapshot under %s on ned-box" % Path(box, "snapshots")],
+          "%s %s" % (by_surface["timeshift"].status, by_surface["timeshift"].lines))
+    check("on the box: transcripts names ned-box, and says the Mac was not searched and why",
+          by_surface["transcripts"].lines
+          == ["ned-box: searched %s, no transcript mentions it" % Path(box, ".claude", "projects"),
+              "the Mac: not searched — no route from ned-box to the Mac is documented"],
+          str(by_surface["transcripts"].lines))
+    summary = finder.render_summary(reports)
+    check("on the box: nothing found still exits 3, and the summary names transcripts alone, for the Mac",
+          by_surface["transcripts"].status == UNAVAILABLE and finder.exit_status(reports) == finder.EXIT_INCOMPLETE
+          and "Could NOT search: transcripts —" in summary,
+          "%s exit %s\n%s" % (by_surface["transcripts"].status, finder.exit_status(reports), summary))
+
+    on_box = RunsBashAndGrepHere([], box)
+    reports = run_as_if_on(True, "a/b.md", box, on_box)
+    by_surface = {r.surface: r for r in reports}
+    kept_copy = str(Path(kept, "b.md"))
+    check("on the box: a file Timeshift kept is FOUND in place, and recovered with cp, not scp",
+          by_surface["timeshift"].status == FOUND and by_surface["timeshift"].recovery == ["cp %s ." % kept_copy]
+          and by_surface["timeshift"].lines[0] == "1 snapshot(s) on ned-box still have it, newest first:",
+          "%s %s %s" % (by_surface["timeshift"].status, by_surface["timeshift"].lines, by_surface["timeshift"].recovery))
+    check("on the box: a transcript of the box's that mentions it is FOUND, named as ned-box's",
+          by_surface["transcripts"].status == FOUND
+          and "ned-box: 1 session transcript(s) mention it" in by_surface["transcripts"].lines,
+          str(by_surface["transcripts"].lines))
+    check("on the box: ... and still nothing over ssh", not any(c.startswith("ssh") for c in on_box.calls),
+          str(on_box.calls))
+
+    only_timeshift = ("localsnapshots", "git", "reflog", "logstore", "transcripts", "timemachine")
+    reports = run_as_if_on(True, "nowhere/c.md", box, RunsBashAndGrepHere([], box),
+                           snapshot_root=str(Path(box, "no-drive")), skip=only_timeshift)
+    check("on the box: an unmounted backup drive is UNAVAILABLE and names ned-box",
+          [(r.status, r.lines) for r in reports]
+          == [(UNAVAILABLE, ["%s does not exist on ned-box — is the backup drive mounted?" % Path(box, "no-drive")])],
+          str([(r.status, r.lines) for r in reports]))
+
+    on_mac = FakeRunner([("ssh", (1, "", ""))])
+    reports = run_as_if_on(False, "nowhere/c.md", box, on_mac)
+    by_surface = {r.surface: r for r in reports}
+    check("on the Mac: transcripts and Timeshift still reach the box over ssh, one call each",
+          sum(1 for c in on_mac.calls if c.startswith("ssh") and "nedlern@ned-box" in c and ".claude/projects" in c) == 1
+          and sum(1 for c in on_mac.calls if c.startswith("ssh") and "nedlern@ned-box" in c and "ROOT=" in c) == 1
+          and not any(c.startswith("bash") for c in on_mac.calls),
+          str(on_mac.calls))
+    check("on the Mac: transcripts' local half is still this Mac's",
+          by_surface["transcripts"].lines[0].startswith("this Mac: ")
+          and any(l.startswith("the box (nedlern@ned-box)") for l in by_surface["transcripts"].lines),
+          str(by_surface["transcripts"].lines))
+
+    # A local bash exits 255 only on its own account: it is not ssh's
+    # "could not connect", so on the box it is a search that did not complete.
+    reports = run_as_if_on(True, "a/b.md", box, FakeRunner([("bash", (255, "", "bash: oops\n"))]),
+                           skip=only_timeshift)
+    check("on the box: a probe exiting 255 did not complete; it is never 'the box is unreachable'",
+          [(r.status, r.lines) for r in reports]
+          == [(UNAVAILABLE, ["the search on ned-box did not complete (exit 255) — bash: oops"])],
+          str([(r.status, r.lines) for r in reports]))
+
+check("the machine test is the locator's: the host name before its first dot is ned-box",
+      callable(real_running_on_ned_box)
+      and real_running_on_ned_box("ned-box") and real_running_on_ned_box("ned-box.lan")
+      and not real_running_on_ned_box("Els-MacBook-Pro.local") and not real_running_on_ned_box("ned-boxer"))
+check("... and with no name given it reads this machine's",
+      callable(real_running_on_ned_box)
+      and real_running_on_ned_box() == (socket.gethostname().split(".")[0] == "ned-box"))
 
 # --------------------------------------------------------------------------
 # Time Machine — the surface with the password wall
