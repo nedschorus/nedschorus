@@ -150,11 +150,11 @@ class TopicBranchGitRecord:
 
     def cut_topic_branch(self):
         """Cut the topic branch from `origin/main`, named for the component,
-        naming the start point explicitly (the topic-branch rule,
+        naming the start point explicitly (the topic branch rule,
         docs/issues/238-topic-branch-creation-script-design.md). A refusal
         — the branch already exists, as after a run that ended failed —
         is TopicBranchCutRefused, an ordinary outcome rather than a crash,
-        as the topic-branch rule has it."""
+        as the topic branch rule has it."""
         start_point = self.topic_branch_start_point
         cut = self.git("checkout", "-b", self.component, start_point, check=False)
         if cut.returncode != 0:
