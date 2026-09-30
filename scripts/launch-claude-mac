@@ -140,7 +140,7 @@ esac
 # identity at all because GitHub refuses an approving review from a pull
 # request's author — so the account that approves cannot be the one that
 # opened it
-# (docs/nedschorus-wiki/queue/github-identities-credentials-and-token-policy.md).
+# (docs/nedschorus-wiki/nedschorus-github-identities-and-token-policy.md).
 #
 # Measured on this Mac 2026-09-22, and the defect this exists to close: `gh
 # auth status` reports the login as `nedlern` — the USER — holding a CLASSIC

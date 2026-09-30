@@ -700,7 +700,7 @@ def main() -> int:
         # The merge-lane seat must be `ned-review-merge`, because that is the
         # account main's protection lets merge and GitHub refuses an
         # approving review from a pull request's author
-        # (docs/nedschorus-wiki/queue/github-identities-credentials-and-token-policy.md).
+        # (docs/nedschorus-wiki/nedschorus-github-identities-and-token-policy.md).
         # Both accounts hold a token file here, so the case measures a
         # CHOICE rather than the only file present.
         merge_token = "github_pat_NED_REVIEW_MERGE_TEST_ONLY_not-a-real-credential"
