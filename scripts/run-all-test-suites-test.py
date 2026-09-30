@@ -194,6 +194,7 @@ def run(root, *arguments, checkout=None, lock_file=None, rendezvous_seconds="20"
                "--checkout", str(checkout if checkout is not None else root / "repo"),
                "--log-dir", str(root / "logs"),
                "--lock-file", str(lock_file if lock_file is not None else root / "run.lock"),
+               "--recorded-inputs-directory", str(root / "recordings"),
                *arguments]
     return subprocess.run(command, capture_output=True, text=True, env=environment,
                           stdin=subprocess.DEVNULL, check=False)
@@ -510,6 +511,220 @@ check("GIT_CEILING_DIRECTORIES is kept: stripping it would widen where git looks
 check("the rest of the environment is passed through, not rebuilt",
       stripped_environment.get("A_VARIABLE_THAT_IS_NOT_GIT_S") == "kept"
       and stripped_environment.get("PATH") == os.environ.get("PATH"))
+
+# --- Recorded inputs: a suite reruns only when a file it read differs --------
+# Walk open-questions-concerns-and-recommendations-2026-09-30, item 5. Each
+# suite reads something different, by a different route: a file it opens, a
+# file a Python child it starts opens, a program it loads by path the way 57
+# suites on main load theirs, a directory it lists, and the checkout's file
+# list through git. Two full runs record them (the second finds the loaded
+# program's bytecode already cached, so it never opens the source); then one
+# file changes at a time, and only the suite that read it may run.
+#
+# Against the program without this change, every case below fails: it has no
+# --only-suites-whose-recorded-inputs-changed-since, so each selective run is
+# refused with exit 2 and nothing runs.
+CHANGED_SINCE = "--only-suites-whose-recorded-inputs-changed-since"
+RECORDING_SUITES = {
+    "reads-a-file-test.py": "pathlib.Path('inputs/read-directly.txt').read_text()\n",
+    "child-reads-a-file-test.py": (
+        "import subprocess\n"
+        "subprocess.run([sys.executable, '-c', "
+        "\"open('inputs/read-by-a-child.txt').read()\"], check=True)\n"),
+    "loads-a-program-by-path-test.py": (
+        "import importlib.util\n"
+        "spec = importlib.util.spec_from_file_location("
+        "'loaded_by_path', 'programs/loaded-by-path.py')\n"
+        "module = importlib.util.module_from_spec(spec)\n"
+        "spec.loader.exec_module(module)\n"
+        "sys.exit(0 if module.VALUE else 1)\n"),
+    "lists-a-directory-test.py": "print(sorted(os.listdir('skills')))\n",
+    "lists-files-through-git-test.py": (
+        "import subprocess\n"
+        "subprocess.run(['git', 'ls-files'], check=True, capture_output=True)\n"),
+    # git run from the checkout on a repository of the suite's own reads
+    # nothing of the checkout's, so a change to the checkout never selects it.
+    "runs-git-on-its-own-repository-test.py": (
+        "import subprocess, tempfile\n"
+        "with tempfile.TemporaryDirectory() as own:\n"
+        "    subprocess.run(['git', 'init', '-q', own + '/origin'], check=True)\n"
+        "    subprocess.run(['git', 'clone', '-q', own + '/origin', own + '/copy'],\n"
+        "                   check=True, capture_output=True)\n"),
+    "reads-nothing-else-test.py": PASSES,
+    "reads-a-file-only-when-asked-test.py": (
+        f"if (pathlib.Path(os.environ['{RAN_FILE_VARIABLE}']).parent / 'ask.txt').exists():\n"
+        "    pathlib.Path('inputs/read-when-asked.txt').read_text()\n"),
+}
+RECORDING_INPUTS = {
+    ".gitignore": "__pycache__/\n",
+    "inputs/read-directly.txt": "first\n",
+    "inputs/read-by-a-child.txt": "first\n",
+    "programs/loaded-by-path.py": "VALUE = 1\n",
+    "skills/one.md": "one\n",
+    "inputs/read-when-asked.txt": "first\n",
+    "unread.txt": "nobody reads this\n",
+}
+
+
+def commit_files(repo, files, message):
+    for relative, body in files.items():
+        path = repo / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(body)
+    git(repo, "add", "-A")
+    git(repo, "commit", "-q", "-m", message)
+    return git(repo, "rev-parse", "HEAD").stdout.strip()
+
+
+def selective_run(root, since):
+    (root / "ran.txt").unlink(missing_ok=True)
+    return run(root, CHANGED_SINCE, since)
+
+
+def recording(root, suite):
+    found = list((root / "recordings").glob(f"*/{suite.replace('/', '__')}.json"))
+    return json.loads(found[0].read_text()) if found else {}
+
+
+with tempfile.TemporaryDirectory() as scratch:
+    root = pathlib.Path(scratch)
+    repo = make_repo(root, RECORDING_SUITES)
+    base = commit_files(repo, RECORDING_INPUTS, "inputs")
+    (root / "ask.txt").write_text("read it\n")
+    first = run(root)
+    asked = recording(root, "reads-a-file-only-when-asked-test.py")
+    (root / "ask.txt").unlink()
+    second = run(root)
+    check("two full runs of the recording fixture pass",
+          first.returncode == 0 and second.returncode == 0,
+          (first.stdout, second.stdout, first.stderr))
+    check("a full run says how inputs are recorded and where they are kept",
+          len(lines(second.stdout)) > 1
+          and lines(second.stdout)[1].startswith("inputs recorded by python-audit-hook")
+          and str(root / "recordings") in lines(second.stdout)[1], lines(second.stdout)[:2])
+    check("a file a suite opens is recorded, with its blob hash",
+          "inputs/read-directly.txt" in recording(root, "reads-a-file-test.py").get("reads", {}),
+          recording(root, "reads-a-file-test.py"))
+    check("a file a Python child process of the suite opens is recorded",
+          "inputs/read-by-a-child.txt"
+          in recording(root, "child-reads-a-file-test.py").get("reads", {}),
+          recording(root, "child-reads-a-file-test.py"))
+    check("a program loaded by path is recorded as its source, though its bytecode was cached",
+          "programs/loaded-by-path.py"
+          in recording(root, "loads-a-program-by-path-test.py").get("reads", {}),
+          recording(root, "loads-a-program-by-path-test.py"))
+    check("a directory the suite lists is recorded, and the import system's listings are not",
+          recording(root, "lists-a-directory-test.py").get("lists") == ["skills"],
+          recording(root, "lists-a-directory-test.py"))
+    check("a git command run on the checkout is recorded",
+          recording(root, "lists-files-through-git-test.py").get(
+              "git_commands_on_the_checkout") == ["ls-files"],
+          recording(root, "lists-files-through-git-test.py"))
+    check("git init and git clone of a repository outside the checkout, run from the "
+          "checkout, are not recorded as git on the checkout",
+          recording(root, "runs-git-on-its-own-repository-test.py").get(
+              "git_commands_on_the_checkout") == [],
+          recording(root, "runs-git-on-its-own-repository-test.py"))
+    check("a run records what its suite read in that run, not what an earlier run into "
+          "the same log directory read",
+          "inputs/read-when-asked.txt" in asked.get("reads", {})
+          and "inputs/read-when-asked.txt" not in recording(
+              root, "reads-a-file-only-when-asked-test.py").get("reads", {}),
+          (asked, recording(root, "reads-a-file-only-when-asked-test.py")))
+    check("a file no suite reads is in no recording",
+          not any("unread.txt" in recording(root, suite).get("reads", {})
+                  for suite in RECORDING_SUITES))
+
+    result = selective_run(root, base)
+    out = lines(result.stdout)
+    check("with nothing changed since the commit, no suite runs, and the run exits 0",
+          result.returncode == 0 and ran(root) == [], (ran(root), result.stdout))
+    check("an unchanged suite is NOT SELECTED, saying none of the files it read differs",
+          any(line.startswith("NOT SELECTED reads-nothing-else-test.py: none of the 1 files "
+                              f"it read differs since {base[:12]}") for line in out), out)
+    check("the SUMMARY counts the suites not selected",
+          bool(out) and out[-1].endswith(f"; 8 suites not selected, their recorded inputs "
+                                         f"unchanged since {base[:12]}"), out[-1:])
+
+    commit_files(repo, {"inputs/read-directly.txt": "second\n"}, "change a file one suite reads")
+    result = selective_run(root, base)
+    out = lines(result.stdout)
+    check("a changed file a suite read selects that suite, and only that suite",
+          ran(root) == ["reads-a-file-test.py"], (ran(root), result.stdout, result.stderr))
+    check("the SELECTED line names the file that differs",
+          "SELECTED reads-a-file-test.py: it reads inputs/read-directly.txt, which differs"
+          in out, out)
+    base = git(repo, "rev-parse", "HEAD").stdout.strip()
+
+    commit_files(repo, {"inputs/read-by-a-child.txt": "second\n"}, "change a child's input")
+    result = selective_run(root, base)
+    check("a changed file a child process read selects the suite that started the child",
+          ran(root) == ["child-reads-a-file-test.py"], (ran(root), result.stdout))
+    base = git(repo, "rev-parse", "HEAD").stdout.strip()
+
+    commit_files(repo, {"programs/loaded-by-path.py": "VALUE = 2\n"}, "change the program")
+    result = selective_run(root, base)
+    check("a changed program loaded by path selects the suite that loads it",
+          ran(root) == ["loads-a-program-by-path-test.py"], (ran(root), result.stdout))
+    base = git(repo, "rev-parse", "HEAD").stdout.strip()
+
+    commit_files(repo, {"skills/two.md": "two\n"}, "add a file to a listed directory")
+    result = selective_run(root, base)
+    out = lines(result.stdout)
+    check("a file added to a directory a suite lists selects that suite, and so does "
+          "one running git ls-files on the checkout",
+          ran(root) == ["lists-a-directory-test.py", "lists-files-through-git-test.py"],
+          (ran(root), result.stdout))
+    check("the SELECTED line names the directory and the added file",
+          "SELECTED lists-a-directory-test.py: it lists skills/, where skills/two.md was added"
+          in out, out)
+    base = git(repo, "rev-parse", "HEAD").stdout.strip()
+
+    for recording_file in (root / "recordings").glob("*/reads-nothing-else-test.py.json"):
+        recording_file.unlink()
+    result = selective_run(root, base)
+    check("a suite with no recording on this machine runs, saying so",
+          ran(root) == ["reads-nothing-else-test.py"]
+          and "SELECTED reads-nothing-else-test.py: no recording of its inputs on this "
+              "machine yet" in lines(result.stdout), (ran(root), result.stdout))
+
+    for changed in ("scripts/run-all-test-suites.py", ".claude/hooks/a-hook.py",
+                    ".claude/settings.json"):
+        base = git(repo, "rev-parse", "HEAD").stdout.strip()
+        commit_files(repo, {changed: f"# {changed}\n"}, f"change {changed}")
+        result = selective_run(root, base)
+        check(f"a change to {changed} runs every suite, saying why",
+              ran(root) == sorted(RECORDING_SUITES)
+              and f"SELECTED reads-nothing-else-test.py: {changed} differs, and every suite "
+                  f"runs under it" in lines(result.stdout), (ran(root), result.stdout))
+
+    result = run(root, CHANGED_SINCE, "no-such-commit")
+    check("a commit git cannot resolve is refused, exit 2, before anything runs",
+          result.returncode == 2 and CHANGED_SINCE in result.stderr, (result.returncode,
+                                                                      result.stderr))
+
+# --- The recorder runs the sitecustomize.py it shadows ------------------------
+# Both machines' Pythons ship one (Homebrew's on the Mac sets sys.executable),
+# and the recorder is put in front of it on PYTHONPATH. Here a PYTHONPATH the
+# program is given carries one that writes down the process it ran in; the
+# suite fails unless it ran in the suite's own process, not only in the
+# program's, whose environment the suite inherits.
+with tempfile.TemporaryDirectory() as scratch:
+    root = pathlib.Path(scratch)
+    make_repo(root, {"needs-the-shadowed-sitecustomize-test.py": (
+        "ran_in = (here := pathlib.Path(os.environ['" + RAN_FILE_VARIABLE + "']).parent"
+        " / 'shadowed-ran-in.txt').read_text().split()\n"
+        "sys.exit(0 if str(os.getpid()) in ran_in else 1)\n")})
+    shadowed = root / "shadowed"
+    shadowed.mkdir()
+    (shadowed / "sitecustomize.py").write_text(
+        "import os, pathlib\n"
+        "with open(pathlib.Path(os.environ['" + RAN_FILE_VARIABLE + "']).parent"
+        " / 'shadowed-ran-in.txt', 'a') as ran_in:\n"
+        "    ran_in.write(f'{os.getpid()}\\n')\n")
+    result = run(root, environment_extra={"PYTHONPATH": str(shadowed)})
+    check("a sitecustomize.py already on PYTHONPATH still runs beneath the recorder",
+          result.returncode == 0, (result.stdout, result.stderr))
 
 # --- The defaults -------------------------------------------------------------
 defaults = module.parse_arguments([])
