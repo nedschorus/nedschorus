@@ -57,8 +57,8 @@ passing review.
   the credential able to push main belongs to a dedicated system user,
   reached only through the main-gatekeeper, which logs every use). Dormant
   until its credential work lands.
-- **The PR process** — until the gate activates: a topic starts on a
-  branch cut from current main and is PR'd as soon as its tests pass, and
+- **The PR process** — until the gate activates: each pull request
+  merges one atomic topic branch, and
   the merge-lane agent-seat reviews and merges every PR (deputization, recorded
   at R13, is the ruled exception). Recorded in CLAUDE.md's PR-process paragraph.
   The earlier form — commits accumulating on a seat branch, cherry-picked
