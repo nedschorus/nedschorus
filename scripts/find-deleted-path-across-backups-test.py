@@ -1037,16 +1037,33 @@ check("run_command: ... and it keeps the rest of its caller's environment",
 
 
 def other_clone_fixture(tmp):
-    """A second repository that has never held a/b.md: the clone a caller's
-    redirect variable names instead of the one searched."""
+    """The clone a caller's redirect variable names instead of the one searched.
+    No branch in it reaches a/b.md, but its reflog does: a commit that added
+    a/b.md on a branch since deleted. Searched by mistake, it turns the reflog
+    surface's NOT FOUND for the asked repository into a FOUND of this clone's
+    commit, so the reflog case below can fail."""
     other = Path(tmp, "other-clone")
     other.mkdir()
     git_clean("init", "-q", "-b", "main", cwd=other)
     Path(other, "unrelated.md").write_text("unrelated\n")
     git_clean("add", "unrelated.md", cwd=other)
     git_clean("commit", "-q", "-m", "unrelated", cwd=other, date="2026-08-20T10:00:00")
+    git_clean("checkout", "-q", "-b", "gone", cwd=other)
+    Path(other, "a").mkdir()
+    Path(other, "a", "b.md").write_text("the other clone's copy\n")
+    git_clean("add", "a/b.md", cwd=other)
+    git_clean("commit", "-q", "-m", "add a/b.md on a branch since deleted", cwd=other, date="2026-08-21T10:00:00")
+    git_clean("checkout", "-q", "main", cwd=other)
+    git_clean("branch", "-q", "-D", "gone", cwd=other)
     return other
 
+
+with tempfile.TemporaryDirectory() as tmp:
+    other = other_clone_fixture(tmp)
+    report = finder.search_git_reflog("a/b.md", str(other))
+    check("redirect fixture: the other clone's reflog alone holds a/b.md, so a search sent there by mistake "
+          "FINDS it and the case below measures what it claims",
+          report.status == FOUND, "%s %s" % (report.status, report.lines))
 
 for variable in ("GIT_COMMON_DIR", "GIT_DIR"):
     with tempfile.TemporaryDirectory() as tmp:
