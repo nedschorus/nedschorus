@@ -1,5 +1,5 @@
 # nedschorus SDLC terms
 
-Standard software-engineering terms the user has directed this project to use where an agent or a reviewer proposed a coined term instead; the /cold-read skill's step 8 sends them here. One line per term, in alphabetical order: the term, then what this project uses it for. A term listed here is not a project-term and is never hyphenated; project-terms are listed in the glossary, `docs/nedschorus-wiki/nedschorus-glossary.md`.
+Standard software-engineering terms this project relies on, each used with its standard meaning; the /cold-read skill's step 8 also sends here a standard term the user directs in place of a coined one. One line per term, in alphabetical order: the term, then what this project uses it for. A term listed here is not a project-term and is never hyphenated; project-terms are listed in the glossary, `docs/nedschorus-wiki/nedschorus-glossary.md`.
 
-None yet.
+- **topic branch** — in Git's sense, a branch for one topic, a feature or a bugfix; in this project, the branch a pull request merges. Not a seat-branch.
