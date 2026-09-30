@@ -2451,12 +2451,16 @@ with tempfile.TemporaryDirectory() as tmp:
             gone_refusal = None
         except finder.CitedQueryCannotBePlaced as error:
             gone_refusal = str(error)
+        except Exception as error:  # reported as this case's failure, not a crash of the whole suite
+            gone_refusal = "raised %r" % error
         with contextlib.redirect_stderr(gone_errors):
             try:
                 finder.main(["../x.md", "--repo", str(tmp)], runner=gone_runner)
                 gone_exit = None
             except SystemExit as stop:
                 gone_exit = stop.code
+            except Exception as error:
+                gone_exit = "raised %r" % error
     finally:
         os.chdir(directory_before)
 check("cited query: from a current directory that no longer exists, ../ is refused with what to give instead",
@@ -2493,15 +2497,18 @@ with tempfile.TemporaryDirectory() as tmp:
     repo = git_fixture_repo(tmp)
     subdirectory = Path(repo, "sub")
     subdirectory.mkdir()
+    code, out, _ = finder.run_command(["git", "-C", str(repo), "rev-parse", "--show-toplevel"])
+    top_level = out.strip()
     for repo_argument in (".", str(repo)):
         os.chdir(str(subdirectory))
         try:
             captured = io.StringIO()
+            recorded = RunsLocallyRefusesSsh([])
             with contextlib.redirect_stdout(captured):
                 code = finder.main(["../a/b.md", "--repo", repo_argument,
                                     "--skip", "localsnapshots", "--skip", "reflog", "--skip", "logstore",
                                     "--skip", "transcripts", "--skip", "box", "--skip", "timemachine"],
-                                   runner=RunsLocallyRefusesSsh([]))
+                                   runner=recorded)
             text = captured.getvalue()
             shown = [l.split("$ ", 1)[1] for l in text.splitlines() if l.strip().startswith("$ git ")]
             recovered = (subprocess.run(["sh", "-c", shown[0]], capture_output=True, text=True).stdout
@@ -2515,10 +2522,13 @@ with tempfile.TemporaryDirectory() as tmp:
               "exit=%s\n%s" % (code, text))
         check("cited query: ... and its recovery command, run from that subdirectory, prints the file",
               shown and shown[0].endswith(":a/b.md") and recovered == "v2\n", "%s -> %r" % (shown, recovered))
-    code, out, _ = finder.run_command(["git", "-C", str(repo), "rev-parse", "--show-toplevel"])
+        git_log_calls = [c for c in recorded.calls if c.startswith("git -C ") and " log " in c]
+        check("cited query: ... and every git log lookup runs at the repository's top level, not the subdirectory",
+              git_log_calls and all(c.startswith("git -C %s log " % top_level) for c in git_log_calls),
+              "\n".join(git_log_calls))
     check("cited query: the snapshot surface, handed the repo-relative form, tests the file inside the repository",
           finder._local_snapshot_probe_path("a/b.md", str(repo), finder.run_command)[0]
-          == finder._below_data_volume(os.path.join(out.strip(), "a", "b.md")),
+          == finder._below_data_volume(os.path.join(top_level, "a", "b.md")),
           str(finder._local_snapshot_probe_path("a/b.md", str(repo), finder.run_command)))
 
 # A FOUND stands alone: when the copy at the wanted path is newer than every
