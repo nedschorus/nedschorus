@@ -180,6 +180,8 @@ and this program never is.
 The git recovery command it prints is run later in its caller's shell, where
 those variables may still be set, so it is printed as `env -u GIT_DIR ...
 git -C <repo> show <commit>:<path>`, unsetting the same variables itself.
+The prefix is the locator's PRINTED_GIT_INVOCATION_WITHOUT_REDIRECTING_VARIABLES,
+so the two programs print one form.
 Printed as a bare `git -C`, under a caller's GIT_COMMON_DIR or GIT_DIR it
 exited 128 instead of printing the file: Codex's review cell on PR "The
 backup search's commands ignore a caller's git redirect variables", fixed
@@ -317,11 +319,10 @@ _locator_spec = importlib.util.spec_from_file_location(
 locator = importlib.util.module_from_spec(_locator_spec)
 _locator_spec.loader.exec_module(locator)
 
-# How a printed git recovery command begins: git run with the locator's
-# GIT_REDIRECTING_VARIABLES unset, so it reads the repository it names from
-# whatever shell it is pasted into (see EVERY COMMAND THIS PROGRAM STARTS).
-PRINTED_GIT_INVOCATION_WITHOUT_REDIRECTING_VARIABLES = "env %s git" % " ".join(
-    "-u %s" % name for name in locator.GIT_REDIRECTING_VARIABLES)
+# How a printed git recovery command begins: the locator's, defined once
+# there, so both programs print the same form (see EVERY COMMAND THIS PROGRAM
+# STARTS).
+PRINTED_GIT_INVOCATION_WITHOUT_REDIRECTING_VARIABLES = locator.PRINTED_GIT_INVOCATION_WITHOUT_REDIRECTING_VARIABLES
 
 FOUND = "FOUND"
 NOT_FOUND = "NOT FOUND"

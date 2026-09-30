@@ -257,9 +257,10 @@ run next. The user ruled on 2026-09-29 that it runs it itself (walk
 item 17, "y"). It starts only after this program's own answer, closing lines
 included, has been printed, and only when that answer has no copy, so a copy
 that is found still answers in a couple of seconds.
-  - It runs as a program, never imported: it imports this file for
-    split_host and KNOWN_HOST_HOMES, and each loading the other would never
-    end.
+  - It runs as a program, never imported: it imports this file for the
+    names the two share, the host rule, the git redirect variables and the
+    printed git invocation among them, and each loading the other would
+    never end.
   - It is given the query as this program placed it: a bare name as it is,
     any other path in its canonical spelling. A query reaches it only when no
     copy is at that path, on disk or in any clone's history (a commit that
@@ -353,7 +354,8 @@ GIT_REDIRECTING_VARIABLES = (
 # How a printed `git show` command begins: git run with
 # GIT_REDIRECTING_VARIABLES unset, so it reads the clone it names from
 # whatever shell it is pasted into (EVERY GIT THIS PROGRAM RUNS in the module
-# docstring). The same name and text as the backup search's.
+# docstring). The backup search imports it, so the two programs print one
+# form.
 PRINTED_GIT_INVOCATION_WITHOUT_REDIRECTING_VARIABLES = "env %s git" % " ".join(
     "-u %s" % name for name in GIT_REDIRECTING_VARIABLES)
 
