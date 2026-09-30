@@ -1206,7 +1206,8 @@ with tempfile.TemporaryDirectory() as scratch:
     passed_deny_rules = (json.loads(passed_settings).get("permissions", {}).get("deny", [])
                          if passed_settings.startswith("{") else [])
     check("the Claude cell denies reading every credential path",
-          set(passed_deny_rules) >= {"Read(~/.config/nedschorus/**)", "Read(~/.ssh/**)",
+          set(passed_deny_rules) >= {"Read(~/.config/nedschorus/**)", "Read(~/.config/gh/**)",
+                                     "Read(~/.ssh/**)",
                                      "Read(//**/*.token)", "Read(//**/.env)"},
           repr(passed_deny_rules))
     # Every reviewer program's login file, Claude's own included (user-ruled
@@ -1223,16 +1224,17 @@ with tempfile.TemporaryDirectory() as scratch:
     # The Codex cell, the same rule in Codex's terms: a named permission
     # profile extending :workspace, which Codex will not combine with
     # --sandbox. The cell runs with HOME at a scratch home holding
-    # .config/nedschorus and no .ssh, and three canaries: one in the
-    # repository and one in the home, which the Linux profile must name, and
-    # one in neither, which it must not -- a path outside the scanned roots
-    # can be deleted by its owner before Codex starts, and Codex then stops
-    # or recreates it on the real disk (review 5346123311).
+    # .config/nedschorus and .config/gh and no .ssh, and three canaries: one
+    # in the repository and one in the home, which the Linux profile must
+    # name, and one in neither, which it must not -- a path outside the
+    # scanned roots can be deleted by its owner before Codex starts, and
+    # Codex then stops or recreates it on the real disk (review 5346123311).
     shutil.rmtree(repository)
     repository = build_scratch_repository(scratch)
     report = report_path_for(repository, "codex-denies-credentials", "codex")
     scratch_home = scratch / "codex-scratch-home"
     (scratch_home / ".config" / "nedschorus").mkdir(parents=True, exist_ok=True)
+    (scratch_home / ".config" / "gh").mkdir(parents=True, exist_ok=True)
     credential_canary = repository / "codex-credential-canary.token"
     home_canary = scratch_home / "projects" / "codex-home-canary.token"
     unscanned_canary = scratch / "neither-home-nor-repository" / "codex-unscanned-canary.token"
@@ -1261,7 +1263,7 @@ with tempfile.TemporaryDirectory() as scratch:
                          if override.startswith("permissions.cold-read-no-credentials.filesystem=")),
                         "")
     home = str(scratch_home)
-    expected_denials = [f'"{home}/.config/nedschorus"="deny"']
+    expected_denials = [f'"{home}/.config/nedschorus"="deny"', f'"{home}/.config/gh"="deny"']
     expected_denials += [f'"{login}"="deny"' for login in login_canaries]
     expected_denials += ([f'"{credential_canary}"="deny"', f'"{home_canary}"="deny"']
                          if sys.platform.startswith("linux")
@@ -1302,12 +1304,14 @@ with tempfile.TemporaryDirectory() as scratch:
     # on the Mac too. The credential directories are pointed at the scratch
     # home for the call, so the real home's paths never reach a failure line
     # (review 5347451780); the module computed them from the real HOME at import.
+    # Each is re-rooted from the real list rather than listed here, so a
+    # directory dropped from CREDENTIAL_DIRECTORIES drops out of both tables.
     real_scan = codex_module.common.credential_files_found_now
     real_directories = codex_module.common.CREDENTIAL_DIRECTORIES
     real_login_files = codex_module.common.REVIEWER_PROGRAM_LOGIN_FILES
     codex_module.common.credential_files_found_now = lambda: [str(home_canary)]
-    codex_module.common.CREDENTIAL_DIRECTORIES = (scratch_home / ".config" / "nedschorus",
-                                                  scratch_home / ".ssh")
+    codex_module.common.CREDENTIAL_DIRECTORIES = tuple(
+        scratch_home / directory.relative_to(Path.home()) for directory in real_directories)
     codex_module.common.REVIEWER_PROGRAM_LOGIN_FILES = {
         "claude": (login_canaries[0],), "codex": (login_canaries[1],),
         "agy": (login_canaries[2], absent_login_file)}
@@ -1333,6 +1337,9 @@ with tempfile.TemporaryDirectory() as scratch:
           scratch_credential_directory_denial in profile_tables["darwin"]
           and '"/**/*.token"="deny"' in profile_tables["darwin"]
           and '"/**/.env"="deny"' in profile_tables["darwin"], profile_tables["darwin"])
+    check("both platforms' profiles deny gh's login directory",
+          all(f'"{home}/.config/gh"="deny"' in profile_tables[platform]
+              for platform in ("linux", "darwin")), repr(profile_tables))
     check("neither platform's profile names the real home's credential directories",
           not any(str(directory) in profile_tables[platform]
                   for directory in real_directories for platform in ("linux", "darwin")),
