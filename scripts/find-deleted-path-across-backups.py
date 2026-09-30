@@ -170,7 +170,33 @@ There is no recovery flag: each FOUND line is followed by the exact command
 that recovers the content, for you to run.
 
 <path> may be repo-relative ("docs/issues/46-x.md"), absolute, or any trailing
-fragment of a path ("dispositions.md"). Fragments match by path suffix.
+fragment of a path ("dispositions.md"). Fragments match by path suffix. It
+may also be written as it is cited: in the scp form
+("nedlern@ned-box:/home/nedlern/nedschorus-logs/x.md", or "ned-box:<path>"),
+from the current directory ("../x.md", "./x.md"), or from a home ("~/x.md").
+Each of those is turned into the path it names before any surface is
+searched, and the header shows both.
+
+WHY THE CITED FORMS ARE READ. Until 2026-09-29 a query was searched exactly as
+typed, and two forms an agent really writes were never found anywhere. The
+scp form, which CLAUDE.md prescribes for citing a log-store file, ends no path
+in any store, so a copy sitting at exactly that path was listed only as a
+candidate in "another directory", NOT FOUND, exit 1 (measured on the walk
+minutes of merge-lane-mac-helper-open-items-and-questions-2026-09-23 the day
+they were shipped). A path through `../` was matched as a literal suffix, and
+the local-snapshot surface joined it onto the repository's top level, testing
+the directory ABOVE it. Both were raised as questions on PR "The lost-file tool
+searches git's reflog and the log-store, and prints each place as it finishes"
+(review 5298941029) and left unfiled until the user ruled, 2026-09-29, walk
+merge-lane-mac-helper-open-items-and-questions-2026-09-23 item 17: "If we are
+going to use it, it should work properly." Which prefixes are hosts, and which
+hosts' homes are known, is the locator's rule, imported from
+locate-file-copies-across-machines.py rather than copied; so the locator must
+never import this file in turn, and runs it as a program. `~` is expanded to
+a home. Only paths that begin with `.` or `..`, or hold a `..`, are placed
+from the current directory: "docs/x.md" stays repo-relative or a fragment, as
+the paragraph above says, where the locator would place it from the current
+directory too.
 
 ONE FORM THE LOCAL-SNAPSHOT SURFACE CANNOT TAKE. A mounted snapshot is tested
 with a single `test -e`, which needs a known path; locating a trailing fragment
@@ -202,6 +228,7 @@ because counting them told a wrapper "found" for a path that never existed.
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import os
 import re
 import shlex
@@ -209,6 +236,13 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+
+# What counts as an scp host prefix, and which hosts' homes are known: the
+# locator's rule, defined once there (see WHY THE CITED FORMS ARE READ).
+_locator_spec = importlib.util.spec_from_file_location(
+    "locate_file_copies_across_machines", Path(__file__).with_name("locate-file-copies-across-machines.py"))
+locator = importlib.util.module_from_spec(_locator_spec)
+_locator_spec.loader.exec_module(locator)
 
 FOUND = "FOUND"
 NOT_FOUND = "NOT FOUND"
@@ -363,6 +397,50 @@ def path_matches(candidate, wanted):
     if candidate == wanted:
         return True
     return candidate.endswith("/" + wanted)
+
+
+class CitedQueryCannotBePlaced(Exception):
+    """The query names a path this program cannot work out; the text says what to give instead."""
+
+
+def _plain_path_from_cited_query(query, cwd=None):
+    """The path a query names, however it was written (see WHY THE CITED FORMS ARE READ).
+
+    * `[user@]host:path` loses its host by the locator's split_host. A path
+      after the host that is not absolute is inside that host's home, `~`
+      included, when KNOWN_HOST_HOMES knows the host.
+    * `~` and `~/...` are expanded on this machine.
+    * A path whose first component is `.` or `..`, or that has a `..`
+      component anywhere, is made absolute from `cwd` (the current
+      directory by default).
+
+    Anything else comes back exactly as given. Raises CitedQueryCannotBePlaced
+    for a relative path with directories after a host whose home is not
+    known, and when the current directory is needed and no longer exists.
+    """
+    host, path = locator.split_host(query)
+    if host is not None and not path.startswith("/"):
+        home = locator.KNOWN_HOST_HOMES.get(host.split(".")[0])
+        inside = path[2:] if path.startswith("~/") else ("" if path == "~" else path)
+        if home:
+            return os.path.normpath(home + ("/" + inside if inside else ""))
+        if "/" in inside.rstrip("/"):
+            raise CitedQueryCannotBePlaced(
+                "Give the file's absolute path on %s: this program does not know that host's home directory." % host)
+        return inside
+    if path == "~" or path.startswith("~/"):
+        return os.path.expanduser(path)
+    parts = path.split("/")
+    if path.startswith("/") or not (parts[0] in (".", "..") or ".." in parts):
+        return path
+    if cwd is None:
+        try:
+            cwd = os.getcwd()
+        except OSError:
+            raise CitedQueryCannotBePlaced(
+                "Give the file's absolute path: the current directory no longer exists, so %r cannot be placed "
+                "from it." % query)
+    return os.path.normpath(os.path.join(cwd, path))
 
 
 # --------------------------------------------------------------------------
@@ -849,15 +927,24 @@ def _search_git_revisions(wanted, repo, runner, surface, revisions, never_contai
              "re-run with the path relative to the repository, or a trailing fragment of it"],
         )
 
+    # git reads a pathspec from the directory -C names, and every path asked
+    # about here is relative to the top level: the query is made so, and
+    # `--name-only` prints them so. The lookups therefore run at the top
+    # level. Run from a subdirectory with --repo ".", `../scripts/x.py` became
+    # scripts/x.py above and was then looked for as <subdirectory>/scripts/x.py:
+    # NOT FOUND for a file git held.
+    code, out, _ = runner(["git", "-C", repo, "rev-parse", "--show-toplevel"])
+    top_level = out.strip() if code == 0 and out.strip() else repo
+
     lines = []
     recovery = []
     dates_held = []
     try:
-        paths = _git_candidate_paths(wanted, repo, runner, revisions)
+        paths = _git_candidate_paths(wanted, top_level, runner, revisions)
         if not paths:
             return SurfaceReport(surface, NOT_FOUND, [never_contained_template % (repo, wanted)])
         for path in paths:
-            commit = _git_newest_commit_holding(path, repo, runner, revisions, parents_outside_every_ref)
+            commit = _git_newest_commit_holding(path, top_level, runner, revisions, parents_outside_every_ref)
             if commit is None:
                 continue
             sha, date, subject = commit
@@ -1150,13 +1237,7 @@ def search_log_store(wanted, log_store_root, box_ssh_host, runner=run_command, s
     same_name = os.path.basename(wanted_in_store)
     hits.sort(key=lambda hit: -hit[0])
     at_wanted_path = [hit for hit in hits if path_matches(hit[1].lower(), wanted_in_store)]
-    listing = []
-    for mtime, path in hits[:LOG_STORE_HITS_SHOWN]:
-        listing.append("    %s  %s" % (time.strftime("%Y-%m-%d %H:%M", time.localtime(mtime)), path))
-    if len(hits) > LOG_STORE_HITS_SHOWN:
-        listing.append("    ... and %d more — list them all with: %s"
-                       % (len(hits) - LOG_STORE_HITS_SHOWN,
-                          _command_listing_every_log_store_name(log_store_root, name, store_is_here, box_ssh_host)))
+    list_every_name = _command_listing_every_log_store_name(log_store_root, name, store_is_here, box_ssh_host)
 
     if not at_wanted_path:
         # Only candidates: not a find. The status, exit code, summary and
@@ -1172,7 +1253,7 @@ def search_log_store(wanted, log_store_root, box_ssh_host, runner=run_command, s
                     % (log_store_root, where, shown_path)]
             status = NOT_FOUND
         lines = head + ["%d file(s) have %r in their name, newest first — candidates only, not counted as found:"
-                        % (len(hits), name)] + listing
+                        % (len(hits), name)] + _log_store_listing(hits, list_every_name)
         elsewhere = sum(1 for hit in hits if os.path.basename(hit[1]).lower() == same_name)
         if elsewhere:
             lines.append("(%d of them %s named %r but in another directory: a different file unless its content says"
@@ -1183,24 +1264,44 @@ def search_log_store(wanted, log_store_root, box_ssh_host, runner=run_command, s
         report.candidate_copies = len(hits)
         return report
 
-    lines = ["%d file(s) under %s on %s have %r in their name, newest first; %d of them %s at a path ending in %r:"
-             % (len(hits), log_store_root, where, name, len(at_wanted_path),
-                "is" if len(at_wanted_path) == 1 else "are", shown_path)]
-    lines += listing
-    newer_candidates = [hit for hit in hits if hit[0] > at_wanted_path[0][0] and hit not in at_wanted_path]
+    # A FOUND stands alone. The copies at the wanted path are listed first,
+    # on their own, so no count of other names can push them out of the
+    # listing: with the listing cut at LOG_STORE_HITS_SHOWN across every
+    # name, twelve newer skill-notes-*.md left .claude/skills/ghi-write/SKILL.md
+    # unlisted beside its own FOUND (PR 702 review 5298941029). Of the other
+    # names only the ones newer than the newest copy there are listed, because
+    # one of those may be the later version (E13); the older ones are a count
+    # and the command that lists them.
+    found_copies = set(at_wanted_path)
+    newer_candidates = [hit for hit in hits if hit not in found_copies and hit[0] > at_wanted_path[0][0]]
+    older_candidates = len(hits) - len(at_wanted_path) - len(newer_candidates)
+    lines = ["%d file(s) under %s on %s %s at a path ending in %r, newest first:"
+             % (len(at_wanted_path), log_store_root, where, "is" if len(at_wanted_path) == 1 else "are", shown_path)]
+    lines += _log_store_listing(at_wanted_path, list_every_name)
     if newer_candidates:
-        lines.append("(%d other candidate(s) are newer than the newest copy at %r: check their content"
-                     % (len(newer_candidates), shown_path))
-        lines.append(" before settling on that copy)")
-    elif len(hits) > len(at_wanted_path):
-        lines.append("(a file elsewhere with %r in its name is a candidate — check its content before calling it"
-                     " recovered)" % name)
+        lines.append("Candidates only, not counted as found: %d other file(s) with %r in their name are newer than"
+                     " the newest copy at %r; check their content before settling on that copy:"
+                     % (len(newer_candidates), name, shown_path))
+        lines += _log_store_listing(newer_candidates, list_every_name)
+    if older_candidates:
+        lines.append("(%d older file(s) with %r in their name are candidates only and not listed; list every name"
+                     " with: %s)" % (older_candidates, name, list_every_name))
     if unread:
         lines.append("(%s)" % unread_line)
     newest_at_wanted_path = shlex.quote(at_wanted_path[0][1])
     recovery = (["cp %s ." % newest_at_wanted_path] if store_is_here
                 else ["scp %s:%s ." % (box_ssh_host, newest_at_wanted_path)])
     return SurfaceReport("log-store", FOUND, lines, recovery)
+
+
+def _log_store_listing(hits, list_every_name):
+    """One line per hit, newest first as given, cut at LOG_STORE_HITS_SHOWN with a count and the command for the rest."""
+    listing = ["    %s  %s" % (time.strftime("%Y-%m-%d %H:%M", time.localtime(mtime)), path)
+               for mtime, path in hits[:LOG_STORE_HITS_SHOWN]]
+    if len(hits) > LOG_STORE_HITS_SHOWN:
+        listing.append("    ... and %d more — list them all with: %s"
+                       % (len(hits) - LOG_STORE_HITS_SHOWN, list_every_name))
+    return listing
 
 
 def _path_to_find_in_the_log_store(wanted):
@@ -2204,7 +2305,8 @@ def main(argv=None, runner=run_command):
         description="Find a deleted path across this Mac's local snapshots, git and its reflog, the log-store, "
                     "agent transcripts, Timeshift on the box, and Time Machine.",
     )
-    parser.add_argument("path", help="repo-relative, absolute, or any trailing fragment of the path")
+    parser.add_argument("path", help="repo-relative, absolute, or any trailing fragment of the path; "
+                                     "the scp form nedlern@ned-box:<path>, ../<path> and ~/<path> are read too")
     parser.add_argument("--repo", default=os.environ.get("FIND_DELETED_PATH_REPO", "."),
                         help="git repository to search (default: current directory)")
     parser.add_argument("--transcripts-dir", default=os.environ.get("FIND_DELETED_PATH_TRANSCRIPTS_DIR", DEFAULT_TRANSCRIPTS_DIR))
@@ -2225,9 +2327,14 @@ def main(argv=None, runner=run_command):
                              "pass this by hand: a hook has no terminal to answer a prompt in")
     args = parser.parse_args(argv)
 
-    # One form for every surface: an absolute path inside the repository is
-    # searched for by its repo-relative name, and the header says so.
-    wanted, _ = _repo_relative_form(args.path, args.repo, runner)
+    # One form for every surface: the path a cited form names, and then an
+    # absolute path inside the repository by its repo-relative name. The
+    # header says so.
+    try:
+        named = _plain_path_from_cited_query(args.path)
+    except CitedQueryCannotBePlaced as refusal:
+        parser.error(str(refusal))
+    wanted, _ = _repo_relative_form(named, args.repo, runner)
     shown = wanted if wanted == args.path else "%s (given as %s)" % (wanted, args.path)
 
     print(render_header(shown) + "\n", flush=True)

@@ -1275,15 +1275,26 @@ with tempfile.TemporaryDirectory() as tmp:
     check("log-store: the name matches whatever its case, and an unrelated name is not listed",
           any(str(newer_rename) in l for l in listed) and not any(str(unrelated) in l for l in listed),
           str(listed))
-    check("log-store: every copy is listed newest first, the older copy at the path after the renamed ones (E13)",
-          [l.split("  ", 1)[1] for l in listed] == [str(newer_rename), str(older_rename), str(exact_copy)],
+    # A FOUND stands alone (walk merge-lane-mac-helper-open-items-and-questions-2026-09-23,
+    # item 17): the copy at the wanted path is listed first under its own line,
+    # and the renamed copies newer than it follow under theirs, newest first (E13).
+    check("log-store: the copy at the wanted path is listed first, then the newer candidates, newest first (E13)",
+          [l.split("  ", 1)[1] for l in listed] == [str(exact_copy), str(newer_rename), str(older_rename)],
           str(listed))
+    check("log-store: the first line counts the copies at the wanted path alone, and the copy follows it",
+          report.lines[0] == "1 file(s) under %s on this machine is at a path ending in "
+                             "'docs/drafts/pr-main-process-design.md', newest first:" % store
+          and report.lines[1].endswith(str(exact_copy)), str(report.lines[:2]))
     check("log-store: each listed copy carries its time, so the newest can be told at a glance",
-          listed and listed[0].startswith("2026-09-18 12:00") and listed[-1].startswith("2026-09-01 09:00"),
+          listed and listed[0].startswith("2026-09-01 09:00") and listed[1].startswith("2026-09-18 12:00"),
           str(listed))
-    check("log-store: other candidates newer than the copy at the path are named, to be checked first (E13)",
-          any("2 other candidate(s) are newer than the newest copy at 'docs/drafts/pr-main-process-design.md'" in l
-              for l in report.lines), str(report.lines))
+    check("log-store: the candidates newer than the copy at the path come under their own line, to be checked (E13)",
+          report.lines[2] == "Candidates only, not counted as found: 2 other file(s) with 'pr-main-process-design'"
+                             " in their name are newer than the newest copy at 'docs/drafts/pr-main-process-design.md';"
+                             " check their content before settling on that copy:",
+          str(report.lines))
+    check("log-store: no line counts older candidates when there are none",
+          not any("older file(s)" in l for l in report.lines), str(report.lines))
     check("log-store, store here: read in place, and nothing is sent over ssh",
           not any(c.startswith("ssh") for c in here.calls), str(here.calls))
     check("log-store, store here: the recovery copies the copy at the wanted path, the one the path identifies",
@@ -1323,14 +1334,19 @@ with tempfile.TemporaryDirectory() as tmp:
     for index in range(finder.LOG_STORE_HITS_SHOWN + 2):
         Path(store, "seats", "merge-lane", "pr-main-process-design-extra-%02d.md" % index).write_text("x\n")
     report = finder.search_log_store("pr-main-process-design.md", str(store), "", RunsLocallyRefusesSsh([]))
-    check("log-store: more matches than the report lists end in a count of the rest",
-          sum(1 for l in report.lines if l.startswith("    2026-")) == finder.LOG_STORE_HITS_SHOWN
-          and any("... and 5 more" in l for l in report.lines),
+    # Fourteen candidates newer than the copy at the path: the case PR 702's
+    # review 5298941029 reproduced, where one listing cut at ten across every
+    # name left the found copy out of its own FOUND.
+    check("log-store: with more newer candidates than a listing holds, the copy at the path is still listed, first",
+          report.status == FOUND and report.lines[1].endswith(str(exact_copy)), str(report.lines[:3]))
+    check("log-store: more candidates than the report lists end in a count of the rest",
+          sum(1 for l in report.lines if l.startswith("    2026-")) == 1 + finder.LOG_STORE_HITS_SHOWN
+          and any("... and 4 more" in l for l in report.lines),
           str(report.lines))
     # Codex P2 on review 5298743638: the rest were a bare count, with nothing
     # saying how to see them. The line now carries the command, and the
     # command is run here: it must list every match, not only the ten shown.
-    more = [l for l in report.lines if "... and 5 more" in l]
+    more = [l for l in report.lines if "... and 4 more" in l]
     command = more[0].split("list them all with: ", 1)[1] if more and "list them all with: " in more[0] else ""
     listed_by_command = subprocess.run(["sh", "-c", command], capture_output=True, text=True)
     check("log-store: the count of the rest names a command, and that command lists every match",
@@ -1339,7 +1355,7 @@ with tempfile.TemporaryDirectory() as tmp:
           "%r -> exit %s\n%s" % (command, listed_by_command.returncode, listed_by_command.stdout))
     report = finder.search_log_store("pr-main-process-design.md", str(store), "nedlern@ned-box",
                                      LocalShellRunner([], Path(tmp)), store_is_here=False)
-    more = [l for l in report.lines if "... and 5 more" in l]
+    more = [l for l in report.lines if "... and 4 more" in l]
     check("log-store, store on the box: the list-them-all command is the same find, sent over ssh",
           more and more[0].split("list them all with: ", 1)[-1].startswith("ssh nedlern@ned-box 'find "),
           str(more))
@@ -1490,8 +1506,9 @@ with tempfile.TemporaryDirectory() as tmp:
           report.status == FOUND and report.recovery == ["cp %s ." % at_its_path],
           "%s %s %s" % (report.status, report.lines, report.recovery))
     check("log-store: ... and the newer same-name file elsewhere is flagged as a candidate to check, not copied",
-          any("1 other candidate(s) are newer than the newest copy at %r" % FOUNDING_PATH in l for l in report.lines),
-          str(report.lines))
+          any("1 other file(s) with 'dispositions' in their name are newer than the newest copy at %r" % FOUNDING_PATH
+              in l for l in report.lines)
+          and report.lines[1].endswith(str(at_its_path)), str(report.lines))
 
     skill_target = Path(store, "cold-read-records", "SKILL-ghi-write-2026-09-19", "target",
                         ".claude", "skills", "ghi-write", "SKILL.md")
@@ -2365,6 +2382,177 @@ check("sudo's non-interactive refusal is told apart from mount_apfs's own failur
       and not finder._is_sudo_non_interactive_refusal(
           "mount_apfs: volume could not be mounted: Resource busy\n")
       and not finder._is_sudo_non_interactive_refusal(""))
+
+# --------------------------------------------------------------------------
+# A query written as it is cited (walk merge-lane-mac-helper-open-items-and-
+# questions-2026-09-23, item 17): the scp form, ../ and ~ name the path they
+# point at, and every other form keeps the meaning the usage block gives it.
+# --------------------------------------------------------------------------
+
+plain = finder._plain_path_from_cited_query
+check("cited query: the scp form with a user and an absolute path is that path",
+      plain("nedlern@ned-box:/home/nedlern/nedschorus-logs/walk/x.md") == "/home/nedlern/nedschorus-logs/walk/x.md")
+check("cited query: a known host without a user is taken off too",
+      plain("ned-box:/home/nedlern/x.md") == "/home/nedlern/x.md")
+check("cited query: ~ after a known host is that host's home, not this machine's",
+      plain("nedlern@ned-box:~/nedschorus-logs/x.md") == "/home/nedlern/nedschorus-logs/x.md"
+      and plain("ned-box:~") == "/home/nedlern")
+check("cited query: a relative path after a known host is inside that host's home",
+      plain("nedlern@ned-box:nedschorus-logs/x.md") == "/home/nedlern/nedschorus-logs/x.md")
+check("cited query: an unknown host keeps an absolute path and a bare name",
+      plain("someone@elsewhere:/srv/x.md") == "/srv/x.md" and plain("someone@elsewhere:x.md") == "x.md")
+try:
+    plain("someone@elsewhere:docs/x.md")
+    refusal = None
+except finder.CitedQueryCannotBePlaced as error:
+    refusal = str(error)
+check("cited query: a relative path with directories after an unknown host is refused, naming the host",
+      refusal == "Give the file's absolute path on elsewhere: this program does not know that host's home directory.",
+      repr(refusal))
+check("cited query: a colon with no user before it and no known host is part of the name",
+      plain("notes:draft.md") == "notes:draft.md" and plain("docs/a:b.md") == "docs/a:b.md")
+check("cited query: ../ and ./ are placed from the current directory",
+      plain("../scripts/x.py", cwd="/r/docs") == "/r/scripts/x.py" and plain("./x.md", cwd="/r/docs") == "/r/docs/x.md")
+check("cited query: a .. anywhere in a relative path is placed from the current directory too",
+      plain("docs/../scripts/x.py", cwd="/r") == "/r/scripts/x.py")
+check("cited query: a repo-relative path or a fragment keeps its meaning, whatever the current directory",
+      plain("docs/x.md", cwd="/r/sub") == "docs/x.md" and plain("x.md", cwd="/r/sub") == "x.md")
+check("cited query: a dotfile is a name, not a ./ path",
+      plain(".env", cwd="/r/sub") == ".env" and plain(".claude/settings.json", cwd="/r/sub") == ".claude/settings.json")
+check("cited query: an absolute path comes back as it is, and ~ is this machine's home",
+      plain("/abs/x.md") == "/abs/x.md" and plain("~/x.md") == os.path.expanduser("~/x.md"))
+
+usage_runner = FakeRunner([])
+usage_errors = io.StringIO()
+with contextlib.redirect_stderr(usage_errors):
+    try:
+        finder.main(["someone@elsewhere:docs/x.md"], runner=usage_runner)
+        usage_exit = None
+    except SystemExit as stop:
+        usage_exit = stop.code
+check("cited query: the command line refuses an unknown host's relative path with exit 2, searching nothing",
+      usage_exit == 2 and "Give the file's absolute path on elsewhere" in usage_errors.getvalue()
+      and usage_runner.calls == [],
+      "exit=%s calls=%s\n%s" % (usage_exit, usage_runner.calls, usage_errors.getvalue()))
+
+# A shell left standing in a removed worktree, which two transcripts show
+# (the locator's PR 703 review 5307798976): a ../ query has nowhere to be placed from.
+directory_before = os.getcwd()
+gone_runner = FakeRunner([])
+gone_errors = io.StringIO()
+with tempfile.TemporaryDirectory() as tmp:
+    removed = Path(tmp, "removed-worktree")
+    removed.mkdir()
+    os.chdir(str(removed))
+    removed.rmdir()
+    try:
+        try:
+            plain("../x.md")
+            gone_refusal = None
+        except finder.CitedQueryCannotBePlaced as error:
+            gone_refusal = str(error)
+        except Exception as error:  # reported as this case's failure, not a crash of the whole suite
+            gone_refusal = "raised %r" % error
+        with contextlib.redirect_stderr(gone_errors):
+            try:
+                finder.main(["../x.md", "--repo", str(tmp)], runner=gone_runner)
+                gone_exit = None
+            except SystemExit as stop:
+                gone_exit = stop.code
+            except Exception as error:
+                gone_exit = "raised %r" % error
+    finally:
+        os.chdir(directory_before)
+check("cited query: from a current directory that no longer exists, ../ is refused with what to give instead",
+      gone_refusal == "Give the file's absolute path: the current directory no longer exists, so '../x.md' cannot "
+                      "be placed from it.", repr(gone_refusal))
+check("cited query: ... and the command line exits 2 with that instruction, searching nothing",
+      gone_exit == 2 and "the current directory no longer exists" in gone_errors.getvalue() and gone_runner.calls == [],
+      "exit=%s calls=%s\n%s" % (gone_exit, gone_runner.calls, gone_errors.getvalue()))
+
+# The case measured on 2026-09-29: the walk minutes of
+# merge-lane-mac-helper-open-items-and-questions-2026-09-23, cited in the scp
+# form, read NOT FOUND, exit 1, from the path they sat at.
+with tempfile.TemporaryDirectory() as tmp:
+    store = Path(tmp, "nedschorus-logs")
+    minutes = Path(store, "walk", "some-walk-minutes.md")
+    minutes.parent.mkdir(parents=True)
+    minutes.write_text("the rulings\n")
+    cited = "nedlern@ned-box:%s" % minutes
+    captured = io.StringIO()
+    with contextlib.redirect_stdout(captured):
+        code = finder.main([cited, "--repo", str(tmp), "--log-store-root", str(store),
+                            "--skip", "localsnapshots", "--skip", "git", "--skip", "reflog", "--skip", "transcripts",
+                            "--skip", "box", "--skip", "timemachine"],
+                           runner=RunsLocallyRefusesSsh([]))
+    text = captured.getvalue()
+check("cited query: a log-store file cited in the scp form is FOUND at its own path, exit 0, with its copy command",
+      code == 0 and "log-store       FOUND" in text and "$ cp %s ." % minutes in text
+      and "Recoverable from: log-store." in text,
+      "exit=%s\n%s" % (code, text))
+check("cited query: ... and the header shows the path searched and the form it was given in",
+      "Searching every history this fleet keeps for: %s (given as %s)" % (minutes, cited) in text, text)
+
+with tempfile.TemporaryDirectory() as tmp:
+    repo = git_fixture_repo(tmp)
+    subdirectory = Path(repo, "sub")
+    subdirectory.mkdir()
+    code, out, _ = finder.run_command(["git", "-C", str(repo), "rev-parse", "--show-toplevel"])
+    top_level = out.strip()
+    for repo_argument in (".", str(repo)):
+        os.chdir(str(subdirectory))
+        try:
+            captured = io.StringIO()
+            recorded = RunsLocallyRefusesSsh([])
+            with contextlib.redirect_stdout(captured):
+                code = finder.main(["../a/b.md", "--repo", repo_argument,
+                                    "--skip", "localsnapshots", "--skip", "reflog", "--skip", "logstore",
+                                    "--skip", "transcripts", "--skip", "box", "--skip", "timemachine"],
+                                   runner=recorded)
+            text = captured.getvalue()
+            shown = [l.split("$ ", 1)[1] for l in text.splitlines() if l.strip().startswith("$ git ")]
+            recovered = (subprocess.run(["sh", "-c", shown[0]], capture_output=True, text=True).stdout
+                         if shown else "")
+        finally:
+            os.chdir(directory_before)
+        check("cited query: ../a/b.md from a subdirectory, --repo %s, is searched as a/b.md and FOUND in git"
+              % ("." if repo_argument == "." else "<top level>"),
+              code == 0 and "Searching every history this fleet keeps for: a/b.md (given as ../a/b.md)" in text
+              and "git             FOUND" in text,
+              "exit=%s\n%s" % (code, text))
+        check("cited query: ... and its recovery command, run from that subdirectory, prints the file",
+              shown and shown[0].endswith(":a/b.md") and recovered == "v2\n", "%s -> %r" % (shown, recovered))
+        git_log_calls = [c for c in recorded.calls if c.startswith("git -C ") and " log " in c]
+        check("cited query: ... and every git log lookup runs at the repository's top level, not the subdirectory",
+              git_log_calls and all(c.startswith("git -C %s log " % top_level) for c in git_log_calls),
+              "\n".join(git_log_calls))
+    check("cited query: the snapshot surface, handed the repo-relative form, tests the file inside the repository",
+          finder._local_snapshot_probe_path("a/b.md", str(repo), finder.run_command)[0]
+          == finder._below_data_volume(os.path.join(top_level, "a", "b.md")),
+          str(finder._local_snapshot_probe_path("a/b.md", str(repo), finder.run_command)))
+
+# A FOUND stands alone: when the copy at the wanted path is newer than every
+# other name, nothing is listed beside it.
+with tempfile.TemporaryDirectory() as tmp:
+    store, (exact_copy, older_rename, newer_rename, unrelated) = log_store_fixture(tmp)
+    newest = time.mktime(time.strptime("2026-09-25 12:00", "%Y-%m-%d %H:%M"))
+    os.utime(str(exact_copy), (newest, newest))
+    report = finder.search_log_store("docs/drafts/pr-main-process-design.md", str(store), "", RunsLocallyRefusesSsh([]))
+    listed = [l.strip() for l in report.lines if l.startswith("    ")]
+    older_lines = [l for l in report.lines if "older file(s)" in l]
+    command = older_lines[0].split("list every name with: ", 1)[-1] if older_lines else ""
+    command = command[:-1] if command.endswith(")") else command
+    listed_by_command = subprocess.run(["sh", "-c", command], capture_output=True, text=True)
+    check("log-store: a copy at the wanted path newer than every candidate stands alone, the only file listed",
+          report.status == FOUND and [l.split("  ", 1)[1] for l in listed] == [str(exact_copy)]
+          and not any(l.startswith("Candidates only") for l in report.lines)
+          and report.recovery == ["cp %s ." % exact_copy],
+          str(report.lines))
+    check("log-store: ... and the older candidates are one line, a count and a command that lists every name",
+          older_lines == ["(2 older file(s) with 'pr-main-process-design' in their name are candidates only and not"
+                          " listed; list every name with: %s)" % command]
+          and listed_by_command.returncode == 0 and len(listed_by_command.stdout.splitlines()) == 3,
+          "%s -> exit %s\n%s" % (older_lines, listed_by_command.returncode, listed_by_command.stdout))
 
 print()
 if failures:
