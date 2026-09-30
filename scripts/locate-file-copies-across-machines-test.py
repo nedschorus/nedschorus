@@ -28,6 +28,7 @@ import json
 import os
 import pathlib
 import re
+import shlex
 import shutil
 import socket
 import subprocess
@@ -1788,6 +1789,77 @@ with scratch() as directory:
           in sections(result.stdout)[0]
           and "NOT searched" not in result.stdout,
           f"exit {result.returncode}\n{result.stdout}{result.stderr}")
+
+# --- A printed read-it command reads its clone, whatever the caller's shell sets ---
+# The command runs later in the caller's own shell, which this program never
+# cleans, so it unsets the variables in its own text. `--git-dir` overrides
+# GIT_DIR but not GIT_COMMON_DIR or GIT_OBJECT_DIRECTORY, so under either a
+# bare `git --git-dir` exited 128, "fatal: invalid object name".
+read_it_hit = {"commit": "0123456789abcdef0123", "status": "M",
+               "clone": "/r/.git", "path": "docs/x.md"}
+for machine, opening in (("mac-host", ""),
+                         (program.NED_BOX_HOSTNAME, "on ned-box: ")):
+    printed = program.read_command(read_it_hit, machine)
+    tokens = (shlex.split(printed[len(opening):])
+              if printed.startswith(opening) else [])
+    count = len(GIT_REDIRECTING_VARIABLES)
+    check(f"a read-it command printed for {machine} begins with env, unsets "
+          "each of the six git redirect variables once, then runs git on the "
+          "clone it names",
+          tokens[:1] == ["env"]
+          and tokens[1:1 + 2 * count:2] == ["-u"] * count
+          and sorted(tokens[2:2 + 2 * count:2])
+          == sorted(GIT_REDIRECTING_VARIABLES)
+          and tokens[1 + 2 * count:]
+          == ["git", "--git-dir=/r/.git", "show", "0123456789ab:docs/x.md"],
+          printed)
+
+with scratch() as directory:
+    base = pathlib.Path(directory).resolve()
+    asked = base / "asked-clone"
+    commit_files(asked, {"docs/read-it-probe.md": "the asked clone's bytes"},
+                 "Add the read-it probe")
+    decoy = base / "decoy-clone"
+    commit_files(decoy, {"docs/read-it-probe.md": "the decoy's bytes"},
+                 "Decoy")
+    hits, log_failure, _ = program.run_git_log(
+        str(asked / ".git"), "read-it-probe", "read-it-probe.md")
+    printed = (program.read_command(hits[0], "mac-host")
+               if hits and log_failure is None else "")
+    bare = "git" + printed[
+        len(program.PRINTED_GIT_INVOCATION_WITHOUT_REDIRECTING_VARIABLES):] \
+        if printed.startswith("env ") else printed
+    decoy_values = {
+        "GIT_DIR": decoy / ".git", "GIT_WORK_TREE": decoy,
+        "GIT_INDEX_FILE": decoy / ".git" / "index",
+        "GIT_OBJECT_DIRECTORY": decoy / ".git" / "objects",
+        "GIT_COMMON_DIR": decoy / ".git",
+        "GIT_ALTERNATE_OBJECT_DIRECTORIES": decoy / ".git" / "objects"}
+
+    def shell_run(command, variable):
+        environment = {key: value for key, value in os.environ.items()
+                       if key not in GIT_REDIRECTING_VARIABLES}
+        environment[variable] = str(decoy_values[variable])
+        return subprocess.run(["/bin/sh", "-c", command or "false"],
+                              cwd=base, env=environment,
+                              capture_output=True, text=True)
+
+    for variable in GIT_REDIRECTING_VARIABLES:
+        as_printed = shell_run(printed, variable)
+        check(f"with {variable} naming another clone in the shell that runs "
+              "it, the printed read-it command prints the asked clone's file",
+              as_printed.returncode == 0
+              and as_printed.stdout == "the asked clone's bytes",
+              f"{printed!r} exit {as_printed.returncode} "
+              f"{as_printed.stdout!r} {as_printed.stderr!r}")
+    for variable in ("GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY"):
+        without_prefix = shell_run(bare, variable)
+        check(f"... and the same command as a bare git exits 128 under "
+              f"{variable}, so the case above measures what it claims",
+              bare.startswith("git --git-dir=")
+              and without_prefix.returncode == 128,
+              f"{bare!r} exit {without_prefix.returncode} "
+              f"{without_prefix.stderr!r}")
 
 # --- A worktree the main clone lists outside every root is searched ------------
 # PR 703 review 5299980640: an ad-hoc worktree directly under /tmp, such as

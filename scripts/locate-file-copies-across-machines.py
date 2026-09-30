@@ -214,6 +214,16 @@ history read as not searched. Only `git ls-files` dropped the variables before
 "merge-lane-mac-helper-open-items-and-questions-2026-09-23", item 17, on
 2026-09-29.
 
+The `git show` command a git hit prints is run later, in the caller's own
+shell, where those variables may still be set, so it unsets them itself:
+`env -u GIT_DIR ... git --git-dir=<clone> show <commit>:<path>`. Printed as
+a bare `git --git-dir`, it exited 128 ("fatal: invalid object name") under a
+caller's GIT_COMMON_DIR or GIT_OBJECT_DIRECTORY naming another clone
+(measured 2026-09-30 by this program's suite). That is the fault PR "The
+backup search's printed git recovery command unsets the git redirect
+variables" fixed in the backup search; this one was built on the user's "y"
+of 2026-09-30 in the merge-lane seat.
+
 HOW THE OTHER MACHINE IS SEARCHED. From the Mac, ned-box is searched by
 running this same program there, sent over one ssh call on stdin
 (`python3 -`), with the surfaces to search passed on its command line. The
@@ -340,6 +350,12 @@ LOCAL_COMMAND_TIMEOUT_SECONDS = 30
 GIT_REDIRECTING_VARIABLES = (
     "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY",
     "GIT_COMMON_DIR", "GIT_ALTERNATE_OBJECT_DIRECTORIES")
+# How a printed `git show` command begins: git run with
+# GIT_REDIRECTING_VARIABLES unset, so it reads the clone it names from
+# whatever shell it is pasted into (EVERY GIT THIS PROGRAM RUNS in the module
+# docstring). The same name and text as the backup search's.
+PRINTED_GIT_INVOCATION_WITHOUT_REDIRECTING_VARIABLES = "env %s git" % " ".join(
+    "-u %s" % name for name in GIT_REDIRECTING_VARIABLES)
 
 PLAN_ENVIRONMENT_VARIABLE = "LOCATE_FILE_COPIES_ACROSS_MACHINES_PLAN"
 THIS_MACHINE_JSON_FLAG = "--this-machine-json"
@@ -1241,7 +1257,8 @@ def describe(hit, machine):
 
 def read_command(hit, machine):
     revision = hit["commit"][:12] + ("^" if hit["status"] == "D" else "")
-    command = (f"git --git-dir={shlex.quote(hit['clone'])} show "
+    command = (f"{PRINTED_GIT_INVOCATION_WITHOUT_REDIRECTING_VARIABLES} "
+               f"--git-dir={shlex.quote(hit['clone'])} show "
                f"{shlex.quote(revision + ':' + hit['path'])}")
     return command if machine != NED_BOX_HOSTNAME else f"on ned-box: {command}"
 
