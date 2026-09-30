@@ -139,19 +139,35 @@ DENY_MESSAGE = (
 
 
 def enclosing_repository_root(path: Path):
-    """Nearest ancestor (or the path itself) that carries .git.
+    """Nearest ancestor (or the path itself) that carries .git as git itself
+    would recognise it.
 
-    A .git *file* counts too — that is how a linked worktree marks its root —
-    so seats, task worktrees, and the main checkout all resolve alike.
-    Returns None when no enclosing repository exists.
+    A .git *file* counts — that is how a linked worktree marks its root — so
+    seats, task worktrees, and the main checkout all resolve alike. A .git
+    *directory* counts only when it holds HEAD, which every repository git
+    creates has. Returns None when no enclosing repository exists.
+
+    WHY AN EMPTY .git DOES NOT COUNT (user-ruled 2026-09-30, item 7 of the
+    walk open-questions-concerns-and-recommendations-2026-09-30, "y"). Codex's
+    Linux sandbox mounts its protected names read-only inside each writable
+    root and creates any that are missing on the real disk, so a `:workspace`
+    Codex run on ned-box leaves an empty /tmp/.git behind for as long as it
+    runs, and sometimes after. Every seat's guard then took /tmp for a
+    checkout: the full test run at PR 765's head (2026-09-29) and main's run
+    after PR 800 merged each failed this hook's cases for that reason alone.
+    The two project programs that created the directory were fixed, but any
+    other `:workspace` Codex run still makes one. Deleting it is no fix, since
+    a running sandbox holds it as a mount point, so the guard reads it the way
+    git does instead.
     """
     try:
         resolved = path.resolve()
     except (OSError, RuntimeError):
         return None
     for candidate in (resolved, *resolved.parents):
+        git_marker = candidate / ".git"
         try:
-            if (candidate / ".git").exists():
+            if git_marker.is_file() or (git_marker / "HEAD").is_file():
                 return candidate
         except OSError:
             continue
