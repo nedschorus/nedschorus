@@ -43,17 +43,25 @@ def run_hook(decoy_project_directory: Path, session_cwd: Path, file_path: str,
     )
 
 
+def make_checkout(root: Path):
+    """A directory git would take for a repository: a .git directory holding
+    HEAD. The guard does not count an empty .git (see the section on Codex
+    sandbox debris below), so every checkout here carries one."""
+    (root / ".git").mkdir(parents=True)
+    (root / ".git" / "HEAD").write_text("ref: refs/heads/main\n", encoding="utf-8")
+
+
 with tempfile.TemporaryDirectory() as temporary_directory:
     tmp = Path(temporary_directory)
 
     # The session's own checkout: a directory with a .git directory.
     workspace = tmp / "workspace"
-    (workspace / ".git").mkdir(parents=True)
+    make_checkout(workspace)
 
     # The decoy the environment variable names: a different checkout holding
     # a stale, populated marker — the exact 2026-08-14 hazard.
     decoy = tmp / "decoy-main-checkout"
-    (decoy / ".git").mkdir(parents=True)
+    make_checkout(decoy)
     decoy_marker = decoy / ".walk-approved"
     decoy_marker.write_text("stale approval from an unrelated session\n", encoding="utf-8")
 
@@ -232,7 +240,7 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     # and BOTH hold a marker, so an implementation resolving from the target
     # instead of the session still passes every other case in this file.
     other_checkout = tmp / "another-checkout"
-    (other_checkout / ".git").mkdir(parents=True)
+    make_checkout(other_checkout)
     other_marker = other_checkout / ".walk-approved"
     other_marker.write_text("approval belonging to the other checkout\n", encoding="utf-8")
     session_marker = workspace / ".walk-approved"
@@ -250,8 +258,7 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     # place; a vanished directory is a broken payload, and falling back let it
     # spend a marker sitting in the target's repository.
     vanished = tmp / "removed-worktree"
-    vanished.mkdir()
-    (vanished / ".git").mkdir()
+    make_checkout(vanished)
     vanished_target_marker = workspace / ".walk-approved"
     vanished_target_marker.write_text("user approved: something else entirely\n",
                                       encoding="utf-8")
@@ -265,6 +272,35 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     check("a marker in the target's repository is NOT spent by that refusal",
           vanished_target_marker.exists())
     vanished_target_marker.unlink(missing_ok=True)
+
+    # --- An empty .git is not a checkout (Codex sandbox debris) ---------------
+    # A `:workspace` Codex run on ned-box leaves an empty /tmp/.git, and a
+    # guard that counted any .git took /tmp for a checkout: PR 765's head run
+    # and main's run after PR 800 failed this file's cases for that alone.
+    # debris_root stands in for /tmp.
+    debris_root = tmp / "tmp-with-codex-sandbox-debris"
+    (debris_root / ".git").mkdir(parents=True)
+    scratch_under_debris = debris_root / "a-subagent-scratchpad"
+    scratch_under_debris.mkdir()
+    result = run_hook(decoy, workspace, str(scratch_under_debris / "subagent-prompt.md"))
+    check("a one-off prompt under an empty .git passes, being outside any checkout",
+          result.returncode == 0, result.stderr)
+    marker = workspace / ".walk-approved"
+    marker.write_text("user approved: the edit from a scratch session\n", encoding="utf-8")
+    result = run_hook(decoy, scratch_under_debris, str(workspace / "CLAUDE.md"))
+    check("a session under an empty .git falls back to the target's repository marker",
+          result.returncode == 0, result.stderr)
+    check("that fallback marker is consumed", not marker.exists())
+    marker.unlink(missing_ok=True)
+
+    # A .git directory holding HEAD still marks a checkout, as a .git file does
+    # (the linked-worktree case above).
+    head_checkout = tmp / "checkout-whose-git-holds-head"
+    make_checkout(head_checkout)
+    (head_checkout / ".walk-approved").write_text("user approved: the head-checkout edit\n",
+                                                  encoding="utf-8")
+    result = run_hook(decoy, head_checkout, str(head_checkout / "CLAUDE.md"))
+    check("a .git directory holding HEAD marks a checkout", result.returncode == 0, result.stderr)
 
 print()
 if failures:
