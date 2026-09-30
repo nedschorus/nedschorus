@@ -397,20 +397,34 @@ with tempfile.TemporaryDirectory() as scratch:
 
     # --- No credential file is readable (user-ruled 2026-09-29) -----------
     # A permission profile extending :read-only, which Codex will not combine
-    # with --sandbox, placed before `review` as the nested parser requires.
-    overrides_before_review = (
-        [launched_command[index + 1] for index, argument
-         in enumerate(launched_command[:launched_command.index("review")])
-         if argument == "-c"]
-        if "review" in launched_command else [])
-    denied_table = next((override.split("=", 1)[1] for override in overrides_before_review
+    # with --sandbox, placed AFTER `review`. `codex exec review` runs the
+    # review's commands in a child thread, and on codex-cli 0.156.0 that
+    # thread drops a profile placed before `review`: its commands ran with
+    # the checkout and /tmp writable and no deny entry (GHI 804, "The Codex
+    # review cell's commands run writable and without credential denials,
+    # because `codex exec review` drops the cell's permission profile"). The
+    # cell's docstring has the measurement, under WHERE THE PERMISSION
+    # PROFILE GOES. The first profile check fails if the profile moves back
+    # before `review`; the second fails if a copy is left there, where it
+    # reads as protection and gives none.
+    def config_overrides(arguments):
+        return [value for flag, value in zip(arguments, arguments[1:]) if flag == "-c"]
+    review_index = (launched_command.index("review") if "review" in launched_command
+                    else len(launched_command))
+    overrides_before_review = config_overrides(launched_command[:review_index])
+    overrides_after_review = config_overrides(launched_command[review_index + 1:])
+    denied_table = next((override.split("=", 1)[1] for override in overrides_after_review
                          if override.startswith("permissions.code-review-no-credentials.filesystem=")),
                         "")
     check("codex runs under no --sandbox, which Codex will not combine with a profile",
           "--sandbox" not in launched_command, f"composed command was {launched_command}")
-    check("codex runs under the credential-denying profile, extending :read-only, before `review`",
-          'default_permissions="code-review-no-credentials"' in overrides_before_review
-          and 'permissions.code-review-no-credentials.extends=":read-only"' in overrides_before_review,
+    check("codex runs under the credential-denying profile, extending :read-only, after `review`",
+          'default_permissions="code-review-no-credentials"' in overrides_after_review
+          and 'permissions.code-review-no-credentials.extends=":read-only"' in overrides_after_review,
+          repr(overrides_after_review))
+    check("no permission override sits before `review`, where the review's commands drop it",
+          not [override for override in overrides_before_review
+               if override.startswith(("default_permissions=", "permissions."))],
           repr(overrides_before_review))
     check("the profile denies the credential directory and a reviewer program's login file",
           f'"{scratch_home}/.config/nedschorus"="deny"' in denied_table

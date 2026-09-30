@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run Codex's built-in code review over a git range, pinned and captured.
+r"""Run Codex's built-in code review over a git range, pinned and captured.
 
 One cell of merge-lane's review: `codex exec review` is Codex's own
 diff reviewer (finding rubric, P0-P3 priorities, changed-line locations).
@@ -9,15 +9,14 @@ must not drift are pinned:
 
   - model and reasoning effort, explicit (the tier convention of
     nc-systems/cold-read/cold-read-codex-cell.py: `deep` = gpt-6-sol at xhigh);
-  - the sandbox, read-only AT THE PARENT LEVEL -- this machine's Codex
-    config defaults to workspace-write, so a reviewer that forgets this
-    flag can write (the nested `review` parser rejects --sandbox; parent
-    placement is the accepted form, verified on codex-cli 0.147.0). It is a
-    permission profile extending Codex's `:read-only`, not `--sandbox
-    read-only`, because the profile also denies every credential file
-    (user-ruled 2026-09-29, item 8 of the walk
-    what-a-cold-read-reviewer-may-read-2026-09-28, "y"); Codex refuses the
-    two together. The profile comes from the builder the cold-read Codex
+  - the sandbox, read-only and denying every credential file, placed AFTER
+    `review`, because the review's commands drop a profile placed before it
+    -- see WHERE THE PERMISSION PROFILE GOES below, which also says how to
+    re-check it after a Codex upgrade. It is a permission profile extending
+    Codex's `:read-only`, not `--sandbox read-only`, because the profile
+    also denies every credential file (user-ruled 2026-09-29, item 8 of the
+    walk what-a-cold-read-reviewer-may-read-2026-09-28, "y"); Codex refuses
+    the two together. The profile comes from the builder the cold-read Codex
     cell uses, codex_credential_denying_permission_profile_arguments in
     nc-systems/cold-read/cold-read-cell-common.py;
   - the base, as a SHA the caller resolved -- `--base origin/main` drifts
@@ -34,6 +33,78 @@ single rules home both runtimes read: Codex reaches it through AGENTS.md,
 which is a pointer at CLAUDE.md rather than a second home; merge-decision
 checks belong to the deferred pr-merge-decision component
 (nedschorus#105).
+
+WHERE THE PERMISSION PROFILE GOES, AND HOW TO RE-CHECK IT AFTER A CODEX
+UPGRADE. `codex exec review` runs the review in a child thread, and every
+command the reviewing model runs belongs to that thread. On codex-cli
+0.156.0 the child drops a permission profile placed before `review`. The
+parser accepts it there, and the child runs under the default the checkout
+would get without it: on ned-box `:workspace` for a project Codex trusts,
+which makes the checkout, /tmp and $TMPDIR writable, and `:read-only` for
+one it does not; on the Mac, whose Codex config sets `sandbox_mode =
+"workspace-write"`, workspace-write. None of them denies a credential file.
+The same `-c` overrides placed after `review` reach the child. `review`'s
+own parser takes `-c` and rejects `--sandbox` and `-p` (exit 2, both
+machines). Until 2026-09-30 this docstring said the parent placement was
+verified on codex-cli 0.147.0; that established only that the parser
+accepted it.
+
+Measured 2026-09-30 on codex-cli 0.156.0, on both machines, for GHI 804
+("The Codex review cell's commands run writable and without credential
+denials, because `codex exec review` drops the cell's permission profile",
+docs/issues/804-the-codex-review-cell-s-commands-run-writable.md). Each run
+had a scratch HOME holding two canary credentials,
+`.config/nedschorus/canary.token` and `.ssh/id_canary`, and a scratch
+CODEX_HOME whose config.toml trusted the scratch repository and, on the
+Mac, also carried the Mac config's `sandbox_mode = "workspace-write"` and
+`approval_policy = "never"`. Each ran this cell's command as a built-in
+review of one commit in a scratch repository whose AGENTS.md told the
+reviewer to `cat` both canaries and `touch` a file under /tmp and one in
+the checkout:
+
+  - Profile before `review`: the reviewer read both canaries and wrote
+    both files, on both machines. On ned-box the `--permission-profile` of
+    its `codex-linux-sandbox` child held root `read`; the checkout,
+    `slash_tmp` and `tmpdir` `write`; and no deny entry. /tmp/.git,
+    /tmp/.codex and /tmp/.agents appeared while its commands ran.
+  - Profile after `review`: both reads and both writes were refused
+    ("Permission denied" and "Read-only file system" on ned-box, "Operation
+    not permitted" on the Mac), nothing appeared under /tmp, and the review
+    still wrote its report. The child's `--permission-profile` held a deny
+    entry for each credential path, root `read`, and nothing writable.
+
+Other parent-level overrides do reach the child: on ned-box, `-c
+model_reasoning_effort=high` placed before `review` became the child's
+effort. The permission profile is the one exception measured, which is why
+`--disable memories` stays at the parent level.
+
+To re-check on ned-box, read the `--permission-profile` of a
+`codex-linux-sandbox` child while the cell runs:
+
+    python3 scripts/code-review-codex-cell.py --base <merge base> --repo <detached worktree at the head> --output <report file>
+    # in a second shell, started before or while it runs; a sandbox child can
+    # live for under a second, so this waits for one. The brackets keep pgrep
+    # from matching a shell whose own command line holds this text.
+    until pid=$(pgrep -n -f '[c]odex-linux-sandbox'); do sleep 0.1; done
+    tr '\0' '\n' < "/proc/$pid/cmdline" | grep -A1 -- '--permission-profile'
+
+It must hold a "deny" entry for each credential path the builder lists,
+root "read", and no "write" entry. Two shapes appear during one review,
+one also carrying `minimal` `read`; both are this cell's profile. A "write"
+entry, or no "deny" entry, means the child has dropped the profile again.
+
+To re-check on either machine, the Mac included, which has no /proc: the
+child thread records the profile it ran under in its session file. A run
+leaves two rollouts under `$CODEX_HOME/sessions/` (default
+~/.codex/sessions/), and only the child's has a `turn_context` record.
+Right after the run, before another Codex session starts:
+
+    grep -o '"active_permission_profile":{[^}]*}' $(ls -t ~/.codex/sessions/*/*/*/rollout-*.jsonl | head -2)
+
+It must print `{"id":"code-review-no-credentials","extends":":read-only"}`.
+With the profile before `review` it printed `{"id":":workspace"}` on
+ned-box, and nothing on the Mac, whose child recorded a workspace-write
+`sandbox_policy` instead.
 
 WHY THE CODEX MEMORY STORE IS OFF FOR REVIEW CELLS -- the one explanation
 for every `codex exec` this repository launches; the other two sites
@@ -107,8 +178,10 @@ asserted here. So the flag today pins a state the machine may already be in;
 what it guarantees is that the cell does not depend on which way the default
 happens to be pointing.
 
-Parent placement, beside --sandbox above; the nested `review` parser also
-accepts --disable, but one placement for both flags is easier to read.
+Parent placement. The nested `review` parser also accepts --disable, and
+the parent placement is kept because a parent-level override does reach
+the review's child thread; the permission profile is the measured
+exception (WHERE THE PERMISSION PROFILE GOES, above).
 
 The scope of that guarantee is these three committed launchers, not the
 machine. A seat that types `codex exec` by hand gets whatever the machine
@@ -295,12 +368,13 @@ def main(argv=None) -> int:
     scope_flag = ["--base", subject_sha] if arguments.base else ["--commit", subject_sha]
     command = [
         "codex", "exec",
-        # Read-only and no credential file, at the parent level; the nested
-        # parser rejects both --sandbox and a profile placed after `review`.
-        *common.codex_credential_denying_permission_profile_arguments(
-            CREDENTIAL_DENYING_PERMISSION_PROFILE, ":read-only"),
         "--disable", "memories",        # a naive cell, not one carrying earlier reviews
         "review",
+        # Read-only and no credential file, AFTER `review`: the review's
+        # commands run in a child thread that drops a profile placed before
+        # it. See WHERE THE PERMISSION PROFILE GOES in the docstring.
+        *common.codex_credential_denying_permission_profile_arguments(
+            CREDENTIAL_DENYING_PERMISSION_PROFILE, ":read-only"),
         *scope_flag,
         "-m", arguments.model,
         "-c", f"model_reasoning_effort={REASONING_EFFORT}",
