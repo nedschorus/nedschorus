@@ -177,6 +177,14 @@ used through the same import as its host rule: the locator keeps its own copy
 of that function only because it is sent whole to the other machine over ssh,
 and this program never is.
 
+The git recovery command it prints is run later in its caller's shell, where
+those variables may still be set, so it is printed as `env -u GIT_DIR ...
+git -C <repo> show <commit>:<path>`, unsetting the same variables itself.
+Printed as a bare `git -C`, under a caller's GIT_COMMON_DIR or GIT_DIR it
+exited 128 instead of printing the file: Codex's review cell on PR "The
+backup search's commands ignore a caller's git redirect variables", fixed
+on the user's "y" in walk merge-lane-mac-helper-open-decisions-2026-09-30.
+
 RUN ON NED-BOX ITSELF, the box's two surfaces are searched in place. Until
 2026-09-30 every run reached "the box" by `ssh nedlern@ned-box`, from the box
 too, where that ssh fails before logging in ("Host key verification failed.":
@@ -282,6 +290,12 @@ _locator_spec = importlib.util.spec_from_file_location(
     "locate_file_copies_across_machines", Path(__file__).with_name("locate-file-copies-across-machines.py"))
 locator = importlib.util.module_from_spec(_locator_spec)
 _locator_spec.loader.exec_module(locator)
+
+# How a printed git recovery command begins: git run with the locator's
+# GIT_REDIRECTING_VARIABLES unset, so it reads the repository it names from
+# whatever shell it is pasted into (see EVERY COMMAND THIS PROGRAM STARTS).
+PRINTED_GIT_INVOCATION_WITHOUT_REDIRECTING_VARIABLES = "env %s git" % " ".join(
+    "-u %s" % name for name in locator.GIT_REDIRECTING_VARIABLES)
 
 FOUND = "FOUND"
 NOT_FOUND = "NOT FOUND"
@@ -1002,7 +1016,8 @@ def _search_git_revisions(wanted, repo, runner, surface, revisions, never_contai
             sha, date, subject = commit
             lines.append("%s" % path)
             lines.append("    last held by %s (%s) %s" % (sha[:9], date, subject[:70]))
-            recovery.append("git -C %s show %s:%s" % (shlex.quote(repo), sha[:9], shlex.quote(path)))
+            recovery.append("%s -C %s show %s:%s" % (PRINTED_GIT_INVOCATION_WITHOUT_REDIRECTING_VARIABLES,
+                                                     shlex.quote(repo), sha[:9], shlex.quote(path)))
             dates_held.append(date)
     except _GitCommandFailed as failure:
         return SurfaceReport(surface, UNAVAILABLE, ["git failed while searching %s — %s" % (repo, failure)])
