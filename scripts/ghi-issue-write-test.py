@@ -2873,10 +2873,227 @@ def run_main_dispatch_cases(scratch: Path):
         tool.repository_root_of, tool.create, tool.edit = saved
 
 
+# --- A design whose code has landed, filed by its `issue:` line -----------
+#
+# The file-naming page moves a design, once its code lands, to the `docs/`
+# directory of its code's directory, under a name with no issue number
+# (user-ruled 2026-09-30, item 3 of the walk
+# ghi-224-migration-order-and-open-questions-2026-09-30). With no number in
+# the name, the `issue:` line the tool writes is what files it. The paths
+# below are the first such move, nc-systems/handoff/docs/, and the shape a
+# subsystem's takes, nc-systems/skills/cold-read/docs/.
+
+LANDED_DESIGN = "nc-systems/handoff/docs/handoff-recover-crashed-seats-design.md"
+SUBSYSTEM_DESIGN = "nc-systems/skills/cold-read/docs/cold-read-design.md"
+LANDED_TITLE = ("Crash recovery for seats that died without a handoff: find "
+                "the last live transcript, resume it supervised")
+LANDED_TEXT = ("---\nstatus: overview\n---\n\n"
+               "# Crash recovery for seats — recover-crashed-seats.py\n\n"
+               "Body.\n")
+
+
+def landed_form(number=120, title=LANDED_TITLE, text=LANDED_TEXT):
+    return tool.with_issue_frontmatter(text, REPO, number, title)
+
+
+def run_landed_design_cases(scratch: Path):
+    check("a design in its system's docs/ is where a landed design sits",
+          tool.landed_design_relative_path(LANDED_DESIGN))
+    check("and so is one in a subsystem's docs/",
+          tool.landed_design_relative_path(SUBSYSTEM_DESIGN))
+    for case_name, relative in [
+            ("a numbered name in docs/ is not a landed design, so one file "
+             "cannot be filed by its name and by its issue: line",
+             "nc-systems/handoff/docs/120-recover-crashed-seats-design.md"),
+            ("a file in docs/ that is not a design is not one",
+             "nc-systems/handoff/docs/handoff-system-overview.md"),
+            ("a docs/ directly under nc-systems/, belonging to no system, "
+             "holds none", "nc-systems/docs/loose-design.md"),
+            ("a design level with its system's code is not one",
+             "nc-systems/main-gatekeeper/main-gatekeeper-design.md"),
+            ("nor is a design still in docs/issues/",
+             "docs/issues/116-fleet-survives-machine-restart-design.md"),
+            ("nor one in the issues queue",
+             "docs/issues/queue/xstate-recovery-design.md")]:
+        check(case_name, not tool.landed_design_relative_path(relative))
+
+    check("the edit operation writes a landed design's path",
+          tool.writable_relative_path(LANDED_DESIGN)
+          and tool.writable_relative_path(SUBSYSTEM_DESIGN))
+    check("and still writes neither a queue note nor an archived draft",
+          not tool.writable_relative_path(
+              "docs/issues/queue/18-write-test-plan-agent-native-riders.md")
+          and not tool.writable_relative_path(
+              "docs/issues/archived/43-step-2-claude-md-inputs.md"))
+
+    # --- Reading the issue a landed design is filed under ----------------
+
+    check("the issue: line the tool writes names the issue's number",
+          tool.issue_number_in_frontmatter(landed_form()) == 120,
+          str(tool.issue_number_in_frontmatter(landed_form())))
+    check("so does a line in the older unquoted shape",
+          tool.issue_number_in_frontmatter(
+              "---\nissue: [A title](https://github.com/nedschorus/"
+              "nedschorus/issues/242)\n---\n\n# H\n") == 242)
+    check("a title carrying another issue's URL does not stand in for the "
+          "link's own number",
+          tool.issue_number_in_frontmatter(tool.with_issue_frontmatter(
+              LANDED_TEXT, REPO, 120,
+              "Follows https://github.com/x/y/issues/9) up")) == 120)
+    check("a file with no frontmatter names no issue",
+          tool.issue_number_in_frontmatter("# H\n\nissue: x/issues/5)\n")
+          is None)
+    check("an issue: line in the body is not the frontmatter's",
+          tool.issue_number_in_frontmatter(
+              "---\nstatus: x\n---\n\nissue: \"[t](https://github.com/a/b/"
+              "issues/5)\"\n") is None)
+
+    # --- The issue's file set reaches a landed design --------------------
+
+    listing = Recorder({
+        "git ls-tree": Completed(
+            "docs/issues/120-crash-recovery-for-seats-design.md\n"
+            "docs/issues/queue/120-recovery-notes.md\n"
+            f"{LANDED_DESIGN}\n"
+            f"{SUBSYSTEM_DESIGN}\n"
+            "nc-systems/handoff/docs/handoff-unfiled-design.md\n"
+            "nc-systems/handoff/docs/120-numbered-design.md\n"
+            "nc-systems/handoff/handoff-supervisor.py\n"),
+        f"git show origin/main:{LANDED_DESIGN}": Completed(landed_form()),
+        f"git show origin/main:{SUBSYSTEM_DESIGN}": Completed(
+            landed_form(number=284, title="Cold read")),
+        "git show origin/main:nc-systems/handoff/docs/handoff-unfiled":
+            Completed(LANDED_TEXT),
+    })
+    found = tool.ghi_md_paths_for_issue(120, scratch, listing)
+    shows_in_one_call = listing.count("git show")
+    check("an issue's files are its numbered files and the landed designs "
+          "whose issue: line names it, and not a queue note, a design "
+          "naming another issue, one naming none, or a numbered name in "
+          "docs/",
+          found == ["docs/issues/120-crash-recovery-for-seats-design.md",
+                    LANDED_DESIGN], str(found))
+    check("only landed designs are read, so the rest of the tree costs no "
+          "git show",
+          shows_in_one_call == 3
+          and not listing.ran("handoff-supervisor.py")
+          and not listing.ran("120-numbered-design"),
+          f"{shows_in_one_call} git show(s): {listing.commands()}")
+    for_subsystem = tool.ghi_md_paths_for_issue(284, scratch, listing)
+    check("a subsystem's landed design is found for its own issue",
+          for_subsystem == [SUBSYSTEM_DESIGN], str(for_subsystem))
+
+    # A read that fails is not "names no issue". Dropped silently, the file
+    # would fall out of the issue's body, which is the empty answer the
+    # listing refuses to give for the same reason.
+    unreadable = Recorder({
+        "git ls-tree": Completed(f"{LANDED_DESIGN}\n"),
+        f"git show origin/main:{LANDED_DESIGN}": Completed(
+            "", returncode=128, stderr="fatal: bad object"),
+    })
+    try:
+        tool.ghi_md_paths_for_issue(120, scratch, unreadable)
+        check("a landed design main cannot show stops the listing", False,
+              "it answered")
+    except tool.Refused as refusal:
+        check("a landed design main cannot show stops the listing",
+              refusal.code == 1, f"code {refusal.code}")
+
+    # --- The edit operation takes a landed design ------------------------
+
+    design = scratch / LANDED_DESIGN
+    design.parent.mkdir(parents=True, exist_ok=True)
+    design.write_text(landed_form(), encoding="utf-8")
+    text, title, number, relative = tool.validate_edit(design, scratch)
+    check("a landed design's issue is its issue: line",
+          number == 120 and relative == LANDED_DESIGN
+          and title == "Crash recovery for seats — recover-crashed-seats.py",
+          f"{number} {relative} {title!r}")
+
+    unfiled = scratch / "nc-systems/handoff/docs/handoff-unfiled-design.md"
+    unfiled.write_text(LANDED_TEXT, encoding="utf-8")
+    try:
+        tool.validate_edit(unfiled, scratch)
+        check("a landed design with no issue: line is refused", False,
+              "it was accepted")
+    except tool.Refused as refusal:
+        check("a landed design with no issue: line is refused, and told to "
+              "add the line or file it",
+              refusal.code == 64 and "`issue:`" in str(refusal)
+              and "create operation" in str(refusal), str(refusal))
+
+    elsewhere = scratch / "docs" / "drafts" / "handoff-notes-design.md"
+    elsewhere.parent.mkdir(parents=True, exist_ok=True)
+    elsewhere.write_text(landed_form(), encoding="utf-8")
+    try:
+        tool.validate_edit(elsewhere, scratch)
+        check("an unnumbered file outside a system's docs/ is still not "
+              "filed, issue: line or not", False, "it was accepted")
+    except tool.Refused as refusal:
+        check("an unnumbered file outside a system's docs/ is still not "
+              "filed, issue: line or not",
+              refusal.code == 64 and "not named for an issue" in str(refusal),
+              str(refusal))
+
+    # The rerun after the move merged: main's copy is this file, so nothing
+    # lands, and the body is relinked to the file where it now sits.
+    old_body = tool.links_body(
+        REPO, ["docs/issues/120-crash-recovery-for-seats-design.md"])
+    rerun = Recorder({
+        f"git show origin/main:{LANDED_DESIGN}": Completed(landed_form()),
+        "gh issue view": issue_json(LANDED_TITLE, old_body),
+        "git ls-tree": Completed(f"{LANDED_DESIGN}\n"),
+    })
+    _, done = tool.edit(design, REPO, scratch, rerun, quiet)
+    check("the rerun after a landed design's move relinks the body to where "
+          "it now sits, and lands nothing",
+          done and ran_with(rerun, "gh issue edit", "120", LANDED_DESIGN)
+          and not rerun.ran("git worktree add"), str(rerun.commands()))
+
+    # A number in the issue: line that no issue has is the author's line
+    # being wrong, and the refusal says to correct that line — a landed
+    # design is not renamed to change its issue.
+    missing = Recorder({
+        "gh issue view": Completed(
+            "", returncode=1,
+            stderr="GraphQL: Could not resolve to an issue or pull request "
+                   "with the number of 120. (repository.issue)"),
+    })
+    try:
+        tool.edit(design, REPO, scratch, missing, quiet)
+        check("a landed design naming no issue is refused", False,
+              "it ran")
+    except tool.Refused as refusal:
+        check("a landed design naming an issue that does not exist is told "
+              "to correct its issue: line, not to rename the file",
+              refusal.code == 64 and "`issue:` line" in str(refusal)
+              and "Rename the file" not in str(refusal), str(refusal))
+
+    # --- create does not file a landed design a second time --------------
+
+    try:
+        tool.validate(design)
+        check("create refuses a file that carries an issue: line", False,
+              "it was accepted")
+    except tool.Refused as refusal:
+        check("create refuses a file that carries an issue: line, which "
+              "only a filed file has, and sends it to the edit operation",
+              refusal.code == 64 and "edit operation" in str(refusal)
+              and "issue 120" in str(refusal), str(refusal))
+    fresh = scratch / "docs" / "issues" / "queue" / "fresh-design.md"
+    fresh.parent.mkdir(parents=True, exist_ok=True)
+    fresh.write_text(LANDED_TEXT, encoding="utf-8")
+    check("a fresh source with no issue: line still validates for create",
+          tool.validate(fresh)[1]
+          == "Crash recovery for seats — recover-crashed-seats.py")
+
+
 def main():
     import tempfile
     with tempfile.TemporaryDirectory(prefix="ghi-issue-write-test-") as name:
         run_cases(Path(name))
+    with tempfile.TemporaryDirectory(prefix="ghi-issue-landed-test-") as name:
+        run_landed_design_cases(Path(name))
     with tempfile.TemporaryDirectory(prefix="ghi-issue-main-test-") as name:
         run_main_dispatch_cases(Path(name))
     # A checkout of its own: the reconsidered marker lives at the root of
