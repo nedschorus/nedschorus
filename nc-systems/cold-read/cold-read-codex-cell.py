@@ -83,7 +83,14 @@ default: a web page the document links to is part of what the reviewer
 reads, and the reviewer fetches it itself (user-ruled 2026-09-29, items 3
 and 5 of the walk what-a-cold-read-reviewer-may-read-2026-09-28). Measured
 that day on both machines: the reviewer fetched a public GitHub issue page,
-HTTP 200, and still could not read a credential canary.
+HTTP 200, and still could not read a credential canary. The cell also sets
+`web_search="live"`: Codex's own web tool otherwise answers from a cache, and
+on the Mac it answered "Cache miss" for a page a document linked in 2 of 3
+cells, while with the setting it fetched the page in 2 of 2, as ned-box did
+without it (measured 2026-09-29; user-ruled 2026-09-30, item 6 of the walk
+open-questions-concerns-and-recommendations-2026-09-30). Rechecked on the Mac
+after the change, 2026-09-30: a cell barred from curl fetched a GitHub issue
+page with the web tool and read the title the issue had been given that day.
 
 WHY /tmp IS READ-ONLY IN THE PROFILE ON LINUX, AND ONLY THERE. `:workspace`
 makes /tmp and $TMPDIR writable roots, and Codex's Linux sandbox mounts its
@@ -227,6 +234,7 @@ def invocation_builder(effort: str):
         if model:
             command += ["-m", model]
         command += ["-c", f"model_reasoning_effort={effort}"]
+        command += ["-c", 'web_search="live"']
         command.append(prompt)
         return command, None
     return build_invocation
