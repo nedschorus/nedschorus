@@ -59,4 +59,25 @@ The cold-read Codex cell is not affected in the same way. It extends `:workspace
 
 ## Next action
 
-Find an invocation of `codex exec review` whose `codex-linux-sandbox` child carries the cell's profile, with the deny entries present and nothing writable. Candidates: `-p` with a config profile layered from `CODEX_HOME`, or a `config.toml` in a scratch `CODEX_HOME` that sets `default_permissions`. Either one must carry the deny table the builder computes for each run, since the credential files it lists are found at run time. `--sandbox` is not one: Codex refuses it together with a permission profile, as the cell's docstring records. Change `scripts/code-review-codex-cell.py` to use that invocation. The `/proc` read above is the check: run it against the changed cell, and add it to the cell's docstring, so the next Codex upgrade can be checked the same way. If no invocation works, whether to keep running the cell, and where, is a question for the user. Separately, `enclosing_repository_root` could skip a `.git` directory with no entries in it. That is a second guard against the same debris, and whether to add it is a question for the user.
+None on this issue: it closes as completed once this edit merges. Its build is done (see Outcome). A follow-up pull request from cold-read-research fixes the three non-blocking findings that PR 809's review left on the cell's re-check recipes. Whether `enclosing_repository_root` should skip a `.git` directory with no entries in it is a question waiting on the user, kept on cold-read-research's task list.
+
+## Outcome
+
+Fixed on 2026-09-30 by PR [The Codex review cell's commands run under its credential-denying profile](https://github.com/nedschorus/nedschorus/pull/809), merged at `0b62d776`.
+
+- **Cause: argument order.** `codex exec review` runs the review in a child thread, and every command the reviewing model runs belongs to that thread. On codex-cli 0.156.0 the child drops a permission profile placed before `review`. It then runs under the default the checkout gets without one:
+  - `:workspace` for a project Codex trusts, on ned-box;
+  - `:read-only` for one it does not, on ned-box;
+  - workspace-write on the Mac, from its config's `sandbox_mode`.
+
+  The same profile, passed as the builder's `-c` configuration overrides but placed after `review`, does reach the child. `review`'s own parser rejects `--sandbox`, and `-p`, the config-profile flag of `codex exec`.
+- **Fix.** `scripts/code-review-codex-cell.py` now places the builder's profile overrides after `review`. The shared builder in `nc-systems/cold-read/cold-read-cell-common.py` is unchanged. The cell's docstring says where the profile goes and how to re-check it after a Codex upgrade.
+- **Measured, both machines, codex-cli 0.156.0.** Each run had a scratch HOME holding canary credentials. With the profile before `review`, the reviewer read both canaries and wrote under `/tmp` and in the checkout. With it after `review`:
+  - both reads and both writes were refused;
+  - no `/tmp/.git` appeared;
+  - the review still wrote its report.
+
+  merge-lane-2 then ran the `/proc` capture twice on the merged head, over a scratch repository on ned-box. Every `codex-linux-sandbox` child of the review held the builder's seven deny entries, root `read` and no `write` entry, and `/tmp/.git` never appeared.
+- **Not yet known, now moot.** Why the directories were once left behind was not investigated. With the profile after `review`, the review's commands no longer create them.
+- **Workaround.** Skipping the Codex review cell on pull requests that touch a credential path is no longer needed.
+- **Not built.** The second guard, `enclosing_repository_root` skipping an empty `.git`, is a question for the user. It is on cold-read-research's task list, not in this issue.
