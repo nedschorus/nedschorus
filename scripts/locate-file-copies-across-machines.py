@@ -267,7 +267,12 @@ that is found still answers in a couple of seconds.
     Given an absolute path outside that repository, they could only report
     that they could not search it, as they did for a log-store path while the
     command was printed instead (measured while PR "The older lost-file tool
-    reads a path as it is cited, and a FOUND stands alone" was built).
+    reads a path as it is cited, and a FOUND stands alone" was built). The
+    line that starts the backup search says the git search above covered
+    them only when this program's own answer was complete (exit 1); after an
+    exit 3, what it could not search is named above instead
+    (PR "The locator runs the backup search itself when it finds nothing",
+    review inline comment 4140421516).
   - Its output is passed on line by line as it comes. It prints each place
     the moment that place answers, so a run killed part way keeps what it had
     printed. It took 72 s on the Mac on 2026-09-30, with the Time Machine
@@ -1461,19 +1466,23 @@ def write_text(text):
     sys.stdout.flush()
 
 
-def run_backup_search_after_nothing_found(query):
+def run_backup_search_after_nothing_found(query, git_search_complete):
     """Run the backup search on `query`, a bare name or an absolute path in
     its canonical spelling, as WHEN NOTHING IS FOUND in the module docstring
     sets out, passing its output on line by line as it comes. Returns the
-    closing lines for what it answered."""
+    closing lines for what it answered. `git_search_complete` is whether
+    this program's own answer searched everything (exit 1), the only case
+    in which its git search covered what the skipped surfaces would."""
     program = (os.environ.get(BACKUP_SEARCH_PROGRAM_VARIABLE)
                or str(pathlib.Path(__file__).resolve().parent
                       / BACKUP_SEARCH_PROGRAM_NAME))
     command = [sys.executable, program, query]
     for surface in BACKUP_SEARCH_SURFACES_ALREADY_SEARCHED:
         command += ["--skip", surface]
+    covered = (", which the git search above covered" if git_search_complete
+               else "")
     write_text("\nNo copy was found, so the backup search runs now, without "
-               "its git surfaces, which the git search above covered:\n"
+               f"its git surfaces{covered}:\n"
                f"  $ {shlex.join(command)}\n\n")
     try:
         process = subprocess.Popen(
@@ -1581,7 +1590,7 @@ def main(argv=None) -> int:
     write_text(text)
     if code != 0:
         closing = run_backup_search_after_nothing_found(
-            target.get("canonical", target["path"]))
+            target.get("canonical", target["path"]), code == 1)
         if closing:
             write_text("\n" + "\n".join(closing) + "\n")
     return code
