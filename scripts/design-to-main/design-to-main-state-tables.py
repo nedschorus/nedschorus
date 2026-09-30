@@ -69,7 +69,7 @@ FOCUS_UNKNOWN = "unknown"
 
 # The inputs an input-quick-check-failed may name (section 4).
 INPUT_DESIGN = "design"
-INPUT_COMPONENT_CONTRACT = "component-contract"
+INPUT_DESIGN_CONTRACT = "design-contract"
 INPUT_TEST_DESIGN = "test-design"
 
 # The classes of a gatekeeper-refusal (section 3.4).
@@ -239,7 +239,7 @@ STATES_WITH_ESCALATE_TO_USER = (
 WRITING_STATES = (CONTRACT_REVISING, IMPLEMENTATION_WRITING,
                   TEST_DESIGN_WRITING, TEST_WRITING)
 # Section 4's writing states, design-writing among them: the initiator
-# writes the design and the component-contract as the others write theirs.
+# writes the design and the design-contract as the others write theirs.
 # WRITING_STATES above is the four whose entry reason the counters' buckets
 # read (section 7), which design-writing has no part in; this is the set
 # section 2 means by "a writing state's `emitted`", whose empty
@@ -287,7 +287,7 @@ COUNTER_TABLE = (
         2, 2, "`ended`, outcome `failed`", per_design_version=False),
     CounterCeilingRule(
         "design-revisions",
-        "`design-acceptance-by-agent` rejects the design or the component-contract "
+        "`design-acceptance-by-agent` rejects the design or the design-contract "
         "before the design's approval",
         2, 2, "the initiator brings the user into the conversation with every set of notes"),
     CounterCeilingRule(
@@ -315,7 +315,7 @@ COUNTER_TABLE = (
     CounterCeilingRule(
         "contract-revisions",
         "`contract-revising` is entered after a rejection or a failed check against "
-        "the component-contract, once the design is approved",
+        "the design-contract, once the design is approved",
         2, 1, "`contract-acceptance-by-user`: one revision; the user is called after "
               "the original and one contract-revision have both failed review, and no "
               "second is written"),
@@ -434,10 +434,10 @@ G_FROM_AN_ACCEPTANCE_CHECK_BY_AGENT = "from a reviewing sub-state by agent"
 G_FROM_THE_LAST_ACCEPTANCE_CHECK = "from the last acceptance-check of the reviewing state"
 G_FROM_AN_EARLIER_ACCEPTANCE_CHECK = "from an acceptance-check that is not the last"
 G_AGAINST_THE_DESIGN = "against the design"
-G_AGAINST_THE_COMPONENT_CONTRACT = "against the component-contract"
+G_AGAINST_THE_DESIGN_CONTRACT = "against the design-contract"
 G_AGAINST_THE_TEST_DESIGN = "against the test-design"
-G_A_REJECT_OF_OR_A_FAILED_CHECK_AGAINST_THE_COMPONENT_CONTRACT = (
-    "a reject of, or a failed check against, the component-contract")
+G_A_REJECT_OF_OR_A_FAILED_CHECK_AGAINST_THE_DESIGN_CONTRACT = (
+    "a reject of, or a failed check against, the design-contract")
 G_TESTS_NOT_YET_BEGUN = "tests not yet begun"
 G_TESTS_BEGUN = "tests begun"
 G_TEST_WORK_STREAM_READY = "the test-work-stream at ready-for-test-suite"
@@ -597,7 +597,7 @@ TRANSITION_TABLE = (
     _row("14", DESIGN_REVIEWING, V_REJECT_CONTRACT,
          (G_FROM_DESIGN_ACCEPTANCE_BY_AGENT, counter_below_ceiling("design-revisions")),
          DESIGN_WRITING, "design-revisions",
-         note="the same initiator fixes the component-contract; then the program check",
+         note="the same initiator fixes the design-contract; then the program check",
          view=DIAGRAM_VIEW_REWORK_AND_ARBITRATION),
     _row("15", DESIGN_REVIEWING, V_REJECT_CONTRACT,
          (G_FROM_DESIGN_ACCEPTANCE_BY_AGENT, counter_at_ceiling("design-revisions")),
@@ -636,7 +636,7 @@ TRANSITION_TABLE = (
                       "nothing here (section 7, the three buckets)",
          view=DIAGRAM_VIEW_MAIN_PATH),
     _row("22", IMPLEMENTATION_WRITING, V_INPUT_QUICK_CHECK_FAILED,
-         (G_AGAINST_THE_COMPONENT_CONTRACT, counter_below_ceiling("contract-revisions")),
+         (G_AGAINST_THE_DESIGN_CONTRACT, counter_below_ceiling("contract-revisions")),
          CONTRACT_REVISING, "contract-revisions",
          view=DIAGRAM_VIEW_REWORK_AND_ARBITRATION),
     _row("23", IMPLEMENTATION_WRITING, V_INPUT_QUICK_CHECK_FAILED,
@@ -674,7 +674,7 @@ TRANSITION_TABLE = (
     _row("32", TEST_DESIGN_WRITING, V_EMITTED, (), TEST_DESIGN_REVIEWING,
          view=DIAGRAM_VIEW_MAIN_PATH),
     _row("33", TEST_DESIGN_WRITING, V_INPUT_QUICK_CHECK_FAILED,
-         (G_AGAINST_THE_COMPONENT_CONTRACT, counter_below_ceiling("contract-revisions")),
+         (G_AGAINST_THE_DESIGN_CONTRACT, counter_below_ceiling("contract-revisions")),
          CONTRACT_REVISING, "contract-revisions",
          view=DIAGRAM_VIEW_REWORK_AND_ARBITRATION),
     _row("34", TEST_DESIGN_WRITING, V_INPUT_QUICK_CHECK_FAILED,
@@ -721,7 +721,7 @@ TRANSITION_TABLE = (
          TEST_DESIGN_ACCEPTANCE_BY_USER,
          view=DIAGRAM_VIEW_INSIDE_THE_REVIEWING_STATES),
     _row("45", TEST_WRITING, V_INPUT_QUICK_CHECK_FAILED,
-         (G_AGAINST_THE_COMPONENT_CONTRACT, counter_below_ceiling("contract-revisions")),
+         (G_AGAINST_THE_DESIGN_CONTRACT, counter_below_ceiling("contract-revisions")),
          CONTRACT_REVISING, "contract-revisions",
          view=DIAGRAM_VIEW_REWORK_AND_ARBITRATION),
     _row("46", TEST_WRITING, V_INPUT_QUICK_CHECK_FAILED,
@@ -797,7 +797,7 @@ TRANSITION_TABLE = (
          (),
          TO_BOTH_WRITERS_FRESH,
          counter_note="each write bounded as row 63",
-         note="both artifacts contradicting the component-contract; the "
+         note="both artifacts contradicting the design-contract; the "
               "implementation-work-stream runs first (section 3.1)",
          view=DIAGRAM_VIEW_REWORK_AND_ARBITRATION),
     # Row 65 has no verdict: it is applied when test-suite-arbitrating is
@@ -817,7 +817,7 @@ TRANSITION_TABLE = (
          (IMPLEMENTATION_WRITING, IMPLEMENTATION_REVIEWING, TEST_DESIGN_WRITING,
           TEST_DESIGN_REVIEWING, TEST_WRITING, TEST_REVIEWING, TEST_SUITE_ARBITRATING),
          (V_REJECT_CONTRACT, V_INPUT_QUICK_CHECK_FAILED),
-         (G_A_REJECT_OF_OR_A_FAILED_CHECK_AGAINST_THE_COMPONENT_CONTRACT,
+         (G_A_REJECT_OF_OR_A_FAILED_CHECK_AGAINST_THE_DESIGN_CONTRACT,
           counter_at_ceiling("contract-revisions")),
          CONTRACT_ACCEPTANCE_BY_USER,
          note="any state above (sections 5.3, 6.6); contract-reviewing's own is row 8, "
@@ -898,12 +898,12 @@ DESIGN_TRANSITION_ROWS = tuple(row.row for row in TRANSITION_TABLE if row.source
 # --- The paths of section 9 ----------------------------------------------
 
 # Before code exists, the design is its issue's GHI-MD, refined in place, and
-# the component-contract sits beside it (user-ruled 2026-09-18); the
+# the design-contract sits beside it (user-ruled 2026-09-18); the
 # invocation names the GHI-MD. When code starts both move into the
 # component's directory as <component>-design.md and <component>-contract.md.
 
 def contract_path_beside_design(design_path):
-    """The component-contract's path while no code exists: beside the design,
+    """The design-contract's path while no code exists: beside the design,
     named like it, with `-design.md` (or plain `.md`) replaced by
     `-contract.md`."""
     stem = design_path[:-len(".md")] if design_path.endswith(".md") else design_path
@@ -957,7 +957,7 @@ STATE_EXIT_JSON_FIELDS_REQUIRED = ("state", "verdict", "package-commit", "named-
 # (section 6.6), in the order the design lists the documents.
 RESUME_DESTINATION_BY_EDITED_DOCUMENT = (
     ("design", DESIGN_WRITING),
-    ("component-contract", CONTRACT_REVIEWING),
+    ("design-contract", CONTRACT_REVIEWING),
     ("test-design", TEST_DESIGN_REVIEWING),
     ("implementation", IMPLEMENTATION_REVIEWING),
     ("tests", TEST_REVIEWING),

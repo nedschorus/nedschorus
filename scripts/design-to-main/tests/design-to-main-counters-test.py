@@ -600,14 +600,14 @@ class CountersDrivenThroughTheMachine(unittest.TestCase):
 
         script = fixture.prefix_to_tests_begun() + [
             (T.TEST_DESIGN_WRITING, T.V_INPUT_QUICK_CHECK_FAILED,
-             {"input_named": T.INPUT_COMPONENT_CONTRACT}),                    # row 33
+             {"input_named": T.INPUT_DESIGN_CONTRACT}),                    # row 33
             (T.CONTRACT_REVISING, T.V_EMITTED, {}),
             (T.CONTRACT_ACCEPTANCE_BY_PROGRAM, T.V_ADVANCE, {}),
             (T.CONTRACT_ACCEPTANCE_BY_AGENT, T.V_ADVANCE, {}),                 # row 9
             fixture.implementation_write(),
             (T.IMPLEMENTATION_ACCEPTANCE_BY_AGENT, T.V_ADVANCE, {}),           # row 26: holds
             (T.TEST_DESIGN_WRITING, T.V_INPUT_QUICK_CHECK_FAILED,
-             {"input_named": T.INPUT_COMPONENT_CONTRACT}),                    # row 67
+             {"input_named": T.INPUT_DESIGN_CONTRACT}),                    # row 67
         ]
         self.repository.remove()
         self.repository = fixture.ThrowawayRepository()

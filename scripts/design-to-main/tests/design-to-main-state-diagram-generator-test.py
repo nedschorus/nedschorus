@@ -260,7 +260,7 @@ class WhatEachViewDraws(unittest.TestCase):
         self.assertIn(
             "    row_67_from_states --> contract_acceptance_by_user: "
             "reject contract, input-quick-check-failed "
-            "[a reject of, or a failed check against, the component-contract]",
+            "[a reject of, or a failed check against, the design-contract]",
             self.lines[T.DIAGRAM_VIEW_INSIDE_THE_REVIEWING_STATES])
         for line in edge_lines(self.all_lines):
             if "[investigation-focus design or test-design" in line:
