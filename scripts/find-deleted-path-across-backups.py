@@ -191,10 +191,12 @@ searches git's reflog and the log-store, and prints each place as it finishes"
 merge-lane-mac-helper-open-items-and-questions-2026-09-23 item 17: "If we are
 going to use it, it should work properly." Which prefixes are hosts, and which
 hosts' homes are known, is the locator's rule, imported from
-locate-file-copies-across-machines.py rather than copied. Only paths that begin
-with `.`, `..` or `~`, or hold a `..`, are placed from the current directory:
-"docs/x.md" stays repo-relative or a fragment, as the paragraph above says,
-where the locator would place it from the current directory too.
+locate-file-copies-across-machines.py rather than copied; so the locator must
+never import this file in turn, and runs it as a program. `~` is expanded to
+a home. Only paths that begin with `.` or `..`, or hold a `..`, are placed
+from the current directory: "docs/x.md" stays repo-relative or a fragment, as
+the paragraph above says, where the locator would place it from the current
+directory too.
 
 ONE FORM THE LOCAL-SNAPSHOT SURFACE CANNOT TAKE. A mounted snapshot is tested
 with a single `test -e`, which needs a known path; locating a trailing fragment
@@ -1273,8 +1275,8 @@ def search_log_store(wanted, log_store_root, box_ssh_host, runner=run_command, s
     found_copies = set(at_wanted_path)
     newer_candidates = [hit for hit in hits if hit not in found_copies and hit[0] > at_wanted_path[0][0]]
     older_candidates = len(hits) - len(at_wanted_path) - len(newer_candidates)
-    lines = ["%d file(s) under %s on %s at a path ending in %r, newest first:"
-             % (len(at_wanted_path), log_store_root, where, shown_path)]
+    lines = ["%d file(s) under %s on %s %s at a path ending in %r, newest first:"
+             % (len(at_wanted_path), log_store_root, where, "is" if len(at_wanted_path) == 1 else "are", shown_path)]
     lines += _log_store_listing(at_wanted_path, list_every_name)
     if newer_candidates:
         lines.append("Candidates only, not counted as found: %d other file(s) with %r in their name are newer than"

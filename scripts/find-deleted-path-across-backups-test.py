@@ -1282,8 +1282,8 @@ with tempfile.TemporaryDirectory() as tmp:
           [l.split("  ", 1)[1] for l in listed] == [str(exact_copy), str(newer_rename), str(older_rename)],
           str(listed))
     check("log-store: the first line counts the copies at the wanted path alone, and the copy follows it",
-          report.lines[0].startswith("1 file(s) under %s on this machine at a path ending in "
-                                     "'docs/drafts/pr-main-process-design.md'" % store)
+          report.lines[0] == "1 file(s) under %s on this machine is at a path ending in "
+                             "'docs/drafts/pr-main-process-design.md', newest first:" % store
           and report.lines[1].endswith(str(exact_copy)), str(report.lines[:2]))
     check("log-store: each listed copy carries its time, so the newest can be told at a glance",
           listed and listed[0].startswith("2026-09-01 09:00") and listed[1].startswith("2026-09-18 12:00"),
