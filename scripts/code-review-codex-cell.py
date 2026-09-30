@@ -113,7 +113,7 @@ the flag's name:
             return read(f"/proc/{pid}/stat").rpartition(b")")[2].split()
         def parent(pid): return (stat(pid)[1:2] or [b""])[0].decode()
         seen, profiles = set(), set()
-        while stat(cell) and stat(cell)[0] != b"Z":
+        while (state := stat(cell)) and state[0] != b"Z":
             for pid in filter(str.isdigit, os.listdir("/proc")):
                 argv = read(f"/proc/{pid}/cmdline").split(b"\0")
                 if pid in seen or os.path.basename(argv[0]) != b"codex-linux-sandbox": continue
