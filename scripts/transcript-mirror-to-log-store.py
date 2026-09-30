@@ -51,8 +51,12 @@ all print nothing. The exits are the same. It is what cron runs, so the log
 holds failures only. It also skips the file counts, so a quiet pass makes no
 `find` over ssh on ned-box. The lock is silent because a run still going when
 the next minute's starts is expected: the first pass after a machine was off
-moves everything since. A stalled transfer does not hold the lock silently:
-rsync's --timeout ends it, and the holder then prints its FAILED line.
+moves everything since. A stalled run does not hold the lock for long:
+every ssh it opens, rsync's included, gives up about a minute after ned-box
+stops answering (ServerAliveInterval 15, ServerAliveCountMax 4), as when the
+Mac sleeps mid-run, and rsync's --timeout ends a transfer that stops moving.
+The run then ends and frees the lock, and a directory preparation or rsync
+that ended that way prints its FAILED line.
 
 SCHEDULE. Every minute, by cron on both machines, so the store's copy of each
 machine's transcripts is at most about a minute behind (user-ruled
@@ -106,7 +110,11 @@ SOURCES = (
     ("handoffs", pathlib.Path(".claude") / "handoffs"),
 )
 
-SSH_COMMAND = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10"]
+# ServerAlive*: a connected ssh gives up about 60 s after the far end stops
+# answering -- a dead TCP session after the Mac slept mid-run -- instead of
+# hanging and holding the lock. rsync's -e transport is built from this list.
+SSH_COMMAND = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10",
+               "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=4"]
 RSYNC_IO_TIMEOUT_SECONDS = "300"
 # rsync: some source files vanished before they could be transferred. On a
 # live tree that is a session ending, not a failure. The code depends on

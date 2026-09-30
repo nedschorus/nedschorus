@@ -21,6 +21,9 @@ MIRROR = SCRIPTS_DIR / "transcript-mirror-to-log-store.py"
 DESTINATION_VARIABLE = "TRANSCRIPT_MIRROR_DESTINATION"
 SOURCE_HOME_VARIABLE = "TRANSCRIPT_MIRROR_SOURCE_HOME"
 RULED_DESTINATION = "nedlern@ned-box:/home/nedlern/nedschorus-logs/transcripts"
+RSYNC_SSH_TRANSPORT = ("ssh -o BatchMode=yes -o ConnectTimeout=10"
+                       " -o ServerAliveInterval=15 -o ServerAliveCountMax=4")
+SERVER_ALIVE_OPTIONS = ("ServerAliveInterval=15", "ServerAliveCountMax=4")
 
 STUB_RECORDER = """#!/usr/bin/env python3
 import json, os, sys
@@ -166,7 +169,7 @@ with tempfile.TemporaryDirectory(prefix="transcript-mirror-test-") as scratch_na
           result.returncode == 0 and result.stdout.count("mirrored:") == 2, result.stdout + result.stderr)
     check("two rsync calls, -a, over batch-mode ssh, into transcripts/<machine>/<source>/ on ned-box",
           len(rsync_calls) == 2 and all(
-              "-a" in c and "ssh -o BatchMode=yes -o ConnectTimeout=10" in c
+              "-a" in c and RSYNC_SSH_TRANSPORT in c
               and c[-1] == f"{RULED_DESTINATION}/{machine}/{name}/"
               and c[-2] == f"{home / '.claude' / name}/"
               for c, name in zip(rsync_calls, ("projects", "handoffs"))),
@@ -175,6 +178,10 @@ with tempfile.TemporaryDirectory(prefix="transcript-mirror-test-") as scratch_na
           not any(flag in c for c in rsync_calls for flag in ("--delete", "--inplace")))
     check("every ssh call runs in batch mode with a connect timeout",
           ssh_calls and all("BatchMode=yes" in c for c in ssh_calls), str(ssh_calls))
+    check("every ssh call, and rsync's ssh transport, gives up on a far end that stops answering",
+          ssh_calls and all(option in c for c in ssh_calls for option in SERVER_ALIVE_OPTIONS)
+          and all(option in c[c.index("-e") + 1] for c in rsync_calls for option in SERVER_ALIVE_OPTIONS),
+          str(calls))
 
     # Files vanishing mid-run is exit 24 from GNU rsync (ned-box) and exit 23
     # from openrsync (the Mac's /usr/bin/rsync); each is a note on its own
