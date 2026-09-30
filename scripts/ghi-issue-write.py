@@ -435,11 +435,20 @@ def tracked_paths_at_head(repository_root: Path, runner) -> list:
     counted, and one heading got two verdicts: merge-lane-2's checkout
     holds walk-ledgers/ and cold-read-records/, which others do not (review
     of PR [GHI titles name the work](https://github.com/nedschorus/nedschorus/pull/829)).
-    Two checkouts at one commit now answer alike. check=False with an empty
-    answer on failure, such as a HEAD with no commit yet, because a path the
-    check cannot see is let through rather than a filing stopped."""
-    completed = runner(["git", "ls-tree", "-r", "--name-only", "HEAD"],
-                       timeout=30, cwd=str(repository_root), check=False)
+    Two checkouts at one commit now answer alike. An empty answer on
+    failure, such as a HEAD with no commit yet, and on a listing that times
+    out, because a path the check cannot see is let through rather than a
+    filing stopped. The timeout is caught here although every other git
+    call in this program lets one end the run with exit 1: this call only
+    decides whether to refuse, and the reviews of PR [GHI heading check runs
+    after the duplicate refusals](https://github.com/nedschorus/nedschorus/pull/838)
+    found this docstring promising "let through" while a timeout stopped
+    the run."""
+    try:
+        completed = runner(["git", "ls-tree", "-r", "--name-only", "HEAD"],
+                           timeout=30, cwd=str(repository_root), check=False)
+    except subprocess.TimeoutExpired:
+        return []
     if completed.returncode != 0:
         return []
     return completed.stdout.splitlines()
@@ -521,7 +530,8 @@ def refuse_heading_with_date_or_file_path(heading: str, repository_root,
     `create` for a new filing, after the refusals for a filing in flight and
     one already on main, so a rerun on a source that is either is told that
     and not to change the heading, which would file a second issue; by
-    `create --dry-run`, so the dry run answers as the real run would; and by
+    `create --dry-run`, which judges the heading as a new filing's real run
+    does but reads neither GitHub nor main (see `main`); and by
     `edit` only when step 4 will set the title to the heading, so an issue
     already filed under such a title can still be edited, and a filing
     resumed after an earlier run is never refused for a title GitHub
@@ -1787,8 +1797,8 @@ def heading_changed_in_this_edit(document_before_this_edit,
     """Whether this edit changed the file's first heading, which is the
     design's trigger for the title following it — a CHANGE, not a mismatch.
     `sync_title_on_heading_change` holds what the comparison is made
-    against and why, and `issue_title_after_this_edit` asks the same
-    question, so the two cannot drift apart."""
+    against and why; `title_follows_heading_in_this_edit` asks this with
+    step 4's two other conditions."""
     return (document_before_this_edit is not None
             and first_heading(document_before_this_edit) != heading)
 
@@ -1798,11 +1808,15 @@ def title_follows_heading_in_this_edit(document_before_this_edit,
     """Whether step 4, `sync_title_on_heading_change`, will set the issue's
     title to this heading: the heading changed in this edit, the issue has
     at most one filed GHI-MD, and the title is not already the heading.
-    Those are step 4's three exits, and the heading check asks this rather
-    than a copy of two of them, which is how the two differed: an edit
-    changing a heading to the title the issue already held was refused,
+    Step 4 itself, the heading check and `issue_title_after_this_edit`
+    all ask this one function, so the three cannot differ. They once did:
+    the heading check asked a copy of two of the conditions, and an edit
+    changing a heading to the title the issue already held was refused
     although no rename followed (review of PR [GHI titles name the
-    work](https://github.com/nedschorus/nedschorus/pull/829))."""
+    work](https://github.com/nedschorus/nedschorus/pull/829)); step 4 and
+    the frontmatter title kept their own copies until the reviews of PR
+    [GHI heading check runs after the duplicate
+    refusals](https://github.com/nedschorus/nedschorus/pull/838)."""
     return (heading_changed_in_this_edit(document_before_this_edit, heading)
             and len(paths) <= 1
             and issue.get("title") != heading)
@@ -1832,11 +1846,12 @@ def issue_title_after_this_edit(document_before_this_edit, heading: str,
     it: where the heading did change and the issue has one filed GHI-MD, the
     title follows the heading, and a line citing the old title would be
     stale the moment this landed — and the next rerun would see a file
-    differing from main's copy and land a second edit to put it right. The
-    two conditions are `sync_title_on_heading_change`'s own, read here
-    rather than restated."""
-    if (heading_changed_in_this_edit(document_before_this_edit, heading)
-            and len(paths) <= 1):
+    differing from main's copy and land a second edit to put it right.
+    Whether step 4 renames is `title_follows_heading_in_this_edit`'s
+    answer; where it does not, the title stays what GitHub holds, which is
+    the heading already when step 4's third condition is what declined."""
+    if title_follows_heading_in_this_edit(document_before_this_edit,
+                                          heading, paths, issue):
         return heading
     return issue.get("title") or heading
 
@@ -1866,15 +1881,18 @@ def sync_title_on_heading_change(repo: str, number: int,
     comparison against that finds no heading to have changed — not on the
     first run, and not on any rerun either, since once the move merges the
     heading on main is the changed one. A moved file's title would follow a
-    heading change never."""
-    if not heading_changed_in_this_edit(document_before_this_edit, title):
-        return
-    if len(paths) > 1:
-        report(f"the heading changed, but issue {number} has {len(paths)} "
-               "filed GHI-MDs and nothing says which one names it, so the "
-               "title is left alone")
-        return
-    if issue.get("title") == title:
+    heading change never.
+
+    Whether to rename is `title_follows_heading_in_this_edit`'s answer, the
+    one the heading check and the frontmatter title also ask. The
+    several-files case is asked again only to say why nothing was renamed."""
+    if not title_follows_heading_in_this_edit(document_before_this_edit,
+                                              title, paths, issue):
+        if (heading_changed_in_this_edit(document_before_this_edit, title)
+                and len(paths) > 1):
+            report(f"the heading changed, but issue {number} has "
+                   f"{len(paths)} filed GHI-MDs and nothing says which one "
+                   "names it, so the title is left alone")
         return
     runner(["gh", "issue", "edit", str(number), "--repo", repo,
             "--title", title])
@@ -2047,8 +2065,23 @@ def main(argv=None):
         if arguments.operation == "create" and arguments.dry_run:
             # The one path that needs no checkout: a file outside one can
             # still be validated, and create's own root lookup comes later.
-            # The heading is judged as the real run judges it, against the
-            # checkout's tracked tree where there is one.
+            # The heading is judged as a new filing's real run judges it,
+            # against the checkout's tracked tree where there is one.
+            #
+            # A NEW FILING'S, because the dry run reads neither GitHub nor
+            # main, so it cannot see a source whose filing is in flight, is
+            # already on main, or resumes by its pairing key: for such a
+            # source with a dated or pathed heading it prints the heading
+            # refusal where the real run would refuse otherwise or resume,
+            # and an agent that followed it would change the heading, which
+            # none of the three checks would then match, and file a second
+            # issue (review of PR [GHI heading check runs after the
+            # duplicate refusals](https://github.com/nedschorus/nedschorus/pull/838)).
+            # Left so on purpose. Reading those states would make the dry
+            # run fetch main and call gh, and it promises to change neither
+            # git nor GitHub; and none of the three states can hold a heading
+            # this check refuses unless a filing started before 2026-09-30
+            # left one, or a path in a filed heading became tracked later.
             text, title = validate(path)
             try:
                 dry_run_root = repository_root_of(path.parent)

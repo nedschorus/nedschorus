@@ -94,6 +94,7 @@ hash and exiting 0.
 import contextlib
 import io
 import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -367,6 +368,43 @@ def run_cases(scratch: Path):
         refused = ""
     check("a directory the checkout holds but git does not track is no "
           "path", "file path" not in refused, refused)
+
+    # The same, for a root entry named alone. The two-segment heading above
+    # passes even under a check that reads the directory, because the
+    # directory holds walk-ledgers/ but not walk-ledgers/notes; a heading
+    # naming walk-ledgers/ alone is refused by such a check and by no other
+    # (review of PR [GHI heading check runs after the duplicate
+    # refusals](https://github.com/nedschorus/nedschorus/pull/838)).
+    try:
+        tool.refuse_heading_with_date_or_file_path(
+            "Tidy the walk-ledgers/ pile", scratch, Recorder({
+                "git ls-tree -r --name-only HEAD":
+                    Completed("\n".join(TRACKED))}))
+        alone_refused = ""
+    except tool.Refused as refusal:
+        alone_refused = str(refusal)
+    check("an untracked directory named alone is no path either",
+          not alone_refused, alone_refused)
+
+    # A listing the check cannot read lets the heading through, whether git
+    # answers with a failure or does not answer in time: the check only
+    # decides whether to refuse, so a path it cannot see is not a reason to
+    # stop a filing. Until the same review a timeout stopped the run with
+    # exit 1, and no case tested that a failed listing is let through.
+    for case_name, answer in [
+            ("a tracked-tree listing that fails lets the heading through",
+             Completed("", 128, "fatal: Not a valid object name HEAD")),
+            ("and so does one that times out",
+             subprocess.TimeoutExpired(
+                 ["git", "ls-tree", "-r", "--name-only", "HEAD"], 30))]:
+        try:
+            tool.refuse_heading_with_date_or_file_path(
+                "Group the components under nc-systems/", scratch,
+                Recorder({"git ls-tree -r --name-only HEAD": answer}))
+            outcome = ""
+        except Exception as failure:
+            outcome = f"{type(failure).__name__}: {failure}"
+        check(case_name, not outcome, outcome)
 
     title_refusal_lines = [
         "Remove the date or file path from this file's first heading; the "
