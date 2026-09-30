@@ -1477,7 +1477,7 @@ def run_backup_search_after_nothing_found(query):
                f"  $ {shlex.join(command)}\n\n")
     try:
         process = subprocess.Popen(
-            command, cwd="/", stdin=subprocess.DEVNULL,
+            command, stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             env=environment_without_git_redirecting_variables())
     except OSError as error:
