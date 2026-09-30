@@ -36,6 +36,9 @@ if sys.argv[0].endswith("ssh") and "wc -l" in " ".join(sys.argv):
     print(os.environ.get("MIRROR_TEST_STORE_COUNT", "0"))
 if sys.argv[0].endswith("rsync") and os.environ.get("MIRROR_TEST_RSYNC_STDERR"):
     sys.stderr.write(os.environ["MIRROR_TEST_RSYNC_STDERR"] + "\\n")
+if sys.argv[0].endswith("ssh") and "mkdir -p" in " ".join(sys.argv) and os.environ.get("MIRROR_TEST_SSH_MKDIR_EXIT"):
+    sys.stderr.write(os.environ.get("MIRROR_TEST_SSH_STDERR", "") + "\\n")
+    sys.exit(int(os.environ["MIRROR_TEST_SSH_MKDIR_EXIT"]))
 sys.exit(int(os.environ.get("MIRROR_TEST_RSYNC_EXIT", "0")) if sys.argv[0].endswith("rsync") else 0)
 """
 
@@ -141,6 +144,14 @@ with tempfile.TemporaryDirectory(prefix="transcript-mirror-test-") as scratch_na
           repr(result.stdout + result.stderr))
     check("--failures-only still mirrors: the new handoff reached the store",
           (store / machine / "handoffs" / "MD-skills-dialog-0002.md").is_file())
+    # A quiet pass writes nothing to the log, so the lock file's mtime,
+    # rewritten as every run starts, is the record of when the mirror last ran.
+    os.utime(lock_path, (1_000_000_000, 1_000_000_000))
+    result = run_mirror(home, str(store), args=QUIET)
+    check("--failures-only: a quiet pass still rewrites the lock file, whose mtime says when the mirror last ran",
+          result.returncode == 0 and result.stdout == ""
+          and lock_path.stat().st_mtime > 1_000_000_000 + 86_400,
+          f"exit {result.returncode}, lock mtime {lock_path.stat().st_mtime}")
     result = run_mirror(bare_home, str(scratch / "store-bare"), args=QUIET)
     check("--failures-only: a missing source directory is not a failure and prints nothing, exit 0",
           result.returncode == 0 and result.stdout == "", result.stdout)
@@ -238,6 +249,21 @@ with tempfile.TemporaryDirectory(prefix="transcript-mirror-test-") as scratch_na
           result.stdout)
     check("--failures-only: a failed rsync's stderr still reaches the log",
           "ssh: connect refused" in result.stderr, repr(result.stderr))
+    # ned-box unreachable at the start of a run: the mkdir ssh fails first,
+    # so the preparation's FAILED line is the only one cron gets.
+    argv_log.unlink()
+    result = run_mirror(home, RULED_DESTINATION, dict(
+        remote_env, MIRROR_TEST_SSH_MKDIR_EXIT="255",
+        MIRROR_TEST_SSH_STDERR="ssh: connect to host ned-box port 22: Operation timed out"), QUIET)
+    prepare_calls = [json.loads(line) for line in argv_log.read_text().splitlines()]
+    check("--failures-only: ssh failing to prepare the store prints both could-not-prepare FAILED lines, exit 1, and rsync never runs",
+          result.returncode == 1 and result.stdout.count("FAILED:") == 2
+          and result.stdout.count("could not prepare") == 2 and "(exit 255)" in result.stdout
+          and not any(c[0].endswith("rsync") for c in prepare_calls),
+          result.stdout + str(prepare_calls))
+    check("--failures-only: a failed preparation's ssh stderr still reaches the log",
+          result.stderr.count("ssh: connect to host ned-box port 22: Operation timed out") == 2,
+          repr(result.stderr))
     argv_log.unlink()
     result = run_mirror(home, RULED_DESTINATION, dict(
         remote_env, MIRROR_TEST_RSYNC_VERSION_LINE=GNU_VERSION_LINE, MIRROR_TEST_RSYNC_EXIT="23"), QUIET)
