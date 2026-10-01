@@ -134,8 +134,16 @@ count, how many were selected, Python), a `SELECTED` or `NOT SELECTED` line
 with its reason for every suite, a `PASS` or `FAIL` line for every suite
 run, each failed suite again with its log, every skipped case, and the
 `SUMMARY:` line; the runner's exit code; the seconds spent waiting for the
-machine's lock; the wall-clock seconds; and the directory holding the run's
-logs. A runner that printed no `SUMMARY:` line has its stderr in the record
+machine's lock; the wall-clock seconds; the directory holding the run's logs;
+and last, this program's own exit code for the run, as
+`pull-request-head-test-run exit code: <n>`. That last line is the run's
+verdict in one line: the runner's exit code and its `SUMMARY:` line say what
+the runner found, and a failed step of this program makes the run no verdict
+whatever they say. The code in that line is the one this program exits with
+once the record is written. A run whose record could not be written exits 5
+instead, and its record, kept beside the logs and never in the log-store
+unless the remedy puts it there, carries the code the run would have exited
+with. A runner that printed no `SUMMARY:` line has its stderr in the record
 after its output. A run whose lock was never released records that and none
 of the runner's refusals.
 
@@ -144,13 +152,21 @@ with the options the log-store's other writers pass. Either way the record is
 written under a name of the run's own in the record's directory,
 .<full hash>.txt.<UTC start>-<pid>.partial, and renamed over the record, so
 that two runs writing at once leave one run's whole record and never a part
-of each. Before either, the record is written beside the logs as
+of each. Before the rename the command counts the bytes that arrived in that
+file and compares the count with the count of the bytes this program sent:
+an `ssh` client that dies while the far side is still reading gives the far
+side an end of input like any other, so the far side cannot tell a record cut
+short from a whole one except by its length. On a different count the command
+removes that file, renames nothing and exits 1, and the record there stays as
+it was. Before either, the record is written beside the logs as
 pull-request-head-test-run-record.txt, so a record that could not reach the
 log-store is still on the machine that made it, and the refusal names the one
-command that writes it once ned-box answers. That command may be run after a
-later run of the same head has written its record, so it reads the `started`
-moment in the first line of the record it finds and writes nothing when that
-moment is later than its own run's.
+command that writes it once ned-box answers. That command may be run after
+another run of the same head has written its record, so it reads the `started`
+moment in the first line of the record it finds and writes nothing unless that
+moment is earlier than its own run's. `started` is to the second, and two runs
+of one head can start in the same second, so on the same moment too the record
+there stays. A record there whose first line gives no such moment is replaced.
 
 THE LOGS stay on the machine: <temporary directory>/
 nedschorus-pull-request-head-test-run/<head>-<UTC start>-<pid>/logs, which the
@@ -190,6 +206,7 @@ never leaves one uncaught.
 
 import argparse
 import importlib.util
+import locale
 import os
 import shlex
 import sys
@@ -323,31 +340,58 @@ def why_the_run_is_no_verdict_on_the_head(checkout: Path, head: str, completed) 
 
 
 def write_record_command(log_store_root: str, machine: str, file_name: str, run_name: str,
-                         unless_the_record_there_started_after=None) -> str:
+                         bytes_sent: int,
+                         unless_the_record_there_started_no_earlier_than=None) -> str:
     """The shell command that writes the record from its stdin, replacing an
-    earlier one of the same machine and head. The record is written under a
-    name of the run's own in the record's directory and renamed over the
-    record, so two writers at once leave one writer's whole record.
+    earlier one of the same machine and head. It has two parts. The first
+    takes what arrives on stdin into a file of the run's own in the record's
+    directory, and counts its bytes: bytes_sent is how many the sender sends,
+    and any other count is a record cut short, which is removed, with exit 1
+    and the record there left as it was. The second puts that whole file in
+    place, today by renaming it over the record, so two writers at once leave
+    one writer's whole record.
 
     Given a moment, as the record's first line spells its `started`, the
     command first reads that line of the record it finds, and writes nothing
-    and exits 1 when the moment there is later: the form the remedy for a
-    failed write is printed in."""
+    and exits 1 unless the moment there is earlier: the form the remedy for a
+    failed write is printed in. The same moment is not earlier, so the record
+    of another run started in the same second stays. A record there whose
+    first line gives no moment, an empty file among them, reads as earlier
+    and is replaced."""
     directory = (f"{log_store_root}/{PULL_REQUEST_HEAD_TEST_RUNS_KIND_DIRECTORY_NAME}/"
                  f"{machine}")
     record = shlex.quote(f"{directory}/{file_name}")
     partial = shlex.quote(f"{directory}/.{file_name}.{run_name}.partial")
-    keep_a_later_record = ""
-    if unless_the_record_there_started_after is not None:
+    cut_short = shlex.quote(
+        f"{PROGRAM}: not written — {bytes_sent} bytes of the record were sent and another "
+        f"count arrived.")
+    run_again = shlex.quote("Run this command again.")
+    # `wc -c` pads its count with spaces on macOS; -eq compares the numbers.
+    take_the_whole_record = (
+        f"cat > {partial} && {{ [ \"$(wc -c < {partial})\" -eq {int(bytes_sent)} ] || "
+        f"{{ echo {cut_short} >&2; echo {run_again} >&2; false; }}; }}")
+    put_it_in_place = f"mv -f {partial} {record}"
+    keep_a_record_that_started_no_earlier = ""
+    if unless_the_record_there_started_no_earlier_than is not None:
         not_written = shlex.quote(
-            f"{PROGRAM}: not written — the record there is of a run that started later.")
+            f"{PROGRAM}: not written — the record there is of a run that started in the "
+            f"same second or later.")
         instruction = shlex.quote("Leave that record as it is.")
-        keep_a_later_record = (
-            f"if [ -e {record} ] && [ \"$(sed -n '1s/^.*, started //p' {record})\" \\> "
-            f"{shlex.quote(unless_the_record_there_started_after)} ]; then "
+        # Not `\>`: two runs started in one second spell `started` the same.
+        keep_a_record_that_started_no_earlier = (
+            f"if [ -e {record} ] && ! [ \"$(sed -n '1s/^.*, started //p' {record})\" \\< "
+            f"{shlex.quote(unless_the_record_there_started_no_earlier_than)} ]; then "
             f"echo {not_written} >&2; echo {instruction} >&2; exit 1; fi && ")
-    return (f"mkdir -p {shlex.quote(directory)} && {keep_a_later_record}cat > {partial} && "
-            f"mv -f {partial} {record} || {{ rm -f {partial}; exit 1; }}")
+    return (f"mkdir -p {shlex.quote(directory)} && {keep_a_record_that_started_no_earlier}"
+            f"{take_the_whole_record} && {put_it_in_place} || {{ rm -f {partial}; exit 1; }}")
+
+
+def bytes_of_text_sent_to_a_command(text: str) -> int:
+    """How many bytes run_on_ned_box_or_here sends for the text. It calls
+    subprocess.run with text=True and no encoding, which encodes the text as
+    locale.getpreferredencoding(False) names: UTF-8 on both machines, and
+    under Python's UTF-8 mode."""
+    return len(text.encode(locale.getpreferredencoding(False)))
 
 
 def parse_arguments(argv):
@@ -506,6 +550,10 @@ def main(argv=None, now=None, wait=time.sleep, monotonic=time.monotonic) -> int:
         f"seconds waiting for the machine's lock: {seconds_waiting_for_lock:.0f}")
     record_lines.append(f"wall-clock seconds: {monotonic() - run_started:.0f}")
     record_lines.append(f"logs: {logs} on {machine}")
+    # See THE RECORD in the module docstring: the last line is the verdict.
+    exit_code_once_the_record_is_written = (
+        daily.EXIT_STEP_OF_THIS_PROGRAM_FAILED if steps_failed else completed.returncode)
+    record_lines.append(f"{PROGRAM} exit code: {exit_code_once_the_record_is_written}")
     record = "\n".join(record_lines)
 
     for what_failed, instruction in steps_failed:
@@ -515,8 +563,6 @@ def main(argv=None, now=None, wait=time.sleep, monotonic=time.monotonic) -> int:
     citation = (f"{mark.NED_BOX_SSH_TARGET}:{arguments.log_store_root}/"
                 f"{PULL_REQUEST_HEAD_TEST_RUNS_KIND_DIRECTORY_NAME}/{machine}/{file_name}")
     ssh_target = None if on_ned_box else mark.NED_BOX_SSH_TARGET
-    write_command = write_record_command(arguments.log_store_root, machine, file_name,
-                                         run_name)
     local_copy = directory / PULL_REQUEST_HEAD_TEST_RUN_RECORD_LOCAL_COPY_FILE_NAME
     try:
         local_copy.write_text(record + "\n", encoding="utf-8")
@@ -526,16 +572,21 @@ def main(argv=None, now=None, wait=time.sleep, monotonic=time.monotonic) -> int:
               f"Tell the user what the line above says.\n"
               f"Fix what the error names, then run this again.", file=sys.stderr)
         return daily.EXIT_RECORD_NOT_WRITTEN
+    write_command = write_record_command(
+        arguments.log_store_root, machine, file_name, run_name,
+        bytes_of_text_sent_to_a_command(record + "\n"))
     try:
         mark.run_on_ned_box_or_here(
             write_command, ssh_target, daily.DAILY_FULL_TEST_RUN_RECORD_WRITE_TIMEOUT_SECONDS,
             stdin_text=record + "\n")
     except mark.DailyMemoryReviewReadOrWriteFailed as error:
-        # Printed to be run later, when a later run of this head may have
+        # Printed to be run later, when another run of this head may have
         # written its record: see write_record_command.
+        # Its stdin is the local copy, which is written as UTF-8.
         remedy_command = write_record_command(
             arguments.log_store_root, machine, file_name, run_name,
-            unless_the_record_there_started_after=started)
+            len((record + "\n").encode("utf-8")),
+            unless_the_record_there_started_no_earlier_than=started)
         by_hand = ([*mark.NED_BOX_SSH_COMMAND, ssh_target, remedy_command] if ssh_target
                    else ["/bin/sh", "-c", remedy_command])
         when = ("When ned-box answers ssh again" if ssh_target
@@ -550,9 +601,7 @@ def main(argv=None, now=None, wait=time.sleep, monotonic=time.monotonic) -> int:
     if summary is not None and verdict_is_on_the_head:
         print(summary)
     print(f"{PROGRAM}: record written to {citation}")
-    if steps_failed:
-        return daily.EXIT_STEP_OF_THIS_PROGRAM_FAILED
-    return completed.returncode
+    return exit_code_once_the_record_is_written
 
 
 def main_that_leaves_no_exception_uncaught(argv=None) -> int:
