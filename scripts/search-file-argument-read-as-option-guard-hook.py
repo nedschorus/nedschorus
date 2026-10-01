@@ -28,7 +28,9 @@ DECISIONS, in order:
 - Deny, never warn. A warning added after the command runs arrives with the
   empty result already read as "no hits".
 - Programs: grep, egrep, fgrep, rg, ugrep, by name or by path, behind leading
-  environment assignments and behind env, command, nohup, nice and timeout.
+  environment assignments, behind env, command, nohup, nice and timeout, and
+  behind the shell keywords that can stand in front of a command (`do`,
+  `then`, `if`, `while`, `until` and the rest of LEADING_SHELL_KEYWORDS).
   The agent's `grep` and `rg` are shell functions with those names, so they
   are covered by name.
 - Only a word whose glob characters stood outside quotes is expanded, the way
@@ -46,16 +48,29 @@ DECISIONS, in order:
   the folder and is refused.
 - Only the first character of an expanded name matters. A pattern whose first
   path component holds no glob character expands only to names beginning with
-  that component, so it is not expanded at all; this keeps `~/x/*` and
+  that component, so it is not expanded unless that component itself begins
+  with `-`, as in `-Users-el-agents-x/*.jsonl`; this keeps `~/x/*` and
   `/abs/*`, which can never begin with `-`, free of any file-system work.
 - Expansion follows the shell's defaults: hidden names are not matched, and
   `**` recurses (zsh's default, bash's with globstar). It stops at the first
   name beginning with `-`, and all expansion in one command shares
   EXPANSION_BUDGET_SECONDS.
-- The refusal gives the command with `--` inserted before the first glob that
-  expands to such a name. When an option follows that point, inserting `--`
-  there would turn the option into a file name, so the refusal says where
-  `--` goes instead of rebuilding the command.
+- The refusal gives the agent's own command, whole, with `--` put in front of
+  the first glob that expands to such a name: the `cd` that put the search in
+  that folder, the pipe, the redirections and the agent's quoting come through
+  as written. The place is found by asking the shared reader, not by
+  re-spelling words: `-- ` is tried at each place a word can start until the
+  result reads as the same commands with `--` in front of that word
+  (command_with_double_dash_before_word). Re-spelling the search's own words
+  dropped the `cd` and quoted `"$k"` as `'$k'`, and a command that then
+  prints nothing is the misreading this guard exists to stop. A command can
+  hold more than one such search, so `--` is put in front of each, and the
+  command given passes this guard when the agent runs it. When the budget
+  runs out before the place is found, the refusal falls back to the search's
+  own words, re-spelled, without the rest of the command.
+- When an option follows that point, inserting `--` there would turn the
+  option into a file name, so the refusal says where `--` goes instead of
+  giving a command.
 
 IT FAILS OPEN, saying nothing, on: an unreadable payload; a `cd` whose target
 it cannot resolve; an expansion that raises or runs out of the budget. A
@@ -75,6 +90,17 @@ WHAT IT CANNOT SEE, so a later reader does not mistake a limit for a check:
 - xargs, find -exec, sh -c, eval, and a heredoc fed to a shell.
 - `git grep`, whose file arguments are pathspecs.
 - Brace expansion, `{a,b}`, which is left as literal text.
+- Where a subshell ends. The shared tokenizer cuts at parentheses and keeps
+  no record of them, so a `cd` inside `( ... )` or `$( ... )` still sets the
+  directory for the commands after it, and a search there can be refused
+  for a folder it does not run in. The command the refusal gives still works.
+- Whether the agent's shell recurses on `**`. Bash without globstar matches
+  one level where this guard matches every level, so a search can be refused
+  for a name only the deeper levels hold; the command the refusal gives works.
+- The budget inside a walk that yields few names. The budget is read before
+  each word and after every 256th name, so `**/*.nosuch` over a large tree is
+  ended by the hook's registered timeout, not by the budget, and the command
+  then runs unguarded.
 - A glob given as an option's separate value (`-f *.txt`) is judged like any
   file word: if it expands to more than one name beginning with `-`, the rest
   are read as options anyway, so the refusal still holds.
@@ -108,7 +134,8 @@ is_program = keystroke_guard.is_program
 SEARCH_PROGRAMS = ("grep", "egrep", "fgrep", "rg", "ugrep")
 
 # Shell keywords that can stand in front of a command on the same line.
-LEADING_SHELL_KEYWORDS = {"do", "then", "else", "elif", "{", "!", "time"}
+LEADING_SHELL_KEYWORDS = {"do", "then", "else", "elif", "if", "while", "until",
+                          "{", "!", "time"}
 
 # Programs that run the rest of their words as a command. `timeout` takes
 # options and a duration first; `nice` may take `-n <value>`.
@@ -263,9 +290,11 @@ def first_expansion_beginning_with_dash(word, directory, deadline, clock):
     `-`, or None. Raises ExpansionBudgetSpent when the shared budget runs out.
 
     Only the first path component decides the first character, so a word
-    whose first component holds no unquoted glob character is not expanded."""
+    whose first component holds no unquoted glob character is expanded only
+    when that component itself begins with `-`."""
     first_component = word.split("/", 1)[0]
-    if not word_holds_unquoted_glob(first_component):
+    if (not word_holds_unquoted_glob(first_component)
+            and not first_component.startswith("-")):
         return None
     if clock() > deadline:
         raise ExpansionBudgetSpent()
@@ -321,8 +350,52 @@ def search_program_index(words):
     return None
 
 
-def refusal_for_search(words, program_index, directory, deadline, clock):
-    """The refusal text for one search command, or None when it passes."""
+def read_simple_commands(command):
+    """The command's simple commands as this guard reads them: heredoc bodies
+    dropped (a body is data here, see the module docstring's limits), and
+    every unquoted glob character marked."""
+    shell_view, _heredoc_bodies = split_out_heredocs(command)
+    return tokenize_simple_commands(mark_unquoted_glob_characters(shell_view))
+
+
+def command_with_double_dash_before_word(command, commands, command_index,
+                                         word_index, deadline, clock):
+    """The agent's own command text with `-- ` put in front of one word, or
+    None when the budget runs out first.
+
+    `-- ` is tried at each place a word can start, and the place is accepted
+    when the shared reader reads the result as the same simple commands with
+    `--` in front of that word. So the reader that found the word also says
+    where the word is, and nothing here re-spells the command: a place inside
+    quotes, a comment or a heredoc body reads differently and is passed over.
+    The places where the word's own text stands unquoted are tried first,
+    which is the first try for nearly every command."""
+    expected = [list(words) for words in commands]
+    expected[command_index].insert(word_index, "--")
+    spelling = plain_word(commands[command_index][word_index])
+    word_starts = [position for position in range(1, len(command))
+                   if command[position - 1] in " \t\n"
+                   and command[position] not in " \t\n"]
+    word_starts.sort(key=lambda position: not command.startswith(spelling, position))
+    for position in word_starts:
+        if clock() > deadline:
+            return None
+        candidate = command[:position] + "-- " + command[position:]
+        if read_simple_commands(candidate) == expected:
+            return candidate
+    return None
+
+
+def refused_search(command, commands, command_index, program_index,
+                   directory, deadline, clock):
+    """What one search command is refused for, or None when it passes:
+    (details, whole_command, respelled_search). The details fill a refusal
+    template. whole_command is the agent's own command with `--` put in, or
+    None when the budget ran out before the place was found.
+    respelled_search is the search's own words with `--` put in, re-spelled,
+    for that case. Both are None when no command can be given because an
+    option follows the glob."""
+    words = commands[command_index]
     program = os.path.basename(words[program_index])
     arguments = words[program_index + 1:]
     index = 0
@@ -349,15 +422,23 @@ def refusal_for_search(words, program_index, directory, deadline, clock):
             for later in later_words)
         details = {"glob_word": plain_word(word), "name": name, "program": program}
         if option_follows:
-            return REFUSAL_WITHOUT_COMMAND_TEMPLATE.format(**details)
-        accepted = (words[:program_index + 1] + arguments[:index] + ["--"]
-                    + arguments[index:])
-        accepted_command = " ".join(
+            return details, None, None
+        whole_command = command_with_double_dash_before_word(
+            command, commands, command_index, program_index + 1 + index,
+            deadline, clock)
+        # The search's own words from its program on. A shell keyword in
+        # front of the program is left out, because `do grep ...` alone is a
+        # syntax error.
+        first_word = 0
+        while words[first_word] in LEADING_SHELL_KEYWORDS:
+            first_word += 1
+        respelled = (words[first_word:program_index + 1] + arguments[:index]
+                     + ["--"] + arguments[index:])
+        respelled_search = " ".join(
             item if REDIRECTION_WORD_PATTERN.match(item) or item == "--"
             else shell_spelling_of_word(item)
-            for item in accepted)
-        return REFUSAL_WITH_COMMAND_TEMPLATE.format(
-            accepted_command=accepted_command, **details)
+            for item in respelled)
+        return details, whole_command, respelled_search
     return None
 
 
@@ -368,19 +449,13 @@ def resolve_directory(base, target):
     return os.path.normpath(os.path.join(base, expanded))
 
 
-def analyze_command_text(command, payload_cwd, clock=time.monotonic):
+def first_refused_search(command, payload_cwd, deadline, clock):
     """Walk the command's simple commands in order, carrying the directory a
-    literal `cd` puts them in, and return the first refusal, or None.
-
-    Heredoc bodies are dropped first: a body is data here (see the module
-    docstring's limits)."""
-    shell_view, _heredoc_bodies = split_out_heredocs(command)
-    marked_view = mark_unquoted_glob_characters(shell_view)
-    deadline = clock() + EXPANSION_BUDGET_SECONDS
+    literal `cd` puts them in, and return what the first refused search is
+    refused for (see refused_search), or None."""
+    commands = read_simple_commands(command)
     directory = payload_cwd
-    for words in tokenize_simple_commands(marked_view):
-        if not words:
-            continue
+    for command_index, words in enumerate(commands):
         program_index = 0
         while (program_index < len(words)
                and ENVIRONMENT_ASSIGNMENT_PATTERN.match(words[program_index])):
@@ -401,10 +476,42 @@ def analyze_command_text(command, payload_cwd, clock=time.monotonic):
         search_index = search_program_index(words)
         if search_index is None:
             continue
-        refusal = refusal_for_search(words, search_index, directory, deadline, clock)
-        if refusal:
-            return refusal
+        refused = refused_search(command, commands, command_index,
+                                 search_index, directory, deadline, clock)
+        if refused:
+            return refused
     return None
+
+
+def analyze_command_text(command, payload_cwd, clock=time.monotonic):
+    """The refusal text for the first search in the command that would hand
+    its program a name beginning with `-`, or None when every search passes.
+
+    The command given is the whole command, so a second such search in it
+    would have the agent refused again on running what the refusal gave.
+    `--` is therefore put in front of each further search too, for as long as
+    a command can be given and the budget lasts."""
+    deadline = clock() + EXPANSION_BUDGET_SECONDS
+    refused = first_refused_search(command, payload_cwd, deadline, clock)
+    if refused is None:
+        return None
+    details, whole_command, respelled_search = refused
+    if respelled_search is None:
+        return REFUSAL_WITHOUT_COMMAND_TEMPLATE.format(**details)
+    if whole_command is None:
+        return REFUSAL_WITH_COMMAND_TEMPLATE.format(
+            accepted_command=respelled_search, **details)
+    while clock() <= deadline:
+        try:
+            further = first_refused_search(whole_command, payload_cwd,
+                                           deadline, clock)
+        except (ExpansionBudgetSpent, OSError, ValueError, re.error):
+            break  # the refusal already found stands; give what there is
+        if further is None or further[1] is None:
+            break
+        whole_command = further[1]
+    return REFUSAL_WITH_COMMAND_TEMPLATE.format(
+        accepted_command=whole_command, **details)
 
 
 def deny(reason):

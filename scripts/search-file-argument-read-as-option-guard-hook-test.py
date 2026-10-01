@@ -158,6 +158,10 @@ try:
         "for x in a; do grep -l needle */*.jsonl; done",
         "grep -l needle -[U]*/*.jsonl",
         "grep -l needle plain/*.jsonl */*.jsonl",
+        "if grep -q needle */*.jsonl; then echo found; fi",
+        "while grep -q needle */*.jsonl; do break; done",
+        "until grep -q needle */*.jsonl; do break; done",
+        f"grep -l needle {DASH_FOLDER}/*.jsonl",
     ]:
         check(f"refused: {command}", run_main(command, scratch) is not None)
 
@@ -177,10 +181,85 @@ try:
           repr(refusal))
 
     refusal = run_main("grep -l needle 'my dir'/*.jsonl */*.jsonl", scratch)
-    check("a quoted literal part is kept quoted in the accepted command",
+    check("a quoted literal part is kept as the agent quoted it",
           refusal is not None
-          and refusal.endswith("grep -l needle 'my dir/'*.jsonl -- */*.jsonl"),
+          and refusal.endswith("run: grep -l needle 'my dir'/*.jsonl -- */*.jsonl"),
           repr(refusal))
+
+    # -----------------------------------------------------------------------
+    # The command the refusal gives is the agent's own command, whole, with
+    # `--` put in: run as written from the payload's folder, it finds what
+    # the refused command meant.
+    # -----------------------------------------------------------------------
+    def command_given(command, cwd, clock=None):
+        refusal = run_main(command, cwd, clock)
+        return refusal.rsplit("run: ", 1)[1] if refusal and "run: " in refusal else None
+
+    def files_listed(command, cwd):
+        return set(run_in_shell(command, cwd).stdout.split())
+
+    given = command_given(
+        f"cd {scratch} && grep -l needle */*.jsonl 2>/dev/null | head -5", elsewhere)
+    check("the command given keeps the cd and the pipe of the refused command",
+          given == f"cd {scratch} && grep -l needle -- */*.jsonl 2>/dev/null | head -5",
+          repr(given))
+    check("run from the payload's own folder, that command lists both files",
+          given is not None
+          and {DASH_FILE, PLAIN_FILE} <= files_listed(given, elsewhere),
+          repr(given))
+    check("the guard passes that command from the payload's own folder",
+          given is not None and run_main(given, elsewhere) is None, repr(given))
+
+    for command, expected in [
+        ("for x in a; do grep -l needle */*.jsonl; done",
+         "for x in a; do grep -l needle -- */*.jsonl; done"),
+        ("if true; then grep -l needle */*.jsonl; fi",
+         "if true; then grep -l needle -- */*.jsonl; fi"),
+        ("! grep -l needle */*.jsonl", "! grep -l needle -- */*.jsonl"),
+        ("{ grep -l needle */*.jsonl; }", "{ grep -l needle -- */*.jsonl; }"),
+        ('k=needle; grep -l "$k" */*.jsonl', 'k=needle; grep -l "$k" -- */*.jsonl'),
+        ('FOO="$HOME" grep -l needle */*.jsonl',
+         'FOO="$HOME" grep -l needle -- */*.jsonl'),
+        ("grep -l needle */*.jsonl; grep -c needle */*.jsonl >/dev/null",
+         "grep -l needle -- */*.jsonl; grep -c needle -- */*.jsonl >/dev/null"),
+        ("cat <<'EOF'\ngrep -l needle */*.jsonl\nEOF\ngrep -l needle */*.jsonl",
+         "cat <<'EOF'\ngrep -l needle */*.jsonl\nEOF\ngrep -l needle -- */*.jsonl"),
+    ]:
+        given = command_given(command, scratch)
+        check(f"the command given for {command!r} is that command with -- put in",
+              given == expected, repr(given))
+        check(f"the command given for {command!r} lists both files and passes the guard",
+              given is not None
+              and {DASH_FILE, PLAIN_FILE} <= files_listed(given, scratch)
+              and run_main(given, scratch) is None,
+              repr(given))
+
+    for command, expected in [
+        ('grep -l needle "$PWD"/plain/b.jsonl */*.jsonl',
+         'grep -l needle "$PWD"/plain/b.jsonl -- */*.jsonl'),
+        ("grep -l needle {plain,nosuch}/*.jsonl */*.jsonl",
+         "grep -l needle {plain,nosuch}/*.jsonl -- */*.jsonl"),
+        (f"grep -l needle {DASH_FOLDER}/*.jsonl",
+         f"grep -l needle -- {DASH_FOLDER}/*.jsonl"),
+        (f'grep -l needle "{DASH_FOLDER}"/*.jsonl',
+         f'grep -l needle -- "{DASH_FOLDER}"/*.jsonl'),
+    ]:
+        given = command_given(command, scratch)
+        check(f"the command given for {command!r} is that command with -- put in",
+              given == expected, repr(given))
+        check(f"the command given for {command!r} lists the file under the "
+              "folder named with a -",
+              given is not None and DASH_FILE in files_listed(given, scratch),
+              repr(given))
+
+    # Out of budget before the place for -- is found, the refusal falls back
+    # to the search's own words: the first two readings of the clock are the
+    # start and the check before the glob is expanded.
+    readings = iter([0.0, 0.0])
+    given = command_given("for x in a; do grep -l needle */*.jsonl; done", scratch,
+                          clock=lambda: next(readings, 1000.0))
+    check("out of budget for the place, the search alone is given, without the keyword",
+          given == "grep -l needle -- */*.jsonl", repr(given))
 
     # -----------------------------------------------------------------------
     # Passed.
@@ -195,6 +274,7 @@ try:
         f"grep -l needle {scratch}/*/*.jsonl",
         "grep -l needle ~/*.nothing-here",
         "grep -rl needle --include=*.jsonl .",
+        "grep -rl needle --include=sub/*.jsonl .",
         "grep -l needle plain/*.jsonl",
         "cd plain && grep -l needle *.jsonl",
         "ls */*.jsonl",
@@ -219,6 +299,22 @@ try:
     check("passes when the expansion budget is spent",
           run_main("grep -l needle */*.jsonl", scratch,
                    clock=lambda: float(next(ticks))) is None)
+
+    many = scratch / "many"
+    many.mkdir()
+    for number in range(300):
+        (many / f"file-{number:03}.txt").write_text("needle\n")
+    readings_taken = []
+
+    def clock_past_the_budget_on_its_third_reading():
+        readings_taken.append(None)
+        return 0.0 if len(readings_taken) < 3 else 1000.0
+
+    check("passes when the budget is spent during a walk over 300 names",
+          run_main("grep -l needle *", many,
+                   clock=clock_past_the_budget_on_its_third_reading) is None)
+    check("the budget is read during that walk, after the 256th name",
+          len(readings_taken) == 3, str(len(readings_taken)))
 
     for raw in ["not json", json.dumps({"tool_name": "Edit"}),
                 json.dumps({"tool_name": "Bash", "tool_input": {}}),
