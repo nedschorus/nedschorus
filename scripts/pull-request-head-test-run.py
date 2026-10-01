@@ -157,15 +157,26 @@ file and compares the count with the count of the bytes this program sent:
 an `ssh` client that dies while the far side is still reading gives the far
 side an end of input like any other, so the far side cannot tell a record cut
 short from a whole one except by its length. On a different count the command
-removes that file, renames nothing and exits 1, and the record there stays as
-it was. Before either, the record is written beside the logs as
-pull-request-head-test-run-record.txt, so a record that could not reach the
-log-store is still on the machine that made it, and the refusal names the one
-command that writes it once ned-box answers. That command may be run after
-another run of the same head has written its record, so it reads the `started`
-moment in the first line of the record it finds and writes nothing unless that
-moment is earlier than its own run's. `started` is to the second, and two runs
-of one head can start in the same second, so on the same moment too the record
+removes that file, says so on stderr, renames nothing and exits 1, and the
+record there stays as it was. It removes the file before it says so: once the
+client is gone stderr has no reader, and the shell is killed at its first
+write there. The command holds ASCII characters alone, apart from the paths
+it is given: this program hands it to a process as an argument, which Python
+encodes with the filesystem encoding, and a character that encoding lacks
+would stop every run before anything is sent. Before either, the record is
+written beside the logs as pull-request-head-test-run-record.txt, so a record
+that could not reach the log-store is still on the machine that made it, and
+the refusal names the one command that writes it once ned-box answers. That
+command first takes its whole record, counted the same way, and then looks at
+the record it finds. That record can be its own run's already: the far side
+renamed the record and the client died before the exit status came back, so
+this program said the record was not written, or the command was run before.
+When the two hold the same bytes the command writes nothing, says the record
+is written and exits 0. Otherwise the command may be running after another
+run of the same head has written its record, so it reads the `started` moment
+in the first line of the record it finds and writes nothing unless that moment
+is earlier than its own run's. `started` is to the second, and two runs of
+one head can start in the same second, so on the same moment too the record
 there stays. A record there whose first line gives no such moment is replaced.
 
 THE LOGS stay on the machine: <temporary directory>/
@@ -347,43 +358,61 @@ def write_record_command(log_store_root: str, machine: str, file_name: str, run_
     takes what arrives on stdin into a file of the run's own in the record's
     directory, and counts its bytes: bytes_sent is how many the sender sends,
     and any other count is a record cut short, which is removed, with exit 1
-    and the record there left as it was. The second puts that whole file in
-    place, today by renaming it over the record, so two writers at once leave
-    one writer's whole record.
+    and the record there left as it was. The file is removed before the
+    command says so on stderr: with no reader there, as when the ssh client
+    has died, the shell is killed at that write and runs nothing after it.
+    The second puts that whole file in place, today by renaming it over the
+    record, so two writers at once leave one writer's whole record.
 
     Given a moment, as the record's first line spells its `started`, the
-    command first reads that line of the record it finds, and writes nothing
-    and exits 1 unless the moment there is earlier: the form the remedy for a
-    failed write is printed in. The same moment is not earlier, so the record
-    of another run started in the same second stays. A record there whose
-    first line gives no moment, an empty file among them, reads as earlier
-    and is replaced."""
+    command has two more parts between those, each run once the whole record
+    has arrived: the form the remedy for a failed write is printed in. When
+    the record it finds holds the same bytes as the record that arrived, it
+    writes nothing, says on stdout that the record is written, and exits 0.
+    Otherwise it reads the first line of the record it finds, and writes
+    nothing and exits 1 unless the moment there is earlier. The same moment
+    is not earlier, so the record of another run started in the same second
+    stays. A record there whose first line gives no moment, an empty file
+    among them, reads as earlier and is replaced. Each of the two removes the
+    run's own file before it says anything, as the first part does.
+
+    What this function adds to the command is ASCII: see THE RECORD in the
+    module docstring."""
     directory = (f"{log_store_root}/{PULL_REQUEST_HEAD_TEST_RUNS_KIND_DIRECTORY_NAME}/"
                  f"{machine}")
     record = shlex.quote(f"{directory}/{file_name}")
     partial = shlex.quote(f"{directory}/.{file_name}.{run_name}.partial")
     cut_short = shlex.quote(
-        f"{PROGRAM}: not written — {bytes_sent} bytes of the record were sent and another "
+        f"{PROGRAM}: not written: {bytes_sent} bytes of the record were sent and another "
         f"count arrived.")
     run_again = shlex.quote("Run this command again.")
     # `wc -c` pads its count with spaces on macOS; -eq compares the numbers.
+    # The `rm` comes before the first `echo`: see the docstring.
     take_the_whole_record = (
         f"cat > {partial} && {{ [ \"$(wc -c < {partial})\" -eq {int(bytes_sent)} ] || "
-        f"{{ echo {cut_short} >&2; echo {run_again} >&2; false; }}; }}")
+        f"{{ rm -f {partial}; echo {cut_short} >&2; echo {run_again} >&2; false; }}; }}")
     put_it_in_place = f"mv -f {partial} {record}"
-    keep_a_record_that_started_no_earlier = ""
+    leave_the_record_there = ""
     if unless_the_record_there_started_no_earlier_than is not None:
+        already_written = shlex.quote(
+            f"{PROGRAM}: already written: the record there is the whole record of this "
+            f"run, byte for byte.")
+        tell_the_user = shlex.quote("Tell the user the record is written.")
         not_written = shlex.quote(
-            f"{PROGRAM}: not written — the record there is of a run that started in the "
+            f"{PROGRAM}: not written: the record there is of a run that started in the "
             f"same second or later.")
         instruction = shlex.quote("Leave that record as it is.")
+        # The run's own record first, then a record that started no earlier.
         # Not `\>`: two runs started in one second spell `started` the same.
-        keep_a_record_that_started_no_earlier = (
+        leave_the_record_there = (
+            f"if [ -e {record} ] && cmp -s {partial} {record}; then rm -f {partial}; "
+            f"echo {already_written}; echo {tell_the_user}; exit 0; fi && "
             f"if [ -e {record} ] && ! [ \"$(sed -n '1s/^.*, started //p' {record})\" \\< "
             f"{shlex.quote(unless_the_record_there_started_no_earlier_than)} ]; then "
-            f"echo {not_written} >&2; echo {instruction} >&2; exit 1; fi && ")
-    return (f"mkdir -p {shlex.quote(directory)} && {keep_a_record_that_started_no_earlier}"
-            f"{take_the_whole_record} && {put_it_in_place} || {{ rm -f {partial}; exit 1; }}")
+            f"rm -f {partial}; echo {not_written} >&2; echo {instruction} >&2; exit 1; "
+            f"fi && ")
+    return (f"mkdir -p {shlex.quote(directory)} && {take_the_whole_record} && "
+            f"{leave_the_record_there}{put_it_in_place} || {{ rm -f {partial}; exit 1; }}")
 
 
 def bytes_of_text_sent_to_a_command(text: str) -> int:
