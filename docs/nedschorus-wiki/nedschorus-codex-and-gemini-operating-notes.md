@@ -1,10 +1,9 @@
-# Notes on using the Codex and Gemini (Antigravity) agents from a seat (PROPOSED wiki page — draft for review)
+# Notes on using the Codex and Gemini (Antigravity) agents from a seat
 
 Written 2026-09-04 by the cold-read-research seat after a day of running both as
 cold-read cells. Every item here was measured, not read from docs, unless it
-says otherwise. Queued for the wiki at the user's word (2026-09-04); the measurements it cites
-are in the cold-read-research checkout's uncommitted record
-`cold-read-records/2026-09-03-cold-read-tier-roster-campaign/`. Claude Code is not covered: it is the runtime the seats run in.
+says otherwise. The measurements it cites are in the record
+`nedlern@ned-box:/home/nedlern/nedschorus-logs/cold-read-records/2026-09-03-cold-read-tier-roster-campaign/`. Claude Code is not covered: it is the runtime the seats run in.
 
 The one rule that saved the most time: **when a runtime's behaviour is not
 obvious, ask the runtime itself, with permissions granted, before reading its
@@ -114,19 +113,19 @@ on a design. `gemini-3.8-flash-high` takes about 200 seconds. Neither found a
 defect no other cell found, so Gemini is a speed cell for interactive use,
 not a seat in the full set.
 
-## Running either as a cold-read cell without a launcher
+## Running a one-off prompt as a cold-read cell
 
-`nc-systems/cold-read/cold-read-claude-cell.py` and `nc-systems/cold-read/cold-read-codex-cell.py` take
-their prompt only from `.claude/skills/cold-read/prompts/<cell>.md`; there is
-no `--prompt-file` flag (as of 2026-09-04; MD-skills has it queued) and no
-`agy` launcher at all. For a one-off prompt or runtime, the pattern that works
-is a direct invocation that composes the prompt with the same `{TARGET_PATH}` /
-`{REPORT_PATH}` substitution and writes the same provenance stamp
-(`<!-- provenance: runtime= model= effort= cell= duration_s= checkout= target= -->`), so
-the existing placement, adjudication and scoring tools take the record
-unchanged. Two working examples are in this record's `tools/`:
-`run-terminology-cells-direct.py` (claude + codex) and
-`run-astra-and-gemini-cells.py` (codex via the launcher, agy direct).
+Each runtime has its launcher: `nc-systems/cold-read/cold-read-claude-cell.py`,
+`nc-systems/cold-read/cold-read-codex-cell.py` and
+`nc-systems/cold-read/cold-read-agy-cell.py`. Each takes `--prompt-file <path>`
+to read a prompt template other than `.claude/skills/cold-read/prompts/<cell>.md`,
+with the same `{TARGET_PATH}` / `{REPORT_PATH}` substitution and the same
+provenance stamp, so a one-off prompt goes through the ordinary launcher and the
+existing placement, adjudication and scoring tools take the record unchanged.
+Before those existed (as of 2026-09-04), the working pattern was a direct
+invocation, as in that record's `tools/`: `run-terminology-cells-direct.py`
+(claude + codex) and `run-astra-and-gemini-cells.py` (codex via the launcher,
+agy direct).
 
 ## Things that went wrong once and will again
 
