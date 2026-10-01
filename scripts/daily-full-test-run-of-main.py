@@ -313,13 +313,17 @@ def remove_worktree_of_main(clone: Path, worktree: Path):
 
 
 def run_test_suite_runner_waiting_for_the_machine_lock(command, worktree: Path, wait,
-                                                       monotonic, lock_handle):
+                                                       monotonic, lock_handle=None):
     """(the runner's finished run, seconds spent waiting for the lock, whether
     the lock was never released). The runner is run again every
     DAILY_FULL_TEST_RUN_LOCK_WAIT_SECONDS while it exits 3, until an attempt
     starts DAILY_FULL_TEST_RUN_LOCK_WAIT_BOUND_SECONDS or more after the first.
-    The runner is given this program's lock; see ONE DAILY RUN AT A TIME PER
-    MACHINE in the module docstring."""
+    The runner is given the lock of the caller that passes one, as this
+    program passes its own; see ONE DAILY RUN AT A TIME PER MACHINE in the
+    module docstring. scripts/pull-request-head-test-run.py, which uses this
+    function and takes no lock, passes none, and its runner is started with
+    no descriptor above 2."""
+    descriptors_the_runner_holds = () if lock_handle is None else (lock_handle.fileno(),)
     waiting_started = monotonic()
     while True:
         attempt_started = monotonic()
@@ -327,7 +331,7 @@ def run_test_suite_runner_waiting_for_the_machine_lock(command, worktree: Path, 
             command, cwd=str(worktree),
             env=run_all_test_suites.environment_without_git_redirecting_variables(),
             stdin=subprocess.DEVNULL, capture_output=True, text=True, errors="replace",
-            check=False, pass_fds=(lock_handle.fileno(),))
+            check=False, pass_fds=descriptors_the_runner_holds)
         waited = attempt_started - waiting_started
         if completed.returncode != run_all_test_suites.EXIT_LOCKED:
             return completed, waited, False
