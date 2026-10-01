@@ -711,6 +711,57 @@ check("a substitution nested in another starts in the outer substitution's direc
       and ["git", "-C", "/elsewhere/wt-fast-read", "rev-parse", "--abbrev-ref", "HEAD"]
       in runner.calls, f"{decision}: {reason} {runner.calls}")
 
+# The second reading must not hide a push the shell runs either. In each
+# command bash 3.2 and bash 5.3 run the force push, and the reader that read
+# a double-quoted string as one word found it.
+for case_name, command in [
+    ("a lone ' in a backticked command in an unquoted body does not hide the force push after it",
+     "cat > notes.md <<EOF\nuse the `don't` form\nEOF\ngit push --force origin the-pr-branch"),
+    ("a <<\\EOF heredoc inside a quoted substitution ends at EOF: the force push after it is found",
+     'X="$(cat <<\\EOF\nplain\nEOF\n)"; git push --force origin the-pr-branch'),
+    ("$$ before a single-quoted string ending in \\ does not hide the force push after it",
+     "a $$'a\\'; git push --force origin the-pr-branch"),
+    ("a subshell inside a $( ... ) inside ${ ... } is read: the force push in it is found",
+     "echo ${y:-$(a && (git push --force origin the-pr-branch))}"),
+]:
+    runner = ProbeRunner(open_pull_requests={"the-pr-branch": FAST_READ_PULL_REQUEST})
+    decision, reason = decide(command, runner)
+    check(case_name, decision == "deny", f"{decision}: {reason}")
+
+# A `cd` in a substitution in an unquoted-delimiter heredoc body moves the
+# shell that runs the substitution and no other, and the shell runs the
+# body's substitutions when it runs the heredoc's command, before anything
+# after that command on its line.
+runner = ProbeRunner(branch="the-pr-branch",
+                     open_pull_requests={"the-pr-branch": FAST_READ_PULL_REQUEST})
+decision, reason = decide(
+    "cat > notes.md <<EOF\npath: $(cd /another/repository && pwd)\nEOF\n"
+    "git push --force", runner)
+check("a cd inside a heredoc body's substitution does not move the push after the heredoc",
+      decision == "deny"
+      and ["git", "-C", SESSION_WORKTREE, "rev-parse", "--abbrev-ref", "HEAD"] in runner.calls
+      and not any("/another/repository" in argv for argv in runner.calls),
+      f"{decision}: {reason} {runner.calls}")
+
+runner = ProbeRunner(branch="the-pr-branch",
+                     open_pull_requests={"the-pr-branch": FAST_READ_PULL_REQUEST})
+decision, reason = decide(
+    "cat <<EOF && cd /another/repository\n$(git push --force)\nEOF", runner)
+check("a push in a heredoc body runs before a cd after the heredoc's command on its line",
+      decision == "deny"
+      and ["git", "-C", SESSION_WORKTREE, "rev-parse", "--abbrev-ref", "HEAD"] in runner.calls
+      and not any("/another/repository" in argv for argv in runner.calls),
+      f"{decision}: {reason} {runner.calls}")
+
+runner = ProbeRunner(branch="the-pr-branch",
+                     open_pull_requests={"the-pr-branch": FAST_READ_PULL_REQUEST})
+decision, reason = decide(
+    "cat <<EOF\n$(cd /elsewhere/wt-fast-read && git push --force)\nEOF", runner)
+check("a cd inside a heredoc body's substitution moves the push inside the same substitution",
+      decision == "deny"
+      and ["git", "-C", "/elsewhere/wt-fast-read", "rev-parse", "--abbrev-ref", "HEAD"]
+      in runner.calls, f"{decision}: {reason} {runner.calls}")
+
 # ---------------------------------------------------------------------------
 # The escape hatch: the one sanctioned rewrite, and the one form of it.
 # ---------------------------------------------------------------------------
