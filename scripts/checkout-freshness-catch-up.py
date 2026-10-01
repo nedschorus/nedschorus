@@ -17,8 +17,9 @@ Wired as a Stop hook, so it runs at every turn boundary. Each run:
      is always safe — it is the MERGE that needs guarding).
   3. Runs the MISBEHAVIOUR detectors, every turn, before anything else: a
      merge commit from main on the working branch whose parents merge cleanly
-     (ruled out 2026-09-14, nedschorus#324; one whose parents CONFLICT is the
-     hand merge the user allowed 2026-09-21 and is not reported), or a pushed
+     both with git's rename detection and without it (ruled out 2026-09-14,
+     nedschorus#324; one whose parents CONFLICT either way is the hand-merge
+     the user allowed 2026-09-21 and is not reported), or a pushed
      head whose history was rewritten (an amend or rebase after a push, ruled
      out 2026-09-08). What they find is the ONLY thing the user hears from
      this hook — "If the agents are doing the wrong thing, or not doing the
@@ -502,7 +503,13 @@ def drift_facts(checkout: Path, stamp: dict, branch: str, state_key: str, state_
 
 def merge_parents_conflict(checkout: Path, first_parent: str, second_parent: str) -> bool:
     """True only when git, re-merging these two already-resolved parent hashes,
-    reports a CONFLICT. False for a clean merge and false for every error.
+    reports a CONFLICT under at least one of two strategies: with rename
+    detection off (-X no-renames), or with git's default rename detection.
+    False when neither re-merge reports one, whether each was clean or errored.
+
+    TWO RE-MERGES, BECAUSE EACH SEES CONFLICTS THE OTHER MERGES CLEANLY, and a
+    hand-merge of either kind is one the author had no choice about. The two
+    paragraphs below say which hand-merge each re-merge exists to recognise.
 
     -X NO-RENAMES IS LOAD-BEARING, not tidiness. With git's default rename
     detection the merge that PR "A conflict is the one case a commit on top
@@ -512,42 +519,60 @@ def merge_parents_conflict(checkout: Path, first_parent: str, second_parent: str
     GitHub's merge candidate does not follow it, which is why that branch showed
     CONFLICTING and had to be merged by hand at all — its merge commit
     413c1afa51d4 says so. So the conflict the author actually faced is the one
-    seen WITHOUT rename detection, and with detection on this function would
+    seen WITHOUT rename detection, and with detection alone this function would
     return False for the exact case it exists to recognise.
 
-    EXIT 1 IS NOT ENOUGH ON ITS OWN. merge-tree exits 1 for an argument it
-    cannot resolve as well as for a conflict (scripts/branch-conflict-check.py's
-    docstring, measured on a deadbeef hash). That file resolves both arguments
-    first so that exit 1 can only mean conflict, and the caller here does the
-    same — but the cost of being wrong differs by direction, so this one also
-    requires the answer itself: --write-tree prints the merged tree's object id
-    as its first line, on a conflict as much as on a clean merge, and no error
-    path prints one.
+    THE DEFAULT RE-MERGE IS LOAD-BEARING TOO. Some conflicts exist only WITH
+    rename detection: a file added under a directory the other side moved is
+    CONFLICT (file location), and -X no-renames merges it cleanly. Those are
+    conflicts the author really faced, because scripts/branch-conflict-check.py
+    asks git with detection on, and so do `git merge` and the pre-push hook that
+    runs that check: the check prints VERDICT: CONFLICT, CLAUDE.md sends the
+    author to the hand-merge, and git's own merge stops until it is resolved by
+    hand. With the no-renames re-merge alone this function returned False for
+    that hand-merge, and the user was told the branch had done what was ruled
+    out. merges_from_main's docstring records the one such merge in main's
+    history and why asking both ways loses nothing.
 
-    EVERY OTHER OUTCOME IS AN ERROR AND READS AS "NO CONFLICT", so the merge is
-    reported. A git too old for --write-tree (before 2.38) or for -X exits 129
-    on usage, unrelated histories exit 128, an unlaunchable git is
-    GIT_DID_NOT_RUN: on any of them this detector degrades to exactly what it
-    did before this exception existed — it reports every merge from main. A
-    false report is visible to the user and corrects itself in one exchange; a
-    misbehaviour that is skipped is invisible for good (the merge-lane-2 seat's
-    judgement, 2026-09-22; the user ruled the exception, not this error path).
-    Nothing here can block a turn either way: the caller only shortens a list.
+    EXIT 1 IS NOT ENOUGH ON ITS OWN, for either re-merge. merge-tree exits 1 for
+    an argument it cannot resolve as well as for a conflict
+    (scripts/branch-conflict-check.py's docstring, measured on a deadbeef hash).
+    That file resolves both arguments first so that exit 1 can only mean
+    conflict, and the caller here does the same — but the cost of being wrong
+    differs by direction, so this one also requires the answer itself:
+    --write-tree prints the merged tree's object id as its first line, on a
+    conflict as much as on a clean merge, and no error path prints one.
+
+    EVERY OTHER OUTCOME IS AN ERROR, AND AN ERROR IS NEVER A CONFLICT. A git too
+    old for --write-tree (before 2.38) or for -X exits 129 on usage, unrelated
+    histories exit 128, an unlaunchable git is GIT_DID_NOT_RUN. A re-merge that
+    errors says nothing, so the answer is the other re-merge's alone: the merge
+    is skipped only when that one positively shows a conflict, and is reported
+    when that one is clean or errors as well. With both erroring this detector
+    degrades to exactly what it did before this exception existed — it reports
+    every merge from main. A false report is visible to the user and corrects
+    itself in one exchange; a misbehaviour that is skipped is invisible for good
+    (the merge-lane-2 seat's judgement, 2026-09-22; the user ruled the
+    exception, not this error path). Nothing here can block a turn either way:
+    the caller only shortens a list.
     """
-    remerged = run_git(["merge-tree", "--write-tree", "-X", "no-renames",
-                        first_parent, second_parent], checkout, timeout=60)
-    if remerged.returncode != MERGE_TREE_CONFLICT_EXIT_CODE:
-        return False
-    merged_tree = remerged.stdout.split("\n", 1)[0].strip()
-    return (len(merged_tree) in MERGE_TREE_OID_LENGTHS
-            and all(character in MERGE_TREE_OID_CHARACTERS for character in merged_tree))
+    for strategy_arguments in (["-X", "no-renames"], []):
+        remerged = run_git(["merge-tree", "--write-tree", *strategy_arguments,
+                            first_parent, second_parent], checkout, timeout=60)
+        if remerged.returncode != MERGE_TREE_CONFLICT_EXIT_CODE:
+            continue
+        merged_tree = remerged.stdout.split("\n", 1)[0].strip()
+        if (len(merged_tree) in MERGE_TREE_OID_LENGTHS
+                and all(character in MERGE_TREE_OID_CHARACTERS for character in merged_tree)):
+            return True
+    return False
 
 
 def merges_from_main(checkout: Path):
     """Short SHAs of merge commits on this branch whose second parent lies on
-    origin/main AND whose two parents merge cleanly — the catch-up merge this
-    hook itself used to make, and which nedschorus#324 ruled out after nine
-    landed on frozen heads in five days.
+    origin/main AND whose two parents merge cleanly, with rename detection and
+    without it — the catch-up merge this hook itself used to make, and which
+    nedschorus#324 ruled out after nine landed on frozen heads in five days.
 
     A merge of another topic branch is not the banned thing, so the second
     parent is tested for being on main rather than every merge being flagged.
@@ -587,14 +612,35 @@ def merges_from_main(checkout: Path):
     754e8337e110, so this rule skips it; the default strategy merges them
     cleanly to tree 722221eb04f7, which is what the -X is there to prevent.
 
-    ONE SHAPE IT STILL REPORTS FALSELY, recorded rather than fixed: a directory
-    rename produces CONFLICT (file location), which only rename DETECTION can
-    see, so -X no-renames merges it cleanly. Merge 6bd0aa5850ce, which relocated
-    two drafts main had moved under docs/nedschorus-wiki/queue/, is a real
-    conflict resolution that this rule still reports. It is the single such case
-    in the 81; widening the test to "either strategy conflicts" would buy it at
-    the price of skipping catch-up merges that renames alone make look
-    conflicted, which is the direction that loses misbehaviours silently.
+    ONE SHAPE THE NO-RENAMES RE-MERGE REPORTED FALSELY, AND WHY THE TEST NOW ASKS
+    BOTH WAYS. A directory rename produces CONFLICT (file location), which only
+    rename DETECTION can see, so -X no-renames merges it cleanly. Merge
+    6bd0aa5850ce, which relocated two drafts main had moved under
+    docs/nedschorus-wiki/queue/, is a real conflict resolution that the
+    no-renames re-merge alone reported: the single such case in the 81. It was
+    first recorded rather than fixed, on the reasoning that widening the test to
+    "either strategy conflicts" would skip catch-up merges that renames alone
+    make look conflicted, the direction that loses misbehaviours silently. That
+    category is empty. scripts/branch-conflict-check.py's own answer from git
+    and `git merge` both use default rename detection, so parents that conflict
+    under it are a branch that check reports as VERDICT: CONFLICT and a merge
+    that stopped until it was resolved by hand: a conflict resolution, not a
+    catch-up. So merge_parents_conflict re-merges both ways and the merge is
+    skipped when either conflicts.
+
+    WHAT THE WIDENING GIVES UP. CLAUDE.md's conflict rule has two branches: a
+    conflict with work main deleted or replaced closes the pull request, and
+    any other conflict is cleared by a hand-merge. This detector has never told
+    the two apart: a merge made over a modify/delete conflict was always
+    skipped. A branch that RENAMED a file main deleted conflicts only with
+    rename detection, so a merge made over it used to be reported, as a
+    catch-up, which it was not; it is now skipped like the others.
+
+    RE-MEASURED when the test was widened, by a stricter condition than the
+    81's: merge commits off main's first-parent line whose second parent is ON
+    that line, 75 of them. One is newly skipped, 6bd0aa5850ce; 53 merge cleanly
+    both ways and are still reported; 21 conflict without rename detection and
+    are skipped as before. The 81 and the 75 have not been reconciled.
     """
     merges = run_git(["rev-list", "--merges", "origin/main..HEAD"], checkout, timeout=30)
     if merges.returncode != 0:
