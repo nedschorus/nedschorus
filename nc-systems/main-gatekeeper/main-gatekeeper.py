@@ -2,7 +2,7 @@
 """The single program through which every change reaches main in nedschorus.
 
 Specification: nc-systems/main-gatekeeper/main-gatekeeper-design.md (canonical).
-Build bindings: docs/issues/queue/3-gatekeeper-build-bindings.md (B1-B6).
+Build bindings: docs/issues/3-gatekeeper-build-bindings.md (B1-B6).
 Build order and the design points left to the builder:
 docs/issues/3-main-gatekeeper-build-slice-plan.md. Issue: nedschorus#3.
 
