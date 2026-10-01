@@ -20,7 +20,9 @@ Usage:
   --test-suite-runner-program
                 the program run in place of the scripts/run-all-test-suites.py
                 beside this file, by the same interpreter with the same
-                arguments; default, the one beside this file
+                arguments; a relative path is taken from the directory this
+                program is started in, not from the checkout; default, the
+                one beside this file
   --temporary-directory
                 where this program keeps its directory, which holds each
                 run's logs and the record's local copy; default, the system
@@ -58,8 +60,9 @@ WHAT ONE RUN DOES, in order.
      checkout with no commit is refused.
   2. Refuses, running nothing and writing no record, when a tracked file of
      the checkout differs from the head (`git status --porcelain
-     --untracked-files=no` prints a line): the record is filed under the
-     head's hash, so it must be the head's files that were tested.
+     --untracked-files=no` prints a line, for a change that is staged as for
+     one that is not): the record is filed under the head's hash, so it must
+     be the head's files that were tested.
   3. Settles the commit the selection starts from: --since, or the merge base
      of the head and refs/remotes/origin/main. Nothing is fetched, so an
      origin/main the clone has not caught up with gives an older merge base
@@ -70,15 +73,39 @@ WHAT ONE RUN DOES, in order.
      <checkout> --only-suites-whose-recorded-inputs-changed-since <since> -j 4
      --log-dir <logs>` from the checkout. While the runner exits 3, another
      run holding the machine's lock, this program waits and runs it again
-     exactly as scripts/daily-full-test-run-of-main.py does, whose function
-     and bound it uses: every 2 seconds for up to an hour, after which the
-     record says the lock was never released. The verdict is the runner's
+     as scripts/daily-full-test-run-of-main.py does, whose function and bound
+     it uses: every 2 seconds for up to an hour, after which the record says
+     the lock was never released. The verdict is the runner's
      exit code and its `SUMMARY:` line, read from the runner's own captured
      output and never from a pipeline.
-  5. Writes the record, replacing an earlier one of the same machine and
+  5. Checks that the runner's verdict, exit 0 or exit 1, is a verdict on the
+     head. See THE HEAD IS COMPARED THREE TIMES below. When it is not, that
+     is a failed step: the record says what differed and quotes the runner's
+     first line, the `SUMMARY:` line is not printed, and the exit code is 4.
+  6. Writes the record, replacing an earlier one of the same machine and
      head.
-  6. Prints the runner's `SUMMARY:` line, when it printed one, then the
-     record's citation, and exits.
+  7. Prints the runner's `SUMMARY:` line, when it printed one and step 5
+     found nothing, then the record's citation, and exits.
+
+THE HEAD IS COMPARED THREE TIMES, because the checkout this program is given
+may be one a seat is working in, and the wait of step 4 can last an hour.
+Step 2 compares before anything runs. Step 5 makes two more comparisons, and
+each closes a window the other leaves open:
+
+  - The runner's first line must name the head's full hash and say `tracked
+    files match that commit`. The runner reads the checkout's commit and its
+    tracked files once it holds the machine's lock, so that line is the
+    runner's own account of what it was about to test, after the wait. It
+    catches a change made during the wait, one put back before the runner
+    exits included.
+  - After the runner exits, HEAD must still be the head and no tracked file
+    may differ. That catches a change made while the suites were running,
+    after the runner wrote its first line.
+
+A change made and put back while the suites are running is seen by neither.
+A runner whose first line this program cannot read as naming the head fails
+step 5 too, so a change to that line's wording in the runner shows as a
+failed step on every run and never as a pass.
 
 WHICH RUNNER RUNS. The scripts/run-all-test-suites.py beside this file, on
 the checkout it is given, never the checkout's own copy. So main's copy of
@@ -99,7 +126,8 @@ The record holds, in this order: this program's name, the machine and the
 UTC time the run started; the head, as `commit <hash> ("<subject>")`; the
 commit the selection started from, the same way, and whether it was the
 merge base or given as --since; the runner's path and the commit of the
-checkout it sits in; each step that failed; the line `the runner's output,
+checkout it sits in, which says nothing of whether the runner's own file
+matches that commit; each step that failed; the line `the runner's output,
 <n> lines:` and then those n lines exactly as the runner printed them, which
 are its first line (checkout, commit, whether tracked files match it, suite
 count, how many were selected, Python), a `SELECTED` or `NOT SELECTED` line
@@ -112,11 +140,17 @@ after its output. A run whose lock was never released records that and none
 of the runner's refusals.
 
 On ned-box the record is written locally. On the Mac it is written over ssh,
-with the options the log-store's other writers pass. Before either, the
-record is written beside the logs as pull-request-head-test-run-record.txt,
-so a record that could not reach the log-store is still on the machine that
-made it, and the refusal names the one command that writes it once ned-box
-answers.
+with the options the log-store's other writers pass. Either way the record is
+written under a name of the run's own in the record's directory,
+.<full hash>.txt.<UTC start>-<pid>.partial, and renamed over the record, so
+that two runs writing at once leave one run's whole record and never a part
+of each. Before either, the record is written beside the logs as
+pull-request-head-test-run-record.txt, so a record that could not reach the
+log-store is still on the machine that made it, and the refusal names the one
+command that writes it once ned-box answers. That command may be run after a
+later run of the same head has written its record, so it reads the `started`
+moment in the first line of the record it finds and writes nothing when that
+moment is later than its own run's.
 
 THE LOGS stay on the machine: <temporary directory>/
 nedschorus-pull-request-head-test-run/<head>-<UTC start>-<pid>/logs, which the
@@ -129,7 +163,9 @@ takes no lock of its own, and removes nothing.
 
 WHAT IS REUSED. scripts/daily-full-test-run-of-main.py is loaded by path, the
 way it loads its own two modules, for: the wait on the runner's lock
-(run_test_suite_runner_waiting_for_the_machine_lock, with its bound); the
+(run_test_suite_runner_waiting_for_the_machine_lock, with its bound, called
+with no lock for the runner to hold: the daily run gives its runner the daily
+run's own lock, and this program takes none); the
 runner's `SUMMARY:` line; its git call, which drops the variables that send
 git into another repository; the two machines' names; the log-store's default
 root; the -j the runner is given; the write's timeout; and the exit codes for
@@ -143,9 +179,13 @@ Exit codes: the runner's own when it ran and every step of this program
 worked — 0 every selected suite passed, 1 a suite failed, 2 the runner could
 not start; 2 also when this program refuses the checkout it was given, with
 no record written, and for a bad invocation; 4 a step of this program failed,
-which the record names, the runner was killed by a signal, or it exited 0 or
-1 without a `SUMMARY:` line, which is no verdict; 5 the record was not
-written.
+which the record names, the runner was killed by a signal, it exited 0 or 1
+without a `SUMMARY:` line, which is no verdict, or its verdict was not a
+verdict on the head; 5 the record was not written; 7 an exception nothing
+caught stopped this program, a module it loads failing to load included: the
+traceback is on stderr, and the run gives no verdict. Python's own exit code
+for an uncaught exception is 1, the code for a failed suite, so this program
+never leaves one uncaught.
 """
 
 import argparse
@@ -155,12 +195,26 @@ import shlex
 import sys
 import tempfile
 import time
+import traceback
 from datetime import datetime, timezone
 from pathlib import Path
 
 PROGRAM = "pull-request-head-test-run"
 
 REPOSITORY_ROOT = Path(__file__).resolve().parent.parent
+
+# See Exit codes in the module docstring.
+EXIT_STOPPED_BY_AN_UNCAUGHT_EXCEPTION = 7
+
+
+def exit_code_after_reporting_the_uncaught_exception() -> int:
+    """Called while an exception is being handled: the traceback on stderr,
+    then what this exit means and what to do, and the exit code."""
+    traceback.print_exc()
+    print(f"{PROGRAM}: not finished — the error above stopped this program, and this run "
+          f"gives no verdict.\n"
+          f"Tell the user what the error above says.", file=sys.stderr)
+    return EXIT_STOPPED_BY_AN_UNCAUGHT_EXCEPTION
 
 
 def module_loaded_by_path(module_name: str, path: Path):
@@ -172,12 +226,21 @@ def module_loaded_by_path(module_name: str, path: Path):
     return module
 
 
-# See WHAT IS REUSED in the module docstring.
-daily_full_test_run_of_main = module_loaded_by_path(
-    "daily_full_test_run_of_main",
-    Path(__file__).resolve().with_name("daily-full-test-run-of-main.py"))
-daily_memory_review_mark = daily_full_test_run_of_main.daily_memory_review_mark
-run_all_test_suites = daily_full_test_run_of_main.run_all_test_suites
+# See WHAT IS REUSED in the module docstring. Run as a program, a module that
+# does not load, or lacks a name taken from it here, ends the run with the exit
+# code for an uncaught exception; a program that imports this file is handed
+# the exception.
+try:
+    daily_full_test_run_of_main = module_loaded_by_path(
+        "daily_full_test_run_of_main",
+        Path(__file__).resolve().with_name("daily-full-test-run-of-main.py"))
+    daily_memory_review_mark = daily_full_test_run_of_main.daily_memory_review_mark
+    run_all_test_suites = daily_full_test_run_of_main.run_all_test_suites
+    EXIT_CHECKOUT_REFUSED = run_all_test_suites.EXIT_COULD_NOT_RUN
+except Exception:
+    if __name__ != "__main__":
+        raise
+    sys.exit(exit_code_after_reporting_the_uncaught_exception())
 
 # The log-store's kind. Under it, one directory per machine, named as the
 # daily run names them.
@@ -195,7 +258,9 @@ PULL_REQUEST_HEAD_TEST_RUN_RUNNER_BESIDE_THIS_FILE = Path(__file__).resolve().wi
 
 MAIN_AS_THE_CLONE_HAS_IT = "refs/remotes/origin/main"
 
-EXIT_CHECKOUT_REFUSED = run_all_test_suites.EXIT_COULD_NOT_RUN
+# What the runner's first line says of a checkout whose tracked files match
+# its commit: the words of commit_and_state in scripts/run-all-test-suites.py.
+RUNNER_STATE_WHEN_TRACKED_FILES_MATCH = "tracked files match that commit"
 
 
 def commit_named_for_the_record(checkout: Path, commit: str) -> str:
@@ -216,12 +281,73 @@ def runner_named_for_the_record(runner: Path) -> str:
     return f"{runner}, from {commit_named_for_the_record(runner.parent, resolved.stdout.strip())}"
 
 
-def write_record_command(log_store_root: str, machine: str, file_name: str) -> str:
+def first_tracked_file_that_differs(checkout: Path):
+    """(the first tracked file git lists as differing from the checkout's
+    commit, or None when none does; why `git status` failed, or None). A
+    change that is staged is listed as one that is not."""
+    changed = daily_full_test_run_of_main.git(
+        checkout, "status", "--porcelain", "--untracked-files=no")
+    if changed.returncode != 0:
+        return None, daily_full_test_run_of_main.first_stderr_line_or_no_detail(
+            changed.stderr)
+    if changed.stdout.strip():
+        return changed.stdout.splitlines()[0][3:], None
+    return None, None
+
+
+def why_the_run_is_no_verdict_on_the_head(checkout: Path, head: str, completed) -> list:
+    """Each reason the runner's finished run is no verdict on the head; none
+    when it is one. See THE HEAD IS COMPARED THREE TIMES in the module
+    docstring."""
+    reasons = []
+    first_line = (completed.stdout.splitlines() or [""])[0]
+    if not (first_line.startswith(f"{run_all_test_suites.PROGRAM}: ")
+            and f" at {head} ({RUNNER_STATE_WHEN_TRACKED_FILES_MATCH}); " in first_line):
+        reasons.append(f"the runner's first line does not say it tested {head} with "
+                       f"tracked files matching that commit")
+    resolved = daily_full_test_run_of_main.git(
+        checkout, "rev-parse", "--verify", "--quiet", "HEAD^{commit}")
+    head_after_the_run = resolved.stdout.strip()
+    if resolved.returncode != 0 or not head_after_the_run:
+        reasons.append(f"after the run git cannot resolve HEAD to a commit in {checkout}")
+    elif head_after_the_run != head:
+        reasons.append(f"after the run HEAD of {checkout} is "
+                       f"{commit_named_for_the_record(checkout, head_after_the_run)}")
+    differing, why_status_failed = first_tracked_file_that_differs(checkout)
+    if why_status_failed is not None:
+        reasons.append(f"after the run git status failed in {checkout}: {why_status_failed}")
+    elif differing is not None:
+        reasons.append(f"after the run a tracked file in {checkout} differs from its "
+                       f"commit: {differing}")
+    return reasons
+
+
+def write_record_command(log_store_root: str, machine: str, file_name: str, run_name: str,
+                         unless_the_record_there_started_after=None) -> str:
     """The shell command that writes the record from its stdin, replacing an
-    earlier one of the same machine and head."""
+    earlier one of the same machine and head. The record is written under a
+    name of the run's own in the record's directory and renamed over the
+    record, so two writers at once leave one writer's whole record.
+
+    Given a moment, as the record's first line spells its `started`, the
+    command first reads that line of the record it finds, and writes nothing
+    and exits 1 when the moment there is later: the form the remedy for a
+    failed write is printed in."""
     directory = (f"{log_store_root}/{PULL_REQUEST_HEAD_TEST_RUNS_KIND_DIRECTORY_NAME}/"
                  f"{machine}")
-    return f"mkdir -p {shlex.quote(directory)} && cat > {shlex.quote(f'{directory}/{file_name}')}"
+    record = shlex.quote(f"{directory}/{file_name}")
+    partial = shlex.quote(f"{directory}/.{file_name}.{run_name}.partial")
+    keep_a_later_record = ""
+    if unless_the_record_there_started_after is not None:
+        not_written = shlex.quote(
+            f"{PROGRAM}: not written — the record there is of a run that started later.")
+        instruction = shlex.quote("Leave that record as it is.")
+        keep_a_later_record = (
+            f"if [ -e {record} ] && [ \"$(sed -n '1s/^.*, started //p' {record})\" \\> "
+            f"{shlex.quote(unless_the_record_there_started_after)} ]; then "
+            f"echo {not_written} >&2; echo {instruction} >&2; exit 1; fi && ")
+    return (f"mkdir -p {shlex.quote(directory)} && {keep_a_later_record}cat > {partial} && "
+            f"mv -f {partial} {record} || {{ rm -f {partial}; exit 1; }}")
 
 
 def parse_arguments(argv):
@@ -258,15 +384,14 @@ def main(argv=None, now=None, wait=time.sleep, monotonic=time.monotonic) -> int:
               file=sys.stderr)
         return EXIT_CHECKOUT_REFUSED
     head = resolved.stdout.strip()
-    changed = daily.git(checkout, "status", "--porcelain", "--untracked-files=no")
-    if changed.returncode != 0:
-        print(f"{PROGRAM}: not run — git status failed in {checkout}: "
-              f"{daily.first_stderr_line_or_no_detail(changed.stderr)}\n"
+    differing, why_status_failed = first_tracked_file_that_differs(checkout)
+    if why_status_failed is not None:
+        print(f"{PROGRAM}: not run — git status failed in {checkout}: {why_status_failed}\n"
               f"Fix what git reports, then run this again.", file=sys.stderr)
         return EXIT_CHECKOUT_REFUSED
-    if changed.stdout.strip():
+    if differing is not None:
         print(f"{PROGRAM}: not run — a tracked file in {checkout} differs from its commit "
-              f"{head}: {changed.stdout.splitlines()[0][3:]}\n"
+              f"{head}: {differing}\n"
               f"Pass --checkout a checkout whose tracked files match the commit to test, "
               f"such as a detached worktree at that commit.", file=sys.stderr)
         return EXIT_CHECKOUT_REFUSED
@@ -301,15 +426,20 @@ def main(argv=None, now=None, wait=time.sleep, monotonic=time.monotonic) -> int:
             since_for_the_record = (f"{commit_named_for_the_record(checkout, since)}, the "
                                     f"merge base of the head and {MAIN_AS_THE_CLONE_HAS_IT}")
 
+    started = now.astimezone(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+    run_name = f"{now.astimezone(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}-{os.getpid()}"
     directory = (Path(arguments.temporary_directory or tempfile.gettempdir()).resolve()
-                 / PULL_REQUEST_HEAD_TEST_RUN_DIRECTORY_NAME
-                 / f"{head}-{now.astimezone(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}-"
-                   f"{os.getpid()}")
+                 / PULL_REQUEST_HEAD_TEST_RUN_DIRECTORY_NAME / f"{head}-{run_name}")
     directory.mkdir(parents=True, exist_ok=True)
     logs = directory / PULL_REQUEST_HEAD_TEST_RUN_LOGS_DIRECTORY_NAME
-    runner = Path(arguments.test_suite_runner_program
-                  or PULL_REQUEST_HEAD_TEST_RUN_RUNNER_BESIDE_THIS_FILE)
+    # Resolved here, in the directory this program was started in: the runner
+    # is started in the checkout, where a relative path names the checkout's
+    # own copy.
+    runner = (Path(arguments.test_suite_runner_program).resolve()
+              if arguments.test_suite_runner_program
+              else PULL_REQUEST_HEAD_TEST_RUN_RUNNER_BESIDE_THIS_FILE)
     completed = None
+    verdict_is_on_the_head = True
     seconds_waiting_for_lock = 0
     if since is not None:
         command = [
@@ -340,11 +470,20 @@ def main(argv=None, now=None, wait=time.sleep, monotonic=time.monotonic) -> int:
                 f"{run_all_test_suites.PROGRAM} exited {completed.returncode} and printed "
                 f"no {daily.RUNNER_SUMMARY_LINE_PREFIX} line, which is no verdict",
                 "Read the runner's stderr in the record, then run this again."))
+        if completed.returncode in (run_all_test_suites.EXIT_ALL_PASSED,
+                                    run_all_test_suites.EXIT_SOME_FAILED):
+            reasons = why_the_run_is_no_verdict_on_the_head(checkout, head, completed)
+            if reasons:
+                verdict_is_on_the_head = False
+                steps_failed.append((
+                    f"no verdict on commit {head} — {'; '.join(reasons)}; the runner's "
+                    f"first line: {(completed.stdout.splitlines() or ['none printed'])[0]}",
+                    "Run this again on a checkout that nothing else changes while the run "
+                    "lasts, such as a detached worktree at the commit to test."))
 
     summary = daily.runner_summary_line(completed) if completed is not None else None
     record_lines = [
-        f"{PROGRAM}: {machine}, started "
-        f"{now.astimezone(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')}",
+        f"{PROGRAM}: {machine}, started {started}",
         f"head: {commit_named_for_the_record(checkout, head)}",
         f"selecting since: {since_for_the_record}",
         f"runner: {runner_named_for_the_record(runner)}"]
@@ -376,7 +515,8 @@ def main(argv=None, now=None, wait=time.sleep, monotonic=time.monotonic) -> int:
     citation = (f"{mark.NED_BOX_SSH_TARGET}:{arguments.log_store_root}/"
                 f"{PULL_REQUEST_HEAD_TEST_RUNS_KIND_DIRECTORY_NAME}/{machine}/{file_name}")
     ssh_target = None if on_ned_box else mark.NED_BOX_SSH_TARGET
-    write_command = write_record_command(arguments.log_store_root, machine, file_name)
+    write_command = write_record_command(arguments.log_store_root, machine, file_name,
+                                         run_name)
     local_copy = directory / PULL_REQUEST_HEAD_TEST_RUN_RECORD_LOCAL_COPY_FILE_NAME
     try:
         local_copy.write_text(record + "\n", encoding="utf-8")
@@ -391,8 +531,13 @@ def main(argv=None, now=None, wait=time.sleep, monotonic=time.monotonic) -> int:
             write_command, ssh_target, daily.DAILY_FULL_TEST_RUN_RECORD_WRITE_TIMEOUT_SECONDS,
             stdin_text=record + "\n")
     except mark.DailyMemoryReviewReadOrWriteFailed as error:
-        by_hand = ([*mark.NED_BOX_SSH_COMMAND, ssh_target, write_command] if ssh_target
-                   else ["/bin/sh", "-c", write_command])
+        # Printed to be run later, when a later run of this head may have
+        # written its record: see write_record_command.
+        remedy_command = write_record_command(
+            arguments.log_store_root, machine, file_name, run_name,
+            unless_the_record_there_started_after=started)
+        by_hand = ([*mark.NED_BOX_SSH_COMMAND, ssh_target, remedy_command] if ssh_target
+                   else ["/bin/sh", "-c", remedy_command])
         when = ("When ned-box answers ssh again" if ssh_target
                 else "When the cause is fixed")
         print(f"{PROGRAM}: the record was not written to {citation} ({error}).\n"
@@ -402,7 +547,7 @@ def main(argv=None, now=None, wait=time.sleep, monotonic=time.monotonic) -> int:
               f"{shlex.quote(str(local_copy))}", file=sys.stderr)
         return daily.EXIT_RECORD_NOT_WRITTEN
 
-    if summary is not None:
+    if summary is not None and verdict_is_on_the_head:
         print(summary)
     print(f"{PROGRAM}: record written to {citation}")
     if steps_failed:
@@ -410,5 +555,14 @@ def main(argv=None, now=None, wait=time.sleep, monotonic=time.monotonic) -> int:
     return completed.returncode
 
 
+def main_that_leaves_no_exception_uncaught(argv=None) -> int:
+    """main's exit code, or the exit code for an uncaught exception after its
+    traceback: see Exit codes in the module docstring."""
+    try:
+        return main(argv)
+    except Exception:
+        return exit_code_after_reporting_the_uncaught_exception()
+
+
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(main_that_leaves_no_exception_uncaught())

@@ -18,7 +18,7 @@ Usage:
                 the same arguments; default, the worktree's own
   --temporary-directory
                 where this program keeps its one directory, which holds the
-                worktree, the run's logs, the record's local copy and this
+                worktree, the run's logs, the record's local copies and this
                 program's lock; default, the system temp directory
   --recorded-inputs-directory
                 passed through to the runner; default, not passed, so the
@@ -56,7 +56,11 @@ WHAT ONE RUN DOES, in order.
      again, for up to an hour; after that the record says the lock was never
      released. The verdict is the runner's exit code and its `SUMMARY:` line,
      read from the runner's own captured output and never from a pipeline.
-  4. Removes the worktree, whatever step 3 did.
+  4. Removes the worktree, whatever step 3 did. When `git worktree remove
+     --force` leaves the directory, because the run left a directory in it
+     that its owner may not write to, this program gives the owner read,
+     write and search permission on every directory in the worktree and
+     removes the worktree itself.
   5. Writes the record, replacing the day's earlier one.
   6. Prints the record's citation and exits.
 
@@ -80,10 +84,16 @@ the record in the line's place.
 
 On ned-box the record is written locally. On the Mac it is written over ssh,
 with the options the log-store's other writers pass. Before either, the
-record is written beside the logs as daily-full-test-run-record.txt, so a
-record that could not reach the log-store is still on the machine that made
-it, and the refusal names the one command that writes it once ned-box
-answers.
+record is written beside the logs as its local copy,
+daily-full-test-run-record-<YYYY-MM-DD>.txt, named by the record's own date,
+so a record that could not reach the log-store is still on the machine that
+made it, and the refusal names the one command that writes it once ned-box
+answers. A later run on the same day replaces the day's local copy, as it
+replaces the day's record; a run on another day writes another file, so the
+command a refusal named still writes that day's record under that day's name
+after later runs. This program removes no local copy: one is left per day a
+run was made, each about a kilobyte, until the machine clears its temporary
+directory.
 
 THE LOGS stay on the machine: <temporary directory>/
 nedschorus-daily-full-test-run-of-main/logs, which each run replaces and the
@@ -95,6 +105,17 @@ to it. A second run started by hand while the scheduled one is going would
 therefore remove the worktree the first is testing. So a run holds an
 exclusive lock on daily-full-test-run-of-main.lock in its directory, and a
 second run exits 6 having done nothing.
+
+The runner holds the lock too: its process is started with the lock's file
+descriptor (`pass_fds`), and a lock taken with flock is held until every
+process holding that descriptor has closed it or exited. A program stopped by
+its process ID leaves its runner running, and the runner is what tests in the
+worktree, so the lock is held until the runner exits as well. No other
+process this program starts is given the descriptor. Nothing the runner
+starts holds the descriptor either: the runner starts each suite, strace and
+git with `subprocess.run`, which closes every descriptor above 2 in the
+process it starts, so a process a suite leaves behind cannot keep later daily
+runs out.
 
 WHAT IS REUSED. nc-systems/handoff/daily-memory-review-mark.py is loaded by
 path, the way nc-systems/handoff/handoff-supervisor.py loads it, for the
@@ -115,9 +136,21 @@ repository.
   ned-box: one cron line, run from the reference clone with the system's
   Python. ned-box's clock is America/Los_Angeles.
 
-    30 3 * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/scripts/daily-full-test-run-of-main.py
+    30 3 * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/scripts/daily-full-test-run-of-main.py >> /home/nedlern/.claude/daily-full-test-run-of-main.log 2>&1
 
-  the Mac: a launchd job, at a time the user has not yet ruled.
+  Both streams are appended to that file because ned-box has no mail
+  transfer agent, so cron discards what a job prints: a refusal that writes
+  no record, exit 5 or exit 6, is read there.
+
+  the Mac: a launchd job at 03:30 Pacific, the same time as ned-box. A run
+  missed while the Mac sleeps starts at the next wake (user-ruled, his "y" at
+  2026-10-01T04:38:17Z in Mac session 8db2e753, item 11 of the walk
+  open-questions-concerns-and-recommendations-2026-09-30).
+
+WHO READS THE RECORD. The seat merge-lane-2 reads ned-box's newest record at
+each session start, and no other channel carries a failed or missing record
+to the user (user-ruled, his "y" at 2026-10-01T04:43:20Z in the same Mac
+session, item 12 of the same walk).
 
 Exit codes: the runner's own when it ran and every step of this program
 worked — 0 every suite passed, 1 a suite failed, 2 the runner could not
@@ -130,9 +163,11 @@ was not written; 6 another daily run holds this program's lock.
 import argparse
 import fcntl
 import importlib.util
+import os
 import re
 import shlex
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -172,7 +207,8 @@ DAILY_FULL_TEST_RUN_MACHINE_NAME_ELSEWHERE = "mac"
 DAILY_FULL_TEST_RUN_DIRECTORY_NAME = "nedschorus-daily-full-test-run-of-main"
 DAILY_FULL_TEST_RUN_WORKTREE_DIRECTORY_NAME = "worktree-of-main"
 DAILY_FULL_TEST_RUN_LOGS_DIRECTORY_NAME = "logs"
-DAILY_FULL_TEST_RUN_RECORD_LOCAL_COPY_FILE_NAME = "daily-full-test-run-record.txt"
+# The record's local copy is this prefix, the record's date and `.txt`.
+DAILY_FULL_TEST_RUN_RECORD_LOCAL_COPY_FILE_NAME_PREFIX = "daily-full-test-run-record-"
 DAILY_FULL_TEST_RUN_LOCK_FILE_NAME = "daily-full-test-run-of-main.lock"
 
 DAILY_FULL_TEST_RUN_RUNNER_PATH_IN_WORKTREE = Path("scripts") / "run-all-test-suites.py"
@@ -211,6 +247,17 @@ def first_stderr_line_or_no_detail(text: str) -> str:
     return (text.strip().splitlines() or ["no detail"])[0]
 
 
+def first_fatal_or_error_stderr_line_or_no_detail(text: str) -> str:
+    """git's error line when git wrote a progress line before it: the first
+    line opening `fatal:` or `error:`, else the first line. `git worktree add`
+    writes `Preparing worktree (detached HEAD ...)` first and its error
+    second."""
+    for line in text.strip().splitlines():
+        if line.startswith(("fatal:", "error:")):
+            return line
+    return first_stderr_line_or_no_detail(text)
+
+
 def take_daily_full_test_run_lock(lock_file: Path):
     """The open, locked handle, or None when another daily run holds it."""
     handle = open(lock_file, "a")
@@ -222,13 +269,43 @@ def take_daily_full_test_run_lock(lock_file: Path):
     return handle
 
 
+def give_owner_read_write_and_search_on_every_directory_under(directory: Path):
+    """Give the owner read, write and search permission on the directory and
+    on every directory in it, so that what they hold can be removed: removing
+    a name needs write and search permission on the directory holding it. A
+    symbolic link is neither changed nor followed, so nothing outside the
+    directory is changed, and a directory whose mode cannot be changed is left
+    for the removal to fail on."""
+    def give(path) -> bool:
+        """Whether the path is a directory and not a symbolic link to one."""
+        try:
+            mode = os.lstat(path).st_mode
+            if not stat.S_ISDIR(mode):
+                return False
+            os.chmod(path, stat.S_IMODE(mode) | stat.S_IRWXU)
+        except OSError:
+            pass
+        return True
+
+    if not give(directory):
+        return
+    # Top-down, so each directory is made readable before it is listed.
+    for parent, directory_names, _ in os.walk(directory):
+        for name in directory_names:
+            give(os.path.join(parent, name))
+
+
 def remove_worktree_of_main(clone: Path, worktree: Path):
     """Remove the worktree and its registration in the clone; None when it is
     gone, or why it is not. `git worktree remove --force` also clears a
     registration whose directory is already gone, and a directory git does
-    not know is removed as a plain directory."""
+    not know is removed as a plain directory. When git could not delete the
+    directory, git has dropped the registration all the same, and what is
+    left is removed here, with permission restored on its directories
+    first."""
     removed = git(clone, "worktree", "remove", "--force", str(worktree))
     if worktree.exists():
+        give_owner_read_write_and_search_on_every_directory_under(worktree)
         shutil.rmtree(worktree, ignore_errors=True)
     if worktree.exists():
         return first_stderr_line_or_no_detail(removed.stderr)
@@ -236,11 +313,17 @@ def remove_worktree_of_main(clone: Path, worktree: Path):
 
 
 def run_test_suite_runner_waiting_for_the_machine_lock(command, worktree: Path, wait,
-                                                       monotonic):
+                                                       monotonic, lock_handle=None):
     """(the runner's finished run, seconds spent waiting for the lock, whether
     the lock was never released). The runner is run again every
     DAILY_FULL_TEST_RUN_LOCK_WAIT_SECONDS while it exits 3, until an attempt
-    starts DAILY_FULL_TEST_RUN_LOCK_WAIT_BOUND_SECONDS or more after the first."""
+    starts DAILY_FULL_TEST_RUN_LOCK_WAIT_BOUND_SECONDS or more after the first.
+    The runner is given the lock of the caller that passes one, as this
+    program passes its own; see ONE DAILY RUN AT A TIME PER MACHINE in the
+    module docstring. scripts/pull-request-head-test-run.py, which uses this
+    function and takes no lock, passes none, and its runner is started with
+    no descriptor above 2."""
+    descriptors_the_runner_holds = () if lock_handle is None else (lock_handle.fileno(),)
     waiting_started = monotonic()
     while True:
         attempt_started = monotonic()
@@ -248,7 +331,7 @@ def run_test_suite_runner_waiting_for_the_machine_lock(command, worktree: Path, 
             command, cwd=str(worktree),
             env=run_all_test_suites.environment_without_git_redirecting_variables(),
             stdin=subprocess.DEVNULL, capture_output=True, text=True, errors="replace",
-            check=False)
+            check=False, pass_fds=descriptors_the_runner_holds)
         waited = attempt_started - waiting_started
         if completed.returncode != run_all_test_suites.EXIT_LOCKED:
             return completed, waited, False
@@ -324,13 +407,13 @@ def main(argv=None, now=None, wait=time.sleep, monotonic=time.monotonic) -> int:
     try:
         return daily_full_test_run_under_lock(
             arguments, now, wait, monotonic, on_ned_box, machine, pacific_date, clone,
-            directory)
+            directory, lock_handle)
     finally:
         lock_handle.close()
 
 
 def daily_full_test_run_under_lock(arguments, now, wait, monotonic, on_ned_box, machine,
-                                   pacific_date, clone, directory) -> int:
+                                   pacific_date, clone, directory, lock_handle) -> int:
     mark = daily_memory_review_mark
     worktree = directory / DAILY_FULL_TEST_RUN_WORKTREE_DIRECTORY_NAME
     logs = directory / DAILY_FULL_TEST_RUN_LOGS_DIRECTORY_NAME
@@ -363,7 +446,7 @@ def daily_full_test_run_under_lock(arguments, now, wait, monotonic, on_ned_box, 
         if added.returncode != 0:
             steps_failed.append((
                 f"not run — git worktree add --detach {worktree} {commit} failed in "
-                f"{clone}: {first_stderr_line_or_no_detail(added.stderr)}",
+                f"{clone}: {first_fatal_or_error_stderr_line_or_no_detail(added.stderr)}",
                 "Fix what git reports, then run this again."))
         else:
             try:
@@ -378,7 +461,7 @@ def daily_full_test_run_under_lock(arguments, now, wait, monotonic, on_ned_box, 
                                 arguments.recorded_inputs_directory]
                 completed, seconds_waiting_for_lock, lock_never_released = (
                     run_test_suite_runner_waiting_for_the_machine_lock(
-                        command, worktree, wait, monotonic))
+                        command, worktree, wait, monotonic, lock_handle))
                 if lock_never_released:
                     steps_failed.append((
                         f"not run — the lock was never released: "
@@ -405,8 +488,9 @@ def daily_full_test_run_under_lock(arguments, now, wait, monotonic, on_ned_box, 
                 if not_removed is not None:
                     steps_failed.append((
                         f"the worktree {worktree} was not removed: {not_removed}",
-                        f"Remove it with: git -C {shlex.quote(str(clone))} worktree remove "
-                        f"--force {shlex.quote(str(worktree))}"))
+                        f"Remove it with: chmod -R u+rwx {shlex.quote(str(worktree))} && "
+                        f"rm -rf {shlex.quote(str(worktree))} && "
+                        f"git -C {shlex.quote(str(clone))} worktree prune"))
 
     record_lines = [
         f"{PROGRAM}: {machine}, {pacific_date} in {mark.PACIFIC_TIME_ZONE_NAME}, started "
@@ -433,7 +517,8 @@ def daily_full_test_run_under_lock(arguments, now, wait, monotonic, on_ned_box, 
                 f"{DAILY_FULL_TEST_RUNS_KIND_DIRECTORY_NAME}/{machine}/{file_name}")
     ssh_target = None if on_ned_box else mark.NED_BOX_SSH_TARGET
     write_command = write_record_command(arguments.log_store_root, machine, file_name)
-    local_copy = directory / DAILY_FULL_TEST_RUN_RECORD_LOCAL_COPY_FILE_NAME
+    local_copy = directory / (
+        f"{DAILY_FULL_TEST_RUN_RECORD_LOCAL_COPY_FILE_NAME_PREFIX}{pacific_date}.txt")
     try:
         local_copy.write_text(record + "\n", encoding="utf-8")
     except OSError as error:
