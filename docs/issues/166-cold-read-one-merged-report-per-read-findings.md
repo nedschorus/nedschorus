@@ -4,6 +4,8 @@ issue: "[cold-read: one merged report per read — findings grouped by passage, 
 
 # cold-read: one merged report per read — findings grouped by passage, with each cell's wording and the count of cells that raised it
 
+**Correction, 2026-10-01.** The cold-read-grid, `nc-systems/cold-read/cold-read-grid.py`, now runs six cells, four defect-hunt cells and two terminology cells, and no restate cell, which was cut on 2026-08-30; so where this page says eight cells or eight reports the count today is six, and point 5 under What is wanted, the restate section, applies only if restate cells return.
+
 ## Problem
 
 A cold read (the review instrument formerly named md-review, renamed 2026-08-25) runs eight reviewer cells over one document — four defect-hunt cells and four restate cells, two model families at two tiers each — and leaves eight report files in the record directory. The agent that commissioned the read then reads all eight itself, works out which findings are the same defect in different words, sorts them into fixes and questions, and walks them with the user.
