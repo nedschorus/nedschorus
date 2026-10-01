@@ -1,4 +1,5 @@
 ---
+issue: "[Fleet survives a machine restart without losing seat context: detect, hand off on notice, relaunch at boot, resume from transcript](https://github.com/nedschorus/nedschorus/issues/116)"
 status: design of record; build tracked in issue [Fleet survives a machine restart without losing seat context: detect, hand off on notice, relaunch at boot, resume from transcript](https://github.com/nedschorus/nedschorus/issues/116)
 design-as-of: 2026-09-11
 ---
@@ -21,7 +22,12 @@ checks that a seat is dead, picks its last real transcript by a heuristic, and
 resumes it under a supervisor. What is missing is everything that decides to call it at boot, and
 one property of how it calls the launcher.
 
-## Demonstrated twice
+**The manual path works today and needs none of this:** after any reboot,
+`python3 scripts/recover-crashed-seats.py <seat>...` restores the named seats
+with their conversations resumed and supervised. `--dry-run` reports every
+decision and launches nothing.
+
+## Demonstrated three times
 
 **2026-08-20, ned-box.** `unattended-upgrades` installed a kernel package, set
 `/var/run/reboot-required`, and scheduled a reboot 19.5 hours out. At 02:00 it
@@ -43,7 +49,12 @@ exercise of `recover-crashed-seats.py`'s automated resume launch — the
 `--resume-session-id` it hands the supervisor — where before that date only the
 by-hand `claude --resume` form had been proven (2026-08-21).
 
-That reboot also produced the measured constraint in § Constraints the build
+**2026-09-10, the Mac.** Four seats live, none came back for twelve and a half
+hours. For the two seats whose successors had never replied, the recovery tool
+would have resumed the retired parent instead; the successors were resumed by
+hand. Details are in the issue's comment of 2026-09-11.
+
+The 2026-09-02 reboot also produced the measured constraint in § Constraints the build
 must respect, which `restart-live-seats-at-login` would otherwise have hit; the
 same section restates one standing rule.
 
@@ -459,6 +470,13 @@ iTerm races the user's own typing and corrupted a live window on 2026-08-17;
 the project's synthetic-keystroke guard hook blocks that form outright
 (issue [Console text-insertion + stuck/waiting-state detection (operator tooling; captured from the comms backlog)](https://github.com/nedschorus/nedschorus/issues/27)).
 
+## Already done on ned-box
+
+`52nedlern-full-auto` on ned-box now sets `Automatic-Reboot "false"` (verified by
+`apt-config dump`), patching unchanged. Livepatch is enabled, so deferring a
+reboot does not expose the kernel. `Automatic-Reboot-WithUsers "false"` would not
+have helped: seats run in tmux and do not register in utmp.
+
 ## The build, in order
 
 1. **Surface a pending reboot** — check `/var/run/reboot-required` where seat
@@ -470,13 +488,33 @@ the project's synthetic-keystroke guard hook blocks that form outright
    the seats stamped within 20 seconds of it, as ruled above. Each run records
    what it selected in the run log ruled below, and a later run in the same
    boot takes the stop from there rather than deriving it again.
+
+   *Built:* PR [restart-live-seats-at-login: select the seats running at the stop from supervisor heartbeats](https://github.com/nedschorus/nedschorus/pull/318). The run log:
+   PR [restart-live-seats-at-login: a run log, so a later run in the same boot knows where the stop was](https://github.com/nedschorus/nedschorus/pull/320); its truthful
+   reporting, PR [restart-live-seats-at-login: the report says what actually happened to the run log](https://github.com/nedschorus/nedschorus/pull/323).
 3. **Window-opening recovery** — `--open-iterm-window-per-seat` on
    `recover-crashed-seats.py`, specified in the issue [Crash recovery for seats that died without a handoff: find the last live transcript, resume it supervised](https://github.com/nedschorus/nedschorus/issues/120) overview, so a recovered
    seat is born attached in its own iTerm window. Independently useful: it is
    how a seat should be recovered by hand too.
+
+   *Built:* change 6 of issue [recover-crashed-seats.py: the six changes ruled 2026-09-02 — exit record, process-identity liveness, parking marker, verified restart, by-hand resume, window](https://github.com/nedschorus/nedschorus/issues/242), PR [recover-crashed-seats: --open-iterm-window-per-seat launches a recovered seat attached, in its own window](https://github.com/nedschorus/nedschorus/pull/319),
+   merged. This program also needs two more of that issue's changes: judge the
+   supervisor by its process rather than heartbeat age (change 1) and verify a
+   resumed seat came up (change 4), without which the login restart recovers
+   nothing in the machine's first minute and misreports. The exit record,
+   parking marker and by-hand resume (changes 2, 3, 5) are behind the
+   failed-seat handling above.
 4. **`restart-live-seats-at-login`, wired to login** — a LaunchAgent on the Mac,
    `fleet-tmux.service` or a sibling on the box, running 2 and then 3, and
-   handling a seat it cannot bring back as ruled above.
+   handling a seat it cannot bring back as ruled above. Both halves are built:
+   PR [restart-live-seats-at-login launches the seats it decides on, and a Mac LaunchAgent runs it at login (#116 step 4)](https://github.com/nedschorus/nedschorus/pull/354), the Mac LaunchAgent,
+   and PR [A systemd user unit runs restart-live-seats-at-login at boot on the box (#116 step 4, box half)](https://github.com/nedschorus/nedschorus/pull/358), the box systemd unit.
+   Next: the failed-seat handling above.
+
+   **Its tests must not reboot the user's Mac** (ruled 2026-09-11): injected
+   boot time and clock, `launchctl kickstart`, a throwaway canary seat.
+   The one real reboot can be ned-box's (the user, 2026-09-11), at the cost
+   of issue [recover-crashed-seats.py: the six changes ruled 2026-09-02 — exit record, process-identity liveness, parking marker, verified restart, by-hand resume, window](https://github.com/nedschorus/nedschorus/issues/242)'s `prof` specimen.
 
    *Built 2026-09-14, the Mac half:* `restart-live-seats-at-login.py` runs
    `recover-crashed-seats.py <seat> --handoff-dir <dir> --open-iterm-window-per-seat`
@@ -691,7 +729,13 @@ Rulings carried from issue [Fleet survives a machine restart without losing seat
 2026-08-20 (walk with the user, item by item), 2026-08-31 (walk item 5,
 `retired-seat-cleanup-and-reboot-open-questions`), and 2026-09-02 (this
 session, after the Mac reboot). The 2026-09-02 measurements are recorded in that
-issue's instance-outcome comment.
+issue's instance-outcome comment. This document landed on main 2026-09-03 through
+PR [Fleet-restart design: pair document for #116, with the 2026-09-02 rulings](https://github.com/nedschorus/nedschorus/pull/240), corrected by a cold read and a
+ten-item walk with the user on 2026-09-02.
+
+Search receipt (2026-08-20): `gh issue list --state all --search` for "reboot",
+"restart seats", "boot", "handoff relaunch", "supervisor restart" returned only
+issue [Claude auto-update purges the running version under live fleet sessions — updates need a drain-or-retain policy](https://github.com/nedschorus/nedschorus/issues/62) and issue [Run named agents on the Ubuntu box, reachable from iTerm2 by name: launch-claude with tmux attach-or-create, and the migration it requires](https://github.com/nedschorus/nedschorus/issues/45).
 
 Related: issue [Crash recovery for seats that died without a handoff: find the last live transcript, resume it supervised](https://github.com/nedschorus/nedschorus/issues/120) owns
 `recover-crashed-seats.py`; issue [Run named agents on the Ubuntu box, reachable from iTerm2 by name: launch-claude with tmux attach-or-create, and the migration it requires](https://github.com/nedschorus/nedschorus/issues/45)
