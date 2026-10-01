@@ -26,7 +26,8 @@ THE SEQUENCE, and what makes each step safe to run twice:
                 filed under an issue whose filing finished; a new filing's
                 heading carries no date or file path.
   2. Adjudicate ask ghi-info whether an open issue already covers this.
-                Fail-open: unreachable means the write proceeds.
+                Fail-open: unreachable means the write proceeds. A ruling
+                question stops it, until --ruling-question-answered.
   3. File       gh issue create, title from the file's first heading, body a
                 placeholder carrying this file's pairing key.
   4. Name+land  copy the file to docs/issues/<number>-<slug>.md in a
@@ -308,6 +309,9 @@ Exit codes:
       path a move takes it from, changed on main since the caller's
       checkout started from it; or an earlier edit of the same file is
       still waiting on an open pull request
+  67  stopped by adjudication: ghi-info found a ruling of the user's that it
+      cannot tell still applies, and nothing was written; a rerun with
+      --ruling-question-answered, once the user has answered, goes on
 
 The 66 refusals are the deny paths here that do not end with the
 reconsider line, deliberately. A conflict is not a judgment to think
@@ -361,6 +365,18 @@ GHI_INFO_ASK_REPLIED_WITHOUT_A_LIST_EXIT_CODES = (2, 3)
 GHI_INFO_ASK_NO_LIST_MESSAGE_OPENINGS = (
     "Not a question about GitHub issues:",
     "ghi-info found a ruling of the user's that it cannot tell still applies:")
+# The ruling question's exit, and the two instruction lines that close its
+# message: RULING_QUESTION_MESSAGE_TEMPLATE after its first line. The lines
+# are used only when the message itself did not reach this program, so the
+# stop still says what to do. Copied and checked as above.
+GHI_INFO_ASK_RULING_QUESTION_EXIT_CODE = 3
+GHI_INFO_ASK_RULING_QUESTION_INSTRUCTION_LINES = (
+    "Ask the user whether that ruling still applies, and put the question on "
+    "your task list.",
+    "Do not file or edit the issue until he answers.")
+EXIT_STOPPED_FOR_RULING_QUESTION = 67
+RULING_QUESTION_RERUN_LINE = (
+    "When he has answered, rerun this command with --ruling-question-answered.")
 
 RECONSIDER_LINE = (
     "If you believe this refusal is wrong, reconsider once against its stated "
@@ -858,12 +874,55 @@ def refuse_if_filing_is_in_flight(repo: str, issues, title: str, runner):
             64)
 
 
+def ruling_question_message(stderr: str) -> str:
+    """The whole of ghi-info-ask.py's ruling-question message, every line of
+    it: from the line its opening starts to the end of stderr, so a ruling
+    sentence ghi-info wrote over several lines arrives whole, and the ask's
+    refresh or reincarnation lines ahead of it are left out. main() prints
+    the message last.
+
+    When no line opens that way — an older relay, or stderr cut short — the
+    message is rebuilt from its opening, stderr's last line as the sentence,
+    and its two instruction lines, so the stop still says what to do."""
+    lines = [line.strip() for line in (stderr or "").splitlines()
+             if line.strip()]
+    opening = GHI_INFO_ASK_NO_LIST_MESSAGE_OPENINGS[1]
+    for index, line in enumerate(lines):
+        if line.startswith(opening):
+            return "\n".join(lines[index:])
+    sentence = lines[-1] if lines else "no sentence reached this program"
+    return "\n".join((f"{opening} {sentence}",)
+                     + GHI_INFO_ASK_RULING_QUESTION_INSTRUCTION_LINES)
+
+
 def adjudicate(repo: str, title: str, text: str, repository_root: Path,
-               runner, report, exclude_issue=None):
+               runner, report, exclude_issue=None,
+               ruling_question_answered=False):
     """Step 2. Fail-open by design: ghi-info unreachable means the write
     proceeds, because an infrastructure failure must never look like a
     refusal. A too-similar verdict is a soft block — the caller reconsiders
-    once and passes by leaving its reasoning in the marker file."""
+    once and passes by leaving its reasoning in the marker file.
+
+    A RULING QUESTION STOPS THE WRITE (user-ruled 2026-10-01, "y", on the
+    first of the follow-ups merge-lane-2 left on PR [ghi-info-ask reports
+    out-of-scope and escalate: as errors that say what to do, not as
+    answers](https://github.com/nedschorus/nedschorus/pull/813), put to him in
+    the reboot-test seat's session that day). ghi-info-ask.py exits 3 when
+    ghi-info found a ruling of the user's that it cannot tell still applies,
+    and its approved message ends "Do not file or edit the issue until he
+    answers." Until this, the write went ahead and the report carried only
+    the message's first line, so the instruction arrived after the issue was
+    written and was cut off besides. Now it raises before step 3 files or
+    step 4 lands anything, with the whole message, exit 67. The rerun the
+    agent makes once the user has answered passes `ruling_question_answered`,
+    which lets exactly this stop through and nothing else: the too-similar
+    refusal and every other check stand, and the report says the user
+    answered. Not a marker file, because the reconsider marker is the
+    agent's own judgment and this is the user's answer, which the agent
+    states on the command line where the run's record shows it.
+
+    The not-about-issues reply, exit 2, still fails open, as before: it means
+    the question was put badly, and this program put it."""
     marker = repository_root / RECONSIDERED_MARKER_NAME
     if marker.is_file():
         marker.unlink()
@@ -890,10 +949,20 @@ def adjudicate(repo: str, title: str, text: str, repository_root: Path,
     except Exception as failure:                      # noqa: BLE001
         report(f"adjudication skipped: ghi-info did not answer ({failure})")
         return
+    if completed.returncode == GHI_INFO_ASK_RULING_QUESTION_EXIT_CODE:
+        message = ruling_question_message(completed.stderr)
+        if ruling_question_answered:
+            report("adjudication: ghi-info raised a question about one of "
+                   "the user's rulings; --ruling-question-answered says the "
+                   "user has answered it, so the write proceeds. The question:")
+            report(message)
+            return
+        raise Refused(f"{message}\n{RULING_QUESTION_RERUN_LINE}",
+                      EXIT_STOPPED_FOR_RULING_QUESTION)
     if completed.returncode in GHI_INFO_ASK_REPLIED_WITHOUT_A_LIST_EXIT_CODES:
         # ghi-info answered, but with no verdict: the question was not about
-        # issues, or it found a ruling it may not judge. Fail-open like any
-        # other missing verdict, and say which, rather than "did not answer".
+        # issues. Fail-open like any other missing verdict, and say so,
+        # rather than "did not answer".
         # The ask's own progress lines can come first, so the message is found
         # by its opening, falling back on the last line, where main() puts it.
         stderr_lines = [line.strip() for line in
@@ -1327,7 +1396,8 @@ def link_body(repo: str, number: int, repository_root: Path, runner, report,
     return True
 
 
-def create(path: Path, repo: str, repository_root: Path, runner, report):
+def create(path: Path, repo: str, repository_root: Path, runner, report,
+           ruling_question_answered=False):
     """The whole sequence, and the one function the tests drive."""
     filed_number = issue_number_in_file_name(path)
     if (filed_number is not None and path.is_file()
@@ -1362,7 +1432,8 @@ def create(path: Path, repo: str, repository_root: Path, runner, report):
         refuse_if_already_landed_on_main(repo, text, title, repository_root,
                                          runner)
         refuse_heading_with_date_or_file_path(title, repository_root, runner)
-        adjudicate(repo, title, text, repository_root, runner, report)
+        adjudicate(repo, title, text, repository_root, runner, report,
+                   ruling_question_answered=ruling_question_answered)
         number = file_issue(repo, title, key, runner, report)
 
     destination = land_file(repo, number, title, path, repository_root,
@@ -2154,7 +2225,8 @@ def issue_file_set_for_this_edit(number: int, relative: str, on_main, paths,
     return paths + [relative]
 
 
-def edit(path: Path, repo: str, repository_root: Path, runner, report):
+def edit(path: Path, repo: str, repository_root: Path, runner, report,
+         ruling_question_answered=False):
     """The whole edit sequence, and the one function the tests drive."""
     text, title, number, relative = validate_edit(path, repository_root)
     # Read here, before a fetch, a model call, a push or a pull request: the
@@ -2218,7 +2290,8 @@ def edit(path: Path, repo: str, repository_root: Path, runner, report):
         # states mean that, and testing main's copy alone saw one of them:
         # see `edit_landing_state`.
         adjudicate(repo, title, text, repository_root, runner, report,
-                   exclude_issue=number)
+                   exclude_issue=number,
+                   ruling_question_answered=ruling_question_answered)
     pending = land_edit(repo, number, title, relative, staged, on_main,
                         moved_from, moved_from_on_main, state, branch,
                         repository_root, runner, report)
@@ -2253,7 +2326,7 @@ class BadInvocationArgumentParser(argparse.ArgumentParser):
     """argparse's own command-line errors join this program's 64.
 
     argparse exits 2 on a missing or unknown option, and this program has no
-    2: the exit codes it documents are 0, 1, 64 and 65, so a caller reading
+    2: the exit codes it documents are 0, 1 and 64 to 67, so a caller reading
     that list cannot place a 2 at all. 64 already means the caller's input is
     wrong, which a mistyped flag is. Usage text and message are argparse's,
     unchanged; only the exit code moves. The form is
@@ -2278,6 +2351,10 @@ def main(argv=None):
         "--dry-run", action="store_true",
         help="validate the file and its heading and print what would be "
              "filed, changing neither GitHub nor git")
+    creator.add_argument(
+        "--ruling-question-answered", action="store_true",
+        help="the user has answered the ruling question ghi-info raised on "
+             "an earlier run; go past that stop, and only that one")
     editor = sub.add_parser(
         "edit", help="land an edit to a filed GHI-MD, after which the "
                      "issue's title and body follow it")
@@ -2287,6 +2364,10 @@ def main(argv=None):
         "--dry-run", action="store_true",
         help="validate the file and print which issue it would edit, "
              "touching neither GitHub nor git")
+    editor.add_argument(
+        "--ruling-question-answered", action="store_true",
+        help="the user has answered the ruling question ghi-info raised on "
+             "an earlier run; go past that stop, and only that one")
     arguments = parser.parse_args(argv)
 
     path = Path(arguments.path).resolve()
@@ -2336,7 +2417,8 @@ def main(argv=None):
             raise Refused(f"no such file: {path}", 64)
         root = repository_root_of(path.parent)
         if arguments.operation == "create":
-            create(path, arguments.repo, root, run, report)
+            create(path, arguments.repo, root, run, report,
+                   ruling_question_answered=arguments.ruling_question_answered)
             return 0
         if arguments.dry_run:
             text, title, number, relative = validate_edit(path, root)
@@ -2345,7 +2427,8 @@ def main(argv=None):
             report("the issue's title changes only if this edit changed "
                    "that heading and the issue has one filed GHI-MD")
             return 0
-        edit(path, arguments.repo, root, run, report)
+        edit(path, arguments.repo, root, run, report,
+             ruling_question_answered=arguments.ruling_question_answered)
         return 0
     except Refused as refusal:
         print(str(refusal), file=sys.stderr)

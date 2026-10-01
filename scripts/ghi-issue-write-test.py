@@ -1165,15 +1165,13 @@ def run_cases(scratch: Path):
 
     # ghi-info-ask.py exits 2 or 3, message on stderr, when ghi-info replies
     # out-of-scope or escalate: instead of a list (user-ruled 2026-09-29).
-    # The write fails open as for any missing verdict, and the report says
-    # what ghi-info said instead of "did not answer".
+    # Exit 2 fails open as for any missing verdict, and the report says what
+    # ghi-info said instead of "did not answer". Exit 3 stops the write
+    # (user-ruled 2026-10-01); its cases follow this one.
     for case_name, exit_code, first_line in [
             ("an out-of-scope reply lets the write proceed and says so", 2,
              "Not a question about GitHub issues: ghi-info reports which "
-             "issues relate to a subject."),
-            ("an escalate: reply lets the write proceed and says so", 3,
-             "ghi-info found a ruling of the user's that it cannot tell "
-             "still applies: the 2026-09-19 ruling on #46 may not hold")]:
+             "issues relate to a subject.")]:
         lines = []
         replied = Recorder({ASK: Completed(
             "", returncode=exit_code,
@@ -1211,10 +1209,127 @@ def run_cases(scratch: Path):
                 tool.adjudicate(REPO, "t", FILE_TEXT, scratch, replied,
                                 lines.append)
                 check(case_name,
-                      lines == [f"adjudication skipped: ghi-info gave no "
-                                f"verdict: {first_line}"], lines)
+                      exit_code == 2
+                      and lines == [f"adjudication skipped: ghi-info gave no "
+                                    f"verdict: {first_line}"], lines)
             except tool.Refused as refusal:
-                check(case_name, False, f"refused: {refusal}")
+                check(case_name,
+                      exit_code == 3 and refusal.code == 67
+                      and str(refusal) == (
+                          first_line + "\nsecond line of the message\n"
+                          + tool.RULING_QUESTION_RERUN_LINE),
+                      f"code {refusal.code}: {refusal}")
+
+    # --- A ruling question stops the write (user-ruled 2026-10-01) -------
+    # ghi-info-ask.py's message is three lines, the ruling sentence on the
+    # first; the stop shows all of it and adds how to go on.
+
+    ruling_first_line = ("ghi-info found a ruling of the user's that it cannot "
+                         "tell still applies: the 2026-09-19 ruling on #46 "
+                         "may not hold")
+    ruling_message = "\n".join(
+        (ruling_first_line,) + tool.GHI_INFO_ASK_RULING_QUESTION_INSTRUCTION_LINES)
+    stopped = Recorder({ASK: Completed("", returncode=3,
+                                       stderr=ruling_message + "\n")})
+    try:
+        tool.adjudicate(REPO, "t", FILE_TEXT, scratch, stopped, quiet)
+        check("a ruling question stops the write", False, "it proceeded")
+    except tool.Refused as refusal:
+        check("a ruling question stops the write",
+              refusal.code == tool.EXIT_STOPPED_FOR_RULING_QUESTION == 67,
+              f"code {refusal.code}")
+        check("and the stop shows the whole message, every line, then how to "
+              "go on once the user has answered",
+              str(refusal) == ruling_message + "\n"
+              + tool.RULING_QUESTION_RERUN_LINE, str(refusal))
+
+    # ghi-info writes the sentence; nothing keeps it to one line.
+    multi_line_sentence = (
+        "ghi-info found a ruling of the user's that it cannot tell still "
+        "applies: the 2026-09-19 ruling on #46\nmay not hold after the "
+        "2026-09-28 rename")
+    wrapped = Recorder({ASK: Completed("", returncode=3, stderr=(
+        "ghi-info-ask: refreshed the seat checkout 1 commit(s) to "
+        "origin/main\n" + multi_line_sentence + "\n"
+        + "\n".join(tool.GHI_INFO_ASK_RULING_QUESTION_INSTRUCTION_LINES)
+        + "\n"))})
+    try:
+        tool.adjudicate(REPO, "t", FILE_TEXT, scratch, wrapped, quiet)
+        check("a ruling sentence written over several lines is shown whole",
+              False, "it proceeded")
+    except tool.Refused as refusal:
+        check("a ruling sentence written over several lines is shown whole",
+              "may not hold after the 2026-09-28 rename" in str(refusal)
+              and str(refusal).startswith(multi_line_sentence)
+              and "refreshed the seat checkout" not in str(refusal),
+              str(refusal))
+
+    for case_name, stderr, sentence in [
+            ("a ruling question whose message did not arrive still says what "
+             "to do, with stderr's last line as the sentence",
+             "an older relay's own line\n", "an older relay's own line"),
+            ("and with nothing on stderr at all",
+             "", "no sentence reached this program")]:
+        bare = Recorder({ASK: Completed("", returncode=3, stderr=stderr)})
+        try:
+            tool.adjudicate(REPO, "t", FILE_TEXT, scratch, bare, quiet)
+            check(case_name, False, "it proceeded")
+        except tool.Refused as refusal:
+            check(case_name,
+                  refusal.code == 67 and str(refusal) == "\n".join(
+                      (f"{tool.GHI_INFO_ASK_NO_LIST_MESSAGE_OPENINGS[1]} "
+                       f"{sentence}",)
+                      + tool.GHI_INFO_ASK_RULING_QUESTION_INSTRUCTION_LINES
+                      + (tool.RULING_QUESTION_RERUN_LINE,)), str(refusal))
+
+    answered_lines = []
+    answered = Recorder({ASK: Completed("", returncode=3,
+                                        stderr=ruling_message + "\n")})
+    try:
+        tool.adjudicate(REPO, "t", FILE_TEXT, scratch, answered,
+                        answered_lines.append, ruling_question_answered=True)
+        check("--ruling-question-answered goes past the stop, and the report "
+              "says the user answered and what the question was",
+              len(answered_lines) == 2
+              and "the user has answered it" in answered_lines[0]
+              and answered_lines[1] == ruling_message, answered_lines)
+    except tool.Refused as refusal:
+        check("--ruling-question-answered goes past the stop, and the report "
+              "says the user answered and what the question was",
+              False, f"refused: {refusal}")
+
+    still_similar = Recorder({ASK: Completed("verdict: too-similar #13\n")})
+    try:
+        tool.adjudicate(REPO, "t", FILE_TEXT, scratch, still_similar, quiet,
+                        ruling_question_answered=True)
+        check("but it passes nothing else: a too-similar verdict still "
+              "refuses", False, "it proceeded")
+    except tool.Refused as refusal:
+        check("but it passes nothing else: a too-similar verdict still "
+              "refuses", refusal.code == 65, f"code {refusal.code}")
+
+    # The last-line fallback for exit 2: no line opens the way the message
+    # does, so the report carries stderr's last line, or says there was none.
+    for case_name, stderr, said in [
+            ("an out-of-scope exit whose message did not arrive reports "
+             "stderr's last line",
+             "ghi-info-ask: refreshed the seat checkout 1 commit(s) to "
+             "origin/main\nan older relay's own line\n",
+             "an older relay's own line"),
+            ("and reports no detail when stderr is empty", "", "no detail")]:
+        lines = []
+        fell_back = Recorder({ASK: Completed("", returncode=2, stderr=stderr)})
+        try:
+            tool.adjudicate(REPO, "t", FILE_TEXT, scratch, fell_back,
+                            lines.append)
+            check(case_name,
+                  lines == [f"adjudication skipped: ghi-info gave no "
+                            f"verdict: {said}"], lines)
+        except tool.Refused as refusal:
+            check(case_name, False, f"refused: {refusal}")
+
+    check("the stop's exit code is its own",
+          tool.EXIT_STOPPED_FOR_RULING_QUESTION not in (0, 1, 64, 65, 66))
 
     ask_spec = TOOL.spec_from_file_location(
         "ghi_info_ask_for_exit_codes",
@@ -1235,6 +1350,14 @@ def run_cases(scratch: Path):
               ask_module.RULING_QUESTION_MESSAGE_TEMPLATE.split(
                   "{sentence}")[0].rstrip()),
           tool.GHI_INFO_ASK_NO_LIST_MESSAGE_OPENINGS)
+    check("the tool's copy of the ruling question's exit code matches "
+          "ghi-info-ask.py's",
+          tool.GHI_INFO_ASK_RULING_QUESTION_EXIT_CODE
+          == ask_module.EXIT_RULING_QUESTION)
+    check("and its copy of that message's two instruction lines too",
+          tool.GHI_INFO_ASK_RULING_QUESTION_INSTRUCTION_LINES
+          == tuple(ask_module.RULING_QUESTION_MESSAGE_TEMPLATE.splitlines()[1:]),
+          tool.GHI_INFO_ASK_RULING_QUESTION_INSTRUCTION_LINES)
 
     marker = scratch / tool.RECONSIDERED_MARKER_NAME
     marker.write_text("I checked #13 and it is a different matter.\n")
@@ -1258,6 +1381,35 @@ def run_cases(scratch: Path):
               and not nothing_written.ran("git worktree add")
               and not nothing_written.ran("gh issue edit"),
               str(nothing_written.commands()))
+
+    ruling_stop = Recorder({ASK: Completed("", returncode=3,
+                                           stderr=ruling_message + "\n")})
+    try:
+        tool.create(written(scratch, "ruling-question-create.md"), REPO,
+                    scratch, ruling_stop, quiet)
+        check("a create stopped by a ruling question writes nothing at all",
+              False, "it proceeded")
+    except tool.Refused as refusal:
+        check("a create stopped by a ruling question writes nothing at all",
+              refusal.code == 67
+              and not ruling_stop.ran("gh issue create")
+              and not ruling_stop.ran("git worktree add")
+              and not ruling_stop.ran("gh issue edit"),
+              f"code {refusal.code}, {ruling_stop.commands()}")
+
+    ruling_answered = Recorder({
+        ASK: Completed("", returncode=3, stderr=ruling_message + "\n"),
+        "gh issue create": Completed(
+            "https://github.com/nedschorus/nedschorus/issues/571\n")})
+    try:
+        tool.create(written(scratch, "ruling-question-answered-create.md"),
+                    REPO, scratch, ruling_answered, quiet,
+                    ruling_question_answered=True)
+    except tool.Refused:
+        pass  # the steps after filing are not what this case is about
+    check("and a create rerun with --ruling-question-answered files the "
+          "issue", ruling_answered.ran("gh issue create"),
+          str(ruling_answered.commands()))
 
     # --- Step 5's git raises instead of reading a failure as an answer ----
     # A failed fetch and a main with nothing filed leave the same empty
@@ -2493,6 +2645,54 @@ def run_edit_cases(scratch: Path):
           and not new_to_land.ran("gh issue edit"),
           str(new_to_land.commands()))
 
+    ruling_question = ("ghi-info found a ruling of the user's that it cannot "
+                       "tell still applies: the 2026-09-19 ruling on #46 may "
+                       "not hold\n" + "\n".join(
+                           tool.GHI_INFO_ASK_RULING_QUESTION_INSTRUCTION_LINES))
+
+    def edit_state_asking(answer):
+        return Recorder({
+            f"git show origin/main:{EDIT_RELATIVE}": Completed("# Older\n"),
+            "git merge-base": Completed(BASE_REVISION + "\n"),
+            f"git show {BASE_REVISION}:{EDIT_RELATIVE}":
+                Completed("# Older\n"),
+            "git ls-remote": Completed(""),
+            "gh pr create": Completed("pr\n"),
+            "gh issue view": issue_json("Older", one_link),
+            "git ls-tree": Completed(EDIT_RELATIVE + "\n"),
+            ASK: answer,
+        })
+
+    ruled_edit = edit_state_asking(
+        Completed("", returncode=3, stderr=ruling_question + "\n"))
+    try:
+        tool.edit(source, REPO, scratch, ruled_edit, quiet)
+        check("an edit stopped by a ruling question", False, "it proceeded")
+    except tool.Refused as refusal:
+        check("an edit stopped by a ruling question",
+              refusal.code == 67 and ruling_question in str(refusal),
+              f"code {refusal.code}: {str(refusal)[:200]}")
+    check("and nothing of it is pushed, opened or retitled",
+          not ruled_edit.ran("git worktree add")
+          and not ruled_edit.ran("git push")
+          and not ruled_edit.ran("gh pr create")
+          and not ruled_edit.ran("gh issue edit"),
+          str(ruled_edit.commands()))
+
+    answered_edit = edit_state_asking(
+        Completed("", returncode=3, stderr=ruling_question + "\n"))
+    answered_refusal = None
+    try:
+        tool.edit(source, REPO, scratch, answered_edit, quiet,
+                  ruling_question_answered=True)
+    except tool.Refused as refusal:
+        answered_refusal = refusal
+    check("and an edit rerun with --ruling-question-answered lands it",
+          answered_refusal is None and answered_edit.ran("gh pr create"),
+          f"refused {getattr(answered_refusal, 'code', None)}: "
+          f"{str(answered_refusal)[:160]}" if answered_refusal
+          else str(answered_edit.commands()))
+
     # A moved file is new content to land too — main holds nothing at the
     # author's path, so `on_main` is None and never equals the staged text.
 
@@ -2834,8 +3034,11 @@ def run_main_dispatch_cases(scratch: Path):
         return scratch
 
     def operation_recorder(name):
-        def recorded(path, repo, root, runner, report):
+        def recorded(path, repo, root, runner, report,
+                     ruling_question_answered=False):
             calls.append((name, path, repo, root, runner))
+            if ruling_question_answered:
+                calls.append((name, "ruling_question_answered"))
         return recorded
 
     saved = (tool.repository_root_of, tool.create, tool.edit)
@@ -2869,6 +3072,19 @@ def run_main_dispatch_cases(scratch: Path):
                   code == 0 and called == [(operation, source.resolve(), repo,
                                             scratch, tool.run)],
                   f"code {code}, {calls}")
+        for operation in ("create", "edit"):
+            case_name = (f"main() hands --ruling-question-answered to "
+                         f"{operation}")
+            calls.clear()
+            try:
+                code = tool.main([operation, str(source),
+                                  "--ruling-question-answered"])
+            except Exception as crash:  # the dispatch itself broke
+                check(case_name, False, f"{type(crash).__name__}: {crash}")
+                continue
+            check(case_name,
+                  code == 0 and (operation, "ruling_question_answered")
+                  in calls, f"code {code}, {calls}")
     finally:
         tool.repository_root_of, tool.create, tool.edit = saved
 
