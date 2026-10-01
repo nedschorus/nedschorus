@@ -1,11 +1,62 @@
+---
+issue: "[Build the explain skill: re-say a message for a reader who does not carry the session's context — the draft exists, and the hold's reason expired](https://github.com/nedschorus/nedschorus/issues/603)"
+---
+
 # The explain skill — GHI-MD for issue [Build the explain skill: re-say a message for a reader who does not carry the session's context — the draft exists, and the hold's reason expired](https://github.com/nedschorus/nedschorus/issues/603)
 
 This document carries the substance the issue summarises: the current draft, the identifier
 table the user ruled into it, what its review already fixed, and what remains before it can
 be installed.
 
-The issue carries the state — why the skill exists and why its 2026-08-22 hold expired.
-Read it first.
+It also carries why the skill exists and why its 2026-08-22 hold expired, in the two sections
+that follow.
+
+## Problem
+
+The user reads agent messages cold. He works in other seats' terminals and arrives at one
+without the context that session has been accumulating, so an explanation written by an agent
+that knows what every term and number refers to routinely fails for the one reader it is
+written for. He has typed some form of "I don't understand", "too much", or "explain assuming
+zero context" thousands of times.
+
+Nothing on main does this job today. `/walk-me-through` covers multi-part material presented
+item by item; it does not cover re-saying a single message that did not land. The drafting
+register for durable MDs is GHI [Build draft-md: the drafting-stage skill run before md-review
+(user-ruled 2026-08-22)](https://github.com/nedschorus/nedschorus/issues/142), which is about
+documents, not about live explanation to the user.
+
+## Why it was held, and why that reason no longer exists
+
+Item 7 of the clarity-registers walk, 2026-08-22, ruled the skill HELD, recorded on GHI
+[Clarity registers: explanations and drafted instruction text land without the user's repeated
+corrections](https://github.com/nedschorus/nedschorus/issues/138):
+
+> An "explain" skill for one-shot explanations: HELD (user-ruled 2026-08-22) — the output style makes the explaining register standing for every session and the walk skill covers multi-part material, so the skill would add only an invocation name; no observed failure remains post-style. Reopen condition: clarify-corrections still being typed at one-shot explanations in sessions running under the Zero-Context Explanation style — those failed explanations become the skill's design evidence.
+
+Three things have happened to that reasoning, and together they are why this issue exists.
+
+**The mechanism it deferred to lived on main for 28.8 hours.** PR [Zero-Context Explanation
+output style, activated fleet-wide](https://github.com/nedschorus/nedschorus/pull/156) merged
+2026-08-31T18:54:03Z. PR [Remove the Zero-Context Explanation output
+style](https://github.com/nedschorus/nedschorus/pull/232) merged 2026-09-01T23:41:11Z. The
+skill was held on 2026-08-22 in favour of a mechanism that had not yet landed and that then
+survived a little over a day.
+
+**The removal was right, and its reasoning argues for a skill.** A custom output style's text
+sits in the system prompt, is never repositioned, and so competes with everything newer as a
+session grows; the built-in styles compensate with a per-turn reminder that a custom style
+cannot declare, because the frontmatter schema is strict. PR [Remove the Zero-Context
+Explanation output style](https://github.com/nedschorus/nedschorus/pull/232) concludes that a
+rule which must survive to turn 200 belongs in a hook or a test, not a style file. A skill is
+nearer to that than a style: it is invoked, so its text arrives at the point of use instead of
+decaying in the system prompt. The 2026-08-22 ruling dismissed the skill as adding "only an
+invocation name" — but an invocation name is precisely the delivery the removal found missing.
+
+**The reopen condition can never fire, and the issue was closed for that reason.** The
+condition names failures observed "in sessions running under the Zero-Context Explanation
+style". No such session can exist. GHI [Clarity
+registers](https://github.com/nedschorus/nedschorus/issues/138) was closed not planned on
+2026-09-21 on exactly this reasoning. So the hold has no live exit, and the job has no owner.
 
 ## Where the material lives, and why that is a problem
 
@@ -275,3 +326,30 @@ active anywhere in the fleet:
 4. Run the cold-read-full-run, as ruled.
 5. The user reads it, then it is installed at `.claude/skills/explain/SKILL.md`. The skill is
    operative prose, so it reaches main through his walk rather than a reviewer's judgement.
+
+## Search receipts
+
+- `scripts/ghi-info-ask.py` with `--include-closed`, asked 2026-09-21 for any issue covering an
+  explain skill for one-shot explanations: returned GHI [Clarity
+  registers](https://github.com/nedschorus/nedschorus/issues/138) (closed not planned), GHI
+  [Build draft-md](https://github.com/nedschorus/nedschorus/issues/142) and GHI [Runtime-behavior
+  research bundle](https://github.com/nedschorus/nedschorus/issues/29), and stated that no issue
+  proposes an explain skill as a live candidate.
+- `gh issue list --state all --limit 200`, titles scanned for `explain`, `clarity`,
+  `identifier`: only GHI [Clarity registers](https://github.com/nedschorus/nedschorus/issues/138).
+- `git log --all` and `git grep` across every branch for `explain-skill` and `explain skill`,
+  2026-09-21: no such file in this repository, on any branch.
+- `ls .claude/skills/` on main, 2026-09-21: `cold-read`, `ghi-write`, `handoff`,
+  `pull-request-review-write`, `sanity-check`, `walk-me-through`. No `explain`.
+
+## Relations
+
+- GHI [Clarity registers: explanations and drafted instruction text land without the user's
+  repeated corrections](https://github.com/nedschorus/nedschorus/issues/138) — the ancestor; held
+  this skill on 2026-08-22 and closed not planned on 2026-09-21.
+- GHI [Build draft-md: the drafting-stage skill run before md-review (user-ruled
+  2026-08-22)](https://github.com/nedschorus/nedschorus/issues/142) — the sibling register, for
+  drafted MDs rather than live explanation.
+- GHI [overview-write skill: how an overview of a system is written and checked before it
+  lands](https://github.com/nedschorus/nedschorus/issues/168) — the third register, for
+  explaining a whole system to a reader who must act on it.
