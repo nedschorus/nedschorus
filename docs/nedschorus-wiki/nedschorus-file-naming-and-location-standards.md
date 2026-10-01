@@ -17,10 +17,10 @@ A file on main that is not where this page says is moved there by GHI [Rationali
 A file in a queue directory is named as it will be at its home, apart from the issue number a GHI-MD gains when its GHI is filed, so promoting it is a `git mv`.
 
 - **Skill prompt, the text a skill's own reviewer or cell runs**
-  - **Location:** `nc-systems/skills/<skill name>/` once `.claude/hooks/instruction-file-guard.py` guards that directory; until then `.claude/skills/<skill name>/prompts/`
+  - **Location:** `nc-systems/skills/<skill name>/`
   - **Naming:** `<pass>-prompt.md`, named for the pass it drives
 - **Hook**
-  - **Location:** `.claude/hooks/`
+  - **Location:** `.claude/hooks/` for a guard, which protects files from agents; a system's own hook in its system's directory, `nc-systems/<system-name>/`
   - **Naming:** `<what it does>.py`, such as `instruction-file-guard.py` or `ghi-issue-write-redirect.py`
 - **Tests, test-designs, design-contracts**
   - **Location:** a test goes in a `tests/` subdirectory when the code sits in a directory of its own, such as `nc-systems/main-gatekeeper/tests/` or `scripts/design-to-main/tests/`; beside the script it tests when the script sits loose in `scripts/` or `.claude/hooks/`, for example `scripts/dangling-path-citation-check-test.py`.
@@ -49,6 +49,18 @@ A file in a queue directory is named as it will be at its home, apart from the i
 - **Draft of a kind that has no queue**
   - **Location:** `docs/drafts/`
   - **Naming:** `<subject>-draft.md`; a version frozen for reviewers is `<subject>-candidate.md`. Candidates move to the log-store's `seats/<seat name>/` once the work they served has landed on main. 
+
+## Files the user reviews
+
+The user reviews every change to these files, from a file's first version in its home to each later edit:
+
+- every MD file in `docs/agents/` and `docs/nedschorus-wiki/`;
+- every MD file under `nc-systems/skills/`;
+- every design, a file named `-design.md`, wherever it sits, except a test-design;
+- every reusable prompt, a file named `-prompt.md` or `-instructions.md`;
+- `CLAUDE.md` and everything under `.claude/`.
+
+Agents write first drafts freely in the draft places: the `queue/` directory beside a home, such as `docs/agents/queue/`, `docs/issues/queue/` or `docs/nedschorus-wiki/queue/`, or `docs/drafts/` for a kind that has no queue. Test-designs and design-contracts reach the user through design-to-main instead. `.claude/hooks/instruction-file-guard.py` enforces this list.
 
 ## Filename suffixes
 

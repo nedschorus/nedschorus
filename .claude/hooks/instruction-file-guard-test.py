@@ -154,10 +154,8 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     check("a reusable prompt inside a worktree checkout is still blocked", result.returncode == 2)
     result = run_hook(decoy, workspace, str(skills / "cold-read-grid.py"))
     check("a skill's code passes", result.returncode == 0, result.stderr)
-    result = run_hook(decoy, workspace, str(skills / "docs" / "cold-read-design.md"))
-    check("a skill's design passes", result.returncode == 0, result.stderr)
-    result = run_hook(decoy, workspace, str(skills / "defect-hunt.md"))
-    check("a prompt without either ending passes (guarded by name only)",
+    result = run_hook(decoy, workspace, str(workspace / "nc-systems" / "handoff" / "defect-hunt.md"))
+    check("a prompt without either ending, outside the reviewed homes, passes (guarded by name only)",
           result.returncode == 0, result.stderr)
     result = run_hook(decoy, workspace, str(workspace / "docs" / "prompt-writing-notes.md"))
     check("a file merely mentioning prompt passes", result.returncode == 0, result.stderr)
@@ -180,6 +178,75 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     result = run_hook(decoy, workspace, str(workspace / "docs" / "agents" / "fleet-instructions.md"))
     check("an approved change to a reusable prompt passes once", result.returncode == 0, result.stderr)
     check("the marker is consumed by the prompt's pass", not marker.exists())
+
+    # Reviewed documents (2026-09-30): an MD file the user reviews is known by
+    # where it sits — docs/agents/, docs/nedschorus-wiki/, nc-systems/skills/ —
+    # or, for a design, by its -design.md name wherever it sits. Drafts stay
+    # free in the draft places; test-designs and design-contracts are left to
+    # design-to-main's own acceptance states.
+    reviewed_homes = [
+        ("a doc in docs/agents/", workspace / "docs" / "agents" / "x.md"),
+        ("a wiki page in docs/nedschorus-wiki/", workspace / "docs" / "nedschorus-wiki" / "x.md"),
+        ("a skill's doc under nc-systems/skills/", skills / "docs" / "x.md"),
+        ("a skill's design under nc-systems/skills/", skills / "docs" / "cold-read-design.md"),
+        ("a skill MD without either prompt ending", skills / "defect-hunt.md"),
+        ("a design GHI-MD in docs/issues/", workspace / "docs" / "issues" / "12-foo-design.md"),
+        ("a landed design in its system's docs/",
+         workspace / "nc-systems" / "handoff" / "docs" / "handoff-foo-design.md"),
+        ("design-to-main's design", workspace / "docs" / "design-to-main" / "design-to-main-state-machine-design.md"),
+    ]
+    for label, target in reviewed_homes:
+        result = run_hook(decoy, workspace, str(target))
+        check(f"{label} is blocked", result.returncode == 2, str(result.returncode))
+    result = run_hook(decoy, workspace, str(workspace / "docs" / "nedschorus-wiki" / "x.md"))
+    check("the block says the user reviews every change here",
+          "reviews every change" in result.stderr, result.stderr)
+    check("the block names the marker", ".walk-approved" in result.stderr, result.stderr)
+    check("the block sends a first draft to a draft place",
+          "docs/drafts/" in result.stderr and "docs/nedschorus-wiki/queue/" in result.stderr,
+          result.stderr)
+    check("the block is one instruction per line", len(result.stderr.strip().splitlines()) == 4,
+          result.stderr)
+    draft_places = [
+        ("a draft in docs/agents/queue/", workspace / "docs" / "agents" / "queue" / "x.md"),
+        ("a draft in docs/nedschorus-wiki/queue/", workspace / "docs" / "nedschorus-wiki" / "queue" / "x.md"),
+        ("a design draft in docs/issues/queue/", workspace / "docs" / "issues" / "queue" / "foo-design.md"),
+        ("a design draft in docs/drafts/", workspace / "docs" / "drafts" / "foo-design.md"),
+        ("a note in nc-queue/", workspace / "nc-queue" / "x.md"),
+    ]
+    for label, target in draft_places:
+        result = run_hook(decoy, workspace, str(target))
+        check(f"{label} passes", result.returncode == 0, result.stderr)
+    not_reviewed = [
+        ("a system's doc that is not a design", workspace / "nc-systems" / "handoff" / "docs" / "x.md"),
+        ("a test-design", workspace / "docs" / "issues" / "12-foo-test-design.md"),
+        ("a design-contract", workspace / "docs" / "issues" / "12-foo-contract.md"),
+        ("a GHI-MD that is not a design", workspace / "docs" / "issues" / "12-foo.md"),
+        ("a walk file", workspace / "docs" / "walk" / "x.md"),
+        ("a skill's code", skills / "x.py"),
+        ("a non-MD file in a reviewed home", workspace / "docs" / "nedschorus-wiki" / "diagram.png"),
+        ("a design's frozen copy in a cold-read record",
+         workspace / "cold-read-records" / "foo-design-2026-09-30" / "foo-design.md"),
+        ("a design's frozen copy in a sanity-check record",
+         workspace / "sanity-check-records" / "2026-09-30-foo-design" / "foo-design.md"),
+    ]
+    for label, target in not_reviewed:
+        result = run_hook(decoy, workspace, str(target))
+        check(f"{label} passes", result.returncode == 0, result.stderr)
+    result = run_hook(decoy, workspace, str(workspace / "docs" / "agents" / "fleet-instructions.md"))
+    check("a reusable prompt in a reviewed home keeps the reusable-prompt message",
+          "reusable prompt" in result.stderr, result.stderr)
+    reviewed_worktree = workspace / ".claude" / "worktrees" / "a-real-worktree"
+    make_checkout(reviewed_worktree)
+    result = run_hook(decoy, workspace, str(reviewed_worktree / "docs" / "nedschorus-wiki" / "x.md"))
+    check("a reviewed document inside a worktree checkout is blocked", result.returncode == 2)
+    result = run_hook(decoy, workspace, str(outside / "foo-design.md"))
+    check("a design outside any checkout passes", result.returncode == 0, result.stderr)
+    marker = workspace / ".walk-approved"
+    marker.write_text("y\n", encoding="utf-8")
+    result = run_hook(decoy, workspace, str(workspace / "docs" / "issues" / "12-foo-design.md"))
+    check("an approved change to a reviewed document passes once", result.returncode == 0, result.stderr)
+    check("the marker is consumed by the document's pass", not marker.exists())
 
     result = run_hook(decoy, workspace, "")
     check("a payload without a file path passes", result.returncode == 0)

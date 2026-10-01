@@ -32,7 +32,7 @@ Only #18's build has been triggered. Each of the other six records a 2026-07-24 
 
 Three rules have caught previous builds:
 
-1. **A skill's files are agent-instructions files**, so a skill lands only when approved-by-walk, guarded by `.claude/hooks/instruction-file-guard.py` (a soft block on file-tool writes under `.claude/`).
+1. **A skill's files are agent-instructions files**, so a skill lands only when approved-by-walk, guarded by `.claude/hooks/instruction-file-guard.py` (a user-block on file-tool writes under `.claude/` and to MD files under `nc-systems/skills/`).
 2. **A skill is instructions, not an essay.** Rationale asides get cut; the text tells an agent what to do. Four such asides were removed from `walk-me-through` on 2026-08-06 for exactly this reason.
 3. **Fresh-reader readability is the bar**, ruled 2026-08-11: an agent must be able to follow the skill cold. A settled draft gets the `/cold-read` skill's full run before it lands.
 
