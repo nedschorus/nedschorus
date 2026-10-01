@@ -1,8 +1,8 @@
 ---
-issue: "[Box unavailability must always reach the user, and wants one shared health check when the process moves to ned-box](https://github.com/nedschorus/nedschorus/issues/337)"
+issue: "[Tell the user when ned-box's claude is logged out or ned-box's subscription has run out](https://github.com/nedschorus/nedschorus/issues/337)"
 ---
 
-# Box unavailability must always reach the user, and wants one shared health check when the process moves to ned-box
+# Tell the user when ned-box's claude is logged out or ned-box's subscription has run out
 
 The user's plan, stated 2026-09-11: "I plan to move most for the process to nedbox, so if claude is not logged in on it, or out of subscription or down in any way I'd block and report."
 
