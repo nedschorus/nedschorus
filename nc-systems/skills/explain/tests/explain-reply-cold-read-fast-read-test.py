@@ -13,19 +13,39 @@ captured from the real fast read; the capture note beside it records how.
 Each case names its oracle, what it compares, and its red condition, the
 reading that means the program is wrong.
 
+The case on two seats' records ships to a scratch store with the real
+nc-systems/cold-read/cold-read-record-ship.py, pointed there by
+COLD_READ_RECORD_SHIP_DESTINATION, the shipper's own test destination, and
+names each record with the real nc-systems/cold-read/cold-read-record-names.py,
+as the fast read does. Only the fast read itself is a stand-in.
+
+The case on a REFUSED record line takes that line from the real shipper,
+shipping two records of one name and different content to a scratch store.
+The case on a failed cell takes the launcher's lines from the real
+nc-systems/cold-read/cold-read-agy-cell.py, run with a PATH that holds no
+sandbox program, so the launcher refuses before agy starts and nothing is
+launched.
+
 The timeout case imports the program and lowers its timeout constant, because
 the real limit is nine minutes; the case runs the stand-in as a process that
 starts a child of its own, so the case sees whether the whole process group
-was stopped, not only the direct child.
+was stopped, not only the direct child. The child's output goes to
+/dev/null: a child holding the stand-in's pipes kept communicate() waiting
+until the child ended by itself, so a child killed with the group and a child
+left running looked the same (found in review, 2026-10-01). The stand-in
+hangs 30 seconds and its child 60, so a program that stops neither returns
+within 30 seconds and the case cannot hang.
 
 Run: python3 nc-systems/skills/explain/tests/explain-reply-cold-read-fast-read-test.py
 Prints one line per case and exits non-zero if any case fails.
 """
 
+import datetime
 import importlib.util
 import json
 import os
 import pathlib
+import re
 import subprocess
 import sys
 import tempfile
@@ -38,6 +58,16 @@ PROGRAM = SKILL_DIRECTORY / "explain-reply-cold-read-fast-read.py"
 FIXTURE_REPORT = (TESTS_DIRECTORY / "explain-reply-cold-read-fast-read-fixtures"
                   / "fast-read-report-captured-2026-09-29.md")
 OVERRIDE_VARIABLE = "EXPLAIN_REPLY_COLD_READ_FAST_READ_PROGRAM_OVERRIDE"
+SEAT_NAME_VARIABLE = "CLAUDE_CODE_TASK_LIST_ID"
+COLD_READ_DIRECTORY = REPO_ROOT / "nc-systems" / "cold-read"
+RECORD_SHIPPER = COLD_READ_DIRECTORY / "cold-read-record-ship.py"
+AGY_CELL_LAUNCHER = COLD_READ_DIRECTORY / "cold-read-agy-cell.py"
+SHIP_DESTINATION_VARIABLE = "COLD_READ_RECORD_SHIP_DESTINATION"
+TELL_HIM_RECORD_INSTRUCTION = ("Tell the user what the record line above says, "
+                               "remedy included, before your closing line.")
+TELL_HIM_LAUNCHER_INSTRUCTION = ("In the line saying the fresh-reader's read failed, "
+                                 "tell the user what the cell launcher's lines above "
+                                 "say, remedy included.")
 
 # A sentence that appears in the fixture's Question 1 section only, and one
 # that appears in its Question 2 section only; checked against the fixture
@@ -67,9 +97,11 @@ log.write_text(json.dumps({
     "target_directory": str(target.parent),
 }))
 if plan.get("start_child_then_hang"):
-    child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)"])
+    child = subprocess.Popen(
+        [sys.executable, "-c", f"import time; time.sleep({plan['child_seconds']})"],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     pathlib.Path(plan["child_pid_file"]).write_text(str(child.pid))
-    time.sleep(120)
+    time.sleep(plan["hang_seconds"])
 if "report_source" in plan:
     report = pathlib.Path(plan["report_copy"])
     shutil.copyfile(plan["report_source"], report)
@@ -101,12 +133,19 @@ def write_stand_in(directory: pathlib.Path) -> pathlib.Path:
     return stand_in
 
 
-def run_program(directory: pathlib.Path, plan: dict, stdin_text: str, arguments=()):
+def run_program(directory: pathlib.Path, plan: dict, stdin_text: str, arguments=(),
+                seat_task_list_id="nedschorus-test-seat-tasks"):
+    """Run the program with the stand-in for the fast read. The seat's
+    task-list id is set rather than inherited, so the cases do not depend on
+    which seat runs them; None leaves the variable unset."""
     stand_in = write_stand_in(directory)
     log = directory / "stand-in-log.json"
     if log.exists():
         log.unlink()
     environment = dict(os.environ)
+    environment.pop(SEAT_NAME_VARIABLE, None)
+    if seat_task_list_id is not None:
+        environment[SEAT_NAME_VARIABLE] = seat_task_list_id
     environment[OVERRIDE_VARIABLE] = str(stand_in)
     environment["STAND_IN_PLAN"] = json.dumps(plan)
     environment["STAND_IN_LOG"] = str(log)
@@ -120,12 +159,15 @@ def run_program(directory: pathlib.Path, plan: dict, stdin_text: str, arguments=
     return completed, logged
 
 
-def load_program_module():
-    specification = importlib.util.spec_from_file_location(
-        "explain_reply_cold_read_fast_read", PROGRAM)
+def load_module(name: str, path: pathlib.Path):
+    specification = importlib.util.spec_from_file_location(name, path)
     module = importlib.util.module_from_spec(specification)
     specification.loader.exec_module(module)
     return module
+
+
+def load_program_module():
+    return load_module("explain_reply_cold_read_fast_read", PROGRAM)
 
 
 def process_is_alive(pid: int) -> bool:
@@ -176,14 +218,53 @@ def main() -> int:
               "the record stays on disk." in output, output[-400:])
         check("a record line saying FAILED is followed by the instruction to tell him",
               "cold-read-fast-read: record: FAILED: ned-box could not be reached; "
-              "the record stays on disk.\nTell the user what the record line above "
-              "says, remedy included, before your closing line." in output,
+              "the record stays on disk.\n" + TELL_HIM_RECORD_INSTRUCTION in output,
               output[-400:])
+
+        # Oracle: stdout after a REFUSED record line, the line taken from the
+        # real shipper refusing a second record of one name into a scratch
+        # store. Red: no instruction to rename and ship again, the record
+        # directory not named, or the instruction to tell him printed for a
+        # name clash, which is neither of CLAUDE.md's cases (ned-box
+        # unreachable, its claude logged out).
+        refusal_store = scratch / "refusal-store" / "cold-read-records"
+        refusal_store.mkdir(parents=True)
+        refused_lines = []
+        for checkout in ("checkout-a", "checkout-b"):
+            record_directory = (scratch / checkout / "cold-read-records"
+                                / "explain-reply-draft-2026-10-01")
+            record_directory.mkdir(parents=True)
+            (record_directory / "fast-read.md").write_text(
+                f"<!-- provenance: {checkout} -->\nthe report {checkout} got\n")
+            ship_environment = dict(os.environ)
+            ship_environment[SHIP_DESTINATION_VARIABLE] = str(refusal_store)
+            shipped = subprocess.run(
+                [sys.executable, str(RECORD_SHIPPER), str(record_directory)],
+                capture_output=True, text=True, env=ship_environment, check=False,
+                timeout=60)
+            refused_lines.append(shipped.stdout.strip())
+        check("the real shipper refuses the second record of one name",
+              refused_lines[1].startswith("REFUSED: explain-reply-draft-2026-10-01 — "),
+              str(refused_lines))
+        refused_record_line = f"cold-read-fast-read: record: {refused_lines[1]}"
+        completed, _ = run_program(
+            scratch, dict(success_plan, record_line=refused_record_line), GOOD_INPUT)
+        rename_instruction = (
+            f"Rename {report_copy.parent} with a -2 suffix, or the next number not "
+            "taken, then run python3 nc-systems/cold-read/cold-read-record-ship.py "
+            "on the renamed directory.")
+        check("a record line saying REFUSED is followed by the instruction to rename "
+              "the record directory and ship it again",
+              f"{refused_record_line}\n{rename_instruction}\n" in completed.stdout,
+              completed.stdout[-600:])
+        check("a record line saying REFUSED does not tell him",
+              TELL_HIM_RECORD_INSTRUCTION not in completed.stdout,
+              completed.stdout[-600:])
 
         # Oracle: stdout. Red: the tell-him instruction printed after a record
         # line that says the record arrived.
         shipped_line = ("cold-read-fast-read: record: shipped: explain-reply-draft-"
-                        "2026-09-30 — 3 file(s) added")
+                        "test-seat-201530-2026-09-30 — 3 file(s) added")
         completed, _ = run_program(
             scratch, dict(success_plan, record_line=shipped_line), GOOD_INPUT)
         check("a record line saying shipped carries no instruction",
@@ -196,8 +277,9 @@ def main() -> int:
         check("the fast read gets exactly --target <file>",
               logged is not None and logged["argv"][0] == "--target"
               and len(logged["argv"]) == 2, str(logged))
-        check("the draft file is named explain-reply-draft.md",
-              logged is not None and logged["target_name"] == "explain-reply-draft.md",
+        check("the draft file is named explain-reply-draft-<seat name>-<HHMMSS>.md",
+              logged is not None and re.fullmatch(
+                  r"explain-reply-draft-test-seat-\d{6}\.md", logged["target_name"]),
               str(logged))
         check("the draft file holds standard input unchanged",
               logged is not None and logged["target_text"] == GOOD_INPUT)
@@ -212,6 +294,73 @@ def main() -> int:
               logged is not None
               and not pathlib.Path(logged["target_directory"]).exists())
 
+        # Oracle: the draft file's name for each seat, named as the fast read
+        # names a record, and what the real shipper prints when both records
+        # ship to one scratch store. Red: the two seats' records share a
+        # name, or the second is refused. Before the draft's name carried the
+        # seat, every seat's record of a day was explain-reply-draft-<date>
+        # and the second seat to ship was refused (2026-10-01, merge-lane-2's
+        # review of the pull request that added the program).
+        record_names = load_module("cold_read_record_names",
+                                   COLD_READ_DIRECTORY / "cold-read-record-names.py")
+        store = scratch / "store" / "cold-read-records"
+        store.mkdir(parents=True)
+        today = datetime.datetime.now()
+        record_lines = {}
+        for seat in ("seat-one", "seat-two"):
+            _, seat_logged = run_program(scratch, success_plan, GOOD_INPUT,
+                                         seat_task_list_id=f"nedschorus-{seat}-tasks")
+            record_name = record_names.record_directory_name_for_target(
+                pathlib.Path(seat_logged["target_name"]), today)
+            record_directory = scratch / seat / "cold-read-records" / record_name
+            record_directory.mkdir(parents=True)
+            (record_directory / "fast-read.md").write_text(
+                f"<!-- provenance: {seat} -->\nthe report {seat} got\n")
+            ship_environment = dict(os.environ)
+            ship_environment[SHIP_DESTINATION_VARIABLE] = str(store)
+            shipped = subprocess.run(
+                [sys.executable, str(RECORD_SHIPPER), str(record_directory)],
+                capture_output=True, text=True, env=ship_environment, check=False,
+                timeout=60)
+            record_lines[seat] = (record_name, shipped.returncode, shipped.stdout.strip())
+        check("two seats' drafts give two different cold-read-record names",
+              record_lines["seat-one"][0] != record_lines["seat-two"][0], str(record_lines))
+        check("each seat's cold-read-record name carries the seat's name",
+              "-seat-one-" in record_lines["seat-one"][0]
+              and "-seat-two-" in record_lines["seat-two"][0], str(record_lines))
+        check("two seats' records of one day both ship to one store, neither refused",
+              all(code == 0 and line.startswith("shipped:")
+                  for _, code, line in record_lines.values()), str(record_lines))
+
+        # Oracle: the name for a fixed clock reading. Red: the time is not the
+        # clock's hour, minute and second, or a session that is no seat's
+        # gets no name part at all.
+        module = load_program_module()
+        reading = datetime.datetime(2026, 10, 1, 20, 15, 30)
+        check("the draft's name carries the clock's hour, minute and second",
+              module.draft_file_name("merge-lane-backlog", reading)
+              == "explain-reply-draft-merge-lane-backlog-201530.md",
+              module.draft_file_name("merge-lane-backlog", reading))
+        check("two replies one second apart get two draft names",
+              module.draft_file_name("merge-lane-backlog", reading)
+              != module.draft_file_name(
+                  "merge-lane-backlog", reading + datetime.timedelta(seconds=1)))
+        check("a session that is no seat's is named no-seat",
+              module.draft_file_name(None, reading) == "explain-reply-draft-no-seat-201530.md",
+              module.draft_file_name(None, reading))
+        _, unseated_logged = run_program(scratch, success_plan, GOOD_INPUT,
+                                         seat_task_list_id=None)
+        check("with no task-list id set, the draft is named no-seat",
+              unseated_logged is not None and re.fullmatch(
+                  r"explain-reply-draft-no-seat-\d{6}\.md", unseated_logged["target_name"]),
+              str(unseated_logged))
+        _, misshapen_logged = run_program(scratch, success_plan, GOOD_INPUT,
+                                          seat_task_list_id="some-other-list")
+        check("a task-list id of another shape is not read as a seat's name",
+              misshapen_logged is not None and re.fullmatch(
+                  r"explain-reply-draft-no-seat-\d{6}\.md", misshapen_logged["target_name"]),
+              str(misshapen_logged))
+
         # Oracle: stdout and exit code. Red: exit 0, or no instruction to send
         # anyway, or the fast read's FAILED line not passed on.
         failed_line = "FAILED (exit 1 from the fast-clarify cell; no report)"
@@ -225,6 +374,81 @@ def main() -> int:
               completed.stdout)
         check("a FAILED fast read passes its FAILED line on",
               failed_line in completed.stdout, completed.stdout)
+        check("a failure with no cell launcher lines adds no instruction about them",
+              TELL_HIM_LAUNCHER_INSTRUCTION not in completed.stdout, completed.stdout)
+
+        # Oracle: exit code and stdout. Red: exit 0 and the report printed,
+        # when the fast read printed a readable path but exited non-zero; its
+        # contract is exit 0 on success only.
+        readable_report = scratch / "readable-report.md"
+        readable_report.write_text("## Question 2: Where you struggled\nA finding.\n")
+        completed, _ = run_program(
+            scratch, {"stdout": f"{readable_report}\n", "exit": 1}, GOOD_INPUT)
+        check("a fast read that exits 1 after printing a readable path counts as failed",
+              completed.returncode == 1 and "Send your reply anyway" in completed.stdout
+              and "A finding." not in completed.stdout,
+              f"exit {completed.returncode}, stdout {completed.stdout!r}")
+
+        # Oracle: the cause line, exactly. Red: the FAILED line read as a path
+        # to a report, which adds "(could not be read: …)" to the cause.
+        completed, _ = run_program(
+            scratch, {"stdout": failed_line + "\n", "exit": 0}, GOOD_INPUT)
+        check("a FAILED line with exit 0 is passed on as the cause, unchanged",
+              completed.returncode == 1
+              and f"The fast read's last line: {failed_line}\n" in completed.stdout,
+              f"exit {completed.returncode}, stdout {completed.stdout!r}")
+
+        # Oracle: stdout, against the lines the real agy launcher prints when
+        # it refuses to start without its sandbox, captured by running the
+        # launcher with a PATH that holds no sandbox program. Red: a launcher
+        # line missing, the instruction to tell him missing or before the
+        # lines, or the runtime's chatter or the fast read's own line passed
+        # on. Before the fix only the fast read's FAILED line reached the
+        # agent, never the install that clears the refusal (Codex's finding).
+        empty_path_directory = scratch / "empty-path"
+        empty_path_directory.mkdir()
+        launcher_environment = dict(os.environ)
+        launcher_environment["PATH"] = str(empty_path_directory)
+        launched = subprocess.run(
+            [sys.executable, str(AGY_CELL_LAUNCHER), "--cell", "fast-clarify",
+             "--tier", "fast", "--target", str(readable_report),
+             "--report", str(scratch / "launcher-report.md"),
+             "--prompt-file", str(readable_report)],
+            capture_output=True, text=True, env=launcher_environment, check=False,
+            timeout=60)
+        launcher_lines = [line for line in launched.stderr.splitlines() if line.strip()]
+        check("the real launcher refuses before agy starts when no sandbox is on PATH",
+              launched.returncode == 64 and launcher_lines
+              and launcher_lines[0].startswith("cold-read-agy-cell: refused before "
+                                               "agy started:"),
+              f"exit {launched.returncode}, stderr {launched.stderr!r}")
+        # The fast read's own line after a refused invocation, copied from
+        # nc-systems/cold-read/cold-read-fast-read.py's main, where it is
+        # printed on stderr after the launcher's lines.
+        fast_read_own_line = ("cold-read-fast-read: the cell launcher refused the "
+                              "invocation (exit 64); not retried, because the same "
+                              "invocation would be refused the same way.")
+        launcher_failed_line = ("FAILED (exit 64 from the fast-clarify cell; no report "
+                                f"at {scratch / 'fast-read.md'})")
+        completed, _ = run_program(
+            scratch,
+            {"stdout": launcher_failed_line + "\n",
+             "stderr": "agy runtime chatter\n" + launched.stderr
+                       + fast_read_own_line + "\n",
+             "exit": 1},
+            GOOD_INPUT)
+        expected_block = "\n".join(
+            [f"The fast read's last line: {launcher_failed_line}", *launcher_lines,
+             TELL_HIM_LAUNCHER_INSTRUCTION]) + "\n"
+        check("a failed cell's launcher lines follow the cause, with the instruction "
+              "to tell him after them",
+              completed.returncode == 1 and expected_block in completed.stdout,
+              f"exit {completed.returncode}, stdout {completed.stdout!r}")
+        check("a failed cell's runtime chatter and the fast read's own lines are "
+              "not passed on",
+              "agy runtime chatter" not in completed.stdout
+              and fast_read_own_line not in completed.stdout,
+              completed.stdout)
 
         completed, _ = run_program(scratch, {"stdout": "", "exit": 0}, GOOD_INPUT)
         check("a fast read that exits 0 printing nothing counts as failed",
@@ -287,8 +511,10 @@ def main() -> int:
               f"exit {completed.returncode}, launched {logged is not None}")
 
         # Oracle: the return value, the elapsed time and the child process.
-        # Red: no timeout reported, a wait near the stand-in's 120 s, or the
-        # stand-in's own child still alive after the timeout.
+        # Red: no timeout reported, a wait near the stand-in's 30 s, or the
+        # stand-in's own child, which would live 60 s, still alive after the
+        # timeout: the case a program that kills only the stand-in, or that
+        # starts it in the caller's own process group, produces.
         module = load_program_module()
         module.FAST_READ_TIMEOUT_SECONDS = 2
         child_pid_file = scratch / "child.pid"
@@ -298,7 +524,8 @@ def main() -> int:
         saved_environment = dict(os.environ)
         os.environ[OVERRIDE_VARIABLE] = str(stand_in)
         os.environ["STAND_IN_PLAN"] = json.dumps(
-            {"start_child_then_hang": True, "child_pid_file": str(child_pid_file)})
+            {"start_child_then_hang": True, "child_pid_file": str(child_pid_file),
+             "hang_seconds": 30, "child_seconds": 60})
         os.environ["STAND_IN_LOG"] = str(scratch / "timeout-log.json")
         try:
             started = time.monotonic()

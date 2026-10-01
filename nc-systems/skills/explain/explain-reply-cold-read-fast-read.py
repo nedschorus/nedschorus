@@ -21,13 +21,29 @@ which to skip -- stays in the skill; this program does the mechanics.
 WHAT IT DOES. Reads the draft from standard input and checks its two labels:
 the text opens with `The user wrote:` and has a line `The reply to him:` with
 a reply under it, the shape the skill gives. Writes the text as
-`explain-reply-draft.md` in a new temporary directory outside the repository;
-the file name gives the cold-read-record its name, `explain-reply-draft-<date>`,
-the name the dry run of 2026-09-29 used. Runs
+`explain-reply-draft-<seat name>-<HHMMSS>.md` in a new temporary directory
+outside the repository. Runs
 `nc-systems/cold-read/cold-read-fast-read.py --target <that file>` from the
 repository root, which ships the cold-read-record to the log-store itself.
 Deletes the temporary directory afterwards: the cold-read-record keeps its own
 copy of the draft under `target/`.
+
+THE DRAFT FILE'S NAME IS THE RECORD'S NAME, AND THE STORE IS SHARED. The fast
+read names the cold-read-record `<the target's file stem>-<date>`, so the
+draft file's name decides the record's:
+`explain-reply-draft-<seat name>-<HHMMSS>-<date>`. Every checkout keeps its
+own `cold-read-records/` and all of them ship to one log-store, where the
+shipper refuses a name the store already holds with different content. The
+draft was first written as `explain-reply-draft.md` in every checkout, the
+name the dry run of 2026-09-29 used, so every seat's record of a day was
+`explain-reply-draft-<date>`: the second checkout to explain anything that day
+was refused, and this program then told its agent to tell the user (found by
+merge-lane-2 reviewing the pull request that added this program, 2026-10-01,
+and reproduced with two seats shipping to one scratch store). The seat's name
+keeps two seats apart; the time, the hour, minute and second of this
+machine's clock, the clock the fast read takes its date from, keeps apart two
+checkouts of one seat, whose agent explains one reply at a time. A second
+record of one name inside one checkout still takes the fast read's `-2`.
 
 WHAT IT PRINTS. On success, the report from its "Question 2" heading to the
 end: where the fresh-reader struggled, what the fresh-reader found missing, and
@@ -36,11 +52,27 @@ sentence never restated. Question 1, the restatement, is left out: it runs the
 full length of the draft and the skill does not act on it. If the report has
 no "Question 2" heading, the whole report is printed rather than nothing. Then
 the report's path, the fast read's own line saying whether the cold-read-record
-reached the log-store, and one instruction line. When that record line says
-FAILED or REFUSED -- ned-box could not be reached, which CLAUDE.md says the
-user must be told -- an instruction line follows it. The fast read's other
-stderr, the cold-read-cell's progress, is dropped. On failure, instruction
-lines only, then the fast read's own last line as it printed it, for the cause.
+reached the log-store, and one instruction line. The record line says one of
+three things, in nc-systems/cold-read/cold-read-record-ship.py's words:
+`shipped`; `FAILED`, the log-store could not be reached or the copy did not
+finish, which CLAUDE.md says the user must be told, so an instruction to tell
+him follows it; or `REFUSED`, the log-store already holds a record of this
+name with different content, so an instruction follows it to rename the
+record directory and ship it again, the shipper's own remedy, which is the
+agent's to carry out and not the user's to hear. The fast read's other
+stderr, the cold-read-cell's progress, is dropped.
+
+On failure: instruction lines, then the fast read's own last line as it
+printed it, for the cause, then the cell launcher's own lines from the fast
+read's stderr, with an instruction to pass their cause and remedy to the user.
+A launcher's own lines open with its program name, `cold-read-agy-cell: `,
+the contract nc-systems/cold-read/cold-read-cell-common.py keeps with the
+cold-read-grid: its `cause:` line for each failed attempt, and the refusal
+nc-systems/cold-read/cold-read-agy-cell.py prints when its sandbox is not on
+PATH, which names the install that clears it. Before 2026-10-01 only the
+fast read's last line was printed, `FAILED (exit 64 from the fast-clarify
+cell; …)`, so the remedy never reached the agent (the Codex cell's finding on
+the pull request that added this program).
 
 EVERY LINE AN AGENT MUST ACT ON CARRIES ITS OWN INSTRUCTION. The skill's check
 13 does not describe this output; it says the command prints an instruction
@@ -66,8 +98,10 @@ nc-systems/skills/explain/tests/explain-reply-cold-read-fast-read-test.py sets
 it.
 """
 
+import datetime
 import os
 import pathlib
+import re
 import shutil
 import signal
 import subprocess
@@ -78,19 +112,39 @@ REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent.parent.parent
 FAST_READ_PROGRAM = REPO_ROOT / "nc-systems" / "cold-read" / "cold-read-fast-read.py"
 FAST_READ_PROGRAM_OVERRIDE_VARIABLE = "EXPLAIN_REPLY_COLD_READ_FAST_READ_PROGRAM_OVERRIDE"
 FAST_READ_TIMEOUT_SECONDS = 540
-DRAFT_FILE_NAME = "explain-reply-draft.md"
+DRAFT_FILE_STEM = "explain-reply-draft"
+# The handoff-supervisor sets this variable to `nedschorus-<seat name>-tasks`
+# in every seat's environment; scripts/seat-shared-file-ship.py reads the
+# seat's name from it the same way.
+SEAT_NAME_ENVIRONMENT_VARIABLE = "CLAUDE_CODE_TASK_LIST_ID"
+SEAT_NAME_PREFIX = "nedschorus-"
+SEAT_NAME_SUFFIX = "-tasks"
+# What stands in the draft file's name for a session that is no seat's.
+NO_SEAT_NAME = "no-seat"
 USER_WORDS_LABEL = "The user wrote:"
 REPLY_LABEL = "The reply to him:"
 QUESTION_2_MARKER = "Question 2"
 # The prefix of the line nc-systems/cold-read/cold-read-fast-read.py prints on
 # stderr after shipping the cold-read-record.
 RECORD_SHIP_LINE_PREFIX = "cold-read-fast-read: record:"
-# Words in the record line that mean the cold-read-record did not reach the
-# log-store (nc-systems/cold-read/cold-read-record-ship.py's own markers).
-RECORD_SHIP_FAILURE_MARKERS = ("FAILED", "REFUSED")
-RECORD_SHIP_FAILURE_INSTRUCTION = (
+# How the shipper's line opens when the cold-read-record did not reach the
+# log-store (nc-systems/cold-read/cold-read-record-ship.py's own markers). See
+# WHAT IT PRINTS for what each means.
+RECORD_SHIP_FAILED_MARKER = "FAILED"
+RECORD_SHIP_REFUSED_MARKER = "REFUSED"
+RECORD_SHIP_FAILED_INSTRUCTION = (
     "Tell the user what the record line above says, remedy included, before "
     "your closing line.")
+RECORD_SHIP_REFUSED_INSTRUCTION = (
+    "Rename {record_directory} with a -2 suffix, or the next number not taken, "
+    "then run python3 nc-systems/cold-read/cold-read-record-ship.py on the "
+    "renamed directory.")
+# A cold-read-cell launcher's own line; see WHAT IT PRINTS. The fast read's
+# own lines open `cold-read-fast-read: ` and do not match.
+CELL_LAUNCHER_LINE = re.compile(r"cold-read-[a-z-]+-cell: ")
+CELL_LAUNCHER_LINES_INSTRUCTION = (
+    "In the line saying the fresh-reader's read failed, tell the user what the "
+    "cell launcher's lines above say, remedy included.")
 EXIT_FAST_READ_FAILED = 1
 EXIT_BAD_INPUT = 64
 
@@ -107,6 +161,23 @@ FAILURE_INSTRUCTIONS = (
     "Do not run this command again for this reply.",
 )
 SUCCESS_INSTRUCTION = "Do not cite this report to the user unless he asks."
+
+
+def seat_name_from_environment():
+    """The seat's name from the task-list id the handoff-supervisor sets, or
+    None: `nedschorus-merge-lane-backlog-tasks` -> `merge-lane-backlog`. A
+    value of any other shape gives None rather than a guess."""
+    value = os.environ.get(SEAT_NAME_ENVIRONMENT_VARIABLE, "").strip()
+    if not value.startswith(SEAT_NAME_PREFIX) or not value.endswith(SEAT_NAME_SUFFIX):
+        return None
+    return value[len(SEAT_NAME_PREFIX):-len(SEAT_NAME_SUFFIX)] or None
+
+
+def draft_file_name(seat_name, now: datetime.datetime) -> str:
+    """`explain-reply-draft-<seat name>-<HHMMSS>.md`, NO_SEAT_NAME standing
+    for a seat name that is None. See THE DRAFT FILE'S NAME IS THE RECORD'S
+    NAME in the module docstring for why both parts are there."""
+    return f"{DRAFT_FILE_STEM}-{seat_name or NO_SEAT_NAME}-{now.strftime('%H%M%S')}.md"
 
 
 def input_shape_problem(text: str):
@@ -168,16 +239,27 @@ def record_ship_lines(stderr: str) -> list:
             if line.strip().startswith(RECORD_SHIP_LINE_PREFIX)]
 
 
+def cell_launcher_lines(stderr: str) -> list:
+    """The cold-read-cell launcher's own lines in the fast read's stderr."""
+    return [line.strip() for line in (stderr or "").split("\n")
+            if CELL_LAUNCHER_LINE.match(line.strip())]
+
+
 def last_nonempty_line(text: str) -> str:
     lines = [line for line in (text or "").split("\n") if line.strip()]
     return lines[-1].strip() if lines else ""
 
 
-def print_failure(cause: str) -> int:
+def print_failure(cause: str, stderr: str = "") -> int:
     for line in FAILURE_INSTRUCTIONS:
         print(line)
     if cause:
         print(f"The fast read's last line: {cause}")
+    launcher_lines = cell_launcher_lines(stderr)
+    for line in launcher_lines:
+        print(line)
+    if launcher_lines:
+        print(CELL_LAUNCHER_LINES_INSTRUCTION)
     return EXIT_FAST_READ_FAILED
 
 
@@ -197,7 +279,8 @@ def main() -> int:
 
     directory = pathlib.Path(tempfile.mkdtemp(prefix="explain-reply-"))
     try:
-        draft_path = directory / DRAFT_FILE_NAME
+        draft_path = directory / draft_file_name(
+            seat_name_from_environment(), datetime.datetime.now())
         draft_path.write_text(text if text.endswith("\n") else text + "\n")
         exit_code, stdout, stderr = run_fast_read(draft_path)
     finally:
@@ -205,22 +288,27 @@ def main() -> int:
 
     if exit_code is None:
         return print_failure(
-            f"none; stopped after {FAST_READ_TIMEOUT_SECONDS} seconds")
+            f"none; stopped after {FAST_READ_TIMEOUT_SECONDS} seconds", stderr)
     report_line = last_nonempty_line(stdout)
     if exit_code != 0 or not report_line or report_line.startswith("FAILED"):
-        return print_failure(report_line or last_nonempty_line(stderr))
+        return print_failure(report_line or last_nonempty_line(stderr), stderr)
     report_path = pathlib.Path(report_line)
     try:
         report_text = report_path.read_text()
     except OSError as error:
-        return print_failure(f"{report_line} (could not be read: {error.strerror})")
+        return print_failure(
+            f"{report_line} (could not be read: {error.strerror})", stderr)
     print(report_from_question_2(report_text))
     print()
     print(f"Report: {report_path}")
     for line in record_ship_lines(stderr):
         print(line)
-        if any(marker in line for marker in RECORD_SHIP_FAILURE_MARKERS):
-            print(RECORD_SHIP_FAILURE_INSTRUCTION)
+        outcome = line[len(RECORD_SHIP_LINE_PREFIX):].strip()
+        if outcome.startswith(RECORD_SHIP_FAILED_MARKER):
+            print(RECORD_SHIP_FAILED_INSTRUCTION)
+        elif outcome.startswith(RECORD_SHIP_REFUSED_MARKER):
+            print(RECORD_SHIP_REFUSED_INSTRUCTION.format(
+                record_directory=report_path.parent))
     print(SUCCESS_INSTRUCTION)
     return 0
 
