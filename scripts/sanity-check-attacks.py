@@ -251,15 +251,21 @@ Running a sanity-check, and reading its output:
   the run had saved and its log are. It then ships the record, as any run
   does when it ends, printing the `record:` line, and ends by the same
   signal; a run killed outright while it ships has already stopped its agents
-  and removed its copy, and its record stays on disk. SIGKILL, and a machine
-  that stops, cannot be answered, so each run, before it makes its own copy,
-  removes the copies no live run owns and prints `removed: a review copy an
-  earlier run left behind, <path>` for each. A copy is a live run's while
-  that run holds the lock on the owner file beside the copy's directory,
-  `<directory>.owner`, which the operating system releases when the process
-  ends however it ends; so two runs at once never remove each other's copy.
-  An agent whose runner was killed outright still runs to its own end, in a
-  copy the next run removes from under it.
+  and removed its copy, and its record stays on disk. No agent-binary starts
+  once the stop is under way: a cell's thread reads the stop and starts its
+  agent-binary under one lock, the lock the handler takes to mark the run
+  stopped, so every agent-binary is in the process table the handler then
+  reads. A signal that arrives after every cell has ended stopped no agent:
+  the runner finishes the run's closing steps, prints what a finished run
+  prints, with no `STOPPED:` line, and ends by the signal. SIGKILL, and a
+  machine that stops, cannot be answered, so each run, before it makes its
+  own copy, removes the copies no live run owns and prints `removed: a review
+  copy an earlier run left behind, <path>` for each. A copy is a live run's
+  while that run holds the lock on the owner file beside the copy's
+  directory, `<directory>.owner`, which the operating system releases when
+  the process ends however it ends; so two runs at once never remove each
+  other's copy. An agent whose runner was killed outright still runs to its
+  own end, in a copy the next run removes from under it.
 - Each saved report opens with a provenance line: runtime, model, effort,
   the reviewing CLI's version (measured by this runner, not self-reported),
   audit, target, and the commit the review copy holds and its state, so
@@ -339,6 +345,12 @@ STOPPED_PROCESS_GRACE_SECONDS = 10.0
 # agent-binary: a cell stopped with its run is not relaunched, and the claude
 # chain does not go on to its next model.
 RUN_STOPPED = threading.Event()
+# Held while a cell's thread reads RUN_STOPPED and starts an agent-binary, and
+# by the stop handler while it sets RUN_STOPPED: see
+# run_agent_binary_unless_run_stopped. Re-entrant, so a handler that runs on a
+# thread already holding it cannot wait on itself; in a run the main thread,
+# which runs the handler, launches no agent-binary and never holds it.
+AGENT_BINARY_LAUNCH_LOCK = threading.RLock()
 # The name of the file beside a review copy's directory whose lock says a
 # live run owns that copy: see claim_review_copy_directory.
 REVIEW_COPY_OWNER_FILE_SUFFIX = ".owner"
@@ -657,10 +669,10 @@ def run_claude(prompt: str, checkout: pathlib.Path = None) -> tuple:
         try:
             # Decoded as UTF-8 with undecodable bytes replaced, never raised
             # on: see run_codex.
-            completed = subprocess.run(
+            completed = run_agent_binary_unless_run_stopped(
                 command, input=prompt, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                 cwd=checkout or REPO_ROOT, text=True, encoding="utf-8",
-                errors="replace", check=False, timeout=CELL_TIMEOUT_SECONDS,
+                errors="replace", timeout=CELL_TIMEOUT_SECONDS,
             )
         except OSError as error:
             # A CLI that will not launch is one failed attempt, not the end of
@@ -686,10 +698,10 @@ def run_claude(prompt: str, checkout: pathlib.Path = None) -> tuple:
         # stdout -- the review itself is returned to run_cell, never printed --
         # so the runtime's words go there too, and not to stderr as in the
         # house tool, whose log is the other stream.
-        if RUN_STOPPED.is_set():
-            # This launch ended because the run was stopped, which
-            # stop_processes_this_run_started did to it: not a failure of the
-            # model's, and not one to warn of.
+        if completed is None or RUN_STOPPED.is_set():
+            # The run was stopped: this model was never started, or its launch
+            # ended because stop_processes_this_run_started ended it. Not a
+            # failure of the model's, and not one to warn of.
             break
         if completed.stderr:
             print(completed.stderr, end="", flush=True)
@@ -714,6 +726,44 @@ def run_claude(prompt: str, checkout: pathlib.Path = None) -> tuple:
             continue
         return 0, completed.stdout, model, "+".join(failed_attempts), None
     return 1, "", "", "+".join(failed_attempts), last_cause
+
+
+def run_agent_binary_unless_run_stopped(command: list, input: str = None,
+                                        timeout: float = None, **popen_keywords):
+    """subprocess.run for an agent-binary, started only while the run is not
+    stopped: the CompletedProcess, or None when RUN_STOPPED was set first and
+    nothing was started. `popen_keywords` are subprocess.Popen's.
+
+    RUN_STOPPED is read and the agent-binary started under
+    AGENT_BINARY_LAUNCH_LOCK, and stop_run_on_signal sets RUN_STOPPED under
+    the same lock. So every agent-binary was started before the run was
+    marked stopped, and is in the process table when
+    stop_processes_this_run_started reads it; once that function has frozen
+    it, it can start nothing more. Before this, a thread that had read
+    RUN_STOPPED unset could launch after the handler's last look at the
+    table: the agent-binary was killed alone, the child it then started held
+    its pipes, and the run waited for that child with every stop signal
+    ignored, its review copy left behind (found in review of the pull request
+    that introduced the review copy). The wait after the start is outside the
+    lock and is subprocess.run's own: on a timeout the agent-binary is killed
+    and TimeoutExpired raised with the streams it had written."""
+    with AGENT_BINARY_LAUNCH_LOCK:
+        if RUN_STOPPED.is_set():
+            return None
+        if input is not None:
+            popen_keywords["stdin"] = subprocess.PIPE
+        process = subprocess.Popen(command, **popen_keywords)
+    with process:
+        try:
+            stdout, stderr = process.communicate(input, timeout=timeout)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait()
+            raise
+        except BaseException:
+            process.kill()
+            raise
+        return subprocess.CompletedProcess(command, process.poll(), stdout, stderr)
 
 
 def last_lines_of_stream(text: str, line_count: int) -> str:
@@ -775,11 +825,14 @@ def run_codex(prompt: str, checkout: pathlib.Path = None) -> tuple:
         # record). A replaced byte costs one character of a log line; and the
         # encoding is named, so a run started where the locale is not UTF-8
         # reads the review as the CLI wrote it.
-        completed = subprocess.run(
+        completed = run_agent_binary_unless_run_stopped(
             command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
             stderr=subprocess.PIPE, text=True, encoding="utf-8",
-            errors="replace", check=False, timeout=CELL_TIMEOUT_SECONDS,
+            errors="replace", timeout=CELL_TIMEOUT_SECONDS,
         )
+        if completed is None:
+            # The run was stopped before codex could start: see run_claude.
+            return 1, "", CODEX_MODEL, "", None
         if completed.returncode != 0 and RUN_STOPPED.is_set():
             # Ended because the run was stopped: see run_claude.
             return completed.returncode, "", CODEX_MODEL, "", None
@@ -1604,9 +1657,10 @@ def stop_processes_this_run_started() -> None:
     deadline = time.monotonic() + STOPPED_PROCESS_GRACE_SECONDS
     while time.monotonic() < deadline and any(still_running(pid) for pid in frozen):
         time.sleep(0.1)
-    # SIGKILL to what is left, and to any process a cell's thread launched in
-    # the moment between reading RUN_STOPPED and this function's last look at
-    # the process table: one more reading of the table finds it.
+    # SIGKILL to what is left, and to whatever is under this process now that
+    # was not frozen: a process a frozen one started after SIGCONT, or a git
+    # call a cell's thread made after the first reading. No agent-binary
+    # starts after RUN_STOPPED is set (run_agent_binary_unless_run_stopped).
     table = processes_under_this_one()
     under_this_process, grew = {this_process}, True
     while grew:
@@ -1627,7 +1681,10 @@ def stop_run_on_signal(signal_number: int, _frame) -> None:
     review copy are not themselves cut short."""
     for number in RUN_STOP_SIGNALS:
         signal.signal(number, signal.SIG_IGN)
-    RUN_STOPPED.set()
+    # Under the lock a cell's thread holds from reading RUN_STOPPED to
+    # starting its agent-binary: see run_agent_binary_unless_run_stopped.
+    with AGENT_BINARY_LAUNCH_LOCK:
+        RUN_STOPPED.set()
     stop_processes_this_run_started()
     raise RunStoppedBySignal(signal_number)
 
@@ -1651,6 +1708,10 @@ class RunOutputCopiedToRecordLog:
         # The record directory, once `attach` has named the log in it: what a
         # run stopped by a signal names in its STOPPED line, and ships.
         self.record_directory = None
+        # None until every cell has ended, then how many reports the run
+        # saved: a stop signal that arrives after that has stopped no agent,
+        # and main() ends the run as a finished run ends.
+        self.reports_saved_once_cells_ended = None
         self._held = []
         self._file = None
         self._lock = threading.Lock()
@@ -2065,14 +2126,32 @@ def main() -> int:
         return run_cells_in_review_copy(args, target_path, run_log)
     except RunStoppedBySignal as stopped:
         stopped_by = stopped.signal_number
-        print(run_stopped_line(stopped_by, run_log.record_directory), flush=True)
-        # Closed before the record is shipped, as at the end of any run; and
-        # shipped while the stop signals are still ignored, after the agents
-        # are stopped and the review copy is removed, so a run that is killed
-        # outright while it ships has already done what must not be left.
-        run_log.detach()
-        if run_log.record_directory is not None:
-            print(f"record: {ship_record(run_log.record_directory)}", flush=True)
+        saved = run_log.reports_saved_once_cells_ended
+        if saved is not None:
+            # Every cell had ended when the signal arrived, so it cut short
+            # only the run's closing steps, and the `finally` blocks on the
+            # way here have finished them. The run ends with what a finished
+            # run prints, never a STOPPED line, whose instruction to run the
+            # whole command again would launch every agent of a run whose
+            # reports are all saved (found in review of the pull request that
+            # introduced the review copy). The record is shipped again if the
+            # signal cut its shipping short; the shipper adds only what the
+            # store lacks.
+            run_log.detach()
+            if saved:
+                print_run_completion(run_log.record_directory)
+            else:
+                print_completion_of_run_that_saved_no_report(run_log.record_directory)
+        else:
+            print(run_stopped_line(stopped_by, run_log.record_directory), flush=True)
+            # Closed before the record is shipped, as at the end of any run;
+            # and shipped while the stop signals are still ignored, after the
+            # agents are stopped and the review copy is removed, so a run that
+            # is killed outright while it ships has already done what must not
+            # be left.
+            run_log.detach()
+            if run_log.record_directory is not None:
+                print(f"record: {ship_record(run_log.record_directory)}", flush=True)
     finally:
         run_log.detach()
         sys.stdout = run_log.stream
@@ -2191,6 +2270,7 @@ def run_cells_in_review_copy(args, target_path: pathlib.Path, run_log: RunOutput
                     _, cell_ok = future.result()
                     ok = ok and cell_ok
                     saved_count += 1 if cell_ok else 0
+                run_log.reports_saved_once_cells_ended = saved_count
         finally:
             # However the cells' part ended, a run a stop signal ended
             # included: what the cells left in their scratch directories is

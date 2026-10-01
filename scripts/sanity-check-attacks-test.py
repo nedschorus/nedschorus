@@ -6,7 +6,8 @@ not a report, the relaunch of a cell that saved no report with the
 instructions a failed cell ends on (cases 38 to 43), and how a run ends when
 it is stopped from outside, what the next run removes after a killed one, the
 bytes an agent-binary may write, and the record of a run that saved no report
-(cases 44 to 48).
+(cases 44 to 48), and a stop that lands as a launch is prepared, after the
+cells have ended, or while a review copy is claimed (cases 49 to 53).
 
 The detector's only value is being trustworthy about whether a review cell
 wrote to the worktree. A hole in it is silent by construction, and a warning
@@ -945,8 +946,8 @@ def main():
     # model times out. The words the timeout prints must be the timed-out
     # attempt's own, and the failed attempt's must appear exactly once — not
     # lost with the exception, not printed a second time. No model is called:
-    # subprocess.run is replaced for this one cell and put back in a finally,
-    # as the chain cases below do.
+    # the launch is replaced for this one cell and put back in a finally, as
+    # the chain cases below do.
     runner_chain_timeout = load_runner()
     first_model = runner_chain_timeout.CLAUDE_MODEL_CHAIN[0]
 
@@ -959,11 +960,11 @@ def main():
             list(command), keywords.get("timeout"),
             output=b"next model: partial review", stderr=b"next model: still reading")
 
-    real_chain_timeout_run = runner_chain_timeout.subprocess.run
+    real_chain_timeout_run = getattr(runner_chain_timeout, "run_agent_binary_unless_run_stopped", None)
     buffer = io.StringIO()
     cell_ok = None
     try:
-        runner_chain_timeout.subprocess.run = first_fails_then_next_times_out
+        runner_chain_timeout.run_agent_binary_unless_run_stopped = first_fails_then_next_times_out
         with tempfile.TemporaryDirectory() as scratch:
             with contextlib.redirect_stdout(buffer):
                 _, cell_ok = runner_chain_timeout.run_cell(
@@ -971,7 +972,7 @@ def main():
                     pathlib.Path("unused-problem-statement.md"),
                     pathlib.Path(scratch), {}, (), StubLedger([]))
     finally:
-        runner_chain_timeout.subprocess.run = real_chain_timeout_run
+        runner_chain_timeout.run_agent_binary_unless_run_stopped = real_chain_timeout_run
     output = buffer.getvalue()
     timeout_line = (f"FAILED: cut-claude — timeout — after "
                     f"{runner_chain_timeout.CELL_TIMEOUT_SECONDS}s\n")
@@ -1131,12 +1132,11 @@ def main():
     # costs a model call, and the defect this guards against is a missing
     # argument.
     #
-    # subprocess.run is replaced for the length of one call only. The module
-    # object is shared with this file's own git() helper, so the real function
-    # goes back in a finally, never left swapped.
+    # The agent-binary's launch, run_agent_binary_unless_run_stopped, is
+    # replaced for the length of one call only, and goes back in a finally.
     runner_memories = load_runner()
     captured = {}
-    real_subprocess_run = runner_memories.subprocess.run
+    real_memories_launch = getattr(runner_memories, "run_agent_binary_unless_run_stopped", None)
 
     def capture_command(command, *arguments, **keywords):
         captured["command"] = list(command)
@@ -1158,7 +1158,7 @@ def main():
     real_lists = (shared.CREDENTIAL_DIRECTORIES, shared.REVIEWER_PROGRAM_LOGIN_FILES,
                   shared.credential_files_found_now)
     try:
-        runner_memories.subprocess.run = capture_command
+        runner_memories.run_agent_binary_unless_run_stopped = capture_command
         shared.CREDENTIAL_DIRECTORIES = tuple(
             scratch_home / directory.relative_to(pathlib.Path.home())
             for directory in real_lists[0])
@@ -1166,7 +1166,7 @@ def main():
         shared.credential_files_found_now = lambda: []
         runner_memories.run_codex("a prompt no model ever sees")
     finally:
-        runner_memories.subprocess.run = real_subprocess_run
+        runner_memories.run_agent_binary_unless_run_stopped = real_memories_launch
         (shared.CREDENTIAL_DIRECTORIES, shared.REVIEWER_PROGRAM_LOGIN_FILES,
          shared.credential_files_found_now) = real_lists
     codex_command = captured.get("command", [])
@@ -1210,12 +1210,12 @@ def main():
         # the last model's after a fallback.
         return subprocess.CompletedProcess(list(command), 0, "a review\n", "")
 
-    real_claude_run = runner_tools.subprocess.run
+    real_claude_run = getattr(runner_tools, "run_agent_binary_unless_run_stopped", None)
     try:
-        runner_tools.subprocess.run = capture_claude_command
+        runner_tools.run_agent_binary_unless_run_stopped = capture_claude_command
         runner_tools.run_claude("a prompt no model ever sees")
     finally:
-        runner_tools.subprocess.run = real_claude_run
+        runner_tools.run_agent_binary_unless_run_stopped = real_claude_run
     claude_command = captured_claude.get("command", [])
     allowed_tools = (claude_command[claude_command.index("--allowedTools") + 1]
                      if "--allowedTools" in claude_command else "")
@@ -1236,8 +1236,8 @@ def main():
     # not available, so it should fall back to opus in that case"), so the cell
     # tries Fable 5.1 and falls back to Opus 5. The three ways an attempt can
     # produce no review are the house chain's (run_model_chain in
-    # nc-systems/cold-read/cold-read-cell-common.py). No model is called: subprocess.run is
-    # replaced for the length of these cases and answers per model.
+    # nc-systems/cold-read/cold-read-cell-common.py). No model is called: the
+    # launch is replaced for the length of these cases and answers per model.
     runner_chain = load_runner()
     fable, opus = runner_chain.CLAUDE_MODEL_CHAIN
     check("the chain is Fable 5.1 then Opus 5, and Opus ends it",
@@ -1245,21 +1245,21 @@ def main():
           runner_chain.CLAUDE_MODEL_CHAIN)
 
     def answering(answers):
-        """A subprocess.run stand-in answering per model: (returncode, stdout)."""
+        """A launch stand-in answering per model: (returncode, stdout)."""
         def fake_run(command, *arguments, **keywords):
             model = command[command.index("--model") + 1]
             code, out = answers[model]
             return subprocess.CompletedProcess(list(command), code, out, "")
         return fake_run
 
-    real_chain_run = runner_chain.subprocess.run
+    real_chain_run = getattr(runner_chain, "run_agent_binary_unless_run_stopped", None)
     try:
-        runner_chain.subprocess.run = answering({fable: (0, "fable's review\n")})
+        runner_chain.run_agent_binary_unless_run_stopped = answering({fable: (0, "fable's review\n")})
         answered = runner_chain.run_claude("a prompt no model ever sees")
         check("the chain runs Fable first, and does not fall back when it answers",
               answered == (0, "fable's review\n", fable, "", None), answered)
 
-        runner_chain.subprocess.run = answering(
+        runner_chain.run_agent_binary_unless_run_stopped = answering(
             {fable: (1, ""), opus: (0, "opus's review\n")})
         code, output, model, fallback_from, cause = runner_chain.run_claude("a prompt")
         check("a Fable that exits non-zero falls back to Opus, which is named as the model",
@@ -1267,7 +1267,7 @@ def main():
               and fallback_from == f"{fable}(exit1)" and cause is None,
               (code, output, model, fallback_from, cause))
 
-        runner_chain.subprocess.run = answering(
+        runner_chain.run_agent_binary_unless_run_stopped = answering(
             {fable: (0, "   \n"), opus: (0, "opus's review\n")})
         code, output, model, fallback_from, cause = runner_chain.run_claude("a prompt")
         check("a Fable that exits 0 having written no review falls back too",
@@ -1275,7 +1275,7 @@ def main():
               and fallback_from == f"{fable}(no-report)",
               (code, model, fallback_from))
 
-        runner_chain.subprocess.run = answering({fable: (1, ""), opus: (1, "")})
+        runner_chain.run_agent_binary_unless_run_stopped = answering({fable: (1, ""), opus: (1, "")})
         code, output, model, fallback_from, cause = runner_chain.run_claude("a prompt")
         check("every model failing fails the cell, and both attempts are named",
               code != 0 and output == ""
@@ -1298,7 +1298,7 @@ def main():
                     "Invalid API key - run /login\n")
             return subprocess.CompletedProcess(list(command), 0, "opus's review\n", "")
 
-        runner_chain.subprocess.run = explaining
+        runner_chain.run_agent_binary_unless_run_stopped = explaining
         spoken = io.StringIO()
         with contextlib.redirect_stdout(spoken):
             code, output, model, fallback_from, cause = runner_chain.run_claude("a prompt")
@@ -1311,7 +1311,7 @@ def main():
               (code, output, model) == (0, "opus's review\n", opus)
               and "opus's review" not in said, (code, output, model, said))
     finally:
-        runner_chain.subprocess.run = real_chain_run
+        runner_chain.run_agent_binary_unless_run_stopped = real_chain_run
 
     # The report's provenance names the model that actually wrote it and what
     # it fell back from, the way the cold-read cells' stamp does.
@@ -1328,6 +1328,7 @@ def main():
     def no_cli_launch_here(command, *arguments, **keywords):
         raise AssertionError(f"a provenance case launched {list(command)}")
 
+    real_version_probe_run = runner_chain.subprocess.run
     runner_chain.subprocess.run = no_cli_launch_here
     try:
         fell_back = runner_chain.provenance_line(
@@ -1336,7 +1337,7 @@ def main():
         straight_through = runner_chain.provenance_line(
             "codex", "gpt-5.6-sol", "cut", "docs/x.md", False, "commit=abc1234")
     finally:
-        runner_chain.subprocess.run = real_chain_run
+        runner_chain.subprocess.run = real_version_probe_run
     check("the provenance line records the model that answered and the fallback",
           "model=claude-opus-5 " in fell_back
           and "fallback_from=claude-fable-5-1(exit1) " in fell_back, fell_back)
@@ -1546,16 +1547,21 @@ def main():
         return subprocess.CompletedProcess(list(command), 0, "a review\n", "")
 
     review_checkout = pathlib.Path("/a/review/copy/of/the/commit")
-    real_launch_run = runner_launch.subprocess.run
+    real_launch_run = getattr(runner_launch, "run_agent_binary_unless_run_stopped", None)
+    # On Linux the codex cell's profile lists the credential files under the
+    # home by running `find` there: emptied, so the real home is not scanned.
+    real_launch_files_found = runner_launch.common.credential_files_found_now
     launch_error = None
     try:
-        runner_launch.subprocess.run = capture_launch
+        runner_launch.run_agent_binary_unless_run_stopped = capture_launch
+        runner_launch.common.credential_files_found_now = lambda: []
         runner_launch.run_claude("a prompt no model ever sees", review_checkout)
         runner_launch.run_codex("a prompt no model ever sees", review_checkout)
     except TypeError as error:
         launch_error = error
     finally:
-        runner_launch.subprocess.run = real_launch_run
+        runner_launch.run_agent_binary_unless_run_stopped = real_launch_run
+        runner_launch.common.credential_files_found_now = real_launch_files_found
     claude_launches = [cwd for command, cwd in launches if command[0] == "claude"]
     codex_commands = [command for command, _ in launches if command[0] == "codex"]
     check("a claude cell runs in the review copy it is handed",
@@ -1930,8 +1936,8 @@ def main():
     # agent to rerun a failed cell once whatever the cause; the user asked
     # "doesn't it matter why a cell fails?" and then said "I don't think the
     # agents will magically know when to rerun", so the decision is the
-    # runner's. No model is called: the launchers, or subprocess.run under
-    # them, are replaced, and each stand-in counts its launches.
+    # runner's. No model is called: the launchers, or the launch under them,
+    # are replaced, and each stand-in counts its launches.
     capacity = "ERROR: Selected model is at capacity. Please try a different model."
 
     def run_cell_capturing(module, runtime, ledger=None, target="docs/x.md",
@@ -2147,12 +2153,12 @@ def main():
           f"raised={raised!r}, output was {output!r}")
 
     # The classes come from what each CLI really prints, through the real
-    # launchers: subprocess.run is replaced under them. The texts are the
+    # launchers: the launch is replaced under them. The texts are the
     # captured ones kept beside the cold-read cells
     # (nc-systems/cold-read/cold-read-claude-cell.py and
     # cold-read-codex-cell.py, recognised_failure_texts_for_model).
     runner_classes = load_runner()
-    real_classes_run = runner_classes.subprocess.run
+    real_classes_run = getattr(runner_classes, "run_agent_binary_unless_run_stopped", None)
     # On Linux the codex cell's permission profile lists the credential files
     # under the home, which it finds by running `find` there: emptied for
     # these launches, as the launch-flag case above does, so the real home is
@@ -2166,7 +2172,7 @@ def main():
     launched_commands = []
 
     def cli_answering(code, stdout, stderr):
-        """A subprocess.run stand-in for one CLI. A stream comes back only
+        """A launch stand-in for one CLI. A stream comes back only
         when the launcher piped it, as from the real function: a launcher
         that discards a stream never sees the cause written there."""
         def fake_run(command, *arguments, **keywords):
@@ -2206,7 +2212,7 @@ def main():
     try:
         for runtime, expected_class, fake_run, expected_detail, calls_per_launch in real_cases:
             del launched_commands[:]
-            runner_classes.subprocess.run = fake_run
+            runner_classes.run_agent_binary_unless_run_stopped = fake_run
             cell_ok, output, raised, report = run_cell_capturing(
                 runner_classes, runtime, ledger=StubLedger([]))
             failed = [line for line in output.splitlines() if line.startswith("FAILED:")]
@@ -2230,7 +2236,7 @@ def main():
                       and "session line 40\n" not in output,
                       f"output was {output[:400]!r}")
     finally:
-        runner_classes.subprocess.run = real_classes_run
+        runner_classes.run_agent_binary_unless_run_stopped = real_classes_run
         runner_classes.common.credential_files_found_now = real_credential_files_found_now
 
     # Case 41: a timeout is not relaunched: the same launch would cost the
@@ -2274,13 +2280,10 @@ def main():
     runner_chain_relaunch = load_runner()
     runner_chain_relaunch.CLI_VERSION_CACHE.update({"claude": "1.1.1-test",
                                                     "codex": "2.2.2-test"})
-    real_chain_relaunch_run = runner_chain_relaunch.subprocess.run
+    real_chain_relaunch_run = getattr(runner_chain_relaunch, "run_agent_binary_unless_run_stopped", None)
     chain_calls = []
 
     def chain_across_a_relaunch(command, *arguments, **keywords):
-        if command[0] != "claude":
-            # git, for the saved report's commit: not this case's subject.
-            return real_chain_relaunch_run(command, *arguments, **keywords)
         model = command[command.index("--model") + 1]
         chain_calls.append(model)
         if model == opus and len(chain_calls) == 4:
@@ -2289,11 +2292,11 @@ def main():
             list(command), 1, "", f"{model}: overloaded, call {len(chain_calls)}\n")
 
     try:
-        runner_chain_relaunch.subprocess.run = chain_across_a_relaunch
+        runner_chain_relaunch.run_agent_binary_unless_run_stopped = chain_across_a_relaunch
         cell_ok, output, raised, report = run_cell_capturing(
             runner_chain_relaunch, "claude")
     finally:
-        runner_chain_relaunch.subprocess.run = real_chain_relaunch_run
+        runner_chain_relaunch.run_agent_binary_unless_run_stopped = real_chain_relaunch_run
     stamp = (report or "").splitlines()[0] if report else ""
     check("a claude cell whose whole chain fails is relaunched, and the chain "
           "runs again from its first model",
@@ -2448,6 +2451,12 @@ if mode == "bad-byte":
     else:
         sys.stdout.buffer.write(report.encode("utf-8") + b"\\xff\\n")
     sys.exit(0)
+if mode == "fail-once" and not (directory / (name + "-failed-once")).exists():
+    # A first launch that fails for a cause the runner relaunches; every
+    # later launch waits, as below.
+    (directory / (name + "-failed-once")).write_text("", encoding="utf-8")
+    sys.stderr.write("ERROR: Selected model is at capacity. Please try a different model.\\n")
+    sys.exit(1)
 # "wait": a launch that is still working when the run is stopped, with a
 # process of its own under it, as an agent-binary has.
 child = subprocess.Popen(["sleep", "300"])
@@ -2481,10 +2490,21 @@ time.sleep(300)
 
     def runner_driver(base, repo):
         """A program that runs the runner's main() over `repo`, as runner_over
-        does in-process: what a real run does, with the roots in scratch."""
+        does in-process: what a real run does, with the roots in scratch.
+
+        The codex profile's credential list comes back empty, so on Linux the
+        real home is not walked for credential files. Three environment
+        variables, each naming a file, hold the run at one moment so a case
+        can send its signal there: DRIVER_HOLD_CODEX_RELAUNCH holds a codex
+        cell's second launch while its profile is built, after run_cell has
+        read RUN_STOPPED unset, until that file exists (`<file>.held` says the
+        hold has begun); DRIVER_STOP_WALK_DONE is written once the stop
+        handler has stopped the processes under the runner; and
+        DRIVER_HOLD_FIRST_SHIP holds the first shipping of the record until a
+        signal ends the hold (`<file>.held` again)."""
         driver = base / "run-the-runner.py"
         driver.write_text(f"""
-import importlib.util, pathlib, sys
+import importlib.util, os, pathlib, sys, time
 spec = importlib.util.spec_from_file_location("sanity_check_attacks", {str(RUNNER_SCRIPT)!r})
 module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
@@ -2492,8 +2512,43 @@ module.REPO_ROOT = pathlib.Path({str(repo)!r})
 module.RECORDS_ROOT = module.REPO_ROOT / "sanity-check-records"
 module.REVIEW_COPIES_ROOT = pathlib.Path({str(base / "review-copies")!r})
 module.CLI_VERSION_CACHE.update({{"claude": "1.1.1-test", "codex": "2.2.2-test"}})
+module.common.credential_files_found_now = lambda: []
 if hasattr(module, "STOPPED_PROCESS_GRACE_SECONDS"):
     module.STOPPED_PROCESS_GRACE_SECONDS = 3.0
+
+def held_until(path):
+    pathlib.Path(path + ".held").write_text("", encoding="utf-8")
+    deadline = time.monotonic() + 60
+    while not pathlib.Path(path).exists() and time.monotonic() < deadline:
+        time.sleep(0.02)
+
+relaunch_hold = os.environ.get("DRIVER_HOLD_CODEX_RELAUNCH")
+if relaunch_hold:
+    profile = module.common.codex_credential_denying_permission_profile_arguments
+    profiles_built = []
+    def profile_held_at_the_relaunch(*arguments, **keywords):
+        profiles_built.append(1)
+        if len(profiles_built) == 2:
+            held_until(relaunch_hold)
+        return profile(*arguments, **keywords)
+    module.common.codex_credential_denying_permission_profile_arguments = profile_held_at_the_relaunch
+walk_done = os.environ.get("DRIVER_STOP_WALK_DONE")
+if walk_done:
+    stop_processes = module.stop_processes_this_run_started
+    def stop_processes_then_say_so():
+        stop_processes()
+        pathlib.Path(walk_done).write_text("", encoding="utf-8")
+    module.stop_processes_this_run_started = stop_processes_then_say_so
+ship_hold = os.environ.get("DRIVER_HOLD_FIRST_SHIP")
+if ship_hold:
+    ship = module.ship_record
+    ships = []
+    def first_ship_held(record_directory):
+        ships.append(1)
+        if len(ships) == 1:
+            held_until(ship_hold)
+        return ship(record_directory)
+    module.ship_record = first_ship_held
 sys.argv = [{str(RUNNER_SCRIPT)!r}, *sys.argv[1:]]
 sys.exit(module.main())
 """, encoding="utf-8")
@@ -2687,31 +2742,32 @@ sys.exit(module.main())
                 process.communicate()
             end_stand_ins(recorded)
 
-    # Still case 45, without a process: the two places a thread reads the stop
-    # before it launches an agent-binary. A cell's thread that reaches either
+    # Still case 45, without a process: the places a thread reads the stop
+    # before it launches an agent-binary. A cell's thread that reaches one
     # after the handler has looked at the process table for the last time
     # would otherwise start a launch the run then waits an hour for. Once the
     # run is stopped, the claude chain launches no model, and a cell launches
-    # nothing and prints nothing.
+    # nothing and prints nothing. Starts are counted where a process would
+    # begin, at subprocess.Popen.
     runner_stopped = load_runner()
     stopped_flag = getattr(runner_stopped, "RUN_STOPPED", None)
     launched_after_stop = []
 
-    def counting_launch(command, *arguments, **keywords):
+    def counting_start(command, *arguments, **keywords):
         launched_after_stop.append(command[0])
-        return subprocess.CompletedProcess(list(command), 0, any_attack_report, "")
+        raise OSError(f"{command[0]} was started after the run was stopped")
 
-    real_stopped_run = runner_stopped.subprocess.run
+    real_stopped_start = runner_stopped.subprocess.Popen
     if stopped_flag is not None:
         stopped_flag.set()
     buffer = io.StringIO()
     try:
-        runner_stopped.subprocess.run = counting_launch
+        runner_stopped.subprocess.Popen = counting_start
         with contextlib.redirect_stdout(buffer):
             chain_result = runner_stopped.run_claude(
                 "a prompt no model ever sees", pathlib.Path("/a/review/copy"))
     finally:
-        runner_stopped.subprocess.run = real_stopped_run
+        runner_stopped.subprocess.Popen = real_stopped_start
     check("once the run is stopped the claude chain launches no model",
           stopped_flag is not None and launched_after_stop == []
           and chain_result[0] != 0 and buffer.getvalue() == "",
@@ -2815,8 +2871,12 @@ sys.exit(module.main())
         saved_environment = dict(os.environ)
         results = {}
         buffer = io.StringIO()
+        # On Linux the codex profile walks the home for credential files:
+        # emptied, so the real home is not walked.
+        real_bytes_files_found = runner_bytes.common.credential_files_found_now
         try:
             os.environ.update(environment)
+            runner_bytes.common.credential_files_found_now = lambda: []
             with contextlib.redirect_stdout(buffer):
                 for name, launcher in (("codex", runner_bytes.run_codex),
                                        ("claude", runner_bytes.run_claude)):
@@ -2825,6 +2885,7 @@ sys.exit(module.main())
                     except UnicodeDecodeError as error:
                         results[name] = error
         finally:
+            runner_bytes.common.credential_files_found_now = real_bytes_files_found
             os.environ.clear()
             os.environ.update(saved_environment)
         for name in ("codex", "claude"):
@@ -2869,6 +2930,313 @@ sys.exit(module.main())
               in shipped_log.read_text(encoding="utf-8")
               and "record: " not in shipped_log.read_text(encoding="utf-8"),
               f"looked for {shipped_log}")
+
+    # Cases 49 to 53 came from round 2 of review of the pull request that
+    # introduced the review copy (2026-10-01).
+    #
+    # Case 49: a stop signal that lands while a cell's relaunch is being
+    # prepared, after run_cell has read RUN_STOPPED unset. The relaunch used
+    # to start after the handler's last look at the process table: the
+    # agent-binary was killed alone, the child it then started held its
+    # pipes, and the runner waited for that child with every stop signal
+    # ignored and its review copy left. The driver holds the codex cell's
+    # second launch while its profile is built, the signal is sent there,
+    # and the hold is let go once the handler has stopped the processes it
+    # found. No agent-binary starts after the signal.
+    with tempfile.TemporaryDirectory() as scratch:
+        base = pathlib.Path(scratch).resolve()
+        target = "docs/stopped-while-a-relaunch-is-prepared.md"
+        repo = scratch_repository_with_design(base, target)
+        programs, recorded = stand_in_agent_binaries(base)
+        relaunch_hold = base / "relaunch-hold"
+        walk_done = base / "stop-walk-done"
+        environment = runner_process_environment(programs, recorded, codex="fail-once")
+        environment["DRIVER_HOLD_CODEX_RELAUNCH"] = str(relaunch_hold)
+        environment["DRIVER_STOP_WALK_DONE"] = str(walk_done)
+        process = subprocess.Popen(
+            [sys.executable, "-B", str(runner_driver(base, repo)),
+             "--target", target, "--attack", "cut", "--runtime", "codex"],
+            env=environment, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        try:
+            held = wait_until(lambda: pathlib.Path(str(relaunch_hold) + ".held").exists())
+            process.send_signal(signal.SIGTERM)
+            walked = wait_until(walk_done.exists, 10.0)
+            relaunch_hold.write_text("", encoding="utf-8")
+            try:
+                out, err = process.communicate(timeout=30)
+                ended_by_itself = True
+            except subprocess.TimeoutExpired:
+                ended_by_itself = False
+                process.kill()
+                out, err = process.communicate()
+            started_after_stop = recorded_process_ids(recorded, "codex")
+            check("a stop that lands while a relaunch is prepared: the first launch "
+                  "had failed and the relaunch was under way when the signal came",
+                  held and walked and "RETRYING: cut-codex — exit-1 — " in out,
+                  f"held {held}, walked {walked}, stdout {out!r}")
+            check("and no agent-binary starts after the signal, and the run ends by "
+                  "it with its copy removed",
+                  ended_by_itself and started_after_stop == []
+                  and process.returncode == -signal.SIGTERM
+                  and left_in_copies_root(base) == []
+                  and sum(line.startswith("STOPPED: SIGTERM ") for line in out.splitlines()) == 1
+                  and "FAILED:" not in out,
+                  f"ended by itself {ended_by_itself}, started {started_after_stop}, "
+                  f"exit {process.returncode}, copies root {left_in_copies_root(base)}, "
+                  f"stdout {out!r}, stderr {err!r}")
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.communicate()
+            end_stand_ins(recorded)
+
+    # Case 50: the lock that makes the stop and a launch exclusive, without a
+    # process. A cell's thread reads RUN_STOPPED and starts its agent-binary
+    # under AGENT_BINARY_LAUNCH_LOCK, and the handler sets RUN_STOPPED under
+    # it, so a launch is either started before the run is marked stopped, and
+    # then in the table the handler reads, or not started at all.
+    runner_gate = load_runner()
+    gate = getattr(runner_gate, "run_agent_binary_unless_run_stopped", None)
+    gate_lock = getattr(runner_gate, "AGENT_BINARY_LAUNCH_LOCK", None)
+    starts = []
+
+    def recorded_start(command, *arguments, **keywords):
+        starts.append(command[0])
+        raise OSError(f"{command[0]} was started")
+
+    real_gate_start = runner_gate.subprocess.Popen
+    gate_result = {}
+    try:
+        runner_gate.subprocess.Popen = recorded_start
+        # The thread is held at the lock; the run is marked stopped; the
+        # thread, let in, starts nothing.
+        if gate is not None and gate_lock is not None:
+            with gate_lock:
+                launching = threading.Thread(
+                    target=lambda: gate_result.update(returned=gate(["codex", "exec"])))
+                launching.start()
+                launching.join(0.3)
+                runner_gate.RUN_STOPPED.set()
+            launching.join(10)
+    finally:
+        runner_gate.subprocess.Popen = real_gate_start
+    check("a launch that waits on the lock while the run is marked stopped starts "
+          "nothing",
+          gate is not None and gate_lock is not None
+          and gate_result.get("returned", "never returned") is None and starts == [],
+          f"gate {gate}, returned {gate_result}, started {starts}")
+
+    # The other side: the handler waits for a start in progress, and marks the
+    # run stopped only once that agent-binary is in the table.
+    runner_gate = load_runner()
+    order = []
+    start_begun = threading.Event()
+
+    class SlowStart:
+        """A start that takes a while, then ends at once with nothing written."""
+        def __init__(self, command, *arguments, **keywords):
+            start_begun.set()
+            time.sleep(0.3)
+            order.append(f"started, run stopped: {runner_gate.RUN_STOPPED.is_set()}")
+            self.returncode = 0
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exception):
+            return False
+
+        def communicate(self, input=None, timeout=None):
+            return "", ""
+
+        def poll(self):
+            return 0
+
+    real_gate_start = runner_gate.subprocess.Popen
+    real_stop_processes = runner_gate.stop_processes_this_run_started
+    handlers_before = {number: signal.getsignal(number)
+                       for number in runner_gate.RUN_STOP_SIGNALS}
+    handler_raised = None
+    try:
+        runner_gate.subprocess.Popen = SlowStart
+        runner_gate.stop_processes_this_run_started = lambda: order.append(
+            f"table read, run stopped: {runner_gate.RUN_STOPPED.is_set()}")
+        launching = threading.Thread(target=lambda: runner_gate.run_agent_binary_unless_run_stopped(
+            ["claude", "-p"], stdout=subprocess.PIPE))
+        launching.start()
+        start_begun.wait(10)
+        try:
+            runner_gate.stop_run_on_signal(signal.SIGTERM, None)
+        except BaseException as error:
+            handler_raised = error
+        launching.join(10)
+    finally:
+        runner_gate.subprocess.Popen = real_gate_start
+        runner_gate.stop_processes_this_run_started = real_stop_processes
+        for number, handler in handlers_before.items():
+            if handler is not None:
+                signal.signal(number, handler)
+    check("the handler marks the run stopped only once a start in progress has "
+          "finished, and reads the table after",
+          order == ["started, run stopped: False", "table read, run stopped: True"]
+          and type(handler_raised).__name__ == "RunStoppedBySignal",
+          f"order {order}, handler raised {handler_raised!r}")
+
+    # And a stop that lands while a codex launch builds its permission profile,
+    # which on Linux runs `find` over the home after every check of the stop
+    # before it: nothing is started, nothing is printed.
+    runner_gate = load_runner()
+    starts = []
+
+    def profile_while_the_run_is_stopped(*arguments, **keywords):
+        runner_gate.RUN_STOPPED.set()
+        return []
+
+    real_gate_start = runner_gate.subprocess.Popen
+    real_profile = runner_gate.common.codex_credential_denying_permission_profile_arguments
+    buffer = io.StringIO()
+    try:
+        runner_gate.subprocess.Popen = recorded_start
+        runner_gate.common.codex_credential_denying_permission_profile_arguments = (
+            profile_while_the_run_is_stopped)
+        with contextlib.redirect_stdout(buffer):
+            try:
+                codex_result = runner_gate.run_codex("a prompt no model ever sees",
+                                                     pathlib.Path("/a/review/copy"))
+            except OSError as error:
+                codex_result = error
+    finally:
+        runner_gate.subprocess.Popen = real_gate_start
+        runner_gate.common.codex_credential_denying_permission_profile_arguments = real_profile
+    check("a stop that lands while a codex launch builds its profile starts no codex",
+          starts == [] and isinstance(codex_result, tuple)
+          and codex_result[0] != 0 and codex_result[4] is None
+          and buffer.getvalue() == "",
+          f"started {starts}, returned {codex_result!r}, printed {buffer.getvalue()!r}")
+
+    # Case 51: a launch the stop ended is not a failure of the agent's. Each
+    # launcher reads the stop again once its agent-binary has ended, and
+    # prints none of what that agent-binary wrote as it was ended: an
+    # interrupted codex prints a KeyboardInterrupt traceback, which used to
+    # land in the run's output above its STOPPED line. The claude chain does
+    # not go on to its next model.
+    for runtime in ("codex", "claude"):
+        runner_ended = load_runner()
+        calls = []
+
+        def ended_by_the_stop(command, *arguments, runner=runner_ended, **keywords):
+            calls.append(command[0])
+            runner.RUN_STOPPED.set()
+            return subprocess.CompletedProcess(
+                list(command), -signal.SIGINT, "",
+                "Traceback (most recent call last):\nKeyboardInterrupt\n")
+
+        runner_ended.run_agent_binary_unless_run_stopped = ended_by_the_stop
+        real_ended_profile = runner_ended.common.codex_credential_denying_permission_profile_arguments
+        runner_ended.common.codex_credential_denying_permission_profile_arguments = (
+            lambda *arguments, **keywords: [])
+        buffer = io.StringIO()
+        try:
+            with contextlib.redirect_stdout(buffer):
+                launcher = runner_ended.run_codex if runtime == "codex" else runner_ended.run_claude
+                ended = launcher("a prompt no model ever sees", pathlib.Path("/a/review/copy"))
+        finally:
+            runner_ended.common.codex_credential_denying_permission_profile_arguments = (
+                real_ended_profile)
+        check(f"a {runtime} launch the stop ended prints nothing it wrote, carries "
+              f"no cause, and launches nothing more",
+              buffer.getvalue() == "" and ended[0] != 0 and ended[4] is None
+              and calls == [runtime],
+              f"printed {buffer.getvalue()!r}, returned {ended!r}, launches {calls}")
+
+    # Case 52: a stop signal that lands after every cell has saved its report,
+    # here while the record ships. It stopped no agent, so the run does not
+    # print a STOPPED line telling the agent to run the whole command again:
+    # it prints what a finished run prints, ships the record, and ends by the
+    # signal.
+    with tempfile.TemporaryDirectory() as scratch:
+        base = pathlib.Path(scratch).resolve()
+        target = "docs/stopped-while-the-record-ships.md"
+        repo = scratch_repository_with_design(base, target)
+        programs, recorded = stand_in_agent_binaries(base)
+        ship_hold = base / "ship-hold"
+        environment = runner_process_environment(
+            programs, recorded, codex="report", claude="report")
+        environment["DRIVER_HOLD_FIRST_SHIP"] = str(ship_hold)
+        process = subprocess.Popen(
+            [sys.executable, "-B", str(runner_driver(base, repo)),
+             "--target", target, "--attack", "cut"],
+            env=environment, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        try:
+            held = wait_until(lambda: pathlib.Path(str(ship_hold) + ".held").exists())
+            process.send_signal(signal.SIGTERM)
+            try:
+                out, err = process.communicate(timeout=30)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                out, err = process.communicate()
+            records = sorted((repo / "sanity-check-records").glob("*"))
+            record = records[0] if len(records) == 1 else None
+            check("a stop that lands after every cell saved its report prints what a "
+                  "finished run prints, and no STOPPED line",
+                  held and record is not None
+                  and (record / "cut-codex.md").is_file() and (record / "cut-claude.md").is_file()
+                  and "STOPPED:" not in out
+                  and f"sanity-check complete: reports in {record}." in out
+                  and sum(line.startswith("record: shipped: ") for line in out.splitlines()) == 1,
+                  f"held {held}, record {record}, stdout {out!r}, stderr {err!r}")
+            check("and the run still ends by the signal, its copy removed",
+                  process.returncode == -signal.SIGTERM and left_in_copies_root(base) == [],
+                  f"exit {process.returncode}, copies root {left_in_copies_root(base)}")
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.communicate()
+            end_stand_ins(recorded)
+
+    # Case 53: another run's removal takes this run's owner file in the moment
+    # between its creation and this run's lock. The lock is then on a file no
+    # path names, and a copy made beside it would have no owner file: the next
+    # run would remove it from under this run's cells. The claim checks the
+    # file's identity under the lock and starts again with a new name.
+    with tempfile.TemporaryDirectory() as scratch:
+        root = pathlib.Path(scratch).resolve()
+        runner_claim = load_runner()
+        runner_claim.REVIEW_COPIES_ROOT = root
+        real_make_owner_file = runner_claim.tempfile.mkstemp
+        made = []
+
+        def owner_file_taken_before_the_lock(*arguments, **keywords):
+            descriptor, name = real_make_owner_file(*arguments, **keywords)
+            made.append(name)
+            if len(made) == 1:
+                # What another run's remove_review_copies_no_live_run_owns
+                # does to an owner file no lock holds yet.
+                os.unlink(name)
+            return descriptor, name
+
+        claimed, claim_error = None, None
+        try:
+            runner_claim.tempfile.mkstemp = owner_file_taken_before_the_lock
+            claimed = runner_claim.claim_review_copy_directory("design")
+        except Exception as error:
+            claim_error = error
+        finally:
+            runner_claim.tempfile.mkstemp = real_make_owner_file
+        holder, owner_file = claimed if claimed else (None, None)
+        owner_path = (holder.with_name(holder.name + runner_claim.REVIEW_COPY_OWNER_FILE_SUFFIX)
+                      if holder else None)
+        check("a claim whose owner file was taken before its lock starts again, and "
+              "its copy's directory has its owner file beside it",
+              claim_error is None and len(made) == 2 and holder is not None
+              and holder.is_dir() and owner_path.is_file()
+              and os.stat(owner_path).st_ino == os.fstat(owner_file.fileno()).st_ino
+              and sorted(path.name for path in root.iterdir())
+              == sorted([holder.name, owner_path.name]),
+              f"error {claim_error!r}, owner files made {made}, holder {holder}, "
+              f"root holds {sorted(path.name for path in root.iterdir())}")
+        if owner_file is not None:
+            owner_file.close()
 
     print()
     if failures:
