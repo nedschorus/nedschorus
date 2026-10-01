@@ -225,6 +225,8 @@ in the nedschorus repository, which this machine also clones:
 - `analysis/` -- analyses, placed by hand
 - `daily-full-test-runs/` -- each machine's daily run of every test suite on
   main, written by `scripts/daily-full-test-run-of-main.py`
+- `pull-request-head-test-runs/` -- each machine's test log of a pull request's
+  head, one per commit, written by `scripts/pull-request-head-test-run.py`
 
 To change this file, edit STORE_README in
 nc-systems/cold-read/cold-read-record-ship.py. The next shipment rewrites this file
