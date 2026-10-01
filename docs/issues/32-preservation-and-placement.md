@@ -1,11 +1,22 @@
+---
+issue: "[What NC preserves, where it goes, how that is codified, and how it is kept from drifting — design pair (destination: wiki page with subpages)](https://github.com/nedschorus/nedschorus/issues/32)"
+---
+
 Issue: https://github.com/nedschorus/nedschorus/issues/32
 
 # What NC Preserves, Where It Goes, How That Is Codified, and How It Is Kept From Drifting
 
 The preservation-and-placement design pair. Substance walked and ruled by the
 user 2026-07-27/28 (the standing-items walk's preservation thread); this
-document carries the walked content, the issue carries the state. Destination
+document carries the walked content and the issue's state. Destination
 form, user-set: this graduates into a wiki page with subpages when matured.
+
+The four parts, one line each (the sections below carry the full substance):
+
+1. **Inventory** — four classes: git-preserved (free), vendor-preserved (the vendor's job; archive the legacy repository, never delete it), machine-local (the only class taking real decisions; shrinks by placement, not by backup), deliberately-unpreserved-or-regenerable (recorded so absence reads as intent). Governing economics: losing ~5% of work beats hoarding material that taxes search and context.
+2. **Placement** — durable state belongs in the repository, moved at natural boundaries; machine-local is for live state; the global scope holds nothing.
+3. **Codification** — no new machinery: duties assign to the gatekeeper, the handoff build, and the writing skills; the graduated wiki page owns the recorded inventory.
+4. **Maintenance** — three anti-drift disciplines, plus detection as the guarantee: a scheduled watermarked sweep PROGRAM (not an agent) that enumerates new artifacts per store, classifies by rule, archives (never deletes; 30-day TTL on archives), and hands only the unclassifiable residue to an agent.
 
 ## Part 1 — the inventory: four classes, each with its recovery story
 
@@ -164,7 +175,7 @@ making orphaned dispatches visible — reduces the sweep's load but is not the
 guarantee. No dedicated drift-detection machinery beyond the sweep until
 incidents earn it, per the enforcement ladder.
 
-## Open questions (state carried on the issue)
+## Open questions
 
 1. **Memory placement — RESOLVED (user-walked 2026-07-31, fleet-side walk
    item 6):** the memory store is **uncommitted working state on one machine, not
@@ -238,6 +249,10 @@ incidents earn it, per the enforcement ladder.
    no sweep machinery, no new rule. Reopening triggers: an actual orphaned
    shared-store entry observed in the wild, or scheduled routine runs
    arriving with a real need to write shared stores.
+
+## Close condition
+
+The issue closes when the pair graduates to its wiki page with the open questions resolved, or is superseded.
 
 ## Relations
 
