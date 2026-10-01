@@ -55,6 +55,11 @@
             "type": "command",
             "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/ghi-issue-write-redirect.py",
             "timeout": 30
+          },
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/scripts/search-file-argument-read-as-option-guard-hook.py",
+            "timeout": 30
           }
         ]
       },
