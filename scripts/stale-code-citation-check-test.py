@@ -13,12 +13,24 @@ Every check is demonstrated both ways: once where it must fire and once where
 it must not. A detector that reports nothing anywhere would pass half a suite.
 """
 
+import importlib.util
 import os
 import shutil
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
+
+# Before anything runs git: a run started with GIT_DIR set, or with another
+# variable that redirects git, must still build this suite's scratch
+# repositories where the suite says, not in the repository the variable names.
+_git_environment_fixture_spec = importlib.util.spec_from_file_location(
+    "git_redirecting_environment_removal_test_fixture",
+    Path(__file__).resolve().with_name(
+        "git-redirecting-environment-removal-test-fixture.py"))
+_git_environment_fixture = importlib.util.module_from_spec(_git_environment_fixture_spec)
+_git_environment_fixture_spec.loader.exec_module(_git_environment_fixture)
+_git_environment_fixture.remove_git_redirecting_environment_variables_from_this_process()
 
 SCRIPTS = Path(__file__).resolve().parent
 PROGRAM = SCRIPTS / "stale-code-citation-check.py"

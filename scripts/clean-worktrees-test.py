@@ -37,6 +37,7 @@ HOME so the transcripts it reads are the suite's own.
 Run: python3 scripts/clean-worktrees-test.py
 """
 
+import importlib.util
 import os
 import shutil
 import subprocess
@@ -44,6 +45,17 @@ import sys
 import tempfile
 import time
 from pathlib import Path
+
+# Before anything runs git: a run started with GIT_DIR set, or with another
+# variable that redirects git, must still build this suite's scratch
+# repositories where the suite says, not in the repository the variable names.
+_git_environment_fixture_spec = importlib.util.spec_from_file_location(
+    "git_redirecting_environment_removal_test_fixture",
+    Path(__file__).resolve().with_name(
+        "git-redirecting-environment-removal-test-fixture.py"))
+_git_environment_fixture = importlib.util.module_from_spec(_git_environment_fixture_spec)
+_git_environment_fixture_spec.loader.exec_module(_git_environment_fixture)
+_git_environment_fixture.remove_git_redirecting_environment_variables_from_this_process()
 
 CLEAN_SCRIPT = Path(__file__).with_name("clean-worktrees.py")
 

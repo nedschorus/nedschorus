@@ -123,10 +123,13 @@ repository's files and exited 0, so the suite list itself was wrong while
 
 WHAT THIS DOES NOT COVER, stated because it is the case that caused the
 2026-09-22 damage: a suite a person or an agent runs DIRECTLY is not
-launched by this program and is not protected by this. The durable answer is
-nedschorus#639's "Next action" item 2 — a scratch repository that asserts
-itself after `git init` — which is an open design question across 21 files
-and is not this change.
+launched by this program and is not protected by this. Such a suite protects
+itself: a suite or fixture that runs `git init` first takes the variables
+listed above out of its own process, through
+scripts/git-redirecting-environment-removal-test-fixture.py, which reads
+GIT_REDIRECTING_ENVIRONMENT_VARIABLES from this file, and
+scripts/test-suites-run-directly-ignore-git-redirecting-environment-test.py
+checks that each one does. That is nedschorus#639's "Next action" item 2.
 
 SKIPPED CASES are reported from text, because no exit code carries them: a
 suite that skips a case still exits 0. Measured 2026-09-21: no suite uses
