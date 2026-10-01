@@ -1,11 +1,20 @@
 ---
+issue: "[Sweep the project's bare generic words to project terms, under the 2026-09-15 three-form rule](https://github.com/nedschorus/nedschorus/issues/386)"
 status: rulings record and working material for issue [Sweep the project's bare generic words to project terms, under the 2026-09-15 three-form rule](https://github.com/nedschorus/nedschorus/issues/386)
-as-of: 2026-09-17
+as-of: 2026-09-30
 ---
 
 # The project-term sweep: what the user ruled, and the work it leaves
 
-The pair document of issue [Sweep the project's bare generic words to project terms, under the 2026-09-15 three-form rule](https://github.com/nedschorus/nedschorus/issues/386). The issue body carries the summary and the next action; this file carries the substance: the five rulings from the MD-skills seat's walk of 2026-09-15 with the user's own words, the rename list ruled at the cold-read-research seat the same day, the terms the MD-skills seat proposes, and the cold-read skill change that makes the sweep self-sustaining. The walk file and its minutes are Mac-local files at the MD-skills seat's checkout, under `docs/walk/`, a gitignored directory that does not exist on main, so this is the durable copy.
+The GHI-MD of issue [Sweep the project's bare generic words to project terms, under the 2026-09-15 three-form rule](https://github.com/nedschorus/nedschorus/issues/386). This file carries the summary, what has landed and what remains, and the substance: the five rulings from the MD-skills seat's walk of 2026-09-15 with the user's own words, the rulings of 2026-09-16, the rename list ruled at the cold-read-research seat on 2026-09-15, the terms the MD-skills seat proposes, and the cold-read skill change that makes the sweep self-sustaining. The walk file and its minutes are Mac-local files at the MD-skills seat's checkout, under `docs/walk/`, a gitignored directory that does not exist on main, so this is the durable copy.
+
+## What this is
+
+On 2026-09-15 the user ruled how this project names its own words, and the rule landed in PR [Glossary: project terms are hyphenated phrases, abbreviations or slash names; the seat model's words become headwords; CLAUDE.md says so](https://github.com/nedschorus/nedschorus/pull/384): a word used in a project-specific sense is a project term, a term takes one of three forms (an abbreviation, a skill's slash name, or a hyphenated phrase), every term is in the glossary, and a new term is proposed to him in one message, not walked. This issue tracks the sweep of the tree to that rule.
+
+## Why it matters
+
+The rule made the tree non-compliant the moment it landed: the cold-read skill alone used ten words in a project-specific sense that no glossary entry defined. Mostly the hyphenated forms already existed in the code and the prose dropped them.
 
 ## The rule
 
@@ -82,6 +91,14 @@ The older half of the naming bullet already asks for multi-part file names; the 
 
 Ruled "y": the naming rule binds new file names only. An existing file is renamed only when someone is already editing it for another reason. No full rename of existing files.
 
+## Ruled 2026-09-16, in the cold-read-research seat's walk of the five seat-brief cold reads (item 1)
+
+1. **`info-agent`** joins the glossary. It is the user's name for the class of agents like ghi-info: "I proposed info-agent. I guess I have a preference for shorter names." The entry, approved as written: "info-agent — a long-lived agent that answers other agents' questions about one domain (the GHIs, PRs, the wiki, one system) and keeps that domain's knowledge current. It is not an agent-seat: a script runs it one question at a time, with no seat-brief and no handoffs, and the user does not talk to it. ghi-info is the first."
+2. **"domain-knowledge agent" is renamed to info-agent** in `docs/issues/26-dynamic-agent-team-model.md`, `docs/issues/46-ghi-info-agent-design.md` and the queue note `git show 93bcc041:docs/nedschorus-wiki/queue/26-lifecycle-revision-from-ghi-info.md`. That note was deleted on 2026-09-28 (queue-drain item 13) after its three lifecycle facts were written into `docs/issues/26-dynamic-agent-team-model.md` without the old term, so it needs no rename.
+3. **`agent-seat` keeps its glossary definition.** The proposed rename to interactive-agent was declined: "I'm fine with an agent-seat as defined".
+
+Already applied: the ghi seat-brief calls ghi-info an info-agent, landed in PR [Five seat briefs rewritten against current state, with the cold read's fixes and the walk's rulings](https://github.com/nedschorus/nedschorus/pull/454).
+
 ## Ruled at the cold-read-research seat, superseded 2026-09-17
 
 Renames for `docs/nedschorus-wiki/nedschorus-agent-seat-model.md` were ruled at that seat on 2026-09-15. The list as it was ruled that day, kept because a record that drops a superseded ruling leaves the next reader no way to tell which version he is looking at:
@@ -112,6 +129,8 @@ Not yet put to him. Under his ruling these go as one message from the MD-skills 
 
 `cold-read-fast-read` and `cold-read-full-run` were `fast-cold-read` and `full-cold-read` until 2026-09-15, when he renamed the sanity-check seat's `review-request` to `sanity-check-request`, "instrument first like the rest".
 
+The issue's original description records what happened next: "Approved the same evening, in one message each: the seven fresh-reader/fresh-agent sentences, old and new; the seven cold-read terms `cold-read-cell`, `cold-read-record`, `cold-read-grid`, `cold-read-tier`, `cold-read-fast-read`, `cold-read-full-run`, `cold-read-target`; and the file name `finding-dispositions.md` for the triage record both review instruments write, one name for both." The terms landed in the glossary in PR [Glossary: eleven project terms from the 2026-09-15 rulings, and the fresh-reader sentences swept](https://github.com/nedschorus/nedschorus/pull/396) (see "Landed" below). The cold-read record's triage file was later named `triage.md` (renamed from `dispositions.md` on 2026-09-18, per `nc-systems/cold-read/cold-read-record-ship.py`); the sanity-check instrument writes `finding-dispositions.md`.
+
 ## The cold-read skill change that makes this self-sustaining
 
 `.claude/skills/cold-read/SKILL.md` has no route for a terminology finding whose fix is a rename beyond the document under review, so such findings get rejected as out of scope. On 2026-09-14 fifteen rename proposals were rejected in `cold-read-records/2026-09-14-nedschorus-file-naming-and-location-standards-3/dispositions.md` (shipped to `nedlern@ned-box:/home/nedlern/nedschorus-logs/cold-read-records/`) as "the project's settled words", none reached the user, and his ruling the next day went the other way, although step 7 already says to ask before rejecting a criticism.
@@ -119,3 +138,23 @@ Not yet put to him. Under his ruling these go as one message from the MD-skills 
 Proposed addition to step 7, making four ask-the-user cases five: "...and when the fix is renaming a term this document does not own. A term this document does not own is one other files use, so renaming it is a change across the project and his to approve: put him the reviewer's proposed name, and on his approval make the rename its own task and its own change rather than folding it into this one. Record in `dispositions.md` that the rename was approved and where it went, or that he declined it." A declined rename leaves the document's word as it is and the finding recorded as declined; the document is not held for it.
 
 No change is needed to `.claude/skills/cold-read/prompts/terminology.md`: it already asks each reviewer for the exact words of a fix, and its option (c) is a constructed name following `CLAUDE.md`'s naming rule, so the conforming name arrives in the report. Skill text is operative prose, so this change takes a cold read and the user's walk before a pull request, and the edit needs a `.walk-approved` marker quoting his words.
+
+## Landed
+
+- PR [GHI-MD for #386: the project-term sweep's five rulings and the work they leave](https://github.com/nedschorus/nedschorus/pull/393): this document.
+- PR [Glossary: eleven project terms from the 2026-09-15 rulings, and the fresh-reader sentences swept](https://github.com/nedschorus/nedschorus/pull/396): the glossary entries approval-walk, fresh-reader, fresh-agent, NC and the seven cold-read terms, and the seven fresh-reader sentences in `.claude/skills/` and `CLAUDE.md`, plus the fast-read script's embedded prompt copy.
+- PR [cold-read skill: sweep its prose to the glossary's project terms](https://github.com/nedschorus/nedschorus/pull/405), merged 2026-09-16: the cold-read skill's prose swept to the seven terms, walked section by section and approved by the user 2026-09-16.
+- PR [cold-read scripts: sweep comments and docstrings to the glossary's project terms](https://github.com/nedschorus/nedschorus/pull/408), merged 2026-09-17: the cold-read scripts' comments and docstrings, no code changed.
+- PR [Cold-read reviewers read the glossary, and the terminology reviewer proposes key-terms](https://github.com/nedschorus/nedschorus/pull/533), 883f629: the cold-read reviewers read the glossary. All four prompts read `docs/nedschorus-wiki/nedschorus-glossary.md` before the document; the terminology prompt is rewritten to the user's rulings of 2026-09-18 and 2026-09-19 (a term is any word or short phrase; a project-term is one the glossary lists; a key-term is a term that is or should be a project-term; test (5) is the glossary check; the fixes run glossary name, standard term, the page's own term, then a proposed project-term; a two-meaning term gets one fix per meaning; a definition the glossary also holds is proposed dropped); `terminology.codex.md` is deleted, one prompt for both reviewers; the skill gains step 1, the glossary check, and step 8 is the user's own paragraph routing a proposed term to the glossary, to rejection, or to the new `docs/nedschorus-wiki/nedschorus-sdlc-terms.md`. The glossary gains key-term and SDLC-term. Its own cold-read-full-run found no reviewer proposing a rename of a project-term, which is the failure this work set out to stop; about a hundred findings on untouched text are held by GHI [cold-read skill: about a hundred findings from its 2026-09-19 six-reviewer read await their walk](https://github.com/nedschorus/nedschorus/issues/531). Walk minutes: `nedlern@ned-box:/home/nedlern/nedschorus-logs/walk/cold-read-skill-glossary-awareness-minutes.md`.
+- PR [sanity-check skill: steps 5 and 6 name claude and codex, not runtimes](https://github.com/nedschorus/nedschorus/pull/535), 4a3c916: the sanity-check skill's steps 5 and 6 name `claude` and `codex` rather than "runtime", after PR [Glossary: a sanity-check-cell runs its attack with claude or with codex](https://github.com/nedschorus/nedschorus/pull/525) did the same for the glossary's sanity-check-cell entry on the user's wording.
+
+## Remaining
+
+1. **The cold-read skill's ask-the-user route** for a terminology finding whose fix is a rename beyond the document: four ask-the-user cases become five (text in "The cold-read skill change that makes this self-sustaining" above, written when those cases were step 7; they are step 8 of `.claude/skills/cold-read/SKILL.md` today, and the record it names is `triage.md`). Skill prose: cold read, walk, marker. At the MD-skills seat.
+2. **The 2026-09-16 rulings above.** The info-agent glossary entry and the rename in the files named are not yet made. When the rename lands, the ghi seat-brief's sentence "the class GHI [Dynamic agent-team model: sparring pairs, on-tap domain experts, spy-triaged oversight (design capture; research pending)](https://github.com/nedschorus/nedschorus/issues/26) calls domain-knowledge agents" in `docs/agents/ghi-instructions.md` stops being true and drops that clause. Not yet assigned to a seat.
+
+## Notes
+
+Searched `gh issue list --state all --search "rename project term hyphenated"` at filing: no existing issue. Adjacent but distinct: GHI [Project vocabulary wiki page: define this project's own terms so a zero-context reader can resolve them](https://github.com/nedschorus/nedschorus/issues/213) (the glossary page itself), GHI [update-glossary skill: the editor rules for the nedschorus glossary, taken off the page (user-asked 2026-09-06)](https://github.com/nedschorus/nedschorus/issues/262) (the update-glossary skill's editor rules), GHI [wiki-write skill, and the detect-set-aside-ask hook that enforces it — checking the file, not the tool call](https://github.com/nedschorus/nedschorus/issues/343) (wiki-write skill).
+
+`scripts/md-drift-lint.py` flags seven lines in this document; merge-lane's reviewer checked all seven and found them false positives (quotes of a declined proposal, of renames not yet applied, and log-store paths that never exist in the repository). Do not "fix" them.
