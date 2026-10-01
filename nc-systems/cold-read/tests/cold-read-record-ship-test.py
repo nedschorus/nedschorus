@@ -123,10 +123,11 @@ with tempfile.TemporaryDirectory(prefix="cold-read-record-ship-test-") as scratc
     # 2026-09-27, walk file-naming-page-revision-2026-09-23, item 9): every
     # owner it names by path must exist, and no naming rule may come back.
     readme_text = (store_root / "README.md").read_text(encoding="utf-8")
-    check("the README lists all six kinds",
+    check("the README lists all seven kinds",
           all(f"- `{kind}/` -- " in readme_text
               for kind in ("cold-read-records", "sanity-check-records", "walk",
-                           "transcripts", "seats", "analysis")), readme_text)
+                           "transcripts", "seats", "analysis",
+                           "daily-full-test-runs")), readme_text)
     readme_owner_paths = [token for token in readme_text.split("`")
                           if token.endswith(".py") and "/" in token]
     repository_root = SYSTEM_DIRECTORY.parent.parent
