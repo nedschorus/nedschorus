@@ -1,3 +1,7 @@
+---
+issue: "[Open-source publishing and community strategy — Ned's Chorus (doc: docs/issues/4-open-source-publishing-community-strategy.md)](https://github.com/nedschorus/nedschorus/issues/4)"
+---
+
 Issue: https://github.com/nedschorus/nedschorus/issues/4
 
 ## Founding-context notes (new-vp review at admission, 2026-07-21)
@@ -6,6 +10,8 @@ Issue: https://github.com/nedschorus/nedschorus/issues/4
 - The daily journal's raw material largely already exists by construction: the committed `handoff/<NNNN>-transcript.md` series and the numbered handoffs are the build-and-learning record the journal entries distill from.
 - The strategy's seven publishing skills join the skills roster AFTER the five founding skills; each is built (or imported through the entry checkpoint) when its channel goes live, not before.
 - Body below is cops's staged text, admitted verbatim; revisions ride this pair as ordinary REVISE dispositions.
+- Staged by cops in the old system at the user's direction, and admitted on 2026-07-21 through the single-admission gate by the new-vp session (old system) 8f247959-314b-441b-abc9-099823cb3cb4.
+- Parent: GHI [Founding program — boot up nedschorus (plan of record: docs/cross-project/nedschorus-founding-plan.md)](https://github.com/nedschorus/nedschorus/issues/1).
 
 ## REVISE — five pre-execution requirements gate the first external action (user-ruled 2026-07-21, package-review item 10)
 
