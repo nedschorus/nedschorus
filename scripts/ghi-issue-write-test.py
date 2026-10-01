@@ -2911,6 +2911,11 @@ def run_landed_design_cases(scratch: Path):
              "holds none", "nc-systems/docs/loose-design.md"),
             ("a design level with its system's code is not one",
              "nc-systems/main-gatekeeper/main-gatekeeper-design.md"),
+            ("nor one level with a subsystem's code, four parts deep but "
+             "not in a docs/ directory",
+             "nc-systems/skills/cold-read/cold-read-design.md"),
+            ("a docs/ directory outside nc-systems/ holds none, however "
+             "deep", "a/b/docs/x-design.md"),
             ("nor is a design still in docs/issues/",
              "docs/issues/116-fleet-survives-machine-restart-design.md"),
             ("nor one in the issues queue",
@@ -3022,6 +3027,24 @@ def run_landed_design_cases(scratch: Path):
               refusal.code == 64 and "`issue:`" in str(refusal)
               and "create operation" in str(refusal), str(refusal))
 
+    # Main's copy decides, not the working tree's: with both files on disk
+    # and their lines disagreeing with main's copies, the listing answers
+    # from main. The edited design names 120 on disk and nothing on main;
+    # the unfiled one names nothing on disk and 120 on main.
+    disagreeing = Recorder({
+        "git ls-tree": Completed(f"{LANDED_DESIGN}\n"
+                                 "nc-systems/handoff/docs/"
+                                 "handoff-unfiled-design.md\n"),
+        f"git show origin/main:{LANDED_DESIGN}": Completed(LANDED_TEXT),
+        "git show origin/main:nc-systems/handoff/docs/handoff-unfiled":
+            Completed(landed_form()),
+    })
+    from_main = tool.ghi_md_paths_for_issue(120, scratch, disagreeing)
+    check("an issue's landed designs are the ones whose issue: line on "
+          "main names it, whatever the working tree's copy says",
+          from_main == ["nc-systems/handoff/docs/handoff-unfiled-design.md"],
+          str(from_main))
+
     elsewhere = scratch / "docs" / "drafts" / "handoff-notes-design.md"
     elsewhere.parent.mkdir(parents=True, exist_ok=True)
     elsewhere.write_text(landed_form(), encoding="utf-8")
@@ -3049,6 +3072,58 @@ def run_landed_design_cases(scratch: Path):
           "it now sits, and lands nothing",
           done and ran_with(rerun, "gh issue edit", "120", LANDED_DESIGN)
           and not rerun.ran("git worktree add"), str(rerun.commands()))
+
+    # The design arrived in docs/ by an ordinary pull request, so main's
+    # copy carries no issue: line, and this edit adds it, as validate_edit's
+    # refusal says to. Main holds the file at this path, so this edit counts
+    # it among the issue's files, as the rerun after the merge will. Without
+    # that, an issue with one other file was renamed after the design's
+    # heading, and an issue with no other file got a body of no links (PR
+    # 849, review round 1).
+    renamed_text = landed_form(text=LANDED_TEXT.replace(
+        "# Crash recovery for seats — recover-crashed-seats.py",
+        "# Crash recovery design, as built"))
+    design.write_text(renamed_text, encoding="utf-8")
+    other_file = "docs/issues/120-crash-recovery-notes.md"
+
+    def adding_the_line(listed, body):
+        return Recorder({
+            f"git show origin/main:{LANDED_DESIGN}": Completed(LANDED_TEXT),
+            "git merge-base": Completed(BASE_REVISION + "\n"),
+            f"git show {BASE_REVISION}:{LANDED_DESIGN}": Completed(
+                LANDED_TEXT),
+            "git ls-remote": Completed(""),
+            "gh pr create": Completed("https://github.com/x/y/pull/12\n"),
+            "gh issue view": issue_json(LANDED_TITLE, body),
+            "git ls-tree": Completed("".join(f"{p}\n" for p in listed)),
+        })
+
+    two_files = adding_the_line([other_file, LANDED_DESIGN],
+                                tool.links_body(REPO, [other_file]))
+    tool.edit(design, REPO, scratch, two_files, quiet)
+    check("adding a landed design's issue: line counts the design among "
+          "the issue's files, so an issue with another file is not renamed "
+          "after the design's heading",
+          two_files.ran("git worktree add")
+          and not ran_with(two_files, "gh issue edit", "--title"),
+          str(two_files.commands()))
+    check("and its body links both files, the design at the path main "
+          "already holds it",
+          ran_with(two_files, "gh issue edit", "--body", other_file,
+                   LANDED_DESIGN), str(two_files.commands()))
+
+    only_file = adding_the_line(
+        [LANDED_DESIGN],
+        tool.links_body(REPO,
+                        ["docs/issues/120-crash-recovery-for-seats-design.md"]))
+    tool.edit(design, REPO, scratch, only_file, quiet)
+    bodies = [call[call.index("--body") + 1] for call in only_file.calls
+              if call[:3] == ["gh", "issue", "edit"] and "--body" in call]
+    check("adding the line to an issue's only file links the design rather "
+          "than writing a body of no links",
+          bodies and all(LANDED_DESIGN in body for body in bodies),
+          str(bodies))
+    design.write_text(landed_form(), encoding="utf-8")
 
     # A number in the issue: line that no issue has is the author's line
     # being wrong, and the refusal says to correct that line — a landed
@@ -3080,6 +3155,44 @@ def run_landed_design_cases(scratch: Path):
               "only a filed file has, and sends it to the edit operation",
               refusal.code == 64 and "edit operation" in str(refusal)
               and "issue 120" in str(refusal), str(refusal))
+    # A rerun of create on the source a design was filed from, after the
+    # design moved to its system's docs/ when its issue closed: no numbered
+    # copy is left on main, and the landed copy is what stops a second
+    # issue (the Codex review cell's P2 on PR 849).
+    heading = "Crash recovery for seats — recover-crashed-seats.py"
+    filed_then_moved = tool.with_issue_frontmatter(LANDED_TEXT, REPO, 120,
+                                                   heading)
+    moved_on_main = Recorder({
+        GHI_MD_LISTING_CALL: Completed(""),
+        f"git ls-tree -r --name-only {MAIN_COMMIT} nc-systems/": Completed(
+            f"{LANDED_DESIGN}\nnc-systems/handoff/handoff-supervisor.py\n"),
+        f"git show {MAIN_COMMIT}:{LANDED_DESIGN}": Completed(
+            filed_then_moved),
+    })
+    try:
+        tool.refuse_if_already_landed_on_main(REPO, LANDED_TEXT, heading,
+                                              scratch, moved_on_main)
+        check("create refuses a source whose filed copy now sits in its "
+              "system's docs/", False, "it was not refused")
+    except tool.Refused as refusal:
+        check("create refuses a source whose filed copy now sits in its "
+              "system's docs/, and sends it to edit that copy",
+              refusal.code == 64 and LANDED_DESIGN in str(refusal)
+              and "/issues/120" in str(refusal), str(refusal))
+    other_design = Recorder({
+        GHI_MD_LISTING_CALL: Completed(""),
+        f"git ls-tree -r --name-only {MAIN_COMMIT} nc-systems/": Completed(
+            f"{LANDED_DESIGN}\n"),
+        f"git show {MAIN_COMMIT}:{LANDED_DESIGN}": Completed(
+            tool.with_issue_frontmatter("# Another design\n", REPO, 120,
+                                        "Another design")),
+    })
+    tool.refuse_if_already_landed_on_main(REPO, LANDED_TEXT, heading,
+                                          scratch, other_design)
+    check("a landed design with other content does not stop the create",
+          other_design.ran(f"git show {MAIN_COMMIT}:{LANDED_DESIGN}"),
+          str(other_design.commands()))
+
     fresh = scratch / "docs" / "issues" / "queue" / "fresh-design.md"
     fresh.parent.mkdir(parents=True, exist_ok=True)
     fresh.write_text(LANDED_TEXT, encoding="utf-8")
