@@ -14,7 +14,7 @@ It builds only the daily review. The rest of the 2026-09-17 design below is not 
 
 ## What the user ruled, 2026-09-30: a daily review from noon
 
-On 2026-09-20 the build was deferred, in walk open-questions-concerns-and-recommendations-2026-09-19, item 4, until "the store passes a threshold the user names". That trigger is recorded in `docs/issues/39-memory-agents-write-freely-and-each-reincarnation-drains-former-issue-body.md`. On 2026-09-30, in walk eight-deferrals-with-no-trigger-2026-09-29, item 3, the user replaced it. His words:
+On 2026-09-20 the build was deferred, in walk open-questions-concerns-and-recommendations-2026-09-19, item 4, until "the store passes a threshold the user names". That trigger stood in this issue's former description, which `git show f4a717d3:docs/issues/39-memory-agents-write-freely-and-each-reincarnation-drains-former-issue-body.md` prints; the ruling and the measurement behind it are in that walk's minutes, `nedlern@ned-box:/home/nedlern/nedschorus-logs/walk/open-questions-concerns-and-recommendations-2026-09-19-minutes.md`. On 2026-09-30, in walk eight-deferrals-with-no-trigger-2026-09-29, item 3, the user replaced it. His words:
 
 > Memory can be useful in the short term, but unless it's drained regularly it becomes counter productive. I think reviewing memory daily is the right approach, assuming all agents share the same memory file.
 
