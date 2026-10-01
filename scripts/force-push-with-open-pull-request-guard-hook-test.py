@@ -652,6 +652,65 @@ check("a substitution as the -C directory is still refused as unresolvable",
       decision == "deny" and "written out" in (reason or "") and not runner.calls,
       f"{decision}: {reason} {runner.calls}")
 
+# A quoted substitution must never hide a push the shell runs. In each command
+# the shell runs the force push, and the reader that read a double-quoted
+# string as one word found it.
+for case_name, command in [
+    ("a ( inside ${...} in a quoted substitution does not hide the force push after it",
+     'echo "$(a ${x%(*})"; git push --force origin the-pr-branch'),
+    ("a $'...' string holding \\' in a quoted substitution does not hide the force push after it",
+     "NOTE=\"$(a $'it\\'s')\"; git push --force origin the-pr-branch"),
+    ("a backticked force push in an unquoted-delimiter heredoc message is found: the shell runs it",
+     'git commit -m "$(cat <<EOF\nsay "never `git push --force origin the-pr-branch` here."\n'
+     'EOF\n)"'),
+]:
+    runner = ProbeRunner(open_pull_requests={"the-pr-branch": FAST_READ_PULL_REQUEST})
+    decision, reason = decide(command, runner)
+    check(case_name, decision == "deny", f"{decision}: {reason}")
+
+# A `cd` inside a quoted substitution moves the shell that runs the
+# substitution and no other: the push after the string runs where the command
+# began, and that is where the guard must look for the branch.
+runner = ProbeRunner(branch="the-pr-branch",
+                     open_pull_requests={"the-pr-branch": FAST_READ_PULL_REQUEST})
+decision, reason = decide(
+    'X="$(cd /another/repository && pwd)"; git push --force', runner)
+check("a cd inside a quoted substitution does not move the push after the string",
+      decision == "deny"
+      and ["git", "-C", SESSION_WORKTREE, "rev-parse", "--abbrev-ref", "HEAD"] in runner.calls
+      and not any("/another/repository" in argv for argv in runner.calls),
+      f"{decision}: {reason} {runner.calls}")
+
+runner = ProbeRunner(branch="the-pr-branch",
+                     open_pull_requests={"the-pr-branch": FAST_READ_PULL_REQUEST})
+decision, reason = decide(
+    'NAME="$(cd /another/repository && git config user.name)"; cd /a/third/place '
+    '&& git push --force', runner)
+check("a cd after the string still moves the push that follows it",
+      decision == "deny"
+      and ["git", "-C", "/a/third/place", "rev-parse", "--abbrev-ref", "HEAD"] in runner.calls,
+      f"{decision}: {reason} {runner.calls}")
+
+# Controls: a cd still moves a push inside the same substitution, and a
+# substitution nested in it starts where the outer one stands.
+runner = ProbeRunner(branch="the-pr-branch",
+                     open_pull_requests={"the-pr-branch": FAST_READ_PULL_REQUEST})
+decision, reason = decide(
+    'echo "pushed: $(cd /elsewhere/wt-fast-read && git push -f | tail -1)"', runner)
+check("a cd inside a quoted substitution moves the push inside the same substitution",
+      decision == "deny"
+      and ["git", "-C", "/elsewhere/wt-fast-read", "rev-parse", "--abbrev-ref", "HEAD"]
+      in runner.calls, f"{decision}: {reason} {runner.calls}")
+
+runner = ProbeRunner(branch="the-pr-branch",
+                     open_pull_requests={"the-pr-branch": FAST_READ_PULL_REQUEST})
+decision, reason = decide(
+    'echo "$(cd /elsewhere/wt-fast-read && echo "$(git push -f)")"', runner)
+check("a substitution nested in another starts in the outer substitution's directory",
+      decision == "deny"
+      and ["git", "-C", "/elsewhere/wt-fast-read", "rev-parse", "--abbrev-ref", "HEAD"]
+      in runner.calls, f"{decision}: {reason} {runner.calls}")
+
 # ---------------------------------------------------------------------------
 # The escape hatch: the one sanctioned rewrite, and the one form of it.
 # ---------------------------------------------------------------------------

@@ -584,13 +584,22 @@ def analyze_command_text(command, payload_cwd, guard):
 
     Heredoc bodies are dropped rather than analyzed: a body is data here, and
     this guard does not chase a push through a shell it feeds (see the module
-    docstring's stated limits)."""
+    docstring's stated limits).
+
+    A `cd` inside a double-quoted `$( ... )` moves the shell that runs the
+    substitution and no other, so the directory is carried per substitution:
+    a substitution starts in the directory of the one around it, and what it
+    does to its own directory ends with it."""
     shell_view, _heredoc_bodies = split_out_heredocs(command)
-    effective_directory = payload_cwd
-    directory_is_unresolved = None
+    directories = {(): (payload_cwd, None)}  # per substitution: (directory, unresolved cd target)
     for words in tokenize_simple_commands(shell_view):
         if not words:
             continue
+        substitution = getattr(words, "substitution", ())
+        enclosing = substitution
+        while enclosing not in directories:
+            enclosing = enclosing[:-1]
+        effective_directory, directory_is_unresolved = directories[enclosing]
         # A `cd` may carry environment assignments in front, like any command.
         program_index = 0
         while (program_index < len(words)
@@ -604,6 +613,7 @@ def analyze_command_text(command, payload_cwd, guard):
             else:
                 effective_directory = resolve_directory(effective_directory, target)
                 directory_is_unresolved = None
+            directories[substitution] = (effective_directory, directory_is_unresolved)
             continue
         invocation = find_git_push_invocation(words)
         if invocation is None or invocation["sanctioned"]:

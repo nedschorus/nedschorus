@@ -659,6 +659,111 @@ check("the heredoc inside the double-quoted substitution is split out, body and 
       and [body.splitlines()[0] for _line, body in heredocs] == ["Document the rule"],
       (shell_view, heredocs))
 
+# --- a quoted substitution must never hide a command the shell runs ---
+# In each command below the shell runs the tmux command. The reader that read
+# a double-quoted string as one word listed that command, by reading on past
+# the string's closing quote. Reading the substitution as commands must not
+# lose it: these are the shapes where the first version of that reading did.
+
+for case_name, command in [
+    ("a ( inside ${...} does not hold the substitution open: the command after it is read",
+     'echo "$(a ${x%(*})"; tmux send-keys -t seat-a x'),
+    ("a $'...' string holding \\' ends at its own quote: the command after it is read",
+     "NOTE=\"$(a $'it\\'s')\"; tmux send-keys -t seat-a x"),
+    ("a heredoc in quoted arithmetic with a lone ' in its body: the command after it is read",
+     "N=\"$(( $(cat <<'EOF'\nit's 1\nEOF\n) + 1 ))\"; tmux send-keys -t seat-a x"),
+    # The shell rejects this one. It stands for every reading of a
+    # substitution that loses its place and never finds the closing ).
+    ("a substitution the reader cannot close: the command after the string is still read",
+     'echo "$(a \'unclosed)"; tmux send-keys -t seat-a x'),
+]:
+    reason = decide(command, StubRunner(stdout="1\n"))
+    check(case_name, reason is not None and "attached client" in reason, reason)
+
+words = guard.tokenize_simple_commands('echo "$(a ${x%(*}; b ${y:-$(c)})" && d')
+check("inside ${...} a parenthesis is a word character, and a $( there is still read",
+      words == [["a", "${x%(*}"], ["b", "${y:-$"], ["c"], ["}"],
+                ["echo", "$(a ${x%(*}; b ${y:-$(c)})"], ["d"]], words)
+
+words = guard.tokenize_simple_commands("a $'it\\'s' b; echo $'x'; c 'it\\'s'")
+check("$'...' ends at its first unescaped quote, and a plain '...' at its first quote",
+      words[0] == ["a", "$it\\'s", "b"] and words[1] == ["echo", "$x"]
+      and words[2][0] == "c", words)
+
+# The bare form, $( ... ) outside quotes, read the $'...' string the same
+# wrong way before this change, so the command after it passed there too.
+reason = decide("NOTE=$(a $'it\\'s'); tmux send-keys -t seat-a x", StubRunner(stdout="1\n"))
+check("the same $'...' string in a bare substitution no longer hides the command after it",
+      reason is not None and "attached client" in reason, reason)
+
+# A heredoc whose delimiter is not quoted is not plain data: the shell expands
+# its body, and runs every $( ... ) and backticked command in it, before the
+# consumer sees it. Those commands are read; the rest of the body is data.
+unquoted_heredoc_message_running_a_backticked_command = (
+    'git commit -m "$(cat <<EOF\n'
+    'say "never `tmux send-keys -t seat-a x` here."\n'
+    "EOF\n"
+    ')"'
+)
+reason = decide(unquoted_heredoc_message_running_a_backticked_command, StubRunner(stdout="1\n"))
+check("a backticked command in an unquoted-delimiter heredoc inside \"$( ... )\" is read",
+      reason is not None and "attached client" in reason, reason)
+
+for case_name, command in [
+    ("a backticked command in an unquoted-delimiter heredoc at the top level is read",
+     "cat > notes.md <<EOF\nnever `tmux send-keys -t seat-a x` here\nEOF"),
+    ("a $( ... ) in an unquoted-delimiter heredoc at the top level is read",
+     "cat > notes.md <<-EOF\n\tseat: $(tmux send-keys -t seat-a x)\n\tEOF"),
+]:
+    reason = decide(command, StubRunner(stdout="1\n"))
+    check(case_name, reason is not None and "attached client" in reason, reason)
+
+runner = StubRunner(stdout="1\n")
+check("escaped \\` and \\$( in an unquoted-delimiter heredoc stay data (no probes)",
+      decide("cat > notes.md <<EOF\nnever \\`tmux send-keys -t seat-a x\\` "
+             "or \\$(tmux send-keys -t seat-b y) here\nEOF", runner) is None
+      and not runner.calls, runner.calls)
+
+shell_view, heredocs = guard.split_out_heredocs(
+    "cat <<EOF\nnever `tmux send-keys -t seat-a x` or $(date +%H) here\nEOF\nls")
+check("an unquoted-delimiter heredoc leaves its substitutions in the shell view, one per line",
+      shell_view == "cat <<EOF\ntmux send-keys -t seat-a x\ndate +%H\nls"
+      and heredocs == [("cat <<EOF",
+                        "never `tmux send-keys -t seat-a x` or $(date +%H) here")],
+      (shell_view, heredocs))
+
+# The heredoc scan keeps its place past the same two forms: a heredoc opened
+# on the line after either is still split out, and its body is data.
+for case_name, first_line in [
+    ("the heredoc scan reads past ${x%(*}: a heredoc on the next line is split out",
+     'X="$(a ${x%(*})"'),
+    ("the heredoc scan reads past $'it\\'s': a heredoc on the next line is split out",
+     "X=\"$(a $'it\\'s')\""),
+]:
+    runner = StubRunner(stdout="1\n")
+    check(case_name,
+          decide(first_line + "\ncat <<'EOF'\nnever `tmux send-keys -t seat-a x`\nEOF",
+                 runner) is None and not runner.calls, runner.calls)
+
+# Controls for the heredoc scan inside a quoted substitution: each passes
+# before this change too, and each fails if the scan closes the substitution
+# at the first ), opens one at an escaped \$(, or does not return to the
+# string when the substitution closes.
+runner = StubRunner(stdout="1\n")
+check("a heredoc opened after a subshell inside the quoted substitution is split out",
+      decide("X=\"$( (a); cat <<'EOF'\nnever `tmux send-keys -t seat-a x`\nEOF\n)\"",
+             runner) is None and not runner.calls, runner.calls)
+
+reason = decide("echo \"run \\$(cat <<'EOF' yourself\"\ntmux send-keys -t seat-a x",
+                StubRunner(stdout="1\n"))
+check("an escaped \\$( opens no substitution for the heredoc scan: << after it is data",
+      reason is not None and "attached client" in reason, reason)
+
+reason = decide('echo "$(a) see <<EOF"\ntmux send-keys -t seat-a x\nEOF',
+                StubRunner(stdout="1\n"))
+check("after the substitution closes the scan is back in the string: << there is data",
+      reason is not None and "attached client" in reason, reason)
+
 
 # --- the ssh invocation parser ---
 

@@ -43,7 +43,9 @@ heredoc); a body is data unless its consumer executes it — `osascript
 <<EOF` is checked for synthetic typing, and a body piped to or fed to a
 shell (`sh`, `bash`, `zsh`) is analyzed as a command itself, as are `sh -c`
 execution strings (the c may ride in a flag cluster, `bash -lc`) and `eval`
-arguments. Unquoted `#` comments are stripped the way the shell strips
+arguments. When the heredoc's delimiter is not quoted the shell expands the
+body, so each `$( ... )` and backticked command in the body is read as the
+commands it is. Unquoted `#` comments are stripped the way the shell strips
 them. An `ssh` whose
 remote command contains the tmux invocation attributes probes to that host
 (carrying -p/-i/-l); ssh found elsewhere in a command — e.g. inside a
@@ -184,8 +186,19 @@ class GuardRun:
         self.depth = 0
 
 
-def scan_line_for_heredoc_markers(line, in_single, in_double,
-                                  substitution_depths):
+class HeredocScanState:
+    """What the heredoc scan carries from one line to the next: which kind of
+    quote it is inside, and one entry per `$(` opened inside double quotes
+    and still open, counting the parentheses open inside it."""
+
+    def __init__(self):
+        self.in_single = False   # inside '...'
+        self.in_ansi_c = False   # inside $'...', where \' does not end the string
+        self.in_double = False
+        self.substitution_depths = []
+
+
+def scan_line_for_heredoc_markers(line, state):
     """Find heredoc delimiters opened on this shell line. Quote-aware, with
     quote state carried in and out so a `<<` inside a string — even a string
     opened on an earlier line — is data. `<<<` is a here-string and a purely
@@ -193,28 +206,36 @@ def scan_line_for_heredoc_markers(line, in_single, in_double,
 
     A `$(` inside double quotes opens a command substitution, which is shell
     again until its matching `)`, so a `<<` there does open a heredoc — the
-    form of `git commit -m "$(cat <<'EOF' ... )"`. substitution_depths holds
-    one entry per such substitution still open, counting the parentheses
-    open inside it, and is updated in place.
-    Returns (terminators, in_single, in_double)."""
+    form of `git commit -m "$(cat <<'EOF' ... )"`. A parenthesis inside a
+    `${ ... }` of that substitution belongs to the expansion's pattern, as in
+    `${x%(*}`, and closes nothing unless a `$(` inside the braces opened it.
+
+    Returns a list of (terminator, body_is_expanded) pairs and updates state
+    in place. body_is_expanded is True when no part of the delimiter is
+    quoted: the shell then expands the body before the consumer reads it."""
     terminators = []
+    depths = state.substitution_depths
+    braces = []  # (substitution level, its parenthesis count) at each open ${
     i, n = 0, len(line)
     while i < n:
         char = line[i]
-        if in_single:
+        if state.in_single or state.in_ansi_c:
+            if char == "\\" and state.in_ansi_c:
+                i += 2
+                continue
             if char == "'":
-                in_single = False
+                state.in_single = state.in_ansi_c = False
             i += 1
             continue
-        if in_double:
+        if state.in_double:
             if char == "\\":
                 i += 2
                 continue
             if char == '"':
-                in_double = False
+                state.in_double = False
             elif line[i:i + 2] == "$(":
-                substitution_depths.append(0)
-                in_double = False
+                depths.append(0)
+                state.in_double = False
                 i += 1
             i += 1
             continue
@@ -222,21 +243,40 @@ def scan_line_for_heredoc_markers(line, in_single, in_double,
             i += 2
             continue
         if char == "'":
-            in_single = True
+            if i and line[i - 1] == "$" and (i < 2 or line[i - 2] != "\\"):
+                state.in_ansi_c = True
+            else:
+                state.in_single = True
             i += 1
             continue
         if char == '"':
-            in_double = True
+            state.in_double = True
             i += 1
             continue
-        if char in "()" and substitution_depths:
+        if depths and line[i:i + 2] == "${":
+            braces.append((len(depths), depths[-1]))
+            i += 2
+            continue
+        in_braces = bool(braces) and braces[-1][0] == len(depths)
+        if char == "}" and in_braces:
+            braces.pop()
+            i += 1
+            continue
+        if char in "()" and depths:
+            if in_braces and (
+                    (char == "(" and line[i - 1:i] != "$")
+                    or (char == ")" and depths[-1] <= braces[-1][1])):
+                i += 1  # part of the expansion's pattern
+                continue
             if char == "(":
-                substitution_depths[-1] += 1
-            elif substitution_depths[-1]:
-                substitution_depths[-1] -= 1
+                depths[-1] += 1
+            elif depths[-1]:
+                depths[-1] -= 1
             else:
-                substitution_depths.pop()
-                in_double = True  # back in the string the $( was opened in
+                depths.pop()
+                state.in_double = True  # back in the string the $( was opened in
+                while braces and braces[-1][0] > len(depths):
+                    braces.pop()
             i += 1
             continue
         if char == "#" and (i == 0 or line[i - 1] in " \t;&|()`"):
@@ -255,7 +295,7 @@ def scan_line_for_heredoc_markers(line, in_single, in_double,
             if j < n and line[j] in "'\"":
                 closing = line.find(line[j], j + 1)
                 if closing != -1:
-                    terminators.append(line[j + 1:closing])
+                    terminators.append((line[j + 1:closing], False))
                     i = closing + 1
                     continue
                 i = j + 1
@@ -264,13 +304,38 @@ def scan_line_for_heredoc_markers(line, in_single, in_double,
             if match:
                 delimiter = match.group(0)
                 if not delimiter.isdigit():
-                    terminators.append(delimiter)
+                    terminators.append((delimiter, "\\" not in delimiter))
                 i = j + len(delimiter)
                 continue
             i = j
             continue
         i += 1
-    return terminators, in_single, in_double
+    return terminators
+
+
+def substitutions_in_expanded_text(text):
+    """The command lists the shell runs while it expands text the way it
+    expands the body of a heredoc whose delimiter is not quoted: the inside of
+    each `$( ... )` and of each pair of backticks. A backslash takes the
+    character after it out of play, as it does for the shell there."""
+    found = []
+    i, n = 0, len(text)
+    while i < n:
+        if text[i] == "\\":
+            i += 2
+        elif text[i:i + 2] == "$(":
+            _commands, closing = tokenize_command_list(text, i + 2, (i,))
+            found.append(text[i + 2:closing])
+            i = closing + 1
+        elif text[i] == "`":
+            closing = i + 1
+            while closing < n and text[closing] != "`":
+                closing += 2 if text[closing] == "\\" else 1
+            found.append(text[i + 1:closing])
+            i = closing + 1
+        else:
+            i += 1
+    return found
 
 
 def split_out_heredocs(command):
@@ -283,27 +348,35 @@ def split_out_heredocs(command):
     the script when the consumer executes it (`osascript <<EOF`, `sh <<EOF`),
     so consumers are kept for the caller to judge.
 
+    One part of a body is not data: when no part of the delimiter is quoted
+    (`<<EOF`, not `<<'EOF'`), the shell expands the body and runs every
+    `$( ... )` and backticked command in it before the consumer reads a
+    character. Each of those command lists stays in the shell view, on a line
+    of its own where the body was, so the callers read it as the commands it
+    is; the rest of the body is data as before.
+
     Terminator matching strips indentation, which is laxer than the shell
     for `<<` without a dash; a body ending early only exposes more lines to
     analysis — the fail-closed direction."""
     shell_lines, heredocs = [], []
     lines = command.split("\n")
     index = 0
-    in_single = in_double = False
-    substitution_depths = []
+    state = HeredocScanState()
     while index < len(lines):
         line = lines[index]
-        terminators, in_single, in_double = scan_line_for_heredoc_markers(
-            line, in_single, in_double, substitution_depths)
+        terminators = scan_line_for_heredoc_markers(line, state)
         shell_lines.append(line)
         index += 1
-        for terminator in terminators:
+        for terminator, body_is_expanded in terminators:
             body_lines = []
             while index < len(lines) and lines[index].strip() != terminator:
                 body_lines.append(lines[index])
                 index += 1
             index += 1  # the terminator line itself
-            heredocs.append((line, "\n".join(body_lines)))
+            body = "\n".join(body_lines)
+            heredocs.append((line, body))
+            if body_is_expanded:
+                shell_lines.extend(substitutions_in_expanded_text(body))
     return "\n".join(shell_lines), heredocs
 
 
@@ -319,19 +392,41 @@ def tokenize_simple_commands(shell_text):
     runs. Its simple commands are listed ahead of the command whose word
     holds it, in the order the shell runs them, and that word keeps the
     substitution's text unexpanded, so a caller testing a word for `$` still
-    finds it."""
-    commands, _end = tokenize_command_list(shell_text, 0, False)
+    finds it. Each of those commands is a SubstitutionCommand, which says
+    which substitution it sits in.
+
+    A reading of a substitution that never finds its closing `)` has lost its
+    place, and must not take the rest of the command with it: the commands it
+    found are kept, and the string is then read to its closing quote as
+    data, so every command after the string is still listed."""
+    commands, _end = tokenize_command_list(shell_text, 0, ())
     return commands
 
 
-def tokenize_command_list(shell_text, start, inside_command_substitution):
-    """tokenize_simple_commands from index start. Returns (commands, end):
-    inside a command substitution, end is the index of the `)` that closes
-    it; otherwise, and for a substitution that never closes, the length of
-    the text."""
+class SubstitutionCommand(list):
+    """A simple command found inside a double-quoted `$( ... )`: its words,
+    and in `substitution` the substitution it sits in and every one around
+    that, outermost first. The shell runs a substitution in a shell of its
+    own, so a caller that carries state from one command to the next, as the
+    force-push guard carries a `cd`, keeps that state inside the substitution.
+    To every other caller it is the list of words it always was."""
+
+    def __init__(self, words, substitution):
+        super().__init__(words)
+        self.substitution = substitution
+
+
+def tokenize_command_list(shell_text, start, substitution):
+    """tokenize_simple_commands from index start. substitution is empty at
+    the top level; inside a double-quoted `$( ... )` it names that
+    substitution and the ones around it. Returns (commands, end): inside a
+    substitution, end is the index of the `)` that closes it; otherwise, and
+    for a substitution that never closes, the length of the text."""
     commands, current = [], []
     word = None
     open_parentheses = 0
+    brace_depths = []   # open_parentheses at each ${ still open
+    last_dollar = None  # index of the last unquoted, unescaped $
 
     def end_word():
         nonlocal word
@@ -343,7 +438,8 @@ def tokenize_command_list(shell_text, start, inside_command_substitution):
         nonlocal current
         end_word()
         if current:
-            commands.append(current)
+            commands.append(
+                SubstitutionCommand(current, substitution) if substitution else current)
             current = []
 
     i, n = start, len(shell_text)
@@ -362,29 +458,41 @@ def tokenize_command_list(shell_text, start, inside_command_substitution):
         if char == "'":
             if word is None:
                 word = []
-            closing = shell_text.find("'", i + 1)
-            if closing == -1:
-                word.append(shell_text[i + 1:])
-                i = n
+            closing = i + 1
+            if last_dollar == i - 1:
+                # $'...': a backslash escapes, so \' does not end the string.
+                while closing < n and shell_text[closing] != "'":
+                    closing += 2 if shell_text[closing] == "\\" else 1
             else:
-                word.append(shell_text[i + 1:closing])
-                i = closing + 1
+                closing = shell_text.find("'", i + 1)
+                if closing == -1:
+                    closing = n
+            word.append(shell_text[i + 1:closing])
+            i = min(closing + 1, n)
             continue
         if char == '"':
             if word is None:
                 word = []
             piece = []
+            lost_its_place = False
             j = i + 1
             while j < n and shell_text[j] != '"':
                 if shell_text[j] == "\\" and j + 1 < n and shell_text[j + 1] in '"\\$`':
                     piece.append(shell_text[j + 1])
                     j += 2
-                elif shell_text[j:j + 2] == "$(":
+                elif shell_text[j:j + 2] == "$(" and not lost_its_place:
                     substituted, closing = tokenize_command_list(
-                        shell_text, j + 2, True)
+                        shell_text, j + 2, substitution + (j,))
                     commands.extend(substituted)
-                    piece.append(shell_text[j:closing + 1])
-                    j = closing + 1
+                    if closing < n:
+                        piece.append(shell_text[j:closing + 1])
+                        j = closing + 1
+                    else:
+                        # Never closed. Keep what it found, and read on to
+                        # this string's closing quote as data.
+                        lost_its_place = True
+                        piece.append("$(")
+                        j += 2
                 else:
                     piece.append(shell_text[j])
                     j += 1
@@ -396,13 +504,25 @@ def tokenize_command_list(shell_text, start, inside_command_substitution):
             i += 1
             continue
         if char in COMMAND_SEPARATOR_CHARS:
+            if brace_depths and (
+                    (char == "(" and shell_text[i - 1] != "$")
+                    or (char == ")" and open_parentheses <= brace_depths[-1])):
+                # Inside ${ ... } a parenthesis belongs to the expansion's
+                # pattern, as in ${x%(*}, unless a $( inside the braces
+                # opened it.
+                if word is None:
+                    word = []
+                word.append(char)
+                i += 1
+                continue
             end_command()
-            if inside_command_substitution and char == "(":
+            if char == "(":
                 open_parentheses += 1
-            elif inside_command_substitution and char == ")":
-                if not open_parentheses:
+            elif char == ")":
+                if open_parentheses:
+                    open_parentheses -= 1
+                elif substitution:
                     return commands, i
-                open_parentheses -= 1
             i += 1
             continue
         if char == "#" and word is None:
@@ -414,6 +534,15 @@ def tokenize_command_list(shell_text, start, inside_command_substitution):
             continue
         if word is None:
             word = []
+        if char == "$":
+            last_dollar = i
+            if shell_text[i + 1:i + 2] == "{":
+                brace_depths.append(open_parentheses)
+                word.append("${")
+                i += 2
+                continue
+        elif char == "}" and brace_depths:
+            brace_depths.pop()
         word.append(char)
         i += 1
     end_command()
