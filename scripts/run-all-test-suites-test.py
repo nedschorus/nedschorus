@@ -25,6 +25,7 @@ import importlib.util
 import json
 import os
 import pathlib
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -544,12 +545,18 @@ RECORDING_SUITES = {
         "subprocess.run(['git', 'ls-files'], check=True, capture_output=True)\n"),
     # git run from the checkout on a repository of the suite's own reads
     # nothing of the checkout's, so a change to the checkout never selects it.
+    # An option's value before the directory (`-b main`, `--origin upstream`)
+    # is not the directory: read as one, it resolves inside the checkout.
     "runs-git-on-its-own-repository-test.py": (
         "import subprocess, tempfile\n"
         "with tempfile.TemporaryDirectory() as own:\n"
         "    subprocess.run(['git', 'init', '-q', own + '/origin'], check=True)\n"
         "    subprocess.run(['git', 'clone', '-q', own + '/origin', own + '/copy'],\n"
-        "                   check=True, capture_output=True)\n"),
+        "                   check=True, capture_output=True)\n"
+        "    subprocess.run(['git', 'init', '-q', '--bare', '-b', 'main', own + '/bare'],\n"
+        "                   check=True)\n"
+        "    subprocess.run(['git', 'clone', '-q', '--origin', 'upstream', own + '/origin',\n"
+        "                    own + '/named-copy'], check=True, capture_output=True)\n"),
     "reads-nothing-else-test.py": PASSES,
     "reads-a-file-only-when-asked-test.py": (
         f"if (pathlib.Path(os.environ['{RAN_FILE_VARIABLE}']).parent / 'ask.txt').exists():\n"
@@ -614,14 +621,14 @@ with tempfile.TemporaryDirectory() as scratch:
           in recording(root, "loads-a-program-by-path-test.py").get("reads", {}),
           recording(root, "loads-a-program-by-path-test.py"))
     check("a directory the suite lists is recorded, and the import system's listings are not",
-          recording(root, "lists-a-directory-test.py").get("lists") == ["skills"],
+          recording(root, "lists-a-directory-test.py").get("lists") == {"skills": ["one.md"]},
           recording(root, "lists-a-directory-test.py"))
     check("a git command run on the checkout is recorded",
           recording(root, "lists-files-through-git-test.py").get(
               "git_commands_on_the_checkout") == ["ls-files"],
           recording(root, "lists-files-through-git-test.py"))
     check("git init and git clone of a repository outside the checkout, run from the "
-          "checkout, are not recorded as git on the checkout",
+          "checkout, are not recorded as git on the checkout, with option values or without",
           recording(root, "runs-git-on-its-own-repository-test.py").get(
               "git_commands_on_the_checkout") == [],
           recording(root, "runs-git-on-its-own-repository-test.py"))
@@ -702,6 +709,265 @@ with tempfile.TemporaryDirectory() as scratch:
     check("a commit git cannot resolve is refused, exit 2, before anything runs",
           result.returncode == 2 and CHANGED_SINCE in result.stderr, (result.returncode,
                                                                       result.stderr))
+
+# --- Selection never trusts a recording it cannot show is complete and of ----
+# --- these files -------------------------------------------------------------
+# merge-lane-2's review of round 1 (review 5373089211 on pull request
+# "The test runner selects suites by their recorded inputs") and mac-claude's
+# (review 5373031797): in each case below, a suite that reads a changed file
+# was NOT SELECTED, and run directly it failed. Every case here fails against
+# the runner at c43bad62, except the `git show` case, which fails there only
+# where strace records (ned-box, run directly).
+
+
+def path_without_strace(root):
+    """A PATH holding git and nothing else, so the audit hook records alone,
+    as on the Mac and inside a full run on ned-box."""
+    bin_dir = root / "bin-without-strace"
+    bin_dir.mkdir(exist_ok=True)
+    if not (bin_dir / "git").exists():
+        (bin_dir / "git").symlink_to(shutil.which("git"))
+    return {"PATH": str(bin_dir)}
+
+
+def select_since(root, since, environment_extra=None):
+    (root / "ran.txt").unlink(missing_ok=True)
+    return run(root, CHANGED_SINCE, since, environment_extra=environment_extra)
+
+
+def head(repo):
+    return git(repo, "rev-parse", "HEAD").stdout.strip()
+
+
+# A recording made on another branch. The store is shared by every worktree
+# and clone on a machine, so the recording selection reads may have been
+# made where the suite read less than it reads here.
+with tempfile.TemporaryDirectory() as scratch:
+    root = pathlib.Path(scratch)
+    repo = make_repo(root, {"reads-two-files-test.py": (
+        "for name in ('p.txt', 'q.txt'):\n"
+        "    assert pathlib.Path(name).read_text() == 'ok\\n', name\n")})
+    reads_both = commit_files(repo, {"p.txt": "ok\n", "q.txt": "ok\n"}, "inputs")
+    git(repo, "checkout", "-q", "-b", "reads-less")
+    commit_files(repo, {"reads-two-files-test.py": SUITE_PREAMBLE + (
+        "assert pathlib.Path('p.txt').read_text() == 'ok\\n'\n")}, "reads only p.txt")
+    run(root)
+    git(repo, "checkout", "-q", reads_both)
+    (repo / "q.txt").write_text("broken\n")
+    result = select_since(root, reads_both)
+    check("a recording made on another branch, where the suite read fewer files, does not "
+          "keep the suite from running",
+          ran(root) == ["reads-two-files-test.py"] and result.returncode == 1,
+          (ran(root), result.stdout))
+    check("the SELECTED line says the recording read another copy of a file",
+          "SELECTED reads-two-files-test.py: its recording read another copy of "
+          "reads-two-files-test.py than the checkout holds, so what it reads here is unknown"
+          in lines(result.stdout), result.stdout)
+
+with tempfile.TemporaryDirectory() as scratch:
+    root = pathlib.Path(scratch)
+    repo = make_repo(root, {"reads-every-note-test.py": (
+        "for name in sorted(os.listdir('notes')):\n"
+        "    assert (pathlib.Path('notes') / name).read_text() == 'ok\\n', name\n")})
+    commit_files(repo, {"notes/a.txt": "ok\n"}, "one note")
+    run(root)
+    two_notes = commit_files(repo, {"notes/b.txt": "ok\n"}, "a second note")
+    (repo / "notes/b.txt").write_text("broken\n")
+    result = select_since(root, two_notes)
+    check("a recording that listed a directory holding other entries than the checkout's "
+          "does not keep the suite from running",
+          ran(root) == ["reads-every-note-test.py"] and result.returncode == 1,
+          (ran(root), result.stdout))
+
+with tempfile.TemporaryDirectory() as scratch:
+    root = pathlib.Path(scratch)
+    repo = make_repo(root, {"reads-what-git-lists-test.py": (
+        "import subprocess\n"
+        "listed = subprocess.run(['git', 'ls-files', 'data'], capture_output=True, text=True,\n"
+        "                        check=True).stdout.split()\n"
+        "for name in listed:\n"
+        "    assert pathlib.Path(name).read_text() == 'ok\\n', name\n")})
+    commit_files(repo, {"data/a.txt": "ok\n"}, "one data file")
+    run(root)
+    two_files = commit_files(repo, {"data/b.txt": "ok\n"}, "a second data file")
+    (repo / "data/b.txt").write_text("broken\n")
+    result = select_since(root, two_files)
+    check("a suite running git on the checkout, recorded on another set of files, runs",
+          ran(root) == ["reads-what-git-lists-test.py"] and result.returncode == 1,
+          (ran(root), result.stdout))
+
+with tempfile.TemporaryDirectory() as scratch:
+    root = pathlib.Path(scratch)
+    repo = make_repo(root, {"reads-p-unless-optional-test.py": (
+        "if not pathlib.Path('optional.txt').exists():\n"
+        "    assert pathlib.Path('p.txt').read_text() == 'ok\\n'\n")})
+    without_optional = commit_files(repo, {"p.txt": "ok\n"}, "p.txt")
+    git(repo, "checkout", "-q", "-b", "has-optional")
+    commit_files(repo, {"optional.txt": "here\n"}, "optional.txt")
+    run(root)
+    git(repo, "checkout", "-q", without_optional)
+    (repo / "p.txt").write_text("broken\n")
+    result = select_since(root, without_optional)
+    check("a recording that found a path the checkout does not have does not keep the "
+          "suite from running",
+          ran(root) == ["reads-p-unless-optional-test.py"] and result.returncode == 1,
+          (ran(root), result.stdout))
+
+# A run that did not finish. The suite reads p.txt, and q.txt only if it is
+# not killed first.
+with tempfile.TemporaryDirectory() as scratch:
+    root = pathlib.Path(scratch)
+    repo = make_repo(root, {"killed-partway-test.py": (
+        "pathlib.Path('p.txt').read_text()\n"
+        f"if (pathlib.Path(os.environ['{RAN_FILE_VARIABLE}']).parent / 'die.txt').exists():\n"
+        "    os.kill(os.getpid(), signal.SIGTERM)\n"
+        "    time.sleep(5)\n"
+        "assert pathlib.Path('q.txt').read_text() == 'ok\\n'\n")})
+    base = commit_files(repo, {"p.txt": "ok\n", "q.txt": "ok\n"}, "inputs")
+    run(root)
+    (root / "die.txt").write_text("die\n")
+    killed = run(root)
+    (root / "die.txt").unlink()
+    commit_files(repo, {"q.txt": "broken\n"}, "change q.txt")
+    result = select_since(root, base)
+    check("a suite whose last run was killed partway runs, though its killed run never "
+          "read the changed file",
+          "FAIL killed-partway-test.py killed by SIGTERM" in killed.stdout
+          and ran(root) == ["killed-partway-test.py"] and result.returncode == 1,
+          (killed.stdout, ran(root), result.stdout))
+    check("the SELECTED line says the last recorded run did not pass",
+          "SELECTED killed-partway-test.py: its last recorded run did not pass: killed by "
+          "SIGTERM" in lines(result.stdout), result.stdout)
+
+with tempfile.TemporaryDirectory() as scratch:
+    root = pathlib.Path(scratch)
+    repo = make_repo(root, {"fails-test.py": "sys.exit(1)\n", "passes-test.py": PASSES})
+    base = head(repo)
+    run(root)
+    result = select_since(root, base)
+    check("a suite whose recorded run failed runs again with nothing changed, and the run "
+          "exits 1",
+          ran(root) == ["fails-test.py"] and result.returncode == 1
+          and "SELECTED fails-test.py: its last recorded run did not pass: exit 1"
+          in lines(result.stdout), (ran(root), result.stdout))
+
+# A new directory under a listed one: the shape of a new system directory
+# under nc-systems/, which a glob of `nc-systems/*/*.py` reads.
+with tempfile.TemporaryDirectory() as scratch:
+    root = pathlib.Path(scratch)
+    repo = make_repo(root, {"globs-systems-test.py": (
+        "import glob\n"
+        "for name in glob.glob('systems/*/*.py'):\n"
+        "    assert 'DUPLICATE' not in pathlib.Path(name).read_text(), name\n")})
+    base = commit_files(repo, {"systems/one/one.py": "VALUE = 1\n"}, "one system")
+    run(root)
+    (repo / "systems/two").mkdir()
+    (repo / "systems/two/two.py").write_text("DUPLICATE = 1\n")
+    result = select_since(root, base)
+    check("a file added in a new directory under a listed directory selects the suite",
+          ran(root) == ["globs-systems-test.py"] and result.returncode == 1
+          and "SELECTED globs-systems-test.py: it lists systems/, where systems/two was added"
+          in lines(result.stdout), (ran(root), result.stdout))
+
+# A path that was not there when the suite ran.
+with tempfile.TemporaryDirectory() as scratch:
+    root = pathlib.Path(scratch)
+    repo = make_repo(root, {
+        "checks-a-path-exists-test.py":
+            "sys.exit(1 if pathlib.Path('optional.txt').exists() else 0)\n",
+        "opens-a-path-that-may-be-absent-test.py": (
+            "try:\n"
+            "    open('extra/optional.txt').read()\n"
+            "    sys.exit(1)\n"
+            "except FileNotFoundError:\n"
+            "    pass\n"),
+        "reads-nothing-else-test.py": PASSES})
+    base = head(repo)
+    run(root)
+    commit_files(repo, {"optional.txt": "here\n", "extra/optional.txt": "here\n"},
+                 "add the optional paths")
+    result = select_since(root, base)
+    check("a path a suite checked for, or failed to open, selects the suite when it is added",
+          ran(root) == ["checks-a-path-exists-test.py",
+                        "opens-a-path-that-may-be-absent-test.py"]
+          and result.returncode == 1, (ran(root), result.stdout))
+    check("the SELECTED line names the path it looked for",
+          "SELECTED checks-a-path-exists-test.py: it looks for optional.txt, which was added"
+          in lines(result.stdout), result.stdout)
+
+# git status reads a working file whose timestamps changed. With the audit
+# hook alone, no recorder sees it.
+with tempfile.TemporaryDirectory() as scratch:
+    root = pathlib.Path(scratch)
+    repo = make_repo(root, {"runs-git-status-test.py": (
+        "import subprocess\n"
+        "assert subprocess.run(['git', 'status', '--porcelain', '--untracked-files=no'],\n"
+        "                      capture_output=True, text=True, check=True).stdout == ''\n")})
+    base = commit_files(repo, {"data.txt": "a\n"}, "data")
+    hook_only = path_without_strace(root)
+    run(root, environment_extra=hook_only)
+    (repo / "data.txt").write_text("b\n")
+    result = select_since(root, base, environment_extra=hook_only)
+    check("a suite running git status on the checkout runs when a file differs, with the "
+          "audit hook recording alone",
+          ran(root) == ["runs-git-status-test.py"] and result.returncode == 1,
+          (ran(root), result.stdout))
+
+# git show reads a file's content from the object store, where strace sees
+# no working file opened.
+with tempfile.TemporaryDirectory() as scratch:
+    root = pathlib.Path(scratch)
+    repo = make_repo(root, {"runs-git-show-test.py": (
+        "import subprocess\n"
+        "assert subprocess.run(['git', 'show', 'HEAD:data.txt'], capture_output=True,\n"
+        "                      text=True, check=True).stdout == 'a\\n'\n")})
+    base = commit_files(repo, {"data.txt": "a\n"}, "data")
+    run(root)
+    commit_files(repo, {"data.txt": "b\n"}, "change data")
+    result = select_since(root, base)
+    check("a suite running git show on the checkout runs when a file differs, whichever "
+          "recorders recorded it",
+          ran(root) == ["runs-git-show-test.py"] and result.returncode == 1,
+          (ran(root), result.stdout))
+
+# A recording that could not be saved.
+with tempfile.TemporaryDirectory() as scratch:
+    root = pathlib.Path(scratch)
+    repo = make_repo(root, {"a-test.py": PASSES})
+    base = head(repo)
+    run(root)
+    stored = next((root / "recordings").glob("*/a-test.py.json"))
+    stored.with_suffix(".json.tmp").mkdir()
+    result = run(root)
+    check("when a recording cannot be saved, the report says the earlier one is removed",
+          any(line.startswith("inputs of a-test.py not recorded: ")
+              and "Its earlier recording is removed" in line
+              for line in lines(result.stdout)) and not stored.exists(),
+          (result.stdout, stored.exists()))
+    result = select_since(root, base)
+    check("so the next selective run selects the suite",
+          ran(root) == ["a-test.py"], (ran(root), result.stdout))
+
+# A run killed by SIGKILL leaves its suites' strace directories behind.
+with tempfile.TemporaryDirectory() as scratch:
+    root = pathlib.Path(scratch)
+    make_repo(root, {"a-test.py": PASSES})
+    killed_logs = root / "logs-of-a-killed-run"
+    left = killed_logs / "recorded-inputs" / "a-test.py.strace"
+    left.mkdir(parents=True)
+    (left / "trace.4242").write_text("a trace nobody removed\n")
+    hook_log = killed_logs / "recorded-inputs" / "a-test.py.hook"
+    hook_log.write_text("read\t/elsewhere\n")
+    (root / "run.lock").write_text(f"pid 4242, checkout {root / 'repo'}, started "
+                                   f"2026-09-30T00:00:00Z, logs in {killed_logs}\n")
+    result = run(root)
+    check("a run removes the strace directories the lock's last holder left behind",
+          result.returncode == 0 and not left.exists(), (result.stdout, left.exists()))
+    check("and nothing else in that holder's log directory", hook_log.exists())
+    holder = (root / "run.lock").read_text()
+    check("the lock names its holder's log directory, on one line",
+          holder.endswith(f", logs in {(root / 'logs').resolve()}\n")
+          and holder.count("\n") == 1 and holder.startswith("pid "), holder)
 
 # --- The recorder runs the sitecustomize.py it shadows ------------------------
 # Both machines' Pythons ship one (Homebrew's on the Mac sets sys.executable),
