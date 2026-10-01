@@ -1,10 +1,14 @@
+---
+issue: "[Working ideas and research backlog — capture pair (Decided / Candidate / Research / Reference)](https://github.com/nedschorus/nedschorus/issues/10)"
+---
+
 Issue: https://github.com/nedschorus/nedschorus/issues/10
 
 ## Admission note (new-vp, 2026-07-22)
 
-- User-directed capture artifact, cops-reconstructed 2026-07-22 from the 2026-07-21 discussion and Ned's Google-Doc notes (the cleaned version had remained in chat); admitted through the single-admitter gate as pair issue [Working ideas and research backlog — capture pair (Decided / Candidate / Research / Reference)](https://github.com/nedschorus/nedschorus/issues/10). Capture ≠ commitment: nothing here is scheduled work, and the user's walk rules which candidates advance.
+- User-directed capture artifact, cops-reconstructed 2026-07-22 from the 2026-07-21 discussion and Ned's Google-Doc notes (the cleaned version had remained in chat); admitted through the single-admitter gate as pair issue [Working ideas and research backlog — capture pair (Decided / Candidate / Research / Reference)](https://github.com/nedschorus/nedschorus/issues/10). Capture ≠ commitment: nothing here is scheduled work, and the user's walk rules which candidates advance. Admitted by the new-vp session c3a1c7c5-9dd9-4d3f-9a92-602b37fff592.
 - The "Related detailed documents" links name cops-local filenames; in this repository that material is the pair document of issue [Open-source publishing and community strategy — Ned's Chorus (doc: docs/issues/4-open-source-publishing-community-strategy.md)](4-open-source-publishing-community-strategy.md) (publishing strategy) and the pair document of issue [Ned's notes: engineering methods and sources — boot-set, rewrite policy, and skill shortlist (doc: docs/issues/9-neds-notes.md)](9-neds-notes.md) (engineering methods).
-- The 2026-07-22 admission redacted the two raw mirror URLs under "Raw Claude Code mirrors" per that subsection's own retain-privately instruction. REVERSED 2026-07-24 by the public-links ruling (walk item 14: links in this public repository are judged on usefulness and reliability only — no provenance-based quarantine): the URLs are restored below, matching pair issue [Ned's notes: engineering methods and sources — boot-set, rewrite policy, and skill shortlist (doc: docs/issues/9-neds-notes.md)](https://github.com/nedschorus/nedschorus/issues/9)'s research-sources section.
+- The 2026-07-22 admission redacted the two raw mirror URLs under "Raw Claude Code mirrors" per that subsection's own retain-privately instruction. REVERSED 2026-07-24 by the public-links ruling (commit 63920c0, "pair #10: public-links ruling applied"; walk item 14: links in this public repository are judged on usefulness and reliability only — no provenance-based quarantine): the URLs are restored below, matching pair issue [Ned's notes: engineering methods and sources — boot-set, rewrite policy, and skill shortlist (doc: docs/issues/9-neds-notes.md)](https://github.com/nedschorus/nedschorus/issues/9)'s research-sources section.
 - Revisions ride this pair as ordinary REVISE dispositions.
 
 # NedsChorus Working Ideas and Research Backlog
