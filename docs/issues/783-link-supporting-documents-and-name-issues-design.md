@@ -29,13 +29,17 @@ Each approval-walk's walk-minutes are in the log-store at `nedlern@ned-box:/home
 - **What the body links, found without a hand-kept list.** The same approval-walk, item 4 (user-ruled 2026-09-30, "seems like we should automate these, assuming automation is easy"): the body links the GHI-MD first, then every file on main that names the issue, anywhere in the repository; files only on an unmerged branch and files in the log-store are not linked; the tool writes the line that names the issue, and the bodies are rebuilt after each merge. This replaces the user-ruling of 2026-09-19 in walk ghi-info-design-write-path-becomes-link-only, which linked "one link per file matching `docs/issues/<number>-*`, globbed at every write, never curated", and keeps its "never curated".
 - **The rulings of the approval-walk on this design.** Walk 783-ghi-md-names-and-supporting-document-links-design-2026-09-30-2 (user-ruled 2026-10-01, "y" to each):
   - each issue has a marker, `ghi-<number>-<16 random hexadecimal characters>`, kept in its GHI-MD's front matter; the tool finds an issue's supporting files by searching the contents and the names of the files on main for the marker; any text file carries it anywhere in its content, any file can carry it in its name, and an image's embedded metadata may carry it but is not relied on (item 2, after the user's proposal: "What if each GHI has a GUID, and we insert that guid into any file or place that we need to 'find' to include in the GHI file list?", and "I think it would help if the GHI# prepended the guid");
-  - the rebuild after a merge covers closed issues too (item 3);
+  - the rebuild after a merge covers closed issues too (item 3), which the user reversed on 2026-10-01 by the ruling below that a closed issue is frozen;
   - one pull request migrates the files and carries the tool change (item 4);
   - edit-GHI checks a changed name as filing does (item 5);
   - an issue's title changes only after the merge that changes its GHI-MD's name (item 6);
   - the two new operations are `mark-supporting-document` and `relink-and-retitle-issues` (item 7);
   - the word is "name", not "slug" (item 8);
   - the name table flags a kept name that breaks the naming rule, and the user decides each (item 9).
+- **A closed issue is frozen.** Walk issue-rename-table-decisions-2026-10-01, decision 3 (user-ruled 2026-10-01, "y"), after the user asked of a rebuild that covers closed issues: "why do we care about closed issues? We might have 20000 of them in the fuutre. Id hate to keep them all from drifting." The ruling reverses item 3 of the approval-walk on this design:
+  - no rebuild ever touches a closed issue, neither its links nor its title;
+  - when an issue is closed, the links in its body are first pinned to the commit at closing, `https://github.com/nedschorus/nedschorus/blob/<commit>/<path>` in place of `https://github.com/nedschorus/nedschorus/blob/main/<path>`, so the links keep opening after a file moves or is deleted;
+  - the closed issues that already have a GHI-MD on main get their links pinned once, in the migration.
 - **The Markdown label.** Walk ghi-md-reconciliation-disagreements-2026-09-30 (user-ruled 2026-10-01): "can we say supports-issues: not just supports. That is too ambiguous." The same walk, item 1: the GHI-MD of GHI [main-gatekeeper — the single check-in gate (design: nc-systems/main-gatekeeper/main-gatekeeper-design.md)](https://github.com/nedschorus/nedschorus/issues/3) is its specification, `nc-systems/main-gatekeeper/main-gatekeeper-design.md`; its move into a `docs/` directory waits for the migration of GHI [Rationalize the repository layout](https://github.com/nedschorus/nedschorus/issues/224), where the user ruled main-gatekeeper is brought into line "rather than by a third move".
 
 ## What the tool does today
@@ -125,7 +129,7 @@ The tool writes the body only over a body it wrote, its list of links or create-
 
 ### Rebuilding after every merge
 
-A new operation, `relink-and-retitle-issues`, rebuilds the body and sets the title of each issue it is given, open or closed, as the user ruled; § Open questions, question 1, asks about one side effect for closed issues. It has three forms:
+A new operation, `relink-and-retitle-issues`, rebuilds the body and sets the title of each open issue it is given. It skips a closed issue, changing neither the body nor the title, as the user ruled (§ Closing an issue), and reports a closed issue named on the command line. It has three forms:
 - `relink-and-retitle-issues <number>…` for named issues;
 - `relink-and-retitle-issues --after-merge <pull request number>` for every issue one merged pull request touched. It asks GitHub for the pull request's merge commit, fetches origin/main, reads the merge's changes against its first parent, renames included, and collects every issue linked by an `issue:` line or named by a marker in any changed file's content or name, in the version before the merge and in the version after. The marker's number names the issue, so no lookup is needed to collect it. A supporting file that was added, changed, moved, renamed or deleted brings each issue it named, or now names, into the run;
 - `relink-and-retitle-issues --all-open` for every open issue.
@@ -138,13 +142,19 @@ Before the build starts, the agent that builds this design asks merge-lane-2 to 
 
 create-GHI, rerun by an author on a landed GHI-MD whose issue body the rebuild has already turned into links, reports that the filing is finished and exits 0, instead of refusing the file as already filed. The /ghi-write skill's rerun after a merge becomes a fallback for when the rebuild did not run.
 
+### Closing an issue
+
+A closed issue is frozen: once its links are pinned, no program changes its body or its title. Before an issue is closed, each link in its body to a file on main, `https://github.com/nedschorus/nedschorus/blob/main/<path>`, is rewritten to the same file at one commit, the commit at closing: `https://github.com/nedschorus/nedschorus/blob/<commit>/<path>`, which GitHub calls a permalink. This is done whether the body is a list of links or prose; only the links' addresses change, so a prose body keeps its text. A pinned link keeps opening after the file moves, is renamed or is deleted, and shows the file as it stood when the issue closed.
+
+After that, nothing rebuilds the issue. `relink-and-retitle-issues` skips it however it is invoked, and a rerun of edit-GHI or create-GHI leaves its body and title alone. So its links and its title stay as they were at closing, even when its GHI-MD is later edited, moved or renamed, and a file marked later with the issue's marker is not linked from it. § Open questions asks which program pins the links, which commit is the commit at closing, and what a reopened issue gets.
+
 ### Moves, renames and deletions
 
 - **A GHI-MD moves or is renamed.** Its `issue:` and `issue-marker:` lines move with it, so the tool finds the file at its new path. edit-GHI, given a file whose `issue:` line links an issue whose GHI-MD main holds at a different path, looks at that other path in the author's checkout:
   - the file is gone from the checkout: the author moved or renamed the GHI-MD, and edit-GHI removes main's old copy in the same commit;
   - the file is still in the checkout: two files carry the line, and edit-GHI refuses, exit 64, telling the author to remove the `issue:` and `issue-marker:` lines from the copy, or to delete the original if the GHI-MD is moving.
   When main holds more than one file with that issue's `issue:` line, edit-GHI removes nothing and reports every path.
-- **A supporting file moves, is renamed or is deleted.** The rebuild after the merge rebuilds the body of every issue whose marker the file carried. A marker in the file's content moves with it; a file that carried the marker in its name keeps it only if the new name keeps it, which the author sees to. A deleted file drops out of the body.
+- **A supporting file moves, is renamed or is deleted.** The rebuild after the merge rebuilds the body of every open issue whose marker the file carried. A marker in the file's content moves with it; a file that carried the marker in its name keeps it only if the new name keeps it, which the author sees to. A deleted file drops out of the body.
 - **A GHI-MD is deleted.** The rebuild follows § What the body links: the body keeps the supporting files' links, and the tool reports that the issue has no GHI-MD. The title stays.
 
 ### Where a GHI-MD may sit
@@ -158,7 +168,7 @@ A landed design is revised only to fix a flaw found in it, and only after human 
 The new tool leaves an issue's title alone and reports while the issue has more than one file with an `issue:` line, so the work below leaves each issue with exactly one.
 
 0. **This design lands.** Through today's edit-GHI, which lands it as a new file of this issue and leaves the earlier GHI-MD in place; its removal is landed by hand in the same change, as today's edit-GHI tells the author to. The earlier GHI-MD's last text: `git show 5620543b:docs/issues/783-an-issue-has-one-ghi-md-and-many.md`.
-1. **The old descriptions go.** The fifteen reconciled GHI-MDs have landed. One pull request deletes the sixteen `-former-issue-body.md` files and repoints every citation of them on main, such as line 17 of `docs/issues/39-memory-drain-at-reincarnation.md`; edit-GHI is then rerun on each of the fifteen GHI-MDs, which rebuilds each body from main. main-gatekeeper's former issue body goes in the same pull request once its specification, merged with that body's decisions, has had the user's review and landed.
+1. **The old descriptions go.** The fifteen reconciled GHI-MDs have landed. One pull request deletes the sixteen `-former-issue-body.md` files and repoints every citation of them on main, such as line 17 of `docs/issues/39-memory-drain-at-reincarnation.md`; edit-GHI is then rerun on each of the fifteen GHI-MDs whose issue is open, which rebuilds each body from main; a closed issue among them keeps its body until the migration pins its links (step 3). main-gatekeeper's former issue body goes in the same pull request once its specification, merged with that body's decisions, has had the user's review and landed.
 2. **The name table.** A subagent lists every open issue in one table: its current name, a proposed new name where the current one is cut off mid-thought, and a flag on any kept name that breaks the naming rule, such as `neds-notes`, two words, or a name carrying a status. The user approves or changes each row.
 3. **The build.** One pull request, atomic under CLAUDE.md, carrying:
    - the tool changes above, with their tests;
@@ -168,7 +178,7 @@ The new tool leaves an issue's title alone and reports while the issue has more 
      - the renames in the approved table, with every citation of an old path on main repointed, as the file-naming page requires of a move;
      - every open issue's `issue:` line rewritten to cite the issue under its name;
    - the changes in § What the build changes outside the tool.
-   After it merges, merge-lane-2 runs `relink-and-retitle-issues --all-open`, which sets every open issue's title to its name and rebuilds every open body. Closed issues are rebuilt when a later merge touches them.
+   After it merges, merge-lane-2 runs `relink-and-retitle-issues --all-open`, which sets every open issue's title to its name and rebuilds every open body. Closed issues are not rebuilt. The closed issues that have a GHI-MD on main get the links in their bodies pinned once, in this migration (§ Closing an issue), after the user has answered § Open questions 1 and 2: 16 of the 72 closed issues when the user ruled, and 17 of 73 after GHI [Ned's notes: engineering methods and sources — boot-set, rewrite policy, and skill shortlist (doc: docs/issues/9-neds-notes.md)](https://github.com/nedschorus/nedschorus/issues/9) closed later on 2026-10-01, counted as the closed issues with a file named `<number>-*` directly in `docs/issues/` on origin/main. Every other closed issue keeps its body as it stands.
 
 Prose elsewhere that cites an issue by its old title keeps that text; its links still open.
 
@@ -193,7 +203,11 @@ Two changes do not go in the build's pull request:
 
 ## Open questions
 
-1. **Closed issues' titles.** The user ruled that the rebuild covers closed issues. The name table covers open issues only, so a later merge that touches a closed issue would retitle it to its file's name, which for most closed issues is the first eight words cut from an old title, the bad name the user ruled against. The choices: (a) the rebuild sets a closed issue's links only and leaves its title; (b) the name table also covers closed issues; (c) closed issues take their cut names. Recommendation: (a), because a closed issue's title is its record, and renaming every closed issue is a large table for little gain.
+The ruling that a closed issue is frozen leaves three points open. The build's pull request pins closed issues' links in the migration, and the program it adds pins them at every closing after it merges, so the user answers the first two before that pull request merges:
+
+1. **Which program pins the links.** Which program rewrites a closing issue's links to the commit at closing, a new operation of the ghi-write-tool that the /ghi-write skill's `Close:` step runs before `gh issue close` or another program; what is done for an issue closed without it; and how a rebuild that read the issue while it was open is kept from writing main's links back over the pinned ones.
+2. **Which commit.** Which commit is the commit at closing, for an issue closed from now on and for the closed issues whose links the migration pins.
+3. **A reopened issue.** Whether an issue that is reopened is rebuilt again as an open issue, and its links pinned again when it is closed again.
 
 ## Search receipt
 
