@@ -1,4 +1,5 @@
 ---
+issue: "[Build ghi-info — the GHI knowledge agent](https://github.com/nedschorus/nedschorus/issues/46)"
 status: design
 design-as-of: 2026-08-11
 ---
@@ -8,6 +9,20 @@ design-as-of: 2026-08-11
 How agents work with GitHub issues (GHIs) in nedschorus: `ghi-info`, a long-lived knowledge agent over the issue corpus; a script-maintained local mirror; a write path whose hook routes raw writes through the project write tool; and the `ghi-write` skill carrying the judgment none of the machinery can. Throughout, **GHI author** means whichever agent is filing or editing an issue. Decision trail: `git show 6c9b437:docs/drafts/ghi-info-agent-plan-draft.md` (per-item dispositions, 2026-08-07) and [git show db917b5:md-review-records/2026-08-09-ghi-info-agent-design-2/dispositions.md](../../git show db917b5:md-review-records/2026-08-09-ghi-info-agent-design-2/dispositions.md); the rejected single-gate direction is kept in § Why issue writes cannot be a credential gate, below, and in full at `git show 0860628:docs/drafts/ghi-gatekeeper-plan-draft.md`.
 
 The organizing idea: instead of building a vector or graph database of the GHIs, we use a modern agent — the corpus fits in its context window (measured 2026-08-07: 45 issues ≈ 109 KB). Mechanical work is script work — fetch, format, measure, filter; `ghi-info` spends model turns only on judgment.
+
+## Build status
+
+Issue [Build ghi-info — the GHI knowledge agent](https://github.com/nedschorus/nedschorus/issues/46) builds the whole system this design describes: the GHI mirror and refresh script, the ghi-info-ask wrapper, the issue-write tool and its redirect hook, the maintenance sweep and fixer spawning, and the seat on the box. On main as of 2026-09-30:
+
+- **The `ghi-write` skill**, the front-loading layer, landed 2026-08-12 (§ The three-layer stack).
+- **The mirror and the seat:** `scripts/ghi-mirror-refresh.py`, run in the seat's checkout `~/agents/ghi-info` on ned-box, which holds `ghi-mirror/`.
+- **The ask wrapper:** `scripts/ghi-info-ask.py`.
+- **The write tool:** `scripts/ghi-issue-write.py`, with its create and edit operations. It has no comment operation: the user ruled on 2026-09-24 that agents write no issue comments.
+- **The redirect hook:** `.claude/hooks/ghi-issue-write-redirect.py`. It refuses a hand-typed write rather than rewriting it into the tool as § The GHI write path describes; its docstring says why.
+- **The corpus migration:** done 2026-09-27, when every open issue's body became the links to its files (`scripts/ghi-prose-body-migration.py`).
+- **Not built:** the maintenance sweep and fixer spawning (§ Maintenance and fixers).
+
+Build considerations beyond this design: the md-review rider, item 9 of `git show ad2c5156:md-review-records/2026-08-11-ghi-info-agent-design/dispositions.md`. § Verify at build lists the assumptions to test, each with its failure branch.
 
 ## What ghi-info is
 
@@ -59,21 +74,23 @@ One overall timeout (inside the hook budget); a killed run is a named failure. A
 
 GHI authors write with `gh` as trained for create, edit, and close; comments are the one taught exception. A PreToolUse hook (`.claude/hooks/ghi-issue-write-redirect.py`, sibling of `.claude/hooks/instruction-file-guard.py`) rewrites body-bearing `gh issue create`/`edit` into `scripts/ghi-issue-write.py` via `updatedInput` (rewrite mechanics and the 600 s configurable command-hook timeout verified 2026-08-07 against https://code.claude.com/docs/en/hooks). The tool's internal `gh` calls are subprocesses below the hook layer; `ghi-info`'s and fixers' writes route through the tool like any author's.
 
-**Creating an issue.** The author writes the GHI-MD, gives it its cold read and acts on what that returns, then runs `scripts/ghi-issue-write.py create <path>`. **The author runs the read, not the tool** (user-ruled 2026-09-20). The user ruled on 2026-09-16 that a GHI-MD is cold-read before its issue links to it; putting that inside the tool would block the author in one command while a reviewer reads the whole document, and would separate the reviewer's notes from the author still holding the file's context. The tool does not check that a read happened: this is the front-loading layer's job, like routing. A file not yet filed lives in `docs/issues/queue/` under any name. The tool does the rest:
+**Creating an issue.** The author writes the GHI-MD, gives it its cold read and acts on what that returns, then runs `scripts/ghi-issue-write.py create <path>`. **The author runs the read, not the tool** (user-ruled 2026-09-20). The user ruled on 2026-09-16, at the merge-lane seat, that a GHI-MD is cold-read before its issue links to it: "These MD files should be cold read". The read is the one the cold-read skill gives a document of that kind, and the ruling also settled the 2026-09-04 direction that `ghi-write`'s prose outputs get a cold read like every other node's. Putting the read inside the tool would block the author in one command while a reviewer reads the whole document, and would separate the reviewer's notes from the author still holding the file's context. The tool does not check that a read happened: this is the front-loading layer's job, like routing. A file not yet filed lives in `docs/issues/queue/` under any name. The tool does the rest:
 
 1. **Validate.** The file exists, opens with a heading, and is not already paired with an issue.
 2. **Adjudicate** (§ What ghi-info is; on an edit, the edit's own issue excluded). Fail-open: `ghi-info` unreachable means the write proceeds without adjudication — the mechanical checks still run.
-3. **File.** `gh issue create`, the title taken verbatim from the file's first heading, the body a placeholder. The tool relays `gh`'s own output verbatim and appends its lines after it.
-4. **Name and land.** Move the file to `docs/issues/<number>-<slug>.md` and land it on main through the tool's own pull request, merged by merge-lane exactly as every other pull request is (user-ruled 2026-09-20: "like every other change seems fine"). A raw push stays refused for every tool. This replaces the 2026-09-15 rule that the pull request merges without waiting on a person, which put the deferred approving identity of issue [Deferred: main-gatekeeper activation shape 2 — a reviewer attached to the gate and an approving identity of its own](https://github.com/nedschorus/nedschorus/issues/357) on this build's critical path; measured 2026-09-20, the lane merged 49 pull requests in a day against about 2.3 issues created, and a GHI-MD is prose under `docs/`, which the review-scope rule makes silent, so the lane reads nothing and merges. **Accepted consequence:** between lane sessions an issue exists with a placeholder body and a link that does not yet resolve; the sequence is resumable, so the author reruns the tool and it continues.
+3. **File.** `gh issue create`, the title taken verbatim from the file's first heading, the body a placeholder. The tool generates the title rather than an agent typing it, so the two cannot disagree (user-ruled 2026-09-16 at the merge-lane seat: "the titles should be generated from them"). The tool relays `gh`'s own output verbatim and appends its lines after it.
+4. **Name and land.** Move the file to `docs/issues/<number>-<slug>.md` and land it on main through the tool's own pull request, merged by merge-lane exactly as every other pull request is (user-ruled 2026-09-20: "like every other change seems fine"). A raw push stays refused for every tool. This replaces the 2026-09-15 rule that the pull request merges without waiting on a person, which put the deferred approving identity of issue [Deferred: main-gatekeeper activation shape 2 — a reviewer attached to the gate and an approving identity of its own](https://github.com/nedschorus/nedschorus/issues/357) on this build's critical path; measured 2026-09-20, the lane merged 49 pull requests in a day against about 2.3 issues created a day over the preceding 30 days, so issue filings add roughly 5% to the lane's load and, counting edits to GHI-MDs, well under a fifth; and a GHI-MD is prose under `docs/`, which the review-scope rule makes silent, so the lane reads nothing and merges. **Accepted consequence:** between lane sessions an issue exists with a placeholder body and a link that does not yet resolve; the sequence is resumable, so the author reruns the tool and it continues.
 5. **Link.** Write the body from a glob of `docs/issues/<number>-*`: one link per file, in filename order, and nothing else. The list is derived at every write, so no author curates it and it cannot fall behind the files. An issue with a design, a design-contract and a test-design carries three links; most carry one.
 
 **The sequence is resumable.** Steps 3 to 5 are three separate remote operations and any of them can fail. Run again on the same file and the tool finds the issue it already created, from the pairing it recorded at step 3, and continues from the step that failed. It never files a second issue for one file.
 
 The tool is a script, not the `ghi-info` agent: it calls the agent once, at step 2, and does every other step itself. It runs in the agent's checkout on ned-box, re-executing over ssh when called from the Mac, as `scripts/ghi-info-ask.py` already does, and the file's content travels with the call the way an ask's question does. Before any write it fetches and fast-forwards; a dirty checkout, or one that will not fast-forward, refuses the write. A read may fall back to stale disk; a write never does.
 
-**Editing an issue** is editing its GHI-MD, through `scripts/ghi-issue-write.py edit <path>`. No author ever writes an issue body. The tool rewrites it from the pairing whenever the file set changes — a file added, a file moved into its system's directory when code starts — and leaves it alone otherwise. The change lands through the tool's pull request; the tool refuses on conflict, as `scripts/ghi-issue-body-edit.py` does today under the 2026-09-08 ruling — no retry, no lock, no merge; show the diff and hand it back. When the edit changes the file's first heading, the tool updates the issue's title to match, which is a title-only edit and passes the hook.
+**Editing an issue** is editing its GHI-MD, through `scripts/ghi-issue-write.py edit <path>`. No author ever writes an issue body. The tool rewrites it from the pairing whenever the file set changes — a file added, a file moved into its system's directory when code starts — and leaves it alone otherwise. The change lands through the tool's pull request; the tool refuses on conflict, as `scripts/ghi-issue-body-edit.py` does today under the 2026-09-08 ruling — no retry, no lock, no merge; show the diff and hand it back. The tool absorbs that guard (user-ruled 2026-09-15). When the edit changes the file's first heading, the tool updates the issue's title to match, which is a title-only edit and passes the hook.
 
-**Where the tool may write.** Any path holding a file paired with an issue: `docs/issues/` before code starts, and the system's own directory after. It writes nowhere else.
+**Where the tool may write.** Any path holding a file paired with an issue: `docs/issues/` before code starts, and the system's own directory after. It writes nowhere else. A closed GHI's GHI-MD stays where it is (user-ruled 2026-09-15).
+
+**Reading a GHI-MD** (user-ruled 2026-09-15): an agent reads GHI-MDs from its worktree; when the Stop hook names one as stale, it runs `git show origin/main:docs/issues/<file>` before citing it. This belongs in the `ghi-write` skill text, which does not carry it yet.
 
 Accepted residual: an issue can change between verdict and write.
 
@@ -101,7 +118,7 @@ Pair staleness is swept in one direction only — issue moved, GHI-MD not. The r
 
 **Overtaken by the link-only-GHI ruling of 2026-09-15.** No author performs the cite step: the tool writes the body, and a failure between its steps is resumable. The residual below is kept for the reader who remembers it.
 
-**Accepted residual:** an author who lands the MD but never completes the cite step goes uncaught by this sweep; the link-integrity scan does not catch it either (a never-added link resolves vacuously). Which model and runtime serve each role best — `ghi-info`, adjudication; Claude or Codex; fable, opus, sonnet — is an open question, settled empirically.
+**Accepted residual:** an author who lands the MD but never completes the cite step goes uncaught by this sweep; the link-integrity scan does not catch it either (a never-added link resolves vacuously). Which model and runtime serve each role best — `ghi-info`, fixers, adjudication; Claude or Codex; fable, opus, sonnet — is an open question, settled empirically as this build proceeds.
 
 ## The three-layer stack
 
