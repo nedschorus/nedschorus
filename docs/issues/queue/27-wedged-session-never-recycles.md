@@ -1,6 +1,6 @@
 # A wedged session trips nothing: the supervisor waits forever, and the only reincarnation trigger is context growth
 
-Queued for issue [Console text-insertion + stuck/waiting-state detection (operator tooling; captured from the comms backlog)](https://github.com/nedschorus/nedschorus/issues/27) (console text-insertion + stuck/waiting-state detection), whose captured scope already names "a wedged worker". Owned by the `fleet` seat (`docs/agents/fleet-instructions.md`), which owns the handoff supervisor and the session machinery.
+Queued for issue [Console text-insertion + stuck/waiting-state detection (operator tooling; captured from the comms backlog)](https://github.com/nedschorus/nedschorus/issues/27) (console text-insertion + stuck/waiting-state detection), whose captured scope already names "a wedged worker". Owned by the `fleet` seat (its brief, deleted on 2026-10-01: `git show 6fa06024:docs/agents/fleet-instructions.md`), which owns the handoff supervisor and the session machinery.
 
 Surfaced by the attack-split validation experiment of 2026-08-12 (`md-review-records/2026-08-12-attack-split-experiment/scorecard.md`, § Fresh-eyes yield), which called it "the sharpest operational gap in the set". Verified against the repository as it stands on 2026-08-13 by the `sanity-checker` seat.
 

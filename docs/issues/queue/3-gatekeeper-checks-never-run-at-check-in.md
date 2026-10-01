@@ -1,6 +1,6 @@
 # The gatekeeper runs no checks at check-in, though seven test suites now exist
 
-Queued for issue [main-gatekeeper — the single check-in gate (design: nc-systems/main-gatekeeper/main-gatekeeper-design.md)](https://github.com/nedschorus/nedschorus/issues/3) (main-gatekeeper — the single check-in gate). Owned by the `gatekeeper` seat (`docs/agents/gatekeeper-instructions.md`).
+Queued for issue [main-gatekeeper — the single check-in gate (design: nc-systems/main-gatekeeper/main-gatekeeper-design.md)](https://github.com/nedschorus/nedschorus/issues/3) (main-gatekeeper — the single check-in gate). Owned by the `gatekeeper` seat (its brief, deleted on 2026-10-01: `git show 1ff4dd07:docs/agents/gatekeeper-instructions.md`).
 
 Surfaced by the attack-split validation experiment of 2026-08-12 (`md-review-records/2026-08-12-attack-split-experiment/scorecard.md`, § Novel findings, "Checks-never-wired"), which scored a split sanity-checker prompt against two archived documents. The finding fell outside what that experiment was scored against, so it was never triaged. Verified against the repository as it stands on 2026-08-13 by the `sanity-checker` seat and written here because a triage nobody records evaporates — these sat unpresented for two days.
 
@@ -30,7 +30,7 @@ Recorded here so it is not raised a third time. The concern: an agent edits `nc-
 
 `nc-systems/main-gatekeeper/main-gatekeeper-design.md:147` (C2, the Unix-user boundary) rules that the deployed copy keeps itself current from main automatically, and that this is safe because "the gatekeeper's source joins the instruction-file class: changes reach main only with approved-by-walk evidence, enforced by the review-evidence check (slice 6). Activating the privileged lane therefore waits on slice 6."
 
-`docs/agents/gatekeeper-instructions.md:20` already carries this as that seat's work, including the residual it does not close: slice 6 closes the hole against agents, not against the repository's owners, who can bypass branch protection by design — "that residual is accepted, not solved."
+The gatekeeper seat's brief (line 20 of `git show 1ff4dd07:docs/agents/gatekeeper-instructions.md`, deleted on 2026-10-01) carried this as that seat's work, including the residual it does not close: slice 6 closes the hole against agents, not against the repository's owners, who can bypass branch protection by design — "that residual is accepted, not solved."
 
 So the remedy is scheduled (slice 6, ruled 2026-08-10 as a prerequisite of activation), owned, and already written into the responsible seat's brief. Nothing to route.
 

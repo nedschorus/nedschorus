@@ -303,7 +303,7 @@ def run_cases(scratch: Path):
     # What `git ls-tree -r --name-only HEAD` lists for the cases below: the
     # detector judges a relative path and a file extension against the
     # tracked tree, never against what a checkout's directory holds.
-    TRACKED = ["docs/agents/doctrine-instructions.md",
+    TRACKED = ["docs/agents/pr-reviewer-instructions.md",
                "docs/issues/412-build-sanity-checker.md",
                "config/cold-read-tier-roster.json",
                "nc-systems/cold-read/cold-read-grid.py",
