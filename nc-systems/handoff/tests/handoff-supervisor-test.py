@@ -1498,29 +1498,43 @@ def run_branch_sync_cases(workspace: Path):
 
 
 # The overview-refresh-due instruction, word for word. A template: the
-# overview, the command and the commit are filled in per system.
+# overview, its draft, the command and the commit are filled in per system.
+# The subagent writes a draft in the wiki's queue directory, and the seat
+# writes the overview only once the user has approved the diff: the
+# instruction-file guard refuses an agent's write to a wiki page without the
+# user's approval, and a subagent cannot ask him for it.
 EXPECTED_OVERVIEW_REFRESH_DUE_INSTRUCTION_TEMPLATE = (
-    " — Dispatch a subagent to refresh {overview_path} against the commits "
+    " — Dispatch a subagent to write {overview_draft_path}: a copy of "
+    "{overview_path} refreshed against the commits "
     "`{commit_listing_command}` lists, as "
     "docs/issues/670-refresh-design-when-a-system-s-code-lands.md defines a "
-    "refresh, and to append to it the pinned line "
+    "refresh, with the pinned line "
     "`{landing_pin_prefix}{main_commit}](<commit url>) on <YYYY-MM-DD> — "
-    "<what landed>`."
+    "<what landed>` appended. When the subagent reports, show the user the "
+    "diff between {overview_path} and {overview_draft_path}. When the user "
+    "approves the diff, write {overview_path} from {overview_draft_path} and "
+    "delete {overview_draft_path}."
 )
 
 
 def expected_widget_overview_refresh_due_line(pinned: str, main: str, count: int) -> str:
     """The whole line for the fixture system `widget`, spelled out, so a
-    change to the report, the template or the command fails the pin."""
+    change to the report, the template, the command or where the draft goes
+    fails the pin."""
+    overview = "docs/nedschorus-wiki/nedschorus-widget-system-overview.md"
+    draft = "docs/nedschorus-wiki/queue/nedschorus-widget-system-overview.md"
     return (
         f"overview refresh due: widget — {count} commit(s) under nc-systems/widget/ "
         f"since its overview's pinned commit, in {pinned}..{main} — Dispatch a "
-        "subagent to refresh docs/nedschorus-wiki/nedschorus-widget-system-overview.md "
+        f"subagent to write {draft}: a copy of {overview} refreshed "
         f"against the commits `git log --no-merges {pinned}..{main} -- nc-systems/widget/ "
         "':(exclude)nc-systems/widget/*.md'` lists, as "
         "docs/issues/670-refresh-design-when-a-system-s-code-lands.md defines a "
-        "refresh, and to append to it the pinned line `**Pinned to what landed:** "
-        f"commit [{main}](<commit url>) on <YYYY-MM-DD> — <what landed>`.")
+        "refresh, with the pinned line `**Pinned to what landed:** "
+        f"commit [{main}](<commit url>) on <YYYY-MM-DD> — <what landed>` appended. "
+        f"When the subagent reports, show the user the diff between {overview} and "
+        f"{draft}. When the user approves the diff, write {overview} from {draft} "
+        f"and delete {draft}.")
 
 
 def overview_refresh_due_or_missing(directory: Path):
@@ -1933,6 +1947,30 @@ def run_overview_refresh_due_prompt_cases(workspace: Path):
           getattr(supervisor, "OVERVIEW_REFRESH_DUE_INSTRUCTION_TEMPLATE", None)
           == EXPECTED_OVERVIEW_REFRESH_DUE_INSTRUCTION_TEMPLATE,
           repr(getattr(supervisor, "OVERVIEW_REFRESH_DUE_INSTRUCTION_TEMPLATE", None)))
+    # The instruction and the instruction-file guard agree: the guard lets the
+    # subagent write the draft the instruction names, and refuses the overview
+    # itself until the user has approved. Run over a scratch checkout, so no
+    # real approval marker is in the guard's reach.
+    guarded_checkout = workspace / "overview-draft-guard-checkout"
+    (guarded_checkout / ".git").mkdir(parents=True)
+    (guarded_checkout / ".git" / "HEAD").write_text("ref: refs/heads/main\n", encoding="utf-8")
+    widget_overview = getattr(
+        supervisor, "SYSTEM_OVERVIEW_PATH_TEMPLATE", "missing").format(system="widget")
+    widget_overview_draft = (
+        getattr(supervisor, "SYSTEM_OVERVIEW_DRAFT_DIRECTORY", "missing")
+        + "/" + widget_overview.rsplit("/", 1)[-1])
+
+    def instruction_file_guard_exit_code(relative_path: str) -> int:
+        return subprocess.run(
+            [sys.executable, str(REPOSITORY_ROOT / ".claude" / "hooks" / "instruction-file-guard.py")],
+            input=json.dumps({"cwd": str(guarded_checkout),
+                              "tool_input": {"file_path": str(guarded_checkout / relative_path)}}),
+            capture_output=True, text=True, check=False).returncode
+
+    check("the instruction-file guard lets a subagent write the overview's draft",
+          instruction_file_guard_exit_code(widget_overview_draft) == 0, widget_overview_draft)
+    check("the instruction-file guard refuses an unapproved write to the overview itself",
+          instruction_file_guard_exit_code(widget_overview) == 2, widget_overview)
     # The convention finds the one overview on main, and that overview carries
     # a pinned line the reader counts: without one the check reports nothing
     # for the handoff system, silently.

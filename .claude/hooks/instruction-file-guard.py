@@ -93,19 +93,30 @@ almost do this already."; then "y" to the rule this file implements. An MD
 file in a checkout is a reviewed document when it sits under docs/agents/,
 docs/nedschorus-wiki/ or nc-systems/skills/, or when its name ends
 `-design.md` — a design, wherever it sits — but not `-test-design.md`.
-Test-designs and design-contracts (`-contract.md`) are left out on purpose:
-design-to-main's own acceptance states bring them to the user, and a guard
-would stop its revising agents from writing the revisions he ruled he does
-not review (the same walk, item 5). Drafts stay free in the same places the
-prompt rule exempts, so an agent drafts in a queue directory or docs/drafts/
-without asking, and the review happens when the draft is written into its
-home and on every later edit there. The review-record directories
-(cold-read-records/, md-review-records/, sanity-check-records/) are exempt
+Test-designs and design-contracts (`-contract.md`) are left out on purpose,
+wherever they sit, the three directories included, so the name exemption is
+tested before the directory rule: design-to-main's own acceptance states
+bring them to the user, and a guard would stop its revising agents from
+writing the revisions he ruled he does not review (the same walk, item 5;
+confirmed 2026-10-01, walk
+nedschorus-file-naming-and-location-standards-2026-09-30, item 1, "Y").
+Drafts stay free in the same places the prompt rule exempts, so an agent
+drafts in a queue directory or docs/drafts/ without asking, and the review
+happens when the draft is written into its approved location and on every
+later edit there. The review-record directories (cold-read-records/,
+md-review-records/, sanity-check-records/) at a checkout's top are exempt
 too: a record holds a frozen copy of a reviewed document, which is a log,
 not the document. Code under nc-systems/skills/ stays with pull-request
 review. Like everything in this file, the rule sees only an agent's Edit,
-Write and NotebookEdit calls: a program that writes a file — git mv, the
-ghi-write tool, design-to-main's machine — is not stopped by it.
+Write and NotebookEdit calls: a shell command, or a program that writes a
+file — git mv, the ghi-write tool, design-to-main's machine — is not stopped
+by it.
+
+The refusal a reviewed document gets tells a subagent to report the change
+to the agent that dispatched it (the same 2026-10-01 walk, item 2, "y"). A
+subagent cannot show the user anything, so "show him the change" alone left
+it with no next step; the handoff-supervisor's overview refresh, which a
+dispatched subagent drafts, is the case that showed it.
 
 Transcripts stay protected, and that is collateral rather than intent: the
 `.jsonl` files sit under ~/.claude/projects/ beside the auto-memory, so no
@@ -134,7 +145,7 @@ PROMPT_EXEMPT_DIRECTORY_PREFIXES = (("docs", "drafts"), (".claude", "jobs"), (".
 REVIEWED_DOCUMENT_SUFFIX = ".md"
 REVIEWED_HOME_DIRECTORY_PREFIXES = (("docs", "agents"), ("docs", "nedschorus-wiki"), ("nc-systems", "skills"))
 REVIEWED_DESIGN_SUFFIX = "-design.md"
-UNREVIEWED_DESIGN_SUFFIX = "-test-design.md"
+UNREVIEWED_DOCUMENT_SUFFIXES = ("-test-design.md", "-contract.md")
 REVIEW_RECORD_DIRECTORY_NAMES = ("cold-read-records", "md-review-records", "sanity-check-records")
 APPROVAL_MARKER_NAME = ".walk-approved"
 
@@ -163,7 +174,8 @@ REVIEWED_DOCUMENT_DENY_MESSAGE = (
     "If he has approved this exact change, quote his exact approval words into {marker} at "
     "the root of your session's own checkout, then resubmit; the marker is used up by the "
     "one call it approves.\n"
-    "If he has not, show him the change and wait for his answer.\n"
+    "If he has not, show him the change and wait for his answer; if you are a subagent, "
+    "report the change to the agent that dispatched you instead.\n"
     "If this is a first draft, write it in docs/drafts/ or in a queue directory such as "
     "docs/issues/queue/, docs/agents/queue/ or docs/nedschorus-wiki/queue/ instead."
 )
@@ -286,11 +298,12 @@ def is_reviewed_document(file_path: str) -> bool:
         return False
     if directory_parts[:1] and directory_parts[0] in REVIEW_RECORD_DIRECTORY_NAMES:
         return False
+    if path.name.endswith(UNREVIEWED_DOCUMENT_SUFFIXES):
+        return False
     if any(directory_parts[:len(prefix)] == prefix
            for prefix in REVIEWED_HOME_DIRECTORY_PREFIXES):
         return True
-    return (path.name.endswith(REVIEWED_DESIGN_SUFFIX)
-            and not path.name.endswith(UNREVIEWED_DESIGN_SUFFIX))
+    return path.name.endswith(REVIEWED_DESIGN_SUFFIX)
 
 
 def is_protected(file_path: str) -> bool:

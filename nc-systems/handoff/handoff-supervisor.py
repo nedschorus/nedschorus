@@ -297,6 +297,13 @@ BRANCH_STATE_INSTRUCTION = (
 # pattern; see overview_refresh_due_lines.
 SYSTEM_OVERVIEW_PATH_TEMPLATE = "docs/nedschorus-wiki/nedschorus-{system}-system-overview.md"
 
+# Where a refreshed overview is drafted before the user has seen it: the
+# wiki's queue directory, under the overview's own file name, which is where
+# the file-naming page puts a wiki page awaiting approval and how it names a
+# file in a queue. Why a refresh is drafted at all is in
+# overview_refresh_due_lines's docstring.
+SYSTEM_OVERVIEW_DRAFT_DIRECTORY = "docs/nedschorus-wiki/queue"
+
 # How long each git call of overview_refresh_due_lines that reads a ref, a tree
 # or an overview gets before it is given up on. Read from the module inside
 # that function rather than bound as a default argument, so a case can lower
@@ -311,18 +318,23 @@ OVERVIEW_REFRESH_CHECK_GH_TIMEOUT_SECONDS = 30
 # Appended to each overview-refresh-due report in the successor's first
 # prompt, the way BRANCH_STATE_INSTRUCTION is appended to the branch sync's.
 # A template, like ORPHANED_SUBAGENT_ROSTER_SENTENCE_TEMPLATE, because the
-# overview, the command listing the commits and the commit to pin are computed
-# per system. The pinned line it asks for is the one
+# overview, its draft, the command listing the commits and the commit to pin
+# are computed per system. The pinned line it asks for is the one
 # scripts/stale-code-citation-check.py reads, prefix included, so a refresh
-# that follows it empties the range this check reports. Why each part is
-# there is in overview_refresh_due_lines's docstring.
+# that follows it empties the range this check reports once the overview is
+# written from the draft. Why each part is there is in
+# overview_refresh_due_lines's docstring.
 OVERVIEW_REFRESH_DUE_INSTRUCTION_TEMPLATE = (
-    " — Dispatch a subagent to refresh {overview_path} against the commits "
+    " — Dispatch a subagent to write {overview_draft_path}: a copy of "
+    "{overview_path} refreshed against the commits "
     "`{commit_listing_command}` lists, as "
     "docs/issues/670-refresh-design-when-a-system-s-code-lands.md defines a "
-    "refresh, and to append to it the pinned line "
+    "refresh, with the pinned line "
     "`{landing_pin_prefix}{main_commit}](<commit url>) on <YYYY-MM-DD> — "
-    "<what landed>`."
+    "<what landed>` appended. When the subagent reports, show the user the "
+    "diff between {overview_path} and {overview_draft_path}. When the user "
+    "approves the diff, write {overview_path} from {overview_draft_path} and "
+    "delete {overview_draft_path}."
 )
 
 # The hour, in America/Los_Angeles, from which memory_review_due_lines looks
@@ -1439,6 +1451,23 @@ def overview_refresh_due_lines(working_directory: Path) -> tuple:
     GHI-MD the instruction names because the refresh is not yet built as a
     skill.
 
+    THE REFRESH IS DRAFTED, AND THE USER SEES IT BEFORE THE OVERVIEW CHANGES.
+    RULED. The user, 2026-10-01, item 2 of the walk
+    nedschorus-file-naming-and-location-standards-2026-09-30, whose minutes are
+      nedlern@ned-box:/home/nedlern/nedschorus-logs/walk/nedschorus-file-naming-and-location-standards-2026-09-30-minutes.md
+    his word "y", and "y" again the same day to the wiki's queue directory
+    over docs/drafts/. An overview is a page under docs/nedschorus-wiki/, and
+    .claude/hooks/instruction-file-guard.py refuses an agent's Edit or Write
+    to a page there until the user's approval words are quoted into its
+    marker. A subagent cannot show the user anything, so a subagent told to
+    refresh the overview in place stalls at that refusal. The instruction
+    therefore has the subagent write the refreshed overview into
+    SYSTEM_OVERVIEW_DRAFT_DIRECTORY, which the guard leaves free, under the
+    overview's own file name, and has the seat show the user the diff, write
+    the overview from the draft and delete the draft. The pull request that
+    carries the refresh then changes the overview itself, which is what the
+    open-pull-request check below looks for.
+
     WHY HERE AND NOT IN A HOOK. It runs once per reincarnation, only where an
     ignition plan is composed, so it needs no record of what it has already
     said. The walk first placed it in scripts/checkout-freshness-catch-up.py,
@@ -1587,12 +1616,15 @@ def overview_refresh_due_lines(working_directory: Path) -> tuple:
                 f"git log --no-merges {commit_range} -- "
                 + " ".join(f"'{pathspec}'" if ":(" in pathspec else pathspec
                            for pathspec in pathspecs))
+            overview_draft_path = (f"{SYSTEM_OVERVIEW_DRAFT_DIRECTORY}/"
+                                   f"{overview_path.rsplit('/', 1)[-1]}")
             due.append((system, overview_path,
                 f"overview refresh due: {system} — {count} commit(s) under "
                 f"nc-systems/{system}/ since its overview's pinned commit, in "
                 f"{commit_range}"
                 + OVERVIEW_REFRESH_DUE_INSTRUCTION_TEMPLATE.format(
                     overview_path=overview_path,
+                    overview_draft_path=overview_draft_path,
                     commit_listing_command=commit_listing_command,
                     landing_pin_prefix=stale_code_citation_check.LANDING_PIN_PREFIX,
                     main_commit=main_commit)))

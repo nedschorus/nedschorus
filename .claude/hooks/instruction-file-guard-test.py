@@ -194,6 +194,8 @@ with tempfile.TemporaryDirectory() as temporary_directory:
         ("a landed design in its system's docs/",
          workspace / "nc-systems" / "handoff" / "docs" / "handoff-foo-design.md"),
         ("design-to-main's design", workspace / "docs" / "design-to-main" / "design-to-main-state-machine-design.md"),
+        ("a design in a record-named directory below the checkout's top",
+         workspace / "docs" / "cold-read-records" / "foo-design-2026-09-30" / "foo-design.md"),
     ]
     for label, target in reviewed_homes:
         result = run_hook(decoy, workspace, str(target))
@@ -205,6 +207,10 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     check("the block sends a first draft to a draft place",
           "docs/drafts/" in result.stderr and "docs/nedschorus-wiki/queue/" in result.stderr,
           result.stderr)
+    check("the block tells a subagent to report the change to the agent that dispatched it",
+          "If he has not, show him the change and wait for his answer; if you are a subagent, "
+          "report the change to the agent that dispatched you instead."
+          in result.stderr.splitlines(), result.stderr)
     check("the block is one instruction per line", len(result.stderr.strip().splitlines()) == 4,
           result.stderr)
     draft_places = [
@@ -212,7 +218,7 @@ with tempfile.TemporaryDirectory() as temporary_directory:
         ("a draft in docs/nedschorus-wiki/queue/", workspace / "docs" / "nedschorus-wiki" / "queue" / "x.md"),
         ("a design draft in docs/issues/queue/", workspace / "docs" / "issues" / "queue" / "foo-design.md"),
         ("a design draft in docs/drafts/", workspace / "docs" / "drafts" / "foo-design.md"),
-        ("a note in nc-queue/", workspace / "nc-queue" / "x.md"),
+        ("a design draft in nc-queue/", workspace / "nc-queue" / "foo-design.md"),
     ]
     for label, target in draft_places:
         result = run_hook(decoy, workspace, str(target))
@@ -221,6 +227,11 @@ with tempfile.TemporaryDirectory() as temporary_directory:
         ("a system's doc that is not a design", workspace / "nc-systems" / "handoff" / "docs" / "x.md"),
         ("a test-design", workspace / "docs" / "issues" / "12-foo-test-design.md"),
         ("a design-contract", workspace / "docs" / "issues" / "12-foo-contract.md"),
+        ("a skill's test-design under nc-systems/skills/", skills / "docs" / "cold-read-test-design.md"),
+        ("a skill's design-contract under nc-systems/skills/", skills / "docs" / "cold-read-contract.md"),
+        ("a name ending design.md without the hyphen", workspace / "docs" / "issues" / "12-redesign.md"),
+        ("a reviewed home's path below the checkout's top",
+         workspace / "tools" / "docs" / "nedschorus-wiki" / "x.md"),
         ("a GHI-MD that is not a design", workspace / "docs" / "issues" / "12-foo.md"),
         ("a walk file", workspace / "docs" / "walk" / "x.md"),
         ("a skill's code", skills / "x.py"),
@@ -229,6 +240,8 @@ with tempfile.TemporaryDirectory() as temporary_directory:
          workspace / "cold-read-records" / "foo-design-2026-09-30" / "foo-design.md"),
         ("a design's frozen copy in a sanity-check record",
          workspace / "sanity-check-records" / "2026-09-30-foo-design" / "foo-design.md"),
+        ("a design's frozen copy in an md-review record",
+         workspace / "md-review-records" / "foo-design-2026-09-30" / "foo-design.md"),
     ]
     for label, target in not_reviewed:
         result = run_hook(decoy, workspace, str(target))
