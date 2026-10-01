@@ -136,6 +136,17 @@ with tempfile.TemporaryDirectory() as workspace:
     findings = problems_for("`PR [<title>](<URL>)` and [doc](docs/ghost-doc.md)", root)
     check("a missing link target beside a placeholder target is still reported",
           findings == ["link target does not exist: docs/ghost-doc.md"], str(findings))
+    # Two shapes the cases above leave open, each named in review of the pull
+    # request that added the skip. A placeholder that OPENS a longer target:
+    # this case fails if fullmatch is loosened to match, which anchors only at
+    # the start. A placeholder other than <URL>: this case fails if the skip
+    # is narrowed to the one placeholder the identifier file happens to use.
+    findings = problems_for("[doc](<name>-ghost.md)", root)
+    check("a placeholder opening a longer link target is still reported",
+          findings == ["link target does not exist: <name>-ghost.md"], str(findings))
+    findings = problems_for("`see [the page](<address>)`", root)
+    check("a link target that is any other placeholder is not checked",
+          findings == [], str(findings))
 
     # --- Dates ------------------------------------------------------------
     check("a real date passes", problems_for("ruled 2026-08-12 by", root) == [])
