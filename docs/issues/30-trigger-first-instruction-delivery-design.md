@@ -1,3 +1,7 @@
+---
+issue: "[Trigger-first instruction delivery (moved from nedlern#1972): delivery timing as a property of every instruction — step-2 CLAUDE.md design input + carried design and scan](https://github.com/nedschorus/nedschorus/issues/30)"
+---
+
 > **Carried from nedlern 2026-07-27** (user-directed, part of the nedlern
 > decommissioning): original path [docs/working/trigger-first-instruction-delivery-design.md](https://github.com/nedlern/nedlern/blob/main/docs/working/trigger-first-instruction-delivery-design.md)
 > at nedlern main. Pair: [nedschorus#30](https://github.com/nedschorus/nedschorus/issues/30).
@@ -16,6 +20,14 @@
 - **Status:** wave-0 design of record for [nedlern/nedlern#1972](https://github.com/nedlern/nedlern/issues/1972) (`priority:high`). **Revision 3, 2026-07-19 — /d-review COMPLETE, verdict READY:** round 1 (author pass + independent cold review: not-ready, 4 HIGH / 8 MED / 5 LOW) fully incorporated in revision 2; the same reviewer's finding-by-finding verification of revision 2 returned **ready — all 17 resolved**, with two NEW wrinkles (loose pre-filter anchors; ambiguous session-fallback key) folded into this revision. Review record: [trigger-first-instruction-delivery-design-cold-review.md](https://github.com/nedlern/nedlern/blob/main/docs/working/trigger-first-instruction-delivery-design-cold-review.md). Nothing here executes without the user's per-piece review; ops execution is additionally held by the user's priority gate (ops paused 2026-07-19).
 - **Inputs, all on main:** the user's ten candidate dispositions + standing rules ([trigger-first-instruction-delivery-thoughts.md](https://github.com/nedlern/nedlern/blob/main/docs/working/trigger-first-instruction-delivery-thoughts.md) § Boss walk decisions), the 67-row first-pass scan ([trigger-first-instruction-delivery-scan-first-pass.md](https://github.com/nedlern/nedlern/blob/main/docs/working/trigger-first-instruction-delivery-scan-first-pass.md)), the hook-spam audit ([trigger-first-instruction-delivery-hook-spam-audit.md](https://github.com/nedlern/nedlern/blob/main/docs/working/trigger-first-instruction-delivery-hook-spam-audit.md)), and the D1–D5 records ([claude-md-restructure-synthesis-and-boss-decisions.md](https://github.com/nedlern/nedlern/blob/main/docs/working/claude-md-restructure-synthesis-and-boss-decisions.md)).
 - **Tracked-by:** [nedlern/nedlern#1972](https://github.com/nedlern/nedlern/issues/1972).
+
+## The idea (user, 2026-07-18 legacy walk, marked important)
+
+Delivery timing becomes a property of every instruction, not a placement. Rules that are infrequently needed AND detectable just-in-time (a tool about to run, a file type being touched, a phrase from the user or the agent, a watcher) move out of always-loaded CLAUDE.md to triggered injection — the instruction re-arrives fresh at the moment of need, which also defeats retention decay under token spend. Session-start delivery becomes one trigger among many.
+
+The user's working assumptions, recorded with the idea: agents retain most content for roughly 100k tokens; space re-injection of the same rule to roughly 50k–100k tokens since its last delivery; moderate over-firing is tolerable ("it's just instructions") — the guard is aggregate context spend.
+
+The program moved to NC from the legacy tracker ([nedlern/nedlern#1972](https://github.com/nedlern/nedlern/issues/1972), now closed onto this issue) on the user's direction of 2026-07-27: nedlern is being decommissioned, so the legacy issue is no longer a durable home.
 
 ## What this designs
 
@@ -56,7 +68,7 @@ ONE hook script (`instruction-trigger-injector.sh`, bash front + python core), r
 
 ### The trigger map
 
-Proposed location config/instruction-triggers/triggers.json (proposed by this design; not built here or at nedlern), payload texts as `config/instruction-triggers/payloads/<rule-id>.md`. Row schema (d-review F-NAMING-SUBJECT):
+Proposed location config/instruction-triggers/triggers.json (proposed by this design; not built here), payload texts as `config/instruction-triggers/payloads/<rule-id>.md`. Row schema (d-review F-NAMING-SUBJECT):
 
 | Field | Meaning |
 |---|---|
@@ -163,6 +175,19 @@ The audit is the program's only decay check and gates all further kernel reducti
 2. Native `.claude/rules` dedup/spacing behavior — measure; outcome only affects whether candidates 7/10 accept per-touch semantics (they stay native either way).
 3. The UserPromptSubmit probe outcome — determines whether `hard-problem-checklist`'s prompt leg injects directly or queue-delivers.
 4. Codex-side delivery — parked to #1925 (D1); the map schema's `subject` field is runtime-neutral by design.
+
+## Relations
+
+- The step-2 CLAUDE.md rewrite is the natural consumer: what stays always-loaded vs what becomes triggered is a step-2 design question (founding plan step 2). What may port from the struck 348-line scan is its METHOD — classify every instruction line against actual enforcement to find what must stay always-loaded. When step 2 runs, pull the scan from nedlern main at `docs/working/trigger-first-instruction-delivery-scan-first-pass.md` and apply the method to NC's own content.
+- The runtime-behavior research bundle measures the other half of the same problem — what a fresh agent retains from always-loaded files: issue [Runtime-behavior research bundle: instruction compression + deliberate scrub, instruction precedence, output styles, context clearing, names reviewer, memory maintenance](https://github.com/nedschorus/nedschorus/issues/29).
+
+## The orphaned-MD adoption (user, 2026-07-19)
+
+Preserved here because its only other home is the decommissioning repository (provenance: [nedlern/nedlern#1972 comment 5086000371](https://github.com/nedlern/nedlern/issues/1972#issuecomment-5086000371)): (1) a work-bearing draft names its tracking issue on a `Tracked-by: <issue>` line inside the draft itself; (2) `Record-only: no pending work` is the opt-out marking a genuine findings log, so the absence of an issue reads as deliberate; (3) mandatory MD-per-GHI was DECLINED (it multiplies the orphan/rot surface; the underlying need is bidirectional linkage, with any repo-native index generated, never hand-authored). It bears on NC because ghi-write faced the same linkage question (GHI [Build ghi-write (step-1 founding skill): trigger on creating or revising a GHI; enforce edit-don't-comment-or-duplicate](https://github.com/nedschorus/nedschorus/issues/13), now closed).
+
+## Close condition
+
+The issue closes when NC's instruction-delivery design either adopts trigger-first delivery (in step 2 or a successor design) or explicitly rejects it with the reason recorded.
 
 ## See Also
 
