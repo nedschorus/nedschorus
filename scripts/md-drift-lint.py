@@ -12,9 +12,10 @@ Checks, per file type:
           (a path this repository deliberately does not track is skipped;
           a backtick citation with a line number, `file.md:120`, is checked
           as the file it names)
-        - markdown link targets resolve (external schemes skipped; a link
-          target keeps any line-number suffix, because a link written
-          `file.md:120` is a broken link)
+        - markdown link targets resolve (external schemes skipped; a target
+          that is only a `<placeholder>` skipped; a link target keeps any
+          line-number suffix, because a link written `file.md:120` is a
+          broken link)
         - YYYY-MM-DD tokens are real calendar dates
         - a backtick command naming an existing project script also names
           only flags that appear in that script's source
@@ -429,6 +430,19 @@ def check_markdown_links(line: str, md_path: Path, repo_root: Path):
     for match in MARKDOWN_LINK.finditer(line):
         target = match.group(1)
         if "://" in target or target.startswith(("mailto:", "#")):
+            continue
+        # A target that is nothing but a `<placeholder>` is a template: the
+        # reader supplies the address, as in `PR [<title>](<URL>)`. The
+        # backtick check has skipped placeholders since 2026-09-20 and this
+        # check had no such skip. Measured 2026-10-01: the six templates of
+        # that shape in explain-how-to-write-an-identifier-instructions.md,
+        # the explain skill's identifier file, text the user approved word
+        # for word, were each reported "link target does not exist: <URL>",
+        # here and by scripts/dangling-path-citation-check.py, which reads
+        # link targets through this function and exited 1 on that file's pull
+        # request. Only a target that is a placeholder and nothing else is
+        # skipped: a placeholder inside a longer target is reported as before.
+        if PLACEHOLDER_SPAN.fullmatch(target):
             continue
         bare = target.split("#", 1)[0]
         if not bare:

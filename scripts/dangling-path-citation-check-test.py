@@ -151,6 +151,28 @@ scripts/inside-a-fence.py
     check("a path inside a code fence is not reported",
           "inside-a-fence" not in out, out)
 
+    # --- a link template whose target is only a placeholder --------------
+    # Measured 2026-10-01 on the pull request that added
+    # explain-how-to-write-an-identifier-instructions.md, the explain skill's
+    # identifier file: this program exited 1 with six findings, each "link
+    # target does not exist: <URL>", one per template of this shape, and
+    # nothing else. The first line below is that file's line 13. The second
+    # is the control: a real link to a file that is not there is still
+    # reported.
+    git(root, "checkout", "-q", "-b", "placeholder-link-target", base)
+    commit_change(root, "docs/identifier-templates.md",
+                  "- A pull request: `PR [<title>](<URL>)`. A pull request not yet created: \"the\n")
+    code, out, err = run_check(root, base)
+    check("a link template whose target is only a placeholder is not reported",
+          code == 0 and "<URL>" not in out, f"{code} {out!r} {err!r}")
+    commit_change(root, "docs/identifier-templates.md",
+                  "- A pull request: `PR [<title>](<URL>)`. A pull request not yet created: \"the\n"
+                  "- The design: [the design](absent-design.md).\n")
+    code, out, err = run_check(root, base)
+    check("a missing link target beside a placeholder template is still reported",
+          code == 1 and "absent-design.md" in out and "<URL>" not in out,
+          f"{code} {out!r} {err!r}")
+
     # --- shapes that are not citations ----------------------------------
     git(root, "checkout", "-q", "-b", "not-citations", base)
     commit_change(root, "scripts/various-shapes", """#!/bin/sh

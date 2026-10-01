@@ -111,6 +111,32 @@ with tempfile.TemporaryDirectory() as workspace:
     check("an anchor link is skipped",
           problems_for("[s](#section)", root) == [])
 
+    # --- A link target that is only a <placeholder> (added 2026-10-01) -----
+    # The two lines are the project's own text, lines 13 and 42 of
+    # explain-how-to-write-an-identifier-instructions.md, the explain skill's
+    # identifier file: templates the reader fills in, written inside a
+    # backtick span. Before the skip each `(<URL>)` was reported "link target
+    # does not exist: <URL>".
+    findings = problems_for(
+        "- A pull request: `PR [<title>](<URL>)`. A pull request not yet created: \"the",
+        root)
+    check("a link target that is only a placeholder is not checked",
+          findings == [], str(findings))
+    findings = problems_for(
+        "  `comment on PR [<title>](<URL>)` or `comment on GHI [<title>](<URL>)`, the URL",
+        root)
+    check("two placeholder link targets on one line are not checked",
+          findings == [], str(findings))
+    # The skip is for a target that is a placeholder and nothing else. A
+    # placeholder inside a longer target was reported before the skip and
+    # still is; this case fails if the skip widens from fullmatch to search.
+    findings = problems_for("[doc](docs/<name>-ghost.md)", root)
+    check("a placeholder inside a longer link target is still reported",
+          findings == ["link target does not exist: docs/<name>-ghost.md"], str(findings))
+    findings = problems_for("`PR [<title>](<URL>)` and [doc](docs/ghost-doc.md)", root)
+    check("a missing link target beside a placeholder target is still reported",
+          findings == ["link target does not exist: docs/ghost-doc.md"], str(findings))
+
     # --- Dates ------------------------------------------------------------
     check("a real date passes", problems_for("ruled 2026-08-12 by", root) == [])
     problems = problems_for("ruled 2026-13-40 by", root)
