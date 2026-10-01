@@ -39,14 +39,29 @@ SHIP = SYSTEM_DIRECTORY / "cold-read-record-ship.py"
 DESTINATION_VARIABLE = "COLD_READ_RECORD_SHIP_DESTINATION"
 RULED_DESTINATION = "nedlern@ned-box:/home/nedlern/nedschorus-logs/cold-read-records"
 
+# What a stub `ssh` answers to the call that places the staged files: every
+# file landed with the bytes the shipment asked for, which is what a store
+# no other shipment is writing to answers. The placing script names each file
+# and its digest on its `set --` line, so the answer is read from there.
+STUB_ANSWER_TO_PLACING = """
+script = sys.argv[-1]
+if "# cold-read-record-ship: place staged files" in script:
+    import shlex
+    pairs = shlex.split(next(line for line in script.splitlines()
+                             if line.startswith("set -- "))[len("set -- "):])
+    for relative, digest in zip(pairs[0::2], pairs[1::2]):
+        print(digest + "  " + relative)
+    sys.exit(0)
+"""
+
 # The stub for both `ssh` and `rsync`: append argv to the log named in the
 # environment and exit 0 printing nothing, which for the inventory call
-# means "no such directory in the store yet".
+# means "no such directory in the store yet", and answer the placing call.
 STUB_RECORDER = """#!/usr/bin/env python3
 import json, os, sys
 with open(os.environ["RECORD_SHIP_TEST_ARGV_LOG"], "a") as log:
     log.write(json.dumps(sys.argv) + "\\n")
-"""
+""" + STUB_ANSWER_TO_PLACING
 
 # A stub `ssh` that records what it was asked as the recorder above does and
 # ANSWERS the inventory call: the script that runs sha256sum gets one line
@@ -58,6 +73,7 @@ STUB_INVENTORY_ANSWERING_SSH = """#!/usr/bin/env python3
 import json, os, sys
 with open(os.environ["RECORD_SHIP_TEST_ARGV_LOG"], "a") as log:
     log.write(json.dumps(sys.argv) + "\\n")
+""" + STUB_ANSWER_TO_PLACING + """
 if "sha256sum" in sys.argv[-1]:
     print(os.environ["RECORD_SHIP_TEST_STORED_TRIAGE_DIGEST"] + "  ./triage.md")
 """
@@ -670,13 +686,29 @@ with tempfile.TemporaryDirectory(prefix="cold-read-record-ship-test-") as scratc
     check("the store's inventory is one ssh call running sha256sum under the record's directory",
           any("sha256sum" in " ".join(c) and f"cold-read-records/{demo.name}" in " ".join(c)
               for c in ssh_calls), str(ssh_calls))
-    check("exactly one rsync call, add-only, over batch-mode ssh, into the record's own directory",
+    staging_prefix = f"{RULED_DESTINATION}/.ship-staging-{demo.name}-"
+    check("exactly one rsync call, over batch-mode ssh, into a staging "
+          "directory beside the record's own, named for the record",
           len(rsync_calls) == 1 and "-a" in rsync_calls[0]
-          and "--ignore-existing" in rsync_calls[0]
           and "ssh -o BatchMode=yes -o ConnectTimeout=10" in rsync_calls[0]
           and rsync_calls[0][-2] == f"{demo.resolve()}/"
-          and rsync_calls[0][-1] == f"{RULED_DESTINATION}/{demo.name}/",
+          and rsync_calls[0][-1].startswith(staging_prefix)
+          and rsync_calls[0][-1].endswith("/"),
           str(rsync_calls))
+    placing_calls = [c for c in ssh_calls
+                     if "# cold-read-record-ship: place staged files" in c[-1]]
+    staging_used = rsync_calls[0][-1][len(f"{RULED_DESTINATION}/"):].rstrip("/") \
+        if rsync_calls else ""
+    check("then one ssh call places the staged files into the record's own "
+          "directory by hard link, never over an existing file, and removes "
+          "the staging directory",
+          len(placing_calls) == 1
+          and "ln -- " in placing_calls[0][-1] and "ln -f" not in placing_calls[0][-1]
+          and f"/home/nedlern/nedschorus-logs/cold-read-records/{demo.name}"
+          in placing_calls[0][-1]
+          and f"rm -rf -- /home/nedlern/nedschorus-logs/cold-read-records/{staging_used}"
+          in placing_calls[0][-1],
+          str(placing_calls))
     check("rsync is never asked to delete or to write in place",
           not any(flag in rsync_calls[0] for flag in ("--delete", "--inplace")),
           str(rsync_calls))
@@ -764,6 +796,165 @@ with tempfile.TemporaryDirectory(prefix="cold-read-record-ship-test-") as scratc
           and f"nedlern@ned-box:{box_store}/{box_record.name}" in printed.getvalue()
           and (box_store / box_record.name / "a.md").read_text(encoding="utf-8") == REPORT_A,
           printed.getvalue())
+
+    # --- TWO SHIPMENTS OF ONE RECORD NAME AT ONCE ----------------------------
+    # Two checkouts ship a record of one name in the same second. The other
+    # shipment's file is made to land at a chosen moment of this one -- after
+    # this one has taken the store's inventory, or after its copy has run -- by
+    # wrapping the call that marks that moment, in this process. Whichever
+    # shipment's file is not the one the store keeps must not print shipped:.
+    racing_spec = importlib.util.spec_from_file_location(
+        "cold_read_record_ship_two_shipments", SHIP)
+    racing = importlib.util.module_from_spec(racing_spec)
+    racing_spec.loader.exec_module(racing)
+    saved_destination = os.environ.pop(DESTINATION_VARIABLE, None)
+    saved_store_inventory = racing.store_inventory
+    saved_subprocess_run = subprocess.run
+
+    def ship_while_the_other_lands(case_label, other_report, moment):
+        """Ship a record whose fast-read.md is REPORT_A while the other
+        shipment's fast-read.md, `other_report`, lands in the store at
+        `moment`: "after-inventory" or "after-copy". Returns the exit code,
+        the stdout, the bytes the store keeps, and what the shipment left
+        in the store's records directory beside the record."""
+        race_store = scratch / f"race-store-{case_label}" / "cold-read-records"
+        race_record = make_record(scratch / f"race-records-{case_label}",
+                                  "explain-reply-draft-seat-a-151738-2026-10-01",
+                                  {"fast-read.md": REPORT_A,
+                                   "target/docs/reply.md": "# the reply\n"})
+        landed_path = race_store / race_record.name / "fast-read.md"
+
+        def land_the_other():
+            landed_path.parent.mkdir(parents=True, exist_ok=True)
+            landed_path.write_text(other_report, encoding="utf-8")
+
+        def inventory_then_land(host, store_dir):
+            answer = saved_store_inventory(host, store_dir)
+            if moment == "after-inventory" and not landed_path.exists():
+                land_the_other()
+            return answer
+
+        copies_run = []
+
+        def run_then_land(command, *args, **kwargs):
+            completed = saved_subprocess_run(command, *args, **kwargs)
+            if moment == "after-copy" and command and command[0] == "rsync" \
+                    and not copies_run:
+                copies_run.append(command)
+                # Written over whatever this shipment's copy put there: the
+                # other shipment's rsync, which found no file when it looked,
+                # renaming its temporary into place after this one's did.
+                land_the_other()
+            return completed
+
+        printed = io.StringIO()
+        racing.store_inventory = inventory_then_land
+        subprocess.run = run_then_land
+        try:
+            with contextlib.redirect_stdout(printed), \
+                    contextlib.redirect_stderr(io.StringIO()):
+                code = racing.ship_one(None, pathlib.PurePosixPath(race_store),
+                                       race_record)
+        finally:
+            racing.store_inventory = saved_store_inventory
+            subprocess.run = saved_subprocess_run
+        kept = landed_path.read_text(encoding="utf-8") if landed_path.exists() else None
+        beside = sorted(p.name for p in race_store.iterdir() if p.name != race_record.name)
+        return code, printed.getvalue(), kept, beside
+
+    try:
+        code, out, kept, beside = ship_while_the_other_lands(
+            "between-inventory-and-copy", REPORT_B, "after-inventory")
+        check("the other shipment's differing report landing between this "
+              "shipment's inventory and its copy makes this one REFUSED, never "
+              "shipped:, its own report not being what the store keeps",
+              code == 2 and out.startswith("REFUSED:") and "fast-read.md" in out
+              and out.count("\n") == 1,
+              f"exit {code}: {out}")
+        check("that refusal leaves the other shipment's report in the store, "
+              "not overwritten", kept == REPORT_B, repr(kept))
+        check("and the refused shipment placed nothing after the taken file: "
+              "its target/ copy, which sorts after fast-read.md, is not in the "
+              "store beside the other shipment's report",
+              not (scratch / "race-store-between-inventory-and-copy"
+                   / "cold-read-records"
+                   / "explain-reply-draft-seat-a-151738-2026-10-01"
+                   / "target").exists())
+
+        code, out, kept, beside = ship_while_the_other_lands(
+            "after-the-copy-ran", REPORT_B, "after-copy")
+        check("the other shipment's differing report landing after this "
+              "shipment's copy ran still never lets both print shipped: -- "
+              "this one refuses, or its report is the one the store keeps",
+              (code == 2 and out.startswith("REFUSED:") and kept == REPORT_B)
+              or (code == 0 and out.startswith("shipped:") and kept == REPORT_A),
+              f"exit {code}: {out}; store keeps {kept!r}")
+
+        code, out, kept, beside = ship_while_the_other_lands(
+            "same-bytes", REPORT_A, "after-inventory")
+        check("the other shipment landing the SAME bytes between inventory and "
+              "copy is no difference: this one is shipped:, exit 0",
+              code == 0 and out.startswith("shipped:") and kept == REPORT_A,
+              f"exit {code}: {out}")
+        check("a shipment leaves nothing in the store beside the record "
+              "directory, whether it shipped or refused",
+              beside == [] and not any(
+                  p.name != "explain-reply-draft-seat-a-151738-2026-10-01"
+                  for case_label in ("between-inventory-and-copy",
+                                     "after-the-copy-ran", "same-bytes")
+                  for p in (scratch / f"race-store-{case_label}"
+                            / "cold-read-records").iterdir()),
+              str(beside))
+    finally:
+        if saved_destination is not None:
+            os.environ[DESTINATION_VARIABLE] = saved_destination
+
+    # The placing script ned-box runs, replayed by a real /bin/sh on scratch
+    # paths. The stubs above answer it without running it, so this is the one
+    # case where its shell is parsed and executed.
+    def place_through_real_sh(case_label, stored_b):
+        staging = scratch / f"placing-{case_label}" / ".ship-staging-r-0"
+        store = scratch / f"placing-{case_label}" / "r"
+        contents = {"a.md": "a\n", "b.md": "b, this shipment's\n",
+                    "sub dir/c.md": "c\n"}
+        for relative, text in contents.items():
+            (staging / relative).parent.mkdir(parents=True, exist_ok=True)
+            (staging / relative).write_text(text, encoding="utf-8")
+        if stored_b is not None:
+            store.mkdir(parents=True, exist_ok=True)
+            (store / "b.md").write_text(stored_b, encoding="utf-8")
+        digests = {relative: hashlib.sha256(text.encode()).hexdigest()
+                   for relative, text in contents.items()}
+        script = racing.place_staged_files_script(
+            pathlib.PurePosixPath(staging), pathlib.PurePosixPath(store),
+            sorted(contents), digests)
+        replayed = subprocess.run(["/bin/sh", "-c", script],
+                                  capture_output=True, text=True, check=False)
+        held = {relative: (store / relative).read_text(encoding="utf-8")
+                for relative in contents if (store / relative).is_file()}
+        return replayed, held, staging, digests
+
+    replayed, held, staging, digests = place_through_real_sh("taken", "b, the other's\n")
+    check("replayed by a real sh, the placing script links the files in order, "
+          "leaves a name taken by other bytes as it was, and places nothing "
+          "after it",
+          replayed.returncode == 0
+          and held == {"a.md": "a\n", "b.md": "b, the other's\n"},
+          f"{held} {replayed.stderr}")
+    check("it removes the staging directory and prints the store's digest "
+          "of each file it holds",
+          not staging.exists()
+          and f"{digests['a.md']}  a.md" in replayed.stdout
+          and hashlib.sha256(b"b, the other's\n").hexdigest() + "  b.md"
+          in replayed.stdout and "c.md" not in replayed.stdout,
+          replayed.stdout)
+    replayed, held, staging, digests = place_through_real_sh(
+        "same-bytes", "b, this shipment's\n")
+    check("a name taken by the same bytes is no stop: every file is placed, "
+          "a path with a space in it included",
+          replayed.returncode == 0 and len(held) == 3 and not staging.exists()
+          and f"{digests['sub dir/c.md']}  sub dir/c.md" in replayed.stdout,
+          f"{held} {replayed.stdout} {replayed.stderr}")
 
 print()
 if failures:

@@ -82,6 +82,34 @@ with the design:
      record's -2 rename gives the second read a directory of its own, and
      nothing is lost by waiting for it.
 
+TWO SHIPMENTS OF ONE NAME AT ONCE. Rule 2 compares against the store's
+inventory, taken before the copy; a file another shipment lands after that
+inventory is not in it. Two checkouts shipping a record of one name in the
+same second did exactly this (PR "The explain skill is installed, with the
+script that gives a draft reply its fresh read",
+https://github.com/nedschorus/nedschorus/pull/894, mac-claude's review item 2,
+2026-10-01): both printed `shipped:`, and the store kept one checkout's
+fast-read.md beside the other's target/. The copy was `rsync
+--ignore-existing` straight into the record's directory, which skips a file
+that has appeared since the inventory without a word, and whose rename can
+also replace one that appeared while it was copying. So the new files are
+copied into a staging directory beside the record's
+(`.ship-staging-<name>-<random>`, removed once they are placed) and placed
+into the record's directory by HARD LINK, one at a time, in a fixed order. A
+hard link is never made over an existing file -- the link call itself fails
+when the name exists, in one step -- so a file another shipment landed first
+is never replaced. The store's digests of the new files are then read back,
+and the outcome is judged on what the store holds, not on what was asked:
+a file holding other bytes is REFUSED under rule 2, a file the store does not
+hold is FAILED, and `shipped:` is printed only when every new file holds this
+shipment's bytes. Identical bytes landed by the other shipment are not a
+difference. Placing stops at the first file found holding other bytes, so the
+shipment that loses the race adds nothing after it; files it placed before
+that one stay, add-only like the rest. A staging directory outlives its
+shipment only when ned-box drops the connection mid-run; nothing reads it,
+and it can be removed by hand. The triage.md replacement of rule 4 is
+outside this: it replaces by design.
+
 The store's directories are created on first use, and a README.md at the
 store's root is rewritten from STORE_README in this file whenever it differs:
 it says what the store is, how to cite a file in it, and which program or
@@ -127,6 +155,8 @@ import shlex
 import os
 import importlib.util
 import pathlib
+import secrets
+import shutil
 import socket
 import subprocess
 import sys
@@ -169,6 +199,15 @@ RSYNC_IO_TIMEOUT_SECONDS = "120"
 # ssh's exit code when it could not connect, which rsync passes through.
 RSYNC_EXIT_CONNECTION_FAILED = 255
 PROVENANCE_COMMENT_PREFIX = "<!-- provenance:"
+
+# The new files of one shipment are copied into a directory of this name
+# beside the record's own, then hard-linked into place; see TWO SHIPMENTS OF
+# ONE NAME AT ONCE above. A leading dot keeps it out of an ordinary listing of
+# the store; the record's name and a random part keep two shipments apart.
+STAGING_DIRECTORY_PREFIX = ".ship-staging-"
+# Marks the one ssh call that places the staged files, so a test's stub `ssh`
+# can tell it from the inventory, which also runs sha256sum.
+PLACE_STAGED_FILES_MARKER = "# cold-read-record-ship: place staged files"
 
 EXIT_SHIPPED = 0
 EXIT_FAILED = 1
@@ -521,6 +560,98 @@ def store_inventory(host, store_dir: pathlib.PurePosixPath):
     return completed, inventory
 
 
+def place_staged_files(host, staging_dir: pathlib.PurePosixPath,
+                       store_dir: pathlib.PurePosixPath, relatives: list,
+                       local_digests: dict):
+    """Hard-link each staged file into the record's directory in the store,
+    in the order given, then remove the staging directory and return the
+    process and the store's {relative path: sha256} of `relatives` -- the
+    files the store now holds under those names, whoever put them there. An
+    unreachable host is an inventory of None, as in store_inventory.
+
+    A link is never made over an existing file. Where the name is taken by
+    other bytes, placing stops: the rest are left unplaced, so the shipment
+    that loses the race adds nothing past that file. Taken by the same bytes,
+    it goes on. See TWO SHIPMENTS OF ONE NAME AT ONCE in the docstring.
+
+    One ssh round trip remotely, running place_staged_files_script; plain
+    filesystem calls and hashlib locally, as store_inventory does."""
+    if host is None:
+        staging, store = pathlib.Path(staging_dir), pathlib.Path(store_dir)
+        try:
+            for relative in relatives:
+                target = store / relative
+                target.parent.mkdir(parents=True, exist_ok=True)
+                try:
+                    os.link(staging / relative, target)
+                except FileExistsError:
+                    if hashlib.sha256(target.read_bytes()).hexdigest() \
+                            != local_digests[relative]:
+                        break
+                except OSError:
+                    break
+        finally:
+            shutil.rmtree(staging, ignore_errors=True)
+        after = {relative: hashlib.sha256((store / relative).read_bytes()).hexdigest()
+                 for relative in relatives if (store / relative).is_file()}
+        return subprocess.CompletedProcess([], 0, "", ""), after
+    script = place_staged_files_script(staging_dir, store_dir, relatives,
+                                       local_digests)
+    completed = subprocess.run(SSH_COMMAND + [host, script],
+                               capture_output=True, text=True, check=False)
+    if completed.returncode != 0:
+        return completed, None
+    after = {}
+    for line in completed.stdout.splitlines():
+        digest, _, relative = line.partition("  ")
+        if digest and relative:
+            after[relative] = digest
+    return completed, after
+
+
+def place_staged_files_script(staging_dir: pathlib.PurePosixPath,
+                              store_dir: pathlib.PurePosixPath, relatives: list,
+                              local_digests: dict) -> str:
+    """The POSIX sh script place_staged_files runs on ned-box: link each file,
+    stop at the first name taken by other bytes, remove the staging
+    directory, print `sha256sum`'s line for each of `relatives` the store
+    holds. `ln` without -f fails when the name exists, and makes the link in
+    the same step when it does not."""
+    quoted_pairs = " ".join(f"{shlex.quote(relative)} {local_digests[relative]}"
+                            for relative in relatives)
+    quoted_relatives = " ".join(shlex.quote(relative) for relative in relatives)
+    staging = shlex.quote(str(staging_dir))
+    store = shlex.quote(str(store_dir))
+    return (
+        f"{PLACE_STAGED_FILES_MARKER}\n"
+        f"set -- {quoted_pairs}\n"
+        f"while [ $# -gt 0 ]; do\n"
+        f"  relative=$1; digest=$2; shift 2\n"
+        f"  mkdir -p -- \"$(dirname -- {store}/\"$relative\")\" || break\n"
+        f"  if ln -- {staging}/\"$relative\" {store}/\"$relative\" 2>/dev/null; then\n"
+        f"    continue\n"
+        f"  fi\n"
+        f"  stored=$(sha256sum < {store}/\"$relative\" 2>/dev/null | cut -d' ' -f1)\n"
+        f"  [ \"$stored\" = \"$digest\" ] || break\n"
+        f"done\n"
+        f"rm -rf -- {staging}\n"
+        f"cd -- {store} || exit 0\n"
+        f"for relative in {quoted_relatives}; do\n"
+        f"  if [ -f \"$relative\" ]; then sha256sum -- \"$relative\"; fi\n"
+        f"done\n")
+
+
+def remove_staging_directory(host, staging_dir: pathlib.PurePosixPath) -> None:
+    """Remove a staging directory a failed copy may have left. Best effort: the
+    copy that failed may have failed because ned-box is unreachable, and then
+    this fails too and the directory stays, which nothing reads."""
+    if host is None:
+        shutil.rmtree(pathlib.Path(staging_dir), ignore_errors=True)
+        return
+    subprocess.run(SSH_COMMAND + [host, f"rm -rf -- {shlex.quote(str(staging_dir))}"],
+                   capture_output=True, text=True, check=False)
+
+
 def ship_one(host, records_path: pathlib.PurePosixPath, record_dir: pathlib.Path) -> int:
     """One directory, one stdout line, one exit code."""
     name = record_dir.name
@@ -559,12 +690,12 @@ def ship_one(host, records_path: pathlib.PurePosixPath, record_dir: pathlib.Path
     if TRIAGE_FILE_REPLACED_IN_THE_STORE in differing:
         differing.remove(TRIAGE_FILE_REPLACED_IN_THE_STORE)
         displaced_triage_digest = in_store[TRIAGE_FILE_REPLACED_IN_THE_STORE]
-    if differing:
+    def refuse(differing_files):
         # The loop only gathers; the one print comes after it, so a
         # cold-read-record with several differing files still gets
         # exactly one stdout line.
         described = []
-        for relative in differing:
+        for relative in differing_files:
             local_line = provenance_comment_of(local_first_line(record_dir / relative))
             if host:
                 store_line = provenance_comment_of(remote_first_line(host, store_dir / relative))
@@ -577,19 +708,46 @@ def ship_one(host, records_path: pathlib.PurePosixPath, record_dir: pathlib.Path
               f"and ship again.")
         return EXIT_REFUSED
 
+    if differing:
+        return refuse(differing)
+
     if not new_files and displaced_triage_digest is None:
         print(f"shipped: {name} — nothing new, all files already there; "
               f"record at {citation}")
         return EXIT_SHIPPED
     if new_files:
+        # Copied beside the record's directory, then linked into it: see TWO
+        # SHIPMENTS OF ONE NAME AT ONCE in the docstring.
+        staging_dir = records_path / (f"{STAGING_DIRECTORY_PREFIX}{name}-"
+                                      f"{secrets.token_hex(6)}")
         transferred = subprocess.run(
-            rsync_command(host, record_dir, store_dir, "--ignore-existing"),
+            rsync_command(host, record_dir, staging_dir),
             capture_output=True, text=True, check=False)
         if transferred.returncode != 0:
+            remove_staging_directory(host, staging_dir)
             reason = ("ned-box unreachable" if transferred.returncode == RSYNC_EXIT_CONNECTION_FAILED
                       else f"rsync exit {transferred.returncode}")
             print(f"FAILED: {name} — {reason} during the copy; a later run finishes it.")
             sys.stderr.write(transferred.stderr)
+            return EXIT_FAILED
+        placed, after = place_staged_files(host, staging_dir, store_dir,
+                                           new_files, local)
+        if after is None:
+            reason = ("ned-box unreachable" if placed.returncode == RSYNC_EXIT_CONNECTION_FAILED
+                      else f"ssh exit {placed.returncode}")
+            print(f"FAILED: {name} — {reason} while placing the copied files; "
+                  f"a later run finishes it.")
+            sys.stderr.write(placed.stderr)
+            return EXIT_FAILED
+        taken = sorted(relative for relative in new_files
+                       if relative in after and after[relative] != local[relative])
+        if taken:
+            return refuse(taken)
+        missing = sorted(relative for relative in new_files if relative not in after)
+        if missing:
+            print(f"FAILED: {name} — not in the store after the copy: "
+                  f"{', '.join(missing)}; a later run finishes it.")
+            sys.stderr.write(placed.stderr)
             return EXIT_FAILED
     if displaced_triage_digest is not None:
         # The replacement is its own rsync of that one file: the copy above
