@@ -177,12 +177,11 @@ EXIT_BAD_INVOCATION = 64
 
 # The note at the door of the log-store, written into it by this program.
 #
-# AGENT-FACING TEXT, so it is instruction and nothing else: what the store is,
-# how to cite a file in it, which program or skill owns each kind, and what to
-# edit to change this file. No dates, no ruling citations, no account of why it reads
-# this way -- those live here and in `refresh_store_readme` below, where a
-# maintainer reads them (user-ruled 2026-09-18, on the force-push guard's
-# refusal, in CLAUDE.md).
+# AGENT-FACING TEXT, so it says what the store is, how to cite a file in it,
+# which program or skill owns each kind, and what to edit to change this file,
+# with a reason wherever the reason helps the reader act. It cites no ruling
+# and no date: a ruling or a date says only who decided and when, which does
+# not help a reader use the store.
 #
 # It used to list every kind and how its files were named. That restatement
 # went stale at each ruling that changed one, and when the cold-read-records'

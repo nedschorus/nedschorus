@@ -122,10 +122,11 @@ The budget can be changed through NEDSCHORUS_PRE_PUSH_CONFLICT_CHECK_SECONDS,
 which exists so the test can run a hanging check in a second. A value that
 does not parse as a positive number is ignored.
 
-THE MESSAGES. Text a program hands an agent at the moment it must act is
-instruction and nothing else (CLAUDE.md, user-ruled 2026-09-18). A refusal
-names the branch, passes on the check's own lines, and says to push again.
-The check's lines already say how to merge, one instruction per line.
+THE MESSAGES. Text a program hands an agent at the moment it must act says
+what was stopped and why, then gives one instruction per line, and cites no
+ruling and no date. A refusal names the branch, passes on the check's own
+lines, and says to push again. The check's lines already say how to merge,
+one instruction per line.
 `--no-verify` is deliberately never printed. It is the escape for a person
 who knows the hook is wrong, not a step to follow on a refusal.
 
