@@ -570,6 +570,96 @@ check("F3: prose inside a dashed-terminator heredoc stays data (no probes)",
       runner.calls)
 
 
+# --- a command substitution inside double quotes is a command list ---
+# The shell runs "$( ... )" exactly as it runs a bare $( ... ). Read as one
+# data word, a guarded command inside it passed, and a heredoc opened inside
+# it was never split out, so the first " in the heredoc's body ended the
+# string and a backticked command after it was read as an invocation.
+
+commit_message_quoting_a_backticked_command = (
+    "git commit -m \"$(cat <<'EOF'\n"
+    "Document the rule\n"
+    "\n"
+    "The brief says: \"never `tmux send-keys -t $SEAT Enter` into a seat.\" Stated now.\n"
+    "EOF\n"
+    ")\""
+)
+runner = StubRunner()
+reason = decide(commit_message_quoting_a_backticked_command, runner)
+check("a heredoc commit message inside \"$(cat <<'EOF' ...)\" is data, quotes and backticks included",
+      reason is None and not runner.calls, (reason, runner.calls))
+
+reason = decide('echo "$(tmux send-keys -t seat-a x)"', StubRunner(stdout="1\n"))
+check("send-keys inside a double-quoted command substitution is denied like the bare form",
+      reason is not None and "attached client" in reason, reason)
+
+reason = decide('OUTPUT="$(tmux paste-buffer -t seat-a 2>&1)"', StubRunner(stdout="1\n"))
+check("paste-buffer captured into a double-quoted assignment is denied",
+      reason is not None and "attached client" in reason, reason)
+
+quoted_substitution_feeding_osascript_a_heredoc = (
+    "RESULT=\"$(osascript <<'EOF'\n"
+    'tell application "iTerm" to tell current session of front window to write text "ls"\n'
+    "EOF\n"
+    ")\""
+)
+reason = decide(quoted_substitution_feeding_osascript_a_heredoc, StubRunner())
+check("osascript consuming a heredoc inside a double-quoted substitution is denied",
+      reason is not None and "write text" in reason, reason)
+
+runner = StubRunner(stdout="1\n")
+reason = decide("git commit -m \"$(cat <<'EOF'\nA 27\" monitor fits\nEOF\n)\"\n"
+                "tmux send-keys -t seat-a x", runner)
+check("a lone \" in the heredoc message does not hide the command after the commit",
+      reason is not None and "attached client" in reason, reason)
+
+runner = StubRunner(stdout="1\n")
+reason = decide('echo "$(tmux send-keys -t seat-a x', runner)
+check("an unterminated \"$( is read as commands to the end of the text",
+      reason is not None and "attached client" in reason, reason)
+
+words = guard.tokenize_simple_commands('echo "at $(date +%H) today" done')
+check("the substitution's commands come first and the word keeps its text unexpanded",
+      words == [["date", "+%H"], ["echo", "at $(date +%H) today", "done"]], words)
+
+words = guard.tokenize_simple_commands('cd "$(dirname "$(git rev-parse --git-dir)")" && ls')
+check("a substitution nested in another, both double-quoted, is read innermost first",
+      words == [["git", "rev-parse", "--git-dir"],
+                ["dirname", "$(git rev-parse --git-dir)"],
+                ["cd", '$(dirname "$(git rev-parse --git-dir)")'], ["ls"]], words)
+
+words = guard.tokenize_simple_commands(
+    'echo "$(printf \')\'; printf "%s)" x; (cd /tmp; ls); tmux send-keys -t seat-a x) end"')
+check("a ) in quotes or closing a subshell does not close the substitution",
+      words[:5] == [["printf", ")"], ["printf", "%s)", "x"], ["cd", "/tmp"], ["ls"],
+                    ["tmux", "send-keys", "-t", "seat-a", "x"]]
+      and len(words) == 6 and words[5][0] == "echo" and words[5][1].endswith(" end"),
+      words)
+
+# Controls: forms the fix must leave as they were.
+runner = StubRunner(stdout="1\n")
+check("an escaped \\$( in double quotes is not a substitution (stays data, no probes)",
+      decide('echo "\\$(tmux send-keys -t seat-a x)"', runner) is None
+      and not runner.calls, runner.calls)
+
+runner = StubRunner()
+reason = decide('tmux send-keys -t "$(cat seat-name)" x', runner)
+check("a substitution as the target is still an unresolved target, not probed",
+      reason is not None and "unexpanded variable" in reason and not runner.calls,
+      (reason, runner.calls))
+
+runner = StubRunner(stdout="1\n")
+reason = decide('echo "$((1<<20))"\ntmux send-keys -t seat-a x', runner)
+check("double-quoted arithmetic 1<<20 opens no heredoc; the next line is still guarded",
+      reason is not None and "attached client" in reason, reason)
+
+shell_view, heredocs = guard.split_out_heredocs(commit_message_quoting_a_backticked_command)
+check("the heredoc inside the double-quoted substitution is split out, body and all",
+      shell_view == "git commit -m \"$(cat <<'EOF'\n)\""
+      and [body.splitlines()[0] for _line, body in heredocs] == ["Document the rule"],
+      (shell_view, heredocs))
+
+
 # --- the ssh invocation parser ---
 
 host, carried, remote = guard.parse_ssh_invocation(

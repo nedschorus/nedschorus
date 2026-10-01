@@ -34,7 +34,9 @@ How the guard reads a command (the 2026-08-17 review round, PR #82): it
 tokenizes the shell text with quoting resolved and splits it into simple
 commands, so only words in an actually-invoked command count — quoted prose
 like `git commit -m "document the osascript write text rule"` or `grep -rn
-"tmux send-keys" scripts/` is a single data word and passes. Heredoc bodies
+"tmux send-keys" scripts/` is a single data word and passes. A `$( ... )`
+inside double quotes is not data: the shell runs it, so its contents are read
+as commands and the string resumes at its matching `)`. Heredoc bodies
 are split out first (quote-state carried across lines, so `<<` inside a
 string, a here-string `<<<`, or arithmetic like `1<<20` opens no phantom
 heredoc); a body is data unless its consumer executes it — `osascript
@@ -79,7 +81,7 @@ within one invocation.
 Detection is literal, not adversarial: it corrects the habit of composing
 these commands directly, which is the only way the failures have happened.
 Known pass-throughs by design: invocations laundered through generated
-files, python, command substitution inside double quotes, a script fed to
+files, python, backtick substitution inside double quotes, a script fed to
 a shell's stdin (`echo ... | sh`), or ssh option forms the probe cannot
 reproduce (combined `-p2222`, `-o`/`-J` chains — the probe then dials its
 default route, which can misjudge a box it cannot actually see).
@@ -182,11 +184,18 @@ class GuardRun:
         self.depth = 0
 
 
-def scan_line_for_heredoc_markers(line, in_single, in_double):
+def scan_line_for_heredoc_markers(line, in_single, in_double,
+                                  substitution_depths):
     """Find heredoc delimiters opened on this shell line. Quote-aware, with
     quote state carried in and out so a `<<` inside a string — even a string
     opened on an earlier line — is data. `<<<` is a here-string and a purely
     numeric "delimiter" is arithmetic (`1<<20`); neither opens a heredoc.
+
+    A `$(` inside double quotes opens a command substitution, which is shell
+    again until its matching `)`, so a `<<` there does open a heredoc — the
+    form of `git commit -m "$(cat <<'EOF' ... )"`. substitution_depths holds
+    one entry per such substitution still open, counting the parentheses
+    open inside it, and is updated in place.
     Returns (terminators, in_single, in_double)."""
     terminators = []
     i, n = 0, len(line)
@@ -203,6 +212,10 @@ def scan_line_for_heredoc_markers(line, in_single, in_double):
                 continue
             if char == '"':
                 in_double = False
+            elif line[i:i + 2] == "$(":
+                substitution_depths.append(0)
+                in_double = False
+                i += 1
             i += 1
             continue
         if char == "\\":
@@ -214,6 +227,16 @@ def scan_line_for_heredoc_markers(line, in_single, in_double):
             continue
         if char == '"':
             in_double = True
+            i += 1
+            continue
+        if char in "()" and substitution_depths:
+            if char == "(":
+                substitution_depths[-1] += 1
+            elif substitution_depths[-1]:
+                substitution_depths[-1] -= 1
+            else:
+                substitution_depths.pop()
+                in_double = True  # back in the string the $( was opened in
             i += 1
             continue
         if char == "#" and (i == 0 or line[i - 1] in " \t;&|()`"):
@@ -267,10 +290,11 @@ def split_out_heredocs(command):
     lines = command.split("\n")
     index = 0
     in_single = in_double = False
+    substitution_depths = []
     while index < len(lines):
         line = lines[index]
         terminators, in_single, in_double = scan_line_for_heredoc_markers(
-            line, in_single, in_double)
+            line, in_single, in_double, substitution_depths)
         shell_lines.append(line)
         index += 1
         for terminator in terminators:
@@ -289,9 +313,25 @@ def tokenize_simple_commands(shell_text):
     material becomes part of a word and never separates, which is what lets
     the guard tell `tmux send-keys` the invocation from "tmux send-keys" the
     quoted prose. Not a full shell grammar: redirections stay as plain words
-    and expansions are not performed."""
+    and expansions are not performed.
+
+    One thing inside double quotes is not data: a `$( ... )`, which the shell
+    runs. Its simple commands are listed ahead of the command whose word
+    holds it, in the order the shell runs them, and that word keeps the
+    substitution's text unexpanded, so a caller testing a word for `$` still
+    finds it."""
+    commands, _end = tokenize_command_list(shell_text, 0, False)
+    return commands
+
+
+def tokenize_command_list(shell_text, start, inside_command_substitution):
+    """tokenize_simple_commands from index start. Returns (commands, end):
+    inside a command substitution, end is the index of the `)` that closes
+    it; otherwise, and for a substitution that never closes, the length of
+    the text."""
     commands, current = [], []
     word = None
+    open_parentheses = 0
 
     def end_word():
         nonlocal word
@@ -306,7 +346,7 @@ def tokenize_simple_commands(shell_text):
             commands.append(current)
             current = []
 
-    i, n = 0, len(shell_text)
+    i, n = start, len(shell_text)
     while i < n:
         char = shell_text[i]
         if char == "\\":
@@ -339,6 +379,12 @@ def tokenize_simple_commands(shell_text):
                 if shell_text[j] == "\\" and j + 1 < n and shell_text[j + 1] in '"\\$`':
                     piece.append(shell_text[j + 1])
                     j += 2
+                elif shell_text[j:j + 2] == "$(":
+                    substituted, closing = tokenize_command_list(
+                        shell_text, j + 2, True)
+                    commands.extend(substituted)
+                    piece.append(shell_text[j:closing + 1])
+                    j = closing + 1
                 else:
                     piece.append(shell_text[j])
                     j += 1
@@ -351,6 +397,12 @@ def tokenize_simple_commands(shell_text):
             continue
         if char in COMMAND_SEPARATOR_CHARS:
             end_command()
+            if inside_command_substitution and char == "(":
+                open_parentheses += 1
+            elif inside_command_substitution and char == ")":
+                if not open_parentheses:
+                    return commands, i
+                open_parentheses -= 1
             i += 1
             continue
         if char == "#" and word is None:
@@ -365,7 +417,7 @@ def tokenize_simple_commands(shell_text):
         word.append(char)
         i += 1
     end_command()
-    return commands
+    return commands, n
 
 
 def is_program(word, name):

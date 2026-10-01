@@ -583,6 +583,76 @@ check("a heredoc body naming the command is data, not an invocation",
       decision is None, f"{decision}: {reason}")
 
 # ---------------------------------------------------------------------------
+# A command substitution inside double quotes is a command list: the shell
+# runs "$( ... )" exactly as it runs a bare $( ... ). Read as one data word, a
+# force push inside it passed unchecked. A heredoc opened inside it was never
+# split out, so the first " in the message ended the string, and a backticked
+# push after it was refused as if it had been run.
+# ---------------------------------------------------------------------------
+
+HEREDOC_MESSAGE_QUOTING_A_FORCE_PUSH = (
+    "$(cat <<'EOF'\n"
+    "Teach the remedy\n"
+    "\n"
+    "The refusal says: \"never `git push --force origin the-pr-branch` at a "
+    "head under review.\" Stated now.\n"
+    "EOF\n"
+    ")"
+)
+for command in [
+    f'git commit -m "{HEREDOC_MESSAGE_QUOTING_A_FORCE_PUSH}"',
+    f'gh pr create --title "Teach the remedy" '
+    f'--body "{HEREDOC_MESSAGE_QUOTING_A_FORCE_PUSH}"',
+]:
+    runner = ProbeRunner(open_pull_requests={"the-pr-branch": FAST_READ_PULL_REQUEST})
+    decision, reason = decide(command, runner)
+    check(f"a heredoc message inside a quoted substitution is data: {command[:24]}",
+          decision is None and not runner.calls,
+          f"{decision}: {reason} {runner.calls}")
+
+for command in [
+    'OUTPUT="$(git push --force origin the-pr-branch 2>&1)"',
+    'echo "$(git push --force-with-lease origin the-pr-branch)"',
+    'echo "pushed: $(cd /elsewhere/wt-fast-read && git push -f origin the-pr-branch | tail -1)"',
+]:
+    runner = ProbeRunner(open_pull_requests={"the-pr-branch": FAST_READ_PULL_REQUEST})
+    decision, reason = decide(command, runner)
+    check(f"a force push inside a quoted substitution is found: {command[:44]}",
+          decision == "deny", f"{decision}: {reason}")
+
+runner = ProbeRunner(branch="the-pr-branch",
+                     open_pull_requests={"the-pr-branch": FAST_READ_PULL_REQUEST})
+decision, reason = decide('OUTPUT="$(git push --force 2>&1)"', runner)
+check("a bare force push inside a quoted substitution resolves the current branch",
+      decision == "deny"
+      and ["git", "-C", SESSION_WORKTREE, "rev-parse", "--abbrev-ref", "HEAD"]
+      in runner.calls, f"{decision}: {reason} {runner.calls}")
+
+# Commit and push in one command. With the message left in the text, a single
+# " in it flipped the reader's quote state, and the push after the commit was
+# read as part of a string.
+runner = ProbeRunner(open_pull_requests={"the-pr-branch": FAST_READ_PULL_REQUEST})
+decision, reason = decide(
+    "git commit -m \"$(cat <<'EOF'\nA 27\" monitor fits\nEOF\n)\" "
+    "&& git push --force origin the-pr-branch", runner)
+check("a lone \" in the heredoc message does not hide the force push after the commit",
+      decision == "deny", f"{decision}: {reason}")
+
+# Controls: forms the reading of a quoted substitution must leave as they were.
+runner = ProbeRunner(open_pull_requests={"the-pr-branch": FAST_READ_PULL_REQUEST})
+decision, reason = decide(
+    'echo "run \\$(git push --force origin the-pr-branch) yourself"', runner)
+check("an escaped \\$( in double quotes is prose, not a substitution",
+      decision is None and not runner.calls, f"{decision}: {reason} {runner.calls}")
+
+runner = ProbeRunner()
+decision, reason = decide(
+    'git -C "$(git rev-parse --show-toplevel)" push --force', runner)
+check("a substitution as the -C directory is still refused as unresolvable",
+      decision == "deny" and "written out" in (reason or "") and not runner.calls,
+      f"{decision}: {reason} {runner.calls}")
+
+# ---------------------------------------------------------------------------
 # The escape hatch: the one sanctioned rewrite, and the one form of it.
 # ---------------------------------------------------------------------------
 
