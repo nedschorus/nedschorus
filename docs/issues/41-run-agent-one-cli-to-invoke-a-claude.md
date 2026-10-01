@@ -14,6 +14,8 @@ One CLI — working name `scripts/run-agent.py` — `--runtime claude|codex --ti
 
 Headless halves: `codex exec` (MEASURED live 2026-08-03: read-only sandbox, `-C`, `--output-last-message` verified working — see `scripts/d-review-codex-cell.py`, the first special-case caller, which collapses onto this primitive when built) and `claude -p` (UNMEASURED — needs the same smoke test; the boss's measured trap that `--allowedTools` silently discards a positional prompt says every headless-Claude flag combination gets verified, never assumed).
 
+**Correction, 2026-10-01.** Both halves run headless today, and `scripts/d-review-codex-cell.py` is no longer on main: the cells `nc-systems/cold-read/cold-read-claude-cell.py`, `nc-systems/cold-read/cold-read-codex-cell.py` and `nc-systems/cold-read/cold-read-agy-cell.py` run `claude`, `codex` and `agy` headless and share `nc-systems/cold-read/cold-read-cell-common.py`, which `scripts/sanity-check-attacks.py` also calls.
+
 ## Design points (boss-ruled 2026-08-03)
 
 1. **Instruction files are the context floor, selected by working directory.** The `--cd` choice decides which CLAUDE.md / AGENTS.md rides along under the prompt. Probe matrix owed at build: which invocation modes load which instruction files, per runtime (currently assumed, not measured).
