@@ -1,3 +1,7 @@
+---
+issue: "[Topic-branch base enforcement: a branch-creation script and a gh pr create check that refuses an undeclared carry of another PR's commits](https://github.com/nedschorus/nedschorus/issues/238)"
+---
+
 # Design: the topic-branch creation script
 
 Issue: issue [Topic-branch base enforcement: a branch-creation script and a gh pr create check that refuses an undeclared carry of another PR's commits](https://github.com/nedschorus/nedschorus/issues/238). State as of 2026-09-02: the script is not built, and nothing in this document has been implemented.
@@ -6,9 +10,29 @@ Issue: issue [Topic-branch base enforcement: a branch-creation script and a gh p
 
 **The rule this implements**, restated here so the document stands alone: an ordinary topic branch starts at current `origin/main`, rather than at whatever the working copy happens to be standing on. Stacked work is the one exception, and it is not this script's case — see "What it deliberately does not do". `CLAUDE.md` states the PR process in terms of "current main"; this document uses the remote-tracking ref `origin/main` throughout, because a seat's local `main` is stale or absent. The pull-request skill that would carry the full procedure is proposed in issue [pull-request skill: how a change reaches main — durable-file disposition, the description, and topic-branch creation](https://github.com/nedschorus/nedschorus/issues/236) and does not exist. This script does not depend on that skill being written.
 
+## What this issue covers: three pieces
+
+A sentence of instruction is not a fix — agents are unreliable readers (user-ruled 2026-09-02, which is why this is filed separately from the pull-request skill). So the issue is three mechanical pieces:
+
+- **Piece 1, the branch-creation script.** This document's subject, designed in full below. Not built.
+- **Piece 2, a check at `gh pr create`.** It detects the actual failure rather than trusting the rule was followed: refuse when the branch about to be filed carries commits belonging to another open pull request's branch, **unless the pull request declares that dependency**. The declaration is what distinguishes the two cases. Stacked work is legitimate — work that depends on an unmerged topic branches from that topic and necessarily carries its commits — and a check without the exemption would refuse exactly the case the rule permits. (Caught by a cold read of the walk item before the issue was filed; the first form of the check had that conflict.) Not designed; see "Where it sits in the code-prompt-code structure".
+- **Piece 3, the `Claude-Session` trailer on every commit, in place before the push.** Filed as a check; built as a hook that stamps the trailer rather than checking for it. See below.
+
+### Piece 3: the `Claude-Session` trailer
+
+Ruled by the user 2026-09-17, at the merge-lane seat's backlog walk, on being offered a one-line instruction instead: *"seems like that should be python, not prompt"*. Commits reach main without the `Claude-Session` trailer the harness asks every session to add; the merge lane has recorded heads arriving without it repeatedly, and nothing but a system-prompt reminder produces it.
+
+The check belongs beside pieces 1 and 2, and not at merge time, for one reason: **a pull request's head is frozen the moment it is pushed** (`CLAUDE.md`), and a missing trailer can only be repaired by rewriting the commit. A check that fires at the merge can refuse but can never be satisfied — it would wedge the lane on work already frozen. So it runs before the push.
+
+**Built 2026-09-18.** PR [Stamp the Claude-Session trailer on commits with a git hook](https://github.com/nedschorus/nedschorus/pull/491), merged as 706356c: `scripts/git-client-side-hooks/prepare-commit-msg`, a git `prepare-commit-msg` hook that stamps the line from `CLAUDE_CODE_BRIDGE_SESSION_ID`, never blocks a commit, and leaves an empty message empty. Wired the same day on both clones, `core.hooksPath` pointing at each reference checkout, and verified by a stamped commit on each machine. Pull request descriptions stay manual.
+
+**2026-09-18: a whole session missed it, and the user's direction.** All six pull requests of the reboot-test seat's 2026-09-17/18 session lacked it, fresh agents' commits too: its briefs dictated the attribution line over their correct reminders. Nothing needs remembering: a session with a claude.ai link carries it as `CLAUDE_CODE_BRIDGE_SESSION_ID`, so it can be stamped rather than checked. The user's direction: the active gatekeeper, GHI [main-gatekeeper — the single check-in gate](https://github.com/nedschorus/nedschorus/issues/3), stamps both the commit and the pull request it composes, beside its `Gatekeeper-origin` trailer — subject to its recorded C2 defect: `sudo` strips the caller's environment. Ruled 2026-09-18, keep this piece: "If the script is a github action, no. If it's a claude thing, yes."
+
 ## The problem
 
-`git checkout -b <name>`, with no start point given, creates the branch at whatever commit the working copy stands on, and moves the copy onto it. So the command that creates topic one leaves the copy standing on topic one, and the same command typed for topic two bases topic two on topic one. The second pull request then contains both topics while its description names one.
+`git checkout -b <name>`, with no start point given, creates the branch at whatever commit the working copy stands on, and moves the copy onto it. So the command that creates topic one leaves the copy standing on topic one, and the same command typed for topic two bases topic two on topic one. The second pull request then contains both topics while its description names one, and if topic one is rejected its code rides into main inside topic two.
+
+A seat cannot avoid this by standing on main between topics: git allows one branch in one working copy, and main is held by the machine's main checkout at `~/Projects/nedschorus`. That is the only reason each seat has a branch named after it (the docstring of `sync_working_branch_with_main` in `nc-systems/handoff/handoff-supervisor.py`: "An agent's home sits on its own branch only because git refuses one branch in two worktrees"). So a seat has nowhere safe to stand, and correctness rests on naming `origin/main` by hand every time.
 
 Nothing detects that automatically. The extra commits are visible from the moment the branch exists — `git log origin/main..HEAD` shows them locally, and the pull request's commit list shows them once filed — and main's protection requires an approving review, so the mistake is catchable. But catching it depends on a person looking, and the branch's description will say one topic while its commits say two.
 
@@ -147,3 +171,11 @@ Rows 6 and 8 also assert that git's message survives after the two contract line
 None blocking implementation. Two decisions are recorded as belonging elsewhere, neither of which changes what this script does: the machine-readable form of a stacked-work declaration, which is issue [pull-request skill: how a change reaches main — durable-file disposition, the description, and topic-branch creation](https://github.com/nedschorus/nedschorus/issues/236)'s to settle when the pull-request skill is written; and the mechanism of the pull-request-creation check, which is proposed in issue [Topic-branch base enforcement: a branch-creation script and a gh pr create check that refuses an undeclared carry of another PR's commits](https://github.com/nedschorus/nedschorus/issues/238) and would need its own design document before anyone builds it.
 
 One behavior is accepted rather than settled, and is recorded above at the place it applies: an ignored file at a path `origin/main` tracks is silently overwritten.
+
+## Next action
+
+Build piece 1, the script — it is small, it is useful the day it lands, and it is the node the rule's correctness actually depends on. Piece 2 follows. Piece 3 is built.
+
+## Search receipt
+
+Searched and NOT FOUND, when the issue was filed: `gh issue list --state all --limit 100 --search "branch base commit worktree"` returned only GHI [main-gatekeeper — the single check-in gate (design: nc-systems/main-gatekeeper/main-gatekeeper-design.md)](https://github.com/nedschorus/nedschorus/issues/3), the gatekeeper issue.
