@@ -8,7 +8,7 @@ The working document of issue [Memory: agents write freely, and each reincarnati
 
 ## Outcome
 
-PR [From noon Pacific, a reincarnated Mac seat is asked for the day's review of both memory stores](https://github.com/nedschorus/nedschorus/pulls?q=is%3Apr+head%3Areincarnated-seat-told-when-daily-memory-review-due) builds the daily review described in the next section. The link is a search for the pull request's branch, `reincarnated-seat-told-when-daily-memory-review-due`, because the pull request had no number when this was written. The line is `memory_review_due_lines` in `nc-systems/handoff/handoff-supervisor.py`, and the marks are written by `nc-systems/handoff/daily-memory-review-mark.py`.
+PR [From noon Pacific, a reincarnated Mac seat is asked for the day's review of both memory stores](https://github.com/nedschorus/nedschorus/pull/823) builds the daily review described in the next section. The line is `memory_review_due_lines` in `nc-systems/handoff/handoff-supervisor.py`, and the marks are written by `nc-systems/handoff/daily-memory-review-mark.py`.
 
 It builds only the daily review. The rest of the 2026-09-17 design below is not built: the read counts, the drain markers, the change to the instruction-file guard, and the change to CLAUDE.md's memory rule. Where the two differ, in the cadence and in the shape of the walk, the daily review is what runs.
 
