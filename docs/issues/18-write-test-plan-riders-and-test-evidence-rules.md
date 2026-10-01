@@ -1,11 +1,24 @@
 ---
+issue: "[Candidate skill: write-test-plan — consequence-ranked test plan with observable oracles and traceability (likely FIRST build)](https://github.com/nedschorus/nedschorus/issues/18)"
 status: working material for issue [Candidate skill: write-test-plan — consequence-ranked test plan with observable oracles and traceability (likely FIRST build)](https://github.com/nedschorus/nedschorus/issues/18)
 as-of: 2026-09-16
 ---
 
 # write-test-plan: the riders, and the rules on what counts as test evidence
 
-The pair document of issue [Candidate skill: write-test-plan — consequence-ranked test plan with observable oracles and traceability (likely FIRST build)](https://github.com/nedschorus/nedschorus/issues/18), the candidate skill write-test-plan. The issue body keeps the summary, the disposition and the next action. This file carries the substance: the four riders drained into the issue on 2026-09-02, the worked example that triggered the build, and the user's rules on what evidence a change needs before it merges. Every section down to "Evidence of record" moved here verbatim from the issue body on 2026-09-16, when adding the newest ruling would have passed the body's 1000-word cap. The section on code that runs only against a stand-in is new.
+The GHI-MD of issue [Candidate skill: write-test-plan — consequence-ranked test plan with observable oracles and traceability (likely FIRST build)](https://github.com/nedschorus/nedschorus/issues/18), the candidate skill write-test-plan. It carries the summary, the disposition, the next action, and the substance: the four riders drained into the issue on 2026-09-02, the worked example that triggered the build, and the user's rules on what evidence a change needs before it merges. Every section from the riders down to "Evidence of record" moved here verbatim from the issue body on 2026-09-16, when adding the newest ruling would have passed the body's 1000-word cap; the summary, the disposition and the next action followed on 2026-09-30 from the issue's former body. The section on code that runs only against a stand-in is new.
+
+## What the skill does
+
+Before building: rank requirements by consequence (1-10 criticality); per requirement specify level, setup, stimulus, observable oracle, expected failure caught, exact command, automated-vs-human, justified exclusions; requirement->test traceability.
+
+Evidence: no adoptable end-to-end source exists; import the criticality scale and oracle framing from Anthropic pr-test-analyzer, the traceability method from Waza spec-verify. cops: highest-value missing packaged capability; leading dogfood candidate for the git-gatekeeper build, whose trial correctly returned needs-design-clarification rather than inventing commands. Flagged as the likely first actual build, manual evaluation.
+
+## Disposition: BUILD TRIGGERED 2026-09-02
+
+The 2026-07-24 ruling recorded below said candidates are recorded and none is built now, and that "a build triggers only when a real task exposes the missing decision". That condition is met. On 2026-08-31 three defects shipped in `scripts/find-deleted-path-across-backups.py` and were fixed across two pull requests, both cited under "Evidence of record". The user asked how to prevent the class, three prevention rules were drafted and walked, and the walk established that the rules being derived are instances of the riders already specified for this skill. The skill is the answer rather than three new `CLAUDE.md` bullets.
+
+Prior disposition, superseded: candidate-on-GHI, not built, user-ruled 2026-07-24 on the outer walk (session ad0a3708) as one of nine candidates recorded together, with the build trigger quoted above. Full text in the issue body's edit history.
 
 ## Riders, drained from the queue 2026-09-02
 
@@ -68,6 +81,14 @@ The rule, and it costs nothing:
 - **Run an unmutated control in the same loop**, after the mutations rather than only before, and state its count. A control that passes at the end proves the tree was restored; a control stated only at the start proves nothing about what the loop did to the file.
 
 This is rider 1 turned on the test harness itself. A mutation loop that cannot report a failure it would detect — because the file it is mutating is not the file under test — proves nothing, exactly as a test copied from its implementation proves nothing.
+
+## Next action
+
+One question comes before the build: whether write-test-plan is a skill at all.
+
+The user ruled on 2026-09-06, on the reboot-test seat's walk, that a capability belonging to a design-to-main node is that node's agent-instructions rather than a skill. Planning a test suite is what design-to-main's `test-design-writing` node does, and a draft of that node's agent-instructions already exists at `docs/agents/queue/design-to-main-test-design-writing-agent-instructions.md`.
+
+So settle that first, because the answer decides what the build produces: a `SKILL.md` under `.claude/skills/`, or agent-instructions under `docs/agents/`. Either way the riders in this file are the content.
 
 ## Evidence of record
 
