@@ -32,8 +32,9 @@ name as the record shipper's rule says. Nothing is lost either way -- a refusal
 copies nothing and names every differing file.
 
 WHO CALLS IT. scripts/sanity-check-attacks.py at the end of every run that
-wrote reports, whatever the cells' outcome, printing this program's one line
-as `record:`; and the requesting agent again after writing
+launched a cell, whatever the cells' outcome, a run in which every cell failed
+included, whose record holds its log and no report, printing this program's
+one line as `record:`; and the requesting agent again after writing
 `finding-dispositions.md`, when the add-only copy sends only that new file.
 A shipping failure never fails the sanity check: the caller prints the line and
 goes on, and the record stays on disk for a later run.

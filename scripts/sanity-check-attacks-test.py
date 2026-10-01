@@ -2,8 +2,11 @@
 """Tests for sanity-check-attacks.py — the worktree write detector, the record
 directory claim, the cells' sanctioned scratch directories, the prompt-body
 boundary, the cells' launch flags, the refusal of a captured text that is
-not a report, and the relaunch of a cell that saved no report with the
-instructions a failed cell ends on (cases 38 to 43).
+not a report, the relaunch of a cell that saved no report with the
+instructions a failed cell ends on (cases 38 to 43), and how a run ends when
+it is stopped from outside, what the next run removes after a killed one, the
+bytes an agent-binary may write, and the record of a run that saved no report
+(cases 44 to 48).
 
 The detector's only value is being trustworthy about whether a review cell
 wrote to the worktree. A hole in it is silent by construction, and a warning
@@ -57,11 +60,14 @@ import os
 import pathlib
 import re
 import shlex
+import fcntl
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
 import threading
+import time
 
 RUNNER_SCRIPT = pathlib.Path(__file__).with_name("sanity-check-attacks.py")
 SANITY_CHECK_RECORD_SHIPPER_SCRIPT = pathlib.Path(__file__).with_name(
@@ -2410,6 +2416,459 @@ def main():
               and (driven.RECORDS_ROOT / records[1] / "mechanization-codex.md").is_file(),
               f"exit {code}, launched {launched}, records {records}, "
               f"stdout {out!r}, stderr {err!r}")
+
+    # Cases 44 to 48 came from review of the pull request that introduced the
+    # review copy (2026-10-01). Cases 44 to 46 run the runner as a real
+    # process over a scratch repository, with stand-in `claude` and `codex`
+    # programs first on its PATH, and send it real signals: a signal handler
+    # and a lock the operating system drops with the process cannot be shown
+    # by a replaced function. No model is called, and nothing is written
+    # under the real ~/.cache: the driver below points the runner's roots at
+    # the scratch directory, as runner_over does for the in-process cases.
+    stand_in_source = f"""#!{sys.executable}
+import os, pathlib, subprocess, sys, time
+name = pathlib.Path(sys.argv[0]).name
+directory = pathlib.Path(os.environ["STAND_IN_DIRECTORY"])
+mode = os.environ.get("STAND_IN_" + name.upper() + "_MODE", "wait")
+report = {any_attack_report!r}
+if name == "claude":
+    sys.stdin.read()
+last_message = (sys.argv[sys.argv.index("--output-last-message") + 1]
+                if "--output-last-message" in sys.argv else None)
+if mode == "report":
+    if last_message:
+        pathlib.Path(last_message).write_text(report, encoding="utf-8")
+    else:
+        sys.stdout.write(report)
+    sys.exit(0)
+if mode == "bad-byte":
+    sys.stderr.buffer.write(b"a byte that is not UTF-8: \\xff\\n")
+    if last_message:
+        pathlib.Path(last_message).write_bytes(report.encode("utf-8") + b"\\xff\\n")
+    else:
+        sys.stdout.buffer.write(report.encode("utf-8") + b"\\xff\\n")
+    sys.exit(0)
+# "wait": a launch that is still working when the run is stopped, with a
+# process of its own under it, as an agent-binary has.
+child = subprocess.Popen(["sleep", "300"])
+(directory / (name + "-" + str(os.getpid()) + ".pids")).write_text(
+    str(os.getpid()) + " " + str(child.pid) + "\\n", encoding="utf-8")
+time.sleep(300)
+"""
+
+    def stand_in_agent_binaries(base):
+        """A directory holding stand-in `claude` and `codex` programs, and the
+        directory each waiting launch records its process ids in."""
+        programs = base / "stand-in-bin"
+        programs.mkdir()
+        for name in ("claude", "codex"):
+            (programs / name).write_text(stand_in_source, encoding="utf-8")
+            (programs / name).chmod(0o755)
+        recorded = base / "stand-in-pids"
+        recorded.mkdir()
+        return programs, recorded
+
+    def runner_process_environment(programs, recorded, **modes):
+        environment = dict(os.environ)
+        tool_directories = [str(pathlib.Path(shutil.which(tool)).parent)
+                            for tool in ("git", "ps", "sleep")]
+        environment["PATH"] = os.pathsep.join(
+            [str(programs), *dict.fromkeys(tool_directories), "/usr/bin", "/bin"])
+        environment["STAND_IN_DIRECTORY"] = str(recorded)
+        for name, mode in modes.items():
+            environment[f"STAND_IN_{name.upper()}_MODE"] = mode
+        return environment
+
+    def runner_driver(base, repo):
+        """A program that runs the runner's main() over `repo`, as runner_over
+        does in-process: what a real run does, with the roots in scratch."""
+        driver = base / "run-the-runner.py"
+        driver.write_text(f"""
+import importlib.util, pathlib, sys
+spec = importlib.util.spec_from_file_location("sanity_check_attacks", {str(RUNNER_SCRIPT)!r})
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+module.REPO_ROOT = pathlib.Path({str(repo)!r})
+module.RECORDS_ROOT = module.REPO_ROOT / "sanity-check-records"
+module.REVIEW_COPIES_ROOT = pathlib.Path({str(base / "review-copies")!r})
+module.CLI_VERSION_CACHE.update({{"claude": "1.1.1-test", "codex": "2.2.2-test"}})
+if hasattr(module, "STOPPED_PROCESS_GRACE_SECONDS"):
+    module.STOPPED_PROCESS_GRACE_SECONDS = 3.0
+sys.argv = [{str(RUNNER_SCRIPT)!r}, *sys.argv[1:]]
+sys.exit(module.main())
+""", encoding="utf-8")
+        return driver
+
+    def recorded_process_ids(recorded, name):
+        """The (launch, child) process ids of each waiting `name` launch."""
+        return [tuple(int(field) for field in path.read_text(encoding="utf-8").split())
+                for path in sorted(recorded.glob(f"{name}-*.pids"))]
+
+    def process_is_running(pid):
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            return True
+        state = subprocess.run(["ps", "-o", "stat=", "-p", str(pid)],
+                               capture_output=True, text=True, check=False)
+        return bool(state.stdout.strip()) and not state.stdout.strip().startswith("Z")
+
+    def wait_until(condition, seconds=30.0):
+        deadline = time.monotonic() + seconds
+        while time.monotonic() < deadline:
+            if condition():
+                return True
+            time.sleep(0.05)
+        return condition()
+
+    def end_stand_ins(recorded):
+        """Whatever a case's stand-ins are still running, ended, so a failing
+        case leaves no process behind."""
+        for path in recorded.glob("*.pids"):
+            for field in path.read_text(encoding="utf-8").split():
+                try:
+                    os.kill(int(field), signal.SIGKILL)
+                except (ProcessLookupError, PermissionError):
+                    pass
+
+    def left_in_copies_root(base):
+        root = base / "review-copies"
+        return sorted(path.name for path in root.iterdir()) if root.is_dir() else []
+
+    # Case 44: SIGTERM, SIGHUP or SIGINT to the runner while a cell runs. The skill
+    # starts the runner as a background task, and a seat's handoff ends
+    # background tasks, so this is an ordinary ending. Before the handler the
+    # runner died at once: the review copy, a whole checkout, stayed for good,
+    # and the cells ran on with nobody to save what they wrote. Here the codex
+    # cell has saved its report and the claude cell is still working, with a
+    # process of its own under it, when the signal arrives at the runner
+    # alone. Afterwards: the runner ended by that signal; the claude launch
+    # and the process under it are gone; the copy and its owner file are gone;
+    # the report already saved, the cells' scratch directories and a log that
+    # says what happened are in the record, which is shipped; and nothing was
+    # relaunched. SIGINT here goes to the runner's process alone, which used
+    # to make the runner wait for its cells, up to their timeout. Each run has
+    # a target of its own, so its record's name is one no other case of this
+    # suite has shipped to the scratch store.
+    for stop_signal in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT):
+        signal_name = stop_signal.name
+        with tempfile.TemporaryDirectory() as scratch:
+            base = pathlib.Path(scratch).resolve()
+            target = f"docs/stopped-by-{signal_name.lower()}.md"
+            repo = scratch_repository_with_design(base, target)
+            programs, recorded = stand_in_agent_binaries(base)
+            process = subprocess.Popen(
+                [sys.executable, "-B", str(runner_driver(base, repo)),
+                 "--target", target, "--attack", "cut"],
+                env=runner_process_environment(programs, recorded, codex="report"),
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            try:
+                records_root = repo / "sanity-check-records"
+                started = wait_until(
+                    lambda: len(recorded_process_ids(recorded, "claude")) == 1
+                    and any(records_root.glob("*/cut-codex.md")))
+                copies_mid_run = left_in_copies_root(base)
+                process.send_signal(stop_signal)
+                try:
+                    out, err = process.communicate(timeout=30)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    out, err = process.communicate()
+                claude_launches = recorded_process_ids(recorded, "claude")
+                still_running = [pid for launch in claude_launches for pid in launch
+                                 if not wait_until(lambda: not process_is_running(pid), 5.0)]
+                records = sorted(records_root.glob("*"))
+                record = records[0] if len(records) == 1 else None
+                log_text = ((record / "sanity-check-run.log").read_text(encoding="utf-8")
+                            if record and (record / "sanity-check-run.log").is_file() else "")
+                check(f"{signal_name} to the runner while a cell runs: the cells had "
+                      f"started and the copy was there",
+                      started and len(copies_mid_run) == 2
+                      and any(name.endswith(".owner") for name in copies_mid_run),
+                      f"started {started}, copies root held {copies_mid_run}")
+                check(f"the runner ends by {signal_name}, after its own steps",
+                      process.returncode == -stop_signal,
+                      f"exit {process.returncode}, stdout {out!r}, stderr {err!r}")
+                check(f"the agent-binary still working when {signal_name} arrived, "
+                      f"and the process under it, are stopped",
+                      len(claude_launches) == 1 and still_running == [],
+                      f"launches {claude_launches}, still running {still_running}")
+                check(f"the review copy and its owner file are gone after {signal_name}",
+                      left_in_copies_root(base) == [],
+                      f"copies root holds {left_in_copies_root(base)}")
+                check(f"the report saved before {signal_name}, the scratch directories "
+                      f"and the log are in the record",
+                      record is not None and (record / "cut-codex.md").is_file()
+                      and (record / "scratch" / "cut-claude").is_dir()
+                      and "saved: " in log_text,
+                      f"record {record}, holds "
+                      f"{sorted(p.name for p in record.iterdir()) if record else None}, "
+                      f"log {log_text!r}")
+                stopped_lines = [line for line in out.splitlines()
+                                 if line.startswith("STOPPED: ")]
+                check(f"the run's STOPPED line says {signal_name} ended it, what to "
+                      f"run, and where the record is, and the log keeps that line",
+                      len(stopped_lines) == 1 and record is not None
+                      and stopped_lines[0].startswith(
+                          f"STOPPED: {signal_name} ended this run")
+                      and "Run the same command again" in stopped_lines[0]
+                      and str(record) in stopped_lines[0]
+                      and stopped_lines[0] in log_text,
+                      f"stdout {out!r}, log {log_text!r}")
+                shipped_log = (SUITE_SCRATCH_LOG_STORE_PATH / "sanity-check-records"
+                               / record.name / "sanity-check-run.log") if record else None
+                check(f"and the record of the run {signal_name} stopped is shipped, "
+                      f"its log whole",
+                      out.splitlines()[-1:] != []
+                      and out.splitlines()[-1].startswith("record: shipped: ")
+                      and shipped_log is not None and shipped_log.is_file()
+                      and shipped_log.read_text(encoding="utf-8") == log_text
+                      and "record: " not in log_text,
+                      f"stdout {out!r}, looked for {shipped_log}")
+                check(f"a cell stopped with its run by {signal_name} is not relaunched "
+                      f"and prints no FAILED instructions",
+                      "RETRYING:" not in out and "FAILED:" not in out
+                      and "WARNING: claude" not in out
+                      and len(recorded_process_ids(recorded, "claude")) == 1,
+                      f"stdout {out!r}")
+            finally:
+                if process.poll() is None:
+                    process.kill()
+                    process.communicate()
+                end_stand_ins(recorded)
+
+    # Case 45: SIGINT sent to the runner's whole process group, as Ctrl-C at a
+    # terminal sends it. Each agent-binary dies of the signal itself. The
+    # runner used to take that for a failed launch: it printed RETRYING, ran
+    # the codex cell again and went on to the claude chain's second model,
+    # then waited for those launches. A stopped run launches nothing more.
+    with tempfile.TemporaryDirectory() as scratch:
+        base = pathlib.Path(scratch).resolve()
+        repo = scratch_repository_with_design(base)
+        programs, recorded = stand_in_agent_binaries(base)
+        process = subprocess.Popen(
+            [sys.executable, "-B", str(runner_driver(base, repo)),
+             "--target", "docs/design.md", "--attack", "cut"],
+            env=runner_process_environment(programs, recorded),
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+            start_new_session=True)
+        try:
+            started = wait_until(
+                lambda: len(recorded_process_ids(recorded, "claude")) == 1
+                and len(recorded_process_ids(recorded, "codex")) == 1)
+            os.killpg(process.pid, signal.SIGINT)
+            try:
+                out, err = process.communicate(timeout=20)
+                ended_by_itself = True
+            except subprocess.TimeoutExpired:
+                ended_by_itself = False
+                os.killpg(process.pid, signal.SIGKILL)
+                out, err = process.communicate()
+            launches = (len(recorded_process_ids(recorded, "claude")),
+                        len(recorded_process_ids(recorded, "codex")))
+            check("SIGINT to the whole process group: no agent-binary is launched "
+                  "again, by a relaunch or by the claude chain's next model",
+                  started and launches == (1, 1) and "RETRYING:" not in out,
+                  f"started {started}, (claude, codex) launches {launches}, "
+                  f"stdout {out!r}")
+            check("and the run ends by SIGINT with its copy removed, not waiting "
+                  "for launches of its own",
+                  ended_by_itself and process.returncode == -signal.SIGINT
+                  and left_in_copies_root(base) == []
+                  and sum(line.startswith("STOPPED: SIGINT ") for line in out.splitlines()) == 1,
+                  f"ended by itself {ended_by_itself}, exit {process.returncode}, "
+                  f"copies root {left_in_copies_root(base)}, stdout {out!r}, "
+                  f"stderr {err!r}")
+        finally:
+            if process.poll() is None:
+                os.killpg(process.pid, signal.SIGKILL)
+                process.communicate()
+            end_stand_ins(recorded)
+
+    # Still case 45, without a process: the two places a thread reads the stop
+    # before it launches an agent-binary. A cell's thread that reaches either
+    # after the handler has looked at the process table for the last time
+    # would otherwise start a launch the run then waits an hour for. Once the
+    # run is stopped, the claude chain launches no model, and a cell launches
+    # nothing and prints nothing.
+    runner_stopped = load_runner()
+    stopped_flag = getattr(runner_stopped, "RUN_STOPPED", None)
+    launched_after_stop = []
+
+    def counting_launch(command, *arguments, **keywords):
+        launched_after_stop.append(command[0])
+        return subprocess.CompletedProcess(list(command), 0, any_attack_report, "")
+
+    real_stopped_run = runner_stopped.subprocess.run
+    if stopped_flag is not None:
+        stopped_flag.set()
+    buffer = io.StringIO()
+    try:
+        runner_stopped.subprocess.run = counting_launch
+        with contextlib.redirect_stdout(buffer):
+            chain_result = runner_stopped.run_claude(
+                "a prompt no model ever sees", pathlib.Path("/a/review/copy"))
+    finally:
+        runner_stopped.subprocess.run = real_stopped_run
+    check("once the run is stopped the claude chain launches no model",
+          stopped_flag is not None and launched_after_stop == []
+          and chain_result[0] != 0 and buffer.getvalue() == "",
+          f"launched {launched_after_stop}, returned {chain_result!r}, "
+          f"printed {buffer.getvalue()!r}")
+    runner_stopped.run_codex = lambda prompt, checkout=None: (
+        launched_after_stop.append("codex") or (0, any_attack_report, "a-test-model", "", None))
+    cell_ok, output, raised, report = run_cell_capturing(runner_stopped, "codex")
+    check("and a cell launches nothing, saves nothing and prints nothing",
+          stopped_flag is not None and launched_after_stop == [] and cell_ok is False
+          and raised is None and report is None and output == "",
+          f"launched {launched_after_stop}, cell_ok {cell_ok}, raised {raised!r}, "
+          f"report {report!r}, output {output!r}")
+
+    # Case 46: what a run killed outright leaves, and what the next run does
+    # with it. SIGKILL cannot be answered, so the copy stays: while the killed
+    # run was alive its copy was its own, and a second run's look at the root
+    # leaves it alone, because the live run holds the lock on its owner file;
+    # once the run is dead the operating system has dropped the lock, and the
+    # next run removes the copy before making its own. A directory with no
+    # owner file, what the runner made before copies had owners, goes too, and
+    # so does an owner file with no directory. A copy whose owner is alive,
+    # here a lock this test holds, stays.
+    with tempfile.TemporaryDirectory() as scratch:
+        base = pathlib.Path(scratch).resolve()
+        repo = scratch_repository_with_design(base)
+        programs, recorded = stand_in_agent_binaries(base)
+        process = subprocess.Popen(
+            [sys.executable, "-B", str(runner_driver(base, repo)),
+             "--target", "docs/design.md", "--attack", "cut", "--runtime", "claude"],
+            env=runner_process_environment(programs, recorded),
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        driven = runner_over(repo, base)
+        remove_leftovers = getattr(driven, "remove_review_copies_no_live_run_owns", None)
+        try:
+            started = wait_until(
+                lambda: len(recorded_process_ids(recorded, "claude")) == 1)
+            copies_root = base / "review-copies"
+            live_copies = [path for path in copies_root.iterdir() if path.is_dir()]
+            buffer = io.StringIO()
+            with contextlib.redirect_stdout(buffer):
+                removed_while_alive = remove_leftovers() if remove_leftovers else None
+            check("a second run's look at the copies leaves a live run's copy alone",
+                  started and len(live_copies) == 1 and removed_while_alive == []
+                  and live_copies[0].is_dir() and (live_copies[0] / "checkout").is_dir(),
+                  f"started {started}, copies {live_copies}, "
+                  f"removed {removed_while_alive}, printed {buffer.getvalue()!r}")
+            process.kill()
+            process.communicate()
+            end_stand_ins(recorded)
+            check("a run killed outright leaves its copy behind",
+                  len(live_copies) == 1 and live_copies[0].is_dir(),
+                  f"copies root holds {left_in_copies_root(base)}")
+            legacy = copies_root / "design-made-before-owner-files"
+            (legacy / "checkout").mkdir(parents=True)
+            (copies_root / "design-no-directory.owner").write_text("", encoding="utf-8")
+            kept = copies_root / "design-owned-by-a-live-run"
+            (kept / "checkout").mkdir(parents=True)
+            kept_owner = open(copies_root / "design-owned-by-a-live-run.owner", "w",
+                              encoding="utf-8")
+            fcntl.flock(kept_owner.fileno(), fcntl.LOCK_EX)
+            try:
+                driven.run_claude = lambda prompt, checkout=None: (
+                    0, any_attack_report, "a-test-model", "", None)
+                code, out, err = drive_main(driven, [
+                    "--target", "docs/design.md", "--attack", "cut",
+                    "--runtime", "claude"])
+                left = left_in_copies_root(base)
+            finally:
+                kept_owner.close()
+            check("the next run removes the killed run's copy, a copy with no owner "
+                  "file and an owner file with no copy, and says so",
+                  code == 0 and bool(live_copies) and not live_copies[0].exists()
+                  and not legacy.exists()
+                  and out.count("removed: a review copy an earlier run left behind, ") == 2
+                  and f"left behind, {live_copies[0]}\n" in out,
+                  f"exit {code}, copies root holds {left}, stdout {out!r}, stderr {err!r}")
+            check("and leaves the copy a live run owns, and nothing of its own",
+                  left == ["design-owned-by-a-live-run",
+                           "design-owned-by-a-live-run.owner"],
+                  f"copies root holds {left}")
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.communicate()
+            end_stand_ins(recorded)
+
+    # Case 47: a byte that is not UTF-8 in what an agent-binary writes. A
+    # Codex session's captured streams hold everything the model and its tools
+    # wrote, and one such byte ended the whole run in a UnicodeDecodeError
+    # traceback, with the cell's finished report lost. The launchers are run
+    # here as they are, over the stand-in programs: the byte is in the codex
+    # launch's standard error and in its last message, and in both of the
+    # claude launch's streams. Each launch returns its review.
+    with tempfile.TemporaryDirectory() as scratch:
+        base = pathlib.Path(scratch).resolve()
+        programs, recorded = stand_in_agent_binaries(base)
+        runner_bytes = load_runner()
+        environment = runner_process_environment(
+            programs, recorded, codex="bad-byte", claude="bad-byte")
+        saved_environment = dict(os.environ)
+        results = {}
+        buffer = io.StringIO()
+        try:
+            os.environ.update(environment)
+            with contextlib.redirect_stdout(buffer):
+                for name, launcher in (("codex", runner_bytes.run_codex),
+                                       ("claude", runner_bytes.run_claude)):
+                    try:
+                        results[name] = launcher("a prompt no model ever sees", base)
+                    except UnicodeDecodeError as error:
+                        results[name] = error
+        finally:
+            os.environ.clear()
+            os.environ.update(saved_environment)
+        for name in ("codex", "claude"):
+            result = results[name]
+            check(f"a {name} launch that writes a byte that is not UTF-8 still "
+                  f"returns its review",
+                  isinstance(result, tuple) and result[0] == 0
+                  and result[1].startswith(any_attack_report),
+                  f"returned {result!r}, printed {buffer.getvalue()!r}")
+
+    # Case 48: a run in which every launched cell failed. It used to ship
+    # nothing and print the record's path nowhere, so the requesting agent
+    # could not find the log the run had saved, which is where each FAILED
+    # line and its instructions are kept. It ships the record, prints the
+    # shipper's line as `record:`, and names the record directory.
+    with tempfile.TemporaryDirectory() as scratch:
+        base = pathlib.Path(scratch)
+        # A target of its own, so the record's name is one no other case of
+        # this suite has shipped to the scratch store, which refuses a second
+        # record of one name whose log differs.
+        repo = scratch_repository_with_design(base, "docs/every-cell-failed.md")
+        driven = runner_over(repo, base)
+        driven.run_codex = lambda prompt, checkout=None: (
+            1, "", "a-test-model", "", ("logged-out", "401 Unauthorized"))
+        code, out, err = drive_main(driven, [
+            "--target", "docs/every-cell-failed.md", "--attack", "cut",
+            "--runtime", "codex"])
+        records = sorted(driven.RECORDS_ROOT.glob("*"))
+        record = records[0] if len(records) == 1 else None
+        shipped_log = (SUITE_SCRATCH_LOG_STORE_PATH / "sanity-check-records"
+                       / record.name / "sanity-check-run.log") if record else None
+        check("a run whose every cell failed prints the shipper's line as `record:` "
+              "and names its record directory",
+              code == 1 and record is not None
+              and sum(line.startswith("record: shipped: ") for line in out.splitlines()) == 1
+              and "sanity-check wrote no reports" in out
+              and f"is in {record}." in out,
+              f"exit {code}, records {records}, stdout {out!r}, stderr {err!r}")
+        check("and its record, the log with the FAILED line in it, is in the store",
+              shipped_log is not None and shipped_log.is_file()
+              and "FAILED: cut-codex — logged-out — 401 Unauthorized"
+              in shipped_log.read_text(encoding="utf-8")
+              and "record: " not in shipped_log.read_text(encoding="utf-8"),
+              f"looked for {shipped_log}")
 
     print()
     if failures:

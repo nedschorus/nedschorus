@@ -63,8 +63,9 @@ Operating rules:
   runner makes a local clone of the repository at the checkout's last commit
   (under `~/.cache/nedschorus-sanity-check-review-copies/`, with the whole
   history and no remote pointing back at the checkout), every agent runs in
-  it, and the runner removes it when the run ends, a run that fails
-  included. So the reviewed text is exactly that commit, and the
+  it, and the runner removes it when the run ends, a run that fails and a
+  run a stop signal ends included (WHEN A RUN IS STOPPED, below). So the
+  reviewed text is exactly that commit, and the
   requester may keep working in the checkout while the agents run. The target
   and every `--context` document must be committed: one that differs from the
   last commit, or that git does not track, is refused before any agent
@@ -128,7 +129,11 @@ Running a sanity-check, and reading its output:
   when it launches an agent a second time, and the warning lines described
   below. Exit 0 when every launched agent saved; 1 when any launched agent
   failed (a skipped agent is not launched); 2 when the invocation itself is
-  unusable — a missing file, a broken prompt boundary, a bad flag.
+  unusable — a missing file, a broken prompt boundary, a bad flag. A run that
+  SIGTERM, SIGINT or SIGHUP ends is ended by that signal, after the steps
+  under WHEN A RUN IS STOPPED. A run in which every launched agent failed
+  still ships its record, which then holds the run's log and no report, and
+  prints the `record:` line and the record's path.
 - An agent that saves no report is launched once more by the runner, with the
   same prompt, in the same copy, unless the cause is one only the user can
   clear or the launch timed out. The cause classes: `logged-out`,
@@ -228,6 +233,33 @@ Running a sanity-check, and reading its output:
   first, or on whether this run launched the other runtime: a rerun of one
   agent is a run that launched one runtime, and the other runtime's report is
   then in the first run's record.
+- WHEN A RUN IS STOPPED. The /sanity-check skill starts this runner as a
+  background task, and a seat's handoff ends that seat's background tasks, so
+  a run is ended from outside in ordinary use. Until review of the pull
+  request that introduced the review copy measured it, SIGTERM or SIGHUP
+  ended the runner at once: the copy, a whole checkout, stayed under
+  `~/.cache` for good, one more for each such run, and the agents ran on to
+  their own end with nobody left to save what they wrote. On SIGTERM, SIGINT
+  or SIGHUP the runner now stops every process under it (the agent-binaries
+  and whatever they started: SIGTERM, then SIGKILL after 10 seconds), launches
+  nothing more — no second launch of an agent that ended this way, and no
+  next model of the claude chain; before this, SIGINT sent to the whole
+  process group, as Ctrl-C at a terminal sends it, relaunched the agents it
+  had just ended — moves the agents' scratch directories into the record,
+  removes the copy, and prints one `STOPPED:` line saying which signal ended
+  the run, that the same command is to be run again, and where the reports
+  the run had saved and its log are. It then ships the record, as any run
+  does when it ends, printing the `record:` line, and ends by the same
+  signal; a run killed outright while it ships has already stopped its agents
+  and removed its copy, and its record stays on disk. SIGKILL, and a machine
+  that stops, cannot be answered, so each run, before it makes its own copy,
+  removes the copies no live run owns and prints `removed: a review copy an
+  earlier run left behind, <path>` for each. A copy is a live run's while
+  that run holds the lock on the owner file beside the copy's directory,
+  `<directory>.owner`, which the operating system releases when the process
+  ends however it ends; so two runs at once never remove each other's copy.
+  An agent whose runner was killed outright still runs to its own end, in a
+  copy the next run removes from under it.
 - Each saved report opens with a provenance line: runtime, model, effort,
   the reviewing CLI's version (measured by this runner, not self-reported),
   audit, target, and the commit the review copy holds and its state, so
@@ -240,16 +272,20 @@ import argparse
 import concurrent.futures
 import contextlib
 import datetime
+import fcntl
 import hashlib
+import os
 import pathlib
 import re
 import shlex
 import shutil
+import signal
 import subprocess
 import sys
 import importlib.util
 import tempfile
 import threading
+import time
 import typing
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -290,6 +326,22 @@ RECOGNISED_FAILURE_TEXTS_FOR_MODEL = {
     "codex": _cold_read_cell_program(
         "cold-read-codex-cell.py").recognised_failure_texts_for_model,
 }
+
+# The signals that end a run early and that this runner answers by stopping
+# its agents and removing its review copy: see WHEN A RUN IS STOPPED in the
+# module docstring. SIGKILL cannot be answered; the next run removes the copy
+# a killed run left (remove_review_copies_no_live_run_owns).
+RUN_STOP_SIGNALS = (signal.SIGTERM, signal.SIGINT, signal.SIGHUP)
+# How long the stopped agents' processes are given to end on SIGTERM before
+# they are sent SIGKILL.
+STOPPED_PROCESS_GRACE_SECONDS = 10.0
+# Set by the first stop signal, and read by every thread before it launches an
+# agent-binary: a cell stopped with its run is not relaunched, and the claude
+# chain does not go on to its next model.
+RUN_STOPPED = threading.Event()
+# The name of the file beside a review copy's directory whose lock says a
+# live run owns that copy: see claim_review_copy_directory.
+REVIEW_COPY_OWNER_FILE_SUFFIX = ".owner"
 
 # The line a cell prints when its first launch produced no report and the
 # runner launches it once more: `RETRYING: <cell> — <cause class> — <detail>`.
@@ -582,6 +634,10 @@ def run_claude(prompt: str, checkout: pathlib.Path = None) -> tuple:
     failed_attempts = []
     last_cause = None
     for model in CLAUDE_MODEL_CHAIN:
+        if RUN_STOPPED.is_set():
+            # The run was stopped: the chain does not go on to a model whose
+            # review nobody is left to save.
+            break
         recognised_texts = RECOGNISED_FAILURE_TEXTS_FOR_MODEL["claude"](model)
         command = [
             "claude", "-p",
@@ -599,10 +655,12 @@ def run_claude(prompt: str, checkout: pathlib.Path = None) -> tuple:
             "--setting-sources", "user",
         ]
         try:
+            # Decoded as UTF-8 with undecodable bytes replaced, never raised
+            # on: see run_codex.
             completed = subprocess.run(
                 command, input=prompt, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                cwd=checkout or REPO_ROOT, text=True, check=False,
-                timeout=CELL_TIMEOUT_SECONDS,
+                cwd=checkout or REPO_ROOT, text=True, encoding="utf-8",
+                errors="replace", check=False, timeout=CELL_TIMEOUT_SECONDS,
             )
         except OSError as error:
             # A CLI that will not launch is one failed attempt, not the end of
@@ -628,6 +686,11 @@ def run_claude(prompt: str, checkout: pathlib.Path = None) -> tuple:
         # stdout -- the review itself is returned to run_cell, never printed --
         # so the runtime's words go there too, and not to stderr as in the
         # house tool, whose log is the other stream.
+        if RUN_STOPPED.is_set():
+            # This launch ended because the run was stopped, which
+            # stop_processes_this_run_started did to it: not a failure of the
+            # model's, and not one to warn of.
+            break
         if completed.stderr:
             print(completed.stderr, end="", flush=True)
         if completed.returncode != 0:
@@ -702,11 +765,24 @@ def run_codex(prompt: str, checkout: pathlib.Path = None) -> tuple:
         # every failed Codex launch was `exit 1` and nothing more, so the
         # runner could neither name the cause nor decide the relaunch on it.
         # The review itself still comes from --output-last-message.
+        # Decoded as UTF-8 with undecodable bytes replaced, never raised on,
+        # and the last message read the same way. A Codex session's streams
+        # hold everything the model and its tools wrote, and with the default
+        # decoding one byte that is not UTF-8 in them ended the whole run in a
+        # UnicodeDecodeError traceback, with this cell's finished report lost
+        # and the record not shipped (found in review of the pull request that
+        # began capturing them; no real session with such a byte is on
+        # record). A replaced byte costs one character of a log line; and the
+        # encoding is named, so a run started where the locale is not UTF-8
+        # reads the review as the CLI wrote it.
         completed = subprocess.run(
             command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE, text=True, check=False,
-            timeout=CELL_TIMEOUT_SECONDS,
+            stderr=subprocess.PIPE, text=True, encoding="utf-8",
+            errors="replace", check=False, timeout=CELL_TIMEOUT_SECONDS,
         )
+        if completed.returncode != 0 and RUN_STOPPED.is_set():
+            # Ended because the run was stopped: see run_claude.
+            return completed.returncode, "", CODEX_MODEL, "", None
         if completed.returncode != 0:
             for stream in (completed.stderr, completed.stdout):
                 print(last_lines_of_stream(
@@ -717,7 +793,8 @@ def run_codex(prompt: str, checkout: pathlib.Path = None) -> tuple:
                 exit_code=completed.returncode,
                 recognised_texts=RECOGNISED_FAILURE_TEXTS_FOR_MODEL["codex"](CODEX_MODEL))
             return completed.returncode, "", CODEX_MODEL, "", cause
-        return 0, last_message_path.read_text(encoding="utf-8"), CODEX_MODEL, "", None
+        return (0, last_message_path.read_text(encoding="utf-8", errors="replace"),
+                CODEX_MODEL, "", None)
     finally:
         last_message_path.unlink(missing_ok=True)
 
@@ -1273,8 +1350,8 @@ def review_copy_of_commit(commit: str, record_name: str,
     in a directory of its own named for the record.
     """
     REVIEW_COPIES_ROOT.mkdir(parents=True, exist_ok=True)
-    holder = pathlib.Path(tempfile.mkdtemp(prefix=f"{record_name}-",
-                                           dir=REVIEW_COPIES_ROOT))
+    remove_review_copies_no_live_run_owns()
+    holder, owner_file = claim_review_copy_directory(record_name)
     checkout = holder / "checkout"
     steps = (
         (["git", "clone", "--quiet", "--local", "--no-checkout",
@@ -1284,19 +1361,275 @@ def review_copy_of_commit(commit: str, record_name: str,
           "+refs/remotes/origin/*:refs/remotes/origin/*"], checkout),
         (["git", "checkout", "--quiet", "--detach", commit], checkout),
     )
-    for command, cwd in steps:
-        step = subprocess.run(command, cwd=cwd, capture_output=True, text=True,
-                              check=False)
-        if step.returncode != 0:
-            shutil.rmtree(holder, ignore_errors=True)
-            raise RuntimeError(f"{' '.join(command[:2])} failed: {step.stderr.strip()}")
+    # One try from the claim on, so the copy is removed however the run ends:
+    # a git step that fails, a run that raises, and a run a stop signal ends
+    # while the copy is still being made.
     try:
+        for command, cwd in steps:
+            step = subprocess.run(command, cwd=cwd, capture_output=True, text=True,
+                                  check=False)
+            if step.returncode != 0:
+                raise RuntimeError(f"{' '.join(command[:2])} failed: {step.stderr.strip()}")
         yield checkout
     finally:
-        shutil.rmtree(holder, ignore_errors=True)
+        remove_directory_whatever_signal_arrives(holder)
+        if holder.exists():
+            # The owner file stays, unlocked once this run ends, so the next
+            # run tries the removal again.
+            print(f"WARNING: the review copy could not be removed: {holder}",
+                  flush=True)
+        else:
+            holder.with_name(holder.name + REVIEW_COPY_OWNER_FILE_SUFFIX).unlink(
+                missing_ok=True)
+        owner_file.close()
+
+
+def remove_directory_whatever_signal_arrives(directory: pathlib.Path) -> None:
+    """Remove `directory`, to the end: a stop signal that arrives partway is
+    raised again only after the removal has run through. The first stop signal
+    makes every later one ignored, so the second pass is not interrupted."""
+    try:
+        shutil.rmtree(directory, ignore_errors=True)
+    except RunStoppedBySignal:
+        shutil.rmtree(directory, ignore_errors=True)
+        raise
+
+
+def claim_review_copy_directory(record_name: str) -> tuple:
+    """A new, empty directory under REVIEW_COPIES_ROOT for one run's review
+    copy, and the open owner file beside it, locked for as long as this run
+    lives: (directory, owner file).
+
+    The lock is what tells a live run's copy from one a dead run left behind
+    (remove_review_copies_no_live_run_owns). The operating system drops it
+    when the process ends, however it ends, SIGKILL included, so no run has to
+    reach a line of its own for its copy to become removable; and two runs at
+    once each hold their own, so neither removes the other's. The owner file
+    is made and locked before the directory exists, so a directory with no
+    owner file is never a live run's. Another run may lock and remove an owner
+    file in the moment between its creation and this run's lock; the lock
+    would then be on a file no path names, so the file's identity is checked
+    under the lock and the claim starts again with a new name. The file's text
+    names the process, for a person reading the directory."""
+    while True:
+        descriptor, owner_name = tempfile.mkstemp(
+            prefix=f"{record_name}-", suffix=REVIEW_COPY_OWNER_FILE_SUFFIX,
+            dir=REVIEW_COPIES_ROOT)
+        owner_file = os.fdopen(descriptor, "w", encoding="utf-8")
+        fcntl.flock(owner_file.fileno(), fcntl.LOCK_EX)
+        holder = pathlib.Path(owner_name[:-len(REVIEW_COPY_OWNER_FILE_SUFFIX)])
+        try:
+            still_named = (os.stat(owner_name).st_ino
+                           == os.fstat(owner_file.fileno()).st_ino)
+            if still_named:
+                holder.mkdir()
+        except FileNotFoundError:
+            still_named = False
+        except FileExistsError:
+            # A directory of that name with no owner file until now: a copy
+            # left by a runner older than owner files. Leave it to the next
+            # run's removal and take another name.
+            pathlib.Path(owner_name).unlink(missing_ok=True)
+            still_named = False
+        if still_named:
+            owner_file.write(f"process {os.getpid()}, started "
+                             f"{datetime.datetime.now().isoformat(timespec='seconds')}\n")
+            owner_file.flush()
+            return holder, owner_file
+        owner_file.close()
+
+
+def remove_review_copies_no_live_run_owns() -> list:
+    """Remove every review copy under REVIEW_COPIES_ROOT that no live run
+    owns, and return the directories removed.
+
+    A run removes its own copy when it ends, and a run ended by SIGTERM,
+    SIGINT or SIGHUP does too (see WHEN A RUN IS STOPPED in the module
+    docstring). A run ended by SIGKILL, or by the machine stopping, cannot:
+    its copy, a whole checkout, would stay for good, one more for each such
+    run, which review of the pull request that introduced the copy measured.
+    So each run, before it makes its own copy, removes the ones left behind.
+    A copy is a live run's while that run holds the lock on its owner file
+    (claim_review_copy_directory); a lock this function can take means the
+    owner is gone. A directory with no owner file was made before copies had
+    owners, by a runner that never reached main, and is removed too. An owner
+    file with no directory is what a run killed between the two leaves, and is
+    removed when its lock can be taken. Two runs starting together may both
+    try one dead copy: one takes the lock and removes it, the other finds the
+    lock held and leaves it alone.
+    """
+    removed = []
+    for holder in sorted(path for path in REVIEW_COPIES_ROOT.iterdir() if path.is_dir()):
+        owner_path = holder.with_name(holder.name + REVIEW_COPY_OWNER_FILE_SUFFIX)
+        owner_file = lock_owner_file_no_live_run_holds(owner_path)
+        if owner_file is None and owner_path.exists():
+            continue
+        if not holder.is_dir():
+            # Its own run removed it, and its owner file, since this function
+            # listed the directory: nothing was left behind.
+            if owner_file is not None:
+                owner_file.close()
+            continue
+        remove_directory_whatever_signal_arrives(holder)
         if holder.exists():
             print(f"WARNING: the review copy could not be removed: {holder}",
                   flush=True)
+        else:
+            removed.append(holder)
+            print(f"removed: a review copy an earlier run left behind, {holder}",
+                  flush=True)
+            owner_path.unlink(missing_ok=True)
+        if owner_file is not None:
+            owner_file.close()
+    for owner_path in sorted(REVIEW_COPIES_ROOT.glob("*" + REVIEW_COPY_OWNER_FILE_SUFFIX)):
+        if owner_path.with_name(owner_path.name[:-len(REVIEW_COPY_OWNER_FILE_SUFFIX)]).exists():
+            continue
+        owner_file = lock_owner_file_no_live_run_holds(owner_path)
+        if owner_file is not None:
+            owner_path.unlink(missing_ok=True)
+            owner_file.close()
+    return removed
+
+
+def lock_owner_file_no_live_run_holds(owner_path: pathlib.Path):
+    """The owner file at `owner_path`, open and locked by this process, when
+    no live run holds its lock; None when a live run does, when the file is
+    not there, or when the path came to name another file while this function
+    waited for nothing: the lock is asked for without waiting."""
+    try:
+        owner_file = open(owner_path, "r+", encoding="utf-8")
+    except OSError:
+        return None
+    try:
+        fcntl.flock(owner_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        if os.stat(owner_path).st_ino == os.fstat(owner_file.fileno()).st_ino:
+            return owner_file
+    except OSError:
+        pass
+    owner_file.close()
+    return None
+
+
+def processes_under_this_one() -> dict:
+    """{pid: parent pid} for every process on the machine but the `ps` that
+    listed them, from one `ps` call (the same flags on macOS and Linux); {}
+    when ps cannot be run.
+
+    The cold-read-grid's process_parents
+    (nc-systems/cold-read/cold-read-grid.py) with one difference, which is why
+    it is not taken from there: that `ps` is a child of the process that asks,
+    and stop_processes_this_run_started walks the asking process's own
+    children, so each reading would hand it one more child, the reader of that
+    reading, and the walk would never end. The grid walks a launcher's tree,
+    which its own `ps` is not in."""
+    try:
+        with subprocess.Popen(["ps", "-A", "-o", "pid=", "-o", "ppid="],
+                              stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                              text=True) as listing:
+            listed, _ = listing.communicate()
+            reader = listing.pid
+    except OSError:
+        return {}
+    parents = {}
+    for line in listed.splitlines():
+        fields = line.split()
+        if len(fields) == 2 and fields[0].isdigit() and fields[1].isdigit():
+            parents[int(fields[0])] = int(fields[1])
+    parents.pop(reader, None)
+    return parents
+
+
+class RunStoppedBySignal(BaseException):
+    """A stop signal ended this run: raised in the main thread by
+    stop_run_on_signal, after the agents' processes were stopped, so that
+    every `finally` and context manager between the run and main() does its
+    work, the review copy's removal among them. A BaseException, so that no
+    `except Exception` on the way takes it for an error of its own."""
+
+    def __init__(self, signal_number: int) -> None:
+        super().__init__(signal_number)
+        self.signal_number = signal_number
+
+
+def stop_processes_this_run_started() -> None:
+    """Stop every process under this one: the agent-binaries of the cells in
+    flight, whatever they started, and a git or shipper call of the runner's
+    own. Prints nothing: it runs inside a signal handler, where the main
+    thread may hold the run log's lock.
+
+    The cold-read-grid's way of stopping a cell's process tree
+    (stop_process_tree in nc-systems/cold-read/cold-read-grid.py), applied to
+    this process's whole tree: frozen top-down with SIGSTOP, re-reading the
+    process table after each level, so a process cannot start another while
+    the tree is collected; then SIGTERM and SIGCONT to all, so each can end on
+    its own terms; then SIGKILL to whatever is left after the grace. The
+    cells' threads reap the agent-binaries they launched; what those started
+    is reaped by init.
+    """
+    this_process = os.getpid()
+    frozen, tried, parents_collected = [], {this_process}, {this_process}
+    while True:
+        frontier = [pid for pid, parent in processes_under_this_one().items()
+                    if parent in parents_collected and pid not in tried]
+        if not frontier:
+            break
+        for pid in frontier:
+            tried.add(pid)
+            try:
+                os.kill(pid, signal.SIGSTOP)
+            except (ProcessLookupError, PermissionError):
+                continue
+            frozen.append(pid)
+            parents_collected.add(pid)
+    for signal_number in (signal.SIGTERM, signal.SIGCONT):
+        for pid in frozen:
+            try:
+                os.kill(pid, signal_number)
+            except (ProcessLookupError, PermissionError):
+                pass
+
+    def still_running(pid: int) -> bool:
+        # A process that has ended and that nobody has reaped yet is still in
+        # the table; `ps` says so, and a signal to it would say nothing.
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            return True
+        state = subprocess.run(["ps", "-o", "stat=", "-p", str(pid)],
+                               capture_output=True, text=True, check=False)
+        return not state.stdout.strip().startswith("Z")
+
+    deadline = time.monotonic() + STOPPED_PROCESS_GRACE_SECONDS
+    while time.monotonic() < deadline and any(still_running(pid) for pid in frozen):
+        time.sleep(0.1)
+    # SIGKILL to what is left, and to any process a cell's thread launched in
+    # the moment between reading RUN_STOPPED and this function's last look at
+    # the process table: one more reading of the table finds it.
+    table = processes_under_this_one()
+    under_this_process, grew = {this_process}, True
+    while grew:
+        found = {pid for pid, parent in table.items() if parent in under_this_process}
+        grew = not found <= under_this_process
+        under_this_process |= found
+    for pid in set(frozen) | (under_this_process - {this_process}):
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            pass
+
+
+def stop_run_on_signal(signal_number: int, _frame) -> None:
+    """The handler main() installs for RUN_STOP_SIGNALS while a run is under
+    way: see WHEN A RUN IS STOPPED in the module docstring. Every later stop
+    signal is ignored from here on, so the stopping and the removal of the
+    review copy are not themselves cut short."""
+    for number in RUN_STOP_SIGNALS:
+        signal.signal(number, signal.SIG_IGN)
+    RUN_STOPPED.set()
+    stop_processes_this_run_started()
+    raise RunStoppedBySignal(signal_number)
 
 
 class RunOutputCopiedToRecordLog:
@@ -1315,6 +1648,9 @@ class RunOutputCopiedToRecordLog:
 
     def __init__(self, stream) -> None:
         self.stream = stream
+        # The record directory, once `attach` has named the log in it: what a
+        # run stopped by a signal names in its STOPPED line, and ships.
+        self.record_directory = None
         self._held = []
         self._file = None
         self._lock = threading.Lock()
@@ -1336,6 +1672,7 @@ class RunOutputCopiedToRecordLog:
 
     def attach(self, log_path: pathlib.Path) -> None:
         with self._lock:
+            self.record_directory = log_path.parent
             self._file = open(log_path, "w", encoding="utf-8")
             self._file.write("".join(self._held))
             self._held = None
@@ -1566,9 +1903,17 @@ def run_cell(attack: str, runtime: str, target: str, context: list,
                                 baseline_status, corpus, report_ledger, checkout,
                                 relaunched_after)
 
+    if RUN_STOPPED.is_set():
+        return cell, False
     failure = launch()
     if failure is None:
         return cell, True
+    if RUN_STOPPED.is_set():
+        # The launch ended because the run was stopped. No second launch, and
+        # none of the lines a failed cell ends on: they tell the requesting
+        # agent how to go on with this run's reports, and the run's STOPPED
+        # line says what a stopped run calls for instead.
+        return cell, False
     relaunched = failed_launch_is_relaunched(failure.cause_class)
     if relaunched:
         separator = common.CAUSE_SEPARATOR
@@ -1577,6 +1922,8 @@ def run_cell(attack: str, runtime: str, target: str, context: list,
         failure = launch(relaunched_after=failure.cause_class)
         if failure is None:
             return cell, True
+        if RUN_STOPPED.is_set():
+            return cell, False
     # One write, so that another cell's lines, printed from its own thread,
     # cannot land between this cell's FAILED line and the instructions that
     # say "the FAILED line above".
@@ -1707,11 +2054,53 @@ def main() -> int:
     # Everything the run prints from here is also kept for its record.
     run_log = RunOutputCopiedToRecordLog(sys.stdout)
     sys.stdout = run_log
+    # Signal handlers can be set from the main thread alone; a caller running
+    # main() on another thread gets the run without them.
+    handlers_before = {}
+    if threading.current_thread() is threading.main_thread():
+        handlers_before = {number: signal.signal(number, stop_run_on_signal)
+                           for number in RUN_STOP_SIGNALS}
+    stopped_by = None
     try:
         return run_cells_in_review_copy(args, target_path, run_log)
+    except RunStoppedBySignal as stopped:
+        stopped_by = stopped.signal_number
+        print(run_stopped_line(stopped_by, run_log.record_directory), flush=True)
+        # Closed before the record is shipped, as at the end of any run; and
+        # shipped while the stop signals are still ignored, after the agents
+        # are stopped and the review copy is removed, so a run that is killed
+        # outright while it ships has already done what must not be left.
+        run_log.detach()
+        if run_log.record_directory is not None:
+            print(f"record: {ship_record(run_log.record_directory)}", flush=True)
     finally:
         run_log.detach()
         sys.stdout = run_log.stream
+        for number, handler in handlers_before.items():
+            # None is what signal.signal returns for a handler that was not
+            # set from Python, and it cannot be set back.
+            if handler is not None:
+                signal.signal(number, handler)
+    # The run ends as a process that signal ended does, so whatever started it
+    # reads the ending it asked for: the agents are stopped, the review copy
+    # is removed and the log is closed by now.
+    sys.stdout.flush()
+    signal.signal(stopped_by, signal.SIG_DFL)
+    os.kill(os.getpid(), stopped_by)
+    return 128 + stopped_by
+
+
+def run_stopped_line(signal_number: int, record_directory) -> str:
+    """The line a run a stop signal ended prints before it ships its record:
+    what happened, as the condition, and what the requesting agent does about
+    it."""
+    name = signal.Signals(signal_number).name
+    line = (f"STOPPED: {name} ended this run before it had finished, and the "
+            f"runner stopped its agents. Run the same command again for the "
+            f"reports this run did not save.")
+    if record_directory is not None:
+        line += (f" The reports it saved, and this log, are in {record_directory}.")
+    return line
 
 
 def run_cells_in_review_copy(args, target_path: pathlib.Path, run_log: RunOutputCopiedToRecordLog) -> int:
@@ -1790,30 +2179,52 @@ def run_cells_in_review_copy(args, target_path: pathlib.Path, run_log: RunOutput
         baseline_status = worktree_snapshot(checkout)
         corpus = tracked_files_corpus(checkout)
         report_ledger = RunnerReportWriteLedger(copy_record_dir, checkout)
-        with concurrent.futures.ThreadPoolExecutor(max_workers=len(cells)) as pool:
-            futures = [
-                pool.submit(run_cell, attack, runtime, args.target, args.context,
-                            args.problem_statement, out_dir, baseline_status, corpus,
-                            report_ledger, checkout, copy_record_dir)
-                for attack, runtime in cells
-            ]
-            for future in concurrent.futures.as_completed(futures):
-                _, cell_ok = future.result()
-                ok = ok and cell_ok
-                saved_count += 1 if cell_ok else 0
-
-        scratch = copy_record_dir / CELL_SCRATCH_DIRECTORY_NAME
-        if scratch.is_dir():
-            shutil.move(str(scratch), str(out_dir / CELL_SCRATCH_DIRECTORY_NAME))
+        try:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=len(cells)) as pool:
+                futures = [
+                    pool.submit(run_cell, attack, runtime, args.target, args.context,
+                                args.problem_statement, out_dir, baseline_status, corpus,
+                                report_ledger, checkout, copy_record_dir)
+                    for attack, runtime in cells
+                ]
+                for future in concurrent.futures.as_completed(futures):
+                    _, cell_ok = future.result()
+                    ok = ok and cell_ok
+                    saved_count += 1 if cell_ok else 0
+        finally:
+            # However the cells' part ended, a run a stop signal ended
+            # included: what the cells left in their scratch directories is
+            # part of the record, and the copy that holds it is removed next.
+            scratch = copy_record_dir / CELL_SCRATCH_DIRECTORY_NAME
+            if scratch.is_dir():
+                shutil.move(str(scratch), str(out_dir / CELL_SCRATCH_DIRECTORY_NAME))
     # Closed before the record is shipped, so the log-store gets the whole log.
     run_log.detach()
 
     if saved_count:
         print_run_completion(out_dir)
     else:
-        print("sanity-check wrote no reports: every agent above failed or was "
-              "skipped; there is nothing to triage.", flush=True)
+        print_completion_of_run_that_saved_no_report(out_dir)
     return 0 if ok else 1
+
+
+def print_completion_of_run_that_saved_no_report(out_dir: pathlib.Path, ship=None) -> None:
+    """Ship the record of a run whose every launched agent failed, and say
+    where its log is.
+
+    Such a run used to ship nothing and name its record nowhere, so the
+    requesting agent could not find the log the run had just saved, the one
+    place that keeps each FAILED: line and the lines under it; found in review
+    of the pull request that gave the record its log. The record is a log like
+    any other run's (see print_run_completion), and the shipper takes a record
+    that holds no report. `ship` is the shipper to call, for the test.
+    """
+    ship = ship or ship_record
+    print(f"record: {ship(out_dir)}", flush=True)
+    print("sanity-check wrote no reports: every agent above failed or was "
+          "skipped; there is nothing to triage. Do what the lines under each "
+          f"FAILED: line above say; this run's log, which keeps them, is in {out_dir}.",
+          flush=True)
 
 
 def print_run_completion(out_dir: pathlib.Path, ship=None) -> None:
