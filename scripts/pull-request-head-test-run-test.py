@@ -1133,6 +1133,49 @@ def run_cases_on_ned_box(workspace: Path):
               "Fix what the error names, then run this again.\n"), repr(result))
 
 
+def run_cases_of_a_subject_that_holds_line_boundaries_that_are_no_line_feed(workspace: Path):
+    """The count in a record's first line is of the lines a line feed ends,
+    which is how the program's docstring tells a reader to count.
+    `str.splitlines` also ends a line at a form feed, at U+0085, at U+2028
+    and at five more characters, so a count taken with it is too high for a
+    record that holds one of them inside a line. A line the runner printed
+    never does: the program splits the runner's output with
+    `str.splitlines`, and each piece is a line of the record. The head's
+    commit subject can, because git gives the subject whole and the record
+    quotes it in one line. So the head here is one commit further on than
+    the fixture's, with a subject that holds three of those characters."""
+    fixture = Fixture(workspace / "a-subject-that-holds-line-boundaries")
+    subject = ("a subject that holds a form feed \x0c, the next-line character \x85 and a "
+               "line separator \u2028 before its last words")
+    (fixture.checkout / "a-second-change.txt").write_text("a second change\n",
+                                                          encoding="utf-8")
+    fixture_git(fixture.checkout, "add", "-A")
+    fixture_git(fixture.checkout, "commit", "-q", "-m", subject)
+    fixture.head = fixture_git(fixture.checkout, "rev-parse", "HEAD")
+    subject_git_gives = fixture_git(fixture.checkout, "log", "-1", "--format=%s")
+    check("the fixture is that case: git gives the head's subject whole, no line feed is "
+          "in it, and `str.splitlines` splits it in four",
+          subject_git_gives == subject and "\n" not in subject
+          and len(subject.splitlines()) == 4, repr(subject_git_gives))
+    passing = fixture.run()
+    failing = fixture.run(exits=(1,), lines=FAILING_RUNNER_LINES)
+    test_log = fixture.test_log("ned-box") or ""
+    records = fixture.records("ned-box")
+    head_line = f'head: commit {fixture.head} ("{subject}")'
+    check("for a head whose subject holds a form feed, U+0085 and U+2028, a record's first "
+          "line counts the lines a line feed ends, the line that quotes the subject being "
+          "one of them: the test log of two runs of that head reads record by record, "
+          "each record's count is the number of its line feeds, and each quotes the "
+          "subject whole in one line",
+          passing.code == 0 and failing.code == 1
+          and records is not None and len(records) == 2
+          and "".join(records) == test_log
+          and all(record.split("\n")[1] == head_line for record in records)
+          and all(int(A_RECORDS_FIRST_LINE.fullmatch(record.split("\n")[0]).group(2))
+                  == record.count("\n") for record in records),
+          f"{passing!r}\n{failing!r}\n{test_log!r}")
+
+
 def run_cases_on_the_mac(workspace: Path):
     fixture = Fixture(workspace / "on-the-mac")
     record_path = f"pull-request-head-test-runs/mac/{fixture.head}.txt"
@@ -1956,6 +1999,7 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     # Mac's temporary directory is reached through a symbolic link.
     workspace_root = Path(temporary_directory).resolve()
     run_cases_on_ned_box(workspace_root)
+    run_cases_of_a_subject_that_holds_line_boundaries_that_are_no_line_feed(workspace_root)
     run_cases_on_the_mac(workspace_root)
     run_cases_of_a_record_cut_short_on_the_way(workspace_root)
     run_cases_of_the_write_command_under_each_shell(workspace_root)

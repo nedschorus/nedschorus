@@ -205,6 +205,22 @@ below, which does this in order:
      record, as on a full disk, is undone: the test log is cut back to the
      length it had, the command says so and exits 1.
 
+ONE STATE STEP 4 DOES NOT UNDO. A writer that is killed after a write the
+test log took in part, and before the cut back, leaves that part at the end
+of the test log. The part is no whole record, so a reader that counts reads
+no record after it. The next writer adds its record straight after the part:
+when the part ends with no line feed, that record does not start a line,
+step 3 does not find it, and its command run again adds it a second time.
+Nothing here guards against that state, because no run has produced it. The
+reviewers of the pull request
+"pull-request-head-test-run: every run of a head is kept: a run adds its
+record to the end of the head's test log, under a lock, and a record is
+added once" (nedschorus/nedschorus pull request 883, 2026-10-01) reached it
+on ned-box with a stand-in writer that kills itself between the write and
+the cut back. A SIGKILL aimed at the write itself left part of a 25 kB
+record in 8 of 400 tries on tmpfs and in 0 of 400 on btrfs, the log-store's
+filesystem.
+
 The command removes nothing and renames nothing, and has one form: the one
 this program runs is the one its refusal prints for a failed write, with the
 count of the bytes of the record's local copy. The command is ASCII apart
