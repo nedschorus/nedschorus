@@ -266,7 +266,7 @@ with tempfile.TemporaryDirectory() as temporary:
     check("an expected closed pointer is not counted as a stale match",
           state6["recent_matches"] == [False], state6)
 
-    # --- escalate:/out-of-scope pass through, no post-check -----------------
+    # --- the boundary replies pass through, no post-check -------------------
     seat7 = root / "seat7"
     seat7.mkdir()
     refresh_calls = fake_refresh_queue([
@@ -274,11 +274,11 @@ with tempfile.TemporaryDirectory() as temporary:
     ])
     claude_calls = fake_claude_queue([
         ({"session_id": "sess-E", "result": "(ack)"}, None),
-        ({"session_id": "sess-E", "result": "escalate: does the 2026-08-01 ruling on #13 still bind?"}, None),
+        ({"session_id": "sess-E", "result": "ask-user-about-ruling: does the 2026-08-01 ruling on #13 still bind?"}, None),
     ])
     answer, error = ghi_ask.ask("q", False, seat7, "x/y")
-    check("ask() hands main() an escalate: reply as ghi-info wrote it, even mentioning #13",
-          answer.startswith("escalate:"), answer)
+    check("ask() hands main() an ask-user-about-ruling: reply as ghi-info wrote it, even mentioning #13",
+          answer.startswith("ask-user-about-ruling:"), answer)
     check("a passthrough reply triggers no drift recheck",
           len(claude_calls) == 2, claude_calls)
 
@@ -544,9 +544,12 @@ finally:
     patch("run_claude", run_claude_orig)
 
 
-# --- main(): out-of-scope and escalate: reach the caller as errors ---------
+# --- main(): the two boundary replies reach the caller as errors -----------
 # User-ruled 2026-09-29 (walk SKILL-ghi-write-2026-09-29-4, item 1 revised):
 # the two bare replies are no longer passed through on stdout with exit 0.
+# Renamed 2026-10-01: out-of-scope became not-about-issues, and escalate:
+# became ask-user-about-ruling:; the old words are still read (the module's
+# RETIRED_BOUNDARY_REPLY_WORDS), so both are sent here.
 # The expected text is typed out here rather than read from the module, so a
 # change to the approved wording fails this file.
 APPROVED_NOT_ABOUT_ISSUES_MESSAGE = (
@@ -583,26 +586,30 @@ try:
     with tempfile.TemporaryDirectory() as temporary:
         root = Path(temporary)
 
-        seat_scope = root / "seat-not-about-issues"
-        seat_scope.mkdir()
-        exit_code, out, err = main_with_reply(seat_scope, "out-of-scope")
-        check("an out-of-scope reply exits 2",
-              exit_code == ghi_ask.EXIT_NOT_ABOUT_ISSUES == 2, exit_code)
-        check("an out-of-scope reply prints the approved message on stderr, and only it",
-              err.endswith(APPROVED_NOT_ABOUT_ISSUES_MESSAGE)
-              and "out-of-scope" not in err, err)
-        check("an out-of-scope reply prints nothing on stdout", out == "", out)
+        # The seat directories are numbered, not named for the reply word,
+        # because the checkout-refresh line on stderr prints the seat's path.
+        for index, word in enumerate(("not-about-issues", "out-of-scope")):
+            seat_scope = root / f"seat-not-a-question-{index}"
+            seat_scope.mkdir()
+            exit_code, out, err = main_with_reply(seat_scope, word)
+            check(f"a {word} reply exits 2",
+                  exit_code == ghi_ask.EXIT_NOT_ABOUT_ISSUES == 2, exit_code)
+            check(f"a {word} reply prints the approved message on stderr, and only it",
+                  err.endswith(APPROVED_NOT_ABOUT_ISSUES_MESSAGE)
+                  and word not in err, err)
+            check(f"a {word} reply prints nothing on stdout", out == "", out)
 
-        seat_ruling = root / "seat-ruling-question"
-        seat_ruling.mkdir()
-        exit_code, out, err = main_with_reply(
-            seat_ruling, "escalate: " + ESCALATE_SENTENCE + "  ")
-        check("an escalate: reply exits 3",
-              exit_code == ghi_ask.EXIT_RULING_QUESTION == 3, exit_code)
-        check("an escalate: reply prints the approved message on stderr, carrying ghi-info's sentence",
-              err.endswith(APPROVED_RULING_QUESTION_MESSAGE)
-              and "escalate:" not in err, err)
-        check("an escalate: reply prints nothing on stdout", out == "", out)
+        for index, prefix in enumerate(("ask-user-about-ruling:", "escalate:")):
+            seat_ruling = root / f"seat-ruling-question-{index}"
+            seat_ruling.mkdir()
+            exit_code, out, err = main_with_reply(
+                seat_ruling, prefix + " " + ESCALATE_SENTENCE + "  ")
+            check(f"a {prefix} reply exits 3",
+                  exit_code == ghi_ask.EXIT_RULING_QUESTION == 3, exit_code)
+            check(f"a {prefix} reply prints the approved message on stderr, carrying ghi-info's sentence",
+                  err.endswith(APPROVED_RULING_QUESTION_MESSAGE)
+                  and prefix not in err, err)
+            check(f"a {prefix} reply prints nothing on stdout", out == "", out)
 
         seat_list = root / "seat-reading-list"
         seat_list.mkdir()
@@ -615,8 +622,16 @@ try:
           and ghi_ask.caller_message_for_passthrough_reply(
               "Out-of-scope reasons are listed in #5") is None)
     check("the two bare replies are still recognized case-insensitively",
-          ghi_ask.caller_message_for_passthrough_reply("OUT-OF-SCOPE")[1] == 2
+          ghi_ask.caller_message_for_passthrough_reply("NOT-ABOUT-ISSUES")[1] == 2
+          and ghi_ask.caller_message_for_passthrough_reply("Ask-User-About-Ruling: x")[1] == 3
+          and ghi_ask.caller_message_for_passthrough_reply("OUT-OF-SCOPE")[1] == 2
           and ghi_ask.caller_message_for_passthrough_reply("Escalate: x")[1] == 3)
+    check("the cold-start prompt teaches ghi-info the new reply words, not the old ones",
+          "reply exactly: not-about-issues." in ghi_ask.COLD_START_PROMPT_TEMPLATE
+          and "Reply: ask-user-about-ruling: <" in ghi_ask.COLD_START_PROMPT_TEMPLATE
+          and "out-of-scope" not in ghi_ask.COLD_START_PROMPT_TEMPLATE
+          and "escalate:" not in ghi_ask.COLD_START_PROMPT_TEMPLATE,
+          ghi_ask.COLD_START_PROMPT_TEMPLATE[-600:])
 finally:
     patch_module_function(ghi_ask.mirror_refresh, "refresh", mirror_orig)
     patch("run_claude", run_claude_orig)
@@ -847,8 +862,10 @@ with tempfile.TemporaryDirectory() as temporary:
     # run now; this check is what catches whatever else says something last.
     check("a reply naming an issue is an answer",
           ghi_ask.reply_answers_the_question("read #39, #29 — start with #39"))
-    check("the two passthrough replies are answers",
-          ghi_ask.reply_answers_the_question("out-of-scope")
+    check("the two passthrough replies are answers, in the new words and the old",
+          ghi_ask.reply_answers_the_question("not-about-issues")
+          and ghi_ask.reply_answers_the_question("ask-user-about-ruling: an old ruling may bind")
+          and ghi_ask.reply_answers_the_question("out-of-scope")
           and ghi_ask.reply_answers_the_question("escalate: an old ruling may bind"))
     check("a reply to a Stop hook is not an answer",
           not ghi_ask.reply_answers_the_question(

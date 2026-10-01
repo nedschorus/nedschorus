@@ -13,10 +13,10 @@ Exit codes:
      erroring or timing out: one line on stderr. A failed ask never blocks a
      write (design's own words): the caller's job is to fall down the
      ghi-write skill's fallback ladder, not to treat exit 1 as fatal.
-  2  ghi-info replied `out-of-scope`: the question was not about issues.
+  2  ghi-info replied `not-about-issues`: the question was not about issues.
      NOT_ABOUT_ISSUES_MESSAGE on stderr, nothing on stdout.
-  3  ghi-info replied `escalate: <sentence>`: it found a ruling of the
-     user's it may not judge. RULING_QUESTION_MESSAGE, carrying that
+  3  ghi-info replied `ask-user-about-ruling: <sentence>`: it found a ruling
+     of the user's it may not judge. RULING_QUESTION_MESSAGE, carrying that
      sentence, on stderr, nothing on stdout.
 
 Why 2 and 3 are not passed through (user-ruled 2026-09-29, walk
@@ -34,10 +34,13 @@ Exit codes of their own, rather than 1, because 1 sends a caller down the
 fallback ladder, which is wrong for both: one wants the question reworded,
 the other wants the user.
 
-ghi-info itself still replies with the bare strings: they are the protocol
-between its prompt and this script (COLD_START_PROMPT_TEMPLATE), and the
-design's § Prompts gives them verbatim. What changed is what reaches the
-caller.
+ghi-info itself still replies with bare words: they are the protocol
+between its prompt and this script (COLD_START_PROMPT_TEMPLATE). What
+changed is what reaches the caller. The words themselves were renamed to say
+what they mean (user-ruled 2026-10-01, reboot-test seat, after "escalate or
+whatever the other response is makes no sense"): `out-of-scope` became
+`not-about-issues`, and `escalate:` became `ask-user-about-ruling:`. The old
+words are still read for a while; see RETIRED_BOUNDARY_REPLY_WORDS.
 
 Seat and machine: ghi-info lives ONLY on the Ubuntu box, at ~/agents/ghi-info
 there — its mirror, session id, and reincarnation counters all live in that
@@ -98,7 +101,7 @@ the question at 20:16:59Z and then answered the checkout-freshness Stop hook
 0, so its fallback ladder never fired. So the run no longer loads this
 project's settings (--setting-sources user, the flag PR #417 gave the
 cold-read cells for the same leak), and a reply that names no issue and is
-neither out-of-scope nor escalate: fails the ask instead of being passed
+neither of the two boundary replies fails the ask instead of being passed
 back.
 
 Post-check (design step 4): every pointer ghi-info returns is checked
@@ -221,9 +224,9 @@ Requests arrive in four forms:
 
 Boundaries:
 
-- Asked a question about anything beyond the issue corpus — the wiki, the code, anything else — reply exactly: out-of-scope.
-- Whether an old ruling still binds is never yours to judge. Reply: escalate: <one sentence naming the ruling and the doubt>.
-- These boundary replies apply to questions. A draft-body request always gets a verdict line — conflict with a ruled issue is exactly what too-similar covers. A question beyond the corpus gets out-of-scope even when it touches a ruling."""
+- Asked a question about anything beyond the issue corpus — the wiki, the code, anything else — reply exactly: not-about-issues.
+- Whether an old ruling still binds is never yours to judge. Reply: ask-user-about-ruling: <one sentence naming the ruling and the doubt>.
+- These boundary replies apply to questions. A draft-body request always gets a verdict line — conflict with a ruled issue is exactly what too-similar covers. A question beyond the corpus gets not-about-issues even when it touches a ruling."""
 
 
 def compose_resume_ask_prompt(question: str, include_closed: bool, changed_numbers,
@@ -261,12 +264,35 @@ def compose_drift_notice(unexpected_closed) -> str:
     return "\n".join(lines)
 
 
+# The two boundary replies COLD_START_PROMPT_TEMPLATE tells ghi-info to give.
+NOT_ABOUT_ISSUES_REPLY = "not-about-issues"
+ASK_USER_ABOUT_RULING_REPLY_PREFIX = "ask-user-about-ruling:"
+# The words those replaced on 2026-10-01, still read. A resumed ghi-info
+# session answers with the words its own cold-start prompt taught it, and the
+# stored session is reused until a reincarnation trigger fires, so a session
+# born before this change keeps saying `out-of-scope` and `escalate:`. Remove
+# these, and the tests that send them, once the session id stored in the box
+# seat's .ghi-info-state.json was cold-started after this change reached
+# ~/agents/ghi-info on ned-box.
+RETIRED_BOUNDARY_REPLY_WORDS = {
+    NOT_ABOUT_ISSUES_REPLY: ("out-of-scope",),
+    ASK_USER_ABOUT_RULING_REPLY_PREFIX: ("escalate:",),
+}
+NOT_ABOUT_ISSUES_REPLY_WORDS = (
+    (NOT_ABOUT_ISSUES_REPLY,)
+    + RETIRED_BOUNDARY_REPLY_WORDS[NOT_ABOUT_ISSUES_REPLY])
+ASK_USER_ABOUT_RULING_REPLY_PREFIXES = (
+    (ASK_USER_ABOUT_RULING_REPLY_PREFIX,)
+    + RETIRED_BOUNDARY_REPLY_WORDS[ASK_USER_ABOUT_RULING_REPLY_PREFIX])
+
+
 def is_passthrough_reply(text: str) -> bool:
-    """escalate:/out-of-scope replies are not reading lists (design step 4);
-    the post-check does not apply to them, and neither does drift recheck.
+    """The two boundary replies are not reading lists (design step 4); the
+    post-check does not apply to them, and neither does drift recheck.
     main() turns them into caller_message_for_passthrough_reply's messages."""
     stripped = text.strip().lower()
-    return stripped.startswith("escalate:") or stripped == "out-of-scope"
+    return (stripped in NOT_ABOUT_ISSUES_REPLY_WORDS
+            or stripped.startswith(ASK_USER_ABOUT_RULING_REPLY_PREFIXES))
 
 
 # What main() hands the caller in place of the two bare replies, and the exit
@@ -287,16 +313,17 @@ RULING_QUESTION_MESSAGE_TEMPLATE = (
 
 
 def caller_message_for_passthrough_reply(text: str):
-    """(message, exit code) for an out-of-scope or escalate: reply, or None
-    for any other reply. The escalate: sentence is carried over as ghi-info
-    wrote it, with the prefix and surrounding whitespace removed."""
+    """(message, exit code) for a not-about-issues or ask-user-about-ruling:
+    reply, or None for any other reply. The ruling sentence is carried over
+    as ghi-info wrote it, with the prefix and surrounding whitespace removed."""
     stripped = text.strip()
-    if stripped.lower() == "out-of-scope":
+    if stripped.lower() in NOT_ABOUT_ISSUES_REPLY_WORDS:
         return NOT_ABOUT_ISSUES_MESSAGE, EXIT_NOT_ABOUT_ISSUES
-    if stripped.lower().startswith("escalate:"):
-        sentence = stripped[len("escalate:"):].strip()
-        return (RULING_QUESTION_MESSAGE_TEMPLATE.format(sentence=sentence),
-                EXIT_RULING_QUESTION)
+    for prefix in ASK_USER_ABOUT_RULING_REPLY_PREFIXES:
+        if stripped.lower().startswith(prefix):
+            sentence = stripped[len(prefix):].strip()
+            return (RULING_QUESTION_MESSAGE_TEMPLATE.format(sentence=sentence),
+                    EXIT_RULING_QUESTION)
     return None
 
 
@@ -774,9 +801,9 @@ def _ask_within_lock(question, include_closed, seat_dir, repo, projects_root,
         save_state(state_path, state)
 
     if not reply_answers_the_question(reply_text):
-        return None, ("ghi-info's reply names no issue and is not an "
-                      "out-of-scope or escalate: reply, so it is not an "
-                      f"answer to this question: {reply_text[:200]!r}")
+        return None, ("ghi-info's reply names no issue and is not a "
+                      "not-about-issues or ask-user-about-ruling: reply, so "
+                      f"it is not an answer to this question: {reply_text[:200]!r}")
 
     return reply_text, None
 
