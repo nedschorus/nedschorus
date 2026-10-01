@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Tests for sanity-check-attacks.py — the worktree write detector, the record
 directory claim, the cells' sanctioned scratch directories, the prompt-body
-boundary, the cells' launch flags, and the refusal of a captured text that is
-not a report.
+boundary, the cells' launch flags, the refusal of a captured text that is
+not a report, and the relaunch of a cell that saved no report with the
+instructions a failed cell ends on (cases 38 to 43).
 
 The detector's only value is being trustworthy about whether a review cell
 wrote to the worktree. A hole in it is silent by construction, and a warning
@@ -54,6 +55,8 @@ import inspect
 import io
 import os
 import pathlib
+import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -602,7 +605,7 @@ def main():
     stray_name = "stray-file-a-claude-cell-should-not-write.md"
     # Report-shaped, so the cell reaches the report write the way a real one
     # does: a text lacking the cut prompt's sections is refused (case 23).
-    runner_gate.run_claude = lambda prompt: (
+    runner_gate.run_claude = lambda prompt, checkout=None: (
         0, "the cell's report body\n\n## Questions\n\nNone.\n\n"
            "## Leanness certification\n\n- the whole document\n",
         "claude-fable-5-1", "")
@@ -619,7 +622,8 @@ def main():
     output = buffer.getvalue()
     check("a claude cell that leaves a stray path behind is warned about, "
           "same as a codex cell",
-          f"WARNING: cut-claude modified the worktree: {stray_name}" in output,
+          "WARNING: the review copy was modified outside the cells' scratch "
+          f"directories, seen when cut-claude finished: {stray_name}" in output,
           f"output was {output!r}")
 
     # Case 19: the per-cell scratch directory the runner makes. The prompts
@@ -755,7 +759,10 @@ def main():
     # in place of a 3,684-word review, printed `saved:` and
     # exited 0 (nedschorus#397). The runtime stand-ins return what a cell
     # captured; the ledger stand-in writes for real, so "no report" is
-    # checked on disk rather than read off a write that never happens.
+    # checked on disk rather than read off a write that never happens. The
+    # stand-ins answer the same text at every launch, so the refused cell is
+    # launched a second time and refused again (cases 38 to 43 are the
+    # relaunch's own).
     non_report = ("The report above is my complete reply. The stop hook's "
                   "freshness note concerns the branch this worktree sits on, "
                   "not my review.\n")
@@ -778,8 +785,8 @@ def main():
     for runtime in runner_refusal.RUNTIMES:
         for captured_text, is_report in ((non_report, False), (cut_report, True)):
             answer = (0, captured_text, "a-test-model", "")
-            runner_refusal.run_claude = lambda prompt, answer=answer: answer
-            runner_refusal.run_codex = lambda prompt, answer=answer: answer
+            runner_refusal.run_claude = lambda prompt, checkout=None, answer=answer: answer
+            runner_refusal.run_codex = lambda prompt, checkout=None, answer=answer: answer
             buffer = io.StringIO()
             with tempfile.TemporaryDirectory() as scratch:
                 out_dir = pathlib.Path(scratch)
@@ -795,10 +802,15 @@ def main():
                       cell_ok and report_written and "saved:" in output
                       and "FAILED:" not in output, f"output was {output!r}")
             else:
-                failed_line = f"FAILED: cut-{runtime} saved text is not a report\n"
+                failed_line = (f"FAILED: cut-{runtime} — not-a-report — the text it "
+                               f"returned lacks questions, leanness (relaunched once)\n")
                 check(f"a {runtime} text that is not a report prints the FAILED line",
                       failed_line in output
                       and "saved:" not in output, f"output was {output!r}")
+                check(f"a {runtime} text that is not a report is launched once more, "
+                      f"and both refused texts are printed",
+                      output.count(f"RETRYING: cut-{runtime} — not-a-report — ") == 1
+                      and output.count(non_report) == 2, f"output was {output!r}")
                 check(f"a {runtime} text that is not a report is printed before "
                       f"the FAILED line",
                       non_report in output and failed_line in output
@@ -817,13 +829,25 @@ def main():
     runner_exit.CLI_VERSION_CACHE.update({"claude": "1.1.1-test",
                                           "codex": "2.2.2-test"})
     runner_exit.worktree_snapshot = lambda *arguments: {}
-    runner_exit.tracked_files_corpus = lambda: ()
-    runner_exit.reviewed_revision = lambda baseline: "commit=test worktree=clean"
+    runner_exit.tracked_files_corpus = lambda *arguments: ()
+    runner_exit.reviewed_revision = lambda *arguments: "commit=test worktree=clean"
+    # The review copy and the committed-target check are cases 27-31's
+    # subject; here the target is this repository's own prompt, and the copy
+    # is an empty directory, so no checkout of this repository is made.
+    runner_exit.uncommitted_review_paths = lambda *arguments: []
+
+    @contextlib.contextmanager
+    def empty_review_copy(commit, record_name, repo_root):
+        with tempfile.TemporaryDirectory() as copy:
+            yield pathlib.Path(copy)
+
+    runner_exit.review_copy_of_commit = empty_review_copy
     real_argv = sys.argv
     for claude_text, expected_exit in ((non_report, 1), (cut_report, 0)):
-        runner_exit.run_claude = lambda prompt, text=claude_text: (
+        runner_exit.run_claude = lambda prompt, checkout=None, text=claude_text: (
             0, text, "a-test-model", "")
-        runner_exit.run_codex = lambda prompt: (0, cut_report, "a-test-model", "")
+        runner_exit.run_codex = lambda prompt, checkout=None: (
+            0, cut_report, "a-test-model", "")
         with tempfile.TemporaryDirectory() as scratch:
             runner_exit.RECORDS_ROOT = pathlib.Path(scratch) / "sanity-check-records"
             sys.argv = [str(RUNNER_SCRIPT), "--attack", "cut", "--target",
@@ -865,15 +889,16 @@ def main():
     )
     for runtime in runner_timeout.RUNTIMES:
         for form, captured_stdout, captured_stderr in streams_by_form:
-            def timing_out(prompt, out=captured_stdout, err=captured_stderr):
+            def timing_out(prompt, checkout=None, out=captured_stdout,
+                           err=captured_stderr):
                 raise subprocess.TimeoutExpired(
                     ["a-runtime"], runner_timeout.CELL_TIMEOUT_SECONDS,
                     output=out, stderr=err)
 
             runner_timeout.run_claude = timing_out
             runner_timeout.run_codex = timing_out
-            timeout_line = (f"FAILED: cut-{runtime} (timeout after "
-                            f"{runner_timeout.CELL_TIMEOUT_SECONDS}s)\n")
+            timeout_line = (f"FAILED: cut-{runtime} — timeout — after "
+                            f"{runner_timeout.CELL_TIMEOUT_SECONDS}s\n")
             buffer = io.StringIO()
             cell_ok, raised = None, None
             with tempfile.TemporaryDirectory() as scratch:
@@ -888,8 +913,9 @@ def main():
             output = buffer.getvalue()
             if form == "None":
                 check(f"a {runtime} cell timing out with no captured streams prints "
-                      f"only the FAILED timeout line and fails the cell",
-                      raised is None and cell_ok is False and output == timeout_line,
+                      f"nothing before the FAILED timeout line and fails the cell",
+                      raised is None and cell_ok is False
+                      and output.startswith(timeout_line),
                       f"raised={raised!r}, cell_ok={cell_ok}, output was {output!r}")
                 continue
             check(f"a {runtime} cell timing out with {form} streams prints both "
@@ -941,8 +967,8 @@ def main():
     finally:
         runner_chain_timeout.subprocess.run = real_chain_timeout_run
     output = buffer.getvalue()
-    timeout_line = (f"FAILED: cut-claude (timeout after "
-                    f"{runner_chain_timeout.CELL_TIMEOUT_SECONDS}s)\n")
+    timeout_line = (f"FAILED: cut-claude — timeout — after "
+                    f"{runner_chain_timeout.CELL_TIMEOUT_SECONDS}s\n")
     check("a claude cell timing out after a failed attempt prints the timed-out "
           "attempt's words once, after the failed attempt's and before the FAILED line",
           all(output.count(words) == 1 for words in
@@ -1225,30 +1251,32 @@ def main():
         runner_chain.subprocess.run = answering({fable: (0, "fable's review\n")})
         answered = runner_chain.run_claude("a prompt no model ever sees")
         check("the chain runs Fable first, and does not fall back when it answers",
-              answered == (0, "fable's review\n", fable, ""), answered)
+              answered == (0, "fable's review\n", fable, "", None), answered)
 
         runner_chain.subprocess.run = answering(
             {fable: (1, ""), opus: (0, "opus's review\n")})
-        code, output, model, fallback_from = runner_chain.run_claude("a prompt")
+        code, output, model, fallback_from, cause = runner_chain.run_claude("a prompt")
         check("a Fable that exits non-zero falls back to Opus, which is named as the model",
               (code, output, model) == (0, "opus's review\n", opus)
-              and fallback_from == f"{fable}(exit1)",
-              (code, output, model, fallback_from))
+              and fallback_from == f"{fable}(exit1)" and cause is None,
+              (code, output, model, fallback_from, cause))
 
         runner_chain.subprocess.run = answering(
             {fable: (0, "   \n"), opus: (0, "opus's review\n")})
-        code, output, model, fallback_from = runner_chain.run_claude("a prompt")
+        code, output, model, fallback_from, cause = runner_chain.run_claude("a prompt")
         check("a Fable that exits 0 having written no review falls back too",
               (code, model) == (0, opus)
               and fallback_from == f"{fable}(no-report)",
               (code, model, fallback_from))
 
         runner_chain.subprocess.run = answering({fable: (1, ""), opus: (1, "")})
-        code, output, model, fallback_from = runner_chain.run_claude("a prompt")
+        code, output, model, fallback_from, cause = runner_chain.run_claude("a prompt")
         check("every model failing fails the cell, and both attempts are named",
               code != 0 and output == ""
               and fallback_from == f"{fable}(exit1)+{opus}(exit1)",
               (code, output, fallback_from))
+        check("and the failed chain carries the cause of its last attempt",
+              cause == ("exit-1", "no output"), cause)
 
         # A failed attempt keeps the runtime's own words. A CLI that is logged
         # out or out of credits explains itself on one of its streams and
@@ -1267,7 +1295,7 @@ def main():
         runner_chain.subprocess.run = explaining
         spoken = io.StringIO()
         with contextlib.redirect_stdout(spoken):
-            code, output, model, fallback_from = runner_chain.run_claude("a prompt")
+            code, output, model, fallback_from, cause = runner_chain.run_claude("a prompt")
         said = spoken.getvalue()
         check("a failed attempt re-emits the runtime's stderr, not just the exit code",
               "Invalid API key" in said, said)
@@ -1420,9 +1448,968 @@ def main():
           said)
     check("and says the record is kept, not deleted",
           "not deleted" in said and "Delete the record directory" not in said, said)
+    run_source = inspect.getsource(getattr(runner_ship, "run_cells_in_review_copy", runner_ship.main))
     check("main ends a run that saved reports through that block",
-          "print_run_completion(out_dir)" in inspect.getsource(runner_ship.main),
+          "print_run_completion(out_dir)" in run_source,
           "main no longer calls print_run_completion")
+
+    # Cases 27-33 make the runner ready for use (GHI "Build sanity-checker",
+    # nedschorus#412). Each fails against the runner as it stood before them.
+    #
+    # Case 27: the cells read a copy of the reviewed commit. Cells
+    # used to read the live checkout for tens of minutes, so the requester
+    # could change nothing while they ran, a cell's write landed in the
+    # checkout (nedschorus#161), and a text edited mid-run was not the text
+    # reviewed. The copy holds the commit, not the checkout's uncommitted
+    # edits, and is gone when the run ends, a run that fails included. A git
+    # write made in it — a branch, a stash — leaves the live repository's refs
+    # and stash untouched: a `git worktree` shares both with the repository,
+    # and the stash with every session's checkout. The copy keeps the live
+    # repository's `origin/*` refs and its history, and names no remote that
+    # leads back into the checkout.
+    runner_copy = load_runner()
+    review_copy_of_commit = getattr(runner_copy, "review_copy_of_commit", None)
+    with tempfile.TemporaryDirectory() as scratch:
+        base = pathlib.Path(scratch)
+        repo = base / "repo"
+        repo.mkdir()
+        new_repo(repo)
+        commit = git(repo, "rev-parse", "HEAD").strip()
+        (repo / "tracked.md").write_text("an uncommitted edit\n", encoding="utf-8")
+        runner_copy.REVIEW_COPIES_ROOT = base / "review-copies"
+        seen = {}
+        if review_copy_of_commit is None:
+            check("the runner makes a review copy of the reviewed commit", False,
+                  "the runner has no review_copy_of_commit")
+        else:
+            with review_copy_of_commit(commit, "2026-09-30-tracked", repo) as checkout:
+                seen["text"] = (checkout / "tracked.md").read_text(encoding="utf-8")
+                seen["head"] = git(checkout, "rev-parse", "HEAD").strip()
+                seen["path"] = checkout
+            check("the review copy holds the reviewed commit's text, not the "
+                  "checkout's uncommitted edit",
+                  seen["text"] == "original\n" and seen["head"] == commit,
+                  f"copy read {seen['text']!r} at {seen['head']}, commit {commit}")
+            check("and the copy is gone, from disk and from git's worktree list, "
+                  "when the run ends",
+                  not seen["path"].exists()
+                  and str(seen["path"]) not in git(repo, "worktree", "list"),
+                  git(repo, "worktree", "list"))
+            git(repo, "update-ref", "refs/remotes/origin/main", commit)
+            live_refs = git(repo, "for-each-ref")
+            live_stash = git(repo, "stash", "list")
+            with review_copy_of_commit(commit, "2026-09-30-tracked", repo) as checkout:
+                (checkout / "tracked.md").write_text("a cell's edit\n", encoding="utf-8")
+                git(checkout, "checkout", "-q", "-b", "a-branch-a-cell-made")
+                git(checkout, "-c", "user.email=test@example.com", "-c", "user.name=test",
+                    "stash", "push", "-q", "-m", "a-stash-a-cell-made")
+                seen["origin-main"] = subprocess.run(
+                    ["git", "-C", str(checkout), "rev-parse", "--verify", "-q",
+                     "origin/main"], capture_output=True, text=True,
+                    check=False).stdout.strip()
+                seen["remotes"] = git(checkout, "remote", "-v")
+            check("a branch and a stash made in the copy leave the live "
+                  "repository's refs and stash untouched",
+                  git(repo, "for-each-ref") == live_refs
+                  and git(repo, "stash", "list") == live_stash,
+                  f"refs now {git(repo, 'for-each-ref')!r}, "
+                  f"stash now {git(repo, 'stash', 'list')!r}")
+            check("the copy keeps the live repository's origin/main and names no "
+                  "remote leading back into the checkout",
+                  seen["origin-main"] == commit and str(repo) not in seen["remotes"],
+                  f"origin/main {seen['origin-main']}, remotes {seen['remotes']!r}")
+            try:
+                with review_copy_of_commit(commit, "2026-09-30-tracked", repo) as checkout:
+                    seen["failed-run"] = checkout
+                    raise RuntimeError("a run that fails partway")
+            except RuntimeError:
+                pass
+            check("and gone when the run fails partway",
+                  not seen["failed-run"].exists()
+                  and str(seen["failed-run"]) not in git(repo, "worktree", "list"),
+                  git(repo, "worktree", "list"))
+
+    # Case 28: both runtimes launch in the copy handed to them. claude takes it
+    # as its working directory; codex takes it as `-C`, which is also the root
+    # its profile lets it write under. Commands are captured, never run.
+    runner_launch = load_runner()
+    launches = []
+
+    def capture_launch(command, *arguments, **keywords):
+        launches.append((list(command), keywords.get("cwd")))
+        return subprocess.CompletedProcess(list(command), 0, "a review\n", "")
+
+    review_checkout = pathlib.Path("/a/review/copy/of/the/commit")
+    real_launch_run = runner_launch.subprocess.run
+    launch_error = None
+    try:
+        runner_launch.subprocess.run = capture_launch
+        runner_launch.run_claude("a prompt no model ever sees", review_checkout)
+        runner_launch.run_codex("a prompt no model ever sees", review_checkout)
+    except TypeError as error:
+        launch_error = error
+    finally:
+        runner_launch.subprocess.run = real_launch_run
+    claude_launches = [cwd for command, cwd in launches if command[0] == "claude"]
+    codex_commands = [command for command, _ in launches if command[0] == "codex"]
+    check("a claude cell runs in the review copy it is handed",
+          launch_error is None and claude_launches == [review_checkout],
+          f"error {launch_error!r}, claude working directories {claude_launches}")
+    check("a codex cell runs in the review copy it is handed",
+          launch_error is None and len(codex_commands) == 1
+          and codex_commands[0][codex_commands[0].index("-C") + 1] == str(review_checkout),
+          f"error {launch_error!r}, codex commands {codex_commands}")
+
+    # Cases 29-33 drive main() over a scratch repository with the runtimes
+    # replaced, so no model is called. A text carrying every attack's required
+    # phrases stands in for a report of any attack.
+    any_attack_report = (
+        "## Questions\n\nNone.\n\n## Leanness certification\n\n- all of it\n\n"
+        "## Prompts-to-code table\n\nNone.\n\n## Coverage\n\nAll of it.\n\n"
+        "## Sketch\n\nA sketch.\n\n## Hard parts\n\nNone.\n\n"
+        "## Late discoveries\n\nNone.\n\n## Assumptions\n\nNone.\n\n"
+        "## What I consulted\n\nNothing off-limits.\n")
+
+    def scratch_repository_with_design(base, target="docs/design.md"):
+        repo = base / "repo"
+        repo.mkdir()
+        new_repo(repo)
+        (repo / ".gitignore").write_text("sanity-check-records/\n", encoding="utf-8")
+        (repo / target).parent.mkdir(parents=True, exist_ok=True)
+        (repo / target).write_text(
+            "# Design\n\nThe `widget-frobnicator` runs nightly.\n", encoding="utf-8")
+        git(repo, "add", "-A")
+        git(repo, "commit", "-qm", "the design")
+        return repo
+
+    def runner_over(repo, base):
+        driven = load_runner()
+        driven.REPO_ROOT = repo
+        driven.RECORDS_ROOT = repo / "sanity-check-records"
+        driven.REVIEW_COPIES_ROOT = base / "review-copies"
+        driven.CLI_VERSION_CACHE.update({"claude": "1.1.1-test", "codex": "2.2.2-test"})
+        return driven
+
+    def drive_main(driven, arguments):
+        """main()'s exit code, stdout and stderr; SystemExit is an exit code."""
+        out, err = io.StringIO(), io.StringIO()
+        saved_argv = sys.argv
+        sys.argv = [str(RUNNER_SCRIPT), *arguments]
+        try:
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                try:
+                    code = driven.main()
+                except SystemExit as exit_:
+                    code = exit_.code
+        finally:
+            sys.argv = saved_argv
+        return code, out.getvalue(), err.getvalue()
+
+    # Case 29: a whole run with the copy. One claude cell leaves a stray file
+    # in the checkout it was given and a note in the scratch directory its
+    # prompt names; meanwhile the requester keeps editing the design in the
+    # live checkout. The stray is reported as a write to the review copy; the
+    # requester's edit is not a cell's write and is not reported; the note is
+    # archived in the record; the copy is gone. Case 30 reads the same run.
+    with tempfile.TemporaryDirectory() as scratch:
+        base = pathlib.Path(scratch)
+        repo = scratch_repository_with_design(base)
+        request = base / "sanity-check-request.md"
+        request.write_text("Problem: schedule nightly work.\n\n"
+                           "Off-limits: the widget-frobnicator design.\n",
+                           encoding="utf-8")
+        driven = runner_over(repo, base)
+        cell_checkouts = []
+
+        def claude_cell(prompt, checkout=None):
+            if checkout is not None:
+                cell_checkouts.append(pathlib.Path(checkout))
+                (pathlib.Path(checkout) / "stray-in-the-review-copy.md").write_text(
+                    "a cell wrote this\n", encoding="utf-8")
+            (repo / "docs" / "design.md").write_text(
+                "# Design\n\nThe requester's next edit, made mid-run.\n",
+                encoding="utf-8")
+            for scratch_path in re.findall(r"(/\S+/scratch/[\w-]+)", prompt):
+                note = pathlib.Path(scratch_path.rstrip(".`'\""))
+                if note.is_dir():
+                    (note / "notes.md").write_text("working notes\n", encoding="utf-8")
+            return 0, any_attack_report, "a-test-model", ""
+
+        driven.run_claude = claude_cell
+        driven.run_codex = lambda prompt, checkout=None: (
+            0, any_attack_report, "a-test-model", "")
+        code, out, err = drive_main(driven, [
+            "--target", "docs/design.md", "--attack", "cut", "--attack", "fresh-eyes",
+            "--problem-statement", str(request)])
+        records = sorted(driven.RECORDS_ROOT.glob("*"))
+        record = records[0] if len(records) == 1 else None
+        copy_warnings = [line for line in out.splitlines()
+                         if line.startswith("WARNING: the review copy was modified")]
+        check("a run over the copy exits 0 with every cell saved",
+              code == 0 and out.count("saved: ") == 4,
+              f"exit {code}, stdout {out!r}, stderr {err!r}")
+        check("the cells ran in a copy, not in the live checkout",
+              bool(cell_checkouts)
+              and all(checkout != repo for checkout in cell_checkouts),
+              f"cells ran in {cell_checkouts}")
+        check("a cell's write in the copy is reported as a write to the review copy",
+              any("stray-in-the-review-copy.md" in line for line in copy_warnings)
+              and not (repo / "stray-in-the-review-copy.md").exists(),
+              f"stdout {out!r}")
+        check("the requester's own edit in the live checkout, made mid-run, is "
+              "not reported as a cell's write",
+              "docs/design.md" not in out, f"stdout {out!r}")
+        notes = sorted(record.glob("scratch/*/notes.md")) if record else []
+        check("the cells' scratch notes are archived in the record",
+              [note.parent.name for note in notes]
+              == ["cut-claude", "fresh-eyes-claude"],
+              f"record {record}, notes {notes}")
+        check("and the copy is gone when the run ends",
+              not any((base / "review-copies").glob("*/*"))
+              and git(repo, "worktree", "list").count("\n") == 1,
+              f"left: {sorted((base / 'review-copies').glob('*/*'))}, "
+              f"worktrees {git(repo, 'worktree', 'list')!r}")
+
+        # Case 30: the run saves its own output and the request in its record,
+        # so a later reader can see which warnings it printed and what the
+        # fresh-eyes cells were asked; an agent used to copy both by hand. The
+        # log holds what was printed before the record directory existed —
+        # the LEAK-WARNING for the design's name in the request — and ends
+        # before the record is shipped, so the copy in the log-store is whole
+        # and a later ship of the dispositions file does not find it changed.
+        run_log = record / "sanity-check-run.log" if record else None
+        log_text = (run_log.read_text(encoding="utf-8")
+                    if run_log and run_log.is_file() else "")
+        check("the run's output is saved in the record as sanity-check-run.log",
+              log_text.count("saved: ") == 4
+              and "LEAK-WARNING: design name `widget-frobnicator`" in log_text,
+              f"log was {log_text!r}")
+        check("and the log ends before the record is shipped",
+              bool(log_text) and "record: " not in log_text
+              and "record: " in out, f"log was {log_text!r}")
+        request_copy = record / "sanity-check-request.md" if record else None
+        check("the request the fresh-eyes cells were given is saved in the record",
+              request_copy is not None and request_copy.is_file()
+              and request_copy.read_text(encoding="utf-8")
+              == request.read_text(encoding="utf-8"),
+              f"record held {sorted(p.name for p in record.iterdir()) if record else None}")
+
+    # Case 31: a target or context document that differs from the last commit
+    # is refused before any cell runs: the copy holds the commit, so the cells
+    # would review a text the requester did not mean.
+    for label, edit, arguments in (
+            ("an edited target",
+             lambda repo: (repo / "docs" / "design.md").write_text(
+                 "# Design\n\nAn uncommitted edit.\n", encoding="utf-8"),
+             ["--target", "docs/design.md", "--attack", "cut"]),
+            ("an untracked context document",
+             lambda repo: (repo / "docs" / "context.md").write_text(
+                 "context\n", encoding="utf-8"),
+             ["--target", "docs/design.md", "--context", "docs/context.md",
+              "--attack", "cut"])):
+        with tempfile.TemporaryDirectory() as scratch:
+            base = pathlib.Path(scratch)
+            repo = scratch_repository_with_design(base)
+            edit(repo)
+            driven = runner_over(repo, base)
+            launched = []
+            driven.run_claude = lambda prompt, checkout=None: (
+                launched.append("claude") or (0, any_attack_report, "a-test-model", ""))
+            driven.run_codex = lambda prompt, checkout=None: (
+                launched.append("codex") or (0, any_attack_report, "a-test-model", ""))
+            code, out, err = drive_main(driven, arguments)
+            check(f"{label} is refused, exit 2, with no cell launched and no record",
+                  code == 2 and launched == []
+                  and not driven.RECORDS_ROOT.exists()
+                  and "commit it" in err,
+                  f"exit {code}, launched {launched}, stderr {err!r}")
+
+    # Case 32: a curly apostrophe or quotation mark in a cell's quote matches
+    # the straight one in the source. One run's replay found 16 of 24 "quote
+    # found in no tracked file" warnings were a curly apostrophe against the
+    # document's straight one (nedschorus#412, item 4).
+    runner_curly = load_runner()
+    corpus = (runner_curly.normalized_for_quote_match(
+        "the runner doesn't save its 'own' log anywhere"),)
+    buffer = io.StringIO()
+    with contextlib.redirect_stdout(buffer):
+        runner_curly.quote_scan(
+            corpus, "It says “the runner doesn’t save its ‘own’ log”.",
+            "q3")
+    check("a quote differing from its source only in curly quotes raises no warning",
+          buffer.getvalue() == "", f"output was {buffer.getvalue()!r}")
+
+    # Case 33: a LEAK-WARNING names the line it matched, so an expected hit on
+    # the request's off-limits list is told from a real leak without searching
+    # the file by hand (22 warnings in one run each named only the file).
+    runner_leak = load_runner()
+    buffer = io.StringIO()
+    with contextlib.redirect_stdout(buffer):
+        runner_leak.leak_scan({"widget-frobnicator"},
+                              "Problem: schedule nightly work.\n"
+                              "Off-limits: the widget-frobnicator design.\n",
+                              "the problem statement (request.md)")
+    check("a LEAK-WARNING names the line number and text it matched",
+          "line 2: Off-limits: the widget-frobnicator design." in buffer.getvalue(),
+          f"output was {buffer.getvalue()!r}")
+
+    # Case 34: `--runtime` reruns one runtime; the other's cells do not launch.
+    # A rerun used to repeat both. The target is a skill, and every skill's
+    # file is SKILL.md, so its record is named for the skill's directory too:
+    # two skills checked on one day no longer share a stem.
+    with tempfile.TemporaryDirectory() as scratch:
+        base = pathlib.Path(scratch)
+        repo = scratch_repository_with_design(base, ".claude/skills/widget/SKILL.md")
+        driven = runner_over(repo, base)
+        launched = []
+        driven.run_claude = lambda prompt, checkout=None: (
+            launched.append("claude") or (0, any_attack_report, "a-test-model", ""))
+        driven.run_codex = lambda prompt, checkout=None: (
+            launched.append("codex") or (0, any_attack_report, "a-test-model", ""))
+        code, out, err = drive_main(driven, [
+            "--target", ".claude/skills/widget/SKILL.md", "--attack", "cut",
+            "--runtime", "codex"])
+        records = [path.name for path in driven.RECORDS_ROOT.glob("*")]
+        check("--runtime codex launches only the codex cell",
+              code == 0 and launched == ["codex"] and "cut-claude" not in out,
+              f"exit {code}, launched {launched}, stderr {err!r}")
+        check("a skill's record is named for its directory, not SKILL alone",
+              len(records) == 1 and records[0].endswith("-widget-SKILL"),
+              f"records {records}")
+
+    # Case 35: the cells are given each document by its repository-relative
+    # path, whatever form it was passed in. An absolute path inside the
+    # checkout used to pass every check and reach the prompt as given, so the
+    # cells read the requester's live file and not the copy's (a cold read of
+    # the skill found it, 2026-10-01). The scratch repository is reached here
+    # through the temporary directory's own name, which on macOS is a symbolic
+    # link, so the absolute forms below do not start with the resolved root.
+    with tempfile.TemporaryDirectory() as scratch:
+        base = pathlib.Path(scratch)
+        repo = scratch_repository_with_design(base)
+        (repo / "docs" / "context.md").write_text("context\n", encoding="utf-8")
+        git(repo, "add", "-A")
+        git(repo, "commit", "-qm", "a context document")
+        driven = runner_over(repo, base)
+        prompts = []
+
+        def capturing_cell(prompt, checkout=None):
+            prompts.append(prompt)
+            return 0, any_attack_report, "a-test-model", ""
+
+        driven.run_claude = capturing_cell
+        driven.run_codex = capturing_cell
+        absolute_target = str(repo / "docs" / "design.md")
+        absolute_context = str(repo / "docs" / "context.md")
+        code, out, err = drive_main(driven, [
+            "--print", "cut", "--target", absolute_target,
+            "--context", absolute_context])
+        check("--print names an absolute target and context repository-relative",
+              code == 0 and "Document under review: `docs/design.md`" in out
+              and "- docs/context.md" in out
+              and str(repo / "docs") not in out
+              and str(repo.resolve() / "docs") not in out,
+              f"exit {code}, request {out[-300:]!r}, stderr {err!r}")
+        code, out, err = drive_main(driven, [
+            "--print", "cut", "--target", "docs/../docs/./design.md"])
+        check("--print folds the `..` and `.` segments of a relative target",
+              code == 0 and "Document under review: `docs/design.md`" in out,
+              f"exit {code}, request {out[-200:]!r}, stderr {err!r}")
+        (repo / "docs" / "alias.md").symlink_to("design.md")
+        git(repo, "add", "-A")
+        git(repo, "commit", "-qm", "a link inside the checkout")
+        code, out, err = drive_main(driven, [
+            "--print", "cut", "--target", "docs/alias.md"])
+        check("--print names a symbolic link inside the checkout by the file "
+              "it leads to",
+              code == 0 and "Document under review: `docs/design.md`" in out,
+              f"exit {code}, request {out[-200:]!r}, stderr {err!r}")
+        code, out, err = drive_main(driven, [
+            "--target", absolute_target, "--context", absolute_context,
+            "--attack", "cut", "--runtime", "claude"])
+        records = sorted(driven.RECORDS_ROOT.glob("*"))
+        report = (records[0] / "cut-claude.md").read_text(encoding="utf-8") \
+            if len(records) == 1 and (records[0] / "cut-claude.md").is_file() else ""
+        check("a run given absolute paths hands the cell the repository-relative "
+              "names and never the live checkout's path",
+              code == 0 and len(prompts) == 1
+              and "Document under review: `docs/design.md`" in prompts[0]
+              and "- docs/context.md" in prompts[0]
+              and absolute_target not in prompts[0]
+              and str(repo.resolve() / "docs") not in prompts[0],
+              f"exit {code}, prompts {[prompt[-300:] for prompt in prompts]!r}, "
+              f"stderr {err!r}")
+        check("and the report's provenance line and the record's name take the "
+              "repository-relative name too",
+              " target=docs/design.md " in report.partition("\n")[0]
+              and len(records) == 1 and records[0].name.endswith("-design"),
+              f"records {[record.name for record in records]}, "
+              f"provenance {report.partition(chr(10))[0]!r}")
+
+    # Case 36: an absolute target with an uncommitted edit is still refused,
+    # and the refusal names the repository-relative path: the rewrite comes
+    # before the uncommitted-changes check, not after it.
+    with tempfile.TemporaryDirectory() as scratch:
+        base = pathlib.Path(scratch)
+        repo = scratch_repository_with_design(base)
+        (repo / "docs" / "design.md").write_text(
+            "# Design\n\nAn uncommitted edit.\n", encoding="utf-8")
+        driven = runner_over(repo, base)
+        launched = []
+        driven.run_claude = lambda prompt, checkout=None: (
+            launched.append("claude") or (0, any_attack_report, "a-test-model", ""))
+        driven.run_codex = lambda prompt, checkout=None: (
+            launched.append("codex") or (0, any_attack_report, "a-test-model", ""))
+        code, out, err = drive_main(driven, [
+            "--target", str(repo / "docs" / "design.md"), "--attack", "cut"])
+        check("an edited target passed as an absolute path is refused under its "
+              "repository-relative name",
+              code == 2 and launched == [] and not driven.RECORDS_ROOT.exists()
+              and err.startswith("docs/design.md differs from the last commit"),
+              f"exit {code}, launched {launched}, stderr {err!r}")
+
+    # Case 37: a path that resolves outside the checkout has no name in the
+    # copy and is refused before any cell runs, whichever way it leaves: `..`
+    # segments, an absolute path, or a tracked symbolic link. The refusal says
+    # what to pass; it used to say "commit it", which no commit could satisfy.
+    def outside_file(repo):
+        (repo.parent / "outside.md").write_text("outside\n", encoding="utf-8")
+
+    def tracked_link_to_outside_file(repo):
+        outside_file(repo)
+        (repo / "docs" / "link.md").symlink_to(repo.parent / "outside.md")
+        git(repo, "add", "-A")
+        git(repo, "commit", "-qm", "a link out of the checkout")
+
+    for label, prepare, arguments in (
+            ("a relative target that climbs out of the checkout", outside_file,
+             lambda repo: ["--target", "../outside.md", "--attack", "cut"]),
+            ("an absolute target outside the checkout", outside_file,
+             lambda repo: ["--target", str(repo.parent / "outside.md"),
+                           "--attack", "cut"]),
+            ("a context document outside the checkout", outside_file,
+             lambda repo: ["--target", "docs/design.md",
+                           "--context", str(repo.parent / "outside.md"),
+                           "--attack", "cut"]),
+            ("a tracked symbolic link that leads out of the checkout",
+             tracked_link_to_outside_file,
+             lambda repo: ["--target", "docs/link.md", "--attack", "cut"])):
+        with tempfile.TemporaryDirectory() as scratch:
+            base = pathlib.Path(scratch)
+            repo = scratch_repository_with_design(base)
+            prepare(repo)
+            driven = runner_over(repo, base)
+            launched = []
+            driven.run_claude = lambda prompt, checkout=None: (
+                launched.append("claude") or (0, any_attack_report, "a-test-model", ""))
+            driven.run_codex = lambda prompt, checkout=None: (
+                launched.append("codex") or (0, any_attack_report, "a-test-model", ""))
+            code, out, err = drive_main(driven, arguments(repo))
+            check(f"{label} is refused, exit 2, with no cell launched and no record",
+                  code == 2 and launched == []
+                  and not driven.RECORDS_ROOT.exists()
+                  and "resolves outside this checkout" in err
+                  and "pass a file inside it" in err and "commit it" not in err,
+                  f"exit {code}, launched {launched}, stderr {err!r}")
+            code, out, err = drive_main(driven, ["--print", "cut", *arguments(repo)[:-2]])
+            check(f"and --print refuses {label} the same way",
+                  code == 2 and out == "" and "resolves outside this checkout" in err,
+                  f"exit {code}, stdout {out[-200:]!r}, stderr {err!r}")
+
+    # Cases 38 to 43: a cell that saves no report is launched once more by the
+    # runner, unless only the user can clear the cause or the launch timed out,
+    # and a cell that ends with no report prints, under its FAILED line, what
+    # the requesting agent does next (user-ruled 2026-10-01, walk
+    # SKILL-sanity-check-2026-09-30-2, item 2). The skill used to tell the
+    # agent to rerun a failed cell once whatever the cause; the user asked
+    # "doesn't it matter why a cell fails?" and then said "I don't think the
+    # agents will magically know when to rerun", so the decision is the
+    # runner's. No model is called: the launchers, or subprocess.run under
+    # them, are replaced, and each stand-in counts its launches.
+    capacity = "ERROR: Selected model is at capacity. Please try a different model."
+
+    def run_cell_capturing(module, runtime, ledger=None, target="docs/x.md",
+                           context=(), problem_statement=None):
+        """(cell_ok, output, raised, out_dir's report text or None) for one
+        cut cell run through run_cell in a temporary record directory."""
+        buffer = io.StringIO()
+        cell_ok, raised, report = None, None, None
+        with tempfile.TemporaryDirectory() as scratch:
+            out_dir = pathlib.Path(scratch)
+            try:
+                with contextlib.redirect_stdout(buffer):
+                    _, cell_ok = module.run_cell(
+                        "cut", runtime, target, list(context), problem_statement,
+                        out_dir, {}, (), ledger or WritingStubLedger())
+            except Exception as error:
+                raised = error
+            report_path = out_dir / f"cut-{runtime}.md"
+            if report_path.is_file():
+                report = report_path.read_text(encoding="utf-8")
+        return cell_ok, buffer.getvalue(), raised, report
+
+    def answering_in_turn(answers, prompts=None):
+        """A launcher stand-in answering its launches in order, the last
+        answer repeated; an answer that is an exception is raised."""
+        launches = []
+
+        def launcher(prompt, checkout=None):
+            launches.append(prompt)
+            answer = answers[min(len(launches), len(answers)) - 1]
+            if isinstance(answer, BaseException):
+                raise answer
+            return answer
+        launcher.launches = launches
+        return launcher
+
+    def with_launcher(module, launcher):
+        module.run_claude = launcher
+        module.run_codex = launcher
+        return launcher
+
+    def words_of_command(line):
+        """A printed command as a shell would split it, or [] when it would not."""
+        try:
+            return shlex.split(line)
+        except ValueError:
+            return []
+
+    def triage_lines(runtime):
+        other = "codex" if runtime == "claude" else "claude"
+        return (f"When a run of this sanity-check saved cut-{other}'s report, "
+                f"triage the cut-attack from that report.\n"
+                f"When no run of this sanity-check saved a report of the "
+                f"cut-attack, write in finding-dispositions.md that the "
+                f"cut-attack is unreviewed.\n")
+
+    runner_relaunch = load_runner()
+    runner_relaunch.CLI_VERSION_CACHE.update({"claude": "1.1.1-test",
+                                              "codex": "2.2.2-test"})
+
+    # Case 38: a failure that passes by itself. The one cold-read retry on
+    # record is a codex cell whose first launch ended "Selected model is at
+    # capacity" and whose identical relaunch saved its report
+    # (SKILL-cold-read-2026-09-18-2). The second launch gets the same prompt,
+    # so the same scratch directory, and the report it saves says in its
+    # provenance line that it took two launches.
+    for runtime in runner_relaunch.RUNTIMES:
+        launcher = with_launcher(runner_relaunch, answering_in_turn([
+            (1, "", "a-test-model", "", ("exit-1", capacity)),
+            (0, cut_report, "a-test-model", "", None)]))
+        cell_ok, output, raised, report = run_cell_capturing(runner_relaunch, runtime)
+        retrying_line = f"RETRYING: cut-{runtime} — exit-1 — {capacity}\n"
+        check(f"a {runtime} cell whose first launch fails is launched once more "
+              f"and saves its report",
+              raised is None and cell_ok is True and len(launcher.launches) == 2
+              and report is not None and "saved: " in output
+              and "FAILED:" not in output,
+              f"raised={raised!r}, cell_ok={cell_ok}, "
+              f"launches={len(launcher.launches)}, output was {output!r}")
+        check(f"the {runtime} relaunch prints one RETRYING line naming the cause, "
+              f"before the saved line, and it is not a WARNING",
+              raised is None and output.count(retrying_line) == 1
+              and output.index(retrying_line) < output.index("saved: ")
+              and "WARNING" not in output,
+              f"raised={raised!r}, output was {output!r}")
+        check(f"the {runtime} relaunch gets the first launch's prompt",
+              len(launcher.launches) == 2
+              and launcher.launches[0] == launcher.launches[1],
+              f"launches={len(launcher.launches)}")
+        check(f"a {runtime} report saved on the relaunch says so in its provenance line",
+              report is not None
+              and " relaunched_after=exit-1 " in report.splitlines()[0]
+              and cut_report in report,
+              f"report began {(report or '')[:300]!r}")
+    launcher = with_launcher(runner_relaunch, answering_in_turn([
+        (0, cut_report, "a-test-model", "", None)]))
+    cell_ok, output, raised, report = run_cell_capturing(runner_relaunch, "codex")
+    check("a cell that saves on its first launch is launched once and carries "
+          "no relaunched_after field",
+          raised is None and cell_ok is True and len(launcher.launches) == 1
+          and report is not None and "relaunched_after=" not in report
+          and "RETRYING:" not in output,
+          f"raised={raised!r}, launches={len(launcher.launches)}, output was {output!r}")
+
+    # Case 39: the relaunch fails too. The cell is launched twice and no more,
+    # its FAILED line carries the last launch's cause and says it was
+    # relaunched, and the two lines under it send the agent to the other
+    # runtime's report or, without one, to record the attack as unreviewed.
+    # Neither line depends on which cell finished first. A launcher that
+    # returns the four values of the older contract, with no cause, is
+    # reported by its exit code.
+    for runtime in runner_relaunch.RUNTIMES:
+        attempts = "claude-fable-5-1(exit1)+claude-opus-5(exit1)" if runtime == "claude" else ""
+        launcher = with_launcher(runner_relaunch, answering_in_turn([
+            (1, "", "", attempts, ("exit-1", "first launch: overloaded")),
+            (1, "", "", attempts, ("exit-1", capacity))]))
+        cell_ok, output, raised, report = run_cell_capturing(runner_relaunch, runtime)
+        tried = f" (models tried: {attempts})" if attempts else ""
+        failed_block = (f"FAILED: cut-{runtime} — exit-1 — {capacity} "
+                        f"(relaunched once){tried}\n" + triage_lines(runtime))
+        check(f"a {runtime} cell whose relaunch fails too is launched twice and fails",
+              raised is None and cell_ok is False and len(launcher.launches) == 2
+              and report is None and "saved:" not in output,
+              f"raised={raised!r}, cell_ok={cell_ok}, "
+              f"launches={len(launcher.launches)}, output was {output!r}")
+        check(f"its FAILED line carries the relaunch's cause, and the triage "
+              f"instructions follow it directly ({runtime})",
+              raised is None and output.endswith(failed_block)
+              and output.count("FAILED:") == 1
+              and output.count(f"RETRYING: cut-{runtime} — exit-1 — "
+                               f"first launch: overloaded\n") == 1,
+              f"raised={raised!r}, output was {output!r}")
+    launcher = with_launcher(runner_relaunch, answering_in_turn([(3, "", "a-test-model", "")]))
+    cell_ok, output, raised, report = run_cell_capturing(runner_relaunch, "codex")
+    check("a launcher that names no cause is reported by its exit code",
+          raised is None and cell_ok is False
+          and "RETRYING: cut-codex — exit-3 — no output\n" in output
+          and "FAILED: cut-codex — exit-3 — no output (relaunched once)\n" in output,
+          f"raised={raised!r}, output was {output!r}")
+
+    # The FAILED line and its instructions are one write: the cells print from
+    # their own threads, and "the FAILED line above" must be the line above.
+    class WriteRecordingStream(io.StringIO):
+        def __init__(self):
+            super().__init__()
+            self.writes = []
+
+        def write(self, text):
+            self.writes.append(text)
+            return super().write(text)
+
+    with_launcher(runner_relaunch, answering_in_turn([
+        (1, "", "a-test-model", "", ("logged-out", "Not logged in"))]))
+    recording = WriteRecordingStream()
+    with tempfile.TemporaryDirectory() as scratch:
+        with contextlib.redirect_stdout(recording):
+            runner_relaunch.run_cell("cut", "codex", "docs/x.md", [], None,
+                                     pathlib.Path(scratch), {}, (), StubLedger([]))
+    failed_writes = [text for text in recording.writes if "FAILED:" in text]
+    check("a failed cell's FAILED line and its instructions are printed as one write",
+          len(failed_writes) == 1 and failed_writes[0].count("\n") == 4
+          and failed_writes[0].startswith("FAILED: cut-codex — logged-out — ")
+          and failed_writes[0].endswith("--attack cut --runtime codex\n"),
+          f"writes were {recording.writes!r}")
+
+    # Case 40: a cause only the user can clear is not relaunched. A logged-out
+    # CLI, a missing one and a usage limit fail a second launch the way they
+    # failed the first, so the cell is launched once, and the lines under its
+    # FAILED line tell the agent to tell the user and give the command that
+    # runs this one cell again: this run's target, each context document and
+    # the request, and the cell's attack and runtime as the only --attack and
+    # --runtime, quoted so a shell takes the line as it stands.
+    request_path = pathlib.Path("a request.md")
+    for cause_class in sorted(runner_relaunch.common.USER_CLEARABLE_CAUSE_CLASSES):
+        for runtime in runner_relaunch.RUNTIMES:
+            launcher = with_launcher(runner_relaunch, answering_in_turn([
+                (1, "", "", "", (cause_class, "the CLI's own line"))]))
+            cell_ok, output, raised, report = run_cell_capturing(
+                runner_relaunch, runtime, target="docs/a design.md",
+                context=("docs/c.md", "docs/d's notes.md"),
+                problem_statement=request_path)
+            lines = output.splitlines()
+            command = words_of_command(lines[-1]) if lines else []
+            check(f"a {runtime} cell failing as {cause_class} is launched once, "
+                  f"with no RETRYING line",
+                  raised is None and cell_ok is False and len(launcher.launches) == 1
+                  and "RETRYING:" not in output and report is None,
+                  f"raised={raised!r}, cell_ok={cell_ok}, "
+                  f"launches={len(launcher.launches)}, output was {output!r}")
+            check(f"and its FAILED line is followed by the two instructions and "
+                  f"the command ({cause_class}, {runtime})",
+                  lines[-4:-1] == [
+                      f"FAILED: cut-{runtime} — {cause_class} — the CLI's own line",
+                      "Tell the user what the FAILED line above says.",
+                      "After the user has cleared the cause, run the command on "
+                      "the next line."],
+                  f"output was {output!r}")
+            check(f"and the command reruns that one cell with this run's documents "
+                  f"({cause_class}, {runtime})",
+                  command == [
+                      str(RUNNER_SCRIPT.resolve()), "--target", "docs/a design.md",
+                      "--context", "docs/c.md", "--context", "docs/d's notes.md",
+                      "--problem-statement", str(request_path.resolve()),
+                      "--attack", "cut", "--runtime", runtime],
+                  f"command was {command}")
+    with_launcher(runner_relaunch, answering_in_turn([
+        (1, "", "", "", ("logged-out", "Not logged in"))]))
+    cell_ok, output, raised, report = run_cell_capturing(runner_relaunch, "claude")
+    check("a run with no request and no context documents prints a command without them",
+          raised is None and words_of_command(output.splitlines()[-1]) == [
+              str(RUNNER_SCRIPT.resolve()), "--target", "docs/x.md",
+              "--attack", "cut", "--runtime", "claude"],
+          f"raised={raised!r}, output was {output!r}")
+
+    # The classes come from what each CLI really prints, through the real
+    # launchers: subprocess.run is replaced under them. The texts are the
+    # captured ones kept beside the cold-read cells
+    # (nc-systems/cold-read/cold-read-claude-cell.py and
+    # cold-read-codex-cell.py, recognised_failure_texts_for_model).
+    runner_classes = load_runner()
+    real_classes_run = runner_classes.subprocess.run
+    # On Linux the codex cell's permission profile lists the credential files
+    # under the home, which it finds by running `find` there: emptied for
+    # these launches, as the launch-flag case above does, so the real home is
+    # not scanned and the only command the stand-ins see is the CLI's.
+    real_credential_files_found_now = runner_classes.common.credential_files_found_now
+    runner_classes.common.credential_files_found_now = lambda: []
+    codex_logged_out = ("2026-09-18T19:37:41.140816Z ERROR codex_api::endpoint::"
+                        "responses_websocket: failed to connect to websocket: HTTP "
+                        "error: 401 Unauthorized, url: wss://api.openai.com/v1/responses")
+    codex_session = "".join(f"session line {number}\n" for number in range(60))
+    launched_commands = []
+
+    def cli_answering(code, stdout, stderr):
+        """A subprocess.run stand-in for one CLI. A stream comes back only
+        when the launcher piped it, as from the real function: a launcher
+        that discards a stream never sees the cause written there."""
+        def fake_run(command, *arguments, **keywords):
+            launched_commands.append(list(command))
+            return subprocess.CompletedProcess(
+                list(command), code,
+                stdout if keywords.get("stdout") == subprocess.PIPE else None,
+                stderr if keywords.get("stderr") == subprocess.PIPE else None)
+        return fake_run
+
+    def cli_missing(command, *arguments, **keywords):
+        launched_commands.append(list(command))
+        raise FileNotFoundError(2, "No such file or directory", command[0])
+
+    # Each row: the runtime, the class its text must be given, the stand-in,
+    # a piece of the detail, and how many times one launch calls the CLI (the
+    # claude chain calls it once per model).
+    real_cases = (
+        ("codex", "logged-out", cli_answering(1, "", codex_session + codex_logged_out + "\n"),
+         codex_logged_out.split(" ", 1)[1], 1),
+        ("codex", "exit-1", cli_answering(1, "", codex_session + capacity + "\n"),
+         capacity, 1),
+        ("codex", "agent-binary-missing", cli_missing, "No such file or directory", 1),
+        ("claude", "logged-out",
+         cli_answering(1, "Not logged in · Please run /login\n", ""),
+         "Not logged in · Please run /login", 2),
+        ("claude", "account-limit",
+         cli_answering(1, "You've hit your session limit · resets 8:50pm "
+                          "(America/Los_Angeles)\n", ""),
+         "resets 8:50pm (America/Los_Angeles)", 2),
+        ("claude", "model-limit",
+         cli_answering(1, "You've reached your Opus limit. Switch to another "
+                          "model, or manage usage credits, to continue.\n", ""),
+         "Opus", 2),
+        ("claude", "agent-binary-missing", cli_missing, "No such file or directory", 2),
+    )
+    try:
+        for runtime, expected_class, fake_run, expected_detail, calls_per_launch in real_cases:
+            del launched_commands[:]
+            runner_classes.subprocess.run = fake_run
+            cell_ok, output, raised, report = run_cell_capturing(
+                runner_classes, runtime, ledger=StubLedger([]))
+            failed = [line for line in output.splitlines() if line.startswith("FAILED:")]
+            relaunched = expected_class not in runner_classes.common.USER_CLEARABLE_CAUSE_CLASSES
+            check(f"a {runtime} CLI's own failure text is classed {expected_class} "
+                  f"and {'relaunched once' if relaunched else 'not relaunched'}",
+                  raised is None and cell_ok is False and len(failed) == 1
+                  and failed[0].startswith(
+                      f"FAILED: cut-{runtime} — {expected_class} — ")
+                  and expected_detail in failed[0]
+                  and ("(relaunched once)" in failed[0]) == relaunched
+                  and (output.count("RETRYING:") == 1) == relaunched
+                  and len(launched_commands) == calls_per_launch * (2 if relaunched else 1),
+                  f"raised={raised!r}, launches={len(launched_commands)}, "
+                  f"output was {output[-700:]!r}")
+            if runtime == "codex" and expected_class == "logged-out":
+                check("a failed codex launch prints the last 20 lines its CLI wrote, "
+                      "not its whole session",
+                      codex_logged_out in output and "session line 59\n" in output
+                      and "session line 41\n" in output
+                      and "session line 40\n" not in output,
+                      f"output was {output[:400]!r}")
+    finally:
+        runner_classes.subprocess.run = real_classes_run
+        runner_classes.common.credential_files_found_now = real_credential_files_found_now
+
+    # Case 41: a timeout is not relaunched: the same launch would cost the
+    # same hour. The triage instructions follow its FAILED line. A relaunch
+    # that times out is reported as a timeout that was relaunched, and a codex
+    # cell cut off after writing a long session prints only its last lines.
+    def timed_out(stderr=None):
+        return subprocess.TimeoutExpired(
+            ["a-runtime"], runner_relaunch.CELL_TIMEOUT_SECONDS, output=None,
+            stderr=stderr)
+
+    timeout_text = f"timeout — after {runner_relaunch.CELL_TIMEOUT_SECONDS}s"
+    for runtime in runner_relaunch.RUNTIMES:
+        launcher = with_launcher(runner_relaunch, answering_in_turn([timed_out()]))
+        cell_ok, output, raised, report = run_cell_capturing(runner_relaunch, runtime)
+        check(f"a {runtime} cell that times out is launched once, and its FAILED "
+              f"line is followed by the triage instructions",
+              raised is None and cell_ok is False and len(launcher.launches) == 1
+              and output == f"FAILED: cut-{runtime} — {timeout_text}\n" + triage_lines(runtime),
+              f"raised={raised!r}, launches={len(launcher.launches)}, output was {output!r}")
+    launcher = with_launcher(runner_relaunch, answering_in_turn([
+        (1, "", "a-test-model", "", ("exit-1", capacity)), timed_out()]))
+    cell_ok, output, raised, report = run_cell_capturing(runner_relaunch, "codex")
+    check("a relaunch that times out is reported as a timeout that was relaunched",
+          raised is None and cell_ok is False and len(launcher.launches) == 2
+          and f"FAILED: cut-codex — {timeout_text} (relaunched once)\n" in output,
+          f"raised={raised!r}, output was {output!r}")
+    with_launcher(runner_relaunch, answering_in_turn([
+        timed_out(stderr=codex_session.encode("utf-8") + b"cut off mid-sente")]))
+    cell_ok, output, raised, report = run_cell_capturing(runner_relaunch, "codex")
+    check("a codex cell that times out prints only the last 20 lines of its session",
+          raised is None and "cut off mid-sente\n" in output
+          and "session line 41\n" in output and "session line 40\n" not in output,
+          f"raised={raised!r}, output was {output[:300]!r}")
+
+    # Case 42: the claude chain across a relaunch. Both models fail in the
+    # first launch; in the second the first model fails again and the second
+    # answers. The report names the model that wrote it, the model the second
+    # launch fell back from, and the first launch's cause; the RETRYING line
+    # carries the cause of the chain's last attempt.
+    runner_chain_relaunch = load_runner()
+    runner_chain_relaunch.CLI_VERSION_CACHE.update({"claude": "1.1.1-test",
+                                                    "codex": "2.2.2-test"})
+    real_chain_relaunch_run = runner_chain_relaunch.subprocess.run
+    chain_calls = []
+
+    def chain_across_a_relaunch(command, *arguments, **keywords):
+        if command[0] != "claude":
+            # git, for the saved report's commit: not this case's subject.
+            return real_chain_relaunch_run(command, *arguments, **keywords)
+        model = command[command.index("--model") + 1]
+        chain_calls.append(model)
+        if model == opus and len(chain_calls) == 4:
+            return subprocess.CompletedProcess(list(command), 0, cut_report, "")
+        return subprocess.CompletedProcess(
+            list(command), 1, "", f"{model}: overloaded, call {len(chain_calls)}\n")
+
+    try:
+        runner_chain_relaunch.subprocess.run = chain_across_a_relaunch
+        cell_ok, output, raised, report = run_cell_capturing(
+            runner_chain_relaunch, "claude")
+    finally:
+        runner_chain_relaunch.subprocess.run = real_chain_relaunch_run
+    stamp = (report or "").splitlines()[0] if report else ""
+    check("a claude cell whose whole chain fails is relaunched, and the chain "
+          "runs again from its first model",
+          raised is None and cell_ok is True
+          and chain_calls == [fable, opus, fable, opus],
+          f"raised={raised!r}, cell_ok={cell_ok}, calls={chain_calls}, "
+          f"output was {output!r}")
+    check("its RETRYING line carries the cause of the chain's last attempt",
+          output.count(f"RETRYING: cut-claude — exit-1 — {opus}: overloaded, "
+                       f"call 2\n") == 1,
+          f"output was {output!r}")
+    check("and the saved report names its model, the fallback of the launch "
+          "that saved it, and the first launch's cause",
+          f" model={opus} " in stamp
+          and f" fallback_from={fable}(exit1) " in stamp
+          and " relaunched_after=exit-1 " in stamp,
+          f"stamp was {stamp!r}")
+
+    # Case 43: whole runs. A run limited to codex whose cell fails twice exits
+    # 1 and prints the same two triage instructions, which name the other
+    # runtime's report without assuming this run launched it: the rerun the
+    # runner itself prints is a run of one runtime, and the other runtime's
+    # report is then in the first run's record. Every line reaches the
+    # record's log. Then a run of both runtimes whose codex cell is logged
+    # out: the command under its FAILED line, run as printed, launches that
+    # one cell and no other, into a record directory of its own.
+    with tempfile.TemporaryDirectory() as scratch:
+        base = pathlib.Path(scratch)
+        repo = scratch_repository_with_design(base)
+        (repo / "docs" / "context notes.md").write_text("# Notes\n", encoding="utf-8")
+        git(repo, "add", "-A")
+        git(repo, "commit", "-qm", "the notes")
+        request = base / "sanity-check-request.md"
+        request.write_text("Problem: schedule nightly work.\n", encoding="utf-8")
+        driven = runner_over(repo, base)
+        launched = []
+
+        def codex_failing_twice(prompt, checkout=None):
+            launched.append("codex")
+            return 1, "", "a-test-model", "", ("exit-1", capacity)
+
+        def claude_never(prompt, checkout=None):
+            launched.append("claude")
+            return 0, any_attack_report, "a-test-model", "", None
+
+        driven.run_codex = codex_failing_twice
+        driven.run_claude = claude_never
+        code, out, err = drive_main(driven, [
+            "--target", "docs/design.md", "--attack", "cut", "--runtime", "codex"])
+        failed_block = (f"FAILED: cut-codex — exit-1 — {capacity} (relaunched once)\n"
+                        + triage_lines("codex"))
+        check("a run limited to codex whose cell fails twice exits 1 with the "
+              "triage instructions and no report",
+              code == 1 and launched == ["codex", "codex"] and failed_block in out
+              and "saved: " not in out
+              and "sanity-check wrote no reports" in out,
+              f"exit {code}, launched {launched}, stdout {out!r}, stderr {err!r}")
+        logs = sorted(driven.RECORDS_ROOT.glob("*/sanity-check-run.log"))
+        log_text = logs[0].read_text(encoding="utf-8") if len(logs) == 1 else ""
+        check("the RETRYING line, the FAILED line and its instructions are in "
+              "the record's log",
+              f"RETRYING: cut-codex — exit-1 — {capacity}\n" in log_text
+              and failed_block in log_text,
+              f"logs {logs}, log was {log_text!r}")
+
+    with tempfile.TemporaryDirectory() as scratch:
+        base = pathlib.Path(scratch)
+        repo = scratch_repository_with_design(base)
+        (repo / "docs" / "context notes.md").write_text("# Notes\n", encoding="utf-8")
+        git(repo, "add", "-A")
+        git(repo, "commit", "-qm", "the notes")
+        request = base / "sanity-check-request.md"
+        request.write_text("Problem: schedule nightly work.\n", encoding="utf-8")
+        driven = runner_over(repo, base)
+        launched = []
+        mechanization_codex_logged_out = [True]
+
+        def codex_logged_out_then_in(prompt, checkout=None):
+            # The cell is told apart by the scratch directory its prompt names.
+            launched.append("codex")
+            if "scratch/mechanization-codex" in prompt and mechanization_codex_logged_out[0]:
+                return 1, "", "a-test-model", "", ("logged-out", "401 Unauthorized")
+            return 0, any_attack_report, "a-test-model", "", None
+
+        def claude_reporting(prompt, checkout=None):
+            launched.append("claude")
+            return 0, any_attack_report, "a-test-model", "", None
+
+        driven.run_codex = codex_logged_out_then_in
+        driven.run_claude = claude_reporting
+        code, out, err = drive_main(driven, [
+            "--target", "docs/design.md", "--context", "docs/context notes.md",
+            "--attack", "cut", "--attack", "fresh-eyes", "--attack", "mechanization",
+            "--problem-statement", str(request), "--runtime", "claude",
+            "--runtime", "codex"])
+        out_lines = out.splitlines()
+        failed_at = [index for index, line in enumerate(out_lines)
+                     if line.startswith("FAILED: mechanization-codex — logged-out — ")]
+        printed = out_lines[failed_at[0] + 3] if len(failed_at) == 1 else ""
+        command = words_of_command(printed)
+        check("a logged-out codex cell in a full run is launched once and prints "
+              "the command that reruns it alone",
+              code == 1 and launched.count("codex") == 3 and launched.count("claude") == 3
+              and out.count("RETRYING:") == 0 and out.count("FAILED:") == 1
+              and command == [
+                  str(RUNNER_SCRIPT.resolve()), "--target", "docs/design.md",
+                  "--context", "docs/context notes.md",
+                  "--problem-statement", str(request.resolve()),
+                  "--attack", "mechanization", "--runtime", "codex"],
+              f"exit {code}, launched {launched}, command {command}, "
+              f"stdout {out!r}, stderr {err!r}")
+        del launched[:]
+        mechanization_codex_logged_out[0] = False
+        code, out, err = drive_main(driven, command[1:])
+        records = sorted(path.name for path in driven.RECORDS_ROOT.glob("*"))
+        check("that command, run as printed, launches the one cell and saves its "
+              "report in a record directory of its own",
+              code == 0 and launched == ["codex"] and out.count("saved: ") == 1
+              and len(records) == 2 and records[1] == records[0] + "-2"
+              and (driven.RECORDS_ROOT / records[1] / "mechanization-codex.md").is_file(),
+              f"exit {code}, launched {launched}, records {records}, "
+              f"stdout {out!r}, stderr {err!r}")
 
     print()
     if failures:
