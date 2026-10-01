@@ -1,3 +1,7 @@
+---
+supports-issues: 3
+---
+
 # Slice 6, the review-evidence check — designed, then ruled not built
 
 Issue: issue [main-gatekeeper — the single check-in gate (design: nc-systems/main-gatekeeper/main-gatekeeper-design.md)](https://github.com/nedschorus/nedschorus/issues/3) · Instruction-file class: issue [Review-system design requirements learned from the legacy gate — dormant until a class of work first requires review](https://github.com/nedschorus/nedschorus/issues/31) · Specification: [`main-gatekeeper-design.md`](../../nc-systems/main-gatekeeper/main-gatekeeper-design.md) · Build order: [`3-main-gatekeeper-build-slice-plan.md`](3-main-gatekeeper-build-slice-plan.md)

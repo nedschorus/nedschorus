@@ -1,3 +1,7 @@
+---
+supports-issues: 3
+---
+
 # main-gatekeeper build — slice plan
 
 Issue: issue [main-gatekeeper — the single check-in gate (design: nc-systems/main-gatekeeper/main-gatekeeper-design.md)](https://github.com/nedschorus/nedschorus/issues/3)
@@ -18,6 +22,24 @@ open. Where this plan and the specification appear to disagree, the
 specification wins and this plan is wrong.
 
 Author: choirmaster, session 1caf1c51 (first build task).
+
+## Build record carried from the issue's old description
+
+Carried word for word on 2026-10-01, when the issue's old description was merged into its GHI-MD, the specification (walk ghi-md-reconciliation-disagreements-2026-09-30, item 1). The sections below hold the same history in more detail; this is the summary the issue showed.
+
+**Built** (`nc-systems/main-gatekeeper/main-gatekeeper.py` + `nc-systems/main-gatekeeper/tests/main-gatekeeper-test.py`, 150 cases green):
+- Slice 1 (2026-08-08): synchronous check-in end to end — screening, candidate built from the declaration, commit with the trailer block, atomic push.
+- Slice 2 (2026-08-08): the entry checkpoint — the `--import` triple validated against the legacy repository and recorded in the carrying commit's trailer. (An `imports` query subcommand was built here and deleted by ruling 2026-08-10: the trailer is the record, `git log --grep` the view.)
+- Slice 3 (2026-08-09): concurrency — the race loser integrates over newer commits, same-path overlap refuses `conflict`, bounded retry cap.
+- Review-cycle rulings applied (2026-08-10 through 12): the base is computed by the program (merge-base; the `--base` field retired), the refusal catalog collapsed, symlinks refused, argparse-level errors join the JSON reply contract, the advisory sees untracked files, and the digest is reframed with length-prefixed components.
+
+**Reviewed:** full md-review cycle 2026-08-09 through 12 — eight reviewer cells (Claude + Codex, two tiers each, hunt + restate) plus a subtraction review; ~150 findings walked with the user; complete records were in `md-review-records/2026-08-09-git-gatekeeper-design/`, deleted from main and the directory gitignored by the 2026-08-14 review-records disposal ruling. Merge to main: PR [git-gatekeeper review walk: spec revised through 2026-08-12, rulings applied, suite 150 green](https://github.com/nedschorus/nedschorus/pull/49).
+
+**Built (2026-08-12): Slice 4** — the worker lifecycle: `--no-wait`, the detached worker, `status`, `cancel`. Landed with its ruled build notes (suite 162 green); notes recorded in `docs/issues/3-main-gatekeeper-build-slice-plan.md`: the 30-day refusal-record expiry sweep, the liveness check before the resubmit sweep, process-group kill for cancel, the worker's start-time recorded beside its pid.
+
+**Built (2026-08-12): Slice 5, program half** (commit 8e19139, riding PR [git-gatekeeper review walk: spec revised through 2026-08-12, rulings applied, suite 150 green](https://github.com/nedschorus/nedschorus/pull/49); suite 169 green) — the branch-protection audit: the `audit` subcommand answers B3c's three named outcomes — `protection-ok` (exit 0), `protection-wrong` (exit 1, facts naming every setting that differs from the spec's § The credential and enforcement contract), `audit-failed` (exit 1 — gh missing, unauthenticated, API error, non-GitHub origin; a loud finding, never a silent skip into green). The ruled recycle anchor (2026-08-12) is wired: the fast-handoff writer prints one branch-protection-audit line after writing each handoff, never blocking. The repo git config pins `user.name`, `user.email`, `user.useConfigOnly` — set and test-pinned. On this box the live audit answers `audit-failed` honestly: the agent credential cannot read protection settings until the credential work lands.
+
+**Built (2026-08-12): Slice 5 complete** — the CLAUDE.md workflow line landed user-walked (permanent path stated, dormancy named, interim lane described), joining the branch-protection audit and the git-config pins. **All five build slices are BUILT**; suite 169 cases green.
 
 ## Why the order matters
 
