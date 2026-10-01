@@ -196,6 +196,12 @@ with tempfile.TemporaryDirectory() as temporary_directory:
         ("design-to-main's design", workspace / "docs" / "design-to-main" / "design-to-main-state-machine-design.md"),
         ("a design in a record-named directory below the checkout's top",
          workspace / "docs" / "cold-read-records" / "foo-design-2026-09-30" / "foo-design.md"),
+        ("a wiki page named contract.md, with no hyphen before contract",
+         workspace / "docs" / "nedschorus-wiki" / "contract.md"),
+        ("a wiki page whose name ends contract.md without the hyphen",
+         workspace / "docs" / "nedschorus-wiki" / "nedschorus-subcontract.md"),
+        ("a wiki page whose name ends test-design.md without the hyphen",
+         workspace / "docs" / "nedschorus-wiki" / "footest-design.md"),
     ]
     for label, target in reviewed_homes:
         result = run_hook(decoy, workspace, str(target))

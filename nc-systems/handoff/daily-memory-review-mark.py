@@ -19,7 +19,10 @@ and why it is built the way it is, are memory_review_due_lines in
 nc-systems/handoff/handoff-supervisor.py. This program writes the marks the
 line reads, and holds what the two share: where the stores and the marks are,
 how a store is read, which Pacific date it is, and the digest that says
-whether the stores changed. The supervisor imports it by path.
+whether the stores changed. The supervisor imports it by path. So does
+nc-systems/handoff/daily-overview-refresh-reminder-mark.py, whose dated marks
+are read and written through this program's reader and writer, given that
+program's own marks directory and file-name pattern.
 
 USAGE
   nc-systems/handoff/daily-memory-review-mark.py started
@@ -102,10 +105,16 @@ DAILY_MEMORY_REVIEW_MARK_SSH_TIMEOUT_SECONDS = 30
 # arguments: over ssh on ned-box, or locally for the Mac's store. It only reads,
 # and prints one JSON object: each store file's content in base64, and each
 # mark's text. An empty or absent directory reads as holding nothing. One text
-# for both machines, so the two stores are read by the same rule.
+# for both machines, so the two stores are read by the same rule. A third
+# argument, when given, is the pattern a mark's file name must match in place
+# of this review's own: nc-systems/handoff/daily-overview-refresh-reminder-mark.py
+# reads its dated marks through this same program, so there is one reader of a
+# marks directory in the log-store.
 MEMORY_STORE_AND_REVIEW_MARKS_READ_PROGRAM = r"""
 import base64, json, os, re, sys
 store_directory, marks_directory = sys.argv[1], sys.argv[2]
+mark_file_name_pattern = (sys.argv[3] if len(sys.argv) > 3
+                          else r"[0-9]{4}-[0-9]{2}-[0-9]{2}-(started|done)[.]txt")
 store = {}
 if store_directory and os.path.isdir(store_directory):
     for name in os.listdir(store_directory):
@@ -116,7 +125,7 @@ if store_directory and os.path.isdir(store_directory):
 marks = {}
 if marks_directory and os.path.isdir(marks_directory):
     for name in os.listdir(marks_directory):
-        if re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}-(started|done)[.]txt", name):
+        if re.fullmatch(mark_file_name_pattern, name):
             with open(os.path.join(marks_directory, name), encoding="utf-8",
                       errors="replace") as handle:
                 marks[name] = handle.read()
@@ -170,14 +179,19 @@ def run_on_ned_box_or_here(command: str, ssh_target, timeout: float, stdin_text=
 
 
 def read_memory_store_and_review_marks(ssh_target, store_directory: str,
-                                       marks_directory: str, timeout: float):
+                                       marks_directory: str, timeout: float,
+                                       mark_file_name_pattern=None):
     """(store, marks): the store's files as {name: bytes}, and the marks as
     {file name: text}, read on ned-box over ssh or, when ssh_target is None,
-    here. Pass "" for a directory not wanted. Raises
-    DailyMemoryReviewReadOrWriteFailed when the read fails."""
+    here. Pass "" for a directory not wanted. mark_file_name_pattern, when
+    given, is the regular expression a mark's whole file name must match in
+    place of this review's started and done names; it is how another dated
+    mark in the log-store is read. Raises DailyMemoryReviewReadOrWriteFailed
+    when the read fails."""
     command = " ".join(shlex.quote(part) for part in (
         "python3", "-c", MEMORY_STORE_AND_REVIEW_MARKS_READ_PROGRAM,
-        store_directory, marks_directory))
+        store_directory, marks_directory,
+        *((mark_file_name_pattern,) if mark_file_name_pattern else ())))
     output = run_on_ned_box_or_here(command, ssh_target, timeout)
     try:
         answer = json.loads(output)
@@ -214,12 +228,15 @@ def latest_done_mark(marks: dict):
     return done[-1][:len("YYYY-MM-DD")], marks[done[-1]].strip()
 
 
-def write_daily_memory_review_mark(ssh_target, file_name: str, content: str, timeout: float):
+def write_daily_memory_review_mark(ssh_target, file_name: str, content: str, timeout: float,
+                                   marks_directory=None):
     """Write one mark into the marks directory, on ned-box over ssh or, when
     ssh_target is None, here. The content travels on stdin, so nothing in it
-    is read by a shell."""
-    directory = shlex.quote(DAILY_MEMORY_REVIEW_MARKS_DIRECTORY)
-    target = shlex.quote(f"{DAILY_MEMORY_REVIEW_MARKS_DIRECTORY}/{file_name}")
+    is read by a shell. marks_directory, when given, is another marks
+    directory in the log-store to write into in place of this review's own."""
+    marks_directory = marks_directory or DAILY_MEMORY_REVIEW_MARKS_DIRECTORY
+    directory = shlex.quote(marks_directory)
+    target = shlex.quote(f"{marks_directory}/{file_name}")
     run_on_ned_box_or_here(f"mkdir -p {directory} && cat > {target}", ssh_target,
                            timeout, stdin_text=content + "\n")
 
