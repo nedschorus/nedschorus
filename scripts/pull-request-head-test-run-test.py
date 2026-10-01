@@ -12,7 +12,9 @@ scripts/run-all-test-suites.py and run from a second clone that plays main's,
 which prints lines in the real runner's shapes and exits as the case tells
 it; ned-box is played by an ssh first on PATH that records its arguments and
 runs the command it was handed here; the machine's name is set per case; and
-the moment, the wait and the clock are passed in, so no case sleeps. The one
+the moment, the wait and the clock are passed in, so no case sleeps, and a
+case of two runs started in one second gives the second run a process number
+of its own, as two real runs have. The one
 case that passes no --test-suite-runner-program replaces the function that
 runs the runner, so the real runner beside the program is named and never
 started. The wait passed in counts its calls and stops a case that waits more
@@ -70,6 +72,11 @@ class WaitedMoreOftenThanAnyCaseAsksFor(Exception):
     pass
 
 SSH_THAT_RUNS_THE_COMMAND_HERE = 'exec /bin/sh -c "$1"'
+# The far side of an ssh whose client died while the far side was still
+# reading: the command gets the first bytes of the record, or none, and then
+# an end of input like any other.
+SSH_THAT_HANDS_OVER_300_BYTES = 'head -c 300 | /bin/sh -c "$1"'
+SSH_THAT_HANDS_OVER_NOTHING = '/bin/sh -c "$1" < /dev/null'
 SSH_THAT_CANNOT_REACH_NED_BOX = (
     "echo 'ssh: connect to host ned-box port 22: No route to host' >&2\n"
     "echo 'a second line' >&2\nexit 255")
@@ -87,7 +94,11 @@ STAND_IN_RUNNER_BEHAVIOUR_FILE_VARIABLE = (
 # a tracked file differs once, for its first line. A run that gets past the
 # lock can then change the checkout, as a seat working in the checkout would
 # while the suites run: the behaviour file's `files_written_in_the_checkout`
-# and `git_commands_run_in_the_checkout`.
+# and `git_commands_run_in_the_checkout`. Three more keys make a runner the
+# real one is not: `lines_printed_before_the_first_line`;
+# `characters_of_the_commit_named_in_the_first_line`, for a first line that
+# names the commit by the start of its hash; and
+# `signal_that_kills_the_runner_after_its_last_line`.
 STAND_IN_RUNNER_SOURCE = r'''
 import json
 import os
@@ -138,12 +149,19 @@ for git_arguments in behaviour.get("git_commands_run_in_the_checkout", []):
                    text=True, check=True)
 log_dir.mkdir(parents=True, exist_ok=True)
 (log_dir / ("log-of-call-%d.log" % len(calls))).write_text("a suite's output\n")
+for line in behaviour.get("lines_printed_before_the_first_line", []):
+    print(line)
 print("run-all-test-suites: %s at %s (%s); 3 suites listed by "
       "git; 2 selected by inputs changed since %s; Python 3.14.4 (%s); -j 4; logs in %s"
-      % (checkout, commit, state, since[:12], sys.executable, log_dir))
+      % (checkout,
+         commit[:behaviour.get("characters_of_the_commit_named_in_the_first_line", 40)],
+         state, since[:12], sys.executable, log_dir))
 print("inputs recorded by python-audit-hook, kept in /a/recordings/directory")
 for line in behaviour["lines"]:
     print(line)
+if behaviour.get("signal_that_kills_the_runner_after_its_last_line"):
+    sys.stdout.flush()
+    os.kill(os.getpid(), behaviour["signal_that_kills_the_runner_after_its_last_line"])
 sys.exit(exit_code)
 '''
 
@@ -290,22 +308,30 @@ class Fixture:
         return (self.run_directory(head, moment)
                 / program.PULL_REQUEST_HEAD_TEST_RUN_RECORD_LOCAL_COPY_FILE_NAME)
 
-    def write_command(self, machine: str, moment=THE_MOMENT, keeps_a_later_record=False):
+    def write_command(self, machine: str, record: str, moment=THE_MOMENT,
+                      keeps_a_record_that_started_no_earlier=False):
         """The shell command a run of the head made at the moment by this
-        process writes its record with; with keeps_a_later_record, the form
-        its remedy is printed in. No path of a fixture needs quoting."""
+        process writes the record with; with
+        keeps_a_record_that_started_no_earlier, the form its remedy is printed
+        in. No path of a fixture needs quoting."""
+        bytes_sent = len(record.encode("utf-8"))
         directory = f"{self.log_store}/pull-request-head-test-runs/{machine}"
-        record = f"{directory}/{self.head}.txt"
+        record_path = f"{directory}/{self.head}.txt"
         partial = (f"{directory}/.{self.head}.txt.{moment:%Y%m%dT%H%M%SZ}-{os.getpid()}"
                    f".partial")
         keeps = ""
-        if keeps_a_later_record:
-            keeps = (f"if [ -e {record} ] && [ \"$(sed -n '1s/^.*, started //p' {record})\" "
-                     f"\\> {moment:%Y-%m-%dT%H:%M:%SZ} ]; then echo "
+        if keeps_a_record_that_started_no_earlier:
+            keeps = (f"if [ -e {record_path} ] && "
+                     f"! [ \"$(sed -n '1s/^.*, started //p' {record_path})\" "
+                     f"\\< {moment:%Y-%m-%dT%H:%M:%SZ} ]; then echo "
                      f"'pull-request-head-test-run: not written — the record there is of a "
-                     f"run that started later.' >&2; echo 'Leave that record as it is.' "
-                     f">&2; exit 1; fi && ")
-        return (f"mkdir -p {directory} && {keeps}cat > {partial} && mv -f {partial} {record} "
+                     f"run that started in the same second or later.' >&2; echo 'Leave that "
+                     f"record as it is.' >&2; exit 1; fi && ")
+        return (f"mkdir -p {directory} && {keeps}cat > {partial} && "
+                f"{{ [ \"$(wc -c < {partial})\" -eq {bytes_sent} ] || {{ echo "
+                f"'pull-request-head-test-run: not written — {bytes_sent} bytes of the "
+                f"record were sent and another count arrived.' >&2; echo 'Run this command "
+                f"again.' >&2; false; }}; }} && mv -f {partial} {record_path} "
                 f"|| {{ rm -f {partial}; exit 1; }}")
 
     def scratch_for_next_run(self):
@@ -340,21 +366,27 @@ class Fixture:
             runner_program=THE_REFERENCE_CLONES_RUNNER,
             lock_wait_bound_seconds=None, during_each_wait=None,
             runner_changes_the_checkout=None, moment=THE_MOMENT,
-            started_in=None) -> RunResult:
+            started_in=None, stand_in_runner_behaviour=None,
+            process_number=None) -> RunResult:
         """main's exit code and output, with the fake ssh's calls, the stand-in
         runner's calls and the waits main asked for. The clock is the sum of
         those waits, so a case takes no time. during_each_wait is called in
         each wait, to change the checkout while the program waits for the
         lock; runner_changes_the_checkout is what the stand-in runner does to
-        the checkout once it is past the lock. A run that waits more often
-        than any case asks for is stopped, and its exit code is
+        the checkout once it is past the lock; stand_in_runner_behaviour is
+        any other key of the stand-in runner's behaviour file. process_number
+        is the process number the run reads as its own, for a run played as
+        another process's: the run's directory and the file it writes its
+        record to are named by it. A run that waits more often than any case
+        asks for is stopped, and its exit code is
         WAITED_MORE_OFTEN_THAN_ANY_CASE_ASKS_FOR."""
         scratch = self.scratch_for_next_run()
         behaviour_file = scratch / "stand-in-runner-behaviour.json"
         calls_file = scratch / "stand-in-runner-calls.json"
         behaviour_file.write_text(json.dumps(
             {"exits": list(exits), "lines": list(lines), "calls_file": str(calls_file),
-             **(runner_changes_the_checkout or {})}),
+             **(runner_changes_the_checkout or {}),
+             **(stand_in_runner_behaviour or {})}),
             encoding="utf-8")
         fake_ssh = self.fake_ssh_directory(scratch, ssh_body)
         waits = []
@@ -373,6 +405,9 @@ class Fixture:
             daily.DAILY_FULL_TEST_RUN_LOCK_WAIT_BOUND_SECONDS = lock_wait_bound_seconds
         saved_gethostname = socket.gethostname
         socket.gethostname = lambda: hostname
+        saved_getpid = os.getpid
+        if process_number is not None:
+            os.getpid = lambda: process_number
         original_path = os.environ.get("PATH", "")
         os.environ["PATH"] = f"{fake_ssh}{os.pathsep}{original_path}"
         os.environ[STAND_IN_RUNNER_BEHAVIOUR_FILE_VARIABLE] = str(behaviour_file)
@@ -392,6 +427,7 @@ class Fixture:
             os.chdir(directory_before)
             os.environ["PATH"] = original_path
             os.environ.pop(STAND_IN_RUNNER_BEHAVIOUR_FILE_VARIABLE, None)
+            os.getpid = saved_getpid
             socket.gethostname = saved_gethostname
             daily.DAILY_FULL_TEST_RUN_LOCK_WAIT_BOUND_SECONDS = saved_bound
         ssh_calls_file = scratch / "ssh-calls"
@@ -451,7 +487,12 @@ def run_cases_on_ned_box(workspace: Path):
               "seconds waiting for the machine's lock: 0",
               "wall-clock seconds: 0",
               f"logs: {fixture.logs()} on ned-box",
+              "pull-request-head-test-run exit code: 0",
           ]) + "\n", repr(record))
+    check("a passing run's record closes with this program's own exit code, 0",
+          record is not None
+          and record.splitlines()[-1] == "pull-request-head-test-run exit code: 0",
+          repr(record))
     check("the record says of every suite whether it was selected and why, and of every "
           "suite run whether it passed",
           record is not None and all(line in record.splitlines() for line in SELECTION_LINES)
@@ -499,6 +540,8 @@ def run_cases_on_ned_box(workspace: Path):
           record_lines[output_starts:output_starts + 2 + len(FAILING_RUNNER_LINES)]
           == [fixture.runner_first_line(), INPUTS_RECORDED_LINE, *FAILING_RUNNER_LINES]
           and "runner exit code: 1" in record_lines, repr(record))
+    check("a failing run's record closes with this program's own exit code, 1",
+          record_lines[-1:] == ["pull-request-head-test-run exit code: 1"], repr(record))
     check("a failing run prints the runner's SUMMARY line and the citation",
           result.stdout == FAILING_SUMMARY_LINE + "\n" + citation_line, result.stdout)
     check("a second run of the same head on the same machine replaces the record: one "
@@ -526,6 +569,11 @@ def run_cases_on_ned_box(workspace: Path):
           and result.stderr.endswith(
               "\nPass --since a commit this checkout has, then run this again.\n")
           and result.stdout == citation_line, f"{result!r}\n{record_lines!r}")
+    check("the record of a run whose runner was not run closes with this program's own "
+          "exit code, 4",
+          result.code == 4
+          and record_lines[-1:] == ["pull-request-head-test-run exit code: 4"],
+          repr(record_lines))
 
     # --- A checkout that does not hold the head's files ------------------------
     record_before = fixture.record("ned-box")
@@ -607,7 +655,9 @@ def run_cases_on_ned_box(workspace: Path):
               for line in record_lines)
           and "runner exit code: 3" in record_lines
           and not any(line.startswith(("SUMMARY:", "the runner's output"))
-                      for line in record_lines), repr(record_lines))
+                      for line in record_lines)
+          and record_lines[-1:] == ["pull-request-head-test-run exit code: 4"],
+          repr(record_lines))
     check("stderr says the lock was never released and what to do, and stdout is the "
           "citation alone",
           "not run — the lock was never released" in result.stderr
@@ -675,6 +725,11 @@ def run_cases_on_ned_box(workspace: Path):
           "no verdict on the head, and the program exits 4",
           result.code == 4 and len(result.runner_calls) == 2 and result.waits == [2]
           and "runner exit code: 0" in record_lines, repr(result))
+    check("the record of that run, which holds the runner's passing SUMMARY line and the "
+          "runner's exit code 0, closes with this program's own exit code, 4",
+          PASSING_SUMMARY_LINE in record_lines and "runner exit code: 0" in record_lines
+          and record_lines[-1:] == ["pull-request-head-test-run exit code: 4"],
+          repr(record_lines))
     check("the record of that run says what differed, by the runner's account and by the "
           "comparison after the run, and quotes the runner's first line",
           no_verdict_line(record_lines)
@@ -750,6 +805,42 @@ def run_cases_on_ned_box(workspace: Path):
           program.run_all_test_suites.commit_and_state(fixture.checkout)
           == (fixture.head, program.RUNNER_STATE_WHEN_TRACKED_FILES_MATCH),
           repr(program.run_all_test_suites.commit_and_state(fixture.checkout)))
+
+    # --- A first line this program cannot read as naming the head ----------------
+    a_line_before = "a line the runner prints before its first line"
+    result = fixture.run(stand_in_runner_behaviour={
+        "lines_printed_before_the_first_line": [a_line_before]})
+    record_lines = (fixture.record("ned-box") or "").splitlines()
+    check("a runner that prints a line before the line naming the head: the line read is "
+          "the first the runner printed, so the passing run is no verdict on the head, "
+          "exit 4, though its second line names the head with its tracked files matching",
+          result.code == 4 and result.stdout == citation_line
+          and len(result.runner_calls) == 1
+          and record_lines.count(fixture.runner_first_line()) == 1
+          and PASSING_SUMMARY_LINE in record_lines and "runner exit code: 0" in record_lines
+          and record_lines[-1:] == ["pull-request-head-test-run exit code: 4"]
+          and no_verdict_line(record_lines)
+          == f"no verdict on commit {fixture.head} — {first_line_does_not_say}; the "
+             f"runner's first line: {a_line_before}", f"{result!r}\n{record_lines!r}")
+    result = fixture.run(stand_in_runner_behaviour={
+        "characters_of_the_commit_named_in_the_first_line": 12})
+    record_lines = (fixture.record("ned-box") or "").splitlines()
+    first_line_naming_12_characters = fixture.runner_first_line().replace(
+        f" at {fixture.head} ", f" at {fixture.head[:12]} ")
+    check("a runner whose first line names the head by the first 12 characters of its "
+          "hash: the full hash is what this program reads, so the passing run is no "
+          "verdict on the head, exit 4",
+          result.code == 4 and result.stdout == citation_line
+          and len(result.runner_calls) == 1
+          and first_line_naming_12_characters != fixture.runner_first_line()
+          and first_line_naming_12_characters in record_lines
+          and PASSING_SUMMARY_LINE in record_lines and "runner exit code: 0" in record_lines
+          and record_lines[-1:] == ["pull-request-head-test-run exit code: 4"]
+          and no_verdict_line(record_lines)
+          == f"no verdict on commit {fixture.head} — {first_line_does_not_say}; the "
+             f"runner's first line: {first_line_naming_12_characters}",
+          f"{result!r}\n{record_lines!r}")
+
     result = fixture.run()
     check("after those runs a run of the checkout put back at the head passes again and "
           "replaces the record",
@@ -768,6 +859,10 @@ def run_cases_on_ned_box(workspace: Path):
           and any(line.startswith("  run-all-test-suites: not run — git lists no")
                   for line in record_lines)
           and result.stdout == citation_line, f"{result!r}\n{record_lines!r}")
+    check("the record of a runner that exits 2 closes with this program's own exit code, "
+          "2, the runner's",
+          record_lines[-1:] == ["pull-request-head-test-run exit code: 2"],
+          repr(record_lines))
     result = fixture.run(exits=(0,), lines=["PASS scripts/a-test.py (0.1s)"])
     record_lines = (fixture.record("ned-box") or "").splitlines()
     check("a runner that exits 0 with no SUMMARY line gave no verdict: the record says so "
@@ -775,12 +870,30 @@ def run_cases_on_ned_box(workspace: Path):
           result.code == 4 and "runner exit code: 0" in record_lines
           and "run-all-test-suites exited 0 and printed no SUMMARY: line, which is no "
               "verdict" in record_lines, f"{result!r}\n{record_lines!r}")
+    check("the record of a runner that exits 0 with no SUMMARY line, which holds the "
+          "runner's exit code 0, closes with this program's own exit code, 4",
+          "runner exit code: 0" in record_lines
+          and record_lines[-1:] == ["pull-request-head-test-run exit code: 4"],
+          repr(record_lines))
     result = fixture.run(exits=(-9,))
     record_lines = (fixture.record("ned-box") or "").splitlines()
     check("a runner killed by a signal gave no verdict either: the record names the "
           "signal and the program exits 4",
           result.code == 4 and "runner exit code: -9" in record_lines
-          and "run-all-test-suites was killed by SIGKILL" in record_lines,
+          and "run-all-test-suites was killed by SIGKILL" in record_lines
+          and record_lines[-1:] == ["pull-request-head-test-run exit code: 4"],
+          f"{result!r}\n{record_lines!r}")
+    result = fixture.run(stand_in_runner_behaviour={
+        "signal_that_kills_the_runner_after_its_last_line": 15})
+    record_lines = (fixture.record("ned-box") or "").splitlines()
+    check("a runner killed by a signal after it printed a passing SUMMARY line gave no "
+          "verdict: exit 4, and the record, which holds that SUMMARY line and the runner's "
+          "exit code -15, closes with this program's own exit code, 4",
+          result.code == 4 and len(result.runner_calls) == 1
+          and PASSING_SUMMARY_LINE in record_lines
+          and "runner exit code: -15" in record_lines
+          and "run-all-test-suites was killed by SIGTERM" in record_lines
+          and record_lines[-1:] == ["pull-request-head-test-run exit code: 4"],
           f"{result!r}\n{record_lines!r}")
 
     # --- The seams, and the runner beside the program ---------------------------
@@ -886,19 +999,14 @@ def run_cases_on_the_mac(workspace: Path):
           and fixture.record_files() == [record_path]
           and result.ssh_calls == [
               "-o BatchMode=yes -o ConnectTimeout=10 nedlern@ned-box "
-              + fixture.write_command("mac")], f"{result!r}\n{record!r}")
-    check("the command that writes the record writes under a name of the run's own in the "
-          "record's directory and renames that file over the record, and leaves no other "
-          "file",
-          f"cat > {fixture.log_store}/pull-request-head-test-runs/mac/.{fixture.head}.txt."
-          f"{THE_MOMENT:%Y%m%dT%H%M%SZ}-{os.getpid()}.partial && mv -f "
-          in fixture.write_command("mac")
-          and f"cat > {fixture.log_store}/{record_path}" not in fixture.write_command("mac")
-          and fixture.record_files() == [record_path], fixture.write_command("mac"))
+              + fixture.write_command("mac", record)], f"{result!r}\n{record!r}")
+    check("the write leaves the record alone in its directory",
+          fixture.record_files() == [record_path], repr(fixture.record_files()))
     check("the Mac's record names the mac, in its first line and beside the logs",
           record is not None and record.startswith(
               "pull-request-head-test-run: mac, started 2026-10-01T03:30:00Z\n")
-          and record.endswith(f"logs: {fixture.logs()} on mac\n"), repr(record))
+          and record.endswith(f"logs: {fixture.logs()} on mac\n"
+                              "pull-request-head-test-run exit code: 0\n"), repr(record))
     check("the citation names ned-box and the mac's directory",
           result.stdout == PASSING_SUMMARY_LINE + "\npull-request-head-test-run: record "
           f"written to nedlern@ned-box:{fixture.log_store}/{record_path}\n", result.stdout)
@@ -915,8 +1023,11 @@ def run_cases_on_the_mac(workspace: Path):
                              ssh_body=SSH_THAT_CANNOT_REACH_NED_BOX)
     target = (f"{unreachable.log_store}/pull-request-head-test-runs/mac/"
               f"{unreachable.head}.txt")
+    local_copy = (unreachable.local_copy().read_text(encoding="utf-8")
+                  if unreachable.local_copy().is_file() else None)
     remedy = ("ssh -o BatchMode=yes -o ConnectTimeout=10 nedlern@ned-box "
-              + shlex.quote(unreachable.write_command("mac", keeps_a_later_record=True))
+              + shlex.quote(unreachable.write_command(
+                  "mac", local_copy or "", keeps_a_record_that_started_no_earlier=True))
               + f" < {unreachable.local_copy()}")
     check("when ned-box cannot be reached the program exits 5, cites nothing and writes "
           "nothing into the log-store",
@@ -930,11 +1041,14 @@ def run_cases_on_the_mac(workspace: Path):
           "Tell the user what the line above says, and the remedy in the line below.\n"
           "When ned-box answers ssh again, write the record by running on this machine: "
           f"{remedy}\n", result.stderr)
-    local_copy = (unreachable.local_copy().read_text(encoding="utf-8")
-                  if unreachable.local_copy().is_file() else None)
     check("the record that could not be written is kept beside the logs",
           local_copy is not None and PASSING_SUMMARY_LINE in local_copy.splitlines(),
           repr(local_copy))
+    check("that record closes with the exit code the run would have exited with, 0, "
+          "while the program, its record not written, exits 5",
+          result.code == 5 and local_copy is not None
+          and local_copy.splitlines()[-1:] == ["pull-request-head-test-run exit code: 0"],
+          f"{result.code} {local_copy!r}")
     # The command as stderr printed it is what the two cases below run.
     remedy_as_printed = result.stderr.rstrip("\n").rpartition(
         "by running on this machine: ")[2]
@@ -965,7 +1079,8 @@ def run_cases_on_the_mac(workspace: Path):
           and unreachable.record_files()
           == [f"pull-request-head-test-runs/mac/{unreachable.head}.txt"]
           and written_by_hand.stderr == "pull-request-head-test-run: not written — the "
-          "record there is of a run that started later.\nLeave that record as it is.\n",
+          "record there is of a run that started in the same second or later.\n"
+          "Leave that record as it is.\n",
           f"{later!r}\n{written_by_hand.returncode} {written_by_hand.stderr}")
 
     earlier = Fixture(workspace / "on-the-mac-with-an-earlier-record")
@@ -995,6 +1110,209 @@ def run_cases_on_the_mac(workspace: Path):
           and FAILING_SUMMARY_LINE in (earlier.record("mac") or "").splitlines(),
           f"{first!r}\n{second!r}\n{written_by_hand.returncode} {written_by_hand.stderr}")
 
+    # --- That command, run after a run started in the same second wrote its record -
+    tie = Fixture(workspace / "on-the-mac-with-two-runs-started-in-one-second")
+    first = tie.run(hostname="a-mac-that-is-not-ned-box",
+                    ssh_body=SSH_THAT_CANNOT_REACH_NED_BOX)
+    remedy_of_the_first_run = first.stderr.rstrip("\n").rpartition(
+        "by running on this machine: ")[2]
+    record_the_first_run_kept = (tie.local_copy().read_text(encoding="utf-8")
+                                 if tie.local_copy().is_file() else "")
+    second = tie.run(hostname="a-mac-that-is-not-ned-box", exits=(1,),
+                     lines=FAILING_RUNNER_LINES, process_number=os.getpid() + 1)
+    record_of_the_second_run = tie.record("mac")
+    scratch = tie.scratch_for_next_run()
+    reachable_again = tie.fake_ssh_directory(scratch, SSH_THAT_RUNS_THE_COMMAND_HERE)
+    environment = program.run_all_test_suites.environment_without_git_redirecting_variables()
+    environment["PATH"] = f"{reachable_again}{os.pathsep}{environment.get('PATH', '')}"
+    written_by_hand = subprocess.run(["/bin/sh", "-c", remedy_of_the_first_run],
+                                     env=environment, capture_output=True, text=True,
+                                     check=False)
+    check("two runs of one head started in the same second, the first passing with its "
+          "record not written, the second failing with its record written: both records "
+          "spell the same started moment, and the first run's record is still beside its "
+          "logs",
+          first.code == 5 and second.code == 1 and record_of_the_second_run is not None
+          and record_the_first_run_kept.splitlines()[:1]
+          == record_of_the_second_run.splitlines()[:1]
+          == ["pull-request-head-test-run: mac, started 2026-10-01T03:30:00Z"]
+          and PASSING_SUMMARY_LINE in record_the_first_run_kept.splitlines()
+          and FAILING_SUMMARY_LINE in record_of_the_second_run.splitlines()
+          and tie.local_copy().is_file()
+          and tie.local_copy().read_text(encoding="utf-8") == record_the_first_run_kept,
+          f"{first!r}\n{second!r}")
+    check("the first run's remedy, run as printed after that, writes nothing, exits 1, "
+          "and says to leave the record as it is: the failing run's record is not replaced "
+          "by the passing run's",
+          written_by_hand.returncode == 1
+          and tie.record("mac") == record_of_the_second_run
+          and record_of_the_second_run is not None
+          and tie.record_files() == [f"pull-request-head-test-runs/mac/{tie.head}.txt"]
+          and written_by_hand.stderr == "pull-request-head-test-run: not written — the "
+          "record there is of a run that started in the same second or later.\n"
+          "Leave that record as it is.\n",
+          f"{written_by_hand.returncode} {written_by_hand.stderr}\n{tie.record('mac')!r}")
+
+
+def run_cases_of_a_record_cut_short_on_the_way(workspace: Path):
+    fixture = Fixture(workspace / "on-the-mac-with-a-record-cut-short")
+    record_path = f"pull-request-head-test-runs/mac/{fixture.head}.txt"
+    earlier = fixture.run(hostname="a-mac-that-is-not-ned-box", moment=AN_EARLIER_MOMENT)
+    record_of_the_earlier_run = fixture.record("mac")
+    for handed_over, ssh_body in (("the first 300 bytes", SSH_THAT_HANDS_OVER_300_BYTES),
+                                  ("nothing", SSH_THAT_HANDS_OVER_NOTHING)):
+        result = fixture.run(hostname="a-mac-that-is-not-ned-box", exits=(1,),
+                             lines=FAILING_RUNNER_LINES, ssh_body=ssh_body)
+        local_copy = (fixture.local_copy().read_text(encoding="utf-8")
+                      if fixture.local_copy().is_file() else "")
+        check(f"when {handed_over} of the record reaches the far side before the input "
+              f"ends, the program exits 5 and says the record was not written, the earlier "
+              f"run's whole record is left byte for byte, and no other file is left",
+              earlier.code == 0 and record_of_the_earlier_run is not None
+              and len(local_copy.encode("utf-8")) > 300
+              and result.code == 5 and result.stdout == ""
+              and fixture.record("mac") == record_of_the_earlier_run
+              and fixture.record_files() == [record_path]
+              and result.stderr.startswith(
+                  "pull-request-head-test-run: the record was not written to "
+                  f"nedlern@ned-box:{fixture.log_store}/{record_path} (ssh nedlern@ned-box "
+                  f"exited 1: pull-request-head-test-run: not written — "
+                  f"{len(local_copy.encode('utf-8'))} bytes of the record were sent and "
+                  f"another count arrived.).\n"), f"{result!r}\n{fixture.record_files()}")
+    remedy_as_printed = result.stderr.rstrip("\n").rpartition(
+        "by running on this machine: ")[2]
+    scratch = fixture.scratch_for_next_run()
+    reachable = fixture.fake_ssh_directory(scratch, SSH_THAT_RUNS_THE_COMMAND_HERE)
+    environment = program.run_all_test_suites.environment_without_git_redirecting_variables()
+    environment["PATH"] = f"{reachable}{os.pathsep}{environment.get('PATH', '')}"
+    cut_short = subprocess.run(
+        ["/bin/sh", "-c", remedy_as_printed.rpartition(" < ")[0]], env=environment,
+        input=local_copy[:300], capture_output=True, text=True, check=False)
+    check("the remedy printed for that run, handed the first 300 bytes of its record, "
+          "writes nothing, exits 1, leaves the earlier run's whole record byte for byte "
+          "and no other file, and says what arrived and what to do",
+          cut_short.returncode == 1 and record_of_the_earlier_run is not None
+          and fixture.record("mac") == record_of_the_earlier_run
+          and fixture.record_files() == [record_path]
+          and cut_short.stderr == "pull-request-head-test-run: not written — "
+          f"{len(local_copy.encode('utf-8'))} bytes of the record were sent and another "
+          "count arrived.\nRun this command again.\n",
+          f"{cut_short.returncode} {cut_short.stderr}")
+    written_by_hand = subprocess.run(["/bin/sh", "-c", remedy_as_printed], env=environment,
+                                     capture_output=True, text=True, check=False)
+    check("the remedy, run as printed once the far side gets the whole record, writes "
+          "that run's whole record over the earlier run's",
+          written_by_hand.returncode == 0 and fixture.record("mac") == local_copy
+          and FAILING_SUMMARY_LINE in local_copy.splitlines()
+          and fixture.record_files() == [record_path],
+          f"{written_by_hand.returncode} {written_by_hand.stderr}")
+    run_a_second_time = subprocess.run(["/bin/sh", "-c", remedy_as_printed], env=environment,
+                                       capture_output=True, text=True, check=False)
+    check("the remedy, run a second time, finds a record of the same started moment, its "
+          "own: it writes nothing, exits 1, and says to leave the record as it is",
+          run_a_second_time.returncode == 1 and fixture.record("mac") == local_copy
+          and fixture.record_files() == [record_path]
+          and run_a_second_time.stderr == "pull-request-head-test-run: not written — the "
+          "record there is of a run that started in the same second or later.\n"
+          "Leave that record as it is.\n",
+          f"{run_a_second_time.returncode} {run_a_second_time.stderr}")
+
+
+def run_cases_of_the_write_command_under_each_shell(workspace: Path):
+    """The command that writes the record, run by itself under /bin/sh and
+    under bash and dash where the machine has them: ned-box's /bin/sh is
+    dash, the Mac's is bash, and `wc -c` pads its count on the Mac."""
+    earlier = "the earlier run's whole record\nwith a second line — and its last\n"
+    later = "the later run's whole record, which is longer\nline two\nline three\n"
+    for shell in ("/bin/sh", "/bin/bash", "/bin/dash"):
+        if not Path(shell).is_file():
+            print(f"SKIP  the write command under {shell}: this machine has no {shell}")
+            continue
+        root = workspace / f"the-write-command-under-{Path(shell).name}"
+        record = root / "pull-request-head-test-runs" / "ned-box" / "a-head.txt"
+
+        def write(text_sent, handed_over, run_name):
+            command = program.write_record_command(
+                str(root), "ned-box", "a-head.txt", run_name, len(text_sent.encode("utf-8")))
+            return subprocess.run([shell, "-c", command], input=handed_over.encode("utf-8"),
+                                  capture_output=True, check=False)
+
+        def files_left():
+            return sorted(os.listdir(record.parent)) if record.parent.is_dir() else None
+
+        first = write(earlier, earlier, "the-earlier-run")
+        check(f"under {shell} a whole record is written: exit 0, the record byte for byte, "
+              f"and no other file",
+              first.returncode == 0 and record.is_file()
+              and record.read_bytes() == earlier.encode("utf-8")
+              and files_left() == ["a-head.txt"], f"{first.returncode} {first.stderr!r}")
+        for handed_over_name, handed_over in (("half the record", later[:20]),
+                                              ("nothing", "")):
+            cut_short = write(later, handed_over, "the-later-run")
+            check(f"under {shell}, {handed_over_name} handed over before the input ends: "
+                  f"exit 1, the earlier whole record left byte for byte, the file the "
+                  f"command wrote to removed, and stderr what arrived and what to do",
+                  cut_short.returncode == 1 and record.is_file()
+                  and record.read_bytes() == earlier.encode("utf-8")
+                  and files_left() == ["a-head.txt"]
+                  and cut_short.stderr.decode("utf-8") == "pull-request-head-test-run: not "
+                  f"written — {len(later.encode('utf-8'))} bytes of the record were sent "
+                  "and another count arrived.\nRun this command again.\n",
+                  f"{cut_short.returncode} {cut_short.stderr!r} {files_left()}")
+        with open(record, "rb") as reader_of_the_earlier_record:
+            replaced = write(later, later, "the-later-run")
+            read_after_the_write = reader_of_the_earlier_record.read()
+        check(f"under {shell} a later whole record replaces the earlier one by a rename: a "
+              f"reader that opened the earlier record before the write still reads the "
+              f"earlier record whole, and the record's path holds the later record",
+              replaced.returncode == 0 and read_after_the_write == earlier.encode("utf-8")
+              and record.read_bytes() == later.encode("utf-8")
+              and files_left() == ["a-head.txt"],
+              f"{replaced.returncode} {replaced.stderr!r} {read_after_the_write!r}")
+
+        # The form the remedy is printed in, which first reads the started
+        # moment of the record it finds.
+        record_there = ("pull-request-head-test-run: ned-box, started 2026-10-01T03:30:00Z\n"
+                        "the record there\n")
+        of_the_remedy = "the whole record the remedy is handed\nits second line\n"
+
+        def remedy(started, there):
+            record.write_bytes(there.encode("utf-8"))
+            command = program.write_record_command(
+                str(root), "ned-box", "a-head.txt", "the-run-of-the-remedy",
+                len(of_the_remedy.encode("utf-8")),
+                unless_the_record_there_started_no_earlier_than=started)
+            return subprocess.run([shell, "-c", command], input=of_the_remedy.encode("utf-8"),
+                                  capture_output=True, check=False)
+
+        for which, started in (("the same second", "2026-10-01T03:30:00Z"),
+                               ("a second later", "2026-10-01T03:29:59Z")):
+            refused = remedy(started, record_there)
+            check(f"under {shell} the remedy of a run started at {started}, when the record "
+                  f"there is of a run started {which}, at 2026-10-01T03:30:00Z: exit 1, "
+                  f"the record there left byte for byte, no other file, and stderr to "
+                  f"leave the record as it is",
+                  refused.returncode == 1
+                  and record.read_bytes() == record_there.encode("utf-8")
+                  and files_left() == ["a-head.txt"]
+                  and refused.stderr.decode("utf-8") == "pull-request-head-test-run: not "
+                  "written — the record there is of a run that started in the same second "
+                  "or later.\nLeave that record as it is.\n",
+                  f"{refused.returncode} {refused.stderr!r} {files_left()}")
+        for which, there in (
+                ("of a run started a second earlier, at 2026-10-01T03:30:00Z", record_there),
+                ("an empty file", ""),
+                ("a file whose first line gives no started moment",
+                 "a first line with no moment\n")):
+            written = remedy("2026-10-01T03:30:01Z", there)
+            check(f"under {shell} the remedy of a run started at 2026-10-01T03:30:01Z, when "
+                  f"the record there is {which}: exit 0, the record replaced by the "
+                  f"remedy's whole record, and no other file",
+                  written.returncode == 0
+                  and record.read_bytes() == of_the_remedy.encode("utf-8")
+                  and files_left() == ["a-head.txt"],
+                  f"{written.returncode} {written.stderr!r} {files_left()}")
+
 
 def wait_for_another_process_until(condition) -> bool:
     """Whether the condition came true within 10 seconds, asked 20 times a
@@ -1011,9 +1329,12 @@ def run_cases_of_two_writers_at_once(workspace: Path):
     the first writer is held half way through its record while the second
     writes all of its own."""
     root = workspace / "two-writers-at-once"
-    first = program.write_record_command(str(root), "ned-box", "a-head.txt", "the-first-run")
-    second = program.write_record_command(str(root), "ned-box", "a-head.txt",
-                                          "the-second-run")
+    first = program.write_record_command(
+        str(root), "ned-box", "a-head.txt", "the-first-run",
+        len("the first writer's first half\nthe first writer's second half\n"))
+    second = program.write_record_command(
+        str(root), "ned-box", "a-head.txt", "the-second-run",
+        len("the second writer's whole record\n"))
     record = root / "pull-request-head-test-runs" / "ned-box" / "a-head.txt"
     partial_of_the_first = record.with_name(".a-head.txt.the-first-run.partial")
     writer = subprocess.Popen(["/bin/sh", "-c", first], stdin=subprocess.PIPE, text=True,
@@ -1150,6 +1471,8 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     workspace_root = Path(temporary_directory).resolve()
     run_cases_on_ned_box(workspace_root)
     run_cases_on_the_mac(workspace_root)
+    run_cases_of_a_record_cut_short_on_the_way(workspace_root)
+    run_cases_of_the_write_command_under_each_shell(workspace_root)
     run_cases_of_two_writers_at_once(workspace_root)
     run_cases_as_a_program(workspace_root)
     run_log_store_readme_cases()
