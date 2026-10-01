@@ -984,9 +984,9 @@ pull request rather than a fact in the history).
 **One consequence, named so it is not rediscovered.** Under shape A a fix
 round on a gate-opened pull request is not "a fresh agent's commit on top
 of the frozen head", because the head is a commit the gate composed. It is
-a second check-in through the gate; whether that updates the same pull
-request with a new candidate commit or opens a second one is a rule to
-write when the first such fix happens, not here.
+a second check-in through the gate, which opens a second pull request:
+the rule is written in the specification § Check-in through a pull request
+(designed 2026-10-01), the bullet "A fix round".
 
 Shape B and gate-merges-itself remain available under shape 2 (below) and
 nothing in this ruling forecloses them. Shape A and shape B are the pull
@@ -1000,7 +1000,7 @@ here; slice 9's owner is unruled, and this table proposes no answer to it.
 
 | Slice | Delivers | Spec tests | Retires |
 |---|---|---|---|
-| 7 | The gate opens a pull request instead of pushing to main (ruled 2026-08-29). Today `attempt_push` pushes `main-gatekeeper-candidate:main` directly. **Ruled 2026-09-15: shape A** — the pull request carries the single candidate commit and the merge lane merges it as a merge commit; § What the gate's pull request carries and how it merges — ruled 2026-09-15 | none yet | `attempt_push`'s direct push to main |
+| 7 | The gate opens a pull request instead of pushing to main (ruled 2026-08-29). Today `attempt_push` pushes `main-gatekeeper-candidate:main` directly. **Ruled 2026-09-15: shape A** — the pull request carries the single candidate commit and the merge lane merges it as a merge commit; § What the gate's pull request carries and how it merges — ruled 2026-09-15. Designed 2026-10-01: the specification § Check-in through a pull request | none yet; owed: the pull-request forms of T2, T4, T7 and T8, which still describe the push | `attempt_push`'s direct push to main |
 | 8 | The per-file staleness report (user-ruled 2026-08-31; in full below, § The per-file staleness report — slice 8's requirement): for every declared path, whether main has changed it since the base commit, how many commits, the latest pull request — a report, never a refusal | none yet | the accepted interim in which nothing checks a path against `origin/main` at push or pull-request time |
 | 9 | The check battery, the mechanical checks that run at check-in. **Ownership unruled** since 2026-08-14 (§ Open item 3 below; PR [gatekeeper slice plan: an open question on whether this build owns the check battery](https://github.com/nedschorus/nedschorus/pull/63)): whether this build owns it or the toolchain plan's Phase 1 binding is corrected is the user's ruling | none yet | unruled |
 | 10 | The C2 move: the gate runs from the dedicated Unix user, on the deployed root-owned copy, pushing on the `ned-git-gatekeeper` token rather than on its caller's credential (specification § The credential and enforcement, the Unix-user boundary bullet) | none yet | pushing on whatever credential the caller's environment carries |
