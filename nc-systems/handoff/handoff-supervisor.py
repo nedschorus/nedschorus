@@ -281,6 +281,10 @@ WRITTEN_BY_SESSION_UNKNOWN_VALUE = "unknown"
 # replaced (2026-08-31) said to catch up with origin/main and resolve
 # conflicts, and on 2026-09-15, thirty seconds after reading it, a seat merged
 # main into a branch whose pull request (#387) was under review.
+# Its last sentence, sending an open pull request that conflicts with main to
+# a hand-merge, was added 2026-09-30 (walk open-items-this-seat-holds-2026-09-24,
+# items 22 to 24, "y"): the user ruled on 2026-09-21 that a conflict, which no
+# commit on top can clear, is cleared by a hand-merge, and CLAUDE.md now says so.
 BRANCH_STATE_INSTRUCTION = (
     " — If this branch has never been pushed, rebase it onto origin/main "
     "before your first substantive action and rerun the tests for what you "
@@ -288,7 +292,9 @@ BRANCH_STATE_INSTRUCTION = (
     "branch from origin/main. If this seat has "
     "open pull requests, check their state with `gh`: merge-lane-2 reviews "
     "and merges them; when one has a review with findings, dispatch a forked "
-    "subagent to fix it — never extend a head you've already announced."
+    "subagent to fix it — never extend a head you've already announced. When "
+    "one conflicts with main, clear the conflict with the hand-merge that "
+    "scripts/branch-conflict-check.py describes."
 )
 
 # Where the overview of the system in nc-systems/<system>/ lives. No map from

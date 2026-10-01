@@ -5,7 +5,13 @@ open pull request, and name that pull request and the remedy in the refusal.
 The rule (CLAUDE.md, ruled 2026-09-08): a head is frozen the moment it is
 pushed, because that is when its review is commissioned. A fix — for a
 changes-requested finding or one the author found themselves — is a fresh
-commit on top of the frozen head, never an amend and never a rewrite.
+commit on top of the frozen head, never an amend and never a rewrite. The one
+exception is a conflict with main, which no commit on top can clear: it is
+cleared by a hand-merge (CLAUDE.md, "How a change reaches main"; user-ruled
+2026-09-21, worded 2026-09-30 in walk open-items-this-seat-holds-2026-09-24,
+items 22 to 24). The refusal used to send "any fix for a conflict with main"
+to a new commit on top, the one move that cannot clear it; it now has a line
+of its own that sends a conflict to the hand-merge.
 
 The incident this guard is built from (2026-09-17): the cold-read-research
 seat's pull request "Fast read: say when the cold-read-full-run is still
@@ -182,8 +188,10 @@ DENY_REASON_TEMPLATE = (
     "If you are force-pushing to restore what an earlier force push replaced, "
     "stop: leave the branch as it is and message merge-lane (find its current "
     "name with ListAgents).\n"
-    "Otherwise, put your change, including any fix for a conflict with main, "
-    "in a new commit on top of the pushed branch, and push without --force.\n"
+    "Otherwise, put your change in a new commit on top of the pushed branch, "
+    "and push without --force.\n"
+    "If the branch conflicts with main, clear the conflict with the hand-merge "
+    "that scripts/branch-conflict-check.py describes, and push without --force.\n"
     "If you already rebased or amended it locally, keep that work on another "
     "branch (git branch {branch}-rewritten), go back to the pushed head (git "
     "switch -C {branch} origin/{branch}), and redo your change as a new "

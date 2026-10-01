@@ -188,6 +188,15 @@ check("D5 'stop rather than reverse' is the refusal's SECOND line",
 check("the refusal teaches the remedy: a new commit on top, pushed without --force",
       reason and "new commit on top" in reason and "without --force" in reason,
       reason)
+# A conflict with main cannot be cleared by a commit on top; the refusal sends
+# it to the hand-merge on a line of its own (CLAUDE.md, "How a change reaches
+# main", worded 2026-09-30). Pinned by equality on the line.
+check("the refusal sends a conflict with main to the hand-merge, as a line of its own",
+      "If the branch conflicts with main, clear the conflict with the hand-merge "
+      "that scripts/branch-conflict-check.py describes, and push without --force."
+      in lines, reason)
+check("the refusal no longer sends a fix for a conflict to a new commit on top",
+      reason and "including any fix for a conflict with main" not in reason, reason)
 check("the refusal names the escape hatch",
       reason and guard.ESCAPE_HATCH_ASSIGNMENT in reason, reason)
 # The incident's own shape: the agent had ALREADY rebased locally, so a plain

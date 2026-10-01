@@ -341,8 +341,18 @@ with tempfile.TemporaryDirectory() as temporary_directory:
           "  scripts your tests run against (1): scripts/advance-three.py\n"
           in agent_text(result), agent_text(result))
     check("and told to leave it and start the next topic from main",
-          "Do not rebase, merge or amend it" in agent_text(result)
+          "Do not rebase or amend it" in agent_text(result)
           and "git checkout -b <name> origin/main" in agent_text(result), agent_text(result))
+    # A conflict with main is the one case a commit on top cannot clear; the
+    # pushed-branch advice sends it to the hand-merge (CLAUDE.md, "How a change
+    # reaches main", worded 2026-09-30).
+    check("a pushed branch is told how to clear a conflict with main, byte for byte",
+          "If it conflicts with main, clear the conflict with the hand-merge that "
+          "scripts/branch-conflict-check.py describes." in agent_text(result),
+          agent_text(result))
+    check("the pushed head's status says how a conflict is cleared, byte for byte",
+          "(frozen: a fix is a new commit on top, never an amend; a conflict with "
+          "main is cleared by a hand-merge)" in agent_text(result), agent_text(result))
     check("the pushed-branch note ends by saying it is not for the user, byte for byte",
           agent_text(result).endswith("\n" + NOT_FOR_THE_USER_LINE), agent_text(result))
     check("the user hears nothing", display_text(result) == "", display_text(result))
@@ -406,7 +416,7 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     git(["push", "-q", "origin", "flip"], flip)
     pushed_now = run_catch_up(["--cwd", str(flip)])
     check("pushing a never-pushed branch re-tells once, with the advice flipped",
-          "Do not rebase, merge or amend it" in agent_text(pushed_now), agent_text(pushed_now))
+          "Do not rebase or amend it" in agent_text(pushed_now), agent_text(pushed_now))
 
     # Detached HEAD: its own advice, never moved.
     detached = tmp / "detached-worktree"
