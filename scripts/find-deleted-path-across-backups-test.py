@@ -2464,60 +2464,76 @@ with tempfile.TemporaryDirectory() as tmp:
     env = {k: v for k, v in os.environ.items()
            if k not in ("GIT_DIR", "GIT_WORK_TREE") and not k.startswith("FIND_DELETED_PATH_")}
     env["PATH"] = str(fake_bin) + os.pathsep + env.get("PATH", "")
-    child = subprocess.Popen(
-        [sys.executable, str(MODULE_PATH)] + streaming_child_options,
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env, start_new_session=True)
-    seen = b""
-    deadline = time.monotonic() + 20
-    while b"git reflog" not in seen and time.monotonic() < deadline:
-        ready, _, _ = select.select([child.stdout], [], [], 0.5)
-        if ready:
-            chunk = os.read(child.stdout.fileno(), 65536)
-            if not chunk:
-                break
-            seen += chunk
-    still_searching = child.poll() is None
-    os.killpg(child.pid, signal.SIGTERM)
-    rest, _ = child.communicate(timeout=30)
-    printed = (seen + rest).decode("utf-8", "replace")
-    check("streaming, real pipe: git's FOUND section is readable while the log-store's ssh is still hanging",
-          still_searching and re.search(r"^git\s+FOUND$", seen.decode("utf-8", "replace"), re.M) is not None,
-          "still searching: %s; read before the kill: %r" % (still_searching, seen))
-    check("streaming, real pipe: a run killed mid-search keeps every section that had answered, and no summary",
-          printed.startswith("Searching every history this fleet keeps for: a/b.md")
-          and re.search(r"^git\s+FOUND$", printed, re.M) and re.search(r"^git reflog\s+NOT FOUND$", printed, re.M)
-          and "Recoverable from" not in printed,
-          repr(printed))
+    # Checked before anything is started. An edit that drops one of these
+    # options leaves the child, and main() below, the machine's own default, and
+    # on the box both read the real one before any check after them could fail.
+    # So nothing below runs unless every root the command line names is one this
+    # case made or one that exists on neither machine.
+    streaming_child_roots = {flag: (streaming_child_options[streaming_child_options.index(flag) + 1]
+                                    if flag in streaming_child_options else None)
+                             for flag in ("--transcripts-dir", "--log-store-root", "--timeshift-snapshot-root")}
+    streaming_child_roots_pinned = (
+        streaming_child_roots["--transcripts-dir"] == str(Path(tmp, "transcripts"))
+        and all(streaming_child_roots[flag] is not None and not os.path.exists(streaming_child_roots[flag])
+                for flag in ("--log-store-root", "--timeshift-snapshot-root")))
+    check("streaming child's command line, before it is started: its own transcripts directory, and a log-store "
+          "and Timeshift root that exist on neither machine",
+          streaming_child_roots_pinned, "roots: %s" % streaming_child_roots)
+    if streaming_child_roots_pinned:
+        child = subprocess.Popen(
+            [sys.executable, str(MODULE_PATH)] + streaming_child_options,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env, start_new_session=True)
+        seen = b""
+        deadline = time.monotonic() + 20
+        while b"git reflog" not in seen and time.monotonic() < deadline:
+            ready, _, _ = select.select([child.stdout], [], [], 0.5)
+            if ready:
+                chunk = os.read(child.stdout.fileno(), 65536)
+                if not chunk:
+                    break
+                seen += chunk
+        still_searching = child.poll() is None
+        os.killpg(child.pid, signal.SIGTERM)
+        rest, _ = child.communicate(timeout=30)
+        printed = (seen + rest).decode("utf-8", "replace")
+        check("streaming, real pipe: git's FOUND section is readable while the log-store's ssh is still hanging",
+              still_searching and re.search(r"^git\s+FOUND$", seen.decode("utf-8", "replace"), re.M) is not None,
+              "still searching: %s; read before the kill: %r" % (still_searching, seen))
+        check("streaming, real pipe: a run killed mid-search keeps every section that had answered, and no summary",
+              printed.startswith("Searching every history this fleet keeps for: a/b.md")
+              and re.search(r"^git\s+FOUND$", printed, re.M) and re.search(r"^git reflog\s+NOT FOUND$", printed, re.M)
+              and "Recoverable from" not in printed,
+              repr(printed))
 
-    # The same command line as the child would run it on the box and never
-    # killed: main() in this process, with the child's environment and the
-    # box's answer to running_on_ned_box(), and a runner that records every
-    # command and starts none, so this check reaches no backup either.
-    streaming_child_commands_as_on_the_box = FakeRunner([])
-    environment_before_the_streaming_child_check = dict(os.environ)
-    running_on_ned_box_before_the_streaming_child_check = finder.running_on_ned_box
-    os.environ.clear()
-    os.environ.update(env)
-    finder.running_on_ned_box = lambda: True
-    try:
-        run_main(streaming_child_options, streaming_child_commands_as_on_the_box)
-    finally:
-        finder.running_on_ned_box = running_on_ned_box_before_the_streaming_child_check
+        # The same command line as the child would run it on the box and never
+        # killed: main() in this process, with the child's environment and the
+        # box's answer to running_on_ned_box(), and a runner that records every
+        # command and starts none, so this check reaches no backup either.
+        streaming_child_commands_as_on_the_box = FakeRunner([])
+        environment_before_the_streaming_child_check = dict(os.environ)
+        running_on_ned_box_before_the_streaming_child_check = finder.running_on_ned_box
         os.environ.clear()
-        os.environ.update(environment_before_the_streaming_child_check)
-    commands_the_child_would_start = streaming_child_commands_as_on_the_box.calls
-    timeshift_probes = [c for c in commands_the_child_would_start if c.startswith("bash -c ")]
-    real_roots_named = [root for root in (finder.DEFAULT_TIMESHIFT_SNAPSHOT_ROOT, finder.DEFAULT_LOG_STORE_ROOT,
-                                          os.path.expanduser(finder.DEFAULT_TRANSCRIPTS_DIR))
-                        if any(root in c for c in commands_the_child_would_start)]
-    check("streaming child's command line: on the box and never killed, it would search Timeshift only under a root "
-          "that exists on neither machine, and names no real Timeshift, log-store or transcripts root",
-          len(timeshift_probes) == 1
-          and ("ROOT=" + shlex.quote(no_timeshift_snapshot_root_on_either_machine)) in timeshift_probes[0]
-          and not os.path.exists(no_timeshift_snapshot_root_on_either_machine)
-          and not os.path.exists(NO_LOG_STORE_ON_THIS_MACHINE)
-          and not real_roots_named,
-          "real roots named: %s; commands: %s" % (real_roots_named, commands_the_child_would_start))
+        os.environ.update(env)
+        finder.running_on_ned_box = lambda: True
+        try:
+            run_main(streaming_child_options, streaming_child_commands_as_on_the_box)
+        finally:
+            finder.running_on_ned_box = running_on_ned_box_before_the_streaming_child_check
+            os.environ.clear()
+            os.environ.update(environment_before_the_streaming_child_check)
+        commands_the_child_would_start = streaming_child_commands_as_on_the_box.calls
+        timeshift_probes = [c for c in commands_the_child_would_start if c.startswith("bash -c ")]
+        real_roots_named = [root for root in (finder.DEFAULT_TIMESHIFT_SNAPSHOT_ROOT, finder.DEFAULT_LOG_STORE_ROOT,
+                                              os.path.expanduser(finder.DEFAULT_TRANSCRIPTS_DIR))
+                            if any(root in c for c in commands_the_child_would_start)]
+        check("streaming child's command line: on the box and never killed, it would search Timeshift only under a root "
+              "that exists on neither machine, and names no real Timeshift, log-store or transcripts root",
+              len(timeshift_probes) == 1
+              and ("ROOT=" + shlex.quote(no_timeshift_snapshot_root_on_either_machine)) in timeshift_probes[0]
+              and not os.path.exists(no_timeshift_snapshot_root_on_either_machine)
+              and not os.path.exists(NO_LOG_STORE_ON_THIS_MACHINE)
+              and not real_roots_named,
+              "real roots named: %s; commands: %s" % (real_roots_named, commands_the_child_would_start))
 
 
 # --------------------------------------------------------------------------
