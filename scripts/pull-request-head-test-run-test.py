@@ -17,7 +17,9 @@ case of two runs started in one second gives the second run a process number
 of its own, as two real runs have. The far side of an ssh whose client has
 died is played by the command run with stderr a pipe whose reader is gone, and
 a preferred encoding that is not UTF-8 by a `locale` the program is handed for
-one run. The one
+one run. A writer that was killed part way is played by a file named with a
+process number no process has, and two writers of one run at once by holding
+the first writer's input while the second starts. The one
 case that passes no --test-suite-runner-program replaces the function that
 runs the runner, so the real runner beside the program is named and never
 started. The wait passed in counts its calls and stops a case that waits more
@@ -85,6 +87,9 @@ SSH_THAT_HANDS_OVER_NOTHING = '/bin/sh -c "$1" < /dev/null'
 # to its end here, and the exit status that comes back is the client's own.
 SSH_THAT_RUNS_THE_COMMAND_HERE_AND_THEN_FAILS = (
     '/bin/sh -c "$1"\necho "ssh: the connection was lost" >&2\nexit 255')
+# Above every process number either machine gives out: Linux stops at 2^22,
+# macOS at 99998. `kill -0` of it fails, as of a writer that no longer runs.
+A_PROCESS_NUMBER_NO_PROCESS_HAS = 999999999
 SSH_THAT_CANNOT_REACH_NED_BOX = (
     "echo 'ssh: connect to host ned-box port 22: No route to host' >&2\n"
     "echo 'a second line' >&2\nexit 255")
@@ -324,25 +329,33 @@ class Fixture:
         in. No path of a fixture needs quoting. The count is the record's
         UTF-8 length in both forms: where this suite runs the preferred
         encoding is UTF-8, and run_cases_of_the_two_byte_counts tells the two
-        counts apart."""
+        counts apart. `$$` stands in the text as the program wrote it: the
+        shell that runs the command makes its own process number of it."""
         bytes_sent = len(record.encode("utf-8"))
         directory = f"{self.log_store}/pull-request-head-test-runs/{machine}"
         record_path = f"{directory}/{self.head}.txt"
-        partial = (f"{directory}/.{self.head}.txt.{moment:%Y%m%dT%H%M%SZ}-{os.getpid()}"
-                   f".partial")
+        files_of_the_run = (f"{directory}/.{self.head}.txt.{moment:%Y%m%dT%H%M%SZ}-"
+                            f"{os.getpid()}")
+        partial = '"$partial"'
+        sweeps = ""
         keeps = ""
         if keeps_a_record_that_started_no_earlier:
-            keeps = (f"if [ -e {record_path} ] && cmp -s {partial} {record_path}; then "
+            sweeps = (f"{{ for left in {files_of_the_run}.*.partial; do "
+                      f"writer=${{left%.partial}}; kill -0 \"${{writer##*.}}\" 2>/dev/null "
+                      f"|| rm -f \"$left\"; done; }} && ")
+            keeps = (f"if [ -e {record_path} ] && "
+                     f"! [ \"$(sed -n '1s/^.*, started //p' {record_path})\" "
+                     f"\\< {moment:%Y-%m-%dT%H:%M:%SZ} ]; then "
+                     f"if cmp -s {partial} {record_path}; then "
                      f"rm -f {partial}; echo 'pull-request-head-test-run: already written: "
                      f"the record there is the whole record of this run, byte for byte.'; "
-                     f"echo 'Tell the user the record is written.'; exit 0; fi && "
-                     f"if [ -e {record_path} ] && "
-                     f"! [ \"$(sed -n '1s/^.*, started //p' {record_path})\" "
-                     f"\\< {moment:%Y-%m-%dT%H:%M:%SZ} ]; then rm -f {partial}; echo "
+                     f"echo 'Tell the user the record is written.'; exit 0; fi; "
+                     f"rm -f {partial}; echo "
                      f"'pull-request-head-test-run: not written: the record there is of a "
                      f"run that started in the same second or later.' >&2; echo 'Leave that "
                      f"record as it is.' >&2; exit 1; fi && ")
-        return (f"mkdir -p {directory} && cat > {partial} && "
+        return (f"partial={files_of_the_run}.$$.partial && mkdir -p {directory} && "
+                f"{sweeps}cat > {partial} && "
                 f"{{ [ \"$(wc -c < {partial})\" -eq {bytes_sent} ] || {{ rm -f {partial}; echo "
                 f"'pull-request-head-test-run: not written: {bytes_sent} bytes of the "
                 f"record were sent and another count arrived.' >&2; echo 'Run this command "
@@ -1292,19 +1305,23 @@ def run_cases_of_the_write_command_under_each_shell(workspace: Path):
         def files_left():
             return sorted(os.listdir(record.parent)) if record.parent.is_dir() else None
 
-        def run_with_no_reader_on_stderr(command, handed_over):
-            """The command run with stderr a pipe whose reader is gone, as on
-            the far side of an ssh whose client has died: the shell's first
-            write there kills the shell."""
+        def run_with_no_reader_on(stream, command, handed_over):
+            """The command run with stdout or stderr a pipe whose reader is
+            gone, as on the far side of an ssh whose client has died: the
+            shell's first write there kills the shell."""
             read_end, write_end = os.pipe()
             os.close(read_end)
             try:
                 return subprocess.run([shell, "-c", command],
                                       input=handed_over.encode("utf-8"),
-                                      stdout=subprocess.DEVNULL, stderr=write_end,
+                                      **{"stdout": subprocess.DEVNULL,
+                                         "stderr": subprocess.DEVNULL, stream: write_end},
                                       check=False)
             finally:
                 os.close(write_end)
+
+        def run_with_no_reader_on_stderr(command, handed_over):
+            return run_with_no_reader_on("stderr", command, handed_over)
 
         first = write(earlier, earlier, "the-earlier-run")
         check(f"under {shell} a whole record is written: exit 0, the record byte for byte, "
@@ -1377,6 +1394,8 @@ def run_cases_of_the_write_command_under_each_shell(workspace: Path):
                         "the record there\n")
         of_the_remedy = ("pull-request-head-test-run: ned-box, started 2026-10-01T03:30:01Z\n"
                          "the whole record the remedy is handed\n")
+        of_a_later_run = ("pull-request-head-test-run: ned-box, started 2026-10-01T03:30:02Z\n"
+                          "a later run's whole record\n")
 
         def remedy_command(started):
             return program.write_record_command(
@@ -1473,6 +1492,152 @@ def run_cases_of_the_write_command_under_each_shell(workspace: Path):
               and record.read_bytes() == record_there.encode("utf-8")
               and files_left() == ["a-head.txt"],
               f"{refused.returncode} {files_left()}")
+        record.write_bytes(of_the_remedy.encode("utf-8"))
+        told_nobody = run_with_no_reader_on(
+            "stdout", remedy_command("2026-10-01T03:30:01Z"), of_the_remedy)
+        check(f"under {shell} the remedy of a run whose whole record is in place, with no "
+              f"reader on stdout: not exit 0, the record there left byte for byte, and the "
+              f"file the command wrote to removed before the command says anything",
+              told_nobody.returncode != 0
+              and record.read_bytes() == of_the_remedy.encode("utf-8")
+              and files_left() == ["a-head.txt"],
+              f"{told_nobody.returncode} {files_left()}")
+        record.write_bytes(b"")
+        fed_nothing = subprocess.run(
+            [shell, "-c", remedy_command("2026-10-01T03:30:01Z")], input=b"",
+            capture_output=True, check=False)
+        check(f"under {shell} the remedy handed nothing, when an empty file is at the "
+              f"record's path: exit 1 on the count, the empty file left, no other file, "
+              f"nothing on stdout, and stderr what arrived and what to do: the count is "
+              f"taken before the record there is looked at, so two empty files are not read "
+              f"as the record already written",
+              fed_nothing.returncode == 1 and record.read_bytes() == b""
+              and files_left() == ["a-head.txt"] and fed_nothing.stdout == b""
+              and fed_nothing.stderr.decode("utf-8") == "pull-request-head-test-run: not "
+              f"written: {len(of_the_remedy.encode('utf-8'))} bytes of the record were sent "
+              "and another count arrived.\nRun this command again.\n",
+              f"{fed_nothing.returncode} {fed_nothing.stdout!r} {fed_nothing.stderr!r} "
+              f"{files_left()}")
+        record.write_bytes(of_a_later_run.encode("utf-8"))
+        cut_short_beside_a_later_record = subprocess.run(
+            [shell, "-c", remedy_command("2026-10-01T03:30:01Z")],
+            input=of_the_remedy[:20].encode("utf-8"), capture_output=True, check=False)
+        check(f"under {shell} the remedy handed half its record, when the record there is "
+              f"of a later run: exit 1, the record there left byte for byte, no other file, "
+              f"and stderr what arrived and what to do, not to leave the record there: the "
+              f"count is taken before the record there is looked at",
+              cut_short_beside_a_later_record.returncode == 1
+              and record.read_bytes() == of_a_later_run.encode("utf-8")
+              and files_left() == ["a-head.txt"]
+              and cut_short_beside_a_later_record.stdout == b""
+              and cut_short_beside_a_later_record.stderr.decode("utf-8")
+              == "pull-request-head-test-run: not "
+              f"written: {len(of_the_remedy.encode('utf-8'))} bytes of the record were sent "
+              "and another count arrived.\nRun this command again.\n",
+              f"{cut_short_beside_a_later_record.returncode} "
+              f"{cut_short_beside_a_later_record.stderr!r} {files_left()}")
+        # Two copies of one remedy at once: the other copy puts the run's
+        # record in place after this copy has taken its record and before it
+        # reads the record there. The other copy's rename is played by a `sed`
+        # first on PATH that puts the record in place and then runs the real
+        # `sed`: the command's first look at the record there is its `sed`.
+        record.write_bytes(record_there.encode("utf-8"))
+        the_other_copy_renames = workspace / f"a-sed-under-{Path(shell).name}"
+        the_other_copy_renames.mkdir()
+        record_of_the_other_copy = the_other_copy_renames / "the-record-of-the-run"
+        record_of_the_other_copy.write_bytes(of_the_remedy.encode("utf-8"))
+        (the_other_copy_renames / "sed").write_text(
+            "#!/bin/sh\n"
+            f"cp {shlex.quote(str(record_of_the_other_copy))} {shlex.quote(str(record))}\n"
+            f"exec {shlex.quote(shutil.which('sed'))} \"$@\"\n", encoding="utf-8")
+        (the_other_copy_renames / "sed").chmod(0o755)
+        beside_the_other_copy = subprocess.run(
+            [shell, "-c", remedy_command("2026-10-01T03:30:01Z")],
+            env={**os.environ, "PATH": f"{the_other_copy_renames}{os.pathsep}"
+                                       f"{os.environ.get('PATH', '')}"},
+            input=of_the_remedy.encode("utf-8"), capture_output=True, check=False)
+        check(f"under {shell} the remedy, when another copy of it puts the run's whole "
+              f"record in place after this copy has taken its record and before this copy "
+              f"reads the record there: exit 0, the record there left byte for byte, no "
+              f"other file, nothing on stderr, and stdout that the record is written",
+              beside_the_other_copy.returncode == 0
+              and record.read_bytes() == of_the_remedy.encode("utf-8")
+              and files_left() == ["a-head.txt"]
+              and beside_the_other_copy.stderr == b""
+              and beside_the_other_copy.stdout.decode("utf-8") == already_written,
+              f"{beside_the_other_copy.returncode} {beside_the_other_copy.stdout!r} "
+              f"{beside_the_other_copy.stderr!r} {files_left()}")
+        record.unlink()
+        with_no_record_there = subprocess.run(
+            [shell, "-c", remedy_command("2026-10-01T03:30:01Z")],
+            input=of_the_remedy.encode("utf-8"), capture_output=True, check=False)
+        check(f"under {shell} the remedy when no record is there: exit 0, the remedy's whole "
+              f"record written, no other file, and nothing on stdout or stderr",
+              with_no_record_there.returncode == 0 and record.is_file()
+              and record.read_bytes() == of_the_remedy.encode("utf-8")
+              and files_left() == ["a-head.txt"]
+              and with_no_record_there.stdout == b"" and with_no_record_there.stderr == b"",
+              f"{with_no_record_there.returncode} {with_no_record_there.stdout!r} "
+              f"{with_no_record_there.stderr!r} {files_left()}")
+
+        # What a writer killed part way left. The root's name needs quoting.
+        quoted_root = workspace / f"a root with a space and a ' quote under {Path(shell).name}"
+        quoted_record = quoted_root / "pull-request-head-test-runs" / "ned-box" / "a-head.txt"
+        quoted_record.parent.mkdir(parents=True)
+
+        def files_left_under_the_quoted_root():
+            return sorted(os.listdir(quoted_record.parent))
+
+        def remedy_under_the_quoted_root(handed_over):
+            return subprocess.run(
+                [shell, "-c", program.write_record_command(
+                    str(quoted_root), "ned-box", "a-head.txt", "the-run-of-the-remedy",
+                    len(of_the_remedy.encode("utf-8")),
+                    unless_the_record_there_started_no_earlier_than="2026-10-01T03:30:01Z")],
+                input=handed_over.encode("utf-8"), capture_output=True, check=False)
+
+        left_by_a_writer_that_no_longer_runs = quoted_record.with_name(
+            f".a-head.txt.the-run-of-the-remedy.{A_PROCESS_NUMBER_NO_PROCESS_HAS}.partial")
+        of_a_writer_that_still_runs = quoted_record.with_name(
+            f".a-head.txt.the-run-of-the-remedy.{os.getpid()}.partial")
+        left_by_a_writer_of_another_run = quoted_record.with_name(
+            f".a-head.txt.another-run.{A_PROCESS_NUMBER_NO_PROCESS_HAS}.partial")
+        for left in (left_by_a_writer_that_no_longer_runs, of_a_writer_that_still_runs,
+                     left_by_a_writer_of_another_run):
+            left.write_bytes(b"part of a record\n")
+        quoted_record.write_bytes(record_there.encode("utf-8"))
+        swept = remedy_under_the_quoted_root(of_the_remedy)
+        check(f"under {shell}, in a log-store whose root's name holds a space and a single "
+              f"quote, the remedy removes the file a writer of its run left whose shell no "
+              f"longer runs, leaves the file of a writer of its run whose process still runs "
+              f"and the file a writer of another run left, and writes its whole record: "
+              f"exit 0",
+              swept.returncode == 0 and swept.stderr == b""
+              and quoted_record.read_bytes() == of_the_remedy.encode("utf-8")
+              and files_left_under_the_quoted_root() == sorted(
+                  [left_by_a_writer_of_another_run.name, of_a_writer_that_still_runs.name,
+                   "a-head.txt"])
+              and of_a_writer_that_still_runs.read_bytes() == b"part of a record\n"
+              and left_by_a_writer_of_another_run.read_bytes() == b"part of a record\n",
+              f"{swept.returncode} {swept.stderr!r} {files_left_under_the_quoted_root()}")
+        # Gone already where the command removed more than its own run's dead
+        # writers' files: the case above has said so.
+        of_a_writer_that_still_runs.unlink(missing_ok=True)
+        left_by_a_writer_of_another_run.unlink(missing_ok=True)
+        left_by_a_writer_that_no_longer_runs.write_bytes(b"part of a record\n")
+        quoted_record.write_bytes(record_there.encode("utf-8"))
+        cut_short = remedy_under_the_quoted_root(of_the_remedy[:20])
+        check(f"under {shell}, in that log-store, the remedy handed half its record: exit 1, "
+              f"the record there left byte for byte, and no other file left: neither the "
+              f"file the command wrote to nor the file a writer that no longer runs left",
+              cut_short.returncode == 1
+              and quoted_record.read_bytes() == record_there.encode("utf-8")
+              and files_left_under_the_quoted_root() == ["a-head.txt"]
+              and cut_short.stderr.decode("utf-8") == "pull-request-head-test-run: not "
+              f"written: {len(of_the_remedy.encode('utf-8'))} bytes of the record were sent "
+              "and another count arrived.\nRun this command again.\n",
+              f"{cut_short.returncode} {cut_short.stderr!r} "
+              f"{files_left_under_the_quoted_root()}")
 
 
 def run_cases_of_what_the_write_command_holds():
@@ -1561,9 +1726,10 @@ def run_cases_of_two_writers_at_once(workspace: Path):
         str(root), "ned-box", "a-head.txt", "the-second-run",
         len("the second writer's whole record\n"))
     record = root / "pull-request-head-test-runs" / "ned-box" / "a-head.txt"
-    partial_of_the_first = record.with_name(".a-head.txt.the-first-run.partial")
     writer = subprocess.Popen(["/bin/sh", "-c", first], stdin=subprocess.PIPE, text=True,
                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    # The shell that runs the command is the process started here.
+    partial_of_the_first = record.with_name(f".a-head.txt.the-first-run.{writer.pid}.partial")
     try:
         writer.stdin.write("the first writer's first half\n")
         writer.stdin.flush()
@@ -1582,8 +1748,9 @@ def run_cases_of_two_writers_at_once(workspace: Path):
         if writer.poll() is None:
             writer.kill()
             writer.wait()
-    check("a record half written is not at the record's path: the writer holds it under a "
-          "name of its own in the record's directory",
+    check("a record half written is not at the record's path: the writer holds it in the "
+          "record's directory, under a name of its own that carries the run's name and the "
+          "process number of the shell that runs the command",
           half_is_written and not record_exists_at_the_half,
           f"{half_is_written} {record_exists_at_the_half}")
     check("a second writer that writes its whole record while the first is half way leaves "
@@ -1597,6 +1764,135 @@ def run_cases_of_two_writers_at_once(workspace: Path):
           and record.read_text(encoding="utf-8")
           == "the first writer's first half\nthe first writer's second half\n"
           and files_left == ["a-head.txt"], f"{code_of_the_first} {files_left}")
+
+
+def run_cases_of_two_writers_of_one_run(workspace: Path):
+    """One run can have two writers at once: its own write command still
+    running on the far side after the client died, or a copy of its remedy,
+    and its remedy started meanwhile. The first writer is fed half the run's
+    record and held; the remedy is started and held before it is fed
+    anything; the first writer is then fed the rest, and the remedy the whole
+    record once the first writer has ended. No step waits on a clock for its
+    outcome: each waits for a file to say the step before it has happened.
+    The log-store root's name holds spaces and a single quote, so every part
+    of the command is run on paths that need quoting."""
+    started = "2026-10-01T03:30:01Z"
+    record_of_the_run = (
+        f"pull-request-head-test-run: ned-box, started {started}\n"
+        + "".join(f"line {number} of the run's own record\n" for number in range(2, 40)))
+    first_half = record_of_the_run[:len(record_of_the_run) // 2]
+    the_rest = record_of_the_run[len(first_half):]
+    of_an_earlier_run = ("pull-request-head-test-run: ned-box, started 2026-10-01T03:30:00Z\n"
+                         "an earlier run's whole record\n")
+    of_a_later_run = ("pull-request-head-test-run: ned-box, started 2026-10-01T03:30:02Z\n"
+                      "a later run's whole record\n")
+    already_written = ("pull-request-head-test-run: already written: the record there is "
+                       "the whole record of this run, byte for byte.\n"
+                       "Tell the user the record is written.\n")
+    not_written = ("pull-request-head-test-run: not written: the record there is of a run "
+                   "that started in the same second or later.\nLeave that record as it is.\n")
+    count = 0
+    for shell in ("/bin/sh", "/bin/bash", "/bin/dash"):
+        if not Path(shell).is_file():
+            print(f"SKIP  two writers of one run under {shell}: this machine has no {shell}")
+            continue
+        for state, there_before in (("no record there", None),
+                                    ("an earlier run's record there", of_an_earlier_run),
+                                    ("a later run's record there", of_a_later_run)):
+            for first_writer, the_first_is_the_remedy in (
+                    ("the run's own write command", False),
+                    ("a copy of the run's remedy", True)):
+                count += 1
+                root = workspace / f"two writers of one run's record, {count}"
+                record = root / "pull-request-head-test-runs" / "ned-box" / "a-head.txt"
+                record.parent.mkdir(parents=True)
+                if there_before is not None:
+                    record.write_bytes(there_before.encode("utf-8"))
+                write_command = program.write_record_command(
+                    str(root), "ned-box", "a-head.txt", "the-run",
+                    len(record_of_the_run.encode("utf-8")))
+                remedy_command = program.write_record_command(
+                    str(root), "ned-box", "a-head.txt", "the-run",
+                    len(record_of_the_run.encode("utf-8")),
+                    unless_the_record_there_started_no_earlier_than=started)
+
+                def files_being_written():
+                    return sorted(name for name in os.listdir(record.parent)
+                                  if name.endswith(".partial"))
+
+                def one_holds(content: bytes) -> bool:
+                    return any((record.parent / name).read_bytes() == content
+                               for name in files_being_written())
+
+                first = subprocess.Popen(
+                    [shell, "-c", remedy_command if the_first_is_the_remedy
+                     else write_command],
+                    stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                remedy = None
+                try:
+                    first.stdin.write(first_half.encode("utf-8"))
+                    first.stdin.flush()
+                    the_first_is_half_way = wait_for_another_process_until(
+                        lambda: one_holds(first_half.encode("utf-8")))
+                    remedy = subprocess.Popen(
+                        [shell, "-c", remedy_command], stdin=subprocess.PIPE,
+                        stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                    # The remedy has started once the file it writes to is
+                    # there and empty.
+                    the_remedy_has_started = wait_for_another_process_until(
+                        lambda: one_holds(b""))
+                    while_both_are_held = files_being_written()
+                    first.stdin.write(the_rest.encode("utf-8"))
+                    first.stdin.close()
+                    code_of_the_first = first.wait(timeout=20)
+                    after_the_first = record.read_bytes() if record.is_file() else None
+                    stdout_of_the_remedy, stderr_of_the_remedy = remedy.communicate(
+                        record_of_the_run.encode("utf-8"), timeout=20)
+                    after_the_remedy = record.read_bytes() if record.is_file() else None
+                finally:
+                    for process in (first, remedy):
+                        if process is not None and process.poll() is None:
+                            process.kill()
+                            process.wait()
+                    for stream in (first.stdout, first.stderr):
+                        stream.close()
+                files_left = sorted(os.listdir(record.parent))
+                each_wrote_to_a_file_of_its_own = (
+                    the_first_is_half_way and the_remedy_has_started
+                    and while_both_are_held == sorted(
+                        f".a-head.txt.the-run.{process.pid}.partial"
+                        for process in (first, remedy)))
+                detail = (f"{the_first_is_half_way} {the_remedy_has_started} "
+                          f"{while_both_are_held} {code_of_the_first} "
+                          f"{(after_the_first or b'').count(bytes(1))} NUL bytes of "
+                          f"{len(after_the_first or b'')} {remedy.returncode} "
+                          f"{stdout_of_the_remedy!r} {stderr_of_the_remedy!r} {files_left}")
+                if the_first_is_the_remedy and there_before is of_a_later_run:
+                    check(f"under {shell}, {state}: {first_writer} is held half way through "
+                          f"the run's record when the run's remedy starts, and each writes "
+                          f"to a file of its own in the record's directory; the first, fed "
+                          f"the rest, is refused and leaves the later run's record byte for "
+                          f"byte; the remedy, fed its record after that, is refused too; no "
+                          f"other file is left",
+                          each_wrote_to_a_file_of_its_own and code_of_the_first == 1
+                          and after_the_first == there_before.encode("utf-8")
+                          and remedy.returncode == 1 and stdout_of_the_remedy == b""
+                          and stderr_of_the_remedy.decode("utf-8") == not_written
+                          and after_the_remedy == there_before.encode("utf-8")
+                          and files_left == ["a-head.txt"], detail)
+                else:
+                    check(f"under {shell}, {state}: {first_writer} is held half way through "
+                          f"the run's record when the run's remedy starts, and each writes "
+                          f"to a file of its own in the record's directory; the first, fed "
+                          f"the rest, exits 0 and leaves the run's whole record, with no "
+                          f"part of it emptied; the remedy, fed its record after that, says "
+                          f"the record is written and exits 0; no other file is left",
+                          each_wrote_to_a_file_of_its_own and code_of_the_first == 0
+                          and after_the_first == record_of_the_run.encode("utf-8")
+                          and remedy.returncode == 0 and stderr_of_the_remedy == b""
+                          and stdout_of_the_remedy.decode("utf-8") == already_written
+                          and after_the_remedy == record_of_the_run.encode("utf-8")
+                          and files_left == ["a-head.txt"], detail)
 
 
 def run_cases_as_a_program(workspace: Path):
@@ -1701,6 +1997,7 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     run_cases_of_what_the_write_command_holds()
     run_cases_of_the_two_byte_counts(workspace_root)
     run_cases_of_two_writers_at_once(workspace_root)
+    run_cases_of_two_writers_of_one_run(workspace_root)
     run_cases_as_a_program(workspace_root)
     run_log_store_readme_cases()
 
