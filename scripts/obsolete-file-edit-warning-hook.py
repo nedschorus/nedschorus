@@ -116,10 +116,17 @@ NEVER_PUSHED_ADVICE = (
     "your work and run `git rebase origin/main` — the Stop hook rebases a never-pushed "
     "branch only when the tree is clean — then rerun the tests for what you touched."
 )
+# A pushed branch that conflicts with main is the one exception: no commit on
+# top can clear a conflict, so it is cleared by a hand-merge (CLAUDE.md, "How a
+# change reaches main"; user-ruled 2026-09-21, worded 2026-09-30 in walk
+# open-items-this-seat-holds-2026-09-24, items 22 to 24). This text used to
+# forbid every merge, which sent an agent with a conflict to the one move that
+# cannot clear it.
 PUSHED_ADVICE = (
-    "This branch is pushed, so its review may be running: do not rebase, merge or "
-    "amend it. A fix for this topic is a new commit on top, and your next topic "
-    "starts with `git checkout -b <name> origin/main`."
+    "This branch is pushed, so its review may be running: do not rebase or amend "
+    "it. A fix for this topic is a new commit on top. If it conflicts with main, "
+    "clear the conflict with the hand-merge that scripts/branch-conflict-check.py "
+    "describes. Your next topic starts with `git checkout -b <name> origin/main`."
 )
 
 

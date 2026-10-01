@@ -116,6 +116,12 @@ GIT_IN_PROGRESS_MARKERS = (
 # itself, so REBASE_ADVICE is what the agent gets only when the hook could
 # not — a dirty tree, or a conflict it aborted. A pushed branch is never
 # moved by anyone but its author, and then only forward.
+# A pushed branch that conflicts with main is the one exception: no commit on
+# top can clear a conflict, so it is cleared by a hand-merge (CLAUDE.md, "How a
+# change reaches main"; user-ruled 2026-09-21, worded 2026-09-30 in walk
+# open-items-this-seat-holds-2026-09-24, items 22 to 24). This text used to
+# forbid every merge, which sent an agent with a conflict to the one move that
+# cannot clear it.
 REBASE_ADVICE = (
     "This branch has never been pushed, so nobody else has it. Bring it up to "
     "date now: commit or set aside any uncommitted work, run `git rebase "
@@ -124,8 +130,10 @@ REBASE_ADVICE = (
     "resolve it by hand or stay behind, which costs nothing at merge."
 )
 LEAVE_IT_ADVICE = (
-    "This branch is pushed, so its review may be running. Do not rebase, merge "
-    "or amend it. A fix for this topic is a new commit on top, pushed once. "
+    "This branch is pushed, so its review may be running. Do not rebase or "
+    "amend it. A fix for this topic is a new commit on top, pushed once. If it "
+    "conflicts with main, clear the conflict with the hand-merge that "
+    "scripts/branch-conflict-check.py describes. "
     "Start your next topic with `git checkout -b <name> origin/main`."
 )
 DETACHED_ADVICE = "You are on a detached HEAD; check out your branch before working."
@@ -403,7 +411,8 @@ def head_state(checkout: Path, branch: str):
     head = run_git(["rev-parse", "HEAD"], checkout, timeout=15).stdout.strip()
     if remote.stdout.strip() == head:
         return "pushed", (f"head pushed and equal to origin/{branch} (frozen: a fix is a "
-                          "new commit on top, never an amend or a merge)")
+                          "new commit on top, never an amend; a conflict with main is "
+                          "cleared by a hand-merge)")
     local = run_git(["rev-list", "--count", f"origin/{branch}..HEAD"], checkout, timeout=30)
     count = local.stdout.strip() if local.returncode == 0 else "some"
     if count == "0":
