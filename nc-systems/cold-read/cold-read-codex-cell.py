@@ -169,8 +169,19 @@ PROGRAM = "cold-read-codex-cell"
 # the baseline a re-measurement compares against, not evidence for the new
 # pins. Live-verified the same day on codex-cli 0.156.0: both ids accepted at
 # xhigh and recorded as the answering model.
+#
+# 2026-10-01 (user direction, "use the latest version"): the `deep`
+# cold-read-tier moves to gpt-6.1-sol at the same effort. `second` stays on
+# gpt-6-luna: the model list codex-cli 0.159.3 fetched that day holds no
+# GPT-6.1 Luna. No campaign has measured gpt-6.1-sol, so the numbers above
+# stay the baseline a re-measurement compares against, not evidence for this
+# pin. The id needs codex-cli 0.159.1 or later: 0.156.0 refuses it with "The
+# 'gpt-6.1-sol' model is not supported when using Codex with a ChatGPT
+# account.", the text it gives any id it does not know. Live-verified the
+# same day on codex-cli 0.159.3: the id accepted at xhigh and recorded as the
+# answering model.
 TIER_TO_CODEX_MODEL_CHAIN = {
-    "deep": ("gpt-6-sol",),
+    "deep": ("gpt-6.1-sol",),
     "second": ("gpt-6-luna",),
 }
 
