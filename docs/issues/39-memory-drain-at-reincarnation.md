@@ -39,12 +39,6 @@ The design:
 - **Memories are not separate per agent.** "Memories should not be separate. This makes reviews more common and easier. That should work for all agents." One store per machine, every agent writing into it, headless runs included.
 - **Cadence:** every reincarnation. **Scope:** nedschorus only; the Mac's other stores, such as the 60 entries under `route-spectrum`, are untouched.
 
-## Status: do not build it yet
-
-**User-ruled 2026-09-20, walk open-questions-concerns-and-recommendations-2026-09-19, item 4.** The premise this issue was filed on has not arrived: agents are not writing memories freely. Measured that day, this project's store held 3 entries on the user's Mac, in `/Users/el/.claude/projects/-Users-el-Projects-nedschorus/memory/`, and 4 on ned-box, 7 between them, against 6 when the policy was ruled on 2026-09-17. For scale, another project on the same Mac held 58. A walk that drains four entries costs more than it returns. Re-measure before reopening the build, and revisit when the store passes a threshold the user names.
-
-The rest of this document stands as the design of the build, for whenever it starts. Nothing is built yet. The build needs the user's walk, because each part is instruction text or a hook.
-
 ## The store
 
 Claude Code keys a memory store to the repository root, not to the working directory: the directory name is that root's path with each `/` turned into `-`. So every worktree of this repository on a machine shares one store, and the two are `~/.claude/projects/-Users-el-Projects-nedschorus/memory/` on the Mac and `~/.claude/projects/-home-nedlern-Projects-nedschorus/memory/` on ned-box. A session in `/Users/el/agents/cold-read-research`, a worktree, writes to the first of those.
