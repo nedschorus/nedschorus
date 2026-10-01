@@ -1,8 +1,12 @@
+---
+issue: "[Ned's notes: engineering methods and sources — boot-set, rewrite policy, and skill shortlist (doc: docs/issues/9-neds-notes.md)](https://github.com/nedschorus/nedschorus/issues/9)"
+---
+
 Issue: https://github.com/nedschorus/nedschorus/issues/9
 
 ## Admission note (new-vp, 2026-07-21)
 
-Authored by cops during the user's skills-and-methods walkthrough, admitted verbatim below (the draft's not-yet-admitted banner replaced by this note; the tail pointer to cops's local publishing file redirected to pair issue [Open-source publishing and community strategy — Ned's Chorus (doc: docs/issues/4-open-source-publishing-community-strategy.md)](https://github.com/nedschorus/nedschorus/issues/4), the admitted home of publishing decisions). Deltas from the continuing walkthrough ride this pair as REVISE dispositions. Not a legacy import — fresh authorship, no entry-manifest line.
+Authored by cops during the user's skills-and-methods walkthrough, admitted verbatim below (the draft's not-yet-admitted banner replaced by this note; the tail pointer to cops's local publishing file redirected to pair issue [Open-source publishing and community strategy — Ned's Chorus (doc: docs/issues/4-open-source-publishing-community-strategy.md)](https://github.com/nedschorus/nedschorus/issues/4), the admitted home of publishing decisions). Deltas from the continuing walkthrough ride this pair as REVISE dispositions. Not a legacy import — fresh authorship, no entry-manifest line. Admitted by the new-vp session f5081355-c3fd-4271-956c-68ffeb99e4ae, at the user's direction that decisions are recorded durably as they are made.
 
 # Ned's Notes: NedsChorus Engineering Methods and Sources
 
@@ -239,15 +243,39 @@ Sources worth adapting or investigating:
   time when a real task exposes the missing decision (first expected pull:
   write-test-plan, issue [Candidate skill: write-test-plan — consequence-ranked test plan with observable oracles and traceability (likely FIRST build)](https://github.com/nedschorus/nedschorus/issues/18)).
 - Rewrite policy — RESOLVED 2026-07-24 (walk item 13; founding-plan open
-  question 9; policy of record: founding plan § Standing decisions):
+  question 9; policy of record: founding plan § Standing decisions; commit
+  d3383f8, "rewrite policy recorded"):
   per-cherry-pick four-class feature classification (preserve-feature /
   update-feature / remove-feature / consider-feature), records in the slice
   plan or entry-manifest line, undecided features to `legacy-feature-queue/`,
   unexamined never preserved.
-- Public-vs-internal — RESOLVED 2026-07-24 (walk item 14): the note is public
+- Public-vs-internal — RESOLVED 2026-07-24 (walk item 14; commit 2c494d3,
+  "public-links policy recorded"): the note is public
   as committed, nothing omitted. Links are judged on usefulness and
   reliability only (public-links policy, founding plan § Standing decisions);
   the leaked-source archives stay, treated like every other source.
+
+When these questions are ruled and the shortlist is consumed, this document is
+disposed of: deleted, or its distilled remains promoted.
+
+## Outcome: both disposal conditions are met, and this issue closes
+
+Ruled by the user on 2026-10-01, in walk ghi-md-reconciliation-disagreements-2026-09-30, item 3 (minutes: `nedlern@ned-box:/home/nedlern/nedschorus-logs/walk/ghi-md-reconciliation-disagreements-2026-09-30-minutes.md`).
+
+The three questions under "Still under review" were each ruled on 2026-07-24, as recorded there: the boot set (walk item 12, commit fa54e52), the rewrite policy (walk item 13, commit d3383f8), and public versus internal (walk item 14, commit 2c494d3).
+
+Each of the nine skills in "Working skill shortlist" became a candidate-skill issue of its own:
+- GHI [Candidate skill: define-work — bounded work-definition spec before ambiguous or substantial work](https://github.com/nedschorus/nedschorus/issues/15), open.
+- GHI [Candidate skill: plan-rewrite-slice — one bounded legacy slice with four-way behavior classification](https://github.com/nedschorus/nedschorus/issues/16), open.
+- GHI [Candidate skill: design-change — read-only evidence-grounded design with one recommendation and honest exits](https://github.com/nedschorus/nedschorus/issues/17), open.
+- GHI [Candidate skill: write-test-plan — consequence-ranked test plan with observable oracles and traceability (likely FIRST build)](https://github.com/nedschorus/nedschorus/issues/18), open.
+- GHI [Candidate skill: attack-artifact — isolated adversarial review; filed as a d-review comparison question](https://github.com/nedschorus/nedschorus/issues/19), open.
+- GHI [Candidate skill: implement-with-evidence — red/green evidence kernel without delete-and-start-over mandates](https://github.com/nedschorus/nedschorus/issues/20), closed.
+- GHI [Candidate skill: diagnose-failure — bounded causal debugging with a three-fix escalation stop](https://github.com/nedschorus/nedschorus/issues/21), closed.
+- GHI [Candidate skill: review-change — exact-revision defect-first code review with a five-part finding gate](https://github.com/nedschorus/nedschorus/issues/22), closed.
+- GHI [Candidate skill: eval-agent-change — baseline-vs-candidate A/B with trigger cases and raw-count reporting](https://github.com/nedschorus/nedschorus/issues/23), closed.
+
+So the shortlist is consumed. Rather than being deleted or distilled as the sentence above says, this document stays as the closed issue's record, as the same ruling directs.
 
 ## Combined walk minutes (pairs issue [Ned's notes: engineering methods and sources — boot-set, rewrite policy, and skill shortlist (doc: docs/issues/9-neds-notes.md)](https://github.com/nedschorus/nedschorus/issues/9) + issue [Working ideas and research backlog — capture pair (Decided / Candidate / Research / Reference)](https://github.com/nedschorus/nedschorus/issues/10)) — the walk-state of record
 
