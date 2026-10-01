@@ -223,6 +223,8 @@ in the nedschorus repository, which this machine also clones:
 - `seats/` -- a seat's shared files, shipped by
   `scripts/seat-shared-file-ship.py`
 - `analysis/` -- analyses, placed by hand
+- `daily-full-test-runs/` -- each machine's daily run of every test suite on
+  main, written by `scripts/daily-full-test-run-of-main.py`
 
 To change this file, edit STORE_README in
 nc-systems/cold-read/cold-read-record-ship.py. The next shipment rewrites this file
