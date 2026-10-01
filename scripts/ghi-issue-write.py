@@ -136,9 +136,13 @@ its name wherever it sits — and does four things:
   1. Validate   the file exists, opens with a heading, is named for an
                 issue, and sits where this tool may write: directly in
                 docs/issues/ before its system's code starts, directly in
-                the system's own directory after. The same two places
-                step 5 builds the body from, and the same predicate —
+                the system's own directory after. The same places step 5
+                builds the body from, and the same predicate —
                 `writable_relative_path`, which `ghi_md_paths_for_issue` calls.
+                A design whose code has landed is the one exception to the
+                name: it sits in its code's docs/ directory under a name
+                with no number, and its `issue:` line says which issue it
+                is filed under (`landed_design_relative_path`, 2026-09-30).
   2. Adjudicate as create does, with this issue left out of the comparison,
                 which the cold-start prompt's item 2 asks for. Asked only
                 where step 3 has new content to land, which a rerun
@@ -330,6 +334,11 @@ from pathlib import Path
 DEFAULT_REPO = "nedschorus/nedschorus"
 GHI_MD_DIRECTORY = "docs/issues"
 SYSTEM_DIRECTORY = "nc-systems"
+# Where a design moves once its code lands: the `docs/` directory of the
+# directory its code is in, under a name ending `-design.md` that carries no
+# issue number. See `landed_design_relative_path`.
+LANDED_DESIGN_DIRECTORY_NAME = "docs"
+LANDED_DESIGN_NAME_ENDING = "-design.md"
 PAIRING_KEY_PREFIX = "ghipair"
 RECONSIDERED_MARKER_NAME = ".ghi-issue-write-reconsidered"
 # What gh's stderr carries when the number names no issue, lowercased for
@@ -626,6 +635,61 @@ def with_issue_frontmatter(text: str, repo: str, number: int,
     return "\n".join(lines) + ("\n" if text.endswith("\n") else "")
 
 
+# The issue number at the end of an `issue:` line's link, in either shape
+# that line has been written in: quoted, as `issue_frontmatter_line` writes
+# it now, or unquoted, as it was first written. Anchored to the end of the
+# line so a title that happens to contain an issue URL is not read instead.
+ISSUE_LINE_NUMBER_PATTERN = re.compile(r"/issues/(\d+)\)\"?\s*$")
+
+
+def issue_number_in_frontmatter(text):
+    """The issue number the file's `issue:` frontmatter line names, or None
+    when the file has no frontmatter block, no such line in it, or a line
+    that names no issue.
+
+    This is how a landed design says which issue it is filed under: its name
+    no longer carries the number (`landed_design_relative_path`). Only the
+    frontmatter block is read, so a line in the body that happens to start
+    with `issue:` is not mistaken for it."""
+    lines = (text or "").splitlines()
+    if not lines or lines[0].strip() != "---":
+        return None
+    for line in lines[1:]:
+        if line.strip() == "---":
+            return None
+        if line.startswith(f"{ISSUE_FRONTMATTER_KEY}:"):
+            match = ISSUE_LINE_NUMBER_PATTERN.search(line)
+            return int(match.group(1)) if match else None
+    return None
+
+
+def landed_design_relative_path(relative: str) -> bool:
+    """Whether this repository path is where a design sits once its code
+    has landed: the `docs/` directory of a system's or a subsystem's
+    directory under nc-systems/, under a name ending `-design.md` that does
+    not begin with an issue number — `nc-systems/handoff/docs/
+    handoff-recover-crashed-seats-design.md`, or
+    `nc-systems/skills/cold-read/docs/cold-read-design.md` for a
+    subsystem.
+
+    That is the file-naming page's rule for a landed design,
+    docs/nedschorus-wiki/nedschorus-file-naming-and-location-standards.md §
+    Design document: the design moves to the `docs/` subdirectory of the
+    directory its code is in, and its name drops the issue number it carried
+    in docs/issues/. With no number in the name, the file's `issue:`
+    frontmatter line is what files it under its issue
+    (`issue_number_in_frontmatter`).
+
+    A numbered name there is not a landed design, so a file cannot be filed
+    under one issue by its name and another by its `issue:` line."""
+    parts = Path(relative).parts
+    return (len(parts) >= 4
+            and parts[0] == SYSTEM_DIRECTORY
+            and parts[-2] == LANDED_DESIGN_DIRECTORY_NAME
+            and parts[-1].endswith(LANDED_DESIGN_NAME_ENDING)
+            and issue_number_in_file_name(Path(relative)) is None)
+
+
 def links_body(repo: str, paths) -> str:
     """The body of a link-only-GHI: one link per filed GHI-MD, in filename
     order,
@@ -675,7 +739,18 @@ def validate(path: Path):
     is not one this tool writes. Named in the review of PR [Build the GHI
     write tool's edit verb](https://github.com/nedschorus/nedschorus/pull/596).
     The three lines each name the condition they apply under, so the agent
-    reads only the one it is in."""
+    reads only the one it is in.
+
+    A FILE CARRYING AN `issue:` LINE IS FILED TOO, whatever its name. This
+    tool writes that line only into a file it lands under an issue, so a
+    source carrying one is a filed copy, and filing it again makes a second
+    issue for one document. Until 2026-09-30 the number in the name was the
+    only mark a filed file carried and this check was not needed; that day a
+    design that has landed became filed by its `issue:` line alone, its name
+    losing the number (`landed_design_relative_path`), and without this
+    refusal `create` read such a design as a fresh document. Measured the
+    same day, no file on main outside docs/issues/ carried an `issue:`
+    line, so nothing already on main is refused by it."""
     if not path.is_file():
         raise Refused(f"no such file: {path}", 64)
     text = path.read_text(encoding="utf-8")
@@ -699,7 +774,19 @@ def validate(path: Path):
             "edit operation writes no such path, so run it on the issue's own "
             "file in one of those two places instead.\n"
             "To file this material as a new issue of its own: run create "
-            "again on a copy whose name carries no number.", 64)
+            "again on a copy whose name carries no number and whose "
+            "frontmatter has no `issue:` line.", 64)
+    filed_under = issue_number_in_frontmatter(text)
+    if filed_under is not None:
+        raise Refused(
+            f"{path} carries an `issue:` line naming issue {filed_under}, "
+            "so it is already filed under that issue.\n"
+            f"A design in a system's {LANDED_DESIGN_DIRECTORY_NAME}/ "
+            "directory: change it with the edit operation.\n"
+            "Anywhere else: run the edit operation on that issue's own "
+            "file instead.\n"
+            "To file this material as a new issue of its own: run create "
+            "again on a copy without the `issue:` line.", 64)
     return text, title
 
 
@@ -939,7 +1026,17 @@ def refuse_if_already_landed_on_main(repo: str, text: str, title: str,
     successful listing of this same commit, so a `git show` that exits
     non-zero at it is a git failure. Read as an absence, None differs from
     what this source would become, the loop moves on, and the run files the
-    second issue this check exists to prevent."""
+    second issue this check exists to prevent.
+
+    LANDED DESIGNS TOO, each under the issue its `issue:` line on main
+    names. A design moves out of docs/issues/ when its issue closes (ruled
+    2026-09-30), and a rerun of create on the source it was filed from would
+    otherwise find no numbered copy and file a second issue: the Codex
+    review cell's P2 on PR [The ghi-write tool finds a landed design in its
+    system's docs/, filed by its issue:
+    line](https://github.com/nedschorus/nedschorus/pull/849). A numbered
+    file moved directly into a system's directory is not compared, as
+    before."""
     runner(["git", "fetch", "origin", "main"], cwd=str(repository_root))
     revision = origin_main_commit_hash(repository_root, runner)
     for landed in ghi_md_paths_on_main(revision, repository_root, runner):
@@ -948,11 +1045,35 @@ def refuse_if_already_landed_on_main(repo: str, text: str, title: str,
         read = runner(["git", "show", f"{revision}:{landed}"],
                       cwd=str(repository_root))
         if read.stdout == staged:
-            raise Refused(
-                f"This file is already on main as {landed}, filed as issue "
-                f"[{title}](https://github.com/{repo}/issues/{number}).\n"
-                f"Edit {landed} with the edit operation instead of rerunning "
-                "create on this file.", 64)
+            raise already_landed_refusal(repo, landed, title, number)
+    for landed in landed_designs_on_main(revision, repository_root, runner):
+        read = runner(["git", "show", f"{revision}:{landed}"],
+                      cwd=str(repository_root))
+        number = issue_number_in_frontmatter(read.stdout)
+        if (number is not None
+                and read.stdout == with_issue_frontmatter(text, repo, number,
+                                                          title)):
+            raise already_landed_refusal(repo, landed, title, number)
+
+
+def already_landed_refusal(repo: str, landed: str, title: str, number: int):
+    return Refused(
+        f"This file is already on main as {landed}, filed as issue "
+        f"[{title}](https://github.com/{repo}/issues/{number}).\n"
+        f"Edit {landed} with the edit operation instead of rerunning "
+        "create on this file.", 64)
+
+
+def landed_designs_on_main(revision: str, repository_root: Path, runner):
+    """Every landed design at this revision: the files under nc-systems/
+    that sit where `landed_design_relative_path` says a design sits once its
+    code has landed. Their names carry no number, so the caller reads each
+    one's `issue:` line to learn its issue. Raises on a failed list for the
+    reason ghi_md_paths_for_issue does."""
+    listed = runner(["git", "ls-tree", "-r", "--name-only", revision,
+                     f"{SYSTEM_DIRECTORY}/"], cwd=str(repository_root))
+    return [line for line in (listed.stdout or "").splitlines()
+            if landed_design_relative_path(line)]
 
 
 def open_pull_requests_for_branch(repo: str, branch: str, runner):
@@ -1127,6 +1248,20 @@ def ghi_md_paths_for_issue(number: int, repository_root: Path, runner):
     function too, so a wider rule would have rewritten those issues' bodies
     on the next create run, not only on an edit.
 
+    AND A LANDED DESIGN, FOUND BY ITS `issue:` LINE. The user ruled on
+    2026-09-30 (item 3 of the walk
+    ghi-224-migration-order-and-open-questions-2026-09-30, "y - dispatch a
+    subagent to do both in a single PR") that the tool learns the
+    file-naming page's rule for a design whose code has landed: it sits in
+    the `docs/` directory of its code's directory, named without the issue
+    number (`landed_design_relative_path`). This extends the DIRECTLY IN
+    ruling above by one place and keeps its property — every candidate is
+    globbed from main's tree at every write, never curated — but a name with
+    no number cannot say which issue it belongs to, so each candidate's
+    `issue:` frontmatter line is read from main's copy and the file is
+    selected when that line names this issue. One `git show` per landed
+    design on main, per call.
+
     Raises on a failed list rather than answering with an empty one. The two
     are indistinguishable to every caller, and the caller then states that
     no file is on main yet as a fact it cannot know. Nothing is lost by
@@ -1142,16 +1277,25 @@ def ghi_md_paths_for_issue(number: int, repository_root: Path, runner):
     prefix = f"{number}-"
     selected = []
     for line in (listed.stdout or "").splitlines():
-        if not Path(line).name.startswith(prefix):
-            continue
-        # The depth is read off the path rather than left to git: `-r` is
-        # what reaches a system's own directory at all, and it also keeps
-        # a DIRECTORY named `<number>-something` out of the answer, git
-        # listing only blobs when it recurses. `writable_relative_path` is
-        # what reads it, and is the whole of the depth rule, so the set
-        # this returns and the set `edit` will land into cannot disagree.
-        if writable_relative_path(line):
-            selected.append(line)
+        if Path(line).name.startswith(prefix):
+            # The depth is read off the path rather than left to git: `-r`
+            # is what reaches a system's own directory at all, and it also
+            # keeps a DIRECTORY named `<number>-something` out of the
+            # answer, git listing only blobs when it recurses.
+            # `writable_relative_path` is what reads it, and is the whole of
+            # the depth rule, so the set this returns and the set `edit`
+            # will land into cannot disagree.
+            if writable_relative_path(line):
+                selected.append(line)
+        elif landed_design_relative_path(line):
+            # A landed design's name carries no number, so its `issue:`
+            # line is read from main's copy. Checked, so a read that fails
+            # raises instead of dropping the file from the body, for the
+            # reason the listing above raises.
+            shown = runner(["git", "show", f"origin/main:{line}"],
+                           cwd=str(repository_root))
+            if issue_number_in_frontmatter(shown.stdout) == number:
+                selected.append(line)
     return selected
 
 
@@ -1264,11 +1408,20 @@ def writable_relative_path(relative: str) -> bool:
     `docs/issues/<number>-*`, globbed at every write, never curated. A
     literal prefix does not descend, which puts docs/issues/queue/ and
     docs/issues/archived/ both outside it. `ghi_md_paths_for_issue` carries the
-    measurement over main's own tree."""
+    measurement over main's own tree.
+
+    A THIRD PLACE since 2026-09-30: a landed design, in the `docs/`
+    directory of its code's directory under a name with no issue number
+    (`landed_design_relative_path`; the ruling is recorded in
+    `ghi_md_paths_for_issue`). The callers that check a name's number check
+    it before asking this, so this answers only where a file sits; a landed
+    design's issue is its `issue:` line, which `validate_edit` requires."""
     parts = Path(relative).parts
     if parts[:-1] == tuple(Path(GHI_MD_DIRECTORY).parts):
         return True
-    return len(parts) == 3 and parts[0] == SYSTEM_DIRECTORY
+    if len(parts) == 3 and parts[0] == SYSTEM_DIRECTORY:
+        return True
+    return landed_design_relative_path(relative)
 
 
 def normalized(text) -> str:
@@ -1313,39 +1466,70 @@ def validate_edit(path: Path, repository_root: Path):
     verb](https://github.com/nedschorus/nedschorus/pull/596) and fixed
     2026-09-22. The move line is kept for the state that does want it — the
     issue's own file sitting somewhere this tool does not write — under the
-    condition that says which state it is."""
+    condition that says which state it is.
+
+    A LANDED DESIGN IS FILED BY ITS `issue:` LINE, its name carrying no
+    number (`landed_design_relative_path`, ruled 2026-09-30 and recorded in
+    `ghi_md_paths_for_issue`). So a file not named for an issue is accepted
+    when it sits where a landed design sits and that line names its issue,
+    and refused, saying to add the line, when it sits there without one. A
+    file not named for an issue anywhere else keeps the refusal it always
+    had, outside the checkout included, so that refusal is asked before the
+    checkout is."""
     if not path.is_file():
         raise Refused(f"no such file: {path}", 64)
     text = path.read_text(encoding="utf-8")
     if not text.strip():
         raise Refused(f"{path} is empty", 64)
     numbered = re.match(r"^(\d+)-", path.name)
-    if not numbered:
-        raise Refused(
-            f"{path} is not named for an issue, so it is not filed under "
-            "one. A filed GHI-MD carries its issue's number wherever it "
-            "sits. To file a new issue from this file, use the create "
-            "operation.", 64)
-    relative = relative_to_root(path, repository_root)
-    if not writable_relative_path(relative):
-        raise Refused(
-            f"{relative} is not a path this tool writes. A filed GHI-MD "
-            f"lives directly in {GHI_MD_DIRECTORY}/ before its system's "
-            f"code starts and directly in {SYSTEM_DIRECTORY}/<system>/ "
-            "after, and in neither a queue nor an archive below them "
-            "(docs/issues/46-ghi-info-agent-design.md § Where the tool may "
-            "write).\n"
-            "A queue note or an archived draft: run this command on the "
-            "issue's own file in one of those two places instead.\n"
-            "The issue's own file somewhere else: move it to one of those "
-            "two places and run this command again.", 64)
+    if numbered:
+        number = int(numbered.group(1))
+        relative = relative_to_root(path, repository_root)
+        if not writable_relative_path(relative):
+            raise Refused(
+                f"{relative} is not a path this tool writes. A filed GHI-MD "
+                f"lives directly in {GHI_MD_DIRECTORY}/ before its system's "
+                f"code starts and directly in {SYSTEM_DIRECTORY}/<system>/ "
+                "after, and in neither a queue nor an archive below them "
+                "(docs/issues/46-ghi-info-agent-design.md § Where the tool "
+                "may write). A design whose code has landed lives in the "
+                f"{LANDED_DESIGN_DIRECTORY_NAME}/ directory of its code's "
+                "directory, under a name with no number.\n"
+                "A queue note or an archived draft: run this command on the "
+                "issue's own file in one of those places instead.\n"
+                "The issue's own file somewhere else: move it to one of "
+                "those places and run this command again.", 64)
+    else:
+        try:
+            relative = str(path.resolve().relative_to(
+                repository_root.resolve()))
+        except ValueError:
+            relative = None
+        if relative is None or not landed_design_relative_path(relative):
+            raise Refused(
+                f"{path} is not named for an issue, so it is not filed under "
+                "one. A filed GHI-MD carries its issue's number in its name, "
+                "except a design whose code has landed, which sits in the "
+                f"{LANDED_DESIGN_DIRECTORY_NAME}/ directory of its code's "
+                "directory. To file a new issue from this file, use the "
+                "create operation.", 64)
+        number = issue_number_in_frontmatter(text)
+        if number is None:
+            raise Refused(
+                f"{relative} is a design in its system's "
+                f"{LANDED_DESIGN_DIRECTORY_NAME}/ directory with no "
+                "`issue:` line naming its issue.\n"
+                "Filed under an issue: add the line `issue: \"[<the issue's "
+                "title>](https://github.com/<owner>/<name>/issues/<number>)\"` "
+                "to its frontmatter and run this command again.\n"
+                "Not filed yet: file it with the create operation.", 64)
     title = first_heading(text)
     if not title:
         raise Refused(
             f"{path} has no heading, so there is no title to derive from "
             "it. The issue's title is the file's first heading, after any "
             "frontmatter (user-ruled 2026-09-16).", 64)
-    return text, title, int(numbered.group(1)), relative
+    return text, title, number, relative
 
 
 def conflict_refusal(opening: str, fold: str, relative: str, revision: str,
@@ -1728,7 +1912,8 @@ def land_edit(repo: str, number: int, title: str, relative: str, staged: str,
     return True
 
 
-def read_issue(repo: str, number: int, relative: str, runner):
+def read_issue(repo: str, number: int, relative: str, runner,
+               number_from_issue_line=False):
     """The issue's title and body as GitHub holds them, read once and used
     by both of the steps that may change them — and, because the caller
     reads it before anything is fetched, adjudicated, pushed or opened, the
@@ -1761,20 +1946,31 @@ def read_issue(repo: str, number: int, relative: str, runner):
     that is read, and only when it is there, a body of tests answering this
     call with title and body alone being none the wiser. Raised
     non-blocking on PR [Build the GHI write tool's edit
-    verb](https://github.com/nedschorus/nedschorus/pull/596)."""
+    verb](https://github.com/nedschorus/nedschorus/pull/596).
+
+    `number_from_issue_line` is True for a landed design, whose number comes
+    from its `issue:` frontmatter line rather than its name, so the two
+    refusals say to correct that line rather than to rename the file."""
+    if number_from_issue_line:
+        whose = f"the `issue:` line of {relative} names it"
+        correct = ("Correct the `issue:` line to name the issue this design "
+                   "is filed under.\n")
+    else:
+        whose = f"{relative} is named for it"
+        correct = ("Rename the file for the issue it is filed under, if it "
+                   "has one.\n"
+                   "If it has no issue yet, file one with the create "
+                   "operation, from a copy whose name carries no number and "
+                   "whose frontmatter has no `issue:` line — create refuses "
+                   "a file already filed under an issue.\n")
     current = runner(["gh", "issue", "view", str(number), "--repo", repo,
                       "--json", "title,body,url"], check=False)
     if current.returncode != 0:
         said = (current.stderr or current.stdout or "").strip()
         if GH_NO_SUCH_ISSUE_STDERR_FRAGMENT in said.lower():
             raise Refused(
-                f"Refused: {repo} has no issue {number}, and {relative} is "
-                "named for it.\n\n"
-                "Rename the file for the issue it is filed under, if it has "
-                "one.\n"
-                "If it has no issue yet, file one with the create operation, "
-                "from a copy whose name carries no number — create refuses a "
-                "file already named for an issue.\n\n"
+                f"Refused: {repo} has no issue {number}, and {whose}.\n\n"
+                f"{correct}\n"
                 f"gh said: {said}", 64)
         raise Refused(f"gh issue view failed: {said}", 1)
     issue = json.loads(current.stdout or "{}")
@@ -1782,12 +1978,8 @@ def read_issue(repo: str, number: int, relative: str, runner):
     if url and "/issues/" not in url:
         raise Refused(
             f"Refused: {number} is a pull request in {repo}, not an issue, "
-            f"and {relative} is named for it.\n\n"
-            "Rename the file for the issue it is filed under, if it has "
-            "one.\n"
-            "If it has no issue yet, file one with the create operation, "
-            "from a copy whose name carries no number — create refuses a file "
-            "already named for an issue.\n\n"
+            f"and {whose}.\n\n"
+            f"{correct}\n"
             f"gh answered with {url}", 64)
     return issue
 
@@ -1925,19 +2117,61 @@ def relink_body_from_main(repo: str, number: int, relative: str, on_main,
     return True
 
 
+def issue_file_set_for_this_edit(number: int, relative: str, on_main, paths,
+                                 report):
+    """The issue's filed GHI-MDs as steps 4 and 5 of this edit count them:
+    the files on main that `ghi_md_paths_for_issue` returns, plus the landed
+    design being edited when main holds it at this path but its `issue:`
+    line there does not name this issue.
+
+    That is the state a design moved into its system's `docs/` by an
+    ordinary pull request arrives in — the eight numbered designs on main
+    carried no `issue:` line on 2026-09-30 — and the state `validate_edit`'s
+    refusal sends the author into, by saying to add the line. It is also
+    the state of a line corrected from one issue to another. The working
+    tree names this issue and main's copy does not, so the listing, which
+    reads main's copy, leaves the file out while main does hold it here.
+    Counted without it, step 4 judged "this issue has one file" when it has
+    two and renamed the issue after the design's heading, and step 5 wrote
+    a body of no links. Both reproduced on PR [The ghi-write tool finds a
+    landed design in its system's docs/, filed by its issue:
+    line](https://github.com/nedschorus/nedschorus/pull/849), review round
+    1. Counted with it, this run answers as the rerun after the merge will,
+    reading the line this edit lands; and the link resolves now, because
+    the file is on main at this path.
+
+    Only where main holds the file at this path: a design not on main yet
+    is not linked, for the reason `ghi_md_paths_for_issue` gives, and a
+    moved file is not at this path until its merge."""
+    if (on_main is None or not landed_design_relative_path(relative)
+            or relative in paths):
+        return paths
+    filed_on_main_under = issue_number_in_frontmatter(on_main)
+    if filed_on_main_under is not None and filed_on_main_under != number:
+        report(f"main's copy of {relative} names issue {filed_on_main_under}, "
+               f"whose body still links it; that link goes the next time one "
+               f"of issue {filed_on_main_under}'s files is edited")
+    return paths + [relative]
+
+
 def edit(path: Path, repo: str, repository_root: Path, runner, report):
     """The whole edit sequence, and the one function the tests drive."""
     text, title, number, relative = validate_edit(path, repository_root)
     # Read here, before a fetch, a model call, a push or a pull request: the
-    # number is the file's NAME, so a name carrying a number no issue has is
-    # the caller's input being wrong, and the run that found that out at
-    # step 5 had already pushed a branch and opened a pull request for an
-    # issue that does not exist. This one read serves steps 4 and 5 below.
-    issue = read_issue(repo, number, relative, runner)
+    # number is the file's NAME, or a landed design's `issue:` line, so one
+    # naming a number no issue has is the caller's input being wrong, and
+    # the run that found that out at step 5 had already pushed a branch and
+    # opened a pull request for an issue that does not exist. This one read
+    # serves steps 4 and 5 below.
+    issue = read_issue(repo, number, relative, runner,
+                       number_from_issue_line=landed_design_relative_path(
+                           relative))
 
     runner(["git", "fetch", "origin", "main"], cwd=str(repository_root))
     on_main = blob_at("origin/main", relative, repository_root, runner)
-    paths = ghi_md_paths_for_issue(number, repository_root, runner)
+    paths = issue_file_set_for_this_edit(
+        number, relative, on_main,
+        ghi_md_paths_for_issue(number, repository_root, runner), report)
     # Where main still holds this document when the author moved it, and
     # main's copy there. Asked only when main has nothing at the author's
     # path — where it does, this is an edit in place and a same-named file
