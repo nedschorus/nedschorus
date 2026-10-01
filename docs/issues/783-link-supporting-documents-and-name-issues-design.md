@@ -5,7 +5,7 @@ status: design
 
 # How the ghi-write-tool names an issue and links its GHI-MD and supporting files
 
-This design says how the ghi-write-tool, `scripts/ghi-issue-write.py`, tells an issue's one GHI-MD from the issue's supporting files, how the issue and its GHI-MD are named, and how the issue's body links both. It replaces this issue's earlier GHI-MD, `docs/issues/783-an-issue-has-one-ghi-md-and-many.md`, which stated the problem only; the pull request that lands this design removes that file (§ Getting there, step 0).
+This design says how the ghi-write-tool, `scripts/ghi-issue-write.py`, tells an issue's one GHI-MD from the issue's supporting files, how the issue and its GHI-MD are named, and how the issue's body links both. It replaces this issue's earlier GHI-MD, which stated the problem only; the pull request that lands this design removes that file (§ Getting there, step 0), whose last text is `git show 5620543b:docs/issues/783-an-issue-has-one-ghi-md-and-many.md`.
 
 § The user-rulings lists what the user has decided. The mechanics that carry those decisions out are this design's own; the user reviewed the choices among them in two approval-walks, and § Open questions lists what is still his to decide.
 
@@ -157,7 +157,7 @@ A landed design is revised only to fix a flaw found in it, and only after human 
 
 The new tool leaves an issue's title alone and reports while the issue has more than one file with an `issue:` line, so the work below leaves each issue with exactly one.
 
-0. **This design lands.** Through today's edit-GHI, which lands it as a new file of this issue and leaves the earlier GHI-MD, `docs/issues/783-an-issue-has-one-ghi-md-and-many.md`, in place; its removal is landed by hand in the same change, as today's edit-GHI tells the author to.
+0. **This design lands.** Through today's edit-GHI, which lands it as a new file of this issue and leaves the earlier GHI-MD in place; its removal is landed by hand in the same change, as today's edit-GHI tells the author to. The earlier GHI-MD's last text: `git show 5620543b:docs/issues/783-an-issue-has-one-ghi-md-and-many.md`.
 1. **The old descriptions go.** The fifteen reconciled GHI-MDs have landed. One pull request deletes the sixteen `-former-issue-body.md` files and repoints every citation of them on main, such as line 17 of `docs/issues/39-memory-drain-at-reincarnation.md`; edit-GHI is then rerun on each of the fifteen GHI-MDs, which rebuilds each body from main. main-gatekeeper's former issue body goes in the same pull request once its specification, merged with that body's decisions, has had the user's review and landed.
 2. **The name table.** A subagent lists every open issue in one table: its current name, a proposed new name where the current one is cut off mid-thought, and a flag on any kept name that breaks the naming rule, such as `neds-notes`, two words, or a name carrying a status. The user approves or changes each row.
 3. **The build.** One pull request, atomic under CLAUDE.md, carrying:
