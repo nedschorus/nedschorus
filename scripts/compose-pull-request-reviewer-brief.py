@@ -3,13 +3,11 @@
 
 The merge-lane seat commissions an independent reviewer for every pull request
 with a fixed standing brief. The reviewing rule itself lives in ONE place,
-`docs/agents/pr-reviewer-instructions.md`, whose own first lines say: "This
-file's text is included verbatim in the prompt of every commissioned PR
-reviewer. The instruments that commission reviewers read it at composition
-time and paste it in — never point at it, never paraphrase it. (Ruled
-2026-08-30: one copy, included everywhere; a pointed-at rule gets skipped, a
-paraphrased one drifts.)" The standing brief used to point at that file by
-absolute path, which is the pointed-at form the rule forbids; pasting the text
+`docs/agents/pr-reviewer-instructions.md`, whose own first line says: "This
+file's text is pasted whole into the prompt of every commissioned Claude PR
+reviewer." A rule the brief only points at gets skipped, and a copy pasted
+into the brief by hand drifts from the file. The standing brief used to point
+at that file by absolute path, which is the pointed-at form; pasting the text
 into the brief would make a second copy, which is the drifting form. So the
 user ruled at the merge-lane seat (2026-09-14): compose the brief at commission
 time. This program is that composition.
