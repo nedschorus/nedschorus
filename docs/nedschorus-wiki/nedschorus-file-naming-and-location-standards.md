@@ -17,10 +17,10 @@ A file on main that is not where this page says is moved there by GHI [Rationali
 A file in a queue directory is named as it will be at its home, apart from the issue number a GHI-MD gains when its GHI is filed, so promoting it is a `git mv`.
 
 - **Skill prompt, the text a skill's own reviewer or cell runs**
-  - **Location:** `nc-systems/skills/<skill name>/` once `.claude/hooks/instruction-file-guard.py` guards that directory; until then `.claude/skills/<skill name>/prompts/`
+  - **Location:** `nc-systems/skills/<skill name>/`
   - **Naming:** `<pass>-prompt.md`, named for the pass it drives
 - **Hook**
-  - **Location:** `.claude/hooks/`
+  - **Location:** `.claude/hooks/` for a hook that guards which files or GitHub issues an agent may change; every other hook in its system's directory, `nc-systems/<system-name>/`, or in `nc-systems/general-tools/` when it belongs to no system
   - **Naming:** `<what it does>.py`, such as `instruction-file-guard.py` or `ghi-issue-write-redirect.py`
 - **Tests, test-designs, design-contracts**
   - **Location:** a test goes in a `tests/` subdirectory when the code sits in a directory of its own, such as `nc-systems/main-gatekeeper/tests/` or `scripts/design-to-main/tests/`; beside the script it tests when the script sits loose in `scripts/` or `.claude/hooks/`, for example `scripts/dangling-path-citation-check-test.py`.
@@ -49,6 +49,18 @@ A file in a queue directory is named as it will be at its home, apart from the i
 - **Draft of a kind that has no queue**
   - **Location:** `docs/drafts/`
   - **Naming:** `<subject>-draft.md`; a version frozen for reviewers is `<subject>-candidate.md`. Candidates move to the log-store's `seats/<seat name>/` once the work they served has landed on main. 
+
+## Files the user reviews
+
+The user reviews every change to these files, from a file's first version in its approved location to each later edit:
+
+- every MD file in `docs/agents/` and `docs/nedschorus-wiki/`;
+- every MD file under `nc-systems/skills/`;
+- every design, a file whose name ends `-design.md`, except a test-design;
+- every reusable prompt, a file whose name ends `-prompt.md` or `-instructions.md`;
+- `CLAUDE.md`, any `CLAUDE.local.md`, and everything under `.claude/` except its working space: `worktrees/`, `jobs/` and `handoffs/`.
+
+The list does not reach the draft places, where agents write drafts freely: any `queue/` directory, such as `docs/agents/queue/`, `docs/issues/queue/` or `docs/nedschorus-wiki/queue/`, `nc-queue/`, and `docs/drafts/`. Test-designs and design-contracts are not on the list, wherever they sit, `nc-systems/skills/` included: design-to-main brings them to the user. Nor are the frozen copies inside `cold-read-records/`, `md-review-records/` and `sanity-check-records/`. `.claude/hooks/instruction-file-guard.py` enforces the list for an agent's file-editing tools; a shell command, `git mv` or a program is not checked.
 
 ## Filename suffixes
 

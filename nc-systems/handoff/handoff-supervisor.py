@@ -19,7 +19,8 @@ The cycle, per reincarnation:
      reminder there are files in the queues. Thats what queues are for.").
   6. Launch the successor with the initial agent instructions. Beside the
      branch sync's line they carry one line per system whose code moved on
-     main past its overview's pinned commit (overview_refresh_due_lines),
+     main past its overview's pinned commit, until the user has been shown
+     that overview's refresh that day (overview_refresh_due_lines),
      and, on the Mac from noon Pacific, one line when the day's memory review
      is due (memory_review_due_lines).
   7. Keep the current and previous handoff and extract; delete older ones.
@@ -140,6 +141,20 @@ _daily_memory_review_mark_spec = importlib.util.spec_from_file_location(
     "daily_memory_review_mark", DAILY_MEMORY_REVIEW_MARK_PATH)
 daily_memory_review_mark = importlib.util.module_from_spec(_daily_memory_review_mark_spec)
 _daily_memory_review_mark_spec.loader.exec_module(daily_memory_review_mark)
+
+# What the "overview refresh due" line shares with the program that writes the
+# mark of the day's reminder: where the marks are, what a mark is called and
+# holds, and the Pacific date. Read through it, so the line and the mark cannot
+# disagree; see overview_refresh_due_lines. It sits beside this file, and its
+# path is also the command the line names. Loading it runs nothing.
+DAILY_OVERVIEW_REFRESH_REMINDER_MARK_PATH = Path(__file__).resolve().with_name(
+    "daily-overview-refresh-reminder-mark.py")
+_daily_overview_refresh_reminder_mark_spec = importlib.util.spec_from_file_location(
+    "daily_overview_refresh_reminder_mark", DAILY_OVERVIEW_REFRESH_REMINDER_MARK_PATH)
+daily_overview_refresh_reminder_mark = importlib.util.module_from_spec(
+    _daily_overview_refresh_reminder_mark_spec)
+_daily_overview_refresh_reminder_mark_spec.loader.exec_module(
+    daily_overview_refresh_reminder_mark)
 
 # The first turn a resumed session gets when no first prompt was given. One
 # definition, because two paths reach it: --resume-session-id, which only
@@ -303,6 +318,18 @@ BRANCH_STATE_INSTRUCTION = (
 # pattern; see overview_refresh_due_lines.
 SYSTEM_OVERVIEW_PATH_TEMPLATE = "docs/nedschorus-wiki/nedschorus-{system}-system-overview.md"
 
+# Where a refreshed overview is drafted before the user has seen it: the
+# wiki's queue directory, which is where the file-naming page puts a wiki
+# page awaiting approval, under the overview's name with the page's `-draft`
+# ending. Not under the overview's own file name: the overview is a tracked
+# file, a name means one tracked file, and
+# scripts/file-name-collision-warning-hook.py hands an agent that writes a
+# second file under a tracked file's name two instructions, delete the
+# tracked file or rename the new one, neither of which a refresh wants. Why a
+# refresh is drafted at all is in overview_refresh_due_lines's docstring.
+SYSTEM_OVERVIEW_DRAFT_PATH_TEMPLATE = (
+    "docs/nedschorus-wiki/queue/nedschorus-{system}-system-overview-draft.md")
+
 # How long each git call of overview_refresh_due_lines that reads a ref, a tree
 # or an overview gets before it is given up on. Read from the module inside
 # that function rather than bound as a default argument, so a case can lower
@@ -314,21 +341,32 @@ OVERVIEW_REFRESH_CHECK_GIT_TIMEOUT_SECONDS = 15
 # Read from the module inside that function, as the git timeout above is.
 OVERVIEW_REFRESH_CHECK_GH_TIMEOUT_SECONDS = 30
 
+# How long overview_refresh_due_lines's one read of the day's reminder marks,
+# over ssh from the Mac, gets before it is given up on. Read from the module
+# inside that function, as the two timeouts above are.
+OVERVIEW_REFRESH_REMINDER_MARKS_READ_TIMEOUT_SECONDS = 30
+
 # Appended to each overview-refresh-due report in the successor's first
 # prompt, the way BRANCH_STATE_INSTRUCTION is appended to the branch sync's.
 # A template, like ORPHANED_SUBAGENT_ROSTER_SENTENCE_TEMPLATE, because the
-# overview, the command listing the commits and the commit to pin are computed
-# per system. The pinned line it asks for is the one
-# scripts/stale-code-citation-check.py reads, prefix included, so a refresh
-# that follows it empties the range this check reports. Why each part is
+# overview, its draft, the command listing the commits, the commit to pin and
+# the command that marks the day's reminder are computed per system. The
+# pinned line it asks for is the one scripts/stale-code-citation-check.py
+# reads, prefix included, so a refresh that follows it empties the range this
+# check reports once the overview is written from the draft. Why each part is
 # there is in overview_refresh_due_lines's docstring.
 OVERVIEW_REFRESH_DUE_INSTRUCTION_TEMPLATE = (
-    " — Dispatch a subagent to refresh {overview_path} against the commits "
+    " — Dispatch a subagent to write {overview_draft_path}: a copy of "
+    "{overview_path} refreshed against the commits "
     "`{commit_listing_command}` lists, as "
     "docs/issues/670-refresh-design-when-a-system-s-code-lands.md defines a "
-    "refresh, and to append to it the pinned line "
+    "refresh, with the pinned line "
     "`{landing_pin_prefix}{main_commit}](<commit url>) on <YYYY-MM-DD> — "
-    "<what landed>`."
+    "<what landed>` appended. When the subagent reports, show the user the "
+    "diff between {overview_path} and {overview_draft_path}. Once the user "
+    "has been shown the diff, run `python3 {reminder_mark_script} {system}`. "
+    "When the user approves the diff, write {overview_path} from "
+    "{overview_draft_path} and delete {overview_draft_path}."
 )
 
 # The hour, in America/Los_Angeles, from which memory_review_due_lines looks
@@ -1418,16 +1456,19 @@ def sync_working_branch_with_main(working_directory: Path) -> str:
     return f"branch sync: {branch} is {ahead} ahead of main and {behind} behind{fetch_note}"
 
 
-def overview_refresh_due_lines(working_directory: Path) -> tuple:
+def overview_refresh_due_lines(working_directory: Path,
+                               now: Optional[datetime] = None) -> tuple:
     """One line for the successor's first prompt per system whose code moved
     on main after the commit its overview is pinned to, unless an open pull
-    request already changes that overview. Never raises.
+    request already changes that overview, or the user has already been shown
+    that overview's refresh today. Never raises.
 
     Each line is a report, `overview refresh due: <system> — <n> commit(s)
     under nc-systems/<system>/ since its overview's pinned commit, in
     <pinned>..<main>`, followed by OVERVIEW_REFRESH_DUE_INSTRUCTION_TEMPLATE
     filled in for that system: composed the way the branch-state line is, and
-    placed right after it.
+    placed right after it. now is the moment whose day is judged, the present
+    when not given.
 
     RULED. The user, 2026-09-23, item 14 of the walk
     what-a-design-becomes-when-its-code-lands-2026-09-22, whose minutes are
@@ -1445,9 +1486,37 @@ def overview_refresh_due_lines(working_directory: Path) -> tuple:
     GHI-MD the instruction names because the refresh is not yet built as a
     skill.
 
+    THE REFRESH IS DRAFTED, AND THE USER SEES IT BEFORE THE OVERVIEW CHANGES.
+    RULED. The user, 2026-10-01, item 2 of the walk
+    nedschorus-file-naming-and-location-standards-2026-09-30, whose minutes are
+      nedlern@ned-box:/home/nedlern/nedschorus-logs/walk/nedschorus-file-naming-and-location-standards-2026-09-30-minutes.md
+    his word "y", and "y" again the same day to the wiki's queue directory
+    over docs/drafts/. An overview is a page under docs/nedschorus-wiki/, and
+    .claude/hooks/instruction-file-guard.py refuses an agent's Edit or Write
+    to a page there until the user's approval words are quoted into its
+    marker. A subagent cannot show the user anything, so a subagent told to
+    refresh the overview in place stalls at that refusal. The instruction
+    therefore has the subagent write the refreshed overview to
+    SYSTEM_OVERVIEW_DRAFT_PATH_TEMPLATE, a path in the wiki's queue directory,
+    which the guard leaves free, and has the seat show the user the diff,
+    write the overview from the draft and delete the draft. The draft's name
+    is the overview's with a `-draft` ending, not the overview's own. RULED.
+    The user, 2026-10-01, his word "1", to the first of three ways out the
+    merge-lane-2 seat put to him, recorded at
+      https://github.com/nedschorus/nedschorus/pull/852#issuecomment-5938899848
+    the draft gets the ending `-draft`, the wiki's queue directory he chose
+    stands, and scripts/file-name-collision-warning-hook.py does not change.
+    Round 2 of the pull request that built this found why a way out was
+    needed: a draft under the overview's own file name draws that hook's
+    warning at the subagent's first write, which tells the subagent to delete
+    the overview or to rename the draft. The pull request that carries the
+    refresh then changes the overview itself, which is what the
+    open-pull-request check below looks for.
+
     WHY HERE AND NOT IN A HOOK. It runs once per reincarnation, only where an
-    ignition plan is composed, so it needs no record of what it has already
-    said. The walk first placed it in scripts/checkout-freshness-catch-up.py,
+    ignition plan is composed, so the one record it needs of what has been
+    said is the day's reminder mark, below. The walk first placed it in
+    scripts/checkout-freshness-catch-up.py,
     which is a Stop hook and would repeat the line at every turn boundary
     until the refresh landed.
 
@@ -1541,9 +1610,48 @@ def overview_refresh_due_lines(working_directory: Path) -> tuple:
     changes the overview counts, not only a refresh: nothing marks a pull
     request as a refresh, and any change to the overview conflicts with one.
     When GitHub cannot be asked -- `gh` missing, a nonzero exit, a timeout, or
-    output that does not parse -- every due line is given and the console
-    says why: a refresh never asked for is worse than a duplicate. The same
-    holds for an open pull request beyond the first 200 `gh` lists.
+    output that does not parse -- no line is withheld for a pull request and
+    the console says why: a refresh never asked for is worse than a
+    duplicate. The same holds for an open pull request beyond the first 200
+    `gh` lists.
+
+    ONCE A DAY FOR EACH OVERVIEW. RULED. The user, 2026-10-01, to the
+    merge-lane-2 seat, recorded at
+      https://github.com/nedschorus/nedschorus/pull/852#issuecomment-5939116857
+    in his own words "as long as I get reminded at least once a day, that
+    should work", and his word "y" to: "one reminder a day for each overview
+    that is behind, from whichever seat starts up first that day; the other
+    seats stay quiet until the next day." Why: since the refresh is drafted
+    and waits for him, the pull request that withholds the line opens only
+    after he has answered one seat, so every seat replaced during that wait
+    was given the line and drafted the same refresh for him to read again.
+    So a due system whose overview no open pull request changes gets its line
+    unless today's reminder mark for that system exists, and the console
+    names the mark that withheld it. The mark, its name, its day and its
+    directory in the log-store, which both machines read, are defined in
+    nc-systems/handoff/daily-overview-refresh-reminder-mark.py, which writes
+    it. The marks are read once, and only when at least one line is still to
+    give.
+
+    THE SEAT WRITES THE MARK, ONCE THE USER HAS BEEN SHOWN THE DIFF. The
+    instruction names the command. The mark means he was reminded, as the
+    daily memory review's marks are written by the seat that walks him
+    through it: a seat that is given the line and is closed before it shows
+    him the diff leaves no mark, and the next seat to reincarnate that day is
+    given the line. The cost is the minutes between one seat's line and its
+    mark, in which a second seat is given the line too.
+
+    THE DAY is the calendar date in America/Los_Angeles, from midnight; the
+    mark program's docstring says why not from noon.
+
+    AT LEAST ONCE A DAY DECIDES EVERY FAILURE. When the marks cannot be read
+    -- ned-box cannot be reached, the read times out, or its output does not
+    parse -- every line still to give is given, and the console says what
+    could not be read. A mark for today whose text is not the time it was
+    written does not withhold its line either, and the console says so. This
+    is the opposite of the memory review's fail safe, which gives no line: a
+    memory review missed comes back at the next noon, while here the user's
+    rule is the floor.
     """
     timeout = OVERVIEW_REFRESH_CHECK_GIT_TIMEOUT_SECONDS
     try:
@@ -1593,15 +1701,19 @@ def overview_refresh_due_lines(working_directory: Path) -> tuple:
                 f"git log --no-merges {commit_range} -- "
                 + " ".join(f"'{pathspec}'" if ":(" in pathspec else pathspec
                            for pathspec in pathspecs))
+            overview_draft_path = SYSTEM_OVERVIEW_DRAFT_PATH_TEMPLATE.format(system=system)
             due.append((system, overview_path,
                 f"overview refresh due: {system} — {count} commit(s) under "
                 f"nc-systems/{system}/ since its overview's pinned commit, in "
                 f"{commit_range}"
                 + OVERVIEW_REFRESH_DUE_INSTRUCTION_TEMPLATE.format(
                     overview_path=overview_path,
+                    overview_draft_path=overview_draft_path,
                     commit_listing_command=commit_listing_command,
                     landing_pin_prefix=stale_code_citation_check.LANDING_PIN_PREFIX,
-                    main_commit=main_commit)))
+                    main_commit=main_commit,
+                    reminder_mark_script=DAILY_OVERVIEW_REFRESH_REMINDER_MARK_PATH,
+                    system=system)))
         except Exception as error:  # this system only; see the docstring
             print(f"handoff-supervisor: overview check for {system} passed over: "
                   f"{type(error).__name__}: {error}")
@@ -1624,22 +1736,54 @@ def overview_refresh_due_lines(working_directory: Path) -> tuple:
                 for changed_file in pull_request["files"]:
                     changing_pull_request_by_path.setdefault(
                         changed_file["path"], title_and_url)
-    except Exception as error:  # every due line is given; see the docstring
+    except Exception as error:  # no line is withheld for a pull request; see the docstring
         unanswered = f"{type(error).__name__}: {error}"
     if unanswered is not None:
         print(f"handoff-supervisor: overview check could not ask GitHub which open "
-              f"pull requests change an overview, so every due line is given: "
-              f"{unanswered}")
-        return tuple(line for _, _, line in due)
+              f"pull requests change an overview, so no line is withheld for a "
+              f"pull request: {unanswered}")
+        still_to_give = [(system, line) for system, _, line in due]
+    else:
+        still_to_give = []
+        for system, overview_path, line in due:
+            if overview_path not in changing_pull_request_by_path:
+                still_to_give.append((system, line))
+                continue
+            title, url = changing_pull_request_by_path[overview_path]
+            print(f"handoff-supervisor: overview check for {system} withheld its line: "
+                  f"the open pull request \"{title}\" ({url}) already changes "
+                  f"{overview_path}")
+    if not still_to_give:
+        return ()
+    # Once a day for each overview; see the docstring.
+    reminder_mark = daily_overview_refresh_reminder_mark
+    try:
+        today = reminder_mark.pacific_date_of(now or datetime.now(timezone.utc))
+        reminder_marks = reminder_mark.read_daily_overview_refresh_reminder_marks(
+            today, OVERVIEW_REFRESH_REMINDER_MARKS_READ_TIMEOUT_SECONDS)
+    except Exception as error:  # every line still to give is given; see the docstring
+        print(f"handoff-supervisor: overview check could not read the day's reminder "
+              f"marks in {reminder_mark.daily_overview_refresh_reminder_mark_citation('')}, "
+              f"so no line is withheld for a reminder already given: "
+              f"{type(error).__name__}: {error}")
+        return tuple(line for _, line in still_to_give)
     lines = []
-    for system, overview_path, line in due:
-        if overview_path not in changing_pull_request_by_path:
+    for system, line in still_to_give:
+        file_name = reminder_mark.daily_overview_refresh_reminder_mark_file_name(today, system)
+        if file_name not in reminder_marks:
             lines.append(line)
             continue
-        title, url = changing_pull_request_by_path[overview_path]
-        print(f"handoff-supervisor: overview check for {system} withheld its line: "
-              f"the open pull request \"{title}\" ({url}) already changes "
-              f"{overview_path}")
+        citation = reminder_mark.daily_overview_refresh_reminder_mark_citation(file_name)
+        written_at = reminder_marks[file_name].strip()
+        if not reminder_mark.reminder_mark_text_is_a_time(written_at):
+            print(f"handoff-supervisor: overview check for {system} gives its line: the "
+                  f"day's reminder mark {citation} does not hold the time it was "
+                  f"written, but {written_at!r}")
+            lines.append(line)
+            continue
+        print(f"handoff-supervisor: overview check for {system} withheld its line: the "
+              f"user was shown this overview's refresh today, at {written_at}, as "
+              f"{citation} records")
     return tuple(lines)
 
 

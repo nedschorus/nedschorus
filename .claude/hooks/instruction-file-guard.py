@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""User-block on modifying instruction files (user-walked 2026-08-07, nedschorus#45).
+"""User-block on modifying instruction files and the documents the user
+reviews (user-walked 2026-08-07, nedschorus#45; reviewed documents added
+2026-09-30).
 
 Wired as a PreToolUse hook on Edit, Write, and NotebookEdit. Instruction
 files — CLAUDE.md, per-agent CLAUDE.local.md identity files, and everything
@@ -79,6 +81,41 @@ an agent's scratchpad); a queue directory (`queue/` or `nc-queue/`) and
 approval; and the .claude/jobs/ and .claude/handoffs/ carve-outs below, which
 are working space.
 
+Reviewed documents are protected by where they sit (user-ruled 2026-09-30,
+walk ghi-224-migration-order-and-open-questions-2026-09-30, item 5). The
+user wants long-lived prose reviewed by him, not agents stopped from
+drafting: "So its not a block, it's a human review"; then "Have you
+considered that we place the MD files or prose that I want to review in
+different directories than the non-reviewed MD files or prose. I think we
+almost do this already."; then "y" to the rule this file implements. An MD
+file in a checkout is a reviewed document when it sits under docs/agents/,
+docs/nedschorus-wiki/ or nc-systems/skills/, or when its name ends
+`-design.md` — a design, wherever it sits — but not `-test-design.md`.
+Test-designs and design-contracts (`-contract.md`) are left out on purpose,
+wherever they sit, the three directories included, so the name exemption is
+tested before the directory rule: design-to-main's own acceptance states
+bring them to the user, and a guard would stop its revising agents from
+writing the revisions he ruled he does not review (the same walk, item 5;
+confirmed 2026-10-01, walk
+nedschorus-file-naming-and-location-standards-2026-09-30, item 1, "Y").
+Drafts stay free in the same places the prompt rule exempts, so an agent
+drafts in a queue directory or docs/drafts/ without asking, and the review
+happens when the draft is written into its approved location and on every
+later edit there. The review-record directories (cold-read-records/,
+md-review-records/, sanity-check-records/) at a checkout's top are exempt
+too: a record holds a frozen copy of a reviewed document, which is a log,
+not the document. Code under nc-systems/skills/ stays with pull-request
+review. Like everything in this file, the rule sees only an agent's Edit,
+Write and NotebookEdit calls: a shell command, or a program that writes a
+file — git mv, the ghi-write tool, design-to-main's machine — is not stopped
+by it.
+
+The refusal a reviewed document gets tells a subagent to report the change
+to the agent that dispatched it (the same 2026-10-01 walk, item 2, "y"). A
+subagent cannot show the user anything, so "show him the change" alone left
+it with no next step; the handoff-supervisor's overview refresh, which a
+dispatched subagent drafts, is the case that showed it.
+
 Transcripts stay protected, and that is collateral rather than intent: the
 `.jsonl` files sit under ~/.claude/projects/ beside the auto-memory, so no
 directory-level carve-out separates them. `.claude/handoffs/` has no such
@@ -103,6 +140,11 @@ PROTECTED_DIRECTORY = ".claude"
 REUSABLE_PROMPT_SUFFIXES = ("-prompt.md", "-instructions.md")
 PROMPT_DRAFT_DIRECTORY_NAMES = ("queue", "nc-queue")
 PROMPT_EXEMPT_DIRECTORY_PREFIXES = (("docs", "drafts"), (".claude", "jobs"), (".claude", "handoffs"))
+REVIEWED_DOCUMENT_SUFFIX = ".md"
+REVIEWED_HOME_DIRECTORY_PREFIXES = (("docs", "agents"), ("docs", "nedschorus-wiki"), ("nc-systems", "skills"))
+REVIEWED_DESIGN_SUFFIX = "-design.md"
+UNREVIEWED_DOCUMENT_SUFFIXES = ("-test-design.md", "-contract.md")
+REVIEW_RECORD_DIRECTORY_NAMES = ("cold-read-records", "md-review-records", "sanity-check-records")
 APPROVAL_MARKER_NAME = ".walk-approved"
 
 MISSING_SESSION_DIRECTORY_DENY_MESSAGE = (
@@ -123,6 +165,17 @@ REUSABLE_PROMPT_DENY_MESSAGE = (
     "is consumed by the one call it approves. If the prompt is a one-off, write it outside "
     "the checkout, in your scratchpad. If it is a draft for his walk, write it in a queue "
     "directory or docs/drafts/."
+)
+
+REVIEWED_DOCUMENT_DENY_MESSAGE = (
+    "Get the user's approval before you change {path}; he reviews every change to a file here.\n"
+    "If he has approved this exact change, quote his exact approval words into {marker} at "
+    "the root of your session's own checkout, then resubmit; the marker is used up by the "
+    "one call it approves.\n"
+    "If he has not, show him the change and wait for his answer; if you are a subagent, "
+    "report the change to the agent that dispatched you instead.\n"
+    "If this is a first draft, write it in docs/drafts/ or in a queue directory such as "
+    "docs/issues/queue/, docs/agents/queue/ or docs/nedschorus-wiki/queue/ instead."
 )
 
 DENY_MESSAGE = (
@@ -199,23 +252,56 @@ def marker_root(payload: dict, file_path: str):
     return enclosing_repository_root(Path(file_path).parent)
 
 
+def checkout_directory_parts(path: Path):
+    """The directories between the file's checkout root and the file, or None
+    when the file sits in no checkout."""
+    root = enclosing_repository_root(path.parent)
+    if root is None:
+        return None
+    try:
+        return path.resolve().relative_to(root).parts[:-1]
+    except ValueError:
+        return None
+
+
+def is_in_draft_or_working_place(directory_parts) -> bool:
+    """A queue directory, docs/drafts/, or a harness working-space carve-out:
+    where drafts and working files are written without the user's review."""
+    if any(part in PROMPT_DRAFT_DIRECTORY_NAMES for part in directory_parts):
+        return True
+    return any(directory_parts[:len(prefix)] == prefix
+               for prefix in PROMPT_EXEMPT_DIRECTORY_PREFIXES)
+
+
 def is_reusable_prompt(file_path: str) -> bool:
     """A file named as a reusable prompt, inside a checkout, and outside the
     directories where drafts and working files are written."""
     path = Path(file_path)
     if not path.name.endswith(REUSABLE_PROMPT_SUFFIXES):
         return False
-    root = enclosing_repository_root(path.parent)
-    if root is None:
+    directory_parts = checkout_directory_parts(path)
+    if directory_parts is None:
         return False
-    try:
-        directory_parts = path.resolve().relative_to(root).parts[:-1]
-    except ValueError:
+    return not is_in_draft_or_working_place(directory_parts)
+
+
+def is_reviewed_document(file_path: str) -> bool:
+    """An MD file in a checkout that sits in one of the user's reviewed homes,
+    or is a design wherever it sits, outside the draft and record places."""
+    path = Path(file_path)
+    if not path.name.endswith(REVIEWED_DOCUMENT_SUFFIX):
         return False
-    if any(part in PROMPT_DRAFT_DIRECTORY_NAMES for part in directory_parts):
+    directory_parts = checkout_directory_parts(path)
+    if directory_parts is None or is_in_draft_or_working_place(directory_parts):
         return False
-    return not any(directory_parts[:len(prefix)] == prefix
-                   for prefix in PROMPT_EXEMPT_DIRECTORY_PREFIXES)
+    if directory_parts[:1] and directory_parts[0] in REVIEW_RECORD_DIRECTORY_NAMES:
+        return False
+    if path.name.endswith(UNREVIEWED_DOCUMENT_SUFFIXES):
+        return False
+    if any(directory_parts[:len(prefix)] == prefix
+           for prefix in REVIEWED_HOME_DIRECTORY_PREFIXES):
+        return True
+    return path.name.endswith(REVIEWED_DESIGN_SUFFIX)
 
 
 def is_protected(file_path: str) -> bool:
@@ -251,7 +337,9 @@ def main() -> int:
     if not file_path:
         return 0
     reusable_prompt = is_reusable_prompt(file_path)
-    if not reusable_prompt and not is_protected(file_path):
+    instruction_file = is_protected(file_path)
+    reviewed_document = is_reviewed_document(file_path)
+    if not (reusable_prompt or instruction_file or reviewed_document):
         return 0
 
     session_directory = session_directory_of(payload)
@@ -264,7 +352,12 @@ def main() -> int:
     if root is not None and consume_approval_marker(root / APPROVAL_MARKER_NAME):
         return 0
 
-    deny_message = REUSABLE_PROMPT_DENY_MESSAGE if reusable_prompt else DENY_MESSAGE
+    if reusable_prompt:
+        deny_message = REUSABLE_PROMPT_DENY_MESSAGE
+    elif instruction_file:
+        deny_message = DENY_MESSAGE
+    else:
+        deny_message = REVIEWED_DOCUMENT_DENY_MESSAGE
     print(deny_message.format(path=file_path, marker=APPROVAL_MARKER_NAME), file=sys.stderr)
     return 2
 
