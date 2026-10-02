@@ -397,14 +397,22 @@ RULING_QUESTION_FIRST_STOP_TEMPLATE = (
     "Ask the user this question from ghi-info, word for word: "
     "#{issue} — {sentence}\n"
     "Do not file or edit the issue until the user has answered.\n"
-    "When the user has answered, rerun this command with {rerun_options}.")
+    "When the user has answered, rerun this command with {rerun_options}.\n"
+    "If the user's answer means the draft must change, change the draft "
+    "before you rerun.\n"
+    "If the user's answer means the issue must not be filed or edited, do "
+    "not rerun.")
 RULING_QUESTION_ANOTHER_ISSUE_STOP_TEMPLATE = (
     "The write stopped again: ghi-info raised a question about a ruling in "
     "another issue, one the user has not answered yet.\n"
     "Ask the user this second question from ghi-info, word for word: "
     "#{issue} — {sentence}\n"
     "Do not file or edit the issue until the user has answered.\n"
-    "When the user has answered, rerun this command with {rerun_options}.")
+    "When the user has answered, rerun this command with {rerun_options}.\n"
+    "If the user's answer means the draft must change, change the draft "
+    "before you rerun.\n"
+    "If the user's answer means the issue must not be filed or edited, do "
+    "not rerun.")
 RULING_QUESTION_NAMING_NO_ISSUE_STOP_TEMPLATE = (
     "The write stopped: ghi-info raised a question about a ruling of the "
     "user's without naming the issue that holds the ruling, so this program "
@@ -412,7 +420,15 @@ RULING_QUESTION_NAMING_NO_ISSUE_STOP_TEMPLATE = (
     "Ask the user this question from ghi-info, word for word, and ask which "
     "issue holds the ruling: {sentence}\n"
     "When the user has answered, rerun this command with "
-    "--ruling-question-answered followed by that issue's number.")
+    "--ruling-question-answered followed by that issue's number.\n"
+    "If the user's answer means the draft must change, change the draft "
+    "before you rerun.\n"
+    "If the user's answer means the issue must not be filed or edited, do "
+    "not rerun.")
+RULING_QUESTION_TEXT_DID_NOT_ARRIVE_MESSAGE = (
+    "The write stopped: ghi-info raised a question about a ruling of the "
+    "user's, but the question's text did not reach this program.\n"
+    "Rerun this command once; if this message appears again, tell the user.")
 RULING_QUESTION_ANSWERED_WITHOUT_NUMBER_MESSAGE = (
     "Nothing was asked or written: --ruling-question-answered was given "
     "without an issue number, so this program cannot tell which question the "
@@ -945,10 +961,11 @@ def ruling_question_from_ask(stderr: str):
     not open with one; sentence is the rest of the question.
 
     None — exit 3 with no question in reach, which no caller is known to
-    produce — is read by `adjudicate` as an answer that did not arrive, and
-    fails open. A stop there would have to put to the user, word for word, a
-    line that is not ghi-info's question: stderr's last line, or a stand-in
-    sentence."""
+    produce — stops the write with its own text rather than failing open:
+    ghi-info did raise a ruling question, and stopping at a failure is part
+    of reporting it. The text asks for one rerun, which asks ghi-info again,
+    rather than putting to the user a line that is not ghi-info's
+    question."""
     lines = [line.strip() for line in (stderr or "").splitlines()
              if line.strip()]
     opening = GHI_INFO_ASK_NO_LIST_MESSAGE_OPENINGS[1]
@@ -1022,8 +1039,11 @@ def adjudicate(repo: str, title: str, text: str, repository_root: Path,
     agent's own judgment and this is the user's answer, which the agent
     states on the command line where the run's record shows it.
 
-    An exit 3 whose question does not reach this program fails open like any
-    answer that did not arrive (`ruling_question_from_ask`).
+    An exit 3 whose question does not reach this program stops too, with a
+    text asking for one rerun (`ruling_question_from_ask`). Each stop that
+    asks the user ends with what to do when the answer changes the draft or
+    rules the write out, because "rerun" alone assumes the answer lets the
+    write go on.
 
     The not-about-issues reply, exit 2, still fails open, as before: it means
     the question was put badly, and this program put it."""
@@ -1054,8 +1074,8 @@ def adjudicate(repo: str, title: str, text: str, repository_root: Path,
     if completed.returncode == GHI_INFO_ASK_RULING_QUESTION_EXIT_CODE:
         ruling_question = ruling_question_from_ask(completed.stderr)
         if ruling_question is None:
-            report("adjudication skipped: ghi-info did not answer")
-            return
+            raise Refused(RULING_QUESTION_TEXT_DID_NOT_ARRIVE_MESSAGE,
+                          EXIT_STOPPED_FOR_RULING_QUESTION)
         message, issue, sentence = ruling_question
         answered = tuple(dict.fromkeys(ruling_questions_answered))
         if issue is not None and issue in answered:

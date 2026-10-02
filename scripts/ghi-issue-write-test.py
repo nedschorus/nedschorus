@@ -1317,24 +1317,41 @@ def run_cases(scratch: Path):
                   == tool.RULING_QUESTION_NAMING_NO_ISSUE_STOP_TEMPLATE.format(
                       sentence=unnumbered), str(refusal))
 
-    # Exit 3 with no question in reach is an answer that did not arrive, and
-    # fails open like one. Two lines on stderr, so a fallback that took one
-    # of them for the question is caught.
+    # Exit 3 with no question in reach stops the write too, with its own
+    # text asking for one rerun. Two lines on stderr, so a fallback that took
+    # one of them for the question is caught.
     for case_name, stderr in [
-            ("an exit 3 whose question did not arrive lets the write proceed "
-             "and says ghi-info did not answer",
+            ("an exit 3 whose question did not arrive stops the write and asks "
+             "for one rerun",
              "ghi-info-ask: refreshed the seat checkout 1 commit(s) to "
              "origin/main\nan older relay's own line\n"),
             ("and so does one with nothing on stderr", "")]:
-        lines = []
         lost = Recorder({ASK: Completed("", returncode=3, stderr=stderr)})
         try:
-            tool.adjudicate(REPO, "t", FILE_TEXT, scratch, lost, lines.append)
-            check(case_name,
-                  lines == ["adjudication skipped: ghi-info did not answer"],
-                  lines)
+            tool.adjudicate(REPO, "t", FILE_TEXT, scratch, lost, quiet)
+            check(case_name, False, "it proceeded")
         except tool.Refused as refusal:
-            check(case_name, False, f"refused: {refusal}")
+            check(case_name,
+                  refusal.code == 67 and str(refusal)
+                  == tool.RULING_QUESTION_TEXT_DID_NOT_ARRIVE_MESSAGE,
+                  f"code {refusal.code}: {refusal}")
+
+    # Each stop that asks the user ends with what to do when the answer
+    # changes the draft or rules the write out.
+    answer_lines = [
+        "If the user's answer means the draft must change, change the draft "
+        "before you rerun.",
+        "If the user's answer means the issue must not be filed or edited, "
+        "do not rerun."]
+    for name in ("RULING_QUESTION_FIRST_STOP_TEMPLATE",
+                 "RULING_QUESTION_ANOTHER_ISSUE_STOP_TEMPLATE",
+                 "RULING_QUESTION_NAMING_NO_ISSUE_STOP_TEMPLATE"):
+        lines = getattr(tool, name).splitlines()
+        check(f"{name} ends with the rerun line, then what to do when the "
+              "answer changes the draft or rules the write out",
+              lines[-2:] == answer_lines
+              and lines[-3].startswith("When the user has answered, rerun"),
+              lines)
 
     answered_lines = []
     answered = Recorder({ASK: Completed(
@@ -3204,7 +3221,7 @@ def run_main_dispatch_cases(scratch: Path):
                   code == 0 and called == [(operation, source.resolve(), repo,
                                             scratch, tool.run)],
                   f"code {code}, {calls}")
-        # The rerun's arguments are read from the stops' own last lines, so
+        # The rerun's arguments are read from the stops' own rerun lines, so
         # a stop that names an option or a form the parser does not accept
         # fails here.
         for stop, rerun_options, numbers in [
@@ -3215,13 +3232,15 @@ def run_main_dispatch_cases(scratch: Path):
             template = (tool.RULING_QUESTION_FIRST_STOP_TEMPLATE
                         if stop == "the first stop"
                         else tool.RULING_QUESTION_ANOTHER_ISSUE_STOP_TEMPLATE)
-            last_line = template.format(
-                issue=783, sentence=RULING_SENTENCE,
-                rerun_options=rerun_options).splitlines()[-1]
+            last_line = next(
+                line for line in template.format(
+                    issue=783, sentence=RULING_SENTENCE,
+                    rerun_options=rerun_options).splitlines()
+                if line.startswith("When the user has answered, rerun"))
             named = re.fullmatch(
                 r"When the user has answered, rerun this command with (.+)\.",
                 last_line)
-            check(f"{stop}'s last line names the rerun's arguments",
+            check(f"{stop}'s rerun line names the rerun's arguments",
                   named is not None, last_line)
             rerun_arguments = named.group(1).split() if named else []
             for operation in ("create", "edit"):

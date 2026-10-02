@@ -6,9 +6,9 @@ ghi-info starts each ruling question with the number of the issue that holds the
 
 > #783 the ruling that a closed issue is frozen may not cover an issue that is reopened
 
-Do what the user's answer says. If the answer changes the draft, change it before you rerun; if the answer is that the write should not happen, do not rerun. When the answer lets the write go on, rerun the same command with `--ruling-question-answered 783`. The rerun asks ghi-info again. If ghi-info raises a ruling question again, the write goes on only if that question names an issue number you gave; if ghi-info raises none, the write goes on as any other write does. If ghi-info now raises a question about a different issue, the run stops again, and you ask the user that question too.
+Do what the user's answer says; each stop's last two lines say what to do when the answer changes the draft or rules the write out. When the answer lets the write go on, rerun the same command with `--ruling-question-answered 783`. The rerun asks ghi-info again. If ghi-info raises a ruling question again, the write goes on only if that question names an issue number you gave; if ghi-info raises none, the write goes on as any other write does. If ghi-info now raises a question about a different issue, the run stops again, and you ask the user that question too.
 
-If `scripts/ghi-info-ask.py` signals a ruling question but the question itself never reaches the tool, the tool treats that as no answer from ghi-info. It reports `adjudication skipped: ghi-info did not answer`, and the write goes on.
+If `scripts/ghi-info-ask.py` signals a ruling question but the question itself never reaches the tool, the run stops too; the section "A ruling question whose text did not arrive" gives that text.
 
 Each section below gives one text the tool prints or sends, word for word, and when you see it. The tool fills in the words in braces when it prints the text:
 
@@ -16,7 +16,7 @@ Each section below gives one text the tool prints or sends, word for word, and w
 - `{sentence}`: the rest of ghi-info's question, as ghi-info wrote it. The sentence can run over several lines.
 - `{rerun_options}`: `--ruling-question-answered` with each issue number you have already given, then with `{issue}`. For example: `--ruling-question-answered 783 --ruling-question-answered 860`.
 
-The user approved the wording of every stop word for word, except each stop's first line, which says what was stopped and why. Those first lines were written after the approval, and the last section of this file lists them. `scripts/ghi-issue-write-test.py` fails when any text here and the tool's text differ.
+The user approved every text below word for word. In the four texts that stop or refuse a run and ask the user something or name a number, the first line, which says what was stopped and why, was written after the rest and approved separately; the last section of this file lists those lines. `scripts/ghi-issue-write-test.py` fails when any text here and the tool's text differ.
 
 ## The first ruling question
 
@@ -29,6 +29,8 @@ The write stopped: ghi-info cannot tell whether a ruling of the user's still app
 Ask the user this question from ghi-info, word for word: #{issue} — {sentence}
 Do not file or edit the issue until the user has answered.
 When the user has answered, rerun this command with {rerun_options}.
+If the user's answer means the draft must change, change the draft before you rerun.
+If the user's answer means the issue must not be filed or edited, do not rerun.
 ```
 
 ## A ruling question about another issue
@@ -42,6 +44,8 @@ The write stopped again: ghi-info raised a question about a ruling in another is
 Ask the user this second question from ghi-info, word for word: #{issue} — {sentence}
 Do not file or edit the issue until the user has answered.
 When the user has answered, rerun this command with {rerun_options}.
+If the user's answer means the draft must change, change the draft before you rerun.
+If the user's answer means the issue must not be filed or edited, do not rerun.
 ```
 
 ## A ruling question that names no issue
@@ -54,6 +58,8 @@ The program's name for this text: `RULING_QUESTION_NAMING_NO_ISSUE_STOP_TEMPLATE
 The write stopped: ghi-info raised a question about a ruling of the user's without naming the issue that holds the ruling, so this program cannot tell when the user has answered it.
 Ask the user this question from ghi-info, word for word, and ask which issue holds the ruling: {sentence}
 When the user has answered, rerun this command with --ruling-question-answered followed by that issue's number.
+If the user's answer means the draft must change, change the draft before you rerun.
+If the user's answer means the issue must not be filed or edited, do not rerun.
 ```
 
 ## The option given without an issue number
@@ -65,6 +71,17 @@ The program's name for this text: `RULING_QUESTION_ANSWERED_WITHOUT_NUMBER_MESSA
 ```text
 Nothing was asked or written: --ruling-question-answered was given without an issue number, so this program cannot tell which question the user answered.
 Give --ruling-question-answered the issue number at the start of the question the user answered, for example --ruling-question-answered 783.
+```
+
+## A ruling question whose text did not arrive
+
+You see this when `scripts/ghi-info-ask.py` signals that ghi-info raised a ruling question, but no line of what it printed carries the question, so there is nothing to put to the user. The run exits 67 and writes nothing. A rerun asks ghi-info again, which usually brings the question through; if the same text appears a second time, stop rerunning and tell the user.
+
+The program's name for this text: `RULING_QUESTION_TEXT_DID_NOT_ARRIVE_MESSAGE`.
+
+```text
+The write stopped: ghi-info raised a question about a ruling of the user's, but the question's text did not reach this program.
+Rerun this command once; if this message appears again, tell the user.
 ```
 
 ## The rerun goes on
