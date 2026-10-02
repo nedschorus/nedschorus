@@ -516,6 +516,15 @@ def launcher_path():
     return None
 
 
+def reach_clause_for_a_running_seat(name: str) -> str:
+    """Return the report clause naming how the operator opens a seat recovery left running."""
+    # Recovery launches detached on the seat's own tmux socket, where a plain `tmux attach` finds nothing.
+    if launcher_path() is not None:
+        return f"; reach it with: launch-claude-mac {name}"
+    return (f"; reach it with: launch-claude-ubuntu {name} from the Mac, "
+            f"or tmux -L {name} attach -t {name} here")
+
+
 def durable_checkout_file_a_launch_here_runs() -> Path:
     if launcher_path() is None:
         return durable_checkout / SUPERVISOR_SCRIPT_WITHIN_A_CHECKOUT
@@ -967,8 +976,12 @@ def recover_seat(name: str, agents_root: Path, handoff_directory: Path,
                             dry_run, ignite_fallback, open_iterm_window,
                             retired_pane_process_ids=pane_process_ids,
                             restart_at_the_operators_word=True)
-        return (f"{rest} (the operator said to restart it, so the leftover shell was closed "
-                f"first: {closed})")
+        # The reach clause stays last, so the operator finds it at the end of every line that left a seat running.
+        reach = reach_clause_for_a_running_seat(name)
+        rest_without_reach = rest[:-len(reach)] if rest.endswith(reach) else rest
+        left_running_reach = reach if rest.endswith(reach) else ""
+        return (f"{rest_without_reach} (the operator said to restart it, so the leftover shell "
+                f"was closed first: {closed}){left_running_reach}")
 
     if verdict == "seat-already-running":
         return f"{name}: {SEAT_ALREADY_RUNNING_REPORT_MARKER} — {detail}"
@@ -991,7 +1004,7 @@ def recover_seat(name: str, agents_root: Path, handoff_directory: Path,
             return (f"{name}: relaunched plain{in_window}, although an unconsumed handoff "
                     f"(counter {counter}) asks to be consulted before a relaunch: {reason}. Its "
                     "supervisor asks its own restart question before it starts a session: "
-                    "answer it in the seat's tmux session")
+                    f"answer it in the seat's tmux session{reach_clause_for_a_running_seat(name)}")
         return (f"{name}: {SEAT_ASKED_TO_BE_CONSULTED_REPORT_MARKER} — an unconsumed handoff "
                 f"(counter {counter}) asks to be consulted before a relaunch: {reason}. Nothing "
                 f"was launched. To bring it back, launch it by hand (launch-claude-mac {name} "
@@ -1030,7 +1043,8 @@ def recover_seat(name: str, agents_root: Path, handoff_directory: Path,
             did_not_come_up = came_up_or_failure_report(name, handoff_directory, False)
             if did_not_come_up is not None:
                 return f"{did_not_come_up}{on_whose_word}"
-            return f"{name}: {relaunched} after {recorded}{no_session}{on_whose_word}"
+            return (f"{name}: {relaunched} after {recorded}{no_session}{on_whose_word}"
+                    f"{reach_clause_for_a_running_seat(name)}")
         fresh = by_hand_launch_command_for_seat(name, seat_directory, handoff_directory, "")
         if session_id is None:
             by_hand = f"to bring it back by hand as a fresh session: {fresh}"
@@ -1069,7 +1083,7 @@ def recover_seat(name: str, agents_root: Path, handoff_directory: Path,
                                                     not ignite_fallback)
         if did_not_come_up is not None:
             return did_not_come_up
-        return f"{name}: relaunched plain{in_window} — {detail}"
+        return f"{name}: relaunched plain{in_window} — {detail}{reach_clause_for_a_running_seat(name)}"
 
     if verdict == "resume" and not ignite_fallback:
         session_id, transcript = detail
@@ -1091,7 +1105,8 @@ def recover_seat(name: str, agents_root: Path, handoff_directory: Path,
         if did_not_come_up is not None:
             return did_not_come_up
         return (f"{name}: relaunched resuming {session_id} "
-                f"({size_kb}KB transcript){in_window}{unreplied_note}")
+                f"({size_kb}KB transcript){in_window}{unreplied_note}"
+                f"{reach_clause_for_a_running_seat(name)}")
 
     extract = newest_dialog_extract(handoff_directory, name)
     if extract is None:
@@ -1104,7 +1119,8 @@ def recover_seat(name: str, agents_root: Path, handoff_directory: Path,
         did_not_come_up = came_up_or_failure_report(name, handoff_directory, False)
         if did_not_come_up is not None:
             return did_not_come_up
-        return f"{name}: relaunched fresh{in_window} (nothing to resume, no extract to read)"
+        return (f"{name}: relaunched fresh{in_window} (nothing to resume, no extract to read)"
+                f"{reach_clause_for_a_running_seat(name)}")
     prompt = (
         f"Read {extract} — it is the dialog from this seat's last recorded "
         "session; the session that followed it ended without writing a handoff "
@@ -1123,7 +1139,8 @@ def recover_seat(name: str, agents_root: Path, handoff_directory: Path,
     did_not_come_up = came_up_or_failure_report(name, handoff_directory, False)
     if did_not_come_up is not None:
         return did_not_come_up
-    return f"{name}: relaunched fresh{in_window} igniting from {extract.name}"
+    return (f"{name}: relaunched fresh{in_window} igniting from {extract.name}"
+            f"{reach_clause_for_a_running_seat(name)}")
 
 
 def append_to_recovery_log(handoff_directory: Path, report: str):
