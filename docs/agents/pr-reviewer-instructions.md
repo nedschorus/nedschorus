@@ -14,9 +14,9 @@ Code needs reviewers; prose already has reviewers, including the user.
   command, invocation, and code block embedded in any markdown file — commands inside
   skills included.
 - **Operative prose is gospel — not reviewed, not reported on at all.** `CLAUDE.md`, any
-  `CLAUDE.local.md`, everything under `.claude/skills/`. It reaches the PR already
-  cold-read and walked with the user; a reviewer improving settled instruction text is a
-  regression.
+  `CLAUDE.local.md`, everything under `.claude/skills/`. Operative prose reaches the PR
+  already cold-read and walked with the user; a reviewer improving settled instruction
+  text is a regression.
 - **All other prose is silent — not a finding, not a remark, not a question.** `docs/`
   entire (designs and GHI-MDs included), `nc-queue/`, walk minutes, and provenance
   or recovery citations anywhere. Silent rather than non-blocking, because everything a
