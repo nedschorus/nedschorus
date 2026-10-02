@@ -28,10 +28,16 @@ not write in this call would be noise the agent cannot act on:
   - Edit: the hits inside `new_string`, located in the file as it now stands
     (the hook runs after the edit). The whole file is read for its fences, so
     a `new_string` written inside a fenced code block is known to be code, and
-    a hit is reported with its line in the file. Every occurrence is located
-    when `replace_all` is set, and the first otherwise; when the text is
-    identical, the hits are too. When `new_string` cannot be found in the file
-    (another writer changed the file in between, say), nothing is reported.
+    a hit is reported with its line in the file. The occurrences this call
+    wrote are the ones that overlap a line the tool's own patch,
+    `tool_response.structuredPatch`, marks as added: the text of `new_string`
+    may already stand elsewhere in the file, and a `replace_all` adds
+    occurrences beside any the file already held. Each hunk gives `newStart`
+    and its `lines`, each line prefixed " " (unchanged), "-" (removed) or "+"
+    (added). When the patch is missing or unreadable, the first occurrence is
+    located, and every occurrence when `replace_all` is set. When `new_string`
+    cannot be found in the file (another writer changed the file in between,
+    say), nothing is reported.
   - Write: the hits on lines whose text is absent from `git show
     HEAD:<path>`, so rewriting a file whole reports only its new lines. A file
     `HEAD` does not hold is new in every line.
@@ -158,7 +164,40 @@ def git_would_track(root: Path, relative_path: str) -> bool:
     return run_git(["check-ignore", "-q", "--", relative_path], root).returncode == 1
 
 
-def hits_in_edit(checker, root: Path, relative_path: str, tool_input: dict):
+def lines_added_by_structured_patch(tool_response):
+    """The 1-based line numbers, in the file as it now stands, that the tool's
+    patch marks as added, or None when the patch is missing or unreadable.
+
+    A real Edit result carries hunks of this shape (Claude Code 2.1.287):
+    {"oldStart": 49, "oldLines": 8, "newStart": 49, "newLines": 12,
+     "lines": [" unchanged", "-removed", "+added", ...]}.
+    """
+    if not isinstance(tool_response, dict):
+        return None
+    hunks = tool_response.get("structuredPatch")
+    if not isinstance(hunks, list) or not hunks:
+        return None
+    added = set()
+    for hunk in hunks:
+        if not isinstance(hunk, dict):
+            return None
+        new_line = hunk.get("newStart")
+        hunk_lines = hunk.get("lines")
+        if not isinstance(new_line, int) or not isinstance(hunk_lines, list):
+            return None
+        for hunk_line in hunk_lines:
+            if not isinstance(hunk_line, str):
+                return None
+            if hunk_line.startswith("+"):
+                added.add(new_line)
+                new_line += 1
+            elif not hunk_line.startswith("-"):
+                new_line += 1
+    return added
+
+
+def hits_in_edit(checker, root: Path, relative_path: str, tool_input: dict,
+                 tool_response=None):
     new_string = tool_input.get("new_string")
     if not isinstance(new_string, str) or not new_string.strip():
         return []
@@ -168,13 +207,21 @@ def hits_in_edit(checker, root: Path, relative_path: str, tool_input: dict):
         file_text = (root / relative_path).read_text(encoding="utf-8", errors="replace")
     except OSError:
         return []
-    spans = []
+    occurrences = []
     start = file_text.find(new_string)
     while start != -1:
-        spans.append((start, start + len(new_string)))
-        if tool_input.get("replace_all") is not True:
-            break
+        occurrences.append((start, start + len(new_string)))
         start = file_text.find(new_string, start + len(new_string))
+    added_lines = lines_added_by_structured_patch(tool_response)
+    if added_lines is not None:
+        spans = [(span_start, span_end) for span_start, span_end in occurrences
+                 if added_lines.intersection(range(
+                     file_text.count("\n", 0, span_start) + 1,
+                     file_text.count("\n", 0, max(span_start, span_end - 1)) + 2))]
+    elif tool_input.get("replace_all") is True:
+        spans = occurrences
+    else:
+        spans = occurrences[:1]
     if not spans:
         return []
     line_numbers = set()
@@ -256,7 +303,8 @@ def main() -> int:
     if checker is None:
         return 0
     if tool_name == "Edit":
-        hits = hits_in_edit(checker, root, relative_path, tool_input)
+        hits = hits_in_edit(checker, root, relative_path, tool_input,
+                            payload.get("tool_response"))
     else:
         hits = hits_in_write(checker, root, relative_path, tool_input)
     if not hits:

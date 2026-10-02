@@ -18,6 +18,7 @@ a repository at its own path before any case writes to it, so a GIT_DIR
 inherited from the caller cannot point these writes at another repository.
 """
 
+import difflib
 import importlib.util
 import json
 import os
@@ -26,6 +27,17 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+
+# Before anything runs git: a run started with GIT_DIR set, or with another
+# variable that redirects git, must still build this suite's scratch
+# repositories where the suite says, not in the repository the variable names.
+_git_environment_fixture_spec = importlib.util.spec_from_file_location(
+    "git_redirecting_environment_removal_test_fixture",
+    Path(__file__).resolve().with_name(
+        "git-redirecting-environment-removal-test-fixture.py"))
+_git_environment_fixture = importlib.util.module_from_spec(_git_environment_fixture_spec)
+_git_environment_fixture_spec.loader.exec_module(_git_environment_fixture)
+_git_environment_fixture.remove_git_redirecting_environment_variables_from_this_process()
 
 HOOK_PATH = Path(__file__).with_name("style-guide-word-checker-markdown-edit-hook.py")
 CHECKER_PATH = Path(__file__).with_name("style-guide-word-checker.py")
@@ -75,6 +87,21 @@ for form in ("lands", "landed", "landing", "homes", "drafts", "walks", "walked",
              "seats", "seated", "heads", "drains", "drained", "draining"):
     forms = file_hit_forms(f"Then {form} again.\n")
     check(f'inflection: "{form}" is flagged', forms == [form], forms)
+
+forms = file_hit_forms("Intro.\n\n- ```sh\n  git switch seat\n  ```\n\nThe seat is free.\n")
+check("a fence opened on a list item's marker line is code, and prose after it is read",
+      forms == ["seat"]
+      and [hit.line_number for hit in checker.find_style_guide_word_hits_in_markdown(
+          "Intro.\n\n- ```sh\n  git switch seat\n  ```\n\nThe seat is free.\n",
+          checker.APPLIES_TO_FILES)] == [7], forms)
+
+forms = file_hit_forms("Run `git\nswitch seat --quiet` now.\n")
+check("a code span that wraps across a line break is code on both lines", forms == [], forms)
+forms = file_hit_forms("Run `git\nswitch seat` now, then the seat moves.\n")
+check("prose after a wrapped code span closes is still read", forms == ["seat"], forms)
+forms = file_hit_forms("A lone ` backtick.\nThe seat is free.\n")
+check("a backtick never closed in its paragraph is literal, and later prose is read",
+      forms == ["seat"], forms)
 
 forms = file_hit_forms("Seat assignments changed.\n")
 check("a form at the start of a sentence, capitalised, is flagged", forms == ["Seat"], forms)
@@ -215,15 +242,51 @@ def payload_common_keys(cwd, tool_name):
             "tool_use_id": "style-guide-word-checker-test-tool-use", "duration_ms": 1}
 
 
-def edit_payload(cwd, file_path, old_string, new_string, replace_all=False):
+def edit_payload(cwd, file_path, old_string, new_string, replace_all=False,
+                 structured_patch=None):
     payload = payload_common_keys(cwd, "Edit")
     payload["tool_input"] = {"file_path": str(file_path), "old_string": old_string,
                              "new_string": new_string, "replace_all": replace_all}
     payload["tool_response"] = {"filePath": str(file_path), "oldString": old_string,
-                                "newString": new_string, "originalFile": "",
-                                "replaceAll": replace_all, "structuredPatch": [],
+                                "newString": new_string, "originalFile": None,
+                                "replaceAll": replace_all,
+                                "structuredPatch": structured_patch or [],
                                 "userModified": False}
     return payload
+
+
+def structured_patch(old_text, new_text):
+    """The hunks Claude Code reports for an Edit, built from a unified diff:
+    {"oldStart", "oldLines", "newStart", "newLines", "lines"}, each line
+    prefixed " ", "-" or "+"; the shape of a real Edit result's
+    structuredPatch on Claude Code 2.1.287."""
+    hunks = []
+    for line in difflib.unified_diff(old_text.split("\n"), new_text.split("\n"),
+                                     lineterm="", n=3):
+        if line.startswith(("---", "+++")):
+            continue
+        if line.startswith("@@"):
+            old_part, new_part = line.split()[1:3]
+            old_start, _, old_count = old_part[1:].partition(",")
+            new_start, _, new_count = new_part[1:].partition(",")
+            hunks.append({"oldStart": int(old_start), "oldLines": int(old_count or 1),
+                          "newStart": int(new_start), "newLines": int(new_count or 1),
+                          "lines": []})
+        else:
+            hunks[-1]["lines"].append(line)
+    return hunks
+
+
+def edit_file_then_run(cwd, file_path, before, old_string, new_string, replace_all=False):
+    """Write `before`, apply the Edit the way the Edit tool does, then run the
+    hook with the patch the tool would report."""
+    if replace_all:
+        after = before.replace(old_string, new_string)
+    else:
+        after = before.replace(old_string, new_string, 1)
+    file_path.write_text(after, encoding="utf-8")
+    return run_hook(edit_payload(cwd, file_path, old_string, new_string, replace_all,
+                                 structured_patch(before, after)))
 
 
 def write_payload(cwd, file_path, content):
@@ -331,6 +394,32 @@ with tempfile.TemporaryDirectory() as temporary_directory:
           hit_lines(result, "docs/committed.md") == [(9, "walk"), (11, "walk")],
           result.stdout + result.stderr)
 
+    # The occurrence this call wrote, not the first in the file: each file
+    # below already holds the text of new_string, "seat", before the Edit's
+    # own line. Without the patch the hook located the first occurrence, so
+    # it reported the older line and lost the new one.
+    result = edit_file_then_run(checkout, committed_file,
+                                "The seat stays.\n\nLater: the chair.\n", "chair", "seat")
+    check("an Edit is located at the line the patch adds, not at the text's first occurrence",
+          hit_lines(result, "docs/committed.md") == [(3, "seat")],
+          result.stdout + result.stderr)
+    result = edit_file_then_run(checkout, committed_file,
+                                "```\nthe seat\n```\n\nFinal: the chair.\n", "chair", "seat")
+    check("an Edit is not lost when the text's first occurrence sits inside a fence",
+          hit_lines(result, "docs/committed.md") == [(5, "seat")],
+          result.stdout + result.stderr)
+    result = edit_file_then_run(checkout, committed_file,
+                                "The agent-seat stays.\n\nThe chair.\n", "chair", "seat")
+    check("an Edit is not lost when the text's first occurrence sits inside a compound",
+          hit_lines(result, "docs/committed.md") == [(3, "seat")],
+          result.stdout + result.stderr)
+    result = edit_file_then_run(checkout, committed_file,
+                                "The seat stays.\n\nThe chair one.\n\nThe chair two.\n",
+                                "chair", "seat", replace_all=True)
+    check("a replace_all Edit reports only the occurrences it wrote, not one already there",
+          hit_lines(result, "docs/committed.md") == [(3, "seat"), (5, "seat")],
+          result.stdout + result.stderr)
+
     reset_committed_file()
     result = run_hook(edit_payload(checkout, committed_file, "x", "a walk the file never got"))
     check("an Edit whose new_string is not in the file reports nothing", silent(result),
@@ -397,6 +486,19 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     result = run_hook(write_payload(checkout, new_page, "The seat.\n"), hook_path=lone_hook)
     check("a checker that fails to load exits 0 with no output", silent(result),
           result.stdout + result.stderr)
+
+    # The last-resort handler: git missing from PATH raises FileNotFoundError
+    # inside the hook, and only the top-level handler keeps that from
+    # becoming a traceback after every markdown Edit.
+    empty_path_directory = tmp / "empty-path-directory"
+    empty_path_directory.mkdir()
+    reset_committed_file()
+    payload = edit_payload(checkout, committed_file, "here before.", "here before.")
+    no_git = subprocess.run([sys.executable, str(HOOK_PATH)], input=json.dumps(payload),
+                            capture_output=True, text=True, check=False,
+                            env=dict(CLEAN_ENVIRONMENT, PATH=str(empty_path_directory)))
+    check("a hook whose git cannot be found exits 0 with no output", silent(no_git),
+          no_git.stdout + no_git.stderr)
 
 if failures:
     print(f"\n{len(failures)} case(s) failed")

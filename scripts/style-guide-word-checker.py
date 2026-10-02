@@ -187,8 +187,11 @@ class StyleGuideWordHit(NamedTuple):
 
 
 # A fence opens with three or more backticks or tildes. Leading whitespace of
-# any width is accepted, because a fence inside a list item is indented.
-FENCE_PATTERN = re.compile(r"^[ \t]*(`{3,}|~{3,})")
+# any width is accepted, because a fence inside a list item is indented, and
+# so is a list marker, because a fence may open on the marker's own line, as
+# in "- ```sh"; missed there, the fence's indented closing line would open a
+# fence of its own that hid every later hit.
+FENCE_PATTERN = re.compile(r"^[ \t]*(?:(?:[-*+]|\d{1,9}[.)])[ \t]+)?(`{3,}|~{3,})")
 BLOCKQUOTE_LINE_PATTERN = re.compile(r"^[ \t]*>")
 
 # Applied in this order; each blanks what it matches with spaces of equal
@@ -268,6 +271,28 @@ def blank_exempt_text(line: str) -> str:
     return line
 
 
+def backtick_run_closing(line: str, run: str, start: int = 0) -> Optional[int]:
+    """The end offset of the first run of exactly len(run) backticks in line at
+    or after start, or None: a code span closes only on a run of its own
+    opening run's length."""
+    found = re.compile(r"(?<!`)`{%d}(?!`)" % len(run)).search(line, start)
+    return None if found is None else found.end()
+
+
+def code_span_continues_to(lines: List[str], line_index: int, run: str) -> bool:
+    """Whether a code span opened by `run`, unmatched on lines[line_index],
+    closes on a later line of the same paragraph. A span closes at most at the
+    paragraph's end, a blank line or a fence; an opener that never closes is a
+    literal backtick, as Markdown reads it."""
+    for later in lines[line_index + 1:]:
+        later = later.rstrip("\r")
+        if not later.strip() or FENCE_PATTERN.match(later):
+            return False
+        if backtick_run_closing(later, run) is not None:
+            return True
+    return False
+
+
 def is_inside_exempt_form(line: str, start: int, end: int, exempt_pattern: Pattern) -> bool:
     """Whether the form at line[start:end] lies inside one of its entry's
     exempt forms. Only a window around the form is searched: an exempt form
@@ -292,8 +317,12 @@ def find_style_guide_word_hits_in_markdown(
     words, word_pattern, exempt_pattern_by_word, entry_by_form = COMPILED_SCOPES[applies_to]
     hits = []
     open_fence = None   # (fence character, fence length) while inside a fenced block
+    # The backtick run of a code span that a line opened and a later line of
+    # the same paragraph closes, while the span runs across the line break.
+    open_code_span_run = None
+    lines = text.split("\n")
     line_start = 0
-    for line_index, raw_line in enumerate(text.split("\n")):
+    for line_index, raw_line in enumerate(lines):
         line = raw_line.rstrip("\r")
         this_line_start = line_start
         line_start += len(raw_line) + 1
@@ -308,13 +337,34 @@ def find_style_guide_word_hits_in_markdown(
         # info string may not hold a backtick.
         if fence and not (fence.group(1)[0] == "`" and "`" in line[fence.end():]):
             open_fence = (fence.group(1)[0], len(fence.group(1)))
+            open_code_span_run = None
             continue
+        # A code span may wrap across a line break: the text before its
+        # closing run on this line, and after an opener the line leaves
+        # unmatched, is code. Tracked on every line, like the fences, because
+        # whether a line starts inside a span depends on the lines before it.
+        code_until = 0
+        if open_code_span_run is not None:
+            closing_end = backtick_run_closing(line, open_code_span_run)
+            if closing_end is None:
+                continue
+            code_until = closing_end
+            open_code_span_run = None
+        code_from = len(line)
+        if "`" in line[code_until:]:
+            spans_blanked = INLINE_CODE_SPAN_PATTERN.sub(_blank, line[code_until:])
+            unmatched = re.search(r"`+", spans_blanked)
+            if unmatched is not None and code_span_continues_to(lines, line_index,
+                                                                unmatched.group(0)):
+                open_code_span_run = unmatched.group(0)
+                code_from = code_until + unmatched.start()
         if line_numbers is not None and line_index + 1 not in line_numbers:
             continue
         lowered = line.lower()
         if not any(word in lowered for word in words) or BLOCKQUOTE_LINE_PATTERN.match(line):
             continue
-        blanked = blank_exempt_text(line)
+        blanked = blank_exempt_text(" " * code_until + line[code_until:code_from]
+                                    + " " * (len(line) - code_from))
         for match in word_pattern.finditer(blanked):
             form = match.group(0)
             entry = entry_by_form[form.lower()]
