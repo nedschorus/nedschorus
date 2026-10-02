@@ -98,9 +98,9 @@
 # measured 2026-09-24: a variable exported in one call read back unset in the
 # next).
 #
-# The refusal printed below is instruction only, each line one instruction
-# and the condition it applies under; this header is where the reasons live
-# (CLAUDE.md, user-ruled 2026-09-18). The refused identity is named inside the
+# The refusal printed below gives one instruction per line, each with the
+# condition it applies under, and cites no ruling and no date; the reasons for
+# those instructions are in this header. The refused identity is named inside the
 # first instruction because the agent needs it to see which variable or flag
 # put the user's address or the tripwire on this commit.
 
