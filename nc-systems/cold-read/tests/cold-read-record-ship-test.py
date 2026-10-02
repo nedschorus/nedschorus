@@ -19,6 +19,7 @@ Run: python3 nc-systems/cold-read/tests/cold-read-record-ship-test.py   (exit 0 
 """
 
 import contextlib
+import fcntl
 import hashlib
 import importlib.util
 import io
@@ -26,10 +27,12 @@ import json
 import os
 import socket
 import pathlib
+import shlex
 import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 
 # This suite sits in nc-systems/cold-read/tests/; the programs it tests are
@@ -1029,6 +1032,229 @@ with tempfile.TemporaryDirectory(prefix="cold-read-record-ship-test-") as scratc
           all(f"stored {hashlib.sha256((store / name).read_bytes()).hexdigest()} {name}"
               in lines for name in ("m.md", "w x.md", "v.md", "renamed.md")),
           replayed.stdout)
+
+    # --- ONE NAME REPLACED BY TWO SHIPMENTS AT ONCE ---------------------------
+    # The replacing step reads the digest of the file it is about to displace,
+    # then renames over it. One shipment is held between those two steps, at
+    # its rename; a second shipment replaces the same name meanwhile; then the
+    # first goes on. Each shipment's announced displaced digest must be what
+    # its own rename displaced: the first renamer displaces the original, the
+    # second displaces the first's bytes. Two shipments announcing the same
+    # displaced digest means one announcement is false.
+    race_original = "minutes, before either shipment\n"
+    race_texts = {"held": "minutes, the held shipment's\n",
+                  "other": "minutes, the other shipment's\n"}
+
+    def race_digest(text):
+        return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+    def race_store_and_stagings(label):
+        base = scratch / f"replace-race-{label}"
+        store = base / "store"
+        store.mkdir(parents=True)
+        (store / "m.md").write_text(race_original, encoding="utf-8")
+        stagings = {}
+        for who, text in race_texts.items():
+            staging = base / f".ship-staging-m-{who}"
+            staging.mkdir()
+            (staging / "m.md").write_text(text, encoding="utf-8")
+            stagings[who] = staging
+        return base, store, stagings
+
+    def race_announcements_are_true(displaced, kept):
+        """True when the two announced displaced digests form the one chain a
+        serial order of the two renames gives, and the store keeps the later
+        renamer's bytes."""
+        held_first = (displaced.get("held") == race_digest(race_original)
+                      and displaced.get("other") == race_digest(race_texts["held"])
+                      and kept == race_texts["other"])
+        other_first = (displaced.get("other") == race_digest(race_original)
+                       and displaced.get("held") == race_digest(race_texts["other"])
+                       and kept == race_texts["held"])
+        return held_first or other_first
+
+    def wait_for_path(path, seconds=30):
+        deadline = time.monotonic() + seconds
+        while not path.exists() and time.monotonic() < deadline:
+            time.sleep(0.02)
+        return path.exists()
+
+    # The script ned-box runs, replayed by a real /bin/sh. A stand-in `mv` on
+    # the held shipment's PATH marks that it has reached its rename and waits
+    # for the word to go on.
+    base, store, stagings = race_store_and_stagings("through-sh")
+    stand_in_bin = base / "stand-in-bin"
+    stand_in_bin.mkdir()
+    reached_rename, go_on = base / "reached-rename", base / "go-on"
+    (stand_in_bin / "mv").write_text(
+        "#!/bin/sh\n"
+        f": > {shlex.quote(str(reached_rename))}\n"
+        f"while [ ! -e {shlex.quote(str(go_on))} ]; do sleep 0.02; done\n"
+        'exec /bin/mv "$@"\n', encoding="utf-8")
+    (stand_in_bin / "mv").chmod(0o755)
+
+    def race_script(who):
+        return racing.replace_with_staged_files_script(
+            pathlib.PurePosixPath(stagings[who]), pathlib.PurePosixPath(store),
+            [("m.md", "m.md", None)])
+
+    held = subprocess.Popen(
+        ["/bin/sh", "-c", race_script("held")], stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE, text=True,
+        env=dict(os.environ, PATH=f"{stand_in_bin}{os.pathsep}{os.environ['PATH']}"))
+    held_reached = wait_for_path(reached_rename)
+    other = subprocess.Popen(["/bin/sh", "-c", race_script("other")],
+                             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    try:
+        other.wait(timeout=2)
+        other_finished_while_held = True
+    except subprocess.TimeoutExpired:
+        other_finished_while_held = False
+    go_on.touch()
+    held_out, held_err = held.communicate(timeout=120)
+    other_out, other_err = other.communicate(timeout=120)
+    displaced = {}
+    for who, out in (("held", held_out), ("other", other_out)):
+        for line in out.splitlines():
+            word, _, rest = line.partition(" ")
+            digest, _, target = rest.partition(" ")
+            if word == "replaced" and target == "m.md":
+                displaced[who] = digest
+    kept = (store / "m.md").read_text(encoding="utf-8")
+    check("replayed by a real sh, a second replacement of one name waits while "
+          "the first is between its digest read and its rename",
+          held_reached and not other_finished_while_held,
+          f"held reached its rename: {held_reached}; other finished meanwhile: "
+          f"{other_finished_while_held}")
+    check("replayed by a real sh, two replacements of one name at once each "
+          "announce the digest their own rename displaced, and the store keeps "
+          "the later one's bytes",
+          held.returncode == 0 and other.returncode == 0
+          and race_announcements_are_true(displaced, kept),
+          f"displaced {displaced}; store keeps {kept!r}; "
+          f"held: {held_out}{held_err}; other: {other_out}{other_err}")
+
+    # The same two replacements through the module's local path, which runs on
+    # ned-box when the store is local: the held one in this process, its
+    # os.replace waiting for the word to go on; the other in a process of its
+    # own, through the same function.
+    base, store, stagings = race_store_and_stagings("local")
+    other_local_program = (
+        "import importlib.util, pathlib, sys\n"
+        "spec = importlib.util.spec_from_file_location('ship', sys.argv[1])\n"
+        "module = importlib.util.module_from_spec(spec)\n"
+        "spec.loader.exec_module(module)\n"
+        "completed, outcomes = module.replace_with_staged_files(\n"
+        "    None, pathlib.PurePosixPath(sys.argv[2]),\n"
+        "    pathlib.PurePosixPath(sys.argv[3]), [('m.md', 'm.md', None)])\n"
+        "if outcomes is None:\n"
+        "    sys.exit(completed.returncode or 1)\n"
+        "print('replaced', outcomes['m.md'].displaced_sha256 or '-', 'm.md')\n")
+    reached, go_on_locally = threading.Event(), threading.Event()
+    saved_os_replace = os.replace
+    held_target = store / "m.md"
+
+    def replace_when_told(source, destination, *args, **kwargs):
+        if pathlib.Path(destination) == held_target and not reached.is_set():
+            reached.set()
+            go_on_locally.wait(120)
+        return saved_os_replace(source, destination, *args, **kwargs)
+
+    held_result = {}
+
+    def run_held():
+        held_result["value"] = racing.replace_with_staged_files(
+            None, pathlib.PurePosixPath(stagings["held"]),
+            pathlib.PurePosixPath(store), [("m.md", "m.md", None)])
+
+    os.replace = replace_when_told
+    try:
+        held_thread = threading.Thread(target=run_held)
+        held_thread.start()
+        held_reached = reached.wait(30)
+        other = subprocess.Popen(
+            [sys.executable, "-c", other_local_program, str(SHIP),
+             str(stagings["other"]), str(store)],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        try:
+            other.wait(timeout=2)
+            other_finished_while_held = True
+        except subprocess.TimeoutExpired:
+            other_finished_while_held = False
+        go_on_locally.set()
+        held_thread.join(120)
+    finally:
+        os.replace = saved_os_replace
+    other_out, other_err = other.communicate(timeout=120)
+    displaced = {}
+    held_value = held_result.get("value")
+    if held_value and held_value[1] and "m.md" in held_value[1]:
+        displaced["held"] = held_value[1]["m.md"].displaced_sha256
+    for line in other_out.splitlines():
+        word, _, rest = line.partition(" ")
+        digest, _, target = rest.partition(" ")
+        if word == "replaced" and target == "m.md":
+            displaced["other"] = digest
+    kept = (store / "m.md").read_text(encoding="utf-8")
+    check("locally, a second replacement of one name waits while the first is "
+          "between its digest read and its rename",
+          held_reached and not other_finished_while_held,
+          f"held reached its rename: {held_reached}; other finished meanwhile: "
+          f"{other_finished_while_held}")
+    check("locally, two replacements of one name at once each announce the "
+          "digest their own rename displaced, and the store keeps the later "
+          "one's bytes",
+          other.returncode == 0 and race_announcements_are_true(displaced, kept),
+          f"displaced {displaced}; store keeps {kept!r}; other: {other_out}{other_err}")
+
+    # A lock another shipment holds too long fails the step, and says so,
+    # before anything is read or renamed; so does a host without python3.
+    base, store, stagings = race_store_and_stagings("lock-held-too-long")
+    holder = os.open(store, os.O_RDONLY)
+    fcntl.flock(holder, fcntl.LOCK_EX)
+    saved_wait = racing.STORE_DIRECTORY_LOCK_WAIT_SECONDS
+    racing.STORE_DIRECTORY_LOCK_WAIT_SECONDS = 1
+    try:
+        local_completed, local_outcomes = racing.replace_with_staged_files(
+            None, pathlib.PurePosixPath(stagings["held"]),
+            pathlib.PurePosixPath(store), [("m.md", "m.md", None)])
+        replayed = subprocess.run(
+            ["/bin/sh", "-c", racing.replace_with_staged_files_script(
+                pathlib.PurePosixPath(stagings["held"]), pathlib.PurePosixPath(store),
+                [("m.md", "m.md", None)])],
+            capture_output=True, text=True, check=False)
+    finally:
+        racing.STORE_DIRECTORY_LOCK_WAIT_SECONDS = saved_wait
+        os.close(holder)
+    untouched = (store / "m.md").read_text(encoding="utf-8") == race_original
+    check("a lock another shipment holds past the wait fails the local step: no "
+          "outcomes, exit 1, the line saying what stopped and what to do, the "
+          "store untouched",
+          local_outcomes is None and local_completed.returncode == 1
+          and "another shipment held the lock" in local_completed.stderr
+          and "Ship again once that shipment has finished." in local_completed.stderr
+          and untouched,
+          f"{local_completed} {local_outcomes}")
+    check("and fails the script ned-box runs the same way, before anything is "
+          "read or renamed",
+          replayed.returncode == 1 and replayed.stdout == ""
+          and "another shipment held the lock" in replayed.stderr and untouched,
+          f"exit {replayed.returncode}: {replayed.stdout} {replayed.stderr}")
+    only_mkdir_bin = base / "only-mkdir-bin"
+    only_mkdir_bin.mkdir()
+    (only_mkdir_bin / "mkdir").symlink_to(shutil.which("mkdir"))
+    replayed = subprocess.run(
+        ["/bin/sh", "-c", racing.replace_with_staged_files_script(
+            pathlib.PurePosixPath(stagings["held"]), pathlib.PurePosixPath(store),
+            [("m.md", "m.md", None)])],
+        capture_output=True, text=True, check=False,
+        env=dict(os.environ, PATH=str(only_mkdir_bin)))
+    check("a host without python3 fails the script, saying so, before anything "
+          "is read or renamed",
+          replayed.returncode == 1 and replayed.stdout == ""
+          and "python3 is not on PATH" in replayed.stderr
+          and (store / "m.md").read_text(encoding="utf-8") == race_original,
+          f"exit {replayed.returncode}: {replayed.stdout} {replayed.stderr}")
 
 print()
 if failures:

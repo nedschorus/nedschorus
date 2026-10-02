@@ -25,10 +25,13 @@ import io
 import json
 import os
 import pathlib
+import re
 import socket
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 
 SCRIPTS_DIR = pathlib.Path(__file__).resolve().parent
 SHIP = SCRIPTS_DIR / "seat-shared-file-ship.py"
@@ -659,6 +662,104 @@ with tempfile.TemporaryDirectory(prefix="seat-shared-file-ship-race-test-") as r
               for label in ("after-listing", "after-copy", "after-rename",
                             "same-bytes")),
           str(names))
+
+# --- ONE SEAT FILE REPLACED BY TWO SHIPMENTS AT ONCE ------------------------
+# Two sessions of one seat ship survey.md, each its own bytes, into a store that
+# already holds it. One shipment is held between reading the digest of the file
+# it is about to displace and its rename; the other, a process of its own, runs
+# meanwhile; then the first goes on. Each REPLACED line must name the digest
+# its own rename displaced: the first renamer the bytes the store held, the
+# second the first's.
+with tempfile.TemporaryDirectory(prefix="seat-shared-file-ship-window-test-") as window_scratch_name:
+    window_scratch = pathlib.Path(window_scratch_name)
+    store_root = window_scratch / "store"
+    seats = store_root / "seats"
+    held_target = seats / "cold-read-research" / "survey.md"
+    held_target.parent.mkdir(parents=True)
+    before_text = "# survey, as the store held it\n"
+    texts = {"held": "# survey, the held session's\n",
+             "other": "# survey, the other session's\n"}
+    held_target.write_text(before_text, encoding="utf-8")
+    sources = {}
+    for who, text in texts.items():
+        sources[who] = window_scratch / f"local-{who}" / "survey.md"
+        sources[who].parent.mkdir(parents=True)
+        sources[who].write_text(text, encoding="utf-8")
+    saved_destination = os.environ.pop(DESTINATION_VARIABLE, None)
+    try:
+        window_module = load_ship_module("seat_shared_file_ship_window")
+    finally:
+        if saved_destination is not None:
+            os.environ[DESTINATION_VARIABLE] = saved_destination
+
+    def digest_of_text(text):
+        return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+    def displaced_digest(stderr_text):
+        found = re.search(r"REPLACED cold-read-research/survey\.md in the store — "
+                          r"the content it held was sha256 ([0-9a-f]{64})", stderr_text)
+        return found.group(1) if found else None
+
+    reached, go_on = threading.Event(), threading.Event()
+    saved_os_replace = os.replace
+
+    def replace_when_told(source, destination, *args, **kwargs):
+        if pathlib.Path(destination) == held_target and not reached.is_set():
+            reached.set()
+            go_on.wait(120)
+        return saved_os_replace(source, destination, *args, **kwargs)
+
+    held_out, held_err, held_result = io.StringIO(), io.StringIO(), {}
+
+    def run_held():
+        with contextlib.redirect_stdout(held_out), contextlib.redirect_stderr(held_err):
+            held_result["code"] = window_module.ship_one_file(
+                window_module.SeatsStoreDestination(
+                    copy_host=None, citation_host="nedlern@ned-box", seats_path=seats),
+                "cold-read-research", sources["held"], "survey.md")
+
+    os.replace = replace_when_told
+    try:
+        held_thread = threading.Thread(target=run_held)
+        held_thread.start()
+        held_reached = reached.wait(60)
+        other_env = dict(os.environ)
+        other_env[DESTINATION_VARIABLE] = str(store_root / "cold-read-records")
+        other_env.pop(SEAT_VARIABLE, None)
+        other = subprocess.Popen(
+            [sys.executable, str(SHIP), "--seat", "cold-read-research",
+             str(sources["other"])],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=other_env)
+        try:
+            other.wait(timeout=3)
+            other_finished_while_held = True
+        except subprocess.TimeoutExpired:
+            other_finished_while_held = False
+        go_on.set()
+        held_thread.join(120)
+    finally:
+        os.replace = saved_os_replace
+    other_out, other_err = other.communicate(timeout=120)
+    announced = {"held": displaced_digest(held_err.getvalue()),
+                 "other": displaced_digest(other_err)}
+    kept = held_target.read_text(encoding="utf-8")
+    held_first = (announced["held"] == digest_of_text(before_text)
+                  and announced["other"] == digest_of_text(texts["held"])
+                  and kept == texts["other"])
+    other_first = (announced["other"] == digest_of_text(before_text)
+                   and announced["held"] == digest_of_text(texts["other"])
+                   and kept == texts["held"])
+    check("a second shipment of one seat file waits while the first is between "
+          "reading the displaced digest and its rename",
+          held_reached and not other_finished_while_held,
+          f"held reached its rename: {held_reached}; other finished meanwhile: "
+          f"{other_finished_while_held}")
+    check("two shipments of one seat file at once each announce the digest "
+          "their own rename displaced",
+          held_first or other_first,
+          f"announced {announced}; store keeps {kept!r}; held: exit "
+          f"{held_result.get('code')} {held_out.getvalue()}{held_err.getvalue()}; "
+          f"other: exit {other.returncode} {other_out}{other_err}")
 
 print()
 if failures:
