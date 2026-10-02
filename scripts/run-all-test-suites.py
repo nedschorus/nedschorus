@@ -11,7 +11,7 @@ Usage:
                 checkout this file is in
   --python      the interpreter that runs each suite file; default, the one
                 running this program
-  -j            how many suites run at once; default 1
+  -j            how many suites run at once; default 4
   --log-dir     where each suite's output and the report are written;
                 default, a new directory under the system temp directory
   --lock-file   the lock that keeps two runs on one machine apart; default
@@ -152,8 +152,11 @@ prints it.
 
 CONCURRENCY. -j N runs N suites at once. Measured on ned-box 2026-09-21
 over the 65 suites: serial 479 s, -j4 247 s, -j8 235 s. -j8 buys little
-because nc-systems/cold-read/tests/cold-read-grid-test.py alone takes 233 s. The default is 1,
-which is what the walk-ledgers loop did; -j4 is the measured choice.
+because nc-systems/cold-read/tests/cold-read-grid-test.py alone takes 233 s. The default is 4,
+the measured choice: it halves a full run, and every run holds the
+machine's one lock for its whole length, so a serial run makes every other
+session's run wait twice as long behind it. The Mac at -j 4: 278 s. -j 1
+still runs one suite at a time when a run must.
 
 NO PER-SUITE TIMEOUT. No suite has been seen to hang, so none is imposed.
 A hung suite hangs the run.
@@ -1166,7 +1169,7 @@ def parse_arguments(argv):
         prog=PROGRAM, description="Run every *-test.py suite git lists in a checkout.")
     parser.add_argument("--checkout", default=str(Path(__file__).resolve().parent.parent))
     parser.add_argument("--python", default=sys.executable)
-    parser.add_argument("-j", dest="jobs", type=int, default=1)
+    parser.add_argument("-j", dest="jobs", type=int, default=4)
     parser.add_argument("--log-dir")
     parser.add_argument("--lock-file", default=str(DEFAULT_LOCK_FILE))
     parser.add_argument("--only-suites-whose-recorded-inputs-changed-since",
