@@ -328,7 +328,7 @@ try:
               f"{code} {stdout.getvalue()!r}")
 
     # -----------------------------------------------------------------------
-    # The refusal is instruction only.
+    # A refusal template cites no date, link, pull request or GHI.
     # -----------------------------------------------------------------------
     for template in (guard.REFUSAL_WITH_COMMAND_TEMPLATE,
                      guard.REFUSAL_WITHOUT_COMMAND_TEMPLATE):

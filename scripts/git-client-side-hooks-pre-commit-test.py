@@ -356,8 +356,8 @@ def run_cases(scratch: Path):
     check("the refusal says to commit on top when amending a commit the user wrote",
           "If you are amending a commit the user wrote, leave it and make a new"
           " commit on top instead." in completed.stderr, completed.stderr)
-    # Instruction only (CLAUDE.md): every line is an instruction, or an
-    # instruction under a stated condition, never a status or a reason.
+    # Every refusal line opens as an instruction ("Commit", "Do not") or as the
+    # condition an instruction applies under ("If"), never as a status line.
     refusal_lines = [line for line in completed.stderr.splitlines() if line.strip()]
     check("every refusal line is an instruction",
           bool(refusal_lines) and all(

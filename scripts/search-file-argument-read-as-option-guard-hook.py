@@ -168,8 +168,10 @@ EXPANSION_BUDGET_SECONDS = 5.0
 # Characters a word can show unquoted in the command the refusal suggests.
 SAFE_UNQUOTED_CHARACTERS = re.compile(r"^[A-Za-z0-9_./~@%+=:,-]+$")
 
-# What an agent reads: instruction only, with the condition it applies under.
-# Why and when live in this module's docstring.
+# What an agent reads: what was refused and why -- the glob, a name it expands
+# to, and the program that reads that name as an option -- then the one
+# instruction that fixes the command. No ruling, date or citation: none of them
+# would help the agent fix the command.
 REFUSAL_WITH_COMMAND_TEMPLATE = (
     "Refused: {glob_word} expands to names beginning with -, such as {name}, "
     "which {program} reads as options, not as files. Put -- before the file "
