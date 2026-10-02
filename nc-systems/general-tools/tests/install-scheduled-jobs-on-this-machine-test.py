@@ -217,10 +217,11 @@ check("--help ends with the docstring's exit-codes paragraph and prints nothing 
       help_exit == 0
       and " ".join(help_text.split()).endswith(
           "Exit codes: 0 done, or for --check every job matches; 1 a step failed after this "
-          "program began changing the machine, or for --check a job differs; 2 not run — a bad "
+          "program began changing the machine, or for --check a job differs or is not in the "
+          "table; 2 not run — a bad "
           "invocation, a table this program cannot use, a machine the table does not name, a "
           "job's program missing, or a crontab that could not be read.")
-      and "WHY THIS EXISTS" not in help_text and "THE TABLE" not in help_text
+      and "WHY THIS EXISTS" not in help_text and "THE TABLE is " not in help_text
       and "user-ruled" not in help_text, help_text)
 
 
@@ -685,6 +686,120 @@ with tempfile.TemporaryDirectory() as temporary:
           exit_code == 0
           and f"absent: daily-full-test-run-of-main — there was no {plist_path}.\n" in printed,
           (exit_code, printed))
+
+    # --- jobs the table does not name ----------------------------------------
+    box_clone = table["machines"]["ned-box"]["clone"]
+    retired_line = f"0 5 * * * /usr/bin/python3 {box_clone}/scripts/a-retired-job.py >> /tmp/x 2>&1"
+    commented_retired = f"# {retired_line}"
+    stub = MachineStub(crontab=(f"{NED_BOX_FOREIGN_COMMENT}\n{commented_retired}\n{BOX_MIRROR}\n"
+                                f"{BOX_DAILY}\n{BOX_ALONE}\n{retired_line}\n{foreign_line}\n").encode())
+    exit_code, printed, errors = run_main(["--check"], NED_BOX, stub)
+    check("--check reports a cron line that runs a program from the clone and is no job's "
+          "line of the table, exit 1, and writes nothing",
+          exit_code == 1 and stub.crontab_writes == [] and printed.count("matches: ") == 3
+          and f"NOT IN THE TABLE: the crontab line {retired_line} — no job of the table names "
+              f"it for this machine.\n" in printed
+          and printed.count("NOT IN THE TABLE: ") == 1 and "DIFFERS" not in printed,
+          (exit_code, printed, errors))
+    check("and not a commented-out line, a line running a program outside the clone, or "
+          "another user's comment",
+          commented_retired not in printed and foreign_line not in printed
+          and "nedsmessenger" not in printed, printed)
+    check("and says what to do with a job NOT IN THE TABLE, one instruction a line",
+          printed.splitlines()[-2].startswith("When a job NOT IN THE TABLE is retired, run `")
+          and printed.splitlines()[-2].endswith(" --remove-not-in-table` on this machine.")
+          and printed.splitlines()[-1] == (
+              "When a job NOT IN THE TABLE should still run, put its entry back in "
+              f"{FIXTURE_TABLE_PATH} through a pull request."), printed)
+    exit_code, printed, errors = run_main(["--check"] + TWO_JOBS, NED_BOX, stub)
+    check("--check limited by --job does not look for jobs the table does not name",
+          exit_code == 0 and "NOT IN THE TABLE" not in printed, (exit_code, printed))
+
+    exit_code, printed, errors = run_main(["--remove-not-in-table"], NED_BOX, stub)
+    check("--remove-not-in-table takes out exactly that line, in one crontab write, and "
+          "leaves every other line",
+          exit_code == 0 and stub.crontab_writes == [(
+              f"{NED_BOX_FOREIGN_COMMENT}\n{commented_retired}\n{BOX_MIRROR}\n{BOX_DAILY}\n"
+              f"{BOX_ALONE}\n{foreign_line}\n").encode()]
+          and f"removed: not in the table — the line removed from the crontab: "
+              f"{retired_line}\n" in printed, (exit_code, printed, stub.crontab_writes))
+    exit_code, printed, errors = run_main(["--remove-not-in-table"], NED_BOX, stub)
+    check("and a second run finds nothing, says so and writes nothing",
+          exit_code == 0 and len(stub.crontab_writes) == 1
+          and printed == "absent: this machine runs no job the table does not name.\n",
+          (exit_code, printed))
+    exit_code, printed, errors = run_main(["--check"], NED_BOX, stub)
+    check("and --check then finds every job matching and nothing outside the table, exit 0",
+          exit_code == 0 and "NOT IN THE TABLE" not in printed, (exit_code, printed))
+    exit_code, printed, errors = run_main(
+        ["--remove-not-in-table", "--job", "daily-full-test-run-of-main"], NED_BOX, stub)
+    check("--remove-not-in-table with --job is refused before anything is read",
+          exit_code == 2 and "--remove-not-in-table takes no --job" in errors,
+          (exit_code, errors))
+    stub = MachineStub(crontab=None)
+    stub.exit_codes["crontab-write"] = 1
+    stub.crontab = f"{retired_line}\n".encode()
+    exit_code, printed, errors = run_main(["--remove-not-in-table"], NED_BOX, stub)
+    check("a failed crontab write in --remove-not-in-table is FAILED, exit 1, nothing reported "
+          "removed", exit_code == 1 and "FAILED: `crontab` exited 1" in errors
+          and "removed:" not in printed, (exit_code, printed, errors))
+
+    mac_clone = table["machines"]["mac"]["clone"]
+    stray_daily = installer.cron_line(mac_machine, daily_job, {"schedule": "30 3 * * *"})
+    stub = MachineStub(crontab=f"{mac_mirror_line}\n{stray_daily}\n".encode())
+    exit_code, printed, errors = run_main(["--check"], MAC, stub)
+    check("a cron line for a job the table gives this machine as a launchd job is NOT IN THE "
+          "TABLE: the table names no cron line for it here",
+          exit_code == 1 and f"NOT IN THE TABLE: the crontab line {stray_daily}" in printed,
+          (exit_code, printed))
+
+    LAUNCH_AGENTS.mkdir(parents=True, exist_ok=True)
+    retired_plist = dict(expected_plist, Label="com.nedschorus.a-retired-job")
+    retired_plist_path = LAUNCH_AGENTS / "com.nedschorus.a-retired-job.plist"
+    retired_plist_path.write_bytes(plistlib.dumps(retired_plist, sort_keys=False).replace(
+        b"<plist ", installer.PLIST_WRITTEN_BY_THIS_PROGRAM + b"\n<plist ", 1))
+    other_installer_path = LAUNCH_AGENTS / "com.nedschorus.restart-live-seats-at-login.plist"
+    other_installer_path.write_bytes(plistlib.dumps(dict(
+        expected_plist, Label="com.nedschorus.restart-live-seats-at-login", RunAtLoad=True)))
+    unrelated_path = LAUNCH_AGENTS / "com.example.updater.plist"
+    unrelated_path.write_bytes(plistlib.dumps({"Label": "com.example.updater"}))
+    stub = MachineStub(crontab=f"{mac_mirror_line}\n".encode(),
+                       loaded=[f"{DOMAIN}/com.nedschorus.a-retired-job"])
+    exit_code, printed, errors = run_main(["--install"] + DAILY, MAC, stub)
+    exit_code, printed, errors = run_main(["--check"], MAC, stub)
+    check("--check reports a plist this program wrote whose label the table does not name, "
+          "exit 1",
+          exit_code == 1 and f"NOT IN THE TABLE: {retired_plist_path}, label "
+                             f"com.nedschorus.a-retired-job — no job of the table names it for "
+                             f"this machine.\n" in printed
+          and printed.count("NOT IN THE TABLE: ") == 1 and printed.count("matches: ") == 2,
+          (exit_code, printed))
+    check("and not a plist of the same shape and label prefix that another program wrote, "
+          "or anyone else's",
+          str(other_installer_path) not in printed and str(unrelated_path) not in printed, printed)
+    exit_code, printed, errors = run_main(["--remove-not-in-table"], MAC, stub)
+    check("--remove-not-in-table boots that label out and deletes its plist, and leaves the "
+          "table's job, the other program's plist and the crontab alone",
+          exit_code == 0 and not retired_plist_path.exists() and plist_path.is_file()
+          and other_installer_path.is_file() and unrelated_path.is_file()
+          and stub.crontab_writes == []
+          and ["launchctl", "bootout", f"{DOMAIN}/com.nedschorus.a-retired-job"] in stub.commands
+          and f"{DOMAIN}/com.nedschorus.a-retired-job" not in stub.loaded
+          and f"removed: not in the table — deleted {retired_plist_path}.\n" in printed,
+          (exit_code, printed, stub.commands))
+
+    plist_path.write_bytes(plistlib.dumps(expected_plist, sort_keys=False))
+    exit_code, printed, errors = run_main(["--check"] + DAILY, MAC, stub)
+    check("a plist that says what the table says but lacks this program's line is a "
+          "difference, so --install rewrites it with the line",
+          exit_code == 1 and f"{plist_path} does not say what the table says" in printed,
+          (exit_code, printed))
+    exit_code, printed, errors = run_main(["--install"] + DAILY, MAC, stub)
+    check("and --install writes the line into it",
+          exit_code == 0 and installer.PLIST_WRITTEN_BY_THIS_PROGRAM in plist_path.read_bytes()
+          and plistlib.loads(plist_path.read_bytes()) == expected_plist, (exit_code, printed))
+    check("--print shows the plist with this program's line",
+          installer.PLIST_WRITTEN_BY_THIS_PROGRAM.decode() in mac_printed, mac_printed)
 
 print()
 if failures:

@@ -3,18 +3,23 @@
 
 Usage:
   nc-systems/general-tools/install-scheduled-jobs-on-this-machine.py
-      (--print | --check | --install [--start-once] | --remove) [--job NAME ...]
+      (--print | --check | --install [--start-once] | --remove
+       | --remove-not-in-table) [--job NAME ...]
 
   --print       print what the table gives this machine: each job's cron line
                 or launchd plist. Reads nothing on the machine, changes nothing.
   --check       compare what this machine has installed with the table; exit 1
-                when any job differs. Changes nothing.
+                when any job differs, or when this machine runs a job the
+                table does not name. Changes nothing.
   --install     make this machine's crontab and launchd jobs what the table
                 says. A job already installed as the table says is left alone.
   --start-once  with --install: after installing, ask launchd to run each
                 selected launchd job once, now.
   --remove      take the named jobs off this machine. Needs --job: nothing
                 removes every job at once.
+  --remove-not-in-table
+                take off this machine every job --check reports NOT IN THE
+                TABLE. Takes no --job.
   --job NAME    limit the run to this job of the table; repeat for several.
                 Without it --print, --check and --install take every job the
                 table places on this machine.
@@ -60,7 +65,11 @@ five time fields, and the line is
 `launchd`: the placement holds `label` and `launchd_keys`, the plist keys that
 say when the job runs (StartCalendarInterval for a time of day; RunAtLoad for
 a login). The plist is Label, ProgramArguments, EnvironmentVariables with the
-machine's PATH, those keys, and both output paths. The login restart's two
+machine's PATH, those keys, and both output paths, and its file carries the
+comment line PLIST_WRITTEN_BY_THIS_PROGRAM, which is how --check tells a plist
+this program wrote from one another program wrote: the login restart's
+installer writes a plist of the same shape, from the same clone, under the
+same label prefix. The login restart's two
 installers (scripts/install-restart-live-seats-at-login-launch-agent.py and
 scripts/install-restart-live-seats-at-login-systemd-unit.py) join the table in
 a later pull request: its launchd half fits `launchd_keys` as it stands, and
@@ -95,20 +104,26 @@ already says what the table says, with its job loaded, is left alone.
 which is how a new job is shown to run under launchd without waiting for its
 hour.
 
-RETIRING A JOB. --remove finds a job's cron line and plist through the job's
-entry in the table, and refuses a job the table does not name. So a job is
-taken off each machine that runs it, with --remove --job NAME, before the
-pull request that deletes it from the table merges. A job deleted from the
-table first stays installed, and nothing reports it: --check and --install
-look only at the table's jobs.
+RETIRING A JOB. Take it off each machine that runs it, with --remove --job
+NAME, before the pull request that deletes it from the table merges: --remove
+finds a job's cron line and plist through the job's entry in the table. A job
+deleted from the table first stays installed, and running it every day is the
+cost of forgetting the order, so --check, run without --job, also reports each
+job this machine runs that no job of the table names for it, NOT IN THE TABLE:
+a cron line, not a comment, that runs a program from the machine's clone and
+is no cron job's line of the table; and a plist carrying
+PLIST_WRITTEN_BY_THIS_PROGRAM whose label is no launchd job's of the table.
+--remove-not-in-table takes exactly those off. Every cron line that runs a
+program from the clone is this program's to own: a scheduled job that runs the
+project's code belongs in the table, which is the reason the table exists.
 
 Every selected job's program must be a file in the clone before anything is
 installed: a job pointed at a missing file fails at every firing and says so
 only in its output file.
 
 Exit codes: 0 done, or for --check every job matches; 1 a step failed after
-this program began changing the machine, or for --check a job differs; 2 not
-run — a bad invocation, a table this program cannot use, a machine the table
+this program began changing the machine, or for --check a job differs or is
+not in the table; 2 not run — a bad invocation, a table this program cannot use, a machine the table
 does not name, a job's program missing, or a crontab that could not be read.
 
 Every option of main() beyond argv is a seam for
@@ -137,6 +152,9 @@ SCHEDULERS = ("cron", "launchd")
 PLIST_KEYS_THIS_PROGRAM_WRITES = (
     "Label", "ProgramArguments", "EnvironmentVariables", "StandardOutPath", "StandardErrorPath")
 NO_CRONTAB_PHRASE = "no crontab for"
+# The line a plist this program writes carries, before its <plist> element.
+PLIST_WRITTEN_BY_THIS_PROGRAM = (
+    b"<!-- written by nc-systems/general-tools/install-scheduled-jobs-on-this-machine.py -->")
 
 
 class Refusal(Exception):
@@ -273,7 +291,8 @@ def launch_agent_plist(machine: dict, job: dict, placement: dict) -> dict:
 
 
 def launch_agent_plist_bytes(machine: dict, job: dict, placement: dict) -> bytes:
-    return plistlib.dumps(launch_agent_plist(machine, job, placement), sort_keys=False)
+    written = plistlib.dumps(launch_agent_plist(machine, job, placement), sort_keys=False)
+    return written.replace(b"<plist ", PLIST_WRITTEN_BY_THIS_PROGRAM + b"\n<plist ", 1)
 
 
 def launchd_domain() -> str:
@@ -377,8 +396,12 @@ def launchd_job_is_loaded(placement: dict, run) -> bool:
 
 
 def installed_plist_matches(plist_path: Path, machine: dict, job: dict, placement: dict) -> bool:
+    """The plist says what the table says, and carries this program's line,
+    so a plist written before the line existed is rewritten with it."""
     try:
-        return plistlib.loads(plist_path.read_bytes()) == launch_agent_plist(machine, job, placement)
+        written = plist_path.read_bytes()
+        return PLIST_WRITTEN_BY_THIS_PROGRAM in written \
+            and plistlib.loads(written) == launch_agent_plist(machine, job, placement)
     except (OSError, ValueError, plistlib.InvalidFileException):
         return False
 
@@ -438,7 +461,46 @@ def start_launchd_job_once(machine, job, placement, run) -> bool:
     return True
 
 
-# --- the four modes -----------------------------------------------------
+# --- jobs the table does not name -----------------------------------------
+
+def cron_lines_not_in_table(machine: dict, placed: list, lines: list) -> list:
+    """Indexes of the lines that run a program from the machine's clone and
+    are no cron job's line of the table; comments are not lines that run."""
+    owned = set()
+    for job, placement in placed:
+        if placement["scheduler"] == "cron":
+            owned.update(lines_of_job(lines, job))
+    from_the_clone = f"{machine['clone']}/"
+    return [index for index, line in enumerate(lines)
+            if index not in owned and not line.lstrip().startswith("#")
+            and from_the_clone in line]
+
+
+def plists_not_in_table(machine: dict, placed: list, launch_agents_directory: Path) -> list:
+    """(path, label) of each plist this program wrote whose label is no
+    launchd job's of the table; none on a machine with no launchd jobs."""
+    if "launchd_path" not in machine or not launch_agents_directory.is_dir():
+        return []
+    labels = {placement["label"] for _, placement in placed if placement["scheduler"] == "launchd"}
+    found = []
+    for plist_path in sorted(launch_agents_directory.glob("*.plist")):
+        try:
+            written = plist_path.read_bytes()
+        except OSError:
+            continue
+        if PLIST_WRITTEN_BY_THIS_PROGRAM not in written:
+            continue
+        try:
+            label = plistlib.loads(written).get("Label")
+        except (ValueError, plistlib.InvalidFileException):
+            label = None
+        label = label if isinstance(label, str) else plist_path.stem
+        if label not in labels:
+            found.append((plist_path, label))
+    return found
+
+
+# --- the five modes -----------------------------------------------------
 
 def print_mode(machine_name, machine, placed, launch_agents_directory: Path) -> int:
     print(f"machine: {machine_name} ({machine['platform']}, {machine['home']})")
@@ -532,7 +594,32 @@ def remove_mode(machine, placed, launch_agents_directory: Path, run) -> int:
     return 0
 
 
-def check_mode(machine, placed, launch_agents_directory: Path, table_path: Path, run) -> int:
+def remove_not_in_table_mode(machine, placed, launch_agents_directory: Path, run) -> int:
+    installed_text = read_crontab(run)
+    lines = crontab_lines(installed_text)
+    stray = cron_lines_not_in_table(machine, placed, lines)
+    if stray:
+        kept = [line for index, line in enumerate(lines) if index not in stray]
+        exit_code = write_crontab("".join(line + "\n" for line in kept), run)
+        if exit_code != 0:
+            report_failed_crontab_write(exit_code)
+            return 1
+        for index in stray:
+            print(f"removed: not in the table — the line removed from the crontab: "
+                  f"{lines[index]}")
+    plists = plists_not_in_table(machine, placed, launch_agents_directory)
+    for plist_path, label in plists:
+        run(["launchctl", "bootout", f"{launchd_domain()}/{label}"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        plist_path.unlink()
+        print(f"removed: not in the table — deleted {plist_path}.")
+    if not stray and not plists:
+        print("absent: this machine runs no job the table does not name.")
+    return 0
+
+
+def check_mode(machine, placed, launch_agents_directory: Path, table_path: Path, run,
+               every_job_selected: bool) -> int:
     differences = 0
     installed_text = None
     for job, placement in placed:
@@ -567,13 +654,30 @@ def check_mode(machine, placed, launch_agents_directory: Path, table_path: Path,
                 print(f"DIFFERS: {name} — {difference}.")
         else:
             print(f"matches: {name} — {placement['scheduler']}.")
+    not_in_table = 0
+    if every_job_selected:
+        if installed_text is None:
+            installed_text = read_crontab(run)
+        lines = crontab_lines(installed_text)
+        for index in cron_lines_not_in_table(machine, placed, lines):
+            not_in_table += 1
+            print(f"NOT IN THE TABLE: the crontab line {lines[index]} — no job of the table "
+                  f"names it for this machine.")
+        for plist_path, label in plists_not_in_table(machine, placed, launch_agents_directory):
+            not_in_table += 1
+            print(f"NOT IN THE TABLE: {plist_path}, label {label} — no job of the table "
+                  f"names it for this machine.")
     if differences:
         print(f"When the table says what this machine should run, run "
               f"`{Path(__file__).resolve()} --install` on this machine.")
         print(f"When this machine is right and the table is wrong, change {table_path} "
               f"through a pull request.")
-        return 1
-    return 0
+    if not_in_table:
+        print(f"When a job NOT IN THE TABLE is retired, run "
+              f"`{Path(__file__).resolve()} --remove-not-in-table` on this machine.")
+        print(f"When a job NOT IN THE TABLE should still run, put its entry back in "
+              f"{table_path} through a pull request.")
+    return 1 if differences or not_in_table else 0
 
 
 def exit_codes_paragraph() -> str:
@@ -597,6 +701,8 @@ def main(argv=None, platform: str = sys.platform, home: Path = None, table_path:
                       help="make this machine's scheduled jobs what the table says")
     mode.add_argument("--remove", action="store_true",
                       help="take the jobs named by --job off this machine")
+    mode.add_argument("--remove-not-in-table", action="store_true",
+                      help="take off this machine every job --check reports NOT IN THE TABLE")
     parser.add_argument("--job", action="append", metavar="NAME",
                         help="limit the run to this job; repeat for several")
     parser.add_argument("--start-once", action="store_true",
@@ -606,6 +712,9 @@ def main(argv=None, platform: str = sys.platform, home: Path = None, table_path:
         parser.error("--start-once goes with --install")
     if arguments.remove and not arguments.job:
         parser.error("--remove needs --job: name each job to take off this machine")
+    if arguments.remove_not_in_table and arguments.job:
+        parser.error("--remove-not-in-table takes no --job: it removes what no job of the "
+                     "table names")
 
     home = Path(home) if home is not None else Path.home()
     table_path = Path(table_path) if table_path is not None \
@@ -619,9 +728,12 @@ def main(argv=None, platform: str = sys.platform, home: Path = None, table_path:
         if arguments.print:
             return print_mode(machine_name, machine, placed, launch_agents_directory)
         if arguments.check:
-            return check_mode(machine, placed, launch_agents_directory, table_path, run)
+            return check_mode(machine, placed, launch_agents_directory, table_path, run,
+                              every_job_selected=not arguments.job)
         if arguments.remove:
             return remove_mode(machine, placed, launch_agents_directory, run)
+        if arguments.remove_not_in_table:
+            return remove_not_in_table_mode(machine, placed, launch_agents_directory, run)
         return install_mode(machine, placed, launch_agents_directory, arguments.start_once, run)
     except Refusal as refusal:
         for line in refusal.lines:
