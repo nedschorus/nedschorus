@@ -204,6 +204,26 @@ check("--print as the Mac prints the mirror's cron line and the daily run's plis
       (exit_code, mac_printed, errors.getvalue()))
 
 
+printed, errors = io.StringIO(), io.StringIO()
+with redirect_stdout(printed), redirect_stderr(errors):
+    try:
+        installer.main(["--help"])
+        help_exit = None
+    except SystemExit as stop_request:
+        help_exit = stop_request.code
+help_text = printed.getvalue()
+check("--help ends with the docstring's exit-codes paragraph and prints nothing else of the "
+      "docstring",
+      help_exit == 0
+      and " ".join(help_text.split()).endswith(
+          "Exit codes: 0 done, or for --check every job matches; 1 a step failed after this "
+          "program began changing the machine, or for --check a job differs; 2 not run — a bad "
+          "invocation, a table this program cannot use, a machine the table does not name, a "
+          "job's program missing, or a crontab that could not be read.")
+      and "WHY THIS EXISTS" not in help_text and "THE TABLE" not in help_text
+      and "user-ruled" not in help_text, help_text)
+
+
 with tempfile.TemporaryDirectory() as temporary:
     root = Path(temporary).resolve()
     LAUNCH_AGENTS = root / "LaunchAgents"
@@ -346,9 +366,9 @@ with tempfile.TemporaryDirectory() as temporary:
     stub = MachineStub(crontab=None)
     stub.exit_codes["crontab-write"] = 1
     exit_code, printed, errors = run_main(["--install"] + TWO_JOBS, NED_BOX, stub)
-    check("a `crontab <file>` that fails is FAILED with its exit code, exit 1, and no job is "
+    check("a `crontab` write that fails is FAILED with its exit code, exit 1, and no job is "
           "reported installed",
-          exit_code == 1 and "FAILED: `crontab <file>` exited 1" in errors
+          exit_code == 1 and "FAILED: `crontab` exited 1; no cron line was changed." in errors
           and "installed:" not in printed and stub.crontab is None,
           (exit_code, printed, errors))
 
@@ -359,8 +379,8 @@ with tempfile.TemporaryDirectory() as temporary:
           exit_code == 1 and stub.crontab_writes == []
           and "DIFFERS: transcript-mirror-to-log-store — the crontab holds no line for "
               "transcript-mirror-to-log-store.py" in printed
-          and f"DIFFERS: daily-full-test-run-of-main — the crontab holds {differing_daily}"
-              in printed and f"the table's line is: {BOX_DAILY}." in printed,
+          and f"DIFFERS: daily-full-test-run-of-main — the crontab holds {differing_daily}, "
+              f"not the table's line: {BOX_DAILY}.\n" in printed,
           (exit_code, printed, errors))
     check("and tells the agent what to do in each of the two cases, one instruction a line",
           printed.splitlines()[-2].startswith("When the table says what this machine should run, "
@@ -427,6 +447,10 @@ with tempfile.TemporaryDirectory() as temporary:
           exit_code == 2 and f"runs {alone_program}, which is not a file on this machine" in errors
           and "to current main, then run this again." in errors and stub.commands == [],
           (exit_code, errors, stub.commands))
+    check("and says what to do when main has no such program either",
+          errors.splitlines()[-1] == ("When main has no scripts/runs-on-ned-box-alone.py either, "
+                                      "correct the table through a pull request, then run this "
+                                      "again."), errors)
     exit_code, printed, errors = run_main(["--check", "--job", "runs-on-ned-box-alone"], NED_BOX,
                                           MachineStub(crontab=f"{BOX_ALONE}\n".encode()))
     check("and --check reports the missing program as a difference",
@@ -468,6 +492,13 @@ with tempfile.TemporaryDirectory() as temporary:
     table_defect("two jobs with one program file name are refused: each would take the "
                  "other's cron line for its own",
                  same_program_file, "its program file `daily-full-test-run-of-main.py` twice")
+
+    def arguments_not_a_list(defective):
+        defective["jobs"][0]["arguments"] = "--failures-only"
+    table_defect("a job field that is there with the wrong type is called wrongly typed, not "
+                 "missing", arguments_not_a_list,
+                 "gives job `transcript-mirror-to-log-store` a missing or wrongly typed "
+                 "`program`, `arguments`, `output` or `on`")
 
     def four_fields(defective):
         defective["jobs"][0]["on"]["ned-box"]["schedule"] = "* * * *"
@@ -618,8 +649,8 @@ with tempfile.TemporaryDirectory() as temporary:
           and plist_path.is_file() and "kickstart" not in stub.launchctl_verbs()
           and "installed:" not in printed, (exit_code, printed, errors, stub.commands))
     check("with the instruction for an ssh session, and the one for every other cause",
-          errors.splitlines()[-2] == ("When this was run over ssh, run it again from a terminal "
-                                      "in this Mac's graphical login session.")
+          errors.splitlines()[-2] == ("When this was run over ssh, ask the user to run it again "
+                                      "from a terminal in this Mac's interactive login session.")
           and errors.splitlines()[-1] == ("Otherwise read what launchctl printed above, and run "
                                           "this again after that cause is removed."), errors)
     stub = MachineStub(crontab=f"{mac_mirror_line}\n".encode())
@@ -639,7 +670,7 @@ with tempfile.TemporaryDirectory() as temporary:
     exit_code, printed, errors = run_main(["--install"], MAC, stub)
     check("a failed crontab write does not stop the launchd job from being installed, and "
           "the run still exits 1",
-          exit_code == 1 and "FAILED: `crontab <file>` exited 1" in errors
+          exit_code == 1 and "FAILED: `crontab` exited 1; no cron line was changed." in errors
           and "installed: daily-full-test-run-of-main" in printed, (exit_code, printed, errors))
 
     # --- launchd: remove ----------------------------------------------------
@@ -648,11 +679,12 @@ with tempfile.TemporaryDirectory() as temporary:
     check("--remove boots the label out and deletes its plist, and leaves the crontab alone",
           exit_code == 0 and stub.commands == [["launchctl", "bootout", TARGET]]
           and not plist_path.exists() and stub.loaded == set()
-          and f"removed: daily-full-test-run-of-main — unloaded {LABEL} and deleted {plist_path}."
-              in printed, (exit_code, printed, stub.commands))
+          and f"removed: daily-full-test-run-of-main — deleted {plist_path}.\n" in printed, (exit_code, printed, stub.commands))
     exit_code, printed, errors = run_main(["--remove"] + DAILY, MAC, stub)
     check("removing a launchd job with no plist still boots it out and says there was none",
-          exit_code == 0 and "absent: daily-full-test-run-of-main" in printed, (exit_code, printed))
+          exit_code == 0
+          and f"absent: daily-full-test-run-of-main — there was no {plist_path}.\n" in printed,
+          (exit_code, printed))
 
 print()
 if failures:

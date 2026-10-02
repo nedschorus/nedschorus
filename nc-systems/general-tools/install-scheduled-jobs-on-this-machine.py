@@ -95,6 +95,13 @@ already says what the table says, with its job loaded, is left alone.
 which is how a new job is shown to run under launchd without waiting for its
 hour.
 
+RETIRING A JOB. --remove finds a job's cron line and plist through the job's
+entry in the table, and refuses a job the table does not name. So a job is
+taken off each machine that runs it, with --remove --job NAME, before the
+pull request that deletes it from the table merges. A job deleted from the
+table first stays installed, and nothing reports it: --check and --install
+look only at the table's jobs.
+
 Every selected job's program must be a file in the clone before anything is
 installed: a job pointed at a missing file fails at every firing and says so
 only in its output file.
@@ -170,7 +177,8 @@ def load_table(table_path: Path) -> dict:
                 or not isinstance(job.get("arguments"), list) \
                 or not all(isinstance(argument, str) for argument in job["arguments"]):
             raise table_refusal(
-                table_path, f"gives job `{name}` no `program`, `arguments`, `output` or `on`")
+                table_path, f"gives job `{name}` a missing or wrongly typed `program`, `arguments`, "
+                            f"`output` or `on`")
         # A cron line is recognised by its program's file name, so two jobs
         # sharing one would each take the other's line for its own.
         program_file_name = Path(job["program"]).name
@@ -355,7 +363,7 @@ def write_crontab(text: str, run) -> int:
 
 
 def report_failed_crontab_write(exit_code: int) -> None:
-    print(f"FAILED: `crontab <file>` exited {exit_code}; no cron line was changed.",
+    print(f"FAILED: `crontab` exited {exit_code}; no cron line was changed.",
           file=sys.stderr)
     print("Read what crontab printed above, and run this again after that cause is removed.",
           file=sys.stderr)
@@ -402,8 +410,8 @@ def install_launchd_job(machine, job, placement, launch_agents_directory: Path, 
         print(f"FAILED: {name} — `launchctl bootstrap {launchd_domain()} {plist_path}` exited "
               f"{bootstrapped.returncode}; the file is written and the job is not loaded.",
               file=sys.stderr)
-        print("When this was run over ssh, run it again from a terminal in this Mac's "
-              "graphical login session.", file=sys.stderr)
+        print("When this was run over ssh, ask the user to run it again from a terminal "
+              "in this Mac's interactive login session.", file=sys.stderr)
         print("Otherwise read what launchctl printed above, and run this again after that "
               "cause is removed.", file=sys.stderr)
         return False
@@ -451,7 +459,9 @@ def refuse_missing_programs(machine, placed) -> None:
             raise Refusal(
                 f"{PROGRAM}: not run — job `{job['name']}` runs "
                 f"{program_path_of(machine, job)}, which is not a file on this machine.",
-                f"Bring {machine['clone']} to current main, then run this again.")
+                f"Bring {machine['clone']} to current main, then run this again.",
+                f"When main has no {job['program']} either, correct the table through a "
+                f"pull request, then run this again.")
 
 
 def install_mode(machine, placed, launch_agents_directory: Path, start_once: bool, run) -> int:
@@ -516,11 +526,9 @@ def remove_mode(machine, placed, launch_agents_directory: Path, run) -> int:
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         if plist_path.is_file():
             plist_path.unlink()
-            print(f"removed: {job['name']} — unloaded {placement['label']} and deleted "
-                  f"{plist_path}.")
+            print(f"removed: {job['name']} — deleted {plist_path}.")
         else:
-            print(f"absent: {job['name']} — unloaded {placement['label']}; there was no "
-                  f"{plist_path}.")
+            print(f"absent: {job['name']} — there was no {plist_path}.")
     return 0
 
 
@@ -542,8 +550,8 @@ def check_mode(machine, placed, launch_agents_directory: Path, table_path: Path,
                 differs.append(f"the crontab holds no line for {Path(job['program']).name}; "
                                f"the table's line: {line}")
             elif held != [line]:
-                differs.append(f"the crontab holds {'; '.join(held)} — and the table's line "
-                               f"is: {line}")
+                differs.append(f"the crontab holds {'; '.join(held)}, not the table's "
+                               f"line: {line}")
         else:
             plist_path = launch_agents_directory / f"{placement['label']}.plist"
             if not plist_path.is_file():
@@ -568,12 +576,18 @@ def check_mode(machine, placed, launch_agents_directory: Path, table_path: Path,
     return 0
 
 
+def exit_codes_paragraph() -> str:
+    """The docstring's paragraph on exit codes, the one part of it --help
+    prints: the rest is for whoever changes this program."""
+    return next(block for block in __doc__.split("\n\n") if block.startswith("Exit codes:"))
+
+
 def main(argv=None, platform: str = sys.platform, home: Path = None, table_path: Path = None,
          launch_agents_directory: Path = None, run=subprocess.run) -> int:
     parser = argparse.ArgumentParser(
         prog=PROGRAM, description="Install the project's scheduled jobs on this machine, "
                                   "from one table of jobs.",
-        formatter_class=argparse.RawDescriptionHelpFormatter, epilog=__doc__)
+        formatter_class=argparse.RawDescriptionHelpFormatter, epilog=exit_codes_paragraph())
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("--print", action="store_true",
                       help="print what the table gives this machine; change nothing")
