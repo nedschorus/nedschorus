@@ -94,6 +94,28 @@ sometimes updated status file". The rules are PER FILE:
     loss, so a failure to ship is never a clean result -- the rule
     report_stray_writes states in nc-systems/cold-read/cold-read-cell-common.py.
 
+TWO SHIPMENTS OF ONE WALK AT ONCE. The rules above are decided on the
+store's listing, and the copy takes seconds over ssh; a second shipment of the
+same walk landing a file in those seconds was overwritten without a word, and
+both printed shipped: (GHI "Two shipments of one cold-read-record name at the
+same moment can lose a report while both say it shipped",
+https://github.com/nedschorus/nedschorus/issues/910, measured for the record
+shipper). So the files are copied into a staging directory in walk/
+(`.ship-staging-<name>-<random>`, removed once they are in place) and put in
+place by the record shipper's two steps: an add-only file by hard link, which
+is never made over an existing file (place_staged_files), and a replaced file
+by rename, the store's digest of what it displaces read in the same step
+(replace_with_staged_files). A walk text the walk only added to is renamed
+in only while the store still holds the copy it was tested against. The
+outcome is judged on what the store holds afterwards: an add-only file
+holding another shipment's bytes is REFUSED by name, a walk text changed in
+the store meanwhile is REFUSED by name, a minutes or dispositions file another
+shipment landed first is replaced and its digest announced as any
+replacement is, and a file that does not hold this run's bytes afterwards --
+another shipment's rename came after this one's, or the file is missing --
+makes the line FAILED, exit 1. Between a replaced file's digest being read and
+its rename there remains the time of two adjacent shell commands.
+
 The minutes' citation at the end of the stdout line is the minutes' still,
 never the dispositions': the minutes are the record of the rulings and what a
 resumed walk reads.
@@ -114,8 +136,9 @@ ned-box the copy is local and the citation still names the host.
 OUTPUT. Exactly one line on stdout -- `shipped:`, `REFUSED:` or `FAILED:` --
 ending, when anything reached the store, with the minutes' citation. Everything
 else is on stderr. Exit 0 when every file shipped or was already there, 2 when
-any add-only file was refused, 1 when the store could not be reached or written,
-64 for a bad invocation.
+any add-only file was refused, 1 when the store could not be reached or written
+or a file does not hold this run's bytes after the copy, 64 for a bad
+invocation.
 
 THE DESTINATION is the record shipper's one constant with the kind swapped to
 `walk/`. Its environment override, COLD_READ_RECORD_SHIP_DESTINATION, moves this
@@ -127,6 +150,7 @@ import hashlib
 import importlib.util
 import os
 import pathlib
+import secrets
 import shlex
 import subprocess
 import sys
@@ -329,9 +353,10 @@ def stored_copy_is_an_exact_prefix(source: pathlib.Path,
 
 
 def rsync_files(copy_host, sources: list, walk_path: pathlib.PurePosixPath):
-    """The files to add or replace, in one rsync, flat into the store's walk/.
-    -a, --ignore-times (see REPLACED above), never --delete or --inplace: rsync
-    writes each file whole or not at all."""
+    """The files to add or replace, in one rsync, flat into `walk_path`: the
+    run's staging directory in walk/, which rsync creates (see TWO SHIPMENTS
+    OF ONE WALK AT ONCE). -a, --ignore-times (see REPLACED above), never
+    --delete or --inplace: rsync writes each file whole or not at all."""
     destination = f"{copy_host}:{walk_path}/" if copy_host else f"{walk_path}/"
     command = ["rsync", "-a", "--ignore-times", "--timeout",
                shipper.RSYNC_IO_TIMEOUT_SECONDS]
@@ -351,6 +376,19 @@ class WalkFileReplacement(typing.NamedTuple):
     role_name: str
     displaced_sha256: str
     local_sha256: str
+    ruling: str
+
+
+class PlannedWalkFileReplacement(typing.NamedTuple):
+    """A file the listing found this run may replace: a minutes or
+    dispositions file, which is replaced whatever the store holds
+    (`required_sha256` None), or a walk text the walk only added to, which
+    is replaced only while the store still holds the copy that was tested
+    (`required_sha256` that copy's digest)."""
+
+    source: pathlib.Path
+    role_name: str
+    required_sha256: typing.Optional[str]
     ruling: str
 
 
@@ -415,45 +453,115 @@ def ship_walk(destination: WalkStoreDestination, name: str,
         sys.stderr.write(listed.stderr)
         return EXIT_FAILED
 
-    to_copy, added, unchanged, refused = [], [], [], []
-    # One WalkFileReplacement per replaced file, in the roles' order, which
-    # puts the walk text before the minutes and the minutes before the
-    # dispositions.
-    replaced = []
+    # Each file's plan is decided on the listing; its outcome on what the
+    # store holds after the copy (see TWO SHIPMENTS OF ONE WALK AT ONCE).
+    to_place, to_replace, unchanged, refused = [], [], [], []
     role_name_of = dict(WALK_FILE_ROLES)
+    local_digests = {}
     for suffix, source in present.items():
         local_digest = sha256_of(source)
+        local_digests[source.name] = local_digest
         in_store = stored.get(str(targets[suffix]))
-        if in_store is None:
-            to_copy.append(source)
-            added.append(source.name)
-        elif in_store.sha256 == local_digest:
+        if in_store is not None and in_store.sha256 == local_digest:
             unchanged.append(source.name)
         elif suffix in REPLACED_ROLE_SUFFIXES:
-            to_copy.append(source)
-            replaced.append(WalkFileReplacement(
-                source.name, role_name_of[suffix], in_store.sha256, local_digest,
-                REPLACED_ROLE_RULING))
+            to_replace.append(PlannedWalkFileReplacement(
+                source, role_name_of[suffix], None, REPLACED_ROLE_RULING))
+        elif in_store is None:
+            to_place.append(source)
         elif (suffix == ROLE_SUFFIX_REPLACED_WHEN_ONLY_APPENDED_TO
               and stored_copy_is_an_exact_prefix(source, in_store)):
-            to_copy.append(source)
-            replaced.append(WalkFileReplacement(
-                source.name, role_name_of[suffix], in_store.sha256, local_digest,
+            to_replace.append(PlannedWalkFileReplacement(
+                source, role_name_of[suffix], in_store.sha256,
                 APPENDED_TO_RULING.format(stored_bytes=in_store.size_in_bytes,
                                           local_bytes=source.stat().st_size)))
         else:
             refused.append(f"{source.name} (store sha256 {in_store.sha256}, "
                            f"local sha256 {local_digest})")
 
-    if to_copy:
-        copied = rsync_files(destination.copy_host, to_copy, destination.walk_path)
+    # One WalkFileReplacement per replaced file, in the roles' order, which
+    # puts the walk text before the minutes and the minutes before the
+    # dispositions. `lost` names a file whose copy is not what the store holds.
+    added, replaced, lost = set(), [], []
+    if to_place or to_replace:
+        staging_dir = destination.walk_path / (
+            f"{shipper.STAGING_DIRECTORY_PREFIX}{name}-{secrets.token_hex(6)}")
+        copied = rsync_files(destination.copy_host,
+                             to_place + [planned.source for planned in to_replace],
+                             staging_dir)
         if copied.returncode != 0:
+            shipper.remove_staging_directory(destination.copy_host, staging_dir)
             reason = ("ned-box unreachable"
                       if copied.returncode == shipper.RSYNC_EXIT_CONNECTION_FAILED
                       else f"rsync exit {copied.returncode}")
             print(f"FAILED: {name} — {reason} during the copy; a later run finishes it.")
             sys.stderr.write(copied.stderr)
             return EXIT_FAILED
+        outcomes = {}
+        if to_replace:
+            renamed, outcomes = shipper.replace_with_staged_files(
+                destination.copy_host, staging_dir, destination.walk_path,
+                [(planned.source.name, planned.source.name, planned.required_sha256)
+                 for planned in to_replace])
+            if outcomes is None:
+                shipper.remove_staging_directory(destination.copy_host, staging_dir)
+                reason = ("ned-box unreachable"
+                          if renamed.returncode == shipper.RSYNC_EXIT_CONNECTION_FAILED
+                          else f"ssh exit {renamed.returncode}")
+                print(f"FAILED: {name} — {reason} while putting the copied files "
+                      f"in place; a later run finishes it.")
+                sys.stderr.write(renamed.stderr)
+                return EXIT_FAILED
+        after = {}
+        if to_place:
+            placed, after = shipper.place_staged_files(
+                destination.copy_host, staging_dir, destination.walk_path,
+                [source.name for source in to_place], local_digests,
+                stop_at_first_taken=False)
+            if after is None:
+                reason = ("ned-box unreachable"
+                          if placed.returncode == shipper.RSYNC_EXIT_CONNECTION_FAILED
+                          else f"ssh exit {placed.returncode}")
+                print(f"FAILED: {name} — {reason} while putting the copied files "
+                      f"in place; a later run finishes it.")
+                sys.stderr.write(placed.stderr)
+                return EXIT_FAILED
+        else:
+            shipper.remove_staging_directory(destination.copy_host, staging_dir)
+        for source in to_place:
+            in_store_now = after.get(source.name)
+            if in_store_now == local_digests[source.name]:
+                added.add(source.name)
+            elif in_store_now is None:
+                lost.append(f"{source.name} (not in the store after the copy)")
+            else:
+                refused.append(f"{source.name} (store sha256 {in_store_now}, "
+                               f"local sha256 {local_digests[source.name]})")
+        for planned in to_replace:
+            file_name = planned.source.name
+            local_digest = local_digests[file_name]
+            outcome = outcomes.get(file_name)
+            if outcome is None:
+                lost.append(f"{file_name} (not in the store after the copy)")
+            elif not outcome.replaced:
+                refused.append(f"{file_name} (changed in the store while this run "
+                               f"ran: store sha256 {outcome.displaced_sha256}, "
+                               f"local sha256 {local_digest})")
+            elif outcome.stored_sha256 != local_digest:
+                lost.append(f"{file_name} (replaced again by another shipment while "
+                            f"this run ran: store sha256 {outcome.stored_sha256}, "
+                            f"local sha256 {local_digest})")
+            elif outcome.displaced_sha256 is None:
+                added.add(file_name)
+            elif outcome.displaced_sha256 == local_digest:
+                unchanged.append(file_name)
+            else:
+                replaced.append(WalkFileReplacement(
+                    file_name, planned.role_name, outcome.displaced_sha256,
+                    local_digest, planned.ruling))
+        replaced.sort(key=lambda replacement: [
+            source.name for source in present.values()].index(replacement.file_name))
+    added = [source.name for source in present.values() if source.name in added]
     # The walk kind's directory in the store on ned-box, which the snapshots
     # copy, built from the record shipper's constant, never written out again
     # here; the destination may be a local override, the snapshots never.
@@ -483,6 +591,13 @@ def ship_walk(destination: WalkStoreDestination, name: str,
     if unchanged:
         parts.append(f"{len(unchanged)} already there unchanged")
     summary = "; ".join(parts) if parts else "nothing to copy"
+    if lost:
+        refused_too = (f" Refused, add-only: {'; '.join(refused)}." if refused else "")
+        print(f"FAILED: {name} — not in the store as this run copied them: "
+              f"{'; '.join(lost)}.{refused_too} Ship the walk again only from the "
+              f"checkout whose copy the store should keep. The rest: {summary}; "
+              f"minutes at {citation}")
+        return EXIT_FAILED
     if refused:
         print(f"REFUSED: {name} — already in the store with different content and "
               f"not replaced, add-only: {'; '.join(refused)}. The rest: {summary}; "

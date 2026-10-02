@@ -161,6 +161,7 @@ import socket
 import subprocess
 import sys
 import tempfile
+import typing
 
 # This file sits in nc-systems/cold-read/, two directories below the root.
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent.parent
@@ -208,6 +209,9 @@ STAGING_DIRECTORY_PREFIX = ".ship-staging-"
 # Marks the one ssh call that places the staged files, so a test's stub `ssh`
 # can tell it from the inventory, which also runs sha256sum.
 PLACE_STAGED_FILES_MARKER = "# cold-read-record-ship: place staged files"
+# Marks the one ssh call that replaces store files with staged ones, for the
+# same reason; see replace_with_staged_files.
+REPLACE_WITH_STAGED_FILES_MARKER = "# cold-read-record-ship: replace with staged files"
 
 EXIT_SHIPPED = 0
 EXIT_FAILED = 1
@@ -562,7 +566,7 @@ def store_inventory(host, store_dir: pathlib.PurePosixPath):
 
 def place_staged_files(host, staging_dir: pathlib.PurePosixPath,
                        store_dir: pathlib.PurePosixPath, relatives: list,
-                       local_digests: dict):
+                       local_digests: dict, stop_at_first_taken: bool = True):
     """Hard-link each staged file into the record's directory in the store,
     in the order given, then remove the staging directory and return the
     process and the store's {relative path: sha256} of `relatives` -- the
@@ -573,6 +577,9 @@ def place_staged_files(host, staging_dir: pathlib.PurePosixPath,
     other bytes, placing stops: the rest are left unplaced, so the shipment
     that loses the race adds nothing past that file. Taken by the same bytes,
     it goes on. See TWO SHIPMENTS OF ONE NAME AT ONCE in the docstring.
+    `stop_at_first_taken=False` goes on past a taken name instead, for
+    scripts/walk-files-ship.py, whose add-only rule refuses a walk's files
+    one by one while the rest still ship.
 
     One ssh round trip remotely, running place_staged_files_script; plain
     filesystem calls and hashlib locally, as store_inventory does."""
@@ -586,7 +593,7 @@ def place_staged_files(host, staging_dir: pathlib.PurePosixPath,
                     os.link(staging / relative, target)
                 except FileExistsError:
                     if hashlib.sha256(target.read_bytes()).hexdigest() \
-                            != local_digests[relative]:
+                            != local_digests[relative] and stop_at_first_taken:
                         break
                 except OSError:
                     break
@@ -596,7 +603,7 @@ def place_staged_files(host, staging_dir: pathlib.PurePosixPath,
                  for relative in relatives if (store / relative).is_file()}
         return subprocess.CompletedProcess([], 0, "", ""), after
     script = place_staged_files_script(staging_dir, store_dir, relatives,
-                                       local_digests)
+                                       local_digests, stop_at_first_taken)
     completed = subprocess.run(SSH_COMMAND + [host, script],
                                capture_output=True, text=True, check=False)
     if completed.returncode != 0:
@@ -611,12 +618,14 @@ def place_staged_files(host, staging_dir: pathlib.PurePosixPath,
 
 def place_staged_files_script(staging_dir: pathlib.PurePosixPath,
                               store_dir: pathlib.PurePosixPath, relatives: list,
-                              local_digests: dict) -> str:
+                              local_digests: dict,
+                              stop_at_first_taken: bool = True) -> str:
     """The POSIX sh script place_staged_files runs on ned-box: link each file,
-    stop at the first name taken by other bytes, remove the staging
-    directory, print `sha256sum`'s line for each of `relatives` the store
-    holds. `ln` without -f fails when the name exists, and makes the link in
-    the same step when it does not."""
+    stop at the first name taken by other bytes (or go on past it, with
+    `stop_at_first_taken=False`), remove the staging directory, print
+    `sha256sum`'s line for each of `relatives` the store holds. `ln` without
+    -f fails when the name exists, and makes the link in the same step when
+    it does not."""
     quoted_pairs = " ".join(f"{shlex.quote(relative)} {local_digests[relative]}"
                             for relative in relatives)
     quoted_relatives = " ".join(shlex.quote(relative) for relative in relatives)
@@ -632,12 +641,135 @@ def place_staged_files_script(staging_dir: pathlib.PurePosixPath,
         f"    continue\n"
         f"  fi\n"
         f"  stored=$(sha256sum < {store}/\"$relative\" 2>/dev/null | cut -d' ' -f1)\n"
-        f"  [ \"$stored\" = \"$digest\" ] || break\n"
+        f"  [ \"$stored\" = \"$digest\" ] || {'break' if stop_at_first_taken else 'continue'}\n"
         f"done\n"
         f"rm -rf -- {staging}\n"
         f"cd -- {store} || exit 0\n"
         f"for relative in {quoted_relatives}; do\n"
         f"  if [ -f \"$relative\" ]; then sha256sum -- \"$relative\"; fi\n"
+        f"done\n")
+
+
+class StagedReplacement(typing.NamedTuple):
+    """What replace_with_staged_files did with one file. `displaced_sha256` is
+    the store's digest of the file the rename replaced, read in the same step
+    as the rename, or None when there was none; `stored_sha256` is the
+    store's digest of the name after every rename of the call, whoever's
+    bytes they are, or None when the name holds no file."""
+
+    replaced: bool
+    displaced_sha256: typing.Optional[str]
+    stored_sha256: typing.Optional[str]
+
+
+def replace_with_staged_files(host, staging_dir: pathlib.PurePosixPath,
+                              store_dir: pathlib.PurePosixPath,
+                              replacements: list):
+    """Rename staged files over the store's, for the files a shipper REPLACES
+    by design: the walk's minutes and dispositions, a walk text the walk only
+    added to (scripts/walk-files-ship.py) and a seat's own files
+    (scripts/seat-shared-file-ship.py). Returns the process and
+    {store relative path: StagedReplacement}, or None for an unreachable
+    host, as store_inventory does. The staging directory is left for the
+    caller to remove, with remove_staging_directory or by placing the rest.
+
+    `replacements` is a list of (staged relative path, store relative path,
+    required sha256 or None). A required digest makes the rename conditional:
+    it runs only while the store still holds those bytes, which is how the
+    walk text's APPENDED TO rule is held to the stored copy it was tested
+    against. None replaces whatever is there.
+
+    WHY A RENAME OF A STAGED COPY, AND NOT rsync STRAIGHT ONTO THE NAME. The
+    shippers read the store's digest, decided, and copied with rsync, which
+    takes seconds over ssh; a second shipment of the same name in those
+    seconds was replaced without a word, the replacement announcement naming
+    the bytes the first look saw, or nothing when it saw no file. Here the
+    digest of what is about to be displaced is read immediately before the
+    rename, in one shell, so the announcement names what was actually
+    displaced, and the store is read again afterwards, so a caller judges its
+    outcome on what the store holds. A second rename landing between that
+    read and this rename is still possible; the window is the time between
+    two adjacent shell commands, not a network copy.
+
+    One ssh round trip remotely, running replace_with_staged_files_script;
+    os.replace and hashlib locally."""
+    if host is None:
+        staging, store = pathlib.Path(staging_dir), pathlib.Path(store_dir)
+        outcomes = {}
+        for staged_relative, store_relative, required in replacements:
+            target = store / store_relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            displaced = (hashlib.sha256(target.read_bytes()).hexdigest()
+                         if target.is_file() else None)
+            replaced = required is None or displaced == required
+            if replaced:
+                os.replace(staging / staged_relative, target)
+            outcomes[store_relative] = (replaced, displaced)
+        return subprocess.CompletedProcess([], 0, "", ""), {
+            store_relative: StagedReplacement(
+                replaced, displaced,
+                hashlib.sha256((store / store_relative).read_bytes()).hexdigest()
+                if (store / store_relative).is_file() else None)
+            for store_relative, (replaced, displaced) in outcomes.items()}
+    script = replace_with_staged_files_script(staging_dir, store_dir, replacements)
+    completed = subprocess.run(SSH_COMMAND + [host, script],
+                               capture_output=True, text=True, check=False)
+    if completed.returncode != 0:
+        return completed, None
+    acted, stored = {}, {}
+    for line in completed.stdout.splitlines():
+        word, _, rest = line.partition(" ")
+        digest, _, relative = rest.partition(" ")
+        if not relative:
+            continue
+        if word in ("replaced", "kept"):
+            acted[relative] = (word == "replaced", None if digest == "-" else digest)
+        elif word == "stored":
+            stored[relative] = digest
+    return completed, {
+        relative: StagedReplacement(replaced, displaced, stored.get(relative))
+        for relative, (replaced, displaced) in acted.items()}
+
+
+def replace_with_staged_files_script(staging_dir: pathlib.PurePosixPath,
+                                     store_dir: pathlib.PurePosixPath,
+                                     replacements: list) -> str:
+    """The POSIX sh script replace_with_staged_files runs on ned-box. For each
+    file: read the store's digest of the name (`-` for none), rename the
+    staged copy over it when no digest is required or the store's is the
+    required one, and print `replaced <digest> <name>` or `kept <digest>
+    <name>`. Then print `stored <digest> <name>` for each name the store
+    holds. `mv -f` within one directory tree is a rename, so the name holds
+    the old file or the new one, never part of either. A digest that cannot
+    be read exits 1 before anything more is renamed."""
+    arguments = " ".join(
+        f"{shlex.quote(staged)} {shlex.quote(target)} {required or '-'}"
+        for staged, target, required in replacements)
+    quoted_targets = " ".join(shlex.quote(target) for _, target, _ in replacements)
+    staging = shlex.quote(str(staging_dir))
+    store = shlex.quote(str(store_dir))
+    return (
+        f"{REPLACE_WITH_STAGED_FILES_MARKER}\n"
+        f"set -- {arguments}\n"
+        f"while [ $# -gt 0 ]; do\n"
+        f"  staged=$1; target=$2; required=$3; shift 3\n"
+        f"  mkdir -p -- \"$(dirname -- {store}/\"$target\")\" || exit 1\n"
+        f"  current=-\n"
+        f"  if [ -f {store}/\"$target\" ]; then\n"
+        f"    current=$(sha256sum < {store}/\"$target\" | cut -d' ' -f1)\n"
+        f"    [ -n \"$current\" ] || exit 1\n"
+        f"  fi\n"
+        f"  if [ \"$required\" = - ] || [ \"$required\" = \"$current\" ]; then\n"
+        f"    mv -f -- {staging}/\"$staged\" {store}/\"$target\" || exit 1\n"
+        f"    printf 'replaced %s %s\\n' \"$current\" \"$target\"\n"
+        f"  else\n"
+        f"    printf 'kept %s %s\\n' \"$current\" \"$target\"\n"
+        f"  fi\n"
+        f"done\n"
+        f"for target in {quoted_targets}; do\n"
+        f"  if [ -f {store}/\"$target\" ]; then\n"
+        f"    printf 'stored %s %s\\n' \"$(sha256sum < {store}/\"$target\" | cut -d' ' -f1)\" \"$target\"\n"
+        f"  fi\n"
         f"done\n")
 
 
