@@ -10,8 +10,9 @@ bytes an agent-binary may write, and the record of a run that saved no report
 cells have ended, or while a review copy is claimed (cases 49 to 53), and an
 agent-binary started as the stop begins, a stop that lands while a report is
 saved, a review copy whose removal fails, and a cell that first runs after
-the stop (cases 54 to 57). No case starts a real agent-binary: see
-CONTAINMENT below.
+the stop (cases 54 to 57), and a stop that ends a cell's git call, version
+probe or agent-binary as the cell saves its report (cases 58 to 60). No case
+starts a real agent-binary: see CONTAINMENT below.
 
 The detector's only value is being trustworthy about whether a review cell
 wrote to the worktree. A hole in it is silent by construction, and a warning
@@ -3481,6 +3482,149 @@ sys.exit(module.main())
           f"raised {late_raised!r}, ok {late_ok}, launches {len(late_launches)}, "
           f"printed {late_output!r}, "
           f"ended {getattr(runner_late, 'CELLS_THE_RUN_STOP_ENDED', None)}")
+
+    # Case 58: a stop signal that lands while the last cell is in a git call
+    # it makes to save its report, after its agent-binary has exited. The
+    # stop's walk ends that call; the call runs with check=False, so the cell
+    # saves its report anyway, with `commit=unknown`. That report is what the
+    # stop cut short, so the run ends with its STOPPED line, not as a finished
+    # run over it. A stand-in `git`, first on the runner's PATH, holds the
+    # cell inside its `git rev-parse --short HEAD`.
+    with tempfile.TemporaryDirectory() as scratch:
+        base = pathlib.Path(scratch).resolve()
+        target = "docs/stopped-in-a-git-call.md"
+        repo = scratch_repository_with_design(base, target)
+        programs, recorded = stand_in_agent_binaries(base)
+        real_git = shutil.which("git")
+        (programs / "git").write_text(
+            "#!/bin/sh\n"
+            'if [ -n "$GIT_HOLD_REV_PARSE" ] && [ "$1" = rev-parse ] && [ "$2" = --short ]; then\n'
+            '    : > "$GIT_HOLD_REV_PARSE.held"\n'
+            '    while [ ! -e "$GIT_HOLD_REV_PARSE" ]; do sleep 0.05; done\n'
+            "fi\n"
+            f'exec {shlex.quote(real_git)} "$@"\n', encoding="utf-8")
+        (programs / "git").chmod(0o755)
+        git_hold = base / "git-hold"
+        walk_done = base / "stop-walk-done"
+        environment = runner_process_environment(programs, recorded, codex="report")
+        environment["GIT_HOLD_REV_PARSE"] = str(git_hold)
+        environment["DRIVER_STOP_WALK_DONE"] = str(walk_done)
+        process = subprocess.Popen(
+            [sys.executable, "-B", str(runner_driver(base, repo)),
+             "--target", target, "--attack", "cut", "--runtime", "codex"],
+            env=environment, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        try:
+            held = wait_until(lambda: pathlib.Path(str(git_hold) + ".held").exists())
+            process.send_signal(signal.SIGTERM)
+            walked = wait_until(walk_done.exists)
+            try:
+                out, err = process.communicate(timeout=30)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                out, err = process.communicate()
+            records = sorted((repo / "sanity-check-records").glob("*"))
+            record = records[0] if len(records) == 1 else None
+            report = record / "cut-codex.md" if record is not None else None
+            report_text = (report.read_text(encoding="utf-8")
+                           if report is not None and report.is_file() else "")
+            check("a stop that ends the git call a cell makes to save its report ends "
+                  "the run with its STOPPED line, not as a finished run",
+                  held and walked and "commit=unknown" in report_text
+                  and "STOPPED: SIGTERM ended this run" in out
+                  and "sanity-check complete" not in out,
+                  f"held {held}, walked {walked}, report {report_text[:200]!r}, "
+                  f"stdout {out!r}, stderr {err!r}")
+            check("and that run ends by the signal, its copy removed",
+                  process.returncode == -signal.SIGTERM and left_in_copies_root(base) == [],
+                  f"exit {process.returncode}, copies root {left_in_copies_root(base)}")
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.communicate()
+            end_stand_ins(recorded)
+
+    # Case 59: each git call and version probe a cell makes to save its
+    # report counts the cell as ended by the stop when a signal ended the call
+    # while the run is stopped, and only then. A probe a signal ended leaves
+    # nothing in the version cache.
+    def ended_calls_counted(call_name, call, returncode, stopped):
+        """(cells the stop ended, the CLI version cache) after `call` ran with
+        every subprocess.run answering `returncode`, in a fresh runner whose
+        current thread runs cut-codex."""
+        module = load_runner()
+        thread_cell = getattr(module, "CELL_RUN_BY_THIS_THREAD", None)
+        if thread_cell is None:
+            return None, None
+        thread_cell.name = "cut-codex"
+        if stopped:
+            module.RUN_STOPPED.set()
+
+        def answered(command, *arguments, **keywords):
+            return subprocess.CompletedProcess(list(command), returncode, "", "")
+
+        real_run = module.subprocess.run
+        try:
+            module.subprocess.run = answered
+            call(module)
+        finally:
+            module.subprocess.run = real_run
+        return set(module.CELLS_THE_RUN_STOP_ENDED), dict(module.CLI_VERSION_CACHE)
+
+    empty_copy = tempfile.TemporaryDirectory()
+    empty_copy_path = pathlib.Path(empty_copy.name)
+    calls_a_cell_makes_to_save = {
+        "worktree_snapshot": lambda module: module.worktree_snapshot(empty_copy_path),
+        "git_status_code_for_path": lambda module: module.git_status_code_for_path(
+            empty_copy_path / "a.md", empty_copy_path),
+        "reviewed_revision": lambda module: module.reviewed_revision({}, empty_copy_path),
+        "runtime_cli_version": lambda module: module.runtime_cli_version("codex"),
+    }
+    for call_name, call in calls_a_cell_makes_to_save.items():
+        ended, cache = ended_calls_counted(call_name, call, -signal.SIGTERM, stopped=True)
+        unended, _ = ended_calls_counted(call_name, call, 0, stopped=True)
+        not_stopped, _ = ended_calls_counted(call_name, call, -signal.SIGTERM, stopped=False)
+        check(f"{call_name}: a call a signal ended while the run is stopped counts its "
+              f"cell as ended by the stop; one that exits on its own, or a run not "
+              f"stopped, counts nothing",
+              ended == {"cut-codex"} and unended == set() and not_stopped == set()
+              and (call_name != "runtime_cli_version" or "codex" not in cache),
+              f"ended {ended}, exited on its own {unended}, not stopped {not_stopped}, "
+              f"version cache {cache}")
+    empty_copy.cleanup()
+
+    # Case 60: an agent-binary that is running when the run is stopped was
+    # ended by the stop, whatever its exit code: one that answered SIGTERM by
+    # exiting 0 with what it had written so far would otherwise have that
+    # saved as a report of a run that ends as a finished run.
+    for stopped_while_it_ran in (True, False):
+        runner_exit_zero = load_runner()
+        thread_cell = getattr(runner_exit_zero, "CELL_RUN_BY_THIS_THREAD", None)
+        if thread_cell is not None:
+            thread_cell.name = "cut-codex"
+        real_exit_zero_popen = runner_exit_zero.subprocess.Popen
+
+        class RunStoppedWhileItRuns(real_exit_zero_popen):
+            def communicate(self, *arguments, module=runner_exit_zero,
+                            stop=stopped_while_it_ran, **keywords):
+                answered = super().communicate(*arguments, **keywords)
+                if stop:
+                    module.RUN_STOPPED.set()
+                return answered
+
+        try:
+            runner_exit_zero.subprocess.Popen = RunStoppedWhileItRuns
+            exited = runner_exit_zero.run_agent_binary_unless_run_stopped(
+                [sys.executable, "-c", "print('what it had written so far')"],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        finally:
+            runner_exit_zero.subprocess.Popen = real_exit_zero_popen
+        ended = getattr(runner_exit_zero, "CELLS_THE_RUN_STOP_ENDED", None)
+        expected = {"cut-codex"} if stopped_while_it_ran else set()
+        check("an agent-binary that exits 0 is counted as ended by the stop when the run "
+              "was stopped while it ran" if stopped_while_it_ran else
+              "and one the run was not stopped during is not",
+              exited is not None and exited.returncode == 0 and ended == expected,
+              f"returned {exited!r}, cells the stop ended {ended}")
 
     # The containment set at import: no case asked the PATH's `claude` or
     # `codex` for more than its version.
