@@ -42,18 +42,26 @@ SHIP = SYSTEM_DIRECTORY / "cold-read-record-ship.py"
 DESTINATION_VARIABLE = "COLD_READ_RECORD_SHIP_DESTINATION"
 RULED_DESTINATION = "nedlern@ned-box:/home/nedlern/nedschorus-logs/cold-read-records"
 
-# What a stub `ssh` answers to the call that places the staged files: every
-# file landed with the bytes the shipment asked for, which is what a store
-# no other shipment is writing to answers. The placing script names each file
-# and its digest on its `set --` line, so the answer is read from there.
+# What a stub `ssh` answers to the call that runs the step under the record's
+# lock: the outcome of a store no other shipment is writing to, in which every
+# file the request names is new and lands with the bytes the shipment asked
+# for -- except triage.md when the environment says the store already holds
+# one, which the step replaces, announcing the digest it held. The request
+# arrives as JSON on stdin; it is appended to the log beside the argv log.
 STUB_ANSWER_TO_PLACING = """
 script = sys.argv[-1]
 if "# cold-read-record-ship: place staged files" in script:
-    import shlex
-    pairs = shlex.split(next(line for line in script.splitlines()
-                             if line.startswith("set -- "))[len("set -- "):])
-    for relative, digest in zip(pairs[0::2], pairs[1::2]):
-        print(digest + "  " + relative)
+    request = json.load(sys.stdin)
+    with open(os.environ["RECORD_SHIP_TEST_ARGV_LOG"] + ".requests", "a") as log:
+        log.write(json.dumps(request) + "\\n")
+    local = request["local_digests"]
+    held_triage = os.environ.get("RECORD_SHIP_TEST_STORED_TRIAGE_DIGEST")
+    replaceable = request["replaceable"]
+    displaced = held_triage if held_triage and replaceable in local else None
+    added = sorted(relative for relative in local
+                   if not (displaced and relative == replaceable))
+    print(json.dumps({"lock_held": False, "differing": [], "added": added,
+                      "displaced": displaced, "stored": dict(local)}))
     sys.exit(0)
 """
 
@@ -700,35 +708,39 @@ with tempfile.TemporaryDirectory(prefix="cold-read-record-ship-test-") as scratc
           str(rsync_calls))
     placing_calls = [c for c in ssh_calls
                      if "# cold-read-record-ship: place staged files" in c[-1]]
-    lock_dir_remote = f"/home/nedlern/nedschorus-logs/cold-read-records/.ship-lock-{demo.name}"
-    lock_calls = [i for i, c in enumerate(calls) if c[0].endswith("ssh")
-                  and "# cold-read-record-ship: lock the record" in c[-1]
-                  and f"mkdir -- {lock_dir_remote}" in c[-1]]
     inventory_calls = [i for i, c in enumerate(calls) if c[0].endswith("ssh")
                        and "sha256sum" in c[-1] and "place staged files" not in c[-1]]
+    copy_indexes = [i for i, c in enumerate(calls) if c[0].endswith("rsync")]
     placing_indexes = [i for i, c in enumerate(calls) if c[0].endswith("ssh")
                        and "place staged files" in c[-1]]
-    release_calls = [i for i, c in enumerate(calls) if c[0].endswith("ssh")
-                     and c[-1] == f"rmdir -- {lock_dir_remote}"]
-    check("remotely the record's lock is taken over ssh before the inventory "
-          "and let go after the placing",
-          len(lock_calls) == 1 and len(release_calls) == 1 and inventory_calls
-          and placing_indexes
-          and lock_calls[0] < inventory_calls[0] < placing_indexes[0] < release_calls[0],
-          f"lock {lock_calls} inventory {inventory_calls} placing "
-          f"{placing_indexes} release {release_calls}")
+    check("remotely the inventory, the copy into staging and the one step "
+          "under the record's lock run in that order, and no other ssh call "
+          "takes or lets go of a lock",
+          len(inventory_calls) == 1 and len(copy_indexes) == 1
+          and len(placing_indexes) == 1
+          and inventory_calls[0] < copy_indexes[0] < placing_indexes[0]
+          and not any("mkdir --" in c[-1] or "rmdir" in c[-1] for c in ssh_calls),
+          f"inventory {inventory_calls} copy {copy_indexes} placing {placing_indexes}")
     staging_used = rsync_calls[0][-1][len(f"{RULED_DESTINATION}/"):].rstrip("/") \
         if rsync_calls else ""
-    check("then one ssh call places the staged files into the record's own "
-          "directory by hard link, never over an existing file, and removes "
-          "the staging directory",
-          len(placing_calls) == 1
-          and "ln -- " in placing_calls[0][-1] and "ln -f" not in placing_calls[0][-1]
-          and f"/home/nedlern/nedschorus-logs/cold-read-records/{demo.name}"
-          in placing_calls[0][-1]
-          and f"rm -rf -- /home/nedlern/nedschorus-logs/cold-read-records/{staging_used}"
-          in placing_calls[0][-1],
-          str(placing_calls))
+    requests_log = pathlib.Path(f"{argv_log}.requests")
+    placing_requests = [json.loads(line) for line in
+                        requests_log.read_text().splitlines()] \
+        if requests_log.exists() else []
+    check("then one ssh call runs the step as a python3 program, its request "
+          "-- the record's directory in the store, the staging directory the "
+          "copy filled, and every local file's digest -- on stdin, not in the "
+          "command line a shell parses",
+          len(placing_calls) == 1 and placing_calls[0][-1].startswith("python3 -c ")
+          and staging_used not in placing_calls[0][-1]
+          and len(placing_requests) == 1
+          and placing_requests[0]["store_dir"]
+          == f"/home/nedlern/nedschorus-logs/cold-read-records/{demo.name}"
+          and placing_requests[0]["staging_dir"]
+          == f"/home/nedlern/nedschorus-logs/cold-read-records/{staging_used}"
+          and sorted(placing_requests[0]["local_digests"])
+          == sorted(p.relative_to(demo).as_posix() for p in demo.rglob("*") if p.is_file()),
+          f"{placing_calls} {placing_requests}")
     check("rsync is never asked to delete or to write in place",
           not any(flag in rsync_calls[0] for flag in ("--delete", "--inplace")),
           str(rsync_calls))
@@ -759,28 +771,17 @@ with tempfile.TemporaryDirectory(prefix="cold-read-record-ship-test-") as scratc
         "RECORD_SHIP_TEST_STORED_TRIAGE_DIGEST": stored_triage_digest})
     replace_calls = [json.loads(line) for line in replace_log.read_text().splitlines()]
     replace_rsync_calls = [c for c in replace_calls if c[0].endswith("rsync")]
-    single_file_calls = [c for c in replace_rsync_calls
-                         if c[-1].endswith(f"{remote_record.name}/triage.md")]
     check("remotely a triage.md the store already holds with other bytes is "
           "shipped, not refused",
           result.returncode == 0 and result.stdout.startswith("shipped:")
           and "triage.md replaced" in result.stdout,
           f"exit {result.returncode}: {result.stdout}{result.stderr}")
-    check("the replacement is a second rsync of that one file, over batch-mode "
-          "ssh, into the record's own directory in the store",
-          len(replace_rsync_calls) == 2 and len(single_file_calls) == 1
-          and single_file_calls[0][-2] == f"{remote_record.resolve()}/triage.md"
-          and single_file_calls[0][-1]
-          == f"{RULED_DESTINATION}/{remote_record.name}/triage.md"
-          and "ssh -o BatchMode=yes -o ConnectTimeout=10" in single_file_calls[0],
+    check("the replacement takes no rsync of its own: the one copy is into "
+          "staging, and the step under the record's lock renames triage.md "
+          "from there",
+          len(replace_rsync_calls) == 1
+          and ".ship-staging-" in replace_rsync_calls[0][-1],
           str(replace_rsync_calls))
-    check("the replacing rsync passes --ignore-times, rsync's size-and-time "
-          "check being what would skip a same-length revision, and is never "
-          "asked to delete or to write in place",
-          single_file_calls and "--ignore-times" in single_file_calls[0]
-          and not any(flag in single_file_calls[0]
-                      for flag in ("--delete", "--inplace", "--ignore-existing")),
-          str(single_file_calls))
     check("the digest the store reported for the displaced triage is announced "
           "on stderr",
           "REPLACED" in result.stderr and stored_triage_digest in result.stderr,
@@ -929,52 +930,101 @@ with tempfile.TemporaryDirectory(prefix="cold-read-record-ship-test-") as scratc
         if saved_destination is not None:
             os.environ[DESTINATION_VARIABLE] = saved_destination
 
-    # The placing script ned-box runs, replayed by a real /bin/sh on scratch
-    # paths. The stubs above answer it without running it, so this is the one
-    # case where its shell is parsed and executed.
-    def place_through_real_sh(case_label, stored_b):
+    # The step ned-box runs, as the python3 program the ssh call sends, run by
+    # a real sh and python3 on scratch paths with its request on stdin. The
+    # stubs above answer it without running it, so this is where the program
+    # as sent -- the function's own source and the line that drives it -- is
+    # parsed and executed.
+    def step_through_real_python3(case_label, stored, wait_seconds=60):
         staging = scratch / f"placing-{case_label}" / ".ship-staging-r-0"
         store = scratch / f"placing-{case_label}" / "r"
         contents = {"a.md": "a\n", "b.md": "b, this shipment's\n",
-                    "sub dir/c.md": "c\n"}
+                    "sub dir/c.md": "c\n", "triage.md": "triage, this shipment's\n"}
         for relative, text in contents.items():
             (staging / relative).parent.mkdir(parents=True, exist_ok=True)
             (staging / relative).write_text(text, encoding="utf-8")
-        if stored_b is not None:
-            store.mkdir(parents=True, exist_ok=True)
-            (store / "b.md").write_text(stored_b, encoding="utf-8")
+        store.mkdir(parents=True, exist_ok=True)
+        for relative, text in stored.items():
+            (store / relative).write_text(text, encoding="utf-8")
         digests = {relative: hashlib.sha256(text.encode()).hexdigest()
                    for relative, text in contents.items()}
-        script = racing.place_staged_files_script(
-            pathlib.PurePosixPath(staging), pathlib.PurePosixPath(store),
-            sorted(contents), digests)
-        replayed = subprocess.run(["/bin/sh", "-c", script],
-                                  capture_output=True, text=True, check=False)
-        held = {relative: (store / relative).read_text(encoding="utf-8")
-                for relative in contents if (store / relative).is_file()}
-        return replayed, held, staging, digests
+        request = {"store_dir": str(store), "staging_dir": str(staging),
+                   "local_digests": digests, "replaceable": "triage.md",
+                   "wait_seconds": wait_seconds, "poll_seconds": 0.05}
+        replayed = subprocess.run(
+            ["/bin/sh", "-c",
+             f"python3 -c {shlex.quote(racing.place_staged_files_program())}"],
+            input=json.dumps(request), capture_output=True, text=True, check=False)
+        held = {p.relative_to(store).as_posix(): p.read_text(encoding="utf-8")
+                for p in store.rglob("*") if p.is_file()}
+        try:
+            outcome = json.loads(replayed.stdout)
+        except ValueError:
+            outcome = None
+        return replayed, outcome, held, staging, store, digests
 
-    replayed, held, staging, digests = place_through_real_sh("taken", "b, the other's\n")
-    check("replayed by a real sh, the placing script links the files in order, "
-          "leaves a name taken by other bytes as it was, and places nothing "
-          "after it",
-          replayed.returncode == 0
-          and held == {"a.md": "a\n", "b.md": "b, the other's\n"},
-          f"{held} {replayed.stderr}")
-    check("it removes the staging directory and prints the store's digest "
-          "of each file it holds",
-          not staging.exists()
-          and f"{digests['a.md']}  a.md" in replayed.stdout
-          and hashlib.sha256(b"b, the other's\n").hexdigest() + "  b.md"
-          in replayed.stdout and "c.md" not in replayed.stdout,
-          replayed.stdout)
-    replayed, held, staging, digests = place_through_real_sh(
-        "same-bytes", "b, this shipment's\n")
-    check("a name taken by the same bytes is no stop: every file is placed, "
-          "a path with a space in it included",
-          replayed.returncode == 0 and len(held) == 3 and not staging.exists()
-          and f"{digests['sub dir/c.md']}  sub dir/c.md" in replayed.stdout,
-          f"{held} {replayed.stdout} {replayed.stderr}")
+    replayed, outcome, held, staging, _, digests = step_through_real_python3(
+        "fresh", {"triage.md": "triage, the store's\n"})
+    check("run by a real python3, the step places every new file by link, a "
+          "path with a space in it included, replaces the store's triage.md "
+          "and announces the digest it held, and removes the staging directory",
+          replayed.returncode == 0 and outcome is not None
+          and outcome["added"] == ["a.md", "b.md", "sub dir/c.md"]
+          and outcome["displaced"]
+          == hashlib.sha256(b"triage, the store's\n").hexdigest()
+          and outcome["stored"] == digests
+          and held == {"a.md": "a\n", "b.md": "b, this shipment's\n",
+                       "sub dir/c.md": "c\n", "triage.md": "triage, this shipment's\n"}
+          and not staging.exists(),
+          f"{outcome} {held} {replayed.stderr}")
+    replayed, outcome, held, staging, _, _ = step_through_real_python3(
+        "taken", {"b.md": "b, the other's\n", "triage.md": "triage, the store's\n"})
+    check("an add-only file the store holds with other bytes is named as "
+          "differing, and nothing is placed or replaced, triage.md included",
+          replayed.returncode == 0 and outcome is not None
+          and outcome["differing"] == ["b.md"]
+          and held == {"b.md": "b, the other's\n", "triage.md": "triage, the store's\n"}
+          and not staging.exists(),
+          f"{outcome} {held} {replayed.stderr}")
+
+    # The record's lock, held by another process for the whole wait: the step
+    # reads and places nothing, says so, and still removes its staging
+    # directory. A holder killed with SIGKILL leaves nothing behind: the
+    # kernel lets go of a flock when its process exits, however it exits.
+    flock_holder_program = (
+        "import fcntl, os, sys, time\n"
+        "descriptor = os.open(sys.argv[1], os.O_RDONLY)\n"
+        "fcntl.flock(descriptor, fcntl.LOCK_EX)\n"
+        "print('held', flush=True)\n"
+        "time.sleep(600)\n")
+    held_store = scratch / "placing-held" / "r"
+    held_store.mkdir(parents=True)
+    holder = subprocess.Popen([sys.executable, "-c", flock_holder_program, str(held_store)],
+                              stdout=subprocess.PIPE, text=True)
+    holder.stdout.readline()
+    try:
+        started = time.monotonic()
+        replayed, outcome, held, staging, _, _ = step_through_real_python3(
+            "held", {}, wait_seconds=1)
+        waited = time.monotonic() - started
+        check("a record whose lock another process holds for the whole wait: the "
+              "step waits, then reports the lock held, places nothing and "
+              "removes its staging directory",
+              replayed.returncode == 0 and outcome == {"lock_held": True}
+              and waited >= 1 and held == {} and not staging.exists(),
+              f"{outcome} {held} waited {waited:.1f}s {replayed.stderr}")
+    finally:
+        holder.kill()
+        holder.wait()
+    started = time.monotonic()
+    replayed, outcome, held, staging, _, _ = step_through_real_python3(
+        "held", {}, wait_seconds=30)
+    check("once that holder is killed with SIGKILL, the next step takes the "
+          "lock at once and places its files: no lock outlives its process",
+          replayed.returncode == 0 and outcome is not None
+          and outcome.get("lock_held") is False and len(outcome["added"]) == 4
+          and time.monotonic() - started < 10,
+          f"{outcome} {replayed.stderr}")
 
     # The go-on form of the placing script, scripts/walk-files-ship.py's: a
     # name taken by other bytes is left as it was, and placing goes on past it.
@@ -1273,12 +1323,13 @@ with tempfile.TemporaryDirectory(prefix="cold-read-record-ship-test-") as scratc
           and (store / "m.md").read_text(encoding="utf-8") == race_original,
           f"exit {replayed.returncode}: {replayed.stdout} {replayed.stderr}")
     # --- THE RECORD'S LOCK: a second shipment of the name waits for the first -
-    # The other shipment is played by this test: it holds the record's lock,
-    # writes its record into the store, and lets go. A shipment started while
-    # the lock is held must place nothing until then, and afterwards finds the
-    # other record whole in its inventory and is refused before it copies
-    # anything -- so its own a-only.md, which sorts before the file the two
-    # disagree on, never lands in the other's record.
+    # The other shipment is played by this test: it holds the flock on the
+    # record's directory, writes its record into the store, and lets go. A
+    # shipment started while the lock is held must place nothing in the record
+    # until then, and afterwards finds the other record whole in the inventory
+    # it takes under the lock and is refused -- so its own a-only.md, which
+    # sorts before the file the two disagree on, never lands in the other's
+    # record.
     def ship_in_process(store, record):
         printed, announced = io.StringIO(), io.StringIO()
         with contextlib.redirect_stdout(printed), contextlib.redirect_stderr(announced):
@@ -1290,27 +1341,28 @@ with tempfile.TemporaryDirectory(prefix="cold-read-record-ship-test-") as scratc
     waiting_record = make_record(scratch / "lock-records-a", "race-lack-2026-10-01",
                                  {"a-only.md": REPORT_A, "fast-read.md": REPORT_A,
                                   "target/x.md": "# shared\n"})
-    held_lock = lock_store / f".ship-lock-{waiting_record.name}"
-    held_lock.mkdir()
+    other_record = lock_store / waiting_record.name
+    other_record.mkdir()
+    held_lock = os.open(other_record, os.O_RDONLY)
+    fcntl.flock(held_lock, fcntl.LOCK_EX)
     outcome = {}
     shipping = threading.Thread(target=lambda: outcome.update(
         zip(("code", "out", "err"), ship_in_process(lock_store, waiting_record))))
     shipping.start()
     time.sleep(0.5)
-    placed_while_held = sorted(p.relative_to(lock_store).as_posix()
-                               for p in lock_store.rglob("*") if p.is_file())
-    other_record = lock_store / waiting_record.name
+    placed_while_held = sorted(p.relative_to(other_record).as_posix()
+                               for p in other_record.rglob("*") if p.is_file())
     for relative, text in {"fast-read.md": REPORT_B, "target/x.md": "# shared\n",
                            "z-only.md": REPORT_B}.items():
         (other_record / relative).parent.mkdir(parents=True, exist_ok=True)
         (other_record / relative).write_text(text, encoding="utf-8")
-    held_lock.rmdir()  # the other shipment lets go
+    os.close(held_lock)  # the other shipment lets go
     shipping.join(timeout=30)
     check("a shipment started while another shipment of the name holds the "
-          "record's lock places nothing until the lock is let go",
+          "record's lock places nothing in the record until the lock is let go",
           placed_while_held == [], str(placed_while_held))
-    check("it then finds the other record in its inventory and is REFUSED, exit "
-          "2, naming the file the two disagree on",
+    check("it then finds the other record in the inventory it takes under the "
+          "lock and is REFUSED, exit 2, naming the file the two disagree on",
           outcome.get("code") == 2 and outcome.get("out", "").startswith("REFUSED:")
           and "fast-read.md" in outcome.get("out", ""), str(outcome))
     check("and the other record stays whole and unmixed: none of the refused "
@@ -1319,45 +1371,60 @@ with tempfile.TemporaryDirectory(prefix="cold-read-record-ship-test-") as scratc
                  for p in other_record.rglob("*") if p.is_file())
           == ["fast-read.md", "target/x.md", "z-only.md"]
           and (other_record / "fast-read.md").read_text(encoding="utf-8") == REPORT_B)
-    check("the refused shipment leaves no lock and no staging directory",
+    check("the refused shipment leaves no staging directory and nothing that "
+          "could block the next shipment",
           sorted(p.name for p in lock_store.iterdir()) == [waiting_record.name],
           str(sorted(p.name for p in lock_store.iterdir())))
 
-    # A lock left by a killed shipment, older than the stale limit, is removed
-    # by the next shipment, which ships.
-    stale_record = make_record(scratch / "lock-records-stale", "stale-lock-2026-10-01",
-                               {"fast-read.md": REPORT_A})
-    stale_lock = lock_store / f".ship-lock-{stale_record.name}"
-    stale_lock.mkdir()
-    long_ago = time.time() - (getattr(racing, "RECORD_LOCK_STALE_MINUTES", 10) + 5) * 60
-    os.utime(stale_lock, (long_ago, long_ago))
-    code, out, err = ship_in_process(lock_store, stale_record)
-    check("a lock older than the stale limit is removed and the shipment ships",
-          code == 0 and out.startswith("shipped:") and not stale_lock.exists()
-          and (lock_store / stale_record.name / "fast-read.md").is_file(),
-          f"exit {code}: {out}{err}")
-
-    # A lock held for the whole wait: FAILED, nothing copied, the other
-    # shipment's lock left where it is.
+    # A lock held for the whole wait: FAILED with the line the user approved,
+    # nothing placed, the staging directory removed.
     held_record = make_record(scratch / "lock-records-held", "held-lock-2026-10-01",
                               {"fast-read.md": REPORT_A})
-    live_lock = lock_store / f".ship-lock-{held_record.name}"
-    live_lock.mkdir()
-    saved_wait = getattr(racing, "RECORD_LOCK_WAIT_SECONDS", 60)
+    held_directory = lock_store / held_record.name
+    held_directory.mkdir()
+    live_lock = os.open(held_directory, os.O_RDONLY)
+    fcntl.flock(live_lock, fcntl.LOCK_EX)
+    saved_wait = racing.RECORD_LOCK_WAIT_SECONDS
     racing.RECORD_LOCK_WAIT_SECONDS = 1
     try:
         code, out, err = ship_in_process(lock_store, held_record)
     finally:
         racing.RECORD_LOCK_WAIT_SECONDS = saved_wait
+        os.close(live_lock)
     check("a lock another shipment holds for the whole wait is FAILED with exit 1 "
           "and one line saying so, the record left on disk",
-          code == 1 and out.startswith("FAILED:") and out.count("\n") == 1
-          and "another shipment of this record has held its lock" in out
-          and "stays on disk" in out, out + err)
-    check("that shipment copied nothing and left the other shipment's lock alone",
-          live_lock.is_dir() and not (lock_store / held_record.name).exists()
+          code == 1 and out == f"FAILED: {held_record.name} — another shipment of "
+          f"this record has held its lock in the store for 1 seconds; the record "
+          f"stays on disk, unshipped. Ship it again later.\n", out + err)
+    check("that shipment placed nothing and left no staging directory",
+          not any(held_directory.iterdir())
           and not any(p.name.startswith(".ship-staging-") for p in lock_store.iterdir()))
-    live_lock.rmdir()
+
+    # A shipper that takes no lock -- one from before it -- landing a file
+    # between the inventory under the lock and the link: the link is never
+    # made over it, placing stops there, and the read-back refuses.
+    unlocked_store = scratch / "unlocked-store" / "cold-read-records"
+    unlocked_record = make_record(scratch / "unlocked-records", "unlocked-2026-10-01",
+                                  {"a.md": REPORT_A, "b.md": REPORT_A, "c.md": REPORT_A})
+    saved_link = os.link
+
+    def link_after_the_other_lands_b(source, target, *args, **kwargs):
+        if pathlib.Path(target).name == "b.md":
+            pathlib.Path(target).write_text(REPORT_B, encoding="utf-8")
+        return saved_link(source, target, *args, **kwargs)
+
+    os.link = link_after_the_other_lands_b
+    try:
+        code, out, err = ship_in_process(unlocked_store, unlocked_record)
+    finally:
+        os.link = saved_link
+    unlocked_held = {p.name: p.read_text(encoding="utf-8")
+                     for p in (unlocked_store / unlocked_record.name).iterdir()}
+    check("a file a shipper without the lock lands just before the link is "
+          "never overwritten: placing stops there and the shipment is REFUSED",
+          code == 2 and out.startswith("REFUSED:") and "b.md" in out
+          and unlocked_held == {"a.md": REPORT_A, "b.md": REPORT_B},
+          f"exit {code}: {out}{err} {unlocked_held}")
 
     # --- A triage.md another shipment placed first is replaced, rule 4 -------
     triage_store = scratch / "triage-race-store" / "cold-read-records"
@@ -1431,39 +1498,6 @@ with tempfile.TemporaryDirectory(prefix="cold-read-record-ship-test-") as scratc
           code == 1 and out.startswith("FAILED:") and "rsync exit 23" in out
           and sorted(p.name for p in failing_store.iterdir()) == [],
           f"exit {code}: {out}; left: {sorted(p.name for p in failing_store.iterdir())}")
-
-    # --- The lock script ned-box runs, replayed by a real /bin/sh ------------
-    replay_locks = scratch / "replayed-locks"
-    replay_locks.mkdir()
-
-    def lock_through_real_sh(lock_dir, wait_seconds=None):
-        saved = getattr(racing, "RECORD_LOCK_WAIT_SECONDS", 60)
-        if wait_seconds is not None:
-            racing.RECORD_LOCK_WAIT_SECONDS = wait_seconds
-        try:
-            script = racing.acquire_record_lock_script(pathlib.PurePosixPath(lock_dir))
-        finally:
-            racing.RECORD_LOCK_WAIT_SECONDS = saved
-        return subprocess.run(["/bin/sh", "-c", script], capture_output=True,
-                              text=True, check=False)
-
-    free_lock = replay_locks / ".ship-lock-free"
-    replayed = lock_through_real_sh(free_lock)
-    check("replayed by a real sh, the lock script takes a free lock: exit 0, "
-          "the directory made", replayed.returncode == 0 and free_lock.is_dir(),
-          replayed.stderr)
-    started = time.monotonic()
-    replayed = lock_through_real_sh(free_lock, wait_seconds=1)
-    check("a lock held by another shipment makes it wait, then exit 75",
-          replayed.returncode == 75 and time.monotonic() - started >= 1
-          and free_lock.is_dir(), f"exit {replayed.returncode} {replayed.stderr}")
-    long_ago = time.time() - (getattr(racing, "RECORD_LOCK_STALE_MINUTES", 10) + 5) * 60
-    os.utime(free_lock, (long_ago, long_ago))
-    replayed = lock_through_real_sh(free_lock, wait_seconds=1)
-    check("a lock older than the stale limit is removed and taken: exit 0, the "
-          "directory new", replayed.returncode == 0 and free_lock.is_dir()
-          and time.time() - free_lock.stat().st_mtime < 60,
-          f"exit {replayed.returncode} {replayed.stderr}")
 
 print()
 if failures:
