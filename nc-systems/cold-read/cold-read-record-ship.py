@@ -127,6 +127,24 @@ A staging directory or a lock outlives its shipment only when the shipment is
 killed or ned-box drops the connection mid-run; nothing reads either, and the
 next shipment of the name removes a stale lock.
 
+TWO LOCKS, ON DIFFERENT STEPS. This module holds two locks, and they never
+guard the same files. The record's lock above guards ship_one, the path
+cold-read and sanity-check records take. It spans the inventory, the copy and
+the placing, which are several ssh round trips, so it is a directory made with
+mkdir and removed with rmdir, with a stale limit for a shipment killed while
+holding it. The store directory's flock (WHY THE STORE DIRECTORY IS LOCKED, in
+replace_with_staged_files) guards one replace step, the path a walk's
+minutes, dispositions and appended walk text and a seat's files take. That
+step runs in one shell, so the lock belongs to that shell, is released however
+the shell exits, and needs no stale limit. No record goes through the replace
+step -- ship_one replaces triage.md with its own copy, under the record's
+lock -- and no walk or seat file goes through ship_one, so a shipment never
+holds both locks and neither waits on the other. A flock could stand in for
+the record's lock only by keeping an ssh session open for the whole shipment
+to hold it; a killed shipment's leftover lock costs at most
+RECORD_LOCK_STALE_MINUTES of FAILED lines asking to ship again later, and
+loses nothing.
+
 The store's directories are created on first use, and a README.md at the
 store's root is rewritten from STORE_README in this file whenever it differs:
 it says what the store is, how to cite a file in it, and which program or
@@ -790,9 +808,10 @@ def replace_with_staged_files(host, staging_dir: pathlib.PurePosixPath,
     call, runs holding an exclusive flock on `store_dir`, which every
     shipment's replace step takes, locally and on ned-box alike; a second
     shipment's step waits until the first's is done, then reads the digest the
-    first left. place_staged_files needs no lock: its hard link never replaces
-    a name, so a name this step finds present can change only through another
-    replace step, which waits. A lock still held by another shipment after
+    first left. place_staged_files does not take this lock: its hard link never
+    replaces a name, so a name this step finds present can change only through
+    another replace step, which waits. (ship_one's record lock, around its own
+    placing, is the other lock: see TWO LOCKS, ON DIFFERENT STEPS.) A lock still held by another shipment after
     STORE_DIRECTORY_LOCK_WAIT_SECONDS fails the step, returning None as an
     unreachable host does.
 
