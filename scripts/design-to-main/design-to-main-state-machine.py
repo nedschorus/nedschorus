@@ -1,22 +1,5 @@
 #!/usr/bin/env python3
-"""The design-to-main state machine's core (section 1 of the design: the
-program that runs the workflow, holding no judgement).
-
-Shape, borrowed from PocketFlow's node and flow pages without the
-dependency (section 11): a state is a node with prep (assemble the
-state-package), exec (launch the work) and post (route on the action word
-the work returned); a reviewing state is a flow that acts as a node,
-running its sub-states in order; the machine is the flow that runs the
-run. PocketFlow wires successors with `node - "action" >> node`; here the
-wiring is the transition table of section 3.2, read as data from
-design-to-main-state-tables.py, so a row of the design is a row of the code.
-
-This slice launches no agent and pushes nothing: the launcher is a stub
-that returns scripted state-exits (ScriptedStateExitLauncher), and the
-git record commits on the topic branch of whatever repository it is given.
-
-Run the tests: scripts/design-to-main/tests/*-test.py, each directly.
-"""
+"""Run the design-to-main workflow through transition-table nodes and reviewing flows."""
 
 import datetime
 import importlib.util
@@ -48,31 +31,10 @@ RefusedBeforeTopicBranchCut = git_record_module.RefusedBeforeTopicBranchCut
 compose_state_exit_trailer = git_record_module.compose_state_exit_trailer
 
 
-# --- The state-exit (section 2) --------------------------------------------
 
 @dataclass(frozen=True)
 class StateExitRecord:
-    """What a state's work emits and the machine routes on: a verdict, a
-    destination, and the commit of the state-package it was built from.
-
-    `state` is the state or sub-state that emitted it. `destination` is
-    optional here: the machine derives the destination from the row and,
-    when the work names one, checks that it is the row's (see the build
-    report on rows whose destination depends on the machine's own state).
-    The other fields carry what a guard of section 3.2 reads off the
-    state-exit: the input an input-quick-check-failed names, the
-    investigation-focus an escalate-to-user names, the coverage-types an
-    emitted write carries, the class of a gatekeeper-refusal, and any user
-    rulings given in a dialog (`reset` among them).
-
-    `coverage_types` is the state-exit's `coverage-type` field (section
-    2): every coverage-type present in what the writer emitted, as a
-    tuple here and a comma-separated string in state-exit.json —
-    `script, prompt` for nine scripts and one prompt-based-test (section
-    3.1, user-ruled 2026-09-09, the eighth walk, item 8). An
-    implementation's is one value, since an implementation is one thing
-    (section 2); a set of tests carries one entry per type present.
-    """
+    """A verdict and its package commit, optional destination, named files, and routing inputs."""
     state: str
     verdict: str
     package_commit: str
@@ -82,39 +44,23 @@ class StateExitRecord:
     coverage_types: Tuple[str, ...] = ()
     refusal_class: Optional[str] = None
     rulings: Tuple[str, ...] = ()
-    # On a `resume` from the investigation the arbitrator's third entry
-    # opened: the ruling the arbitrator held in its report, one of
-    # test-suite-arbitrating's verdicts (section 6.6).
     held_ruling: Optional[str] = None
-    # The files the state-exit names, relative to the repository: the
-    # artifact it wrote and its notes. Its commit carries these and the
-    # record, never the whole worktree (section 9).
+    # Commit only named files and the run record; unrelated worktree changes do not belong to this state-exit.
     named_files: Tuple[str, ...] = ()
     notes: str = ""
 
     @property
     def from_state(self):
-        """The state of section 3.1 this state-exit leaves: the composite
-        state when a sub-state emitted it."""
+        """Return the emitting state, or its composite when a sub-state emitted."""
         return tables.COMPOSITE_STATE_OF_SUB_STATE.get(self.state, self.state)
 
 
 class MalformedStateExitFile(ValueError):
-    """state-exit.json does not have the form section 2 fixes: a field the
-    design does not name, a required one missing, or a value of the wrong
-    shape. Raised by the reader with the field's name; routing it as a
-    machine error is the launcher's, once one launches agents."""
+    """An invalid state-exit file, reported with the offending field."""
 
 
 def state_exit_record_from_json_file(path):
-    """Read an instance's state-exit.json (section 2) into a
-    StateExitRecord: the hyphenated field names of the design mapped by
-    STATE_EXIT_JSON_FIELDS, `coverage-type` split into the tuple of
-    coverage-types, `named-files` and `rulings` as tuples; `named-files`
-    is required, since it is always written (section 2; the tenth walk,
-    item 3). The launcher
-    that reads agents' files is not in this slice; this is the reader it
-    will call."""
+    """Read state-exit.json into a StateExitRecord, validating field names and shapes."""
     path = pathlib.Path(path)
     try:
         data = json.loads(path.read_text())
@@ -151,26 +97,22 @@ def state_exit_record_from_json_file(path):
 
 
 def coverage_types_from_json_field(text):
-    """The `coverage-type` field of state-exit.json, `script, prompt`, as
-    the record's tuple: split on commas, blanks trimmed, empties dropped."""
+    """Return comma-separated coverage-types as a tuple."""
     return tuple(part.strip() for part in text.split(",") if part.strip())
 
 
 def coverage_types_as_json_field(coverage_types):
-    """The record's tuple as the `coverage-type` field of state-exit.json."""
     return ", ".join(coverage_types)
 
 
 class IllegalStateExit(Exception):
-    """No row of section 3.2 allows this state-exit from this state: a
-    machine error (section 3.2), routed to investigate-workflow."""
+    """A state-exit with no legal transition, routed as a machine error."""
 
 
 class TransitionTableAmbiguous(Exception):
-    """More than one row matched: a defect in the table, never routed."""
+    """Multiple matching transition rows: a table defect that is never routed."""
 
 
-# --- The legal-transition check (section 3.2) --------------------------------
 
 @dataclass
 class GuardContext:
@@ -180,12 +122,8 @@ class GuardContext:
 
 
 def applicable_acceptance_checks(run, composite_state):
-    """The sub-states a reviewing state runs in order, for this run
-    (section 3.1): the user's check of an implementation or of tests only
-    when they are agent-instructions; the contract's agent check only on a
-    contract-revision. The contract's user check is not in this order at
-    all: no advance reaches it — it is entered by a reject at the
-    revisions ceiling (rows 8 and 67), and left by rows 9, 10 and 11."""
+    """Return the applicable acceptance sub-states in execution order."""
+    # The contract's user check is entered only on rejection at the revision ceiling, never by advance.
     row = tables.STATE_TABLE_BY_NAME[composite_state]
     if composite_state == tables.CONTRACT_REVIEWING:
         checks = [tables.CONTRACT_ACCEPTANCE_BY_PROGRAM]
@@ -197,9 +135,6 @@ def applicable_acceptance_checks(run, composite_state):
             return row.sub_states
         return row.sub_states[:1]
     if composite_state == tables.TEST_REVIEWING:
-        # Section 6.4: the user's check runs when prompt or
-        # script-and-prompt is among the coverage-types the test writer's
-        # emitted carries for the set.
         if run.tests_are_agent_instructions():
             return row.sub_states
         return row.sub_states[:1]
@@ -221,7 +156,6 @@ def _earlier_acceptance_check(ctx):
 
 
 def next_acceptance_check(run, state_exit):
-    """Row 16's destination: the check after the one that emitted."""
     checks = applicable_acceptance_checks(run, state_exit.from_state)
     return checks[checks.index(state_exit.state) + 1]
 
@@ -276,10 +210,7 @@ GUARD_PREDICATES = {
         lambda ctx: ctx.state_exit.input_named == tables.INPUT_DESIGN_CONTRACT,
     tables.G_AGAINST_THE_TEST_DESIGN:
         lambda ctx: ctx.state_exit.input_named == tables.INPUT_TEST_DESIGN,
-    # Row 67 is one row across writers and reviewers, so the verdict must
-    # also be one the emitting state has (section 3.1): a writer fails a
-    # check, a reviewer rejects, and the other way round is a machine error
-    # at the ceiling as it is below it.
+    # The shared ceiling row still requires a verdict valid for the emitting writer or reviewer.
     tables.G_A_REJECT_OF_OR_A_FAILED_CHECK_AGAINST_THE_DESIGN_CONTRACT:
         lambda ctx: (
             ctx.state_exit.verdict in tables.STATE_TABLE_BY_NAME[ctx.state_exit.from_state].verdicts
@@ -298,12 +229,7 @@ GUARD_PREDICATES = {
         lambda ctx: not ctx.run.work_stream_ready(tables.IMPLEMENTATION_WORK_STREAM),
     tables.G_COULD_NOT_RUN_FIRST: lambda ctx: ctx.run.consecutive_could_not_run_count == 0,
     tables.G_COULD_NOT_RUN_SECOND: lambda ctx: ctx.run.consecutive_could_not_run_count >= 1,
-    # Does not hold when the run-state records a failed suite (its
-    # advance has no row: section 6.5, the tenth walk, item 16) or no
-    # entry at all — nothing yet, or the resume by which the user named
-    # test-suite-arbitrating as his destination (section 6.6): the
-    # arbitrator's advance is then a machine error, not a guess (reported
-    # with this slice).
+    # An arbitrator advance stands in for a reviewer; a failed suite or missing entry gives no advance to apply.
     tables.G_ENTERED_FROM_A_REVIEWERS_CEILING:
         lambda ctx: ctx.run.test_suite_arbitrating_entered_from in tables.COMPOSITE_STATE_OF_SUB_STATE,
     tables.G_BEFORE_THE_TEST_DESIGNS_APPROVAL: lambda ctx: not ctx.run.test_design_approved,
@@ -316,9 +242,7 @@ GUARD_PREDICATES = {
         lambda ctx: ctx.state_exit.investigation_focus in (tables.FOCUS_DESIGN, tables.FOCUS_TEST_DESIGN),
     tables.G_FOCUS_NOT_NAMED:
         lambda ctx: ctx.state_exit.investigation_focus not in (tables.FOCUS_DESIGN, tables.FOCUS_TEST_DESIGN),
-    # Row 65's guard is read on ENTRY to test-suite-arbitrating (enter()),
-    # not on a state-exit; it is here so that every guard phrase of the
-    # table has its predicate, evaluated on the run alone.
+    # This guard is evaluated on entry, not on a state-exit.
     tables.G_ENTERED_FOR_THE_THIRD_TIME_IN_THE_DESIGN_VERSION:
         lambda ctx: ctx.run.counters.at_ceiling("arbitrator-rulings"),
     tables.G_RESUME_BELOW_REDESIGNS_CEILING_OR_NOT_TO_DESIGN_WRITING:
@@ -351,37 +275,7 @@ def guards_hold(row, context):
 
 
 def refuse_malformed_resume(run, state_exit, resume_destination):
-    """Section 6.6's form of a `resume`, checked before any ruling it
-    carries is applied and before any row is looked up, so that a
-    malformed resume is refused whole — the reset it carries with it
-    (section 9). A malformed resume is a machine error like any other
-    illegal state-exit (section 3.2, "any other state-exit"), and the
-    pause is unchanged (route_machine_error).
-
-    Four forms are refused. A destination the user typed that names no
-    state or sub-state (row 72's guard would hold for any string, and a
-    row applied to a name the tables do not know would escape as a
-    KeyError). A destination of `ended` or `initiate-design-to-main`,
-    which section 6.1 forbids (PR #287's round-6 review reproduced the
-    first ending the run with no outcome and the second crashing after
-    the cut). A destination of `test-suite-arbitrating` from an
-    investigation that paused somewhere else: the arbitrator returned to
-    rules on the failed suite or the reviewer's ceiling that entered it
-    before the pause, and anywhere else there is no suite and no ceiling
-    to rule on (section 6.5; user-ruled 2026-09-11, the ninth walk, item
-    5). And a held ruling that is not one of the arbitrator's six —
-    `escalate-to-user` above all, which section 6.6 rules out because the
-    arbitrator is already talking to the user, and which applied would
-    open a second investigation whose plain resume returns to the same
-    ceiling (PR #295, round 2).
-
-    A plain resume from the investigation the arbitrator's third entry
-    opened — no destination, no held ruling — is NOT refused: it returns
-    to the same arbitrator, whose counter the resume has zeroed, so the
-    return is the first entry of a fresh budget rather than a fourth
-    (section 6.6; user-ruled 2026-09-11, the ninth walk, item 4, dropping
-    the refusal the earlier rule carried).
-    """
+    # Validate before rulings or row lookup so a malformed resume cannot reset counters or alter the pause.
     if state_exit.verdict != tables.V_RESUME:
         return
     from_state = state_exit.from_state
@@ -414,11 +308,7 @@ def refuse_malformed_resume(run, state_exit, resume_destination):
 
 
 def the_one_coverage_type_of_an_implementation(state_exit):
-    """Section 2: the coverage-type of an implementation says what kind of
-    thing it is — script, prompt, or script-and-prompt — one value. An
-    implementation-writing `emitted` carrying more than one is a machine
-    error, routed like any illegal state-exit; the design does not say
-    this in so many words (reported with this slice)."""
+    """Return the implementation's sole coverage-type, raising on multiple values."""
     if len(state_exit.coverage_types) != 1:
         raise IllegalStateExit(
             "%r from %s carries %r as its coverage-type; an implementation has one "
@@ -428,13 +318,7 @@ def the_one_coverage_type_of_an_implementation(state_exit):
 
 
 def refuse_a_write_that_named_no_file(state_exit):
-    """Section 2: `named-files` is always written, an empty list when the
-    agent produced no artifact — but a writing state's `emitted` that
-    names none is a machine error, since a write that named no file did
-    not happen (user-ruled 2026-09-14, the tenth walk, item 3). Routed
-    like any illegal state-exit. The user pushed past a plain empty list
-    here, wanting a deliberate nothing told apart from a bug that
-    produced nothing."""
+    # An emitted write without an artifact is a machine error, even though other exits may name no files.
     if (state_exit.from_state in tables.WRITING_STATES_INCLUDING_DESIGN_WRITING
             and state_exit.verdict == tables.V_EMITTED
             and not state_exit.named_files):
@@ -444,12 +328,7 @@ def refuse_a_write_that_named_no_file(state_exit):
 
 
 def coverage_types_of_the_test_designs_requirements(test_design_text):
-    """Section 6.4: the coverage-type of every test-requirement in the
-    test-design, in the order the file lists them. Each requirement
-    carries it on a line of its own, `coverage-type: <value>`, which is
-    what the machine reads for the check below (user-ruled 2026-09-11,
-    the ninth walk, item 7); the rest of the test-design's syntax is step
-    1's (section 11), so nothing else of the file is read."""
+    """Return each requirement's coverage-type in file order."""
     prefix = tables.TEST_DESIGN_COVERAGE_TYPE_LINE_PREFIX
     return tuple(
         line.strip()[len(prefix):].strip()
@@ -458,12 +337,6 @@ def coverage_types_of_the_test_designs_requirements(test_design_text):
 
 
 def the_set_of_coverage_types_the_test_design_asks_for(requirement_coverage_types):
-    """Sections 2 and 6.4: the coverage-types a `test-writing` `emitted`
-    carries for the set the test-design asks for — every type present
-    among its requirements, with `no-tests` requirements disregarded,
-    since such a requirement runs nothing and counts as neither pass nor
-    fail; `no-tests` alone when nothing is left, never beside a type that
-    is present (user-ruled 2026-09-14, the tenth walk, items 6 and 2)."""
     present = {t for t in requirement_coverage_types
                if t != tables.COVERAGE_TYPE_NO_TESTS}
     if not present:
@@ -472,21 +345,7 @@ def the_set_of_coverage_types_the_test_design_asks_for(requirement_coverage_type
 
 
 def refuse_a_test_write_that_disagrees_with_the_test_design(state_exit, test_design_text):
-    """Section 6.4: the machine checks the coverage-types the test
-    writer's `emitted` carries for the set against the test-design's
-    per-requirement types (user-ruled 2026-09-09, the eighth walk, item
-    8). It has to: those types decide whether the tests go to
-    `test-acceptance-by-user` as standing-agent-instructions, so a set
-    that is not the test-design's would route the run — or skip the
-    user's check — on a claim nothing backs. A disagreement is a machine
-    error, routed like any illegal state-exit.
-
-    Nothing is checked when the component has no test-design in the
-    worktree, or when the file names no requirement the machine can read:
-    the check compares against the test-design's per-requirement types,
-    and there are none. Reading the file for more than its
-    `coverage-type:` lines waits on the test-design's syntax, which
-    section 11 leaves to step 1 of the build order."""
+    # These types decide whether user acceptance is required; trusting an unsupported type could skip that check.
     if test_design_text is None:
         return
     requirements = coverage_types_of_the_test_designs_requirements(test_design_text)
@@ -504,8 +363,7 @@ def refuse_a_test_write_that_disagrees_with_the_test_design(state_exit, test_des
 
 
 def find_legal_transition_row(run, state_exit, resume_destination=None):
-    """Given a state and a state-exit, the row of section 3.2 that allows
-    it; IllegalStateExit when none does."""
+    """Return the matching transition row; raise IllegalStateExit if none matches."""
     context = GuardContext(run, state_exit, resume_destination)
     from_state = state_exit.from_state
     refuse_malformed_resume(run, state_exit, resume_destination)
@@ -528,8 +386,7 @@ def find_legal_transition_row(run, state_exit, resume_destination=None):
             "rows %s all match %r from %s" % (
                 [r.row for r in matches], state_exit.verdict, from_state))
     row = matches[0]
-    # On `resume` the destination is the user's input to the guard, not a
-    # claim about the row: row 73 overrides it with `ended`.
+    # A resume destination is user input to the guard; a stopping row may override it with ended.
     if state_exit.destination is not None and state_exit.verdict != tables.V_RESUME:
         derived = derived_destination(row, context)
         if derived is not None and state_exit.destination != derived:
@@ -541,8 +398,7 @@ def find_legal_transition_row(run, state_exit, resume_destination=None):
 
 
 def derived_destination(row, context):
-    """The destination a row names, or None where the row's destination is
-    the machine's to work out (a hold, a resume, both work-streams)."""
+    """Return the row's fixed destination, or None when the machine must derive it."""
     if row.to_state == tables.TO_RETRY_SAME_STATE:
         return context.state_exit.from_state
     if row.to_state in (tables.TO_HOLD_READY_FOR_TEST_SUITE,
@@ -563,31 +419,19 @@ def derived_destination(row, context):
 
 
 def the_reviewers_advance_the_arbitrator_stands_in_for(run, state_exit):
-    """Row 60: the `advance` the reviewer would have emitted — from the
-    sub-state whose reject entered test-suite-arbitrating, with the
-    arbitrator's package-commit — routed by that reviewing state's own
-    rows (row 16 to a later check, or the state's last-check rows)."""
+    """Return the reviewer's advance carrying the arbitrator's package commit."""
     return StateExitRecord(state=run.test_suite_arbitrating_entered_from,
                            verdict=tables.V_ADVANCE,
                            package_commit=state_exit.package_commit)
 
 
-# --- The launcher stub -------------------------------------------------------
 
 class ScriptedStateExitLauncherExhausted(RuntimeError):
-    """The script ran out: the run pauses where it is."""
+    """The script ran out; pause the run at its current position."""
 
 
 class ScriptedStateExitLauncher:
-    """Stands in for launching an agent or running a script: returns the
-    next scripted state-exit for the state it is asked to launch.
-
-    `script` is a list of (state-or-sub-state, verdict, fields) tuples,
-    consumed in order; `fields` are StateExitRecord's optional fields.
-    A scripted `package_commit` overrides the state-package's, to feign a
-    stale state-exit; otherwise the state-exit carries the commit the
-    state-package was built from.
-    """
+    """Return scripted state-exits in order, using the current package commit unless overridden."""
 
     def __init__(self, script):
         self.script = list(script)
@@ -611,12 +455,9 @@ class ScriptedStateExitLauncher:
                                package_commit=package_commit, **fields)
 
 
-# --- Nodes and flows ---------------------------------------------------------
 
 class StateWorkNode:
-    """One state's (or sub-state's) work: prep assembles the state-package,
-    exec launches it, post routes on the verdict it came back with. `run`
-    returns the next position of the run."""
+    """Assemble, launch, and route one state's work, returning the next position."""
 
     def __init__(self, machine, state):
         self.machine = machine
@@ -631,7 +472,7 @@ class StateWorkNode:
     def post(self, run, state_package, state_exit):
         if state_exit.package_commit != state_package["package-commit"]:
             self.machine.discard_stale_state_exit(run, state_package, state_exit)
-            return None  # the state is re-run
+            return None
         return self.machine.route_state_exit(run, state_exit)
 
     def run(self, run):
@@ -644,10 +485,7 @@ class StateWorkNode:
 
 
 class ReviewingStateFlow:
-    """A reviewing state is composite (section 3.1): a flow of its
-    acceptance-checks, run in order, that acts as a node. It ends with the
-    state-exit of the sub-state that ended it — the first whose row leaves
-    the composite."""
+    """Run acceptance-checks until a sub-state exits the composite reviewing state."""
 
     def __init__(self, machine, composite_state, start_sub_state=None):
         self.machine = machine
@@ -666,46 +504,27 @@ class RunEnded(Exception):
 
 
 class DesignToMainStateMachineFlow:
-    """The flow that runs one component's run, from initiate-design-to-main
-    to ended, routing every state-exit through the transition table and
-    committing each to the topic branch."""
+    """Route and commit each state-exit of a component's run through completion."""
 
     def __init__(self, git_record, launcher, today=None):
         self.git_record = git_record
         self.launcher = launcher
         self.today = today or (lambda: datetime.date.today().isoformat())
-        self.routed = []            # (row, state_exit, commit) in order
-        self.discarded = []         # stale state-exits
+        self.routed = []
+        self.discarded = []
         self.machine_errors = []
-        self.held_rulings_applied = []   # (row, the arbitrator's held state-exit) on a resume
-        self.reviewers_advances_applied = []   # (row, the reviewer's advance) by row 60
+        self.held_rulings_applied = []
+        self.reviewers_advances_applied = []
 
-    # -- starting and recovering ---------------------------------------------
 
     def start(self, component):
-        """The run's first act, before any state is entered: refuse a
-        checkout with no `origin/main` to cut the topic branch from
-        (TopicBranchCutRefused), the one check before anything runs
-        (section 6.6; user-ruled 2026-09-11, the ninth walk, item 10)."""
+        """Start the run after verifying origin/main is available for the topic branch cut."""
         self.git_record.require_topic_branch_start_point()
         return RunStateRecord(component)
 
     def recover(self):
-        """Section 9, recovery: re-run the state from the last commit's
-        run-state.json; uncommitted files are the dead process's, discarded
-        — unless the paused state is investigate-workflow, where they are
-        the user's: the worktree is kept as found and the dialog reopened
-        (the successor's next step launches investigate-workflow again).
-        Recovery of a run that has ended touches nothing. The run is read
-        from the last commit BEFORE any discard, so that the discard is
-        guarded by the run's own `topic-branch-cut`: a run that died before
-        row 1's cut, or an invocation with no run committed at HEAD at all,
-        has no commit to recover from and the checkout is the invoker's —
-        refused (RefusedBeforeTopicBranchCut), nothing discarded. A checkout
-        that has lost `origin/main` is not refused here as start() refuses
-        it: the next step's instance count meets git's raw
-        CalledProcessError, which is expected, not a defect (user-ruled
-        2026-09-16, GHI #282 item 11: no checkout has lost it)."""
+        """Recover the committed run, preserving investigation edits and discarding other unfinished work."""
+        # Read the committed run before discarding: only its branch-cut flag establishes ownership of the checkout.
         text = self.git_record.run_state_text_at_last_commit()
         if text is None:
             raise RefusedBeforeTopicBranchCut(
@@ -713,14 +532,11 @@ class DesignToMainStateMachineFlow:
                 "so there is no state-exit to recover from; the checkout is as it was" % (
                     self.git_record.head_commit(), self.git_record.current_branch()))
         run = RunStateRecord.from_dict(json.loads(text))
-        # Keyed on the state, not on the outcome (PR #287, round 6): a run
-        # at `ended` has no state to re-run, whatever its outcome field
-        # says, so nothing in the checkout is a dead process's.
+        # An ended run has no state to re-run, regardless of its outcome field.
         if run.current_state not in (tables.ENDED, tables.INVESTIGATE_WORKFLOW):
             self.git_record.discard_all_uncommitted_work_for_recovery(run)
         return run
 
-    # -- the flow ---------------------------------------------------------------
 
     def node_for(self, position):
         composite = tables.COMPOSITE_STATE_OF_SUB_STATE.get(position)
@@ -736,14 +552,7 @@ class DesignToMainStateMachineFlow:
         self.node_for(run.current_state).run(run)
 
     def run_until_ended(self, run, max_steps=200):
-        """Run to `ended` and return the outcome. Two refusals leave here
-        uncaught, both from before row 1 has cut the topic branch (section
-        6.6): TopicBranchCutRefused when row 1's cut is refused, and
-        RefusedBeforeTopicBranchCut when initiate-design-to-main emits
-        anything but `invoked`. Either way the refusal is the report to
-        the invoking conversation, and the run does not start — nothing
-        written, nothing committed, the checkout as it was, whatever
-        branch it stood on."""
+        """Return the run's outcome; propagate refusals before the topic branch is cut."""
         steps = 0
         while run.current_state != tables.ENDED:
             self.step(run)
@@ -752,7 +561,6 @@ class DesignToMainStateMachineFlow:
                 raise RuntimeError("the run did not end within %d steps" % max_steps)
         return run.outcome
 
-    # -- the state-package (section 2) ---------------------------------------
 
     def assemble_state_package(self, run, state):
         composite = tables.COMPOSITE_STATE_OF_SUB_STATE.get(state, state)
@@ -761,34 +569,15 @@ class DesignToMainStateMachineFlow:
             "state": state,
             "composite-state": composite,
             "component": run.component,
-            # Section 2: the set of files the launched agent is told to
-            # read, so each is a path. Before code exists the design is its
-            # issue's GHI-MD, as the invocation named it, and the
-            # design-contract sits beside it (section 9; user-ruled
-            # 2026-09-18). The move into the component's directory when
-            # implementation-writing is first entered is not built yet;
-            # when it is, this package follows the documents.
+            # Before implementation, the design and contract paths still point to the issue's GHI-MD directory.
             "standard-package": (self.git_record.design_path,
                                  tables.contract_path_beside_design(self.git_record.design_path),
                                  str(self.git_record.user_rulings_path)),
             "beyond-the-standard-package": row.package_beyond_standard,
             "package-commit": self.git_record.head_commit(),
             "design-version": run.design_version,
-            # Where this instance writes its notes.md and state-exit.json
-            # (section 9): evidence/<state or sub-state>-<n>/, n counted
-            # from 1 over the State: trailers of the branch above its cut.
             "evidence-directory": self.git_record.evidence_directory_for_the_next_instance(state),
         }
-        # The investigation report's path, reports/investigation-<n>.md, n
-        # counted like the evidence directory's, which only the machine
-        # knows (sections 2 and 9; user-ruled 2026-09-14, the tenth walk,
-        # item 17). At investigate-workflow, the report the talking agent
-        # — initiator or arbitrator, the same package — writes before the
-        # dialog opens (section 6.6). At design-writing entered as a
-        # redesign — the test enter() counts the redesign by — the report
-        # of the investigation whose resume opened it (section 3.1); not on
-        # a re-entry within the redesign's version, whose initiator already
-        # holds it (section 1). No other package names it.
         if state == tables.INVESTIGATE_WORKFLOW:
             state_package["investigation-report"] = (
                 self.git_record.investigation_report_path_for_the_next_instance())
@@ -797,153 +586,81 @@ class DesignToMainStateMachineFlow:
                 self.git_record.investigation_report_path_of_the_latest_instance())
         return state_package
 
-    # -- routing -----------------------------------------------------------------
 
     def discard_stale_state_exit(self, run, state_package, state_exit):
         self.discarded.append((state_package, state_exit))
 
     def route_state_exit(self, run, state_exit):
-        """Check the state-exit against section 3.2, apply the row, commit
-        (section 9), and return the next position."""
+        """Validate, apply, and commit a state-exit; return the next position."""
         resume_destination = None
         counters_before_rulings = run.counters.as_dict()
         rulings_refused = False
         named_files_not_there = ()
         try:
-            # Section 9: a state-exit naming a file that is not there is a
-            # machine error, routed like any illegal state-exit — checked
-            # first, before any row or ruling takes effect.
+            # Validate named files before applying any row or ruling: refusal must have no partial effects.
             named_files_not_there = tuple(
                 self.git_record.named_files_that_are_not_there(state_exit.named_files))
             if named_files_not_there:
                 raise IllegalStateExit(
                     "%r from %s names files that are not there: %s (section 9)" % (
                         state_exit.verdict, state_exit.state, ", ".join(named_files_not_there)))
-            # Section 6.4: the test writer's set against the test-design's
-            # per-requirement coverage-types. Here rather than in
-            # find_legal_transition_row because it reads the test-design
-            # from the worktree, which the routing has in hand and the
-            # table's own checks do not.
+            # Coverage checks read the worktree, which the transition-table lookup does not have.
             if (state_exit.from_state == tables.TEST_WRITING
                     and state_exit.verdict == tables.V_EMITTED):
                 refuse_a_test_write_that_disagrees_with_the_test_design(
                     state_exit, self.git_record.test_design_text())
             if state_exit.verdict == tables.V_RESUME:
-                # Resolved, and its form checked, before any ruling it
-                # carries is applied (refuse_malformed_resume).
                 resume_destination = self.resolve_resume_destination(run, state_exit)
-            # A `reset` ruling takes effect on the counters before the row
-            # is looked up (row 73 guards on the redesigns ceiling); the
-            # rulings themselves are written to the branch with the commit,
-            # below, after the guard — nothing is on disk if this
-            # state-exit is refused.
+            # Apply reset before guards read counter ceilings; defer disk writes until the state-exit is accepted.
             self.apply_rulings_to_the_run(run, state_exit)
             row = find_legal_transition_row(run, state_exit, resume_destination)
             next_position, write_number = self.apply_transition_row(
                 run, row, state_exit, resume_destination)
         except (IllegalStateExit, CounterCeilingExceeded) as error:
             if not run.topic_branch_cut:
-                # Before row 1 has cut the topic branch a machine error
-                # cannot open an investigation: the discard and the commit
-                # that open one would run against the invoking
-                # conversation's checkout — on `main`, or on the topic
-                # branch a finished run for this component left it on,
-                # which is why the run's own flag decides and not the
-                # branch name. Refused here, before the run's state is
-                # touched, so that the run is still at
-                # initiate-design-to-main and nothing is on disk; the
-                # record's own guard (require_topic_branch_cut_for_run)
-                # is the backstop behind this for any path that skips it.
+                # Before this run cuts its topic branch, the checkout belongs to the invoker and must not be discarded or committed.
                 raise RefusedBeforeTopicBranchCut(
                     "%r from %s is refused before the topic branch is cut: %s; "
                     "the run does not start and the checkout is as it was" % (
                         state_exit.verdict, state_exit.state, error)) from error
             row = None
             write_number = None
-            # A refused state-exit is refused whole (section 9, on the
-            # reset a malformed resume carries): its rulings are neither
-            # applied nor recorded; the user says them again on the
-            # correct state-exit.
+            # Refuse the whole state-exit, including its rulings, so an invalid resume cannot reset counters.
             run.counters = RunCounters(counters_before_rulings)
             rulings_refused = True
             next_position = self.route_machine_error(run, state_exit, error)
         run.previous_state = state_exit.from_state
-        # The user's edits a resume carries are read against the commit the
-        # investigation it leaves opened at — before enter() and the
-        # opening below can refresh that commit for an investigation this
-        # same state-exit opens (PR #295, round 2, finding 1).
+        # Read edits against the investigation being left before entry can replace its opening commit.
         files_beyond_the_named = self.paths_the_user_changed_in_the_investigation(
             run, state_exit, row)
-        # Entry-charged counters and entry rules apply before the commit, so
-        # that run-state.json on the branch is the state the run is in.
+        # Apply entry rules before commit so persisted run-state describes the state actually entered.
         self.enter(run, next_position)
         if self.investigation_opens_with(run):
-            # The branch head now: the PARENT of the opening commit, from
-            # which commit_the_investigation_opened_with finds the opening
-            # commit the resume diff runs against (section 6.6). The
-            # parent, because the value must be in run-state.json inside
-            # the opening commit for the branch to carry it through the
-            # pause (a successor recovering from investigate-workflow reads
-            # it there), and a commit's own SHA cannot be written into a
-            # file it contains.
+            # Store the parent of the opening commit: a commit cannot contain its own SHA.
             run.investigation_opened_at_commit = self.git_record.head_commit()
         commit = self.commit_state_exit(
             run, state_exit, write_number, record_rulings=not rulings_refused,
             files_beyond_the_named=files_beyond_the_named,
             named_files_not_there=named_files_not_there)
         self.routed.append((row, state_exit, commit))
-        # Section 9 (user-ruled 2026-09-09, the eighth walk, item 7): after
-        # committing a state-exit, the machine discards every other change
-        # in its worktree — what no state-exit claimed: a writer's scratch
-        # file, a paused agent's half-written work. Section 6.6's pause
-        # discards the same way, after the opening commit now, so that an
-        # opening state-exit that names files (a writer that stopped
-        # mid-write names what it has written so far) has them committed
-        # (PR #295, round 2, finding 2). The one exception: a state-exit
-        # from investigate-workflow that leaves the run there — a stray
-        # verdict, a refused resume — where the worktree is the user's
-        # (section 9, recovery) and nothing of his is discarded.
+        # Commit named partial work before discarding unclaimed changes.
+        # An investigation that stays paused retains the user's worktree edits.
         if not (state_exit.from_state == tables.INVESTIGATE_WORKFLOW
                 and run.current_state == tables.INVESTIGATE_WORKFLOW):
             self.git_record.discard_every_change_the_commit_did_not_carry(run)
         return run.current_state
 
     def mark_investigation_opening(self, run):
-        """Every opener of an investigation — open_investigation, enter()'s
-        third-entry rule, route_machine_error for a state-exit from
-        outside the investigation — marks the opening here: the commit it
-        opens at is not yet known (it is the branch head just before the
-        opening commit, set in route_state_exit), and the None is what
-        tells route_state_exit that this state-exit opened one. Keyed on
-        the openers, not on the state-exit's from-state, so that an
-        investigation opened by a state-exit routed from
-        investigate-workflow itself (a resume naming a destination that
-        lands on the third-entry rule) is opened whole — its paused state,
-        row, focus and commit all this opening's (PR #295, round 2,
-        finding 1). A stray verdict or a refused resume from within an
-        investigation marks nothing, and the pause stays the one in
-        progress."""
+        # Mark on opening, not on from-state: a resume can itself open a new investigation.
         run.investigation_opened_at_commit = None
 
     def investigation_opens_with(self, run):
-        """Whether the state-exit being routed is the one that opens an
-        investigation: the run is now paused in investigate-workflow and
-        an opener has marked the opening (mark_investigation_opening)."""
+        """Return whether the current state-exit opened the investigation."""
         return (run.current_state == tables.INVESTIGATE_WORKFLOW
                 and run.investigation_opened_at_commit is None)
 
     def route_machine_error(self, run, state_exit, error):
-        """Section 3.2: any other state-exit is a machine error; the run
-        pauses in investigate-workflow, investigation-focus unknown, the
-        illegal state-exit in the arbitrator's report.
-
-        Emitted from investigate-workflow itself — a verdict other than
-        stop, submit-to-PR-gate or resume — the machine error is recorded
-        and committed like any other, but the run stays paused where it
-        was: the paused state, the focus and the opening commit are the
-        investigation's, not overwritten with investigate-workflow and
-        unknown, which would send every plain resume back into the
-        investigation and lose the user's edits before the stray exit."""
+        """Record an illegal state-exit and open an investigation, preserving an existing pause."""
         self.machine_errors.append((state_exit, error))
         run.machine_error = str(error)
         if state_exit.from_state != tables.INVESTIGATE_WORKFLOW:
@@ -952,14 +669,11 @@ class DesignToMainStateMachineFlow:
             run.investigation_focus = tables.FOCUS_UNKNOWN
             run.investigation_opened_by = "%s from %s: %s" % (
                 state_exit.verdict, state_exit.state, error)
-            run.investigation_opened_by_row = None   # no row: a machine error
+            run.investigation_opened_by_row = None
             run.investigation_held_resume_destination = None
         return tables.INVESTIGATE_WORKFLOW
 
     def apply_rulings_to_the_run(self, run, state_exit):
-        """What a ruling does to the run in memory: `reset` zeroes the
-        counters (section 7). The rulings reach the branch's user-rulings
-        file with the state-exit's commit (write_rulings_to_the_record)."""
         for ruling in state_exit.rulings:
             if ruling == "reset":
                 run.counters.reset_by_the_user()
@@ -969,18 +683,8 @@ class DesignToMainStateMachineFlow:
             self.git_record.append_user_ruling(run, ruling, self.today())
 
     def paths_the_user_changed_in_the_investigation(self, run, state_exit, row):
-        """The files a `resume` names beyond its own `named_files`: every
-        path the user changed on the branch since the investigation opened
-        — tracked modifications, deletions and new files alike, the record
-        directory apart — read by the same diff the resume routes on
-        (section 6.6: the user may edit any file on the branch; section 9:
-        a state-exit's commit carries the files it names). Without them
-        the edit stays uncommitted, the next state's package-commit does
-        not hold it, and the next investigation's discard erases it
-        (PR #295, round 1). A resume refused as a machine error (no row)
-        is refused whole and names nothing: the run stays paused in
-        investigate-workflow, where the worktree is the user's and the
-        next resume's diff still sees the edit."""
+        """Return user-changed paths for an accepted resume to commit, excluding the record directory."""
+        # An accepted resume must commit user edits before another investigation can discard them.
         if (row is None or state_exit.verdict != tables.V_RESUME
                 or not run.investigation_opened_at_commit):
             return ()
@@ -988,20 +692,13 @@ class DesignToMainStateMachineFlow:
             self.commit_the_investigation_opened_with(run)))
 
     def commit_the_investigation_opened_with(self, run):
-        """The commit the resume diff runs against (section 6.6): the
-        opening commit, which is the first commit after the parent the
-        run-state records (route_state_exit, on the opening). The opening
-        commit may carry files — the user's edits a resume that opened
-        this investigation committed, a writer's partial work named by the
-        state-exit that opened it — and those are not the user's edits IN
-        this investigation, so the diff must not start below them."""
+        """Return the opening commit used as the resume diff baseline."""
+        # Opening commits can contain partial work; diffing from their parent would mistake that work for later user edits.
         return self.git_record.first_commit_after(run.investigation_opened_at_commit)
 
     def commit_state_exit(self, run, state_exit, write_number, record_rulings=True,
                           files_beyond_the_named=(), named_files_not_there=()):
-        # Guarded before anything is written — the rulings, then
-        # run-state.json — not only at the record's commit, so a refusal
-        # leaves no file behind.
+        # Guard before any file write so a refusal leaves no rulings or run-state behind.
         self.git_record.require_topic_branch_cut_for_run(run, "write and commit the state-exit")
         if record_rulings:
             self.write_rulings_to_the_record(run, state_exit)
@@ -1010,31 +707,20 @@ class DesignToMainStateMachineFlow:
             state_exit.state, state_exit.verdict, state_exit.package_commit,
             run.counters.as_dict(), write_number)
         subject = "%s: %s %s" % (run.component, state_exit.state, state_exit.verdict)
-        # A state-exit refused for naming files that are not there is
-        # committed like any other machine error, with the named files
-        # that are there; the missing ones are the error, in the trailer's
-        # run-state.
+        # Preserve existing named files in the machine-error commit; missing files remain the reported error.
         named = tuple(f for f in state_exit.named_files if f not in named_files_not_there)
         named += tuple(f for f in files_beyond_the_named if f not in named)
         return self.git_record.commit_state_exit(run, subject, trailer, named)
 
-    # -- entering a state -------------------------------------------------------
 
     def enter(self, run, position):
-        """Section 7's entry-charged counters and section 3.2's entry rules,
-        applied when the run moves to `position`, before the state-exit
-        that moves it is committed. A sub-state position charges nothing."""
+        """Apply entry counters and rules before the state-exit is committed."""
         if position == tables.DESIGN_WRITING and run.previous_state == tables.INVESTIGATE_WORKFLOW:
-            # A redesign: counted on entry; resets the version.
             run.counters.increment("redesigns")
             run.start_new_design_version()
         if position == tables.TEST_SUITE_ARBITRATING:
             third_entry = tables.TRANSITION_TABLE_BY_ROW[tables.ROW_THE_ARBITRATORS_THIRD_ENTRY]
             if guards_hold(third_entry, GuardContext(run, None)):
-                # Row 65: the arbitrator's third entry opens the
-                # investigation (sections 6.5, 7); its ruling rides in the
-                # report, and a resume from here names a destination or
-                # applies that ruling (section 6.6), never re-entering.
                 self.mark_investigation_opening(run)
                 run.paused_state = tables.TEST_SUITE_ARBITRATING
                 run.investigation_focus = third_entry.investigation_focus
@@ -1047,17 +733,13 @@ class DesignToMainStateMachineFlow:
                 run.current_state = third_entry.to_state
                 return
             run.counters.increment("arbitrator-rulings")
-        # A work-stream's position is the state it is in, reviewing states
-        # included: the hold rows (26, 48) send the run to the other
-        # work-stream's position, and a stream paused in a reviewing state
-        # resumes there, not at the writing state before it.
+        # A paused reviewing stream must resume at its review, not restart the preceding writing state.
         composite = tables.COMPOSITE_STATE_OF_SUB_STATE.get(position, position)
         work_stream = tables.STATE_TABLE_BY_NAME[composite].work_stream
         if work_stream:
             run.set_work_stream_position(work_stream, composite)
         run.current_state = position
 
-    # -- applying a row -----------------------------------------------------------
 
     def enter_writing_state(self, run, state, entry_reason):
         run.writing_state_entry_reason[state] = entry_reason
@@ -1072,22 +754,12 @@ class DesignToMainStateMachineFlow:
         run.investigation_opened_by = "%s from %s (row %s)" % (
             state_exit.verdict, state_exit.state, row.row)
         run.investigation_opened_by_row = row.row
-        # Row 11: the user's redesign goes through the investigation, "then
-        # design-writing as a redesign" — the investigation holds that
-        # destination for its resume, so a plain resume does not return to
-        # the contract check the user just left.
+        # Hold the redesign destination through investigation so a plain resume does not return to the contract check.
         run.investigation_held_resume_destination = (
             tables.DESIGN_WRITING
             if row.row == tables.ROW_REDESIGN_ORDERED_AT_THE_CONTRACT_CHECK else None)
 
     def resolve_resume_destination(self, run, state_exit):
-        """Section 6.6: the destination the user names; else, from the
-        investigation the arbitrator's third entry opened, the ruling the
-        arbitrator held; else the destination the investigation's opening
-        held (row 11's redesign); else the earliest state downstream of
-        what the diff shows changed; else the state that was paused. The
-        form is checked here (refuse_malformed_resume), before any ruling
-        the resume carries is applied."""
         refuse_malformed_resume(run, state_exit, state_exit.destination)
         if state_exit.destination:
             return state_exit.destination
@@ -1103,10 +775,7 @@ class DesignToMainStateMachineFlow:
         return derived or run.paused_state
 
     def apply_the_held_ruling(self, run, state_exit):
-        """Section 6.6: the ruling the arbitrator held in its report,
-        routed as if test-suite-arbitrating had emitted it — through its
-        rows, with its entry reasons — but without entering the state,
-        whose next entry would be the fourth. Returns the next position."""
+        """Route the held arbitrator ruling without re-entering the arbitrator; return the next position."""
         held = StateExitRecord(state=tables.TEST_SUITE_ARBITRATING,
                                verdict=state_exit.held_ruling,
                                package_commit=state_exit.package_commit,
@@ -1118,9 +787,7 @@ class DesignToMainStateMachineFlow:
         return next_position
 
     def apply_the_reviewers_advance(self, run, state_exit):
-        """Row 60: apply the reviewer's own advance row — its side effects
-        too (tests begin, a work-stream's position, the hold) — and return
-        where it goes. The row is recorded beside the held rulings."""
+        """Apply the reviewer's advance, including side effects, and return its destination."""
         advance = the_reviewers_advance_the_arbitrator_stands_in_for(run, state_exit)
         row = find_legal_transition_row(run, advance)
         next_position, _ = self.apply_transition_row(run, row, advance, None)
@@ -1128,19 +795,13 @@ class DesignToMainStateMachineFlow:
         return next_position
 
     def apply_transition_row(self, run, row, state_exit, resume_destination):
-        """Side effects of a row: counters, flags, positions; returns the
-        next position and the write number for the trailer."""
+        """Apply row side effects and return (next_position, write_number)."""
         from_state = state_exit.from_state
         verdict = state_exit.verdict
         next_position = row.to_state
         write_number = None
 
-        # The row's counter (section 7: only an emitted state-exit charges
-        # a write counter, and by the three buckets). The `Write:` trailer
-        # counts what the writer's counter counts (section 9): the number
-        # that counter reaches, or `forced` when the write spends none of
-        # it. writes_emitted_per_version counts every write, for the
-        # first-write rule.
+        # The Write trailer follows the charged counter; writes_emitted_per_version also counts forced writes.
         if row.counter in tables.COUNTED_WRITING_STATES.values():
             run.writes_emitted_per_version[from_state] = (
                 run.writes_emitted_per_version.get(from_state, 0) + 1)
@@ -1161,22 +822,14 @@ class DesignToMainStateMachineFlow:
                 run.implementation_coverage_type = the_one_coverage_type_of_an_implementation(
                     state_exit)
             elif from_state == tables.TEST_WRITING:
-                # Recorded as the writer emitted it, which route_state_exit
-                # has already checked against the test-design's
-                # per-requirement coverage-types
-                # (refuse_a_test_write_that_disagrees_with_the_test_design,
-                # section 6.4): a set that is not the test-design's never
-                # reaches this row.
                 run.tests_coverage_types = tuple(state_exit.coverage_types)
 
-        # The contract's program check: consecutive failures.
         if state_exit.state == tables.CONTRACT_ACCEPTANCE_BY_PROGRAM:
             if verdict == tables.V_REJECT_CONTRACT:
                 run.consecutive_program_check_failure_count += 1
             else:
                 run.consecutive_program_check_failure_count = 0
 
-        # The suite's consecutive could-not-run count and the submit retries.
         if from_state == tables.TEST_SUITE_EXECUTING:
             if row.to_state == tables.TO_RETRY_SAME_STATE:
                 run.consecutive_could_not_run_count += 1
@@ -1188,19 +841,11 @@ class DesignToMainStateMachineFlow:
             else:
                 run.submit_retry_count = 0
 
-        # Row 1: the machine cuts the topic branch before design-writing.
-        # A refusal (TopicBranchCutRefused) leaves the machine here, before
-        # anything is entered or committed, and leaves the run's flag
-        # unset: a state-exit committed now would land on whatever branch
-        # the checkout stands on. The flag, set only once the cut has
-        # succeeded, is what the record's guard reads before every discard
-        # and commit; it goes to the branch in run-state.json with row 1's
-        # own commit, so a successor recovering the run reads it there.
+        # Set the run's branch-cut flag only after cutting succeeds; branch names alone cannot prove run ownership.
         if row.row == tables.ROW_TOPIC_BRANCH_CUT:
             self.git_record.cut_topic_branch()
             run.topic_branch_cut = True
 
-        # Approvals and the work-streams.
         if row.row == tables.ROW_DESIGN_APPROVED:
             run.design_approved = True
             self.enter_writing_state(run, tables.IMPLEMENTATION_WRITING, self.reason_for_advance(
@@ -1234,9 +879,6 @@ class DesignToMainStateMachineFlow:
                                          tables.ENTRY_REASON_CONTRACT_REVISION)
             next_position = tables.IMPLEMENTATION_WRITING
         if row.to_state == tables.TO_BOTH_WRITERS_FRESH:
-            # Row 64: both writers, each write the arbitrator's bucket; the
-            # implementation-work-stream runs first, and holds for the
-            # test-work-stream (row 26) at test-writing.
             self.enter_writing_state(run, tables.IMPLEMENTATION_WRITING,
                                      tables.ENTRY_REASON_ARBITRATOR_RULING)
             self.enter_writing_state(run, tables.TEST_WRITING,
@@ -1251,9 +893,6 @@ class DesignToMainStateMachineFlow:
         if row.to_state == tables.TO_WHEREVER_THAT_REVIEWING_STATES_ADVANCE_GOES:
             next_position = self.apply_the_reviewers_advance(run, state_exit)
 
-        # Re-entering a writing state by a reject, a discuss or the
-        # arbitrator's ruling: why, for the three buckets. (Rows 18 and 41,
-        # the advances from upstream, set their reason above.)
         if (next_position in (tables.IMPLEMENTATION_WRITING, tables.TEST_WRITING)
                 and verdict != tables.V_ADVANCE):
             if verdict == tables.V_DISCUSS:
@@ -1268,17 +907,12 @@ class DesignToMainStateMachineFlow:
                       if row.counter == "test-design-corrections"
                       else tables.ENTRY_REASON_REJECT_FROM_REVIEW)
             self.enter_writing_state(run, tables.TEST_DESIGN_WRITING, reason)
-        # Investigations and endings.
         if row.to_state == tables.INVESTIGATE_WORKFLOW:
             self.open_investigation(run, row, state_exit)
         if row.to_state == tables.ENDED:
             run.outcome = row.outcome
         if row.to_state == tables.TO_RESUME_DESTINATION:
-            # Row 72: every resume zeroes the six per-version counters, as a
-            # redesign does — the user has intervened, and every agent gets
-            # its chance again (section 7). Before the held ruling is
-            # applied, so that it reads the zeroed counters; a refused
-            # resume never reaches here (route_machine_error).
+            # Reset before applying a held ruling so every agent gets a fresh per-version budget after user intervention.
             run.counters.zero_the_six_per_version_counters()
             if resume_destination == tables.TO_APPLY_THE_HELD_RULING:
                 next_position = self.apply_the_held_ruling(run, state_exit)
@@ -1286,18 +920,7 @@ class DesignToMainStateMachineFlow:
                 next_position = resume_destination
                 self.position_work_streams_for_resume(run, next_position, state_exit)
 
-        # What entered test-suite-arbitrating, for row 60 (and the
-        # third-entry rule, which reads nothing of it but is applied on
-        # this same entry). Recorded here, where the state-exit is in
-        # hand and every destination above is resolved, before enter()
-        # runs. A `resume` does NOT record itself: the arbitrator returned
-        # to from an investigation rules on the failed suite or the
-        # reviewer's ceiling that entered it before the pause, and its
-        # `advance` means what it meant then, so what entered it is kept
-        # across the pause (section 6.5; user-ruled 2026-09-11, the ninth
-        # walk, item 5). A resume reaches the arbitrator only from an
-        # investigation that paused there (refuse_malformed_resume), so
-        # there is always an entry to keep.
+        # A resume must retain the arbitrator's original entry cause: its advance still refers to that suite or reviewer.
         if (next_position == tables.TEST_SUITE_ARBITRATING
                 and state_exit.verdict != tables.V_RESUME):
             run.test_suite_arbitrating_entered_from = state_exit.state
@@ -1305,10 +928,7 @@ class DesignToMainStateMachineFlow:
         return next_position, write_number
 
     def upstream_reason_for_test_writing(self, run):
-        """Tests re-entered after the test-design was re-written: the
-        test-design changed, whatever sent its writer back, so the write is
-        bounded by that document's counter (section 7) unless a document
-        further upstream was the cause."""
+        # A test-design rewrite spends that upstream document's budget unless a still earlier document caused it.
         reason = run.writing_state_entry_reason.get(tables.TEST_DESIGN_WRITING)
         if reason in (tables.ENTRY_REASON_CONTRACT_REVISION, tables.ENTRY_REASON_REDESIGN,
                       tables.ENTRY_REASON_USER_NAMED_DESTINATION):

@@ -1,53 +1,12 @@
 #!/usr/bin/env python3
-"""Compose a pull-request reviewer's brief at the moment the reviewer is commissioned.
+"""Compose a reviewer brief with the reviewing instructions inserted verbatim.
 
-The merge-lane seat commissions an independent reviewer for every pull request
-with a fixed standing brief. The reviewing rule itself lives in ONE place,
-`docs/agents/pr-reviewer-instructions.md`, whose own first line says: "This
-file's text is pasted whole into the prompt of every commissioned Claude PR
-reviewer." A rule the brief only points at gets skipped, and a copy pasted
-into the brief by hand drifts from the file. The standing brief used to point
-at that file by absolute path, which is the pointed-at form; pasting the text
-into the brief would make a second copy, which is the drifting form. So the
-user ruled at the merge-lane seat (2026-09-14): compose the brief at commission
-time. This program is that composition.
+The default instructions come from the reference checkout on main so a pull
+request cannot change the rule used to review itself. The brief is local to
+the machine, so the caller supplies its path.
 
-What it does. It reads the standing brief, which contains exactly one MARKER
-LINE — `<<PR-REVIEWER-INSTRUCTIONS>>` on a line by itself — and may contain
-the placeholder `<N>` (literal, angle brackets included) wherever the pull
-request number belongs. It replaces every `<N>` in the brief with the number,
-replaces the marker line (the line and its own line terminator) with the
-instruction file's entire text byte for byte — no reflow, no trimming, no
-added newline; the instruction file's own final newline is what separates it
-from the line after the marker — and writes the composed prompt to stdout.
-The `<N>` substitution runs on the brief BEFORE the instructions are inserted,
-so the instruction bytes are never touched even if that file one day contains
-the placeholder itself. All I/O is in bytes, so no newline translation and no
-encoding step can alter either file on the way through.
-
-Why `--instructions-file` defaults to the REFERENCE CHECKOUT'S ABSOLUTE PATH,
-`/Users/el/Projects/nedschorus/docs/agents/pr-reviewer-instructions.md`, and
-not to a path relative to this script: a reviewer works in a worktree checked
-out at the pull request's head, and a relative path would resolve inside that
-worktree — so a pull request that edited the reviewing rule would compose its
-own edited rule into its own review. The reference checkout is always on main,
-so the rule the reviewer reads is the rule main holds. `--brief-file` has no
-default because the standing brief is machine-local (it lives in the
-gitignored `walk-ledgers/` on the merge-lane seat's Mac); its location is the
-caller's to state.
-
-Refusals (one line on stderr, exit 1): the brief file has zero or more than
-one marker line; the instructions file is empty (zero bytes); either file is
-unreadable (missing, unreadable, or not a regular file); a malformed command
-line, including a `--pull-request` that is not a positive integer. Exit 2 is
-reserved for a defect in this program, per the project convention set by
-`nc-systems/main-gatekeeper/main-gatekeeper.py`'s reply contract — which is why argparse's own
-usage-and-exit-2 is overridden below. No network, no git, no subprocess: pure
-text.
-
-Usage:
-  compose-pull-request-reviewer-brief.py --pull-request <N> --brief-file <path>
-      [--instructions-file <path>] > <composed prompt>
+Byte I/O preserves instruction text exactly. Substitute the pull request
+number only in the brief, never in the inserted instructions.
 """
 
 import argparse
@@ -69,12 +28,7 @@ class Refusal(Exception):
 
 
 class RefusingArgumentParser(argparse.ArgumentParser):
-    """A malformed command line is a refusal (exit 1), not a defect (exit 2).
-
-    argparse's default is usage text on stderr and exit 2, which this project
-    reserves for a program defect; `nc-systems/main-gatekeeper/main-gatekeeper.py` overrides it
-    the same way.
-    """
+    """Use exit 1 for malformed arguments; the project reserves exit 2 for defects."""
 
     def error(self, message):
         raise Refusal(f"the command line is malformed: {message}")
@@ -110,7 +64,7 @@ def is_marker_line(line: bytes) -> bool:
 
 
 def compose(brief: bytes, instructions: bytes, pull_request: int) -> bytes:
-    """The composed prompt, or a Refusal naming why there is none."""
+    """Return the composed prompt or raise Refusal."""
     if instructions == b"":
         raise Refusal("the instructions file is empty; nothing to insert at the marker")
     lines = brief.splitlines(keepends=True)
