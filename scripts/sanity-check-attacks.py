@@ -252,12 +252,16 @@ Running a sanity-check, and reading its output:
   does when it ends, printing the `record:` line, and ends by the same
   signal; a run killed outright while it ships has already stopped its agents
   and removed its copy, and its record stays on disk. No agent-binary starts
-  once the stop is under way: a cell's thread reads the stop and starts its
-  agent-binary under one lock, the lock the handler takes to mark the run
-  stopped, so every agent-binary is in the process table the handler then
-  reads. A signal that arrives after every cell has ended stopped no agent:
-  the runner finishes the run's closing steps, prints what a finished run
-  prints, with no `STOPPED:` line, and ends by the signal. SIGKILL, and a
+  a review once the stop is under way: a cell's thread reads the stop and
+  starts its agent-binary under one lock, the lock the handler takes to mark
+  the run stopped, so every agent-binary is in the process table the handler
+  then reads. The one later start is the `--version` probe of a cell saving
+  its report, for the report's provenance line; it reads the version and
+  exits. A signal that ends no cell stopped no agent: one that arrives after
+  every agent-binary has exited, while the cells save their reports or the
+  run does its closing steps. The cells save their reports, and the runner
+  finishes the run's closing steps, prints what a finished run prints, with
+  no `STOPPED:` line, and ends by the signal. SIGKILL, and a
   machine that stops, cannot be answered, so each run, before it makes its
   own copy, removes the copies no live run owns and prints `removed: a review
   copy an earlier run left behind, <path>` for each. A copy is a live run's
@@ -345,6 +349,11 @@ STOPPED_PROCESS_GRACE_SECONDS = 10.0
 # agent-binary: a cell stopped with its run is not relaunched, and the claude
 # chain does not go on to its next model.
 RUN_STOPPED = threading.Event()
+# The cells the stop ended before they could save a report: each one whose
+# thread found RUN_STOPPED set at one of run_cell's checks. Read once every
+# cell's thread has ended, to tell a stop that cut a cell short from one that
+# landed while the cells were only finishing their reports.
+CELLS_THE_RUN_STOP_ENDED = set()
 # Held while a cell's thread reads RUN_STOPPED and starts an agent-binary, and
 # by the stop handler while it sets RUN_STOPPED: see
 # run_agent_binary_unless_run_stopped. Re-entrant, so a handler that runs on a
@@ -1431,7 +1440,7 @@ def review_copy_of_commit(commit: str, record_name: str,
         if holder.exists():
             # The owner file stays, unlocked once this run ends, so the next
             # run tries the removal again.
-            print(f"WARNING: the review copy could not be removed: {holder}",
+            print(review_copy_not_removed_line(holder),
                   flush=True)
         else:
             holder.with_name(holder.name + REVIEW_COPY_OWNER_FILE_SUFFIX).unlink(
@@ -1439,10 +1448,19 @@ def review_copy_of_commit(commit: str, record_name: str,
         owner_file.close()
 
 
+def review_copy_not_removed_line(holder: pathlib.Path) -> str:
+    """The line a run prints when a review copy's removal leaves it in place.
+    The copy's owner file stays, and its lock is released when this run ends,
+    so the next run's remove_review_copies_no_live_run_owns removes the copy;
+    the requesting agent has nothing to do."""
+    return (f"WARNING: the review copy could not be removed: {holder}. "
+            f"Leave it; the next sanity-check run removes it.")
+
+
 def remove_directory_whatever_signal_arrives(directory: pathlib.Path) -> None:
     """Remove `directory`, to the end: a stop signal that arrives partway is
     raised again only after the removal has run through. The first stop signal
-    makes every later one ignored, so the second pass is not interrupted."""
+    makes every later one do nothing, so the second pass is not interrupted."""
     try:
         shutil.rmtree(directory, ignore_errors=True)
     except RunStoppedBySignal:
@@ -1527,7 +1545,7 @@ def remove_review_copies_no_live_run_owns() -> list:
             continue
         remove_directory_whatever_signal_arrives(holder)
         if holder.exists():
-            print(f"WARNING: the review copy could not be removed: {holder}",
+            print(review_copy_not_removed_line(holder),
                   flush=True)
         else:
             removed.append(holder)
@@ -1662,7 +1680,10 @@ def stop_processes_this_run_started() -> None:
     # SIGKILL to what is left, and to whatever is under this process now that
     # was not frozen: a process a frozen one started after SIGCONT, or a git
     # call a cell's thread made after the first reading. No agent-binary
-    # starts after RUN_STOPPED is set (run_agent_binary_unless_run_stopped).
+    # starts a review after RUN_STOPPED is set
+    # (run_agent_binary_unless_run_stopped); a cell saving its report may
+    # still run the `--version` probe (runtime_cli_version), which exits on
+    # its own.
     table = processes_under_this_one()
     under_this_process, grew = {this_process}, True
     while grew:
@@ -1676,13 +1697,30 @@ def stop_processes_this_run_started() -> None:
             pass
 
 
+def stop_signal_after_the_first_does_nothing(_signal_number: int, _frame) -> None:
+    """The handler a stop signal meets once the run is already stopping: it
+    does nothing, so the stopping and the removal of the review copy are not
+    cut short.
+
+    A handler set from Python and not SIG_IGN, because an ignored disposition
+    survives exec and a handled one does not. The stop handler waits for
+    AGENT_BINARY_LAUNCH_LOCK, and a cell's thread may be starting an
+    agent-binary under that lock in the same moment; with SIG_IGN that
+    agent-binary started with SIGTERM, SIGINT and SIGHUP ignored, so the
+    SIGTERM that stops it did nothing, and it and whatever it started ran on
+    until the SIGKILL after STOPPED_PROCESS_GRACE_SECONDS. A handled
+    disposition is reset to the default by exec, so the agent-binary can end
+    on the SIGTERM."""
+
+
 def stop_run_on_signal(signal_number: int, _frame) -> None:
     """The handler main() installs for RUN_STOP_SIGNALS while a run is under
     way: see WHEN A RUN IS STOPPED in the module docstring. Every later stop
-    signal is ignored from here on, so the stopping and the removal of the
-    review copy are not themselves cut short."""
+    signal does nothing from here on (stop_signal_after_the_first_does_nothing),
+    so the stopping and the removal of the review copy are not themselves cut
+    short."""
     for number in RUN_STOP_SIGNALS:
-        signal.signal(number, signal.SIG_IGN)
+        signal.signal(number, stop_signal_after_the_first_does_nothing)
     # Under the lock a cell's thread holds from reading RUN_STOPPED to
     # starting its agent-binary: see run_agent_binary_unless_run_stopped.
     with AGENT_BINARY_LAUNCH_LOCK:
@@ -1711,8 +1749,8 @@ class RunOutputCopiedToRecordLog:
         # run stopped by a signal names in its STOPPED line, and ships.
         self.record_directory = None
         # None until every cell has ended, then how many reports the run
-        # saved: a stop signal that arrives after that has stopped no agent,
-        # and main() ends the run as a finished run ends.
+        # saved; also set when a stop signal ended no cell. Such a stop has
+        # stopped no agent, and main() ends the run as a finished run ends.
         self.reports_saved_once_cells_ended = None
         self._held = []
         self._file = None
@@ -1967,6 +2005,7 @@ def run_cell(attack: str, runtime: str, target: str, context: list,
                                 relaunched_after)
 
     if RUN_STOPPED.is_set():
+        CELLS_THE_RUN_STOP_ENDED.add(cell)
         return cell, False
     failure = launch()
     if failure is None:
@@ -1976,6 +2015,7 @@ def run_cell(attack: str, runtime: str, target: str, context: list,
         # none of the lines a failed cell ends on: they tell the requesting
         # agent how to go on with this run's reports, and the run's STOPPED
         # line says what a stopped run calls for instead.
+        CELLS_THE_RUN_STOP_ENDED.add(cell)
         return cell, False
     relaunched = failed_launch_is_relaunched(failure.cause_class)
     if relaunched:
@@ -1986,6 +2026,7 @@ def run_cell(attack: str, runtime: str, target: str, context: list,
         if failure is None:
             return cell, True
         if RUN_STOPPED.is_set():
+            CELLS_THE_RUN_STOP_ENDED.add(cell)
             return cell, False
     # One write, so that another cell's lines, printed from its own thread,
     # cannot land between this cell's FAILED line and the instructions that
@@ -2130,9 +2171,10 @@ def main() -> int:
         stopped_by = stopped.signal_number
         saved = run_log.reports_saved_once_cells_ended
         if saved is not None:
-            # Every cell had ended when the signal arrived, so it cut short
-            # only the run's closing steps, and the `finally` blocks on the
-            # way here have finished them. The run ends with what a finished
+            # The signal ended no cell: it arrived after every agent-binary
+            # had exited, so the cells went on to save their reports, and the
+            # `finally` blocks on the way here have finished the run's closing
+            # steps. The run ends with what a finished
             # run prints, never a STOPPED line, whose instruction to run the
             # whole command again would launch every agent of a run whose
             # reports are all saved (found in review of the pull request that
@@ -2147,7 +2189,7 @@ def main() -> int:
         else:
             print(run_stopped_line(stopped_by, run_log.record_directory), flush=True)
             # Closed before the record is shipped, as at the end of any run;
-            # and shipped while the stop signals are still ignored, after the
+            # and shipped while later stop signals still do nothing, after the
             # agents are stopped and the review copy is removed, so a run that
             # is killed outright while it ships has already done what must not
             # be left.
@@ -2260,6 +2302,8 @@ def run_cells_in_review_copy(args, target_path: pathlib.Path, run_log: RunOutput
         baseline_status = worktree_snapshot(checkout)
         corpus = tracked_files_corpus(checkout)
         report_ledger = RunnerReportWriteLedger(copy_record_dir, checkout)
+        CELLS_THE_RUN_STOP_ENDED.clear()
+        futures = []
         try:
             with concurrent.futures.ThreadPoolExecutor(max_workers=len(cells)) as pool:
                 futures = [
@@ -2273,6 +2317,21 @@ def run_cells_in_review_copy(args, target_path: pathlib.Path, run_log: RunOutput
                     ok = ok and cell_ok
                     saved_count += 1 if cell_ok else 0
                 run_log.reports_saved_once_cells_ended = saved_count
+        except RunStoppedBySignal:
+            # The pool's exit waited for every cell's thread, so each cell has
+            # ended by now. A stop that ended none of them landed while the
+            # cells were only finishing: an agent-binary had exited, and its
+            # report was saved after the signal. That run saved every report it
+            # was going to, so it ends as a finished run ends, never with a
+            # STOPPED line telling the agent to run the whole command again.
+            if (run_log.reports_saved_once_cells_ended is None
+                    and len(futures) == len(cells)
+                    and all(future.done() and future.exception() is None
+                            for future in futures)
+                    and not CELLS_THE_RUN_STOP_ENDED):
+                run_log.reports_saved_once_cells_ended = sum(
+                    1 for future in futures if future.result()[1])
+            raise
         finally:
             # However the cells' part ended, a run a stop signal ended
             # included: what the cells left in their scratch directories is
