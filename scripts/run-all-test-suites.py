@@ -1395,7 +1395,7 @@ class Report:
 
 def parse_arguments(argv):
     parser = argparse.ArgumentParser(
-        prog=PROGRAM, description="Run every *-test.py suite git lists in a checkout.")
+        prog=PROGRAM, description="Run every *-test.py and *-test.sh suite git lists in a checkout.")
     parser.add_argument("--checkout", default=str(Path(__file__).resolve().parent.parent))
     parser.add_argument("--python", default=sys.executable)
     parser.add_argument("-j", dest="jobs", type=int, default=4)
