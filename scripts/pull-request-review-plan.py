@@ -619,7 +619,8 @@ def compute_pull_request_review_plan(arguments):
         else:
             merge_commits = required_git_output(repository, "rev-list", "--merges", "--first-parent", f"{earlier}..{head}").splitlines()
             rewritten = not commit_is_ancestor_of(repository, earlier, head)
-            delta_files = changed_files_with_classes_and_tiers(repository, earlier, head)
+            delta_files = changed_files_with_classes_and_tiers(
+                repository, earlier, head, hook_registration_old_revision=diff_base)
             if merge_commits or rewritten:
                 earlier_merge_base = required_git_output(repository, "merge-base", diff_base, earlier)
                 earlier_files = changed_files_with_classes_and_tiers(repository, earlier_merge_base, earlier)

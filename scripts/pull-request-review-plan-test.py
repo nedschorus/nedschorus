@@ -390,6 +390,25 @@ def run_hook_registration_and_delta_boundary_cases(fixture):
           and plan["merge_base"] != main_head, plan)
 
     fixture.reset_fixture_to_base()
+    fixture.write_fixture_file("scripts/sibling-program.py", 'print("reviewed message")\n')
+    delta_hook_earlier_head = fixture.commit_fixture_changes("reviewed head before main hook registration")
+    fixture.write_fixture_file("scripts/sibling-program.py", 'print("fixed message")\n')
+    delta_hook_changed_head = fixture.commit_fixture_changes("string fix before main hook registration")
+    fixture.git_command("checkout", "-q", "--detach", fixture.base_head)
+    fixture.write_fixture_file(".claude/settings.json", sibling_hook_settings)
+    delta_hook_main_head = fixture.commit_fixture_changes("main registers program after branch was cut")
+    fixture.git_command("update-ref", "refs/remotes/origin/main", delta_hook_main_head)
+    fixture.configure_github_answers(delta_hook_changed_head,
+                                     reviews=[[fixture_review(101, delta_hook_earlier_head)]],
+                                     live_base=delta_hook_main_head)
+    plan = fixture.read_review_plan()
+    delta_hook_program_entry = next(entry for entry in plan["delta_files"]
+                                   if entry["path"] == "scripts/sibling-program.py")
+    check("delta hook registrations include the diff base when main registers the program after the branch was cut",
+          delta_hook_program_entry["class"] == "hook" and delta_hook_program_entry["tier"] == "full-reviewer"
+          and plan["delta_only_review_applies"] is False, plan)
+
+    fixture.reset_fixture_to_base()
     fixture.write_fixture_file(".claude/settings.json", sibling_hook_settings)
     earlier = fixture.commit_fixture_changes("earlier round registers hook")
     fixture.write_fixture_file(".claude/settings.json", BASELINE_FILE_CONTENTS[".claude/settings.json"])
