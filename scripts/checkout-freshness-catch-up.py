@@ -33,7 +33,12 @@ Wired as a Stop hook, so it runs at every turn boundary. Each run:
      landed merge commits on FROZEN heads; this moves only heads nobody else
      has, creates no merge commit, and leaves the pushed-head rule untouched.
      Walked and ruled 2026-09-15 (docs/walk/keeping-branches-current-telling-
-     and-rebase).
+     and-rebase). "Never pushed" takes two facts, not one: no branch of this
+     name is on origin, AND none of the branch's own commits is on any remote
+     branch. A branch cut under a new name at a pull request's pushed head
+     passes the first test and fails the second; its commits are that pull
+     request's, under review, so it is left alone like a pushed branch (head
+     state "pushed-history", see head_state()).
   5. If the branch is behind and HAS been pushed, never moves it. The agent
      is TOLD, once per update of main: how far behind, which files main has
      changed that it lacks — named, grouped by why they matter, computed from
@@ -137,9 +142,22 @@ LEAVE_IT_ADVICE = (
     "scripts/branch-conflict-check.py describes. "
     "Start your next topic with `git checkout -b <name> origin/main`."
 )
+# A branch whose own commits are already on a remote branch, under another
+# name: the shape a fix-round agent makes when it cuts a branch at a pull
+# request's pushed head, because that pull request's own branch is checked out
+# in another worktree. Rebasing it would rewrite the pull request's commits
+# under their review, so it gets the pushed branch's instructions. Read by
+# obsolete-file-edit-warning-hook.py too, so both hooks say the same thing.
+PUSHED_HISTORY_ADVICE = (
+    "This branch's commits are already on GitHub under another branch name, so the "
+    "branch is treated as pushed and is not rebased: a pushed head may be under "
+    "review, and a rebase would rewrite it. Do not rebase or amend those commits. A "
+    "fix is a new commit on top. If it conflicts with main, clear the conflict with "
+    "the hand-merge that scripts/branch-conflict-check.py describes."
+)
 DETACHED_ADVICE = "You are on a detached HEAD; check out your branch before working."
-UNKNOWN_ADVICE = ("Your head state could not be determined (git did not run); nothing was "
-                  "changed. Check `git status` before working.")
+UNKNOWN_ADVICE = ("Your head state could not be determined (a git command failed); nothing "
+                  "was changed. Check `git status` before working.")
 AFTER_REBASE_ADVICE = "Rerun the test suites for what you touched: your work now sits on newer code."
 
 # Appended to EVERY note the agent receives, by tell() itself, so no note can
@@ -391,12 +409,79 @@ def own_commit_count(checkout: Path):
         return None
 
 
+def remote_branches_holding_own_commits(checkout: Path):
+    """The remote branches that already hold commits of this branch, as a list
+    of names; [] when none does; None when git could not answer.
+
+    "This branch's commits" are those in origin/main..HEAD, merge commits and
+    the commits a merge brought in alike: if any one of them is on a remote
+    branch, rebasing the branch would rewrite history someone else has. The
+    test is a set difference of two local-ref walks, `origin/main..HEAD`
+    against `HEAD --not --remotes`, so it needs no fetch and no network, and
+    it sees past the agent's own new commits on top, which are on no remote
+    branch yet, to the pushed commits beneath them. A third call, made only
+    when a pushed commit is found, names the remote branches that hold the
+    newest one, for the agent's message.
+
+    Every remote-tracking ref counts, origin's and any other remote's, and so
+    does a ref left behind by a branch deleted on GitHub: a commit that was
+    ever pushed may be under review or in someone's hands, and leaving such a
+    branch unrebased costs only a hand-merge if it ever conflicts.
+    """
+    own = run_git(["rev-list", "origin/main..HEAD"], checkout, timeout=30)
+    if own.returncode != 0:
+        return None
+    own_commits = own.stdout.split()
+    if not own_commits:
+        return []
+    not_on_any_remote = run_git(["rev-list", "HEAD", "--not", "--remotes"], checkout,
+                                timeout=30)
+    if not_on_any_remote.returncode != 0:
+        return None
+    unpushed = set(not_on_any_remote.stdout.split())
+    # rev-list lists newest first, so this is the newest pushed commit: the one
+    # a remote branch's tip is likeliest to be.
+    newest_pushed = next((sha for sha in own_commits if sha not in unpushed), None)
+    if newest_pushed is None:
+        return []
+    holders = run_git(["for-each-ref", "--format=%(refname:short)", "--contains",
+                       newest_pushed, "refs/remotes"], checkout, timeout=15)
+    names = holders.stdout.split() if holders.returncode == 0 else []
+    # Already known to be on a remote branch; failing to name it changes
+    # nothing about what may be done with it.
+    return names or ["a remote branch"]
+
+
+# How many of the remote branches holding a branch's commits the head state
+# names before it counts the rest.
+PUSHED_HISTORY_BRANCHES_NAMED = 2
+
+
 def head_state(checkout: Path, branch: str):
     """(key, text) for where HEAD stands against its remote branch. The
     frozen-head rule (CLAUDE.md, 2026-09-08) freezes a head the moment it is
     pushed, so "pushed and equal to origin/<branch>" is the fact the rule
     keys on; whether a pull request is open is not asked, because that
-    needs gh and the network at every turn end, and the rule does not."""
+    needs gh and the network at every turn end, and the rule does not.
+
+    PUSHED HISTORY UNDER A NEW NAME. No origin/<branch> does not, on its own,
+    mean nobody else has the branch. An agent that fixes a pull request from
+    a worktree of its own cannot check out the pull request's branch there,
+    since git checks a branch out in one worktree at a time, so it cuts a new
+    branch at the pushed head. That branch has no remote branch of its name,
+    yet every commit under the agent's fix is the pull request's, under
+    review. Read as "unpushed", the Stop hook rebased it, moving the frozen
+    head, and the obsolete-file warning told the agent to rebase it (GHI "The
+    checkout-freshness hook treats a new branch cut at a pull request's pushed
+    head as never pushed, and rebases it",
+    https://github.com/nedschorus/nedschorus/issues/913). So before answering
+    "unpushed", the branch's own commits are checked against every remote
+    branch, and a branch carrying any of them is "pushed-history": treated
+    as pushed, never rebased. A new key rather
+    than "pushed", because "pushed" says HEAD equals origin/<branch>, which
+    is false here, and the head state is what the agent and the stamp read.
+    A git failure in that check is "unknown", never "unpushed": "unpushed" is
+    the one answer that authorises a rebase."""
     if branch in ("", "HEAD"):
         return "detached", "detached HEAD"
     remote = run_git(["rev-parse", "--verify", "--quiet", f"origin/{branch}"],
@@ -408,7 +493,18 @@ def head_state(checkout: Path, branch: str):
         # class as unknowable).
         return "unknown", "head state unknowable (git did not run)"
     if remote.returncode != 0:
-        return "unpushed", "head unpushed"
+        holders = remote_branches_holding_own_commits(checkout)
+        if holders is None:
+            return "unknown", ("head state unknowable (git could not check whether this "
+                               "branch's commits are on a remote branch)")
+        if not holders:
+            return "unpushed", "head unpushed"
+        named = ", ".join(holders[:PUSHED_HISTORY_BRANCHES_NAMED])
+        if len(holders) > PUSHED_HISTORY_BRANCHES_NAMED:
+            named += f" and {len(holders) - PUSHED_HISTORY_BRANCHES_NAMED} more"
+        return "pushed-history", (f"no branch of this name on origin, but its commits are "
+                                  f"already on {named} (pushed history: a fix is a new "
+                                  f"commit on top, never a rebase)")
     head = run_git(["rev-parse", "HEAD"], checkout, timeout=15).stdout.strip()
     if remote.stdout.strip() == head:
         return "pushed", (f"head pushed and equal to origin/{branch} (frozen: a fix is a "
@@ -854,8 +950,8 @@ def catch_up_session_checkout(checkout: Path, interval_seconds: int) -> None:
     stamp["last_action"] = "reported, not merged (ruled 2026-09-14)"
     if not already_told:
         stamp["last_told"] = told
-        advice = {"detached": DETACHED_ADVICE, "unknown": UNKNOWN_ADVICE}.get(
-            state_key, LEAVE_IT_ADVICE)
+        advice = {"detached": DETACHED_ADVICE, "unknown": UNKNOWN_ADVICE,
+                  "pushed-history": PUSHED_HISTORY_ADVICE}.get(state_key, LEAVE_IT_ADVICE)
         tell(f"{heading}{changed_on_main_clause}{note}\n{advice}")
     write_stamp(stamp_path, stamp)
 
