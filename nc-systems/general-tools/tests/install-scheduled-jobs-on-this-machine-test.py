@@ -744,6 +744,65 @@ with tempfile.TemporaryDirectory() as temporary:
           "removed", exit_code == 1 and "FAILED: `crontab` exited 1" in errors
           and "removed:" not in printed, (exit_code, printed, errors))
 
+    # Which crontab lines run a program from the clone: the program is the
+    # command's first word, or an interpreter's first argument that is not an
+    # option; a line that sets a variable, or only reads or writes a file in
+    # the clone, runs no program from it.
+    path_setting = f"PATH={box_clone}/scripts:/usr/bin:/bin"
+    reads_the_clone = f"0 4 * * * /usr/bin/tar czf /tmp/backup.tgz {box_clone}/data"
+    writes_into_the_clone = f"0 6 * * * /usr/local/bin/other-tool >> {box_clone}/other.log 2>&1"
+    runs_directly = f"0 8 * * * {box_clone}/scripts/a-retired-shell-job.sh --quiet"
+    runs_through_env = (f"0 7 * * * /usr/bin/env -i HOME=/tmp /usr/bin/python3 -u "
+                        f"{box_clone}/scripts/a-retired-env-job.py")
+    runs_at_reboot = f"@reboot /usr/bin/python3 {box_clone}/scripts/a-retired-reboot-job.py"
+    check("the program a crontab line runs is its first word, or an interpreter's first "
+          "argument that is not an option, and nothing for a line that sets a variable",
+          [installer.program_a_cron_line_runs(line) for line in (
+              path_setting, reads_the_clone, writes_into_the_clone, runs_directly,
+              runs_through_env, runs_at_reboot, BOX_MIRROR, "", "# 0 4 * * * x")]
+          == [None, "/usr/bin/tar", "/usr/local/bin/other-tool",
+              f"{box_clone}/scripts/a-retired-shell-job.sh",
+              f"{box_clone}/scripts/a-retired-env-job.py",
+              f"{box_clone}/scripts/a-retired-reboot-job.py",
+              f"{box_clone}/scripts/transcript-mirror-to-log-store.py", None, None])
+    not_runs = [path_setting, reads_the_clone, writes_into_the_clone]
+    runs = [runs_directly, runs_through_env, runs_at_reboot]
+    stub = MachineStub(crontab="".join(
+        line + "\n" for line in [path_setting, BOX_MIRROR, BOX_DAILY, BOX_ALONE]
+        + not_runs + runs).encode())
+    exit_code, printed, errors = run_main(["--check"], NED_BOX, stub)
+    check("--check reports a line that runs a program from the clone, directly, through env "
+          "or at reboot, and not a line that sets PATH to the clone or only reads or writes "
+          "a file there",
+          exit_code == 1 and printed.count("NOT IN THE TABLE: ") == 3
+          and all(f"NOT IN THE TABLE: the crontab line {line} — " in printed for line in runs)
+          and not any(line in printed for line in not_runs), (exit_code, printed))
+    exit_code, printed, errors = run_main(["--remove-not-in-table"], NED_BOX, stub)
+    check("--remove-not-in-table takes out only those three, and keeps the PATH line and the "
+          "lines that only touch a file in the clone",
+          exit_code == 0 and stub.crontab_writes == ["".join(
+              line + "\n" for line in [path_setting, BOX_MIRROR, BOX_DAILY, BOX_ALONE]
+              + not_runs).encode()], (exit_code, printed, stub.crontab_writes))
+
+    # A retired line that runs a program file of the same name as a cron job
+    # of the table is found as that job's line, the way an install finds it:
+    # --check reports it as that job's DIFFERS, and --install replaces it.
+    same_file_other_arguments = BOX_DAILY.replace("30 3 * * *", "0 2 * * *").replace(
+        "daily-full-test-run-of-main.py", "daily-full-test-run-of-main.py --a-retired-argument")
+    stub = MachineStub(crontab=(f"{BOX_MIRROR}\n{BOX_DAILY}\n{BOX_ALONE}\n"
+                                f"{same_file_other_arguments}\n").encode())
+    exit_code, printed, errors = run_main(["--check"], NED_BOX, stub)
+    check("a retired line running a table job's program file is that job's DIFFERS, not NOT "
+          "IN THE TABLE",
+          exit_code == 1 and "NOT IN THE TABLE" not in printed
+          and f"DIFFERS: daily-full-test-run-of-main — the crontab holds {BOX_DAILY}; "
+              f"{same_file_other_arguments}, not the table's line" in printed,
+          (exit_code, printed))
+    exit_code, printed, errors = run_main(["--install"], NED_BOX, stub)
+    check("and --install replaces both with the table's one line",
+          exit_code == 0 and stub.crontab == f"{BOX_MIRROR}\n{BOX_DAILY}\n{BOX_ALONE}\n".encode(),
+          (exit_code, printed, stub.crontab))
+
     mac_clone = table["machines"]["mac"]["clone"]
     stray_daily = installer.cron_line(mac_machine, daily_job, {"schedule": "30 3 * * *"})
     stub = MachineStub(crontab=f"{mac_mirror_line}\n{stray_daily}\n".encode())
@@ -787,6 +846,27 @@ with tempfile.TemporaryDirectory() as temporary:
           and f"{DOMAIN}/com.nedschorus.a-retired-job" not in stub.loaded
           and f"removed: not in the table — deleted {retired_plist_path}.\n" in printed,
           (exit_code, printed, stub.commands))
+
+    # A table whose last launchd job was retired names none, and the plist the
+    # retired job left is still found; on a machine that is not macOS, nothing
+    # is looked for.
+    marked_dir = root / "LaunchAgents-of-a-table-with-no-launchd-job"
+    marked_dir.mkdir()
+    last_retired_path = marked_dir / "com.nedschorus.the-last-launchd-job.plist"
+    last_retired_path.write_bytes(plistlib.dumps(
+        dict(expected_plist, Label="com.nedschorus.the-last-launchd-job"), sort_keys=False)
+        .replace(b"<plist ", installer.PLIST_WRITTEN_BY_THIS_PROGRAM + b"\n<plist ", 1))
+    unmarked_path = marked_dir / "com.nedschorus.written-before-the-marker.plist"
+    unmarked_path.write_bytes(plistlib.dumps(
+        dict(expected_plist, Label="com.nedschorus.written-before-the-marker"), sort_keys=False))
+    mac_without_launchd_path = {key: value for key, value in table["machines"]["mac"].items()
+                                if key != "launchd_path"}
+    check("a plist this program wrote is found when the table names no launchd job and no "
+          "launchd_path; a plist written before the marker line is not",
+          installer.plists_not_in_table(mac_without_launchd_path, [], marked_dir)
+          == [(last_retired_path, "com.nedschorus.the-last-launchd-job")])
+    check("and nothing is looked for on a machine that is not macOS",
+          installer.plists_not_in_table(table["machines"]["ned-box"], [], marked_dir) == [])
 
     plist_path.write_bytes(plistlib.dumps(expected_plist, sort_keys=False))
     exit_code, printed, errors = run_main(["--check"] + DAILY, MAC, stub)

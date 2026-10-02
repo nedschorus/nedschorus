@@ -110,9 +110,12 @@ finds a job's cron line and plist through the job's entry in the table. A job
 deleted from the table first stays installed, and running it every day is the
 cost of forgetting the order, so --check, run without --job, also reports each
 job this machine runs that no job of the table names for it, NOT IN THE TABLE:
-a cron line, not a comment, that runs a program from the machine's clone and
-is no cron job's line of the table; and a plist carrying
+a cron line whose command runs a program from the machine's clone, directly or
+through an interpreter, and is no cron job's line of the table — not a
+comment, not a line that sets a variable, and not a line that only reads or
+writes a file in the clone; and a plist carrying
 PLIST_WRITTEN_BY_THIS_PROGRAM whose label is no launchd job's of the table.
+A plist written before that line existed is not found.
 --remove-not-in-table takes exactly those off. Every cron line that runs a
 program from the clone is this program's to own: a scheduled job that runs the
 project's code belongs in the table, which is the reason the table exists.
@@ -463,23 +466,69 @@ def start_launchd_job_once(machine, job, placement, run) -> bool:
 
 # --- jobs the table does not name -----------------------------------------
 
+# A crontab line that sets a variable for the lines after it, NAME=value; and
+# one word of a command that does the same for that command alone.
+CRON_ENVIRONMENT_ASSIGNMENT = re.compile(r"\s*[A-Za-z_][A-Za-z0-9_]*\s*=")
+# A program whose first argument that is not an option is the program it runs.
+INTERPRETER_PROGRAM_NAME = re.compile(r"python[0-9.]*|bash|sh|dash|zsh|perl|ruby|node|env")
+
+
+def program_a_cron_line_runs(line: str):
+    """The program a crontab line runs, as the line spells it: the command's
+    first word, or, when that word is an interpreter or `env`, the first word
+    after it that is not an option or a NAME=value. None for a blank line, a
+    comment, or a line that sets a variable. A line whose command only reads
+    or writes a file, such as a redirect into the clone, runs no program of
+    that file, so the file is not what this returns."""
+    if not line.strip() or line.lstrip().startswith("#") or CRON_ENVIRONMENT_ASSIGNMENT.match(line):
+        return None
+    special_schedule = line.lstrip().startswith("@")
+    fields = line.split(None, 1 if special_schedule else 5)
+    if len(fields) < (2 if special_schedule else 6):
+        return None
+    try:
+        words = shlex.split(fields[-1])
+    except ValueError:
+        words = fields[-1].split()
+    after_interpreter = False
+    for word in words:
+        if CRON_ENVIRONMENT_ASSIGNMENT.match(word):
+            continue
+        if after_interpreter and word.startswith("-"):
+            continue
+        if INTERPRETER_PROGRAM_NAME.fullmatch(Path(word).name):
+            after_interpreter = True
+            continue
+        return word
+    return None
+
+
 def cron_lines_not_in_table(machine: dict, placed: list, lines: list) -> list:
-    """Indexes of the lines that run a program from the machine's clone and
-    are no cron job's line of the table; comments are not lines that run."""
+    """Indexes of the lines whose program, as program_a_cron_line_runs finds
+    it, is a file under the machine's clone, and that are no cron job's line
+    of the table. A job's lines are found by its program's file name, as an
+    install finds them, so a retired line that runs a file of the same name as
+    a cron job of the table counts as that job's line: --check reports it as
+    that job's DIFFERS, and --install replaces it with the table's line."""
     owned = set()
     for job, placement in placed:
         if placement["scheduler"] == "cron":
             owned.update(lines_of_job(lines, job))
     from_the_clone = f"{machine['clone']}/"
     return [index for index, line in enumerate(lines)
-            if index not in owned and not line.lstrip().startswith("#")
-            and from_the_clone in line]
+            if index not in owned
+            and (program_a_cron_line_runs(line) or "").startswith(from_the_clone)]
 
 
 def plists_not_in_table(machine: dict, placed: list, launch_agents_directory: Path) -> list:
     """(path, label) of each plist this program wrote whose label is no
-    launchd job's of the table; none on a machine with no launchd jobs."""
-    if "launchd_path" not in machine or not launch_agents_directory.is_dir():
+    launchd job's of the table. Looked for on every macOS machine, including
+    one whose table names no launchd job, because the job retired last leaves
+    the table with none. A plist written before this program wrote
+    PLIST_WRITTEN_BY_THIS_PROGRAM into its plists carries no such line, and is
+    not found: --install writes the line into the plists of the jobs still in
+    the table, and a job retired before that is not seen."""
+    if machine["platform"] != "darwin" or not launch_agents_directory.is_dir():
         return []
     labels = {placement["label"] for _, placement in placed if placement["scheduler"] == "launchd"}
     found = []
