@@ -13,7 +13,9 @@ Checks, per file type:
           a backtick citation with a line number, `file.md:120`, is checked
           as the file it names)
         - markdown link targets resolve (external schemes skipped; a target
-          that is only a `<placeholder>` skipped; a link target keeps any
+          that is only a `<placeholder>` skipped; a target written in angle
+          brackets, `[x](<docs/file.md>)`, checked as the path inside them
+          when that path ends in a known extension; a link target keeps any
           line-number suffix, because a link written `file.md:120` is a
           broken link)
         - YYYY-MM-DD tokens are real calendar dates
@@ -101,6 +103,26 @@ SKIP_MARKERS = ("://", "<", "{", "*", "$", "~", "…")
 # carries no path either way, so nothing is lost. The case below fails if "/"
 # is put back.
 PLACEHOLDER_SPAN = re.compile(r"<(?![!?])[^\s<>](?:[^<>]*[^\s<>])?>")
+
+
+def unwrap_angle_link_target(target: str) -> str:
+    """The path a link target written in angle brackets names, or the target
+    unchanged.
+
+    Markdown lets a link target be written inside angle brackets,
+    `[x](<docs/file.md>)`, and that target is the path inside them. The same
+    shape is also how a template writes an address the reader supplies,
+    `[<title>](<URL>)`, which PLACEHOLDER_SPAN matches and the link checks
+    skip. What is inside tells the two apart: a path ends in a file extension
+    this lint knows, before any "#anchor", and a placeholder does not. Without
+    this, every angle-bracket target was skipped as a placeholder, so a
+    missing file behind one went unreported.
+    """
+    inner = target[1:-1]
+    if (PLACEHOLDER_SPAN.fullmatch(target)
+            and inner.split("#", 1)[0].endswith(PATH_EXTENSIONS)):
+        return inner
+    return target
 
 # A line saying a file lives in git history references something deliberately
 # absent from the working tree; its paths are not drift.
@@ -384,7 +406,7 @@ def referenced_files(line: str, md_path: Path, repo_root: Path):
                       for word in match.group(1).strip().split()
                       if looks_like_repo_path(word))
     for match in MARKDOWN_LINK.finditer(line):
-        target = match.group(1)
+        target = unwrap_angle_link_target(match.group(1))
         if "://" in target or target.startswith(("mailto:", "#")):
             continue
         bare = target.split("#", 1)[0]
@@ -428,7 +450,7 @@ def check_code_numbers(line: str, md_path: Path, repo_root: Path):
 
 def check_markdown_links(line: str, md_path: Path, repo_root: Path):
     for match in MARKDOWN_LINK.finditer(line):
-        target = match.group(1)
+        target = unwrap_angle_link_target(match.group(1))
         if "://" in target or target.startswith(("mailto:", "#")):
             continue
         # A target that is nothing but a `<placeholder>` is a template: the
