@@ -234,6 +234,13 @@ def run_store_and_digest_cases(workspace: Path):
           mark.memory_stores_digest({"MEMORY.md": b"index\n"},
                                     {"MEMORY.md": b"index\n", "entry.md": b"one\n"}) != base)
 
+    check("ned-box's store as the Mac mounts it is the same store under /Volumes/nedhome, "
+          "the Mac's mount of ned-box's home",
+          getattr(mark, "NED_BOX_MEMORY_STORE_MAC_MOUNT_DIRECTORY", None)
+          == "/Volumes/nedhome" + mark.NED_BOX_MEMORY_STORE_DIRECTORY[len("/home/nedlern"):]
+          and mark.NED_BOX_MEMORY_STORE_DIRECTORY.startswith("/home/nedlern/"),
+          repr(getattr(mark, "NED_BOX_MEMORY_STORE_MAC_MOUNT_DIRECTORY", None)))
+
 
 with tempfile.TemporaryDirectory() as temporary_directory:
     run_mark_cases(Path(temporary_directory))
