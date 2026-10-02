@@ -56,3 +56,5 @@ The system is half moved into `nc-systems/handoff/`: the supervisor, the writer 
 **Pinned to what landed:** commit [f3d0abd](https://github.com/nedschorus/nedschorus/commit/f3d0abd896ace389e9e2af5ca01aa9a39122c022) on 2026-09-29 — the handoff-supervisor's "overview refresh due" line, and recovery that launches from `~/Projects/nedschorus`.
 
 **Pinned to what landed:** commit [08ddce3](https://github.com/nedschorus/nedschorus/commit/08ddce3c9504f19140101ea6265ece5d29e36236) on 2026-09-30 — the handoff-supervisor's "memory review due" line, and `nc-systems/handoff/daily-memory-review-mark.py`, which writes the marks that line reads.
+
+**Pinned to what landed:** commit [233de8b](https://github.com/nedschorus/nedschorus/commit/233de8b3e70357f347f601a8129932efff227533) on 2026-10-01 — the handoff-supervisor's "branch sync" line sends an open pull request that conflicts with main to the hand-merge that `scripts/branch-conflict-check.py` describes.

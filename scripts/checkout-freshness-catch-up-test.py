@@ -1245,6 +1245,188 @@ with tempfile.TemporaryDirectory() as exception_scratch:
           and never_blocks(old_git_result) and never_blocks(unresolvable_result),
           f"{old_git_result.returncode} {unresolvable_result.returncode}")
 
+    # --- a hand-merge the conflict check called for is not reported ----------
+    # CLAUDE.md, "How a change reaches main": a pushed branch that
+    # scripts/branch-conflict-check.py reports as `VERDICT: CONFLICT` is cleared
+    # by a hand-merge. That program asks git with rename detection ON, as
+    # `git merge` and the pre-push hook do; this hook once re-merged the two
+    # parents with rename detection OFF only. A file added under a directory the
+    # other side moved conflicts only WITH detection (CONFLICT (file location)).
+    # So the conflict check ordered the hand-merge, git's own merge stopped and
+    # was resolved by hand, and this hook then told the user that the branch did
+    # what was ruled out 2026-09-14. The first shape is the merge commit "Merge
+    # main to relocate #342's two drafts, and revert two commit-pinned paths"
+    # (6bd0aa5850ce) in miniature, the one such merge in main's history
+    # (merges_from_main's docstring); the second is the same conflict with the
+    # two sides swapped. Both not-reported checks FAIL against the script as it
+    # was when it re-merged without rename detection only, each printing the
+    # merge-from-main line — checked by running this file against that
+    # revision, not assumed.
+    conflict_check_path = SCRIPT_PATH.with_name("branch-conflict-check.py")
+
+    def conflict_check_exit_and_verdict_line(seat_path: Path):
+        """(exit status, first line) of the real conflict check, run as the
+        pre-push hook runs it: git's answer alone, GitHub never asked."""
+        ran = subprocess.run([sys.executable, str(conflict_check_path), "--head", "HEAD"],
+                             cwd=str(seat_path), capture_output=True, text=True, check=False)
+        return ran.returncode, (ran.stdout.splitlines() or [""])[0]
+
+    def move_drafts_directory(repository: Path):
+        git(["mv", "docs/drafts", "docs/queue"], repository)
+        git(["commit", "-q", "-m", "move docs/drafts to docs/queue"], repository)
+
+    def add_third_draft(repository: Path):
+        commit_file(repository, "docs/drafts/third-draft.md", "the third draft\n",
+                    "add a third draft under docs/drafts")
+
+    for shape_name, seat_change, main_change, case_name in (
+            ("seat-moved-the-directory", move_drafts_directory, add_third_draft,
+             "the hand-merge that relocates a file main added under a directory the "
+             "branch moved is NOT reported — the conflict check called for it"),
+            ("main-moved-the-directory", add_third_draft, move_drafts_directory,
+             "the hand-merge that relocates a file the branch added under a directory "
+             "main moved is NOT reported — the conflict check called for it")):
+        shape_origin, shape_seat = seat_on_main(shape_name)
+        # A directory both sides start with, holding two drafts.
+        commit_file(shape_origin, "docs/drafts/first-draft.md", "the first draft\n",
+                    "main adds a first draft")
+        commit_file(shape_origin, "docs/drafts/second-draft.md", "the second draft\n",
+                    "main adds a second draft")
+        git(["fetch", "-q", "origin"], shape_seat)
+        git(["merge", "-q", "--ff-only", "origin/main"], shape_seat)
+        seat_change(shape_seat)
+        # Pushed, because the rule is about a pushed branch: its head is frozen,
+        # so a commit on top is the only other move, and that cannot clear a
+        # conflict.
+        git(["push", "-q", "origin", "seat"], shape_seat)
+        main_change(shape_origin)
+        git(["fetch", "-q", "origin"], shape_seat)
+
+        verdict_exit, verdict_line = conflict_check_exit_and_verdict_line(shape_seat)
+        check(f"(fixture, {shape_name}) the conflict check reports VERDICT: CONFLICT "
+              "and exits 1, on git's answer alone",
+              verdict_exit == 1 and verdict_line.startswith("VERDICT: CONFLICT -- "),
+              f"exit {verdict_exit}: {verdict_line}")
+        check(f"(fixture, {shape_name}) merging main by hand stops on a conflict",
+              merge_main_into(shape_seat) != 0)
+        # The resolution git itself suggests: the added file goes where the
+        # directory went. The merge's message names the resolved file, as
+        # CLAUDE.md has a hand-merge do.
+        git(["add", "-A"], shape_seat)
+        git(["commit", "-q", "-m",
+             "Merge origin/main into seat by hand\n\n"
+             "Resolved: docs/queue/third-draft.md, moved from docs/drafts/ to "
+             "follow the directory."], shape_seat)
+        check(f"(fixture, {shape_name}) the resolution is one merge commit whose second "
+              "parent is on main, with the added file relocated",
+              git(["rev-list", "--merges", "--count", "origin/main..HEAD"],
+                  shape_seat).stdout.strip() == "1"
+              and git(["merge-base", "--is-ancestor", "HEAD^2", "origin/main"],
+                      shape_seat).returncode == 0
+              and git(["ls-files", "docs"], shape_seat).stdout.split()
+              == ["docs/queue/first-draft.md", "docs/queue/second-draft.md",
+                  "docs/queue/third-draft.md"],
+              git(["ls-files", "docs"], shape_seat).stdout)
+        check(f"(fixture, {shape_name}) the parents CONFLICT under git's default rename "
+              "detection, which is what the conflict check asked",
+              merge_tree_status(shape_seat, []) == 1)
+        check(f"(fixture, {shape_name}) and re-merge CLEAN with rename detection off, "
+              "which is all this hook once asked",
+              merge_tree_status(shape_seat, ["-X", "no-renames"]) == 0)
+        shape_result = run_catch_up(["--cwd", str(shape_seat)])
+        check(case_name, "merge commit(s) from main" not in display_text(shape_result),
+              display_text(shape_result))
+
+    # --- one re-merge errors: the other one's answer decides -----------------
+    # The hook re-merges twice, without rename detection and with it. An error
+    # from one is not an answer, so it is never a conflict: the merge is
+    # skipped only when the OTHER re-merge positively shows a conflict, and is
+    # reported when the other is clean. The two shim cases above make both
+    # re-merges error; these four make exactly one error, by a `git` shim that
+    # intercepts merge-tree only when rename detection is off, or only when it
+    # is on. A git with --write-tree but without -X for merge-tree is the real
+    # version of the first.
+    def merge_tree_shim_for_one_strategy(name: str, without_rename_detection: bool,
+                                         body: str) -> Path:
+        directory = exception_tmp / name
+        directory.mkdir()
+        script = directory / "git"
+        script.write_text(
+            "#!/bin/sh\n"
+            'if [ "$1" = "merge-tree" ]; then\n'
+            '  case " $* " in\n'
+            '    *" no-renames "*) without_rename_detection=yes ;;\n'
+            "    *) without_rename_detection=no ;;\n"
+            "  esac\n"
+            f'  if [ "$without_rename_detection" = "{"yes" if without_rename_detection else "no"}" ]; then\n'
+            f"{body}\n"
+            "  fi\n"
+            "fi\n"
+            f'exec "{real_git}" "$@"\n',
+            encoding="utf-8")
+        script.chmod(0o755)
+        return directory
+
+    no_renames_errors = merge_tree_shim_for_one_strategy(
+        "merge-tree-errors-without-rename-detection", True,
+        '    printf "shimmed: unknown option -X\\n" >&2\n'
+        "    exit 129")
+    default_errors = merge_tree_shim_for_one_strategy(
+        "merge-tree-errors-with-rename-detection", False,
+        '    printf "shimmed: fatal\\n" >&2\n'
+        "    exit 128")
+
+    def shimmed_merge_tree_statuses(shim_directory: Path, seat_path: Path):
+        """(exit without rename detection, exit with it) of re-merging the
+        seat's merge commit's parents through a shim, as the hook would."""
+        environment = dict(os.environ)
+        environment["PATH"] = f"{shim_directory}{os.pathsep}{environment['PATH']}"
+        return tuple(
+            subprocess.run(["git", "merge-tree", "--write-tree", *strategy_arguments,
+                            "HEAD^1", "HEAD^2"], cwd=str(seat_path), env=environment,
+                           capture_output=True, text=True, check=False).returncode
+            for strategy_arguments in (["-X", "no-renames"], []))
+
+    def clean_catch_up_seat(name: str):
+        """A seat that merged main with nothing to resolve: the banned catch-up."""
+        its_origin, its_seat = seat_on_main(name)
+        commit_file(its_seat, "seat-own.txt", "mine\n", "the seat's own work")
+        commit_file(its_origin, "scripts/unrelated.py", "main's\n", "main advances elsewhere")
+        merge_main_into(its_seat)
+        return its_seat
+
+    # A seat each, for the reason given above: a finding is reported once per stamp.
+    for (combination_name, shim_directory, build_seat, expected_statuses,
+         expected_reported, case_name) in (
+            ("no-renames-errors-default-conflicts", no_renames_errors,
+             lambda name: hand_resolved_seat(name)[0], (129, 1), False,
+             "an error without rename detection and a conflict with it: NOT reported, "
+             "the conflict is an answer"),
+            ("no-renames-conflicts-default-errors", default_errors,
+             lambda name: hand_resolved_seat(name)[0], (1, 128), False,
+             "a conflict without rename detection and an error with it: NOT reported, "
+             "the conflict is an answer"),
+            ("no-renames-errors-default-clean", no_renames_errors,
+             clean_catch_up_seat, (129, 0), True,
+             "an error without rename detection and a clean merge with it: still "
+             "reported, the error is not a conflict"),
+            ("no-renames-clean-default-errors", default_errors,
+             clean_catch_up_seat, (0, 128), True,
+             "a clean merge without rename detection and an error with it: still "
+             "reported, the error is not a conflict")):
+        combination_seat = build_seat(combination_name)
+        statuses = shimmed_merge_tree_statuses(shim_directory, combination_seat)
+        check(f"(fixture, {combination_name}) the shim makes exactly one re-merge error",
+              statuses == expected_statuses, str(statuses))
+        combination_result = run_catch_up(["--cwd", str(combination_seat)],
+                                          path_prefix=str(shim_directory))
+        reported = "carries 1 merge commit(s) from main" in display_text(combination_result)
+        check(case_name, reported is expected_reported,
+              combination_result.stdout + combination_result.stderr)
+        check(f"and the hook exits 0 and blocks no turn ({combination_name})",
+              combination_result.returncode == 0 and never_blocks(combination_result),
+              str(combination_result.returncode))
+
 
 print()
 if failures:

@@ -82,8 +82,8 @@ WHAT ONE RUN DOES, in order.
      head. See THE HEAD IS COMPARED THREE TIMES below. When it is not, that
      is a failed step: the record says what differed and quotes the runner's
      first line, the `SUMMARY:` line is not printed, and the exit code is 4.
-  6. Writes the record, replacing an earlier one of the same machine and
-     head.
+  6. Writes the record, adding it to the end of the head's test log on this
+     machine. No record an earlier run wrote there is removed or changed.
   7. Prints the runner's `SUMMARY:` line, when it printed one and step 5
      found nothing, then the record's citation, and exits.
 
@@ -115,15 +115,31 @@ is still tested, by scripts/run-all-test-suites-test.py in the checkout, which
 the runner runs like any other suite. The record names the runner that ran
 and the commit of the checkout that runner sits in.
 
-THE RECORD is one text file per machine and head in the log-store:
+THE TEST LOG is one text file per machine and head in the log-store:
 
   nedlern@ned-box:/home/nedlern/nedschorus-logs/pull-request-head-test-runs/<machine>/<full hash>.txt
 
 <full hash> is the head's. <machine> is `ned-box` or `mac`, as in the daily
 run's records, so that a run of one head on the Mac and a run of it on ned-box
-each keep their record.
-The record holds, in this order: this program's name, the machine and the
-UTC time the run started; the head, as `commit <hash> ("<subject>")`; the
+each keep their test log.
+
+EVERY RUN IS KEPT (user-ruled 2026-10-01, the same walk, item 3.2, option
+(b), his "Y" at 2026-10-01T17:48:28Z in Mac session c15a68db). A run writes
+one record, and the test log holds the record of every run of that head on
+that machine, each added whole at the end, in the order the records were
+written. Until that ruling a run's record replaced the one before it, and the
+two reviewers of this program showed what that loses: a first run of a head
+fails two suites, a second run of the same head selects no suite and exits 0,
+and the test log then shows no failure; a run that could not start replaced
+an earlier result the same way. The last record is the one written last. That
+is the newest run, except when the record of an earlier run could not be
+written at the time and was written later by the command the refusal names;
+each record's first line gives the moment its run started.
+
+A RECORD holds, in this order: this program's name, the machine, the UTC
+time the run started and the number of lines the record has, as
+`pull-request-head-test-run: <machine>, started <moment>, a record of <n>
+lines`; the head, as `commit <hash> ("<subject>")`; the
 commit the selection started from, the same way, and whether it was the
 merge base or given as --since; the runner's path and the commit of the
 checkout it sits in, which says nothing of whether the runner's own file
@@ -142,53 +158,84 @@ the runner found, and a failed step of this program makes the run no verdict
 whatever they say. The code in that line is the one this program exits with
 once the record is written. A run whose record could not be written exits 5
 instead, and its record, kept beside the logs and never in the log-store
-unless the remedy puts it there, carries the code the run would have exited
-with. A runner that printed no `SUMMARY:` line has its stderr in the record
-after its output. A run whose lock was never released records that and none
-of the runner's refusals.
+unless the command its refusal names puts it there, carries the code the run
+would have exited with. A runner that printed no `SUMMARY:` line has its
+stderr in the record after its output. A run whose lock was never released
+records that and none of the runner's refusals.
 
-On ned-box the record is written locally. On the Mac it is written over ssh,
-with the options the log-store's other writers pass. Either way the record is
-written under a name of the writer's own in the record's directory,
-.<full hash>.txt.<UTC start>-<pid>.<process number of the shell that runs the
-command>.partial, and renamed over the record, so that two writers at once
-leave one writer's whole record and never a part of each. The name carries
-the shell's process number because one run can have two writers at once: its
-own write still running on the far side after the client died, and the
-command printed for a failed write, or that command run twice. A name the two
-shared would be emptied by the second writer under the first, which would
-then rename a record whose first part is NUL bytes. Before the rename the
-command counts the bytes that arrived in that file and compares the count
-with the count of the bytes this program sent: an `ssh` client that dies
-while the far side is still reading gives the far side an end of input like
-any other, so the far side cannot tell a record cut short from a whole one
-except by its length. On a different count the command removes that file,
-says so on stderr, renames nothing and exits 1, and the record there stays as
-it was. It removes the file before it says so: once the client is gone stderr
-has no reader, and the shell is killed at its first write there. The command
-holds ASCII characters alone, apart from the paths it is given: this program
-hands it to a process as an argument, which Python encodes with the
-filesystem encoding, and a character that encoding lacks would stop every run
-before anything is sent. Before either, the record is written beside the logs
-as pull-request-head-test-run-record.txt, so a record that could not reach
-the log-store is still on the machine that made it, and the refusal names the
-one command that writes it once ned-box answers. That command first removes
-each file an earlier writer of its run left in the record's directory, when
-the shell whose process number the file's name carries no longer runs: a
-writer killed part way removes nothing, and no later writer opens its file.
-It then takes its whole record, counted the same way, and looks at the record
-it finds. The command may be running after another run of the same head has
-written its record, so it reads the `started` moment in the first line of the
-record it finds and writes nothing unless that moment is earlier than its own
-run's. `started` is to the second, and two runs of one head can start in the
-same second, so on the same moment too the record there stays. A record there
-whose first line gives no such moment is replaced. A record there of the same
-moment can also be the command's own run's already: the far side renamed the
-record and the client died before the exit status came back, so this program
-said the record was not written, or the command was run before, or twice at
-once. So when the moment there is not earlier the command compares the two
-records: when they hold the same bytes it says the record is written and exits
-0, and otherwise it says to leave the record there and exits 1.
+TO READ A TEST LOG RECORD BY RECORD, take the first line, which says how many
+lines its record has, a line being what a line feed ends; that line and the
+lines after it, that many in all, are one record, and its last line is the
+`exit code` line above; the line after that, if there is one, is the next
+record's first line. The count is what tells a record's first line from a
+line the runner printed: the runner's output is quoted whole, a failed
+suite's log included, and a reader that counts never reads a quoted line as a
+first line.
+
+HOW A RECORD IS ADDED. On ned-box the command that adds it runs locally. On
+the Mac it runs over ssh, with the options the log-store's other writers
+pass. Either way the record arrives on the command's stdin and the command
+is `python3 -c` with one program, PULL_REQUEST_HEAD_TEST_LOG_APPEND_PROGRAM
+below, which does this in order:
+
+  1. Takes the whole of stdin and counts its bytes against the count of the
+     bytes this program sent: an `ssh` client that dies while the far side is
+     still reading gives the far side an end of input like any other, so the
+     far side cannot tell a record cut short from a whole one except by its
+     length. On another count it writes nothing and exits 1.
+  2. Opens the test log for appending, making it and its directory when they
+     are not there, and takes an exclusive `flock` on it. Two runs of one
+     head can write at once, merge-lane-2's review subagent and the
+     independent reviewer on ned-box, and so can two writers of one run: the
+     run's own write still running on the far side after the client died,
+     and the command printed for a failed write, or that command run twice.
+     Each waits here for the one before it, which holds the lock for steps 3
+     and 4 and no longer. The kernel releases a flock when its holder ends,
+     however it ends, so a writer that was killed leaves no lock to clear,
+     and it leaves no file of its own either: the test log is the only file
+     a writer opens.
+  3. Looks for the record in the test log, byte for byte and starting at the
+     start of a line. Found, the run's record is there already: the far side
+     added it and the client died before the exit status came back, so this
+     program said the record was not written, or the command was run before.
+     It then says on stdout that the record is written and exits 0, and adds
+     nothing, so a record is in its test log once however often the command
+     is run.
+  4. Adds the record at the end in one write. A write that takes part of the
+     record, as on a full disk, is undone: the test log is cut back to the
+     length it had, the command says so and exits 1.
+
+ONE STATE STEP 4 DOES NOT UNDO. A writer that is killed after a write the
+test log took in part, and before the cut back, leaves that part at the end
+of the test log. The part is no whole record, so a reader that counts reads
+no record after it. The next writer adds its record straight after the part:
+when the part ends with no line feed, that record does not start a line,
+step 3 does not find it, and its command run again adds it a second time.
+Nothing here guards against that state, because no run has produced it. The
+reviewers of the pull request
+"pull-request-head-test-run: every run of a head is kept: a run adds its
+record to the end of the head's test log, under a lock, and a record is
+added once" (nedschorus/nedschorus pull request 883, 2026-10-01) reached it
+on ned-box with a stand-in writer that kills itself between the write and
+the cut back. A SIGKILL aimed at the write itself left part of a 25 kB
+record in 8 of 400 tries on tmpfs and in 0 of 400 on btrfs, the log-store's
+filesystem.
+
+The command removes nothing and renames nothing, and has one form: the one
+this program runs is the one its refusal prints for a failed write, with the
+count of the bytes of the record's local copy. The command is ASCII apart
+from the path it is given, and so is the program it holds: this program hands
+the command to a process as an argument, which Python encodes with the
+filesystem encoding, and a character that encoding lacks would stop every
+run before anything is sent. It is Python because the same `flock` is
+then taken on both machines and under any shell: macOS ships no `flock`
+binary, and scripts/agent-binary-update-under-lock.py takes its lock the same
+way for the same reason. The shell that is handed the command replaces
+itself with `python3`, so the write's timeout ends the process that holds the
+lock and no other. Before the command runs, the record is written beside the
+logs as pull-request-head-test-run-record.txt, so a record that could not
+reach the log-store is still on the machine that made it, and the refusal
+names the one command that adds it once ned-box answers.
 
 THE LOGS stay on the machine: <temporary directory>/
 nedschorus-pull-request-head-test-run/<head>-<UTC start>-<pid>/logs, which the
@@ -197,7 +244,7 @@ head can be started on one machine at once: merge-lane-2's review subagent
 and the independent reviewer work on the same head in parallel on ned-box.
 The runner's lock makes the second wait, and a directory the two shared would
 have the second replacing logs the first is still writing. So this program
-takes no lock of its own, and removes nothing.
+takes no lock of its own on the machine's test runs, and removes nothing.
 
 WHAT IS REUSED. scripts/daily-full-test-run-of-main.py is loaded by path, the
 way it loads its own two modules, for: the wait on the runner's lock
@@ -301,6 +348,36 @@ MAIN_AS_THE_CLONE_HAS_IT = "refs/remotes/origin/main"
 # its commit: the words of commit_and_state in scripts/run-all-test-suites.py.
 RUNNER_STATE_WHEN_TRACKED_FILES_MATCH = "tracked files match that commit"
 
+# See HOW A RECORD IS ADDED in the module docstring. Run as `python3 -c
+# <this> <the test log's path> <the count of the bytes sent>`, with the record
+# on stdin. It is one line, because the refusal for a failed write prints the
+# command on one line; it holds no single quote, so the shell's quoting of it
+# is one pair of them; and it is ASCII. An error nothing here expects, such as
+# a directory that cannot be made, is said on stderr in one line, which is the
+# line the refusal quotes. Its statements, in order: the count; the directory
+# and the test log; the lock; the record already there; the one write, undone
+# when it took part of the record.
+PULL_REQUEST_HEAD_TEST_LOG_APPEND_PROGRAM = "; ".join((
+    "import fcntl, os, sys",
+    f'sys.excepthook = lambda kind, error, trace: sys.stderr.write("{PROGRAM}: not written: '
+    f'%s: %s\\n" % (kind.__name__, error))',
+    "test_log, bytes_sent = sys.argv[1], int(sys.argv[2])",
+    "record = sys.stdin.buffer.read()",
+    f'len(record) == bytes_sent or sys.exit("{PROGRAM}: not written: %d bytes of the record '
+    f'were sent and another count arrived.\\nRun this command again." % bytes_sent)',
+    "os.makedirs(os.path.dirname(test_log), exist_ok=True)",
+    "log = os.open(test_log, os.O_RDWR | os.O_APPEND | os.O_CREAT, 0o666)",
+    "fcntl.flock(log, fcntl.LOCK_EX)",
+    "length = os.fstat(log).st_size",
+    "there = os.pread(log, length, 0)",
+    f'(there.startswith(record) or b"\\n" + record in there) and (print("{PROGRAM}: already '
+    f'written: the test log there holds the whole record of this run, byte for byte.\\nTell '
+    f'the user the record is written."), sys.exit())',
+    f'os.write(log, record) == bytes_sent or (os.ftruncate(log, length), sys.exit("{PROGRAM}: '
+    f'not written: the test log took part of the record and is cut back to what it held.'
+    f'\\nRun this command again."))',
+))
+
 
 def commit_named_for_the_record(checkout: Path, commit: str) -> str:
     """`commit <hash> ("<subject>")`, or the hash alone when git gives no
@@ -361,97 +438,19 @@ def why_the_run_is_no_verdict_on_the_head(checkout: Path, head: str, completed) 
     return reasons
 
 
-def write_record_command(log_store_root: str, machine: str, file_name: str, run_name: str,
-                         bytes_sent: int,
-                         unless_the_record_there_started_no_earlier_than=None) -> str:
-    """The shell command that writes the record from its stdin, replacing an
-    earlier one of the same machine and head. It has two parts. The first
-    takes what arrives on stdin into a file of the writer's own in the
-    record's directory, and counts its bytes: bytes_sent is how many the
-    sender sends, and any other count is a record cut short, which is
-    removed, with exit 1 and the record there left as it was. The file is
-    removed before the command says so on stderr: with no reader there, as
-    when the ssh client has died, the shell is killed at that write and runs
-    nothing after it. The second puts that whole file in place, today by
-    renaming it over the record, so two writers at once leave one writer's
-    whole record.
+def write_record_command(log_store_root: str, machine: str, file_name: str,
+                         bytes_sent: int) -> str:
+    """The shell command that adds the record on its stdin to the end of the
+    head's test log, unless the test log holds that record already: see HOW A
+    RECORD IS ADDED in the module docstring. bytes_sent is how many bytes the
+    sender sends. The shell replaces itself with python3, so the process the
+    write's timeout ends is the one that holds the lock.
 
-    The writer's own file is named by the run and by `$$`, the process number
-    of the shell that runs the command, and the command holds that name in a
-    shell variable it sets first. So two writers of one run at once, this
-    command and the form below, or that form twice, never open one file: see
-    THE RECORD in the module docstring.
-
-    Given a moment, as the record's first line spells its `started`, the
-    command is the form the remedy for a failed write is printed in, and has
-    three more parts. Before it takes its record, it removes each file of
-    its run in the record's directory whose name carries the process number
-    of a shell that no longer runs, which `kill -0` tells: what a writer
-    killed part way left. A file whose writer still runs stays. The other two
-    come between taking the record and putting it in place. It reads the
-    first line of the record it finds, and writes nothing unless the moment
-    there is earlier. The same moment is not earlier, so the record of
-    another run started in the same second stays. A record there whose first
-    line gives no moment, an empty file among them, reads as earlier and is
-    replaced. When the moment there is not earlier, the record there can be
-    the run's own, so the command then compares its bytes with the record
-    that arrived: on the same bytes it says on stdout that the record is
-    written and exits 0, and on others it says on stderr to leave the record
-    there, and exits 1. The moment is read first and the bytes compared
-    second, so that of two copies of the command run at once, the one that
-    finds the other's record in place says the record is written. Each of the
-    two removes the writer's own file before it says anything, as the first
-    part does.
-
-    What this function adds to the command is ASCII: see THE RECORD in the
-    module docstring."""
-    directory = (f"{log_store_root}/{PULL_REQUEST_HEAD_TEST_RUNS_KIND_DIRECTORY_NAME}/"
-                 f"{machine}")
-    record = shlex.quote(f"{directory}/{file_name}")
-    files_of_the_run = shlex.quote(f"{directory}/.{file_name}.{run_name}")
-    # `$$` is expanded by the shell that runs the command, never by this
-    # program: the name is the writer's own.
-    name_the_writers_own_file = f"partial={files_of_the_run}.$$.partial"
-    partial = '"$partial"'
-    cut_short = shlex.quote(
-        f"{PROGRAM}: not written: {bytes_sent} bytes of the record were sent and another "
-        f"count arrived.")
-    run_again = shlex.quote("Run this command again.")
-    # `wc -c` pads its count with spaces on macOS; -eq compares the numbers.
-    # The `rm` comes before the first `echo`: see the docstring.
-    take_the_whole_record = (
-        f"cat > {partial} && {{ [ \"$(wc -c < {partial})\" -eq {int(bytes_sent)} ] || "
-        f"{{ rm -f {partial}; echo {cut_short} >&2; echo {run_again} >&2; false; }}; }}")
-    put_it_in_place = f"mv -f {partial} {record}"
-    remove_what_a_killed_writer_left = ""
-    leave_the_record_there = ""
-    if unless_the_record_there_started_no_earlier_than is not None:
-        # `kill -0` signals nothing: it tells whether the process runs.
-        remove_what_a_killed_writer_left = (
-            f"{{ for left in {files_of_the_run}.*.partial; do "
-            f"writer=${{left%.partial}}; "
-            f"kill -0 \"${{writer##*.}}\" 2>/dev/null || rm -f \"$left\"; done; }} && ")
-        already_written = shlex.quote(
-            f"{PROGRAM}: already written: the record there is the whole record of this "
-            f"run, byte for byte.")
-        tell_the_user = shlex.quote("Tell the user the record is written.")
-        not_written = shlex.quote(
-            f"{PROGRAM}: not written: the record there is of a run that started in the "
-            f"same second or later.")
-        instruction = shlex.quote("Leave that record as it is.")
-        # Not `\>`: two runs started in one second spell `started` the same.
-        # The run's own record is one that started no earlier, so the
-        # comparison of the bytes comes inside that test, after it.
-        leave_the_record_there = (
-            f"if [ -e {record} ] && ! [ \"$(sed -n '1s/^.*, started //p' {record})\" \\< "
-            f"{shlex.quote(unless_the_record_there_started_no_earlier_than)} ]; then "
-            f"if cmp -s {partial} {record}; then rm -f {partial}; "
-            f"echo {already_written}; echo {tell_the_user}; exit 0; fi; "
-            f"rm -f {partial}; echo {not_written} >&2; echo {instruction} >&2; exit 1; "
-            f"fi && ")
-    return (f"{name_the_writers_own_file} && mkdir -p {shlex.quote(directory)} && "
-            f"{remove_what_a_killed_writer_left}{take_the_whole_record} && "
-            f"{leave_the_record_there}{put_it_in_place} || {{ rm -f {partial}; exit 1; }}")
+    What this function adds to the command is ASCII."""
+    test_log = (f"{log_store_root}/{PULL_REQUEST_HEAD_TEST_RUNS_KIND_DIRECTORY_NAME}/"
+                f"{machine}/{file_name}")
+    return (f"exec python3 -c {shlex.quote(PULL_REQUEST_HEAD_TEST_LOG_APPEND_PROGRAM)} "
+            f"{shlex.quote(test_log)} {int(bytes_sent)}")
 
 
 def bytes_of_text_sent_to_a_command(text: str) -> int:
@@ -595,7 +594,6 @@ def main(argv=None, now=None, wait=time.sleep, monotonic=time.monotonic) -> int:
 
     summary = daily.runner_summary_line(completed) if completed is not None else None
     record_lines = [
-        f"{PROGRAM}: {machine}, started {started}",
         f"head: {commit_named_for_the_record(checkout, head)}",
         f"selecting since: {since_for_the_record}",
         f"runner: {runner_named_for_the_record(runner)}"]
@@ -622,7 +620,12 @@ def main(argv=None, now=None, wait=time.sleep, monotonic=time.monotonic) -> int:
     exit_code_once_the_record_is_written = (
         daily.EXIT_STEP_OF_THIS_PROGRAM_FAILED if steps_failed else completed.returncode)
     record_lines.append(f"{PROGRAM} exit code: {exit_code_once_the_record_is_written}")
-    record = "\n".join(record_lines)
+    # The first line counts the record's lines, itself among them: see TO READ
+    # A TEST LOG RECORD BY RECORD in the module docstring. The count is taken
+    # from the text, so it is the number of lines a reader finds.
+    after_the_first_line = "\n".join(record_lines)
+    record = (f"{PROGRAM}: {machine}, started {started}, a record of "
+              f"{after_the_first_line.count(chr(10)) + 2} lines\n{after_the_first_line}")
 
     for what_failed, instruction in steps_failed:
         print(f"{PROGRAM}: {what_failed}\n{instruction}", file=sys.stderr)
@@ -641,20 +644,19 @@ def main(argv=None, now=None, wait=time.sleep, monotonic=time.monotonic) -> int:
               f"Fix what the error names, then run this again.", file=sys.stderr)
         return daily.EXIT_RECORD_NOT_WRITTEN
     write_command = write_record_command(
-        arguments.log_store_root, machine, file_name, run_name,
+        arguments.log_store_root, machine, file_name,
         bytes_of_text_sent_to_a_command(record + "\n"))
     try:
         mark.run_on_ned_box_or_here(
             write_command, ssh_target, daily.DAILY_FULL_TEST_RUN_RECORD_WRITE_TIMEOUT_SECONDS,
             stdin_text=record + "\n")
     except mark.DailyMemoryReviewReadOrWriteFailed as error:
-        # Printed to be run later, when another run of this head may have
-        # written its record: see write_record_command.
-        # Its stdin is the local copy, which is written as UTF-8.
+        # The same command, printed to be run later. Its stdin is the local
+        # copy, which is written as UTF-8. It adds nothing when the test log
+        # holds the record already: see write_record_command.
         remedy_command = write_record_command(
-            arguments.log_store_root, machine, file_name, run_name,
-            len((record + "\n").encode("utf-8")),
-            unless_the_record_there_started_no_earlier_than=started)
+            arguments.log_store_root, machine, file_name,
+            len((record + "\n").encode("utf-8")))
         by_hand = ([*mark.NED_BOX_SSH_COMMAND, ssh_target, remedy_command] if ssh_target
                    else ["/bin/sh", "-c", remedy_command])
         when = ("When ned-box answers ssh again" if ssh_target

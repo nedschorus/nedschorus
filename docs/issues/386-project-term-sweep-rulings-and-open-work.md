@@ -151,7 +151,7 @@ No change is needed to `.claude/skills/cold-read/prompts/terminology.md`: it alr
 ## Remaining
 
 1. **The cold-read skill's ask-the-user route** for a terminology finding whose fix is a rename beyond the document: four ask-the-user cases become five (text in "The cold-read skill change that makes this self-sustaining" above, written when those cases were step 7; they are step 8 of `.claude/skills/cold-read/SKILL.md` today, and the record it names is `triage.md`). Skill prose: cold read, walk, marker. At the MD-skills seat.
-2. **The 2026-09-16 rulings above.** The info-agent glossary entry and the rename in the files named are not yet made. When the rename lands, the ghi seat-brief's sentence "the class GHI [Dynamic agent-team model: sparring pairs, on-tap domain experts, spy-triaged oversight (design capture; research pending)](https://github.com/nedschorus/nedschorus/issues/26) calls domain-knowledge agents" in `docs/agents/ghi-instructions.md` stops being true and drops that clause. Not yet assigned to a seat.
+2. **The 2026-09-16 rulings above.** The info-agent glossary entry and the rename in the files named are not yet made. The ghi seat brief, one of the files the rename would have reached, was deleted on 2026-10-01, so no clause there is left to drop. Not yet assigned to a seat.
 
 ## Notes
 

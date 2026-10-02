@@ -50,6 +50,20 @@ The 2026-09-07 ruling covers the two live trees. It does not cover a recovered a
 
 **Also worth recording, because a claim in this issue reads the other way to a fresh reader:** the log-store's own durability is Timeshift on ned-box, verified 2026-09-08 — snapshots of `/home/nedlern` every ten minutes to `/mnt/backup` on a separate 3.6 TB disk, 3.3 TB free. The store is not on a network drive and has no network mount; it is the box's internal disk, snapshotted to a second disk in the same machine.
 
+
+## Measured 2026-10-01: the Mac's Time Machine backup, six questions answered
+
+The Mac-side survey, ruled 2026-08-14, asked six questions about the Mac's backup that no agent on ned-box could answer. Its questions are at `git show 773d118c:docs/issues/queue/mac-side-time-machine-survey.md`; the file is removed from the queue now that this section answers them. Measured on the Mac on 2026-10-01 (last at 19:59 PDT), read-only, with the backup drive connected; item 27 of the walk queue-and-drafts-drain-2026-09-22 ruled that the answers are recorded here (minutes: `nedlern@ned-box:/home/nedlern/nedschorus-logs/walk/queue-and-drafts-drain-2026-09-22-minutes.md`).
+
+1. **Destination.** `tmutil destinationinfo`: one destination, "My Passport for Mac", Kind Local, an external disk mounted at `/Volumes/My Passport for Mac`, 3.6 TB.
+2. **Last backup and spacing.** `tmutil latestbackup`: 2026-10-01 18:58 PDT. `tmutil listbackups`: about one backup an hour while the drive is attached; none from 2026-09-26 to 2026-09-29, and the drive was found unplugged during that gap.
+3. **Exclusions.** `tmutil isexcluded` reports `[Included]` for `~/Projects`, `~/agents`, `~/.claude` and `~/Documents`. So `~/Projects`, `~/agents` and `~/.claude` are backed up on both machines: on ned-box by Timeshift, whose include list ends with `+ /home/nedlern/**`.
+4. **Retention.** `tmutil listbackups` holds 79 backups, the oldest from 2025-11-13: hourly within the last day, one a day within the last month, and two to five a month before that, with none at all in June 2026. `df -h` on the drive: 1.2 TB of 3.6 TB used, 32%. Time Machine deletes its oldest backups only when the drive fills, so at this level nothing has yet been deleted for space.
+5. **Frequency.** `defaults read /Library/Preferences/com.apple.TimeMachine`: `AutoBackup` is 1 (automatic backups on) and `AutoBackupInterval` is 3600 (hourly), on macOS 26.6.2 (`sw_vers -productVersion`). The interval is a setting on this version, and it is at its hourly value.
+6. **Restoring one file.** The backups can be listed without privilege, but not read in place: the path `tmutil latestbackup` prints does not open for an ordinary user, and reading inside a backup takes a read-only `mount_apfs`, which needs root. `scripts/find-deleted-path-across-backups.py <path>` searches Time Machine as one of its surfaces and prints the exact recovery command, or UNAVAILABLE with the command that needs the password. The tight sudoers rule it is built around ships in the repository as `config/sudoers-mount-apfs-readonly-for-backup-recovery`; a file named `nedschorus-mount-apfs-readonly` is present in `/etc/sudoers.d/` on the Mac (its content was not read: that needs root).
+
+**Next action.** None from these answers. Scope item 3 below, testing one restore path, now has a command-line route to test: `scripts/find-deleted-path-across-backups.py` against a file known to be in a Mac backup.
+
 ---
 
 Boss-raised 2026-07-21: is a backup strategy for state that matters but is not in git worth a GHI? Ruling implicit in this issue's existence: yes, as future work — the machine currently has Time Machine coverage (boss-operated; no agent has been taught to use it), so nothing is unprotected today; what is missing is a ruled inventory and tested restore paths.
@@ -64,7 +78,7 @@ Legacy references (existence verified 2026-07-21, contents NOT vetted — the bo
 - `~/Projects/nedlern/docs/working/proposed/agent-state-outside-git-design.md`
 - `~/Projects/nedlern/docs/working/proposed/nedlern-machine-state-repo-and-sweep-2026-07-17.md`
 
-Ladder position: the transcript mirror is authorized (2026-09-07) and now built and scheduled (2026-09-10); nothing else under this issue is.
+Ladder position: the transcript mirror is authorized (2026-09-07) and now built and scheduled (2026-09-10); the Mac's Time Machine survey is answered (2026-10-01, above); nothing else under this issue is authorized.
 
 —
-Session: f5081355-c3fd-4271-956c-68ffeb99e4ae (new-vp); revised 2026-09-10 by md-skills-9e
+Session: f5081355-c3fd-4271-956c-68ffeb99e4ae (new-vp); revised 2026-09-10 by md-skills-9e; Time Machine answers added 2026-10-01 by cold-read-research

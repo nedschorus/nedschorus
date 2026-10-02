@@ -1,20 +1,20 @@
 ---
-issue: "[Memory: agents write freely, and each reincarnation drains the new entries in a walk with the user](https://github.com/nedschorus/nedschorus/issues/39)"
+issue: "[Memory: a daily review of both memory stores with the user](https://github.com/nedschorus/nedschorus/issues/39)"
 ---
 
-# Memory: agents write freely, and each reincarnation drains the new entries in a walk with the user
+# Memory: a daily review of both memory stores with the user
 
-The working document of issue [Memory: agents write freely, and each reincarnation drains the new entries in a walk with the user](https://github.com/nedschorus/nedschorus/issues/39), which the issue body links to. It replaces that issue's original plan, two hooks echoing every memory read and write to the console, with the policy the user ruled on 2026-09-17 in the five-seat-briefs walk; those minutes are in the log-store, `nedlern@ned-box:/home/nedlern/nedschorus-logs/walk/five-seat-briefs-cold-read-findings-2026-09-16-minutes.md`, where CLAUDE.md's log rule puts walk files. The memory-maintenance thread of issue [Runtime-behavior research bundle: instruction compression + deliberate scrub, instruction precedence, output styles, context clearing, names reviewer, memory maintenance](https://github.com/nedschorus/nedschorus/issues/29) asks the wider research question; this settles the operating rule. Agent-seat, and the `fleet` seat's ownership of hooks and session machinery, are defined in `docs/nedschorus-wiki/nedschorus-agent-seat-model.md`; a seat's brief is the file `docs/agents/<seat>-instructions.md`.
+The working document of issue [Memory: a daily review of both memory stores with the user](https://github.com/nedschorus/nedschorus/issues/39), which the issue body links to. It replaces that issue's original plan, two hooks echoing every memory read and write to the console, with the policy the user ruled on 2026-09-17 in the five-seat-briefs walk; those minutes are in the log-store, `nedlern@ned-box:/home/nedlern/nedschorus-logs/walk/five-seat-briefs-cold-read-findings-2026-09-16-minutes.md`, where CLAUDE.md's log rule puts walk files. The memory-maintenance thread of issue [Runtime-behavior research bundle: instruction compression + deliberate scrub, instruction precedence, output styles, context clearing, names reviewer, memory maintenance](https://github.com/nedschorus/nedschorus/issues/29) asks the wider research question; this settles the operating rule. Agent-seat, and the `fleet` seat's ownership of hooks and session machinery, are defined in `docs/nedschorus-wiki/nedschorus-agent-seat-model.md`; a seat's brief is the file `docs/agents/<seat>-instructions.md`.
 
 ## Outcome
 
 PR [From noon Pacific, a reincarnated Mac seat is asked for the day's review of both memory stores](https://github.com/nedschorus/nedschorus/pull/823) builds the daily review described in the next section. The line is `memory_review_due_lines` in `nc-systems/handoff/handoff-supervisor.py`, and the marks are written by `nc-systems/handoff/daily-memory-review-mark.py`.
 
-It builds only the daily review. The rest of the 2026-09-17 design below is not built: the read counts, the drain markers, the change to the instruction-file guard, and the change to CLAUDE.md's memory rule. Where the two differ, in the cadence and in the shape of the walk, the daily review is what runs.
+It builds only the daily review. The rest of the 2026-09-17 design below was dropped (user-ruled 2026-09-30): the read counts, the drain markers, the change to the instruction-file guard, and the change to CLAUDE.md's memory rule. Each memory write still needs the user's approval, and the daily review is what runs.
 
 ## What the user ruled, 2026-09-30: a daily review from noon
 
-On 2026-09-20 the build was deferred, in walk open-questions-concerns-and-recommendations-2026-09-19, item 4, until "the store passes a threshold the user names". That trigger is recorded in `docs/issues/39-memory-agents-write-freely-and-each-reincarnation-drains-former-issue-body.md`. On 2026-09-30, in walk eight-deferrals-with-no-trigger-2026-09-29, item 3, the user replaced it. His words:
+On 2026-09-20 the build was deferred, in walk open-questions-concerns-and-recommendations-2026-09-19, item 4, until "the store passes a threshold the user names". That trigger stood in this issue's former description, which `git show f4a717d3:docs/issues/39-memory-agents-write-freely-and-each-reincarnation-drains-former-issue-body.md` prints; the ruling and the measurement behind it are in that walk's minutes, `nedlern@ned-box:/home/nedlern/nedschorus-logs/walk/open-questions-concerns-and-recommendations-2026-09-19-minutes.md`. On 2026-09-30, in walk eight-deferrals-with-no-trigger-2026-09-29, item 3, the user replaced it. His words:
 
 > Memory can be useful in the short term, but unless it's drained regularly it becomes counter productive. I think reviewing memory daily is the right approach, assuming all agents share the same memory file.
 
@@ -33,6 +33,8 @@ The design:
 7. **A seat that dies mid-walk.** Its started mark keeps every other seat quiet until the next noon. That is deliberate.
 
 ## What the user ruled, 2026-09-17
+
+This section and every section after it record the 2026-09-17 design, kept as history. The parts the Outcome names were dropped and are not to be built, and its drain walk and test plan describe that design, not the daily review above, which is what runs.
 
 - **Agents may write memories without asking first.** His words, on memories: "I'm fine with agents writing memories, as long as they are maintained on reincarnation."
 - **Maintenance is a walk with him at each reincarnation.** "The way to do that is to walk them with me."

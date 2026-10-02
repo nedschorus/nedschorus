@@ -208,9 +208,8 @@ check("the refusal tells an agent that already rewrote locally how to recover",
 check("the recovery never discards uncommitted work (no reset --hard)",
       reason and "reset --hard" not in reason, reason)
 
-# User-ruled 2026-09-18: agents need clear, direct, specific instructions.
-# Nothing an agent reads carries a date, a citation or a ruling's name; those
-# belong in the module docstring, where maintainers read them.
+# Nothing an agent reads carries a date, a citation or a ruling's name: those
+# say only who decided and when, which does not help the agent act.
 for label, text in [
     ("the refusal", reason),
     ("the unresolvable refusal", decide("cd $WORKTREE && git push --force")[1]),

@@ -77,8 +77,9 @@ MAXIMUM_INJECTED_TAIL_WORDS below carries the measurement and the arithmetic.
 scripts/handoff-extract-conversation.py is deliberately left alone: its other
 callers write files, not context.
 
-The injected text is instruction and nothing else (user-ruled 2026-09-18). Its
-reasons are here, where maintainers read them.
+The injected text tells the agent what to do, with a reason only where the
+reason helps the agent act. The design reasons above are for maintainers and
+stay here.
 """
 
 import importlib.util
