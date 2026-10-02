@@ -4,12 +4,53 @@ issue: "[Build the explain skill: re-say a message for a reader who does not car
 
 # The explain skill — GHI-MD for issue [Build the explain skill: re-say a message for a reader who does not carry the session's context — the draft exists, and the hold's reason expired](https://github.com/nedschorus/nedschorus/issues/603)
 
-This document carries the substance the issue summarises: the current draft, the identifier
-table the user ruled into it, what its review already fixed, and what remains before it can
-be installed.
+The explain skill is installed on main, and the Outcome section below says what was built
+and where it lives. The sections after it are the design record: why the skill exists, why
+its 2026-08-22 hold expired, the 2026-09-15 draft, the identifier table the user ruled into
+it, and what its reviews fixed.
 
-It also carries why the skill exists and why its 2026-08-22 hold expired, in the two sections
-that follow.
+## Outcome
+
+**Installed.** PR [The explain skill is installed, with the script that gives a draft reply
+its fresh read](https://github.com/nedschorus/nedschorus/pull/894) merged on
+2026-10-02T04:12:37Z, merge commit `360282cfc5370f5ba77e42547782b833d34063b4`, after three
+review rounds. In round 1 both reviewers requested changes. Round 2 approved the fix-round.
+Round 3 approved one commit carrying two printed lines the user approved after their cold
+read, and a test case that round 2's reviewer asked for.
+
+What is on main:
+
+- `.claude/skills/explain/SKILL.md`, the skill; `/explain fast` skips the fresh read.
+- `nc-systems/skills/explain/explain-how-to-write-an-identifier-instructions.md`, the
+  identifier table ruled on 2026-09-16, as the skill's supporting file; check 7 of the skill
+  links to it.
+- `nc-systems/skills/explain/explain-reply-cold-read-fast-read.py`, the script that gives a
+  draft reply its fresh read before the reply is sent, with its test under
+  `nc-systems/skills/explain/tests/`.
+- The project glossary's line for /explain.
+
+The sequence the earlier Next action fixed was met:
+
+- The identifier table was folded in.
+- The cold-read-full-run of the shortened skill is
+  `nedlern@ned-box:/home/nedlern/nedschorus-logs/cold-read-records/SKILL-explain-skill-draft-2026-09-30-2/`.
+- The user read and approved the text in the approval-walk explain-skill-draft-2026-09-29-2,
+  minutes `nedlern@ned-box:/home/nedlern/nedschorus-logs/walk/explain-skill-draft-2026-09-29-2-minutes.md`.
+- The 2026-09-16 walk record is shipped to the log-store at
+  `nedlern@ned-box:/home/nedlern/nedschorus-logs/walk/2026-09-16-merge-lane-sixteen-open-items-small-first-minutes.md`.
+
+**Agents may use the skill.** No ruling keeps agents off /explain. The user corrected that
+reading on 2026-09-30: "I did not rule that agents cant use explain. They can't use it because
+it's not built yet". So the skill is installed as a normal skill, and the trial proposed for
+its first ten uses was dropped.
+
+**One change approved but not yet on main.** The grammar word in check 7 of the skill,
+"that" used as a noun, becomes "that" used as a pronoun. The same word changes in CLAUDE.md's
+pronoun bullet. The user approved both on 2026-10-01 in the approval-walk
+claude-md-sentences-the-pronoun-rule-catches-2026-10-01, minutes
+`nedlern@ned-box:/home/nedlern/nedschorus-logs/walk/claude-md-sentences-the-pronoun-rule-catches-2026-10-01-minutes.md`.
+The agent-seat merge-lane-backlog is building both into one pull request of their own, not yet
+opened on 2026-10-02, outside this issue.
 
 ## Problem
 
@@ -58,7 +99,11 @@ style". No such session can exist. GHI [Clarity
 registers](https://github.com/nedschorus/nedschorus/issues/138) was closed not planned on
 2026-09-21 on exactly this reasoning. So the hold has no live exit, and the job has no owner.
 
-## Where the material lives, and why that is a problem
+## Where the material lived, and why that was a problem
+
+Resolved: this document put the draft and the table into the repository, and the 2026-09-16
+walk record is shipped to the log-store (see Outcome). The section is kept as it was written
+on 2026-09-21.
 
 Three documents matter here and **none of them is in git**. All three are untracked files in
 one agent-seat's checkout on one machine:
@@ -83,9 +128,10 @@ cold-read-record by the fast read of 2026-09-15:
 That copy is **superseded** — the revision that answered the fast read came after it. Do not
 build from it.
 
-## The current draft, 2026-09-15 post-revision
+## The draft, 2026-09-15 post-revision
 
-Reproduced verbatim. This is the text to work from.
+Reproduced verbatim. The installed skill, `.claude/skills/explain/SKILL.md`, supersedes it;
+the draft is kept as the design record and is not the text to work from.
 
 ```markdown
 ---
@@ -175,11 +221,15 @@ One change the revising agent made on its own judgement and flagged for the user
 overrule: step 2's retreat from "a story about a file, run or branch" to "the smallest real
 case". It has not been overruled.
 
-## The identifier table — ruled 2026-09-16, and NOT yet folded in
+## The identifier table — ruled 2026-09-16, now folded in
 
-This is the one piece of the skill's content that is genuinely missing. The user ruled it
+The table is now the skill's supporting file,
+`nc-systems/skills/explain/explain-how-to-write-an-identifier-instructions.md`. The user ruled it
 row by row at walk items 13.1 through 13.3 on 2026-09-16; the draft above predates it by a
-day and does not contain it. Reproduced in full because its only copy is untracked.
+day and does not contain it. Reproduced in full because, on 2026-09-21, its only copy was
+untracked. Where this table and the installed file differ, the installed file is in force: the
+reviews of the skill changed several rows, for example a GitHub issue is written `GHI` with its
+title and link, not `issue #386`.
 
 His requirement, in his own words:
 
@@ -275,7 +325,7 @@ zero times in either corpus. The leaks are the project's own.
 Not ruled by that walk: `§174`, a section or line number whose link points at the whole
 document.
 
-## Where the rule lives — settled, with one part outstanding
+## Where the rule lives — settled
 
 The table's own closing question was whether a rule this proactive belongs somewhere that
 binds always, since `/explain` is reactive and fires only after the user is already
@@ -284,12 +334,12 @@ confused. Walk items 14 and 15 answered it, and both landed:
 - `/Users/el/.claude/CLAUDE.md` gained the one-bullet form as its third bullet (item 14).
 - The project's `CLAUDE.md` gained the same bullet without its ruling-date tail (item 15),
   through a pull request authored by the merge account and approved by an independent
-  reviewer. It is line 8 on main today, with "type word" since renamed to "link-type" and then,
-  on 2026-09-22, to "ID-type".
+  reviewer. It is in `CLAUDE.md` on main, with "type word" since renamed to "link-type" and
+  then, on 2026-09-22, to "ID-type".
 
 **The full table still goes into this skill either way** — that was stated in the walk item
-itself. The one-bullet form in the two instruction files is the always-on summary; the table
-is the reference.
+itself, and it is done: the table is the skill's supporting file (see Outcome). The one-bullet
+form in the two instruction files is the always-on summary; the table is the reference.
 
 ## The cold read is ruled, not open
 
@@ -318,14 +368,8 @@ active anywhere in the fleet:
 
 ## Next action
 
-1. Land this document, which puts the draft and the ruled table into git for the first time.
-2. Ship the 2026-09-16 walk record to the log-store with `scripts/walk-files-ship.py`, or
-   confirm it is expendable. It holds the only written record of items 12 to 15 and is
-   currently one `git clean -x` from gone.
-3. Fold the identifier table into the draft — task #244's step 3, never done.
-4. Run the cold-read-full-run, as ruled.
-5. The user reads it, then it is installed at `.claude/skills/explain/SKILL.md`. The skill is
-   operative prose, so it reaches main through his walk rather than a reviewer's judgement.
+None. The skill is installed (see Outcome); the issue closes once this record of the outcome is
+on main.
 
 ## Search receipts
 
