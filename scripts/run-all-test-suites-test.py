@@ -302,6 +302,34 @@ with tempfile.TemporaryDirectory() as scratch:
           holder.startswith("pid ") and f"checkout {repo.resolve()}, started 20" in holder,
           holder)
 
+# --- A *-test.sh suite runs under sh, and keeps no recording ------------------
+SHELL_SUITE_PREAMBLE = f'echo "$0" >> "${RAN_FILE_VARIABLE}"\n'
+with tempfile.TemporaryDirectory() as scratch:
+    root = pathlib.Path(scratch)
+    repo = make_repo(root, {"a-test.py": PASSES})
+    (repo / "passes-test.sh").write_text(SHELL_SUITE_PREAMBLE + "exit 0\n")
+    (repo / "nested/fails-test.sh").parent.mkdir()
+    (repo / "nested/fails-test.sh").write_text(SHELL_SUITE_PREAMBLE + "exit 1\n")
+    git(repo, "add", "--", "passes-test.sh", "nested/fails-test.sh")
+    git(repo, "commit", "-q", "-m", "shell suites")
+    result = run(root)
+    check("a tracked *-test.sh runs under sh, beside the *-test.py suites",
+          ran(root) == ["a-test.py", "nested/fails-test.sh", "passes-test.sh"], ran(root))
+    check("a *-test.sh suite is judged by its exit code, and its failure fails the run",
+          result.returncode == 1
+          and "FAIL nested/fails-test.sh exit 1" in result.stdout
+          and lines(result.stdout)[-1].startswith("SUMMARY: 2 passed, 1 failed, 3 total;"),
+          (result.returncode, result.stdout, result.stderr))
+    check("a *-test.sh suite keeps no recording of its inputs",
+          not list((root / "recordings").glob("*/*test.sh.json")),
+          sorted(str(path) for path in (root / "recordings").glob("*/*")))
+    (root / "ran.txt").unlink()
+    result = run(root, "--only-suites-whose-recorded-inputs-changed-since", "HEAD")
+    check("so every selective run selects a *-test.sh suite, even unchanged",
+          "SELECTED passes-test.sh: no recording of its inputs on this machine yet"
+          in result.stdout and "passes-test.sh" in ran(root),
+          (result.stdout, ran(root)))
+
 # --- An all-passing checkout exits 0 -----------------------------------------
 with tempfile.TemporaryDirectory() as scratch:
     root = pathlib.Path(scratch)

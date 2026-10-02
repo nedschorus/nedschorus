@@ -35,9 +35,10 @@ into scripts/, with its test, and fixes the ways it was measured to go
 wrong. The design-to-main machine's test-suite-executing state needs the
 same thing, so this outlives the merge lane.
 
-WHAT IT RUNS. Every file git lists matching `*-test.py`
-(`git ls-files -- '*-test.py'`, whose `*` crosses directory boundaries), so
-a suite in a directory nobody has told this program about is still run.
+WHAT IT RUNS. Every file git lists matching `*-test.py` or `*-test.sh`
+(`git ls-files -- '*-test.py' '*-test.sh'`, whose `*` crosses directory
+boundaries), so a suite in a directory nobody has told this program about is
+still run.
 Measured 2026-09-21: that list and the four globs found the same 65 files,
 and git's list leaves out the fixture design-to-main-test-fixture.py by
 itself. A file git does not track is not run: commit or add a new suite
@@ -50,7 +51,8 @@ HOW EACH SUITE IS JUDGED. By its exit code, and nothing else: 0 is PASS,
 anything else is FAIL, and a suite killed by a signal is FAIL naming the
 signal. The suites print at least four different success wordings, so no
 text can be trusted to mean pass or fail. Each suite runs as
-`<interpreter> -u <path>` from the checkout's top directory, stdin closed,
+`<interpreter> -u <path>`, or `sh <path>` for a `*-test.sh` suite, from the
+checkout's top directory, stdin closed,
 stdout and stderr together into its own log file. A suite that starts
 `python3` itself gets whatever PATH finds, not --python.
 
@@ -385,6 +387,12 @@ from pathlib import Path
 PROGRAM = "run-all-test-suites"
 
 TEST_SUITE_PATHSPEC = "*-test.py"
+# A shell suite runs under sh and keeps no recording of its inputs: the
+# recorder is a Python audit hook, which never sees what sh reads, and
+# without strace (the Mac has none) a recording of a shell suite would hold
+# nothing but the suite file, so an unchanged suite would wrongly go NOT
+# SELECTED. With no recording, every selective run selects it.
+SHELL_TEST_SUITE_PATHSPEC = "*-test.sh"
 SKIPPED_CASE_LINE = re.compile(r"^SKIP\s")
 
 # Stripped from the environment each suite is launched with; the docstring
@@ -768,7 +776,7 @@ def checkout_top_directory(given):
 
 
 def suites_listed_by_git(top):
-    listed = git(top, "ls-files", "-z", "--", TEST_SUITE_PATHSPEC)
+    listed = git(top, "ls-files", "-z", "--", TEST_SUITE_PATHSPEC, SHELL_TEST_SUITE_PATHSPEC)
     if listed.returncode != 0:
         raise CouldNotRun(
             f"{PROGRAM}: not run — git ls-files failed in {top}: "
@@ -932,12 +940,16 @@ def install_python_input_recorder(log_dir):
     return recorder_dir
 
 
+def is_shell_test_suite(suite):
+    return suite.endswith(SHELL_TEST_SUITE_PATHSPEC[1:])
+
+
 def run_one_suite(top, interpreter, suite, log_dir, recorder=None):
     """Runs one suite; with `recorder` (the recorder directory, the recording
     directory, and strace's path or None) its inputs are recorded as it runs."""
     log_file = log_path_for(log_dir, suite)
     environment = environment_without_git_redirecting_variables()
-    command = [interpreter, "-u", suite]
+    command = ["sh", suite] if is_shell_test_suite(suite) else [interpreter, "-u", suite]
     if recorder is not None:
         recorder_dir, recording_dir, strace = recorder
         hook_log, strace_dir = recording_paths_for(recording_dir, suite)
@@ -1460,6 +1472,8 @@ def main(argv=None):
                 report.line(f"{'SELECTED' if selected else 'NOT SELECTED'} {suite}: {why}")
 
         def run_and_record(suite):
+            if is_shell_test_suite(suite):
+                return run_one_suite(top, interpreter, suite, log_dir)
             result = run_one_suite(top, interpreter, suite, log_dir, recorder)
             try:
                 save_recording(recordings_dir, recording_of(
