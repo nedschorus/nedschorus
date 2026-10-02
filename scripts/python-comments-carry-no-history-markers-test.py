@@ -6,12 +6,23 @@ History belongs in the commit message and the pull request. Agents copy the
 comment style of the code around them, so one history comment breeds more.
 """
 import ast
+import importlib.util
 import io
+import os
 import re
 import subprocess
 import sys
+import tempfile
 import tokenize
 from pathlib import Path
+
+_git_environment_fixture_spec = importlib.util.spec_from_file_location(
+    "git_redirecting_environment_removal_test_fixture",
+    Path(__file__).resolve().with_name(
+        "git-redirecting-environment-removal-test-fixture.py"))
+_git_environment_fixture = importlib.util.module_from_spec(_git_environment_fixture_spec)
+_git_environment_fixture_spec.loader.exec_module(_git_environment_fixture)
+_git_environment_fixture.remove_git_redirecting_environment_variables_from_this_process()
 
 REPOSITORY = Path(__file__).resolve().parent.parent
 SUITE = "scripts/python-comments-carry-no-history-markers-test.py"
@@ -186,16 +197,44 @@ def markers_in(path, source):
     return found
 
 
-def failures_in_tree(repository):
+def scan_tree(repository):
+    """Return (failures, paths that do not parse, number of .py files listed)."""
     paths = subprocess.run(["git", "-C", str(repository), "ls-files", "*.py"],
                            capture_output=True, text=True, check=True).stdout.split()
-    failures = []
+    failures, unparseable = [], []
     for path in paths:
-        found = markers_in(path, (repository / path).read_text(encoding="utf-8"))
+        source = (repository / path).read_text(encoding="utf-8")
+        try:
+            ast.parse(source)
+            list(tokenize.generate_tokens(io.StringIO(source).readline))
+        except (SyntaxError, tokenize.TokenError):
+            unparseable.append(path)
+            continue
+        found = markers_in(path, source)
         ceiling = FILES_AWAITING_THE_COMMENT_TRIM.get(path, 0)
         if len(found) > ceiling:
             failures.append((path, found, ceiling))
-    return failures
+    return failures, unparseable, len(paths)
+
+
+def a_file_that_does_not_parse_is_reported():
+    with tempfile.TemporaryDirectory() as scratch:
+        scratch = Path(scratch)
+        subprocess.run(["git", "init", "-q", str(scratch)], check=True)
+        (scratch / "broken.py").write_text("def (:\n", encoding="utf-8")
+        subprocess.run(["git", "-C", str(scratch), "add", "broken.py"], check=True)
+        _, unparseable, listed = scan_tree(scratch)
+    return unparseable == ["broken.py"] and listed == 1
+
+
+def the_suite_run_with_git_dir_set_still_scans_this_repository():
+    # A child copy of this suite, started with GIT_DIR naming an empty repository.
+    with tempfile.TemporaryDirectory() as scratch:
+        subprocess.run(["git", "init", "-q", "--bare", scratch], check=True)
+        environment = dict(os.environ, GIT_DIR=scratch, HISTORY_MARKER_SUITE_CHILD="1")
+        child = subprocess.run([sys.executable, __file__], capture_output=True, text=True,
+                               env=environment)
+    return child.returncode == 0 and "PASS  git ls-files lists this repository's .py files" in child.stdout
 
 
 def report(failures):
@@ -229,7 +268,16 @@ def main():
         check("a line in ALLOWED_DATA_LINES is skipped",
               all(not markers_in(key.rsplit(":", 1)[0], "") for key in ALLOWED_DATA_LINES)),
     ]
-    failures = failures_in_tree(REPOSITORY)
+    if not os.environ.get("HISTORY_MARKER_SUITE_CHILD"):
+        results.append(check("run with GIT_DIR set, the suite still scans this repository",
+                             the_suite_run_with_git_dir_set_still_scans_this_repository()))
+        results.append(check("a tracked .py file that does not parse is reported, not skipped",
+                             a_file_that_does_not_parse_is_reported()))
+    failures, unparseable, listed = scan_tree(REPOSITORY)
+    results.append(check("git ls-files lists this repository's .py files", listed > 0))
+    results.append(check("every tracked .py file parses"
+                         + (f"; these do not: {', '.join(unparseable)}" if unparseable else ""),
+                         not unparseable))
     report(failures)
     results.append(check("no tracked .py file carries more history markers than it is allowed", not failures))
     if all(results):
