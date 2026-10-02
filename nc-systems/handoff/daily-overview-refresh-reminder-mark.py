@@ -161,7 +161,7 @@ def main(argv=None, now=None) -> int:
             marks_directory=DAILY_OVERVIEW_REFRESH_REMINDER_MARKS_DIRECTORY)
     except daily_memory_review_mark.DailyMemoryReviewReadOrWriteFailed as error:
         print(f"{PROGRAM}: the mark for {arguments.system} was not written ({error}) — "
-              f"tell the user what it said, and run this again once the cause is fixed.",
+              f"tell the user this message, and run this command again once the cause is fixed.",
               file=sys.stderr)
         return 1
     print(f"{PROGRAM}: the reminder for {arguments.system} is recorded for "

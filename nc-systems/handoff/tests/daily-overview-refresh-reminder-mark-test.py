@@ -160,8 +160,8 @@ def run_mark_cases(workspace: Path):
     check("when ned-box cannot be reached, stderr carries ssh's first line and what to do",
           stderr == "daily-overview-refresh-reminder-mark: the mark for handoff was not "
           "written (ssh nedlern@ned-box exited 255: ssh: connect to host ned-box port 22: "
-          "No route to host) — tell the user what it said, and run this again once the "
-          "cause is fixed.\n", stderr)
+          "No route to host) — tell the user this message, and run this command again once "
+          "the cause is fixed.\n", stderr)
 
     code, stdout, stderr, calls = fixture.run(["handoff"], ssh_body="exec sleep 30",
                                               ssh_timeout=1)
