@@ -562,7 +562,9 @@ def place_staged_files(host, staging_dir: pathlib.PurePosixPath,
         try:
             outcome = place_staged_files_and_read_them_back(request)
         except OSError as failed:
-            return subprocess.CompletedProcess([], 1, "", f"{failed}\n"), None
+            # stdout carries the OS's own reason, which the FAILED line prints.
+            return subprocess.CompletedProcess([], 1, failed.strerror or str(failed),
+                                               f"{failed}\n"), None
         return subprocess.CompletedProcess([], 0, "", ""), outcome
     completed = subprocess.run(
         SSH_COMMAND + [host, f"python3 -c {shlex.quote(place_staged_files_program())}"],
@@ -759,8 +761,12 @@ def ship_one(host, records_path: pathlib.PurePosixPath, record_dir: pathlib.Path
         return EXIT_FAILED
     placed, outcome = place_staged_files(host, staging_dir, store_dir, local)
     if outcome is None:
-        reason = ("ned-box unreachable" if placed.returncode == RSYNC_EXIT_CONNECTION_FAILED
-                  else f"ssh exit {placed.returncode}")
+        if host is None:
+            reason = placed.stdout
+        elif placed.returncode == RSYNC_EXIT_CONNECTION_FAILED:
+            reason = "ned-box unreachable"
+        else:
+            reason = f"ssh exit {placed.returncode}"
         print(f"FAILED: {name} — {reason} while placing the copied files; "
               f"a later run finishes it.")
         sys.stderr.write(placed.stderr)

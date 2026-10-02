@@ -1139,6 +1139,27 @@ with tempfile.TemporaryDirectory(prefix="cold-read-record-ship-test-") as scratc
           and sorted(p.name for p in failing_store.iterdir()) == [],
           f"exit {code}: {out}; left: {sorted(p.name for p in failing_store.iterdir())}")
 
+    # --- A local placing step that hits an OS error names that error ---------
+    denied_store = scratch / "denied-store" / "cold-read-records"
+    denied_record = make_record(scratch / "denied-records", "denied-2026-10-01",
+                                {"a.md": REPORT_A})
+    saved_place = racing.place_staged_files_and_read_them_back
+
+    def place_denied(request):
+        raise PermissionError(13, "Permission denied", request["store_dir"])
+
+    racing.place_staged_files_and_read_them_back = place_denied
+    try:
+        code, out, err = ship_in_process(denied_store, denied_record)
+    finally:
+        racing.place_staged_files_and_read_them_back = saved_place
+    check("a local placing step that hits an OS error prints that error as the "
+          "reason, not an ssh exit",
+          code == 1 and out.startswith("FAILED: denied-2026-10-01 — Permission denied "
+                                       "while placing the copied files; a later run finishes it.")
+          and "ssh" not in out,
+          f"exit {code}: {out}")
+
 print()
 if failures:
     print(f"{len(failures)} case(s) FAILED:")
