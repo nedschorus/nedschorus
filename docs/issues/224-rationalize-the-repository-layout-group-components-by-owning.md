@@ -18,7 +18,7 @@ The repository is laid out by file type, so no system is findable in one place. 
 
 Alphabetical order actively scatters these groups: the recovery system's two halves sort to opposite ends of the directory, eleven unrelated programs apart. Add its design (on an unmerged branch), its unbuilt hook half, and its sudoers file, and one system occupies five locations across two trees and a branch.
 
-**Why waiting costs more than acting.** Every additional citation into a path raises the price of moving it later, and this project has now measured that price three times: the `md-review` -> `cold-read` rename left an entire branch reading as obsolete; the incident behind `scripts/find-deleted-path-across-backups.py` was an agent following a citation to a moved file and building the wrong thing from its absence; and `docs/issues/queue/3-gatekeeper-checks-never-run-at-check-in.md` cites `scripts/git-gatekeeper.py:823-825`, where the attach point has since moved to 861-863.
+**Why waiting costs more than acting.** Every additional citation into a path raises the price of moving it later, and this project has now measured that price three times: the `md-review` -> `cold-read` rename left an entire branch reading as obsolete; the incident behind `scripts/find-deleted-path-across-backups.py` was an agent following a citation to a moved file and building the wrong thing from its absence; and the queue note on the gatekeeper's unrun checks cited `scripts/git-gatekeeper.py:823-825` (`git show 78ceb75b:docs/issues/queue/3-gatekeeper-checks-never-run-at-check-in.md`), where the attach point had since moved to 861-863.
 
 ## What is proposed
 
