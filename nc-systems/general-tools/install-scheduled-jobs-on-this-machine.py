@@ -126,8 +126,9 @@ only in its output file.
 
 Exit codes: 0 done, or for --check every job matches; 1 a step failed after
 this program began changing the machine, or for --check a job differs or is
-not in the table; 2 not run — a bad invocation, a table this program cannot use, a machine the table
-does not name, a job's program missing, or a crontab that could not be read.
+not in the table; 2 not run — a bad invocation, a table this program cannot
+use, a machine the table does not name, a job's program missing, or a crontab
+that could not be read.
 
 Every option of main() beyond argv is a seam for
 tests/install-scheduled-jobs-on-this-machine-test.py, which installs nothing
@@ -398,15 +399,45 @@ def launchd_job_is_loaded(placement: dict, run) -> bool:
                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0
 
 
+def installed_plist_says_what_the_table_says(plist_path: Path, machine: dict, job: dict,
+                                             placement: dict) -> bool:
+    try:
+        return plistlib.loads(plist_path.read_bytes()) \
+            == launch_agent_plist(machine, job, placement)
+    except (OSError, ValueError, plistlib.InvalidFileException):
+        return False
+
+
+def installed_plist_carries_the_written_by_line(plist_path: Path) -> bool:
+    try:
+        return PLIST_WRITTEN_BY_THIS_PROGRAM in plist_path.read_bytes()
+    except OSError:
+        return False
+
+
 def installed_plist_matches(plist_path: Path, machine: dict, job: dict, placement: dict) -> bool:
     """The plist says what the table says, and carries this program's line,
     so a plist written before the line existed is rewritten with it."""
-    try:
-        written = plist_path.read_bytes()
-        return PLIST_WRITTEN_BY_THIS_PROGRAM in written \
-            and plistlib.loads(written) == launch_agent_plist(machine, job, placement)
-    except (OSError, ValueError, plistlib.InvalidFileException):
-        return False
+    return installed_plist_says_what_the_table_says(plist_path, machine, job, placement) \
+        and installed_plist_carries_the_written_by_line(plist_path)
+
+
+def booted_out_or_reported(target: str, plist_path: Path, run) -> bool:
+    """Boots target out of launchd. False, with FAILED reported, when the
+    bootout failed and the job is still loaded: deleting its plist then would
+    leave a loaded job that no plist and no --check can find, so the plist is
+    kept. A bootout that fails because the job was not loaded is no failure."""
+    booted = run(["launchctl", "bootout", target],
+                 stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+    if booted.returncode == 0 or run(["launchctl", "print", target], stdout=subprocess.DEVNULL,
+                                     stderr=subprocess.DEVNULL).returncode != 0:
+        return True
+    sys.stderr.write((booted.stderr or b"").decode(errors="replace"))
+    print(f"FAILED: {target.rsplit('/', 1)[-1]} — launchctl bootout exited {booted.returncode}, "
+          f"so the job may still be loaded; {plist_path} was kept.", file=sys.stderr)
+    print("Read what launchctl printed above, and run this again after that cause is removed.",
+          file=sys.stderr)
+    return False
 
 
 def install_launchd_job(machine, job, placement, launch_agents_directory: Path, run) -> bool:
@@ -615,6 +646,7 @@ def install_mode(machine, placed, launch_agents_directory: Path, start_once: boo
 
 
 def remove_mode(machine, placed, launch_agents_directory: Path, run) -> int:
+    every_step_worked = True
     cron_jobs = [job for job, placement in placed if placement["scheduler"] == "cron"]
     if cron_jobs:
         installed_text = read_crontab(run)
@@ -633,14 +665,14 @@ def remove_mode(machine, placed, launch_agents_directory: Path, run) -> int:
         if placement["scheduler"] != "launchd":
             continue
         plist_path = launch_agents_directory / f"{placement['label']}.plist"
-        run(["launchctl", "bootout", launchd_target(placement)],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        if plist_path.is_file():
+        if not booted_out_or_reported(launchd_target(placement), plist_path, run):
+            every_step_worked = False
+        elif plist_path.is_file():
             plist_path.unlink()
             print(f"removed: {job['name']} — deleted {plist_path}.")
         else:
             print(f"absent: {job['name']} — there was no {plist_path}.")
-    return 0
+    return 0 if every_step_worked else 1
 
 
 def remove_not_in_table_mode(machine, placed, launch_agents_directory: Path, run) -> int:
@@ -657,14 +689,17 @@ def remove_not_in_table_mode(machine, placed, launch_agents_directory: Path, run
             print(f"removed: not in the table — the line removed from the crontab: "
                   f"{lines[index]}")
     plists = plists_not_in_table(machine, placed, launch_agents_directory)
+    every_step_worked = True
     for plist_path, label in plists:
-        run(["launchctl", "bootout", f"{launchd_domain()}/{label}"],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        if not booted_out_or_reported(f"{launchd_domain()}/{label}", plist_path, run):
+            every_step_worked = False
+            continue
         plist_path.unlink()
         print(f"removed: not in the table — deleted {plist_path}.")
     if not stray and not plists:
-        print("absent: this machine runs no job the table does not name.")
-    return 0
+        print("absent: no crontab line runs a program from the clone, and no plist this "
+              "installer wrote, outside the table.")
+    return 0 if every_step_worked else 1
 
 
 def check_mode(machine, placed, launch_agents_directory: Path, table_path: Path, run,
@@ -692,8 +727,13 @@ def check_mode(machine, placed, launch_agents_directory: Path, table_path: Path,
             plist_path = launch_agents_directory / f"{placement['label']}.plist"
             if not plist_path.is_file():
                 differs.append(f"{plist_path} is not there")
-            elif not installed_plist_matches(plist_path, machine, job, placement):
+            elif not installed_plist_says_what_the_table_says(plist_path, machine, job,
+                                                              placement):
                 differs.append(f"{plist_path} does not say what the table says")
+            elif not installed_plist_carries_the_written_by_line(plist_path):
+                differs.append(f"{plist_path} says what the table says but lacks the line "
+                               f"marking it as written by this installer; --install adds that "
+                               f"line")
             if not launchd_job_is_loaded(placement, run):
                 differs.append(f"launchd has no job {placement['label']} loaded in "
                                f"{launchd_domain()}")
@@ -722,10 +762,15 @@ def check_mode(machine, placed, launch_agents_directory: Path, table_path: Path,
         print(f"When this machine is right and the table is wrong, change {table_path} "
               f"through a pull request.")
     if not_in_table:
-        print(f"When a job NOT IN THE TABLE is retired, run "
-              f"`{Path(__file__).resolve()} --remove-not-in-table` on this machine.")
-        print(f"When a job NOT IN THE TABLE should still run, put its entry back in "
-              f"{table_path} through a pull request.")
+        print(f"When every job NOT IN THE TABLE is retired, run "
+              f"`{Path(__file__).resolve()} --remove-not-in-table` on this machine; it "
+              f"removes all of them.")
+        print(f"When only some are retired, first add the others' entries to {table_path} "
+              f"through a pull request.")
+        print(f"When a job NOT IN THE TABLE should still run, add its entry to {table_path} "
+              f"through a pull request.")
+        print(f"To learn whether a job was retired on purpose, run "
+              f"`git log -p -- {table_path}` in the clone.")
     return 1 if differences or not_in_table else 0
 
 
@@ -745,7 +790,8 @@ def main(argv=None, platform: str = sys.platform, home: Path = None, table_path:
     mode.add_argument("--print", action="store_true",
                       help="print what the table gives this machine; change nothing")
     mode.add_argument("--check", action="store_true",
-                      help="compare this machine with the table; exit 1 on a difference")
+                      help="compare this machine with the table; exit 1 on a difference or a "
+                           "job not in the table")
     mode.add_argument("--install", action="store_true",
                       help="make this machine's scheduled jobs what the table says")
     mode.add_argument("--remove", action="store_true",
@@ -762,8 +808,8 @@ def main(argv=None, platform: str = sys.platform, home: Path = None, table_path:
     if arguments.remove and not arguments.job:
         parser.error("--remove needs --job: name each job to take off this machine")
     if arguments.remove_not_in_table and arguments.job:
-        parser.error("--remove-not-in-table takes no --job: it removes what no job of the "
-                     "table names")
+        parser.error("--remove-not-in-table takes no --job: it removes every job --check "
+                     "reports NOT IN THE TABLE")
 
     home = Path(home) if home is not None else Path.home()
     table_path = Path(table_path) if table_path is not None \
