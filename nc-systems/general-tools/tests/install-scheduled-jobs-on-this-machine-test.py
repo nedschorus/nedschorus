@@ -86,7 +86,7 @@ class MachineStub:
         self.loaded = set(loaded)
         self.commands, self.crontab_writes = [], []
         self.crontab_list_failure = None      # (exit code, stderr bytes)
-        self.exit_codes = {}                  # "crontab-write" | "lint" | "bootstrap" | "kickstart" | "bootout"
+        self.exit_codes = {}                  # "crontab-write" | "lint" | "bootstrap" | "kickstart" | "bootout" | "print"
         self.bootstrap_loads_the_job = True
 
     def __call__(self, command, stdout=None, stderr=None):
@@ -109,7 +109,7 @@ class MachineStub:
         elif command[:2] == ["plutil", "-lint"]:
             code = self.exit_codes.get("lint", 0)
         elif command[:2] == ["launchctl", "print"]:
-            code = 0 if command[2] in self.loaded else 113
+            code = self.exit_codes.get("print", 0 if command[2] in self.loaded else 113)
         elif command[:2] == ["launchctl", "bootout"]:
             if "bootout" in self.exit_codes and command[2] in self.loaded:
                 code, err = self.exit_codes["bootout"], b"Boot-out failed: 5: Input/output error\n"
@@ -601,9 +601,10 @@ with tempfile.TemporaryDirectory() as temporary:
     plist_path.write_bytes(plistlib.dumps(dict(expected_plist, StartCalendarInterval={
         "Hour": 4, "Minute": 0}), sort_keys=False))
     exit_code, printed, errors = run_main(["--check"] + DAILY, MAC, stub)
-    check("--check names a plist that does not say what the table says",
-          exit_code == 1 and f"{plist_path} does not say what the table says" in printed,
-          (exit_code, printed))
+    check("--check names a plist that does not say what the table says, and not as a missing "
+          "marker line",
+          exit_code == 1 and f"{plist_path} does not say what the table says" in printed
+          and "lacks the line" not in printed, (exit_code, printed))
     exit_code, printed, errors = run_main(["--install"] + DAILY, MAC, stub)
     check("and --install writes the table's plist over it and loads it again",
           exit_code == 0 and plistlib.loads(plist_path.read_bytes()) == expected_plist
@@ -705,6 +706,14 @@ with tempfile.TemporaryDirectory() as temporary:
               f"{plist_path} was kept.\n"
               "Read what launchctl printed above, and run this again after that cause is "
               "removed.\n"), (exit_code, printed, errors))
+    stub = MachineStub()
+    stub.exit_codes["bootout"], stub.exit_codes["print"] = 5, 1
+    stub.loaded.add(TARGET)
+    exit_code, printed, errors = run_main(["--remove"] + DAILY, MAC, stub)
+    check("a bootout that fails while launchctl print fails with other than service-not-found "
+          "is FAILED, exit 1, and the plist is kept",
+          exit_code == 1 and plist_path.is_file() and "removed:" not in printed
+          and f"FAILED: {LABEL} — launchctl bootout exited 5" in errors, (exit_code, errors))
     plist_path.unlink()
 
     # --- jobs the table does not name ----------------------------------------
@@ -774,41 +783,47 @@ with tempfile.TemporaryDirectory() as temporary:
           and "removed:" not in printed, (exit_code, printed, errors))
 
     # Which crontab lines run a program from the clone: the program is the
-    # command's first word, or an interpreter's first argument that is not an
-    # option; a line that sets a variable, or only reads or writes a file in
-    # the clone, runs no program from it.
+    # command's first word, or an interpreter's first argument; a line that
+    # sets a variable, or only reads or writes a file in the clone, runs no
+    # program from it, and a line that gives an interpreter or env an option
+    # is not read at all, since the option may take the next word.
     path_setting = f"PATH={box_clone}/scripts:/usr/bin:/bin"
     reads_the_clone = f"0 4 * * * /usr/bin/tar czf /tmp/backup.tgz {box_clone}/data"
     writes_into_the_clone = f"0 6 * * * /usr/local/bin/other-tool >> {box_clone}/other.log 2>&1"
     runs_directly = f"0 8 * * * {box_clone}/scripts/a-retired-shell-job.sh --quiet"
-    runs_through_env = (f"0 7 * * * /usr/bin/env -i HOME=/tmp /usr/bin/python3 -u "
+    runs_through_env = (f"0 7 * * * /usr/bin/env HOME=/tmp /usr/bin/python3 "
                         f"{box_clone}/scripts/a-retired-env-job.py")
+    env_option_takes_a_clone_directory = f"0 9 * * * /usr/bin/env -C {box_clone}/data /usr/bin/true"
+    interpreter_option = f"0 10 * * * /usr/bin/python3 -u {box_clone}/scripts/a-retired-job.py"
     runs_at_reboot = f"@reboot /usr/bin/python3 {box_clone}/scripts/a-retired-reboot-job.py"
     check("the program a crontab line runs is its first word, or an interpreter's first "
-          "argument that is not an option, and nothing for a line that sets a variable",
+          "argument, and nothing for a line that sets a variable or gives an interpreter or "
+          "env an option",
           [installer.program_a_cron_line_runs(line) for line in (
               path_setting, reads_the_clone, writes_into_the_clone, runs_directly,
-              runs_through_env, runs_at_reboot, BOX_MIRROR, "", "# 0 4 * * * x")]
+              runs_through_env, runs_at_reboot, BOX_MIRROR, "", "# 0 4 * * * x",
+              env_option_takes_a_clone_directory, interpreter_option)]
           == [None, "/usr/bin/tar", "/usr/local/bin/other-tool",
               f"{box_clone}/scripts/a-retired-shell-job.sh",
               f"{box_clone}/scripts/a-retired-env-job.py",
               f"{box_clone}/scripts/a-retired-reboot-job.py",
-              f"{box_clone}/scripts/transcript-mirror-to-log-store.py", None, None])
-    not_runs = [path_setting, reads_the_clone, writes_into_the_clone]
+              f"{box_clone}/scripts/transcript-mirror-to-log-store.py", None, None, None, None])
+    not_runs = [path_setting, reads_the_clone, writes_into_the_clone,
+                env_option_takes_a_clone_directory, interpreter_option]
     runs = [runs_directly, runs_through_env, runs_at_reboot]
     stub = MachineStub(crontab="".join(
         line + "\n" for line in [path_setting, BOX_MIRROR, BOX_DAILY, BOX_ALONE]
         + not_runs + runs).encode())
     exit_code, printed, errors = run_main(["--check"], NED_BOX, stub)
     check("--check reports a line that runs a program from the clone, directly, through env "
-          "or at reboot, and not a line that sets PATH to the clone or only reads or writes "
-          "a file there",
+          "or at reboot, and not a line that sets PATH to the clone, only reads or writes "
+          "a file there, or gives env or an interpreter an option such as `env -C <clone>/data`",
           exit_code == 1 and printed.count("NOT IN THE TABLE: ") == 3
           and all(f"NOT IN THE TABLE: the crontab line {line} — " in printed for line in runs)
           and not any(line in printed for line in not_runs), (exit_code, printed))
     exit_code, printed, errors = run_main(["--remove-not-in-table"], NED_BOX, stub)
-    check("--remove-not-in-table takes out only those three, and keeps the PATH line and the "
-          "lines that only touch a file in the clone",
+    check("--remove-not-in-table takes out only those three, and keeps the PATH line, the "
+          "lines that only touch a file in the clone and the lines with an option",
           exit_code == 0 and stub.crontab_writes == ["".join(
               line + "\n" for line in [path_setting, BOX_MIRROR, BOX_DAILY, BOX_ALONE]
               + not_runs).encode()], (exit_code, printed, stub.crontab_writes))
@@ -888,8 +903,15 @@ with tempfile.TemporaryDirectory() as temporary:
                f"may still be loaded; {retired_plist_path} was kept.\n"
                "Read what launchctl printed above, and run this again after that cause is "
                "removed.\n") in errors, (exit_code, printed, errors))
+    stub.exit_codes["print"] = 1
+    exit_code, printed, errors = run_main(["--remove-not-in-table"], MAC, stub)
+    check("in --remove-not-in-table, a bootout that fails while launchctl print fails with "
+          "other than service-not-found is FAILED, exit 1, and the plist is kept",
+          exit_code == 1 and retired_plist_path.is_file() and "removed:" not in printed
+          and "FAILED: com.nedschorus.a-retired-job — launchctl bootout exited 5" in errors,
+          (exit_code, printed, errors))
     retired_plist_path.unlink()
-    del stub.exit_codes["bootout"]
+    del stub.exit_codes["bootout"], stub.exit_codes["print"]
 
     # A table whose last launchd job was retired names none, and the plist the
     # retired job left is still found; on a machine that is not macOS, nothing
@@ -909,10 +931,30 @@ with tempfile.TemporaryDirectory() as temporary:
           "launchd_path; a plist written before the marker line is not",
           installer.plists_not_in_table(mac_without_launchd_path, [], marked_dir)
           == [(last_retired_path, "com.nedschorus.the-last-launchd-job")])
+    no_launchd_table = json.loads(FIXTURE_TABLE_PATH.read_text(encoding="utf-8"))
+    for job in no_launchd_table["jobs"]:
+        job["on"] = {machine_name: placement for machine_name, placement
+                     in job["on"].items() if placement["scheduler"] != "launchd"}
+    no_launchd_table["jobs"] = [job for job in no_launchd_table["jobs"] if job["on"]]
+    no_launchd_table["machines"]["mac"].pop("launchd_path", None)
+    no_launchd_table_path = root / "table-with-no-launchd-job.json"
+    no_launchd_table_path.write_text(json.dumps(no_launchd_table), encoding="utf-8")
+    saved_launch_agents, LAUNCH_AGENTS = LAUNCH_AGENTS, marked_dir
+    stub = MachineStub(crontab=f"{mac_mirror_line}\n".encode(),
+                       loaded=[f"{DOMAIN}/com.nedschorus.the-last-launchd-job"])
+    exit_code, printed, errors = run_main(["--remove-not-in-table"], MAC, stub,
+                                          no_launchd_table_path)
+    LAUNCH_AGENTS = saved_launch_agents
+    check("--remove-not-in-table under a table that names no launchd job removes the plist "
+          "the last launchd job left, and not one written before the marker line",
+          exit_code == 0 and not last_retired_path.exists() and unmarked_path.is_file()
+          and f"removed: not in the table — deleted {last_retired_path}.\n" in printed,
+          (exit_code, printed, errors))
     check("and nothing is looked for on a machine that is not macOS",
           installer.plists_not_in_table(table["machines"]["ned-box"], [], marked_dir) == [])
 
     plist_path.write_bytes(plistlib.dumps(expected_plist, sort_keys=False))
+    stub.loaded.add(TARGET)
     exit_code, printed, errors = run_main(["--check"] + DAILY, MAC, stub)
     check("a plist that says what the table says but lacks this program's line is a "
           "difference of its own, so --install rewrites it with the line",
@@ -920,7 +962,10 @@ with tempfile.TemporaryDirectory() as temporary:
               f"DIFFERS: daily-full-test-run-of-main — {plist_path} says what the table says "
               "but lacks the line marking it as written by this installer; --install adds "
               "that line.\n") in printed
-          and "does not say what the table says" not in printed, (exit_code, printed))
+          and "does not say what the table says" not in printed
+          and "--install` on this machine." in printed
+          and "When this machine is right and the table is wrong" not in printed,
+          (exit_code, printed))
     exit_code, printed, errors = run_main(["--install"] + DAILY, MAC, stub)
     check("and --install writes the line into it",
           exit_code == 0 and installer.PLIST_WRITTEN_BY_THIS_PROGRAM in plist_path.read_bytes()

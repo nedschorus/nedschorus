@@ -422,15 +422,22 @@ def installed_plist_matches(plist_path: Path, machine: dict, job: dict, placemen
         and installed_plist_carries_the_written_by_line(plist_path)
 
 
+# What `launchctl print` exits with when the domain has no such service.
+LAUNCHCTL_PRINT_SERVICE_NOT_FOUND = 113
+
+
 def booted_out_or_reported(target: str, plist_path: Path, run) -> bool:
     """Boots target out of launchd. False, with FAILED reported, when the
-    bootout failed and the job is still loaded: deleting its plist then would
-    leave a loaded job that no plist and no --check can find, so the plist is
-    kept. A bootout that fails because the job was not loaded is no failure."""
+    bootout failed and `launchctl print` does not say the job is gone:
+    deleting its plist then could leave a loaded job that no plist and no
+    --check can find, so the plist is kept. A bootout that fails because the
+    job was not loaded is no failure; only print's service-not-found exit
+    says so, and any other exit of print leaves the job's state unknown."""
     booted = run(["launchctl", "bootout", target],
                  stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
     if booted.returncode == 0 or run(["launchctl", "print", target], stdout=subprocess.DEVNULL,
-                                     stderr=subprocess.DEVNULL).returncode != 0:
+                                     stderr=subprocess.DEVNULL).returncode \
+            == LAUNCHCTL_PRINT_SERVICE_NOT_FOUND:
         return True
     sys.stderr.write((booted.stderr or b"").decode(errors="replace"))
     print(f"FAILED: {target.rsplit('/', 1)[-1]} — launchctl bootout exited {booted.returncode}, "
@@ -507,8 +514,13 @@ INTERPRETER_PROGRAM_NAME = re.compile(r"python[0-9.]*|bash|sh|dash|zsh|perl|ruby
 def program_a_cron_line_runs(line: str):
     """The program a crontab line runs, as the line spells it: the command's
     first word, or, when that word is an interpreter or `env`, the first word
-    after it that is not an option or a NAME=value. None for a blank line, a
-    comment, or a line that sets a variable. A line whose command only reads
+    after it that is not a NAME=value. None for a blank line, a comment, or a
+    line that sets a variable; and None when an interpreter or `env` is given
+    an option, because an option may take the next word as its argument
+    (`env -C <dir>`), and telling which do would mean knowing every option of
+    every interpreter: such a line is not reported, which only misses a job,
+    where a wrong reading could remove a line that runs no program from the
+    clone. A line whose command only reads
     or writes a file, such as a redirect into the clone, runs no program of
     that file, so the file is not what this returns."""
     if not line.strip() or line.lstrip().startswith("#") or CRON_ENVIRONMENT_ASSIGNMENT.match(line):
@@ -526,7 +538,7 @@ def program_a_cron_line_runs(line: str):
         if CRON_ENVIRONMENT_ASSIGNMENT.match(word):
             continue
         if after_interpreter and word.startswith("-"):
-            continue
+            return None
         if INTERPRETER_PROGRAM_NAME.fullmatch(Path(word).name):
             after_interpreter = True
             continue
@@ -705,9 +717,11 @@ def remove_not_in_table_mode(machine, placed, launch_agents_directory: Path, run
 def check_mode(machine, placed, launch_agents_directory: Path, table_path: Path, run,
                every_job_selected: bool) -> int:
     differences = 0
+    differences_only_the_marker = 0
     installed_text = None
     for job, placement in placed:
         name, differs = job["name"], []
+        marker_differences_of_this_job = 0
         if not Path(program_path_of(machine, job)).is_file():
             differs.append(f"its program {program_path_of(machine, job)} is not a file on "
                            f"this machine")
@@ -734,11 +748,14 @@ def check_mode(machine, placed, launch_agents_directory: Path, table_path: Path,
                 differs.append(f"{plist_path} says what the table says but lacks the line "
                                f"marking it as written by this installer; --install adds that "
                                f"line")
+                marker_differences_of_this_job = 1
             if not launchd_job_is_loaded(placement, run):
                 differs.append(f"launchd has no job {placement['label']} loaded in "
                                f"{launchd_domain()}")
         if differs:
             differences += 1
+            if len(differs) == marker_differences_of_this_job:
+                differences_only_the_marker += 1
             for difference in differs:
                 print(f"DIFFERS: {name} — {difference}.")
         else:
@@ -759,8 +776,10 @@ def check_mode(machine, placed, launch_agents_directory: Path, table_path: Path,
     if differences:
         print(f"When the table says what this machine should run, run "
               f"`{Path(__file__).resolve()} --install` on this machine.")
-        print(f"When this machine is right and the table is wrong, change {table_path} "
-              f"through a pull request.")
+        # A missing marker line is never the table's fault.
+        if differences > differences_only_the_marker:
+            print(f"When this machine is right and the table is wrong, change {table_path} "
+                  f"through a pull request.")
     if not_in_table:
         print(f"When every job NOT IN THE TABLE is retired, run "
               f"`{Path(__file__).resolve()} --remove-not-in-table` on this machine; it "
