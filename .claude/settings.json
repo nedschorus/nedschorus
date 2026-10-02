@@ -33,6 +33,11 @@
           {
             "type": "command",
             "command": "python3 \"$CLAUDE_PROJECT_DIR\"/scripts/checkout-freshness-catch-up.py"
+          },
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/scripts/agent-seat-due-task-raise-hook.py",
+            "timeout": 30
           }
         ]
       }
