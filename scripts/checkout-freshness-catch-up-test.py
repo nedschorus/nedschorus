@@ -418,6 +418,66 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     check("pushing a never-pushed branch re-tells once, with the advice flipped",
           "Do not rebase or amend it" in agent_text(pushed_now), agent_text(pushed_now))
 
+    # PUSHED HISTORY UNDER A NEW NAME (GHI "The checkout-freshness hook treats a
+    # new branch cut at a pull request's pushed head as never pushed, and
+    # rebases it"). A fix-round agent cannot check out a pull request's own
+    # branch in a second worktree, so it cuts a NEW branch at the pushed head.
+    # No origin/<that name> exists, yet its commits are the pull request's,
+    # under review: the hook must not rebase it. Before the fix, every case
+    # below failed: the hook called the branch "unpushed" and rebased it.
+    fix_round = tmp / "fix-round-worktree"
+    pushed_head = git(["rev-parse", "origin/flip"], reference).stdout.strip()
+    git(["worktree", "add", "-q", "-b", "flip-fix-round", str(fix_round), "origin/flip"],
+        reference)
+    configure_identity(fix_round)
+    commit_file(origin, "scripts/advance-five-a.py", "5a\n", "advance five a")
+    result = run_catch_up(["--cwd", str(fix_round)])
+    check("a new branch cut at a pushed head, behind main, is NOT rebased",
+          git(["rev-parse", "HEAD"], fix_round).stdout.strip() == pushed_head
+          and not (fix_round / "scripts/advance-five-a.py").exists(), result.stdout)
+    check("its head state is pushed-history, not unpushed",
+          stamp_of(fix_round).get("head_state") == "pushed-history", str(stamp_of(fix_round)))
+    check("the agent is told where the commits already are",
+          "no branch of this name on origin, but its commits are already on origin/flip"
+          in agent_text(result), agent_text(result))
+    check("and told why it is not rebased and what to do, byte for byte",
+          "This branch's commits are already on GitHub under another branch name, so the "
+          "branch is treated as pushed and is not rebased: a pushed head may be under "
+          "review, and a rebase would rewrite it. Do not rebase or amend those commits. A "
+          "fix is a new commit on top. If it conflicts with main, clear the conflict with "
+          "the hand-merge that scripts/branch-conflict-check.py describes."
+          in agent_text(result), agent_text(result))
+    check("the pushed-history note never tells the agent to rebase",
+          "git rebase origin/main" not in agent_text(result), agent_text(result))
+    check("the pushed-history note ends by saying it is not for the user, byte for byte",
+          agent_text(result).endswith("\n" + NOT_FOR_THE_USER_LINE), agent_text(result))
+    check("the user hears nothing about a pushed-history branch", display_text(result) == "",
+          display_text(result))
+
+    # The agent's fix commit on top is on no remote branch; the commits beneath
+    # it are. The check has to look past HEAD, and the branch stays unrebased.
+    commit_file(fix_round, "fix.txt", "the fix\n", "the fix-round's commit on top")
+    fix_head = git(["rev-parse", "HEAD"], fix_round).stdout.strip()
+    commit_file(origin, "scripts/advance-five-b.py", "5b\n", "advance five b")
+    result = run_catch_up(["--cwd", str(fix_round)])
+    check("with an unpushed fix commit on top, the branch is still NOT rebased",
+          git(["rev-parse", "HEAD"], fix_round).stdout.strip() == fix_head
+          and git(["rev-parse", "HEAD~1"], fix_round).stdout.strip() == pushed_head
+          and not (fix_round / "scripts/advance-five-b.py").exists(), result.stdout)
+    check("and its head state is still pushed-history",
+          stamp_of(fix_round).get("head_state") == "pushed-history", str(stamp_of(fix_round)))
+
+    # The other side of the line: a genuinely new branch, whose own commit is on
+    # no remote branch, is still rebased exactly as before.
+    fresh = tmp / "fresh-topic-worktree"
+    git(["worktree", "add", "-q", "-b", "fresh-topic", str(fresh), "origin/main~1"], reference)
+    configure_identity(fresh)
+    commit_file(fresh, "fresh.txt", "new work\n", "a new topic's own commit, never pushed")
+    result = run_catch_up(["--cwd", str(fresh)])
+    check("a new branch whose own commit is on no remote branch is still rebased",
+          (fresh / "scripts/advance-five-b.py").exists() and (fresh / "fresh.txt").exists()
+          and "was rebased" in agent_text(result), agent_text(result) + result.stderr)
+
     # Detached HEAD: its own advice, never moved.
     detached = tmp / "detached-worktree"
     git(["worktree", "add", "-q", "--detach", str(detached), "main~1"], reference)
@@ -662,6 +722,50 @@ with tempfile.TemporaryDirectory() as no_git_scratch:
     check("head_state with git unlaunchable is 'unknown', never 'unpushed'",
           unknown_state == "unknown" and "git did not run" in unknown_text,
           (unknown_state, unknown_text))
+
+# ---------------------------------------------------------------------------
+# The pushed-history check failing is "unknown", never "unpushed"
+# ---------------------------------------------------------------------------
+# git answers that no origin/<branch> exists, and then the check of whether
+# the branch's commits are on a remote branch fails. That failure must not
+# fall through to "unpushed", the one answer that authorises a rebase. A shim
+# fails every rev-list and hands every other call to the real git.
+with tempfile.TemporaryDirectory() as shim_scratch:
+    shim_scratch = Path(shim_scratch)
+    shim_origin = shim_scratch / "origin"
+    shim_origin.mkdir()
+    git(["init", "-q", "-b", "main"], shim_origin)
+    configure_identity(shim_origin)
+    commit_file(shim_origin, "a.txt", "a\n", "first")
+    shim_clone = shim_scratch / "clone"
+    git(["clone", "-q", str(shim_origin), str(shim_clone)], shim_scratch)
+    configure_identity(shim_clone)
+    git(["checkout", "-q", "-b", "a-branch-never-pushed"], shim_clone)
+    commit_file(shim_clone, "b.txt", "b\n", "own work")
+    rev_list_failing = shim_scratch / "rev-list-failing-git"
+    rev_list_failing.mkdir()
+    (rev_list_failing / "git").write_text(
+        "#!/bin/sh\n"
+        'if [ "$1" = "rev-list" ]; then\n'
+        '  printf "shimmed: rev-list fails\\n" >&2\n'
+        "  exit 3\n"
+        "fi\n"
+        f'exec "{shutil.which("git")}" "$@"\n', encoding="utf-8")
+    (rev_list_failing / "git").chmod(0o755)
+    saved_path = os.environ["PATH"]
+    try:
+        os.environ["PATH"] = f"{rev_list_failing}{os.pathsep}{saved_path}"
+        failed_check_state, failed_check_text = catch_up_module.head_state(
+            shim_clone, "a-branch-never-pushed")
+    finally:
+        os.environ["PATH"] = saved_path
+    check("a pushed-history check that fails is 'unknown', never 'unpushed'",
+          failed_check_state == "unknown"
+          and "could not check whether this branch's commits are on a remote branch"
+          in failed_check_text, (failed_check_state, failed_check_text))
+    check("(control) with git answering, the same branch is 'unpushed'",
+          catch_up_module.head_state(shim_clone, "a-branch-never-pushed")[0] == "unpushed",
+          str(catch_up_module.head_state(shim_clone, "a-branch-never-pushed")))
 
 # ---------------------------------------------------------------------------
 # --reference-pull must still speak. Its only other case exercises the
