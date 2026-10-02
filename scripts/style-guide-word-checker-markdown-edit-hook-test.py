@@ -25,6 +25,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 # Before anything runs git: a run started with GIT_DIR set, or with another
@@ -399,6 +400,22 @@ with tempfile.TemporaryDirectory() as temporary_directory:
           "breaks into spaces",
           edit_hits(result, "docs/committed.md") == [("head", "Read it see (head) first")],
           result.stdout + result.stderr)
+
+    result = run_hook(edit_payload(checkout, committed_file, "x",
+                                   "Notes kept at the end of the\nwalk minutes."))
+    check("a hit that starts a line after five words keeps the line break as a space",
+          edit_hits(result, "docs/committed.md")
+          == [("walk", "the end of the walk minutes.")],
+          result.stdout + result.stderr)
+
+    started = time.monotonic()
+    result = run_hook(edit_payload(checkout, committed_file, "x",
+                                   "x" * 60000 + " one two three four five six head"))
+    elapsed = time.monotonic() - started
+    check("a 60 KB run with no whitespace before a hit is reported within 5 seconds",
+          elapsed < 5 and edit_hits(result, "docs/committed.md")
+          == [("head", "three four five six head")],
+          "%.1f s; %s" % (elapsed, result.stdout + result.stderr))
     reset_committed_file()
 
     # --- Write ------------------------------------------------------------

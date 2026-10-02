@@ -95,7 +95,13 @@ REPORT_OPENING_LINES = (
 HIT_LINE = '{path}:{line}: "{form}": {names}'
 EDIT_HIT_LINE = '{path}, in "{context}": "{form}": {names}'
 CONTEXT_WORDS_EACH_SIDE = 4
-WORDS_BEFORE_PATTERN = re.compile(r"(?:\S+\s+){0,%d}\S*$" % CONTEXT_WORDS_EACH_SIDE)
+# \Z, not $: $ also matches before a final newline, which joins the word
+# before a line break to a hit that starts the next line.
+WORDS_BEFORE_PATTERN = re.compile(r"(?:\S+\s+){0,%d}\S*\Z" % CONTEXT_WORDS_EACH_SIDE)
+# The search before a hit reads only this many characters back: the search
+# tries every start position, and over a long run with no whitespace its time
+# grows with the square of the text it reads.
+CONTEXT_CHARACTERS_BEFORE_HIT = 1000
 WORDS_AFTER_PATTERN = re.compile(r"\S*(?:\s+\S+){0,%d}" % CONTEXT_WORDS_EACH_SIDE)
 MORE_HITS_LINE = ("{count} more hit(s) in the same text are not listed: reread the rest "
                   "of the text just written for the same words.")
@@ -178,7 +184,8 @@ def words_around(text: str, offset: int, form: str) -> str:
     """The form with up to CONTEXT_WORDS_EACH_SIDE words either side of it,
     from the text the Edit added, its whitespace collapsed to single spaces.
     A word joined to the form, as "(head" is, comes along with it."""
-    before = WORDS_BEFORE_PATTERN.search(text[:offset]).group(0)
+    before = WORDS_BEFORE_PATTERN.search(
+        text[max(0, offset - CONTEXT_CHARACTERS_BEFORE_HIT):offset]).group(0)
     after = WORDS_AFTER_PATTERN.match(text[offset + len(form):]).group(0)
     return " ".join((before + form + after).split())
 
