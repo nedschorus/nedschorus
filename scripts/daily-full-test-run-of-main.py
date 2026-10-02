@@ -162,6 +162,7 @@ failed, which the record names, the runner was killed by a signal, or it
 exited 0 or 1 without a `SUMMARY:` line, which is no verdict; 5 the record
 was not written; 6 another daily run holds this program's lock.
 """
+# A machine-local failure may have no code diff, so selected suites cannot cover it.
 
 import argparse
 import fcntl
@@ -184,15 +185,12 @@ REPOSITORY_ROOT = Path(__file__).resolve().parent.parent
 
 
 def module_loaded_by_path(module_name: str, path: Path):
-    """A module whose file name has hyphens, loaded the way
-    nc-systems/handoff/handoff-supervisor.py loads the mark program."""
     spec = importlib.util.spec_from_file_location(module_name, path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
 
 
-# See WHAT IS REUSED in the module docstring.
 daily_memory_review_mark = module_loaded_by_path(
     "daily_memory_review_mark",
     REPOSITORY_ROOT / "nc-systems" / "handoff" / "daily-memory-review-mark.py")
@@ -200,35 +198,26 @@ run_all_test_suites = module_loaded_by_path(
     "run_all_test_suites", Path(__file__).resolve().with_name("run-all-test-suites.py"))
 
 DAILY_FULL_TEST_RUN_DEFAULT_LOG_STORE_ROOT = "/home/nedlern/nedschorus-logs"
-# The log-store's kind, and the two machines' names under it: the spellings
-# the log-store's transcripts/ directory uses.
+# Use the log-store’s established machine and kind names.
 DAILY_FULL_TEST_RUNS_KIND_DIRECTORY_NAME = "daily-full-test-runs"
 DAILY_FULL_TEST_RUN_MACHINE_NAME_ON_NED_BOX = "ned-box"
 DAILY_FULL_TEST_RUN_MACHINE_NAME_ELSEWHERE = "mac"
 
-# This program's one directory under the temporary directory, and what it holds.
 DAILY_FULL_TEST_RUN_DIRECTORY_NAME = "nedschorus-daily-full-test-run-of-main"
 DAILY_FULL_TEST_RUN_WORKTREE_DIRECTORY_NAME = "worktree-of-main"
 DAILY_FULL_TEST_RUN_LOGS_DIRECTORY_NAME = "logs"
-# The record's local copy is this prefix, the record's date and `.txt`.
 DAILY_FULL_TEST_RUN_RECORD_LOCAL_COPY_FILE_NAME_PREFIX = "daily-full-test-run-record-"
 DAILY_FULL_TEST_RUN_LOCK_FILE_NAME = "daily-full-test-run-of-main.lock"
 
 DAILY_FULL_TEST_RUN_RUNNER_PATH_IN_WORKTREE = Path("scripts") / "run-all-test-suites.py"
-# The runner's docstring: -j 4 is the measured choice.
 DAILY_FULL_TEST_RUN_SUITES_AT_ONCE = "4"
 
-# How long the runner's exit 3 is waited out, and how long between attempts.
-# Read from the module inside main rather than bound as default arguments, so
-# a case can lower the bound.
+# Read wait bounds at runtime so tests can shorten them.
 DAILY_FULL_TEST_RUN_LOCK_WAIT_SECONDS = 2
 DAILY_FULL_TEST_RUN_LOCK_WAIT_BOUND_SECONDS = 3600
 
-# How long the record's write gets before it is given up on.
 DAILY_FULL_TEST_RUN_RECORD_WRITE_TIMEOUT_SECONDS = 30
 
-# The runner prints a skipped case as `<suite>: SKIP <the suite's own words>`,
-# under its `skipped cases:` heading.
 RUNNER_SKIPPED_CASE_LINE = re.compile(r"^(?:\S+: )?SKIP\s")
 RUNNER_FAILED_SUITE_LINE_PREFIX = "FAIL "
 RUNNER_SUMMARY_LINE_PREFIX = "SUMMARY:"
@@ -251,10 +240,7 @@ def first_stderr_line_or_no_detail(text: str) -> str:
 
 
 def first_fatal_or_error_stderr_line_or_no_detail(text: str) -> str:
-    """git's error line when git wrote a progress line before it: the first
-    line opening `fatal:` or `error:`, else the first line. `git worktree add`
-    writes `Preparing worktree (detached HEAD ...)` first and its error
-    second."""
+    # git worktree add can print progress before its error; prefer the actual error line.
     for line in text.strip().splitlines():
         if line.startswith(("fatal:", "error:")):
             return line
@@ -262,7 +248,7 @@ def first_fatal_or_error_stderr_line_or_no_detail(text: str) -> str:
 
 
 def take_daily_full_test_run_lock(lock_file: Path):
-    """The open, locked handle, or None when another daily run holds it."""
+    """Return the locked handle, or None if another run holds the lock."""
     handle = open(lock_file, "a")
     try:
         fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -273,14 +259,10 @@ def take_daily_full_test_run_lock(lock_file: Path):
 
 
 def give_owner_read_write_and_search_on_every_directory_under(directory: Path):
-    """Give the owner read, write and search permission on the directory and
-    on every directory in it, so that what they hold can be removed: removing
-    a name needs write and search permission on the directory holding it. A
-    symbolic link is neither changed nor followed, so nothing outside the
-    directory is changed, and a directory whose mode cannot be changed is left
-    for the removal to fail on."""
+    # Deleting entries requires write and search permission on the containing directory.
+    # Do not follow symlinks: permission repairs must stay inside the worktree.
     def give(path) -> bool:
-        """Whether the path is a directory and not a symbolic link to one."""
+        """Grant owner permissions to a non-symlink directory and return whether it is one."""
         try:
             mode = os.lstat(path).st_mode
             if not stat.S_ISDIR(mode):
@@ -292,20 +274,15 @@ def give_owner_read_write_and_search_on_every_directory_under(directory: Path):
 
     if not give(directory):
         return
-    # Top-down, so each directory is made readable before it is listed.
+    # Make each directory readable before listing its children.
     for parent, directory_names, _ in os.walk(directory):
         for name in directory_names:
             give(os.path.join(parent, name))
 
 
 def remove_worktree_of_main(clone: Path, worktree: Path):
-    """Remove the worktree and its registration in the clone; None when it is
-    gone, or why it is not. `git worktree remove --force` also clears a
-    registration whose directory is already gone, and a directory git does
-    not know is removed as a plain directory. When git could not delete the
-    directory, git has dropped the registration all the same, and what is
-    left is removed here, with permission restored on its directories
-    first."""
+    """Return None after removal, or the reason removal failed."""
+    # git can drop registration even when directory deletion fails; remove the remainder directly.
     removed = git(clone, "worktree", "remove", "--force", str(worktree))
     if worktree.exists():
         give_owner_read_write_and_search_on_every_directory_under(worktree)
@@ -317,15 +294,8 @@ def remove_worktree_of_main(clone: Path, worktree: Path):
 
 def run_test_suite_runner_waiting_for_the_machine_lock(command, worktree: Path, wait,
                                                        monotonic, lock_handle=None):
-    """(the runner's finished run, seconds spent waiting for the lock, whether
-    the lock was never released). The runner is run again every
-    DAILY_FULL_TEST_RUN_LOCK_WAIT_SECONDS while it exits 3, until an attempt
-    starts DAILY_FULL_TEST_RUN_LOCK_WAIT_BOUND_SECONDS or more after the first.
-    The runner is given the lock of the caller that passes one, as this
-    program passes its own; see ONE DAILY RUN AT A TIME PER MACHINE in the
-    module docstring. scripts/pull-request-head-test-run.py, which uses this
-    function and takes no lock, passes none, and its runner is started with
-    no descriptor above 2."""
+    """Return (process result, seconds waiting, whether the lock timed out)."""
+    # Pass the daily lock to the runner so killing the parent cannot expose a worktree still being tested.
     descriptors_the_runner_holds = () if lock_handle is None else (lock_handle.fileno(),)
     waiting_started = monotonic()
     while True:
@@ -344,15 +314,13 @@ def run_test_suite_runner_waiting_for_the_machine_lock(command, worktree: Path, 
 
 
 def runner_summary_line(completed):
-    """The runner's last line opening `SUMMARY:`, or None when it printed none."""
+    """Return the last SUMMARY: line, or None."""
     summary = [line for line in completed.stdout.splitlines()
                if line.startswith(RUNNER_SUMMARY_LINE_PREFIX)]
     return summary[-1] if summary else None
 
 
 def runner_output_lines_for_the_record(completed):
-    """The lines of the runner's output the record keeps, in the runner's own
-    order; see THE RECORD in the module docstring."""
     printed = completed.stdout.splitlines()
     kept = []
     if printed and printed[0].startswith(f"{run_all_test_suites.PROGRAM}: "):
@@ -370,8 +338,7 @@ def runner_output_lines_for_the_record(completed):
 
 
 def write_record_command(log_store_root: str, machine: str, file_name: str) -> str:
-    """The shell command that writes the record from its stdin, replacing the
-    day's earlier one."""
+    """Return a shell command that replaces the day’s record with stdin."""
     directory = f"{log_store_root}/{DAILY_FULL_TEST_RUNS_KIND_DIRECTORY_NAME}/{machine}"
     return f"mkdir -p {shlex.quote(directory)} && cat > {shlex.quote(f'{directory}/{file_name}')}"
 
@@ -421,8 +388,6 @@ def daily_full_test_run_under_lock(arguments, now, wait, monotonic, on_ned_box, 
     worktree = directory / DAILY_FULL_TEST_RUN_WORKTREE_DIRECTORY_NAME
     logs = directory / DAILY_FULL_TEST_RUN_LOGS_DIRECTORY_NAME
     run_started = monotonic()
-    # Each is one line of the record, and one refusal on stderr: what failed,
-    # then the instruction.
     steps_failed = []
     commit = None
     completed = None

@@ -1,37 +1,8 @@
 #!/usr/bin/env python3
-"""Search only the user's own typed messages across Claude Code session transcripts.
+"""Search typed user messages in Claude Code transcripts.
 
-A transcript is JSONL; one object per line. A line the user typed has
-type == "user" and a plain string in message.content. Every other "user" line is
-harness material -- tool results (message.content is a list of tool_result
-blocks), injected reminders, command output -- and is skipped, which is what
-makes this different from grepping the file.
-
-Two further exclusions, because both wear the user's label:
-  * a string body that is entirely a <...> block, such as
-    <command-message>, <local-command-stdout> or <system-reminder>;
-  * a body opening with "Caveat:", the local-command banner.
-
-Usage:
-  search-user-messages-in-transcripts.py PATTERN [PATTERN ...]
-      [--projects-dir DIR] [--seat SUBSTRING] [--since-hours N]
-      [--context N] [--all-terms] [--list-seats]
-
-Every PATTERN is a case-insensitive regular expression. A message matches when
-any pattern matches, or, with --all-terms, when all of them do.
-
-  --seat        keep only project directories whose name contains SUBSTRING;
-                repeatable. The directory is the checkout path with the
-                separators replaced by hyphens, so --seat reboot-test finds
-                -Users-el-agents-reboot-test.
-  --since-hours consider only transcripts modified in the last N hours.
-  --context     also print the N messages on each side of a hit, from either
-                speaker, so a bare "y" can be read.
-  --list-seats  print the project directories that pass the filters and stop.
-
-Exit status is 0 when at least one message matched, 1 when none did, 2 on a
-usage error.
-"""
+The harness also labels tool results, reminders, and command output as user
+turns; exclude those when searching for the user’s own words."""
 
 import argparse
 import glob

@@ -151,12 +151,10 @@ from pathlib import Path
 PROGRAM = "install-scheduled-jobs-on-this-machine"
 TABLE_FILE_NAME = "scheduled-jobs-on-each-machine.json"
 SCHEDULERS = ("cron", "launchd")
-# The plist keys this program writes itself; a table's launchd_keys may not
-# name one, or the table and the program would each claim to say what it is.
+# Reject table overrides of program-owned plist keys to avoid conflicting definitions.
 PLIST_KEYS_THIS_PROGRAM_WRITES = (
     "Label", "ProgramArguments", "EnvironmentVariables", "StandardOutPath", "StandardErrorPath")
 NO_CRONTAB_PHRASE = "no crontab for"
-# The line a plist this program writes carries, before its <plist> element.
 PLIST_WRITTEN_BY_THIS_PROGRAM = (
     b"<!-- written by nc-systems/general-tools/install-scheduled-jobs-on-this-machine.py -->")
 
@@ -201,8 +199,7 @@ def load_table(table_path: Path) -> dict:
             raise table_refusal(
                 table_path, f"gives job `{name}` a missing or wrongly typed `program`, `arguments`, "
                             f"`output` or `on`")
-        # A cron line is recognised by its program's file name, so two jobs
-        # sharing one would each take the other's line for its own.
+        # Cron matching uses program filenames; duplicates would claim each other's lines.
         program_file_name = Path(job["program"]).name
         if name in names or program_file_name in program_file_names:
             raise table_refusal(
@@ -249,8 +246,7 @@ def machine_of_this_host(table: dict, table_path: Path, platform: str, home: Pat
 
 
 def jobs_placed_on(table: dict, table_path: Path, machine_name: str, selected_names):
-    """(job, placement) for each selected job the table places on this machine,
-    in the table's order; every placed job when none is selected."""
+    """Return selected (job, placement) pairs in table order; no selection means all placed jobs."""
     known = [job["name"] for job in table["jobs"]]
     for name in selected_names or []:
         if name not in known:
@@ -283,7 +279,6 @@ def cron_line(machine: dict, job: dict, placement: dict) -> str:
 
 
 def launch_agent_plist(machine: dict, job: dict, placement: dict) -> dict:
-    """The plist as a dict, in the order plistlib writes it."""
     plist = {
         "Label": placement["label"],
         "ProgramArguments": [machine["python"], program_path_of(machine, job)] + job["arguments"],
@@ -307,11 +302,9 @@ def launchd_target(placement: dict) -> str:
     return f"{launchd_domain()}/{placement['label']}"
 
 
-# --- cron ---------------------------------------------------------------
 
 def read_crontab(run) -> str:
-    """This user's crontab as text, bytes kept whatever they are; "" when the
-    user has none. Refuses when `crontab -l` fails any other way."""
+    """Return the crontab with bytes preserved, or an empty string when none exists."""
     finished = run(["crontab", "-l"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     if finished.returncode == 0:
         return (finished.stdout or b"").decode("utf-8", "surrogateescape")
@@ -332,17 +325,14 @@ def crontab_lines(text: str) -> list:
 
 
 def lines_of_job(lines: list, job: dict) -> list:
-    """Indexes of the lines that run the job's program: not a comment, and
-    naming the program's file as the last part of a path."""
+    """Return indexes of noncomment cron lines naming the job's program file."""
     names_the_file = re.compile(r"/" + re.escape(Path(job["program"]).name) + r"(?=\s|$)")
     return [index for index, line in enumerate(lines)
             if not line.lstrip().startswith("#") and names_the_file.search(line)]
 
 
 def crontab_with(text: str, wanted: list):
-    """The crontab after installing each (job, line) of wanted, and what
-    happened to each job: (job, "unchanged" | "added" | "replaced", old lines).
-    The text itself comes back when nothing changes."""
+    """Return (updated crontab, per-job changes), preserving text when unchanged."""
     lines, outcomes = crontab_lines(text), []
     for job, line in wanted:
         held = lines_of_job(lines, job)
@@ -363,7 +353,7 @@ def crontab_with(text: str, wanted: list):
 
 
 def crontab_without(text: str, jobs: list):
-    """The crontab after removing each job's lines, and the lines removed."""
+    """Return (updated crontab, removed lines)."""
     lines, removed = crontab_lines(text), []
     for job in jobs:
         held = lines_of_job(lines, job)
@@ -376,7 +366,6 @@ def crontab_without(text: str, jobs: list):
 
 
 def write_crontab(text: str, run) -> int:
-    """Replace this user's crontab with text in one `crontab <file>` call."""
     with tempfile.NamedTemporaryFile("wb", suffix=".crontab", delete=False) as crontab_file:
         crontab_file.write(text.encode("utf-8", "surrogateescape"))
     try:
@@ -392,7 +381,6 @@ def report_failed_crontab_write(exit_code: int) -> None:
           file=sys.stderr)
 
 
-# --- launchd ------------------------------------------------------------
 
 def launchd_job_is_loaded(placement: dict, run) -> bool:
     return run(["launchctl", "print", launchd_target(placement)],
@@ -416,23 +404,17 @@ def installed_plist_carries_the_written_by_line(plist_path: Path) -> bool:
 
 
 def installed_plist_matches(plist_path: Path, machine: dict, job: dict, placement: dict) -> bool:
-    """The plist says what the table says, and carries this program's line,
-    so a plist written before the line existed is rewritten with it."""
     return installed_plist_says_what_the_table_says(plist_path, machine, job, placement) \
         and installed_plist_carries_the_written_by_line(plist_path)
 
 
-# What `launchctl print` exits with when the domain has no such service.
+# launchctl print exits 113 when the domain has no such service.
 LAUNCHCTL_PRINT_SERVICE_NOT_FOUND = 113
 
 
 def booted_out_or_reported(target: str, plist_path: Path, run) -> bool:
-    """Boots target out of launchd. False, with FAILED reported, when the
-    bootout failed and `launchctl print` does not say the job is gone:
-    deleting its plist then could leave a loaded job that no plist and no
-    --check can find, so the plist is kept. A bootout that fails because the
-    job was not loaded is no failure; only print's service-not-found exit
-    says so, and any other exit of print leaves the job's state unknown."""
+    """Return whether launchd confirms the job is unloaded; report failure otherwise."""
+    # Keep the plist on uncertainty: deleting it could leave a loaded job invisible to --check.
     booted = run(["launchctl", "bootout", target],
                  stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
     if booted.returncode == 0 or run(["launchctl", "print", target], stdout=subprocess.DEVNULL,
@@ -448,7 +430,7 @@ def booted_out_or_reported(target: str, plist_path: Path, run) -> bool:
 
 
 def install_launchd_job(machine, job, placement, launch_agents_directory: Path, run) -> bool:
-    """True when the job is installed as the table says when this returns."""
+    """Return whether the installed job matches the table."""
     name, label = job["name"], placement["label"]
     plist_path = launch_agents_directory / f"{label}.plist"
     if installed_plist_matches(plist_path, machine, job, placement) \
@@ -465,8 +447,7 @@ def install_launchd_job(machine, job, placement, launch_agents_directory: Path, 
         print("Read what plutil printed above, and run this again after that cause is removed.",
               file=sys.stderr)
         return False
-    # bootstrap refuses a label already loaded, so an earlier load is booted
-    # out first; booting out a label that is not loaded fails and is ignored.
+    # bootstrap refuses an already loaded label; boot it out first.
     run(["launchctl", "bootout", launchd_target(placement)],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     bootstrapped = run(["launchctl", "bootstrap", launchd_domain(), str(plist_path)])
@@ -502,27 +483,14 @@ def start_launchd_job_once(machine, job, placement, run) -> bool:
     return True
 
 
-# --- jobs the table does not name -----------------------------------------
 
-# A crontab line that sets a variable for the lines after it, NAME=value; and
-# one word of a command that does the same for that command alone.
 CRON_ENVIRONMENT_ASSIGNMENT = re.compile(r"\s*[A-Za-z_][A-Za-z0-9_]*\s*=")
-# A program whose first argument that is not an option is the program it runs.
 INTERPRETER_PROGRAM_NAME = re.compile(r"python[0-9.]*|bash|sh|dash|zsh|perl|ruby|node|env")
 
 
 def program_a_cron_line_runs(line: str):
-    """The program a crontab line runs, as the line spells it: the command's
-    first word, or, when that word is an interpreter or `env`, the first word
-    after it that is not a NAME=value. None for a blank line, a comment, or a
-    line that sets a variable; and None when an interpreter or `env` is given
-    an option, because an option may take the next word as its argument
-    (`env -C <dir>`), and telling which do would mean knowing every option of
-    every interpreter: such a line is not reported, which only misses a job,
-    where a wrong reading could remove a line that runs no program from the
-    clone. A line whose command only reads
-    or writes a file, such as a redirect into the clone, runs no program of
-    that file, so the file is not what this returns."""
+    """Return the program path as spelled in a cron line, or None when unresolved."""
+    # Interpreter and env options may consume arguments; guessing could remove an unrelated job.
     if not line.strip() or line.lstrip().startswith("#") or CRON_ENVIRONMENT_ASSIGNMENT.match(line):
         return None
     special_schedule = line.lstrip().startswith("@")
@@ -547,12 +515,8 @@ def program_a_cron_line_runs(line: str):
 
 
 def cron_lines_not_in_table(machine: dict, placed: list, lines: list) -> list:
-    """Indexes of the lines whose program, as program_a_cron_line_runs finds
-    it, is a file under the machine's clone, and that are no cron job's line
-    of the table. A job's lines are found by its program's file name, as an
-    install finds them, so a retired line that runs a file of the same name as
-    a cron job of the table counts as that job's line: --check reports it as
-    that job's DIFFERS, and --install replaces it with the table's line."""
+    """Return indexes of cron lines running clone programs absent from the table."""
+    # A retired line sharing a current job's filename belongs to that job for check and install.
     owned = set()
     for job, placement in placed:
         if placement["scheduler"] == "cron":
@@ -564,13 +528,8 @@ def cron_lines_not_in_table(machine: dict, placed: list, lines: list) -> list:
 
 
 def plists_not_in_table(machine: dict, placed: list, launch_agents_directory: Path) -> list:
-    """(path, label) of each plist this program wrote whose label is no
-    launchd job's of the table. Looked for on every macOS machine, including
-    one whose table names no launchd job, because the job retired last leaves
-    the table with none. A plist written before this program wrote
-    PLIST_WRITTEN_BY_THIS_PROGRAM into its plists carries no such line, and is
-    not found: --install writes the line into the plists of the jobs still in
-    the table, and a job retired before that is not seen."""
+    """Return (path, label) pairs for marked plists whose jobs are absent from the table."""
+    # Search even with no launchd jobs: the last job may have retired. Unmarked plists are not ours.
     if machine["platform"] != "darwin" or not launch_agents_directory.is_dir():
         return []
     labels = {placement["label"] for _, placement in placed if placement["scheduler"] == "launchd"}
@@ -592,7 +551,6 @@ def plists_not_in_table(machine: dict, placed: list, launch_agents_directory: Pa
     return found
 
 
-# --- the five modes -----------------------------------------------------
 
 def print_mode(machine_name, machine, placed, launch_agents_directory: Path) -> int:
     print(f"machine: {machine_name} ({machine['platform']}, {machine['home']})")
@@ -776,7 +734,7 @@ def check_mode(machine, placed, launch_agents_directory: Path, table_path: Path,
     if differences:
         print(f"When the table says what this machine should run, run "
               f"`{Path(__file__).resolve()} --install` on this machine.")
-        # A missing marker line is never the table's fault.
+        # A missing ownership marker is not a table mismatch.
         if differences > differences_only_the_marker:
             print(f"When this machine is right and the table is wrong, change {table_path} "
                   f"through a pull request.")
@@ -794,8 +752,7 @@ def check_mode(machine, placed, launch_agents_directory: Path, table_path: Path,
 
 
 def exit_codes_paragraph() -> str:
-    """The docstring's paragraph on exit codes, the one part of it --help
-    prints: the rest is for whoever changes this program."""
+    """Return the module docstring's exit-code paragraph for --help."""
     return next(block for block in __doc__.split("\n\n") if block.startswith("Exit codes:"))
 
 

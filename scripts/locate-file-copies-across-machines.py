@@ -1,324 +1,5 @@
 #!/usr/bin/env python3
-"""Find every copy of a file by its name, on both machines, newest first.
-
-WHAT PROBLEM THIS SOLVES. Between 2026-08-23 and 2026-09-23 agents told the
-user fourteen times that a file did not exist when it did. Only two of the
-fourteen were real deletions. The other twelve still existed somewhere the
-agent had not looked: another seat's checkout, the git reflog, the log-store
-under a different name, a handoff. None of those misses went through Glob or
-Grep; every one was a Bash `find` or `git log` over too few places, or no
-search at all. The research, and the episodes this program is measured
-against, are at
-
-    nedlern@ned-box:/home/nedlern/nedschorus-logs/seats/merge-lane/lost-file-research-report-2026-09-23.md
-
-The user approved building this locator on 2026-09-23 (walk
-"merge-lane-mac-helper-open-items-and-questions-2026-09-23", item 4.1, "Y").
-It is the fast first step: it answers "where is it now?" in a couple of
-seconds. scripts/find-deleted-path-across-backups.py is the slow second step,
-for a file that no longer exists anywhere, and this program runs it when it
-finds nothing (WHEN NOTHING IS FOUND, below).
-
-WHAT IT SEARCHES. By name only, never by content. The query is a file name or
-a path; its last component's stem (the name without its final suffix) is
-matched case-insensitively as a substring of each file's name, so
-`pr-main-process-design.md` also finds the log-store's
-`pr-main-process-design-draft-from-origin-merge-lane-28e4f5f.md`.
-
-    Mac      checkouts  /Users/el/agents, /Users/el/Projects,
-                        /private/tmp/claude-501 (scratch worktrees),
-                        and every worktree the main clone lists outside them
-             handoffs   /Users/el/.claude/handoffs
-             git        every clone found under the checkouts
-    ned-box  checkouts  /home/nedlern/agents, /home/nedlern/Projects,
-                        /tmp/claude-1000 (scratch worktrees),
-                        and every worktree the main clone lists outside them
-             log-store  /home/nedlern/nedschorus-logs, except transcripts/
-             handoffs   /home/nedlern/.claude/handoffs
-             git        every clone found under the checkouts
-
-The worktrees a main clone lists (`git worktree list`) are searched even when
-they sit outside every root: an ad-hoc worktree directly under /tmp, such as
-ned-box's /tmp/pr619-fix-round-baseline or the Mac's /private/tmp/ghi-569-fix,
-was never searched (PR 703 review 5299980640). Measured 2026-09-24: one such
-worktree on each machine; listing them took 3 to 34 ms and searching one 12 ms.
-
-FOUND MEANS THE SAME NAME, AND THE SAME PATH WHEN ONE IS GIVEN. A query that is
-a bare file name, with no `/` in it, is found by a copy with that name, in any
-case. Any other query names one path, and is found only at that path -- or,
-inside this repository, at the same place in any of its checkouts and in its
-history (see below): a dispositions.md in some other directory is not found
-for `md-review-records/x/dispositions.md`. A query that is not absolute is made
-absolute from the current directory BEFORE anything else looks at it, `./x`
-and `../x` included, so it gets exactly the answer its absolute spelling gets
-through the one code path. PR 703 review 5307849568 measured what a separate
-path for relative queries did: `.claude/settings.local.json` asked from a
-seat whose own copy was absent exited 0 on another project's file, and
-`./CLAUDE.local.md` became the bare name and found every seat's. When the
-current directory no longer exists -- a shell still standing in a removed
-worktree, which two transcripts show (PR 703 review 5307798976) -- a relative
-query cannot be placed: the program says so, searches nothing and exits 3.
-Any other query is searched from `/`, the program's current directory once
-the query is placed: git refuses to start in a directory that no longer
-exists ("Unable to read current working directory"), and from one every git
-surface went unsearched, so a file only git history holds read as not
-established (PR 703 review 5308486733).
-The log-store reuses generic names across its records (measured 2026-09-24:
-40 dispositions.md, 31 fast-read.md, 29 reference-check.md, 26 memory.md,
-11 SKILL.md), and the backup search's log-store surface read an unrelated
-record as the file until the same rule was applied there (PR 702 review
-5298743638). Every other file whose name
-contains the stem, including a same-name copy in another directory, is a
-candidate, to be checked by content; candidates do not make the answer
-"found".
-
-A FILE GIT DOES NOT TRACK IS FOUND ONLY AT ITS OWN PATH. A file in a checkout
-of this repository that git does not track there -- a seat's CLAUDE.local.md,
-its .claude/settings.local.json, an uncommitted draft -- belongs to that one
-checkout, so another checkout's file at the same place is a different file:
-it is a candidate, never the copy found, unless the query names that file's
-own path. A tracked file at the same place in another checkout is the same
-file on another branch, and is found as before. PR 703 review 5299970582
-measured the fault: on ned-box, /Users/el/agents/merge-lane/CLAUDE.local.md
-exited 0 on merge-lane-2's CLAUDE.local.md, handing a seat another seat's
-standing instructions as its own. A relative query names its own path from
-the current directory, so a relative query from inside a checkout finds that
-checkout's untracked file. A bare file name still finds every file of that
-name, tracked or not: it asks for any file so named, and each copy is listed
-with its machine and path. Which files git tracks is asked with one
-`git ls-files` per checkout that holds a hit, and only for a query with
-directories in it. When git cannot answer for a checkout, its files are
-listed as "tracking unknown" and counted only at their own path, as an
-untracked file is: an unanswered question is not an answer.
-
-AN ABSOLUTE QUERY INTO THIS REPOSITORY IS COMPARED BY ITS PATH INSIDE ITS
-CHECKOUT. A git hit's path is relative to its clone, and the same file sits in
-every seat's checkout, so `/Users/el/agents/merge-lane/docs/x.md` is found by
-commit <hash>'s `docs/x.md` and by `/home/nedlern/agents/<seat>/docs/x.md`.
-Where a path sits in this repository is read from one ordered list of the
-places this repository's checkouts live, written from the map of record,
-docs/nedschorus-wiki/nedschorus-fleet-machine-paths-and-checkouts.md, and
-checked on 2026-09-24 against `git worktree list` in each machine's main clone
-(74 checkouts on the Mac, 15 on ned-box, every one in a place below):
-
-    place                              Mac                  ned-box
-    the main clone                     /Users/el/Projects/  /home/nedlern/
-                                         nedschorus           Projects/nedschorus
-    a seat's checkout, each child of   /Users/el/agents     /home/nedlern/agents
-    a task worktree, nested in either  <checkout>/.claude/worktrees/<name>
-      of the above
-    a scratch or ad-hoc worktree,      /tmp                 /tmp
-      at any depth
-
-  - Under the main clone, or under a child of a seats directory, the path
-    inside the checkout is what follows it, with a leading
-    `.claude/worktrees/<name>/` taken off: that is where Claude Code puts a
-    task worktree, and the file sits in that worktree, not in the checkout
-    around it (PR 703 review 5299440729: a removed nested worktree turned a
-    found query into a not-found one). This needs nothing on disk, so it
-    answers the same whether the checkout is there, removed, or on the other
-    machine.
-  - Under /tmp a worktree can sit at any depth, so its root is not in the
-    path. A query there is compared by the longest tail of the path, two
-    components or more, that a copy of this repository holds. A tail of one
-    component is not trusted, because `<worktree>/docs/README.md` would then
-    be found by the clone's own README.md. A file found there, which is on
-    disk, is placed by the nearest `.git` above it, when that `.git` belongs
-    to this repository.
-  - Other children of Projects are other projects (the Mac holds 31, 23 of
-    them git checkouts, the legacy nedlern one among them), and so is
-    anything else outside the list: a query there is found only by the file
-    at that very path, or by a commit of that project's own clone at that
-    path, in the clone's own work tree or in any worktree the clone lists
-    (PR 703 review 5308486733: a commit made in another project's linked
-    worktree was found only at the main clone's path). The same holds for
-    the log-store and the handoffs.
-    Another project's files and git history never count as a copy of this
-    repository's path, nor this repository's as a copy of theirs (PR 703
-    review 5299487158: another project's root README.md under
-    /Users/el/Projects counted as found for this repository's).
-THIS REPOSITORY is the main clone's git directory on each machine: every seat
-and task worktree resolves to it through its `.git` file (measured 2026-09-24:
-no seat directory on either machine is a clone of its own). A git hit counts
-for a path inside a checkout only when it comes from that git directory.
-A file at a checkout's root, such as `/Users/el/agents/merge-lane/CLAUDE.md`,
-is found only at the root of a checkout, not by a CLAUDE.md in some
-subdirectory.
-EVERY PATH IS COMPARED IN ONE SPELLING. On the Mac /tmp is /private/tmp, and
-the Mac mounts ned-box's home at /Volumes/nedhome (named in
-.claude/hooks/backup-and-snapshot-write-guard.py; the map of record does not
-list it), so `/Volumes/nedhome/nedschorus-logs/x.md` is
-`/home/nedlern/nedschorus-logs/x.md`. Both the query and every hit are put in
-the canonical spelling before any comparison (PR 703 review 5299440729: a
-scratchpad file asked as /tmp/claude-501/... was not found at its own path).
-/private/tmp itself is not searched on the Mac, only /private/tmp/claude-501:
-it holds the backup search's snapshot mounts of the whole disk, and a find
-over it ran past 120 s on 2026-09-24. A worktree there is still found through
-its commits.
-
-THE QUERY MAY BE WRITTEN AS IT IS CITED. `nedlern@ned-box:/home/...`, the scp
-form CLAUDE.md prescribes for log-store citations, is read as the path after
-the colon; so is `ned-box:<path>`. A host is recognised when a user name comes
-before it or when it is a machine this program knows, so a file name that
-merely holds a colon is left alone. `~` is expanded, on ned-box to
-/home/nedlern. A relative path after an scp host is inside that host's home,
-when this program knows it; a relative path with directories after a host
-whose home it does not know is a usage error, rather than a path guessed on
-this machine. PR 703 review 5299114606 measured the scp form never being
-found, even at its exact path.
-Measured 2026-09-24: `plan.md`, a name no file has, matched 1,767 names on
-the Mac alone, and this program exited 0 on them without naming the next
-step. The same fault was found in the backup search's log-store surface on
-PR "The lost-file tool searches git's reflog and the log-store, and prints
-each place as it finishes" (review 5298558956), where a stem match printed a
-recovery command for an unrelated file. A renamed copy, which the research's
-E11 and E14 needed, is still listed, as a candidate.
-
-The log-store's transcripts/ directory is left out on purpose: its files are
-named by session id, and searching inside transcripts was not part of what
-was approved. `.git`, `__pycache__`, `node_modules`, `.venv` and `venv`
-directories are never descended into.
-
-THE GIT SURFACE is `git log --reflog --all --full-history` over each clone,
-with a pathspec that matches the name anywhere in the tree. `--full-history`
-is needed because with a pathspec git otherwise simplifies history: at a
-merge that leaves the path as its first parent had it, git follows that
-parent alone, so a file added and deleted on a merged topic branch is never
-reached. Measured 2026-09-24: in ned-box's shared clone, `git log --reflog
---all -- docs/drafts/simplification-review-prompt-draft.md` printed nothing,
-and with `--full-history` it printed commits 40fef4e and ae3b93a, both on
-origin/main; 32 of the 662 deleted paths in that clone were hidden that way
-(PR 703 review 5298686798). The flag cost about 0.04 s on the Mac's main
-clone. scripts/find-deleted-path-across-backups.py passes it for the same
-reason. `--reflog` is what the research's
-episodes E11 and E14 needed: two commits of docs/drafts/pr-main-process-design.md
-were reachable only from the merge-lane worktree's HEAD reflog after its
-seat-branch was recreated. Measured 2026-09-23 with git 2.55 on the Mac: those
-two commits sit only in .git/worktrees/merge-lane/logs/HEAD, and
-`git log --reflog` run against the main clone's git directory lists them, so
-one run per clone covers the HEAD reflogs of all its worktrees. The suite's
-worktree case measures the same thing on each machine's git. A hit reports the
-newest commit that touched each matching path, and prints the `git show`
-command that reads the file's content there.
-
-EVERY GIT THIS PROGRAM RUNS answers for the repository it names, not for one
-the caller's environment names: `git ls-files` in a checkout, and
-`git worktree list` and `git log` against a clone's git directory, all run
-with GIT_REDIRECTING_VARIABLES removed from their environment. `--git-dir`
-overrides GIT_DIR but not GIT_COMMON_DIR or GIT_OBJECT_DIRECTORY. Measured
-2026-09-30 with git 2.56.0: with GIT_COMMON_DIR naming another clone's git
-directory, `git --git-dir <clone>/.git worktree list` listed the other clone's
-worktrees, and `git log --all` failed with "bad object", so the clone's
-history read as not searched. Only `git ls-files` dropped the variables before
-(PR 703 review 5307849568); the other two were found in walk
-"merge-lane-mac-helper-open-items-and-questions-2026-09-23", item 17, on
-2026-09-29.
-
-The `git show` command a git hit prints is run later, in the caller's own
-shell, where those variables may still be set, so it unsets them itself:
-`env -u GIT_DIR ... git --git-dir=<clone> show <commit>:<path>`. Printed as
-a bare `git --git-dir`, it exited 128 ("fatal: invalid object name") under a
-caller's GIT_COMMON_DIR or GIT_OBJECT_DIRECTORY naming another clone
-(measured 2026-09-30 by this program's suite). That is the fault PR "The
-backup search's printed git recovery command unsets the git redirect
-variables" fixed in the backup search; this one was built on the user's "y"
-of 2026-09-30 in the merge-lane seat.
-
-HOW THE OTHER MACHINE IS SEARCHED. From the Mac, ned-box is searched by
-running this same program there, sent over one ssh call on stdin
-(`python3 -`), with the surfaces to search passed on its command line. The
-program therefore does not depend on ned-box's checkout being current, and
-both machines search with one implementation. From ned-box the Mac is NOT
-searched: no route from ned-box to the Mac is documented
-(docs/nedschorus-wiki/nedschorus-fleet-machine-paths-and-checkouts.md
-describes only the Mac to ned-box direction), so the program says the Mac was
-not searched rather than building one.
-
-WHAT IT PRINTS. Two lists: the copies found (see FOUND MEANS above), every one
-of them, newest first; then the candidates, cut to the newest few, those with
-the query's name first. Each line carries the time (UTC), the machine, the surface, the path and the size; a git hit names
-its commit as commit <hash> ("<subject>"), the form ruled on 2026-09-22.
-Copies whose content is identical (compared by git's blob hash, so a checkout
-file and the commit that holds the same bytes are recognised as one) are
-printed under the newest of them as "same content" lines rather than as
-separate entries. Then every place searched, every place that could not be
-searched and why, and the time the search took.
-
-The closing lines are instructions to the agent that ran it, one per line,
-each with the condition it applies under, as CLAUDE.md requires of text a
-program hands an agent at the moment it must act: tell the user when ned-box
-could not be reached, with the remedy (CLAUDE.md also requires that); report
-where it looked rather than that the file does not exist.
-
-WHEN NOTHING IS FOUND, THE BACKUP SEARCH RUNS NEXT. Until 2026-09-30 this
-program printed scripts/find-deleted-path-across-backups.py as the command to
-run next. The user ruled on 2026-09-29 that it runs it itself (walk
-"merge-lane-mac-helper-open-items-and-questions-2026-09-23", the follow-up to
-item 17, "y"). It starts only after this program's own answer, closing lines
-included, has been printed, and only when that answer has no copy, so a copy
-that is found still answers in a couple of seconds.
-  - It runs as a program, never imported: it imports this file for the
-    names the two share, the host rule, the git redirect variables and the
-    printed git invocation among them, and each loading the other would
-    never end.
-  - It is given the query as this program placed it: a bare name as it is,
-    any other path in its canonical spelling. A query reaches it only when no
-    copy is at that path, on disk or in any clone's history (a commit that
-    deleted the path, or one only a reflog names, is a copy found), so it
-    asks about a file git never tracked there, which is found only at its own
-    path (A FILE GIT DOES NOT TRACK, above). Each backup surface tests an
-    absolute path exactly and matches a relative one as a suffix anywhere,
-    which is how another seat's file would be taken for this one. So no
-    --repo is passed: the backup search starts in `/` with
-    GIT_REDIRECTING_VARIABLES removed, where git names no repository and the
-    path is not rewritten relative to one.
-  - Its git and git reflog surfaces are left out (--skip git --skip reflog).
-    The git surface here read every commit a branch or a reflog reaches, in
-    every clone on both machines; the backup search's read one repository.
-    Given an absolute path outside that repository, they could only report
-    that they could not search it, as they did for a log-store path while the
-    command was printed instead (measured while PR "The older lost-file tool
-    reads a path as it is cited, and a FOUND stands alone" was built). The
-    line that starts the backup search says the git search above covered
-    them only when this program's own answer was complete (exit 1); after an
-    exit 3, what it could not search is named above instead
-    (PR "The locator runs the backup search itself when it finds nothing",
-    review inline comment 4140421516).
-  - Its output is passed on line by line as it comes. It prints each place
-    the moment that place answers, so a run killed part way keeps what it had
-    printed. It took 72 s on the Mac on 2026-09-30, with the Time Machine
-    disk not connected.
-  - It does not change the exit code. Its transcripts surface finds every
-    path the asking session typed: on 2026-09-30 it answered "Recoverable
-    from: transcripts." and exited 0 for a name no file ever had, on the
-    asking session's own transcript. Its answer is shown, and a closing line
-    says what to do with it.
-  - A run that ends without the backup search's summary line did not finish
-    (it was killed, it could not start, or it raised), and the closing line
-    says so: the places it had not printed were never searched.
-
-EXIT CODES.
-    0  at least one copy was found, as FOUND MEANS above defines it (a
-       surface that failed is still printed)
-    1  no copy was found, and every surface was searched; candidates may
-       still be listed
-    2  bad invocation (argparse's own exit)
-    3  no copy was found, and at least one surface or machine could NOT be
-       searched -- so "not found" is not established; or the query was a
-       relative path and the current directory no longer exists, so nothing
-       was searched
-A failed surface never reads as "not found": that is why 3 exists apart
-from 1. A candidate never reads as "found": that is why 1 and 3 allow them.
-The code is this program's own search's: the backup search that runs after
-a 1 or a 3 never changes it (WHEN NOTHING IS FOUND, above).
-
-TESTS. scripts/locate-file-copies-across-machines-test.py. The surfaces are
-injectable through the LOCATE_FILE_COPIES_ACROSS_MACHINES_PLAN environment
-variable, a JSON plan of the same shape as `production_plan()` returns, and
-the suite puts a stand-in `ssh` on PATH for the other machine.
-LOCATE_FILE_COPIES_ACROSS_MACHINES_BACKUP_SEARCH_PROGRAM names a stand-in for
-the backup search.
-"""
+"""Find file copies by name across both machines, then search backups if none are found."""
 
 from __future__ import annotations
 
@@ -344,72 +25,37 @@ SSH_EXIT_CONNECTION_FAILED = 255
 REMOTE_TIMEOUT_SECONDS = 30
 LOCAL_COMMAND_TIMEOUT_SECONDS = 30
 
-# The variables that point git at another repository. They are dropped from
-# the environment of every git this program runs, so a caller's GIT_DIR or
-# GIT_COMMON_DIR cannot answer for the repository asked about; the same six
-# scripts/run-all-test-suites.py strips.
+# Remove Git redirects so each command answers for the named repository.
 GIT_REDIRECTING_VARIABLES = (
     "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY",
     "GIT_COMMON_DIR", "GIT_ALTERNATE_OBJECT_DIRECTORIES")
-# How a printed `git show` command begins: git run with
-# GIT_REDIRECTING_VARIABLES unset, so it reads the clone it names from
-# whatever shell it is pasted into (EVERY GIT THIS PROGRAM RUNS in the module
-# docstring). The backup search imports it, so the two programs print one
-# form.
+# Printed recovery commands must also remove redirects from the shell where they are pasted.
 PRINTED_GIT_INVOCATION_WITHOUT_REDIRECTING_VARIABLES = "env %s git" % " ".join(
     "-u %s" % name for name in GIT_REDIRECTING_VARIABLES)
 
 PLAN_ENVIRONMENT_VARIABLE = "LOCATE_FILE_COPIES_ACROSS_MACHINES_PLAN"
 THIS_MACHINE_JSON_FLAG = "--this-machine-json"
-# The backup search, beside this program in the same checkout, run when
-# nothing is found (WHEN NOTHING IS FOUND in the module docstring). It is run
-# by this program's own interpreter, because the file is not executable (mode
-# 100644 on main). BACKUP_SEARCH_PROGRAM_VARIABLE names another program to run
-# in its place: the suite's stand-in.
+# Use this interpreter: the backup search file is not executable.
 BACKUP_SEARCH_PROGRAM_NAME = "find-deleted-path-across-backups.py"
 BACKUP_SEARCH_PROGRAM_VARIABLE = (
     "LOCATE_FILE_COPIES_ACROSS_MACHINES_BACKUP_SEARCH_PROGRAM")
-# Its surfaces that the git surface here has already covered.
 BACKUP_SEARCH_SURFACES_ALREADY_SEARCHED = ("git", "reflog")
-# How its summary line begins (render_summary there), the last line it
-# prints: a run that printed neither did not finish. Then the exit codes it
-# says it found the file with, and could not search everywhere with.
+# Without a summary line, the backup search did not finish.
 BACKUP_SEARCH_SUMMARY_OPENINGS = (
     "Recoverable from: ", "No surface that could be searched has it.")
 BACKUP_SEARCH_FOUND_EXIT = 0
 BACKUP_SEARCH_INCOMPLETE_EXIT = 3
 
-# A match larger than this is listed but not hashed, so it is never collapsed
-# with an identical copy. Hashing is the only part of a search whose cost
-# grows with file size.
+# Bound hashing cost, the only search cost that grows with file size.
 HASH_SIZE_LIMIT_BYTES = 64 * 1024 * 1024
-# Per machine, only the newest this-many candidate file matches are hashed
-# into the answer; per clone, only the newest this-many candidate paths. A
-# one-letter query must still answer in seconds. A copy with the query's own
-# name is never cut by either cap: the remedy the answer offers for a cut,
-# "run again with more of the name", cannot help when the query is already
-# the whole name (PR 703 review 5298659418: `CLAUDE.md` lost two copies to
-# the cap on ned-box).
+# Cap candidates for broad queries, but never exact names: a more specific query cannot recover capped exact matches.
 MAX_FILE_HITS_PER_MACHINE = 300
 MAX_GIT_PATHS_PER_CLONE = 300
-# Candidate entries printed; the rest are counted. Same-name copies are all
-# printed.
 MAX_ENTRIES_PER_LIST = 25
-# Directories never descended into, besides `.git`: bytecode, and third-party
-# dependency trees no agent writes into. Measured 2026-09-23 on the Mac:
-# /Users/el/Projects/route-spectrum took 0.44 s to search with its
-# node_modules and 0.02 s without it.
 SKIPPED_DIRECTORY_NAMES = ("__pycache__", "node_modules", ".venv", "venv")
 
-# A machine plan has three parts. `surfaces` are the places searched.
-# `this_repository` is where this repository's checkouts live on that
-# machine, the ordered list the module docstring sets out: `clones` (the main
-# clone), `checkout_parents` (every child a checkout) and `scratch_trees` (a
-# worktree at any depth); a task worktree nested at NESTED_WORKTREE_PARTS
-# inside a clone or a parent's child is recognised under both. `spellings` are
-# [alias, canonical] pairs: a path under the alias is compared as the same
-# path under the canonical prefix.
 NESTED_WORKTREE_PARTS = (".claude", "worktrees")
+# Do not search all of /private/tmp: backup snapshot mounts can expand the search to the whole disk.
 MAC_SURFACES = {
     "machine": "mac",
     "surfaces": [
@@ -424,6 +70,7 @@ MAC_SURFACES = {
                         "scratch_trees": ["/tmp"]},
     "spellings": [["/private/tmp", "/tmp"]],
 }
+# Transcript names are session IDs; locating files within transcripts requires a content search.
 NED_BOX_SURFACES = {
     "machine": "ned-box",
     "surfaces": [
@@ -438,10 +85,9 @@ NED_BOX_SURFACES = {
     "this_repository": {"clones": ["/home/nedlern/Projects/nedschorus"],
                         "checkout_parents": ["/home/nedlern/agents"],
                         "scratch_trees": ["/tmp"]},
-    # How the Mac spells this machine's paths: its mount of ned-box's home.
+    # The Mac mounts ned-box's home here.
     "spellings": [["/Volumes/nedhome", "/home/nedlern"]],
 }
-# The machines a bare `<host>:<path>` query may name, and where `~` is there.
 KNOWN_HOST_HOMES = {NED_BOX_HOSTNAME: "/home/nedlern"}
 MAC_NOT_REACHABLE_FROM_NED_BOX = (
     "no route from ned-box to the Mac is documented")
@@ -451,12 +97,7 @@ STATUS_WORDS = {"A": "added", "M": "modified", "D": "deleted",
 
 
 def production_plan() -> dict:
-    """What to search, decided by which machine this is.
-
-    `this` is searched here; `other` is searched over ssh when it carries an
-    `ssh_target`, and reported as not searched when it carries a
-    `not_searched_because` instead.
-    """
+    """Return local and remote search plans for this machine."""
     if socket.gethostname().split(".")[0] == NED_BOX_HOSTNAME:
         return {"this": NED_BOX_SURFACES,
                 "other": dict(MAC_SURFACES,
@@ -473,7 +114,6 @@ def plan_for_this_run() -> dict:
 
 
 def query_stem(query: str) -> str:
-    """The part of the query that is matched: its last component's stem."""
     name = pathlib.PurePath(query.rstrip("/")).name
     return pathlib.PurePath(name).stem if name else ""
 
@@ -483,7 +123,7 @@ def query_name(query: str) -> str:
 
 
 def escape_glob(text: str) -> str:
-    """`text` made literal inside a find -iname pattern or a git glob."""
+    """Make text literal inside a find pattern or Git glob."""
     return "".join("\\" + ch if ch in "*?[]\\" else ch for ch in text)
 
 
@@ -492,19 +132,14 @@ def name_matches(basename: str, stem: str) -> bool:
 
 
 def is_same_name(basename: str, name: str) -> bool:
-    """Whether a file named `basename` is a copy of the query named `name`:
-    the same name in any case, or, for a query with no suffix, the same stem.
-    Only these count as found; every other name that holds the stem is a
-    candidate."""
+    """Match names case-insensitively, or stems when the query has no suffix."""
     basename, name = basename.lower(), name.lower()
     return basename == name or (
         "." not in name and pathlib.PurePath(basename).stem == name)
 
 
 def split_host(query):
-    """(host, path) for a query in the scp form `[user@]host:path`, or
-    (None, query). A host is taken only when a user name comes before it or
-    it is in KNOWN_HOST_HOMES, and never when a `/` comes before the colon."""
+    """Return (host, path) for a recognized scp query, otherwise (None, query)."""
     head, colon, path = query.partition(":")
     if not colon or not path or "/" in head:
         return None, query
@@ -517,21 +152,14 @@ def split_host(query):
 
 
 class CurrentDirectoryIsGone(Exception):
-    """A relative path was asked for from a directory that no longer
-    exists, so there is nothing to make it absolute from."""
+    """A relative query cannot be resolved from a removed working directory."""
 
 
 def resolve_query(query, cwd=None):
-    """The query as a plain path: an scp host prefix taken off, `~`
-    expanded, and every path with a `/` in it that is not absolute made
-    absolute from `cwd` (the current directory by default). A bare file name,
-    with no `/` at all, is returned as it is. Raises CurrentDirectoryIsGone
-    when the current directory is needed and no longer exists, and
-    ValueError for a relative path with directories on a host whose home
-    is not known."""
+    """Resolve scp and relative paths, leaving bare file names unchanged."""
     host, path = split_host(query)
     if host is not None and not path.startswith("/"):
-        # A relative path after a host is inside that host's home.
+        # An scp-relative path is relative to the remote home.
         home = KNOWN_HOST_HOMES.get(host.split(".")[0])
         inside = path[2:] if path.startswith("~/") else (
             "" if path == "~" else path)
@@ -563,8 +191,7 @@ def parts_of(path):
 
 
 def canonical_path(path, spellings):
-    """`path` in its canonical spelling: under the first alias it starts
-    with, that alias is replaced by its canonical prefix."""
+    """Replace the first matching path alias with its canonical prefix."""
     for alias, canonical in spellings:
         alias, canonical = alias.rstrip("/"), canonical.rstrip("/")
         if path == alias or path.startswith(alias + "/"):
@@ -573,8 +200,7 @@ def canonical_path(path, spellings):
 
 
 def parts_below(path, root):
-    """`path`'s components below `root`, or None when it is not under it.
-    Both are in one spelling already."""
+    """Return the path components below root, or None for a path outside root."""
     root = root.rstrip("/")
     if path == root:
         return []
@@ -584,8 +210,7 @@ def parts_below(path, root):
 
 
 def inside_nested_worktree(parts):
-    """A path inside a checkout, with a task worktree nested at
-    NESTED_WORKTREE_PARTS/<name>/ taken off its front."""
+    """Remove a nested task worktree prefix from a checkout-relative path."""
     depth = len(NESTED_WORKTREE_PARTS)
     if (len(parts) > depth + 1
             and tuple(parts[:depth]) == NESTED_WORKTREE_PARTS):
@@ -594,11 +219,7 @@ def inside_nested_worktree(parts):
 
 
 def place_in_this_repository(path, layouts):
-    """Where the canonical absolute `path` sits among this repository's
-    checkouts, walking the ordered list the module docstring sets out:
-    ("checkout", its path inside the checkout), ("scratch", its components
-    below the scratch tree, the checkout's root being unknown), or None when
-    it is in none of the places this repository's checkouts live."""
+    """Return (checkout kind, relative path parts), or None outside repository locations."""
     for layout in layouts:
         for clone in layout.get("clones", []):
             below = parts_below(path, clone)
@@ -618,7 +239,7 @@ def place_in_this_repository(path, layouts):
 
 
 def layouts_and_spellings(plan):
-    """(this repository's layouts, every spelling pair) of both machines."""
+    """Return both machines' repository layouts and path spelling pairs."""
     layouts, spellings = [], []
     for machine in (plan.get("this"), plan.get("other")):
         if machine:
@@ -628,19 +249,12 @@ def layouts_and_spellings(plan):
 
 
 def this_repository_git_dirs(layout):
-    """The git directories that are this repository on this machine: each
-    main clone's, as git_dirs_of names them."""
     return set(git_dirs_of([os.path.join(clone, ".git")
                             for clone in layout.get("clones", [])]))
 
 
 def place_of_file(path, layout, spellings, this_git_dirs, cache):
-    """(the checkout's root, the file's path inside it, "/"-joined) for a
-    file on this disk, or None when the file is not in a checkout of this
-    repository. Under a scratch tree, where the path does not say where the
-    worktree starts, the nearest `.git` above the file decides, and only
-    when it is this repository's; `cache` remembers each directory's
-    answer."""
+    """Return (checkout root, relative path), or None outside this repository."""
     placed = place_in_this_repository(canonical_path(path, spellings),
                                       [layout])
     if placed is None:
@@ -678,17 +292,13 @@ def place_of_file(path, layout, spellings, this_git_dirs, cache):
 
 
 def environment_without_git_redirecting_variables():
-    """This program's environment, less GIT_REDIRECTING_VARIABLES, for every
-    git it runs. The same name and job as the function in
-    scripts/run-all-test-suites.py; it is not imported from there because
-    this program is sent whole to the other machine over ssh."""
+    # Keep this helper local: the complete program is sent over ssh without sibling modules.
     return {key: value for key, value in os.environ.items()
             if key not in GIT_REDIRECTING_VARIABLES}
 
 
 def tracked_in_checkout(root, relative_paths):
-    """(the paths among `relative_paths` that git tracks in the checkout at
-    `root`, failure or None). A root with no `.git` tracks nothing."""
+    """Return (tracked paths, failure or None) for the checkout."""
     if not os.path.lexists(os.path.join(root, ".git")):
         return set(), None
     command = ["git", "-C", root, "ls-files", "-z", "--",
@@ -712,9 +322,8 @@ def tracked_in_checkout(root, relative_paths):
 
 
 def worktrees_listed_by(git_dir):
-    """(the work trees `git worktree list` names for the repository at
-    `git_dir`, failure or None). Git records each path with its symbolic
-    links resolved."""
+    """Return (worktree paths, failure or None) for the repository."""
+    # Git records worktree paths with symbolic links resolved.
     try:
         result = subprocess.run(
             ["git", "--git-dir", git_dir, "worktree", "list", "--porcelain"],
@@ -732,11 +341,8 @@ def worktrees_listed_by(git_dir):
 
 
 def listed_worktrees_outside(layout, surfaces):
-    """(directories, failures): each worktree a main clone of this
-    repository lists that exists and lies under none of `surfaces`' roots.
-    Both sides are compared resolved, since git records a worktree's path
-    with its symbolic links resolved (/private/tmp for the Mac's /tmp), and
-    a worktree under a root would otherwise be searched twice."""
+    """Return (worktrees outside the search roots, failures)."""
+    # Resolve both sides so symlink aliases do not cause duplicate searches.
     roots = [os.path.realpath(root)
              for surface in surfaces for root in surface["roots"]]
     outside, failures = set(), []
@@ -758,14 +364,7 @@ def listed_worktrees_outside(layout, surfaces):
 
 
 def query_target(resolved, layouts, spellings):
-    """What a found copy must match, for a query resolve_query returned:
-    either a bare file name or an absolute path. `kind` is "name" (a bare
-    file name), "checkout" (a path whose path inside this repository's
-    checkout is `parts`), "scratch" (a path under a scratch tree: `parts` are
-    its components below the tree), or "absolute" (any other path). `path` is
-    the resolved query; `canonical` is it in the canonical spelling, which
-    every comparison uses, and the one place a file git does not track is
-    found for it."""
+    """Return the query kind, canonical path, and parts needed to match copies."""
     parts = parts_of(resolved)
     if not os.path.isabs(resolved):
         return {"kind": "name", "parts": parts, "path": resolved}
@@ -779,8 +378,7 @@ def query_target(resolved, layouts, spellings):
 
 
 def same_parts(parts, wanted):
-    """Whether two component lists name the same path: the directories equal
-    in any case, the names the same by is_same_name."""
+    """Compare directories case-insensitively and file names with is_same_name."""
     return (bool(parts) and bool(wanted)
             and [part.lower() for part in parts[:-1]]
             == [part.lower() for part in wanted[:-1]]
@@ -793,8 +391,7 @@ def ends_with(parts, tail):
 
 
 def keep_same_name_and_newest(items, name, cap, basename_of):
-    """`items`, newest first, with every same-name item kept and only the
-    newest `cap` of the others."""
+    """Return all same-name items and up to cap other items, newest first."""
     kept, others = [], 0
     for item in items:
         if is_same_name(basename_of(item), name):
@@ -806,12 +403,8 @@ def keep_same_name_and_newest(items, name, cap, basename_of):
 
 
 def git_blob_id(path: str, size: int):
-    """git's object id for this file's bytes, or None when it is not hashed.
-
-    git's id rather than a plain sha256 so that a checkout file and a commit
-    holding the same bytes collapse into one entry: `git log --raw` already
-    reports every commit's blob ids, at no extra cost.
-    """
+    """Return the Git blob ID, or None when the file is not hashed."""
+    # Git blob IDs let checkout files and history entries with identical bytes share a group.
     if size > HASH_SIZE_LIMIT_BYTES:
         return None
     digest = hashlib.sha1(b"blob %d\0" % size)
@@ -825,10 +418,7 @@ def git_blob_id(path: str, size: int):
 
 
 def find_command(directory, prune, stem, print_git_entries):
-    """One find over one directory: matching regular files, and, for a
-    surface whose clones are searched, every `.git` entry (directory or
-    worktree file). `.git` and SKIPPED_DIRECTORY_NAMES are pruned either
-    way."""
+    """Build a find command for matching files and, when requested, Git entries."""
     command = ["find", directory]
     for path in prune:
         command += ["-path", path, "-prune", "-o"]
@@ -845,15 +435,8 @@ def find_command(directory, prune, stem, print_git_entries):
 
 
 def split_surface(surface, stem):
-    """(directories to hand to find, matching files, report) for one
-    surface, from one listing of each root.
-
-    WHY ONE FIND PER DIRECTORY UNDER A ROOT, NOT ONE FIND PER ROOT. Measured
-    2026-09-23 on the Mac: a single find over the three checkout roots
-    (279,000 files, 222,000 of them under /Users/el/Projects) took 6.7 to 7.4
-    s; the same search as one find per directory directly under the roots,
-    sixteen at a time, took 1.7 s. The files directly in a root, and a `.git`
-    directly in one, are taken from the listing itself."""
+    """Return (directories to search, matching files, report) from a surface listing."""
+    # Search child directories separately so slow roots can be searched in parallel.
     prune = surface.get("prune", [])
     report = {"name": surface["name"], "roots": surface["roots"],
               "absent": [], "prune": prune, "failures": []}
@@ -868,9 +451,7 @@ def split_surface(surface, stem):
             report["failures"].append(
                 f"{root} could not be listed: {error.strerror}")
             continue
-        # A pruned path, a skipped name or a `.git` directly under a root
-        # needs no check here: find applies its tests to its own starting
-        # point too, so it prunes (and, for `.git`, prints) that directory.
+        # find tests its starting point too, so pruned roots need no separate handling.
         for entry in entries:
             try:
                 if entry.is_dir(follow_symlinks=False):
@@ -884,8 +465,7 @@ def split_surface(surface, stem):
 
 
 def run_find(directory, prune, stem, print_git_entries):
-    """(matching file paths, `.git` entries, failure or None) for one
-    directory."""
+    """Return (matching paths, Git entries, failure or None) for one directory."""
     command = find_command(directory, prune, stem, print_git_entries)
     try:
         result = subprocess.run(command, capture_output=True,
@@ -913,12 +493,8 @@ def run_find(directory, prune, stem, print_git_entries):
 
 
 def git_dirs_of(git_entries):
-    """The distinct repositories behind a list of `.git` entries.
-
-    A `.git` directory is a clone's own git directory. A `.git` FILE is a
-    worktree's pointer, `gitdir: <common>/worktrees/<name>`, and stands for
-    the clone at <common>; one `git log --reflog` there covers every
-    worktree's HEAD reflog (measured; see the module docstring)."""
+    """Return distinct clone Git directories from clone and worktree entries."""
+    # One git log --reflog on the common directory covers every worktree's HEAD reflog.
     found = {}
     for entry in git_entries:
         if os.path.isdir(entry):
@@ -938,13 +514,7 @@ def git_dirs_of(git_entries):
             if os.path.basename(parent) != "worktrees":
                 continue
             git_dir = os.path.dirname(parent)
-        # A directory without git's three markers -- a HEAD file, objects/
-        # and refs/ -- is not a repository, and git log refuses it ("not a
-        # git repository"). Measured: on 2026-09-23 five on the Mac, probe
-        # repositories under /private/tmp with no HEAD; on 2026-09-24 seven
-        # on ned-box under /tmp/claude-1000, git-variable experiments whose
-        # objects/ was written elsewhere. They hold nothing to search, so
-        # they are skipped rather than reported as places not searched.
+        # Git requires HEAD, objects, and refs; incomplete probe directories hold no searchable repository.
         if (os.path.isfile(os.path.join(git_dir, "HEAD"))
                 and os.path.isdir(os.path.join(git_dir, "objects"))
                 and os.path.isdir(os.path.join(git_dir, "refs"))):
@@ -953,6 +523,7 @@ def git_dirs_of(git_entries):
 
 
 def git_log_command(git_dir, stem):
+    # --full-history keeps paths added and deleted on merged branches visible despite merge simplification.
     return ["git", "--git-dir", git_dir, "log", "--reflog", "--all",
             "--full-history", "--topo-order", "--no-renames", "--raw",
             "--no-abbrev", "-z",
@@ -961,21 +532,9 @@ def git_log_command(git_dir, stem):
 
 
 def parse_git_log(output: bytes, stem: str):
-    """{path: newest hit} from `git_log_command`'s output.
-
-    The output is a run of commits, each `\\x01<hash>\\0<time>\\0<subject>\\0`
-    followed by its raw entries, `:<modes> <old> <new> <status>\\0<path>\\0`.
-    A merge commit carries no entries. The pathspec also matches files under
-    a directory whose name contains the stem, so the stem is checked again
-    against each path's own name.
-
-    NEWEST IS THE FIRST SEEN, unless a later entry is strictly newer. The log
-    runs in --topo-order, so a commit always comes before its parents: two
-    commits made in the same second -- an add and the delete that follows
-    it, as the suite makes them -- are ordered by ancestry, which their
-    one-second timestamps cannot do. Between unrelated commits the later
-    timestamp still wins.
-    """
+    """Return the newest hit per path from raw Git log output."""
+    # Topo-order breaks equal-timestamp ties by ancestry; only a strictly newer timestamp replaces a hit.
+    # Recheck the basename: the pathspec also matches files beneath matching directory names.
     newest = {}
     for chunk in output.split(b"\x01"):
         if not chunk:
@@ -1010,7 +569,7 @@ def parse_git_log(output: bytes, stem: str):
 
 
 def run_git_log(git_dir, stem, name):
-    """(hits, failure, candidate paths cut by the cap) for one clone."""
+    """Return (hits, failure, capped candidate count) for one clone."""
     try:
         result = subprocess.run(
             git_log_command(git_dir, stem), capture_output=True,
@@ -1037,16 +596,7 @@ def run_git_log(git_dir, stem, name):
 
 
 def search_this_machine(machine_plan, stem, name, check_tracked=False):
-    """Everything this machine holds under the plan, as one JSON-ready dict:
-    the hits, a report per surface, and the git report. With
-    `check_tracked`, a file hit in a checkout of this repository carries
-    `untracked` when git does not track it there, or `tracking_unknown` when
-    git could not say. A git hit from a clone that is not this repository
-    carries `canonical`, the path it had in that clone's own work tree, and,
-    with `check_tracked`, `canonical_in_linked_worktrees`, the paths it had
-    in each linked worktree the clone lists. `check_tracked` is set for a
-    query with directories in it, the only kind whose answer compares
-    paths."""
+    """Return JSON-ready hits and surface reports, optionally checking checkout tracking."""
     surfaces = machine_plan["surfaces"]
     layout = machine_plan.get("this_repository", {})
     spellings = machine_plan.get("spellings", [])
@@ -1056,9 +606,7 @@ def search_this_machine(machine_plan, stem, name, check_tracked=False):
     with concurrent.futures.ThreadPoolExecutor(max_workers=16) as pool:
 
         def search_clones(git_entries):
-            # A clone's log starts as soon as the find that met it returns,
-            # so the git surface overlaps the slower finds instead of
-            # waiting for all of them.
+            # Overlap clone history searches with the remaining slower file searches.
             for git_dir in git_dirs_of(git_entries):
                 if git_dir not in git_dirs:
                     git_dirs.add(git_dir)
@@ -1121,8 +669,7 @@ def search_this_machine(machine_plan, stem, name, check_tracked=False):
         hits.append(hit)
         if placed and check_tracked:
             in_checkouts.setdefault(placed[0], []).append((hit, placed[1]))
-    # A file git does not track in its checkout is that checkout's own, and
-    # counts as a copy only at its own path (see the module docstring).
+    # An untracked file belongs only to its checkout, not to equivalent paths in other seats.
     reports_by_surface = {report["name"]: report for report in reports}
     with concurrent.futures.ThreadPoolExecutor(max_workers=16) as pool:
         asked = {pool.submit(tracked_in_checkout, root,
@@ -1141,11 +688,7 @@ def search_this_machine(machine_plan, stem, name, check_tracked=False):
                     "failures"].append(failure)
     for hit in git_hits:
         hit["this_repository"] = hit["clone"] in this_git_dirs
-    # Another project's clone: its path is the path in that clone's own work
-    # tree, and in each linked worktree the clone lists, so a query for any
-    # of those paths finds its history. A listing git could not give leaves
-    # "not found" at a linked worktree's path unestablished, so it is
-    # reported as a git failure.
+    # Include linked-worktree paths for other projects; a failed listing leaves their history coverage unknown.
     other_clones = (sorted({hit["clone"] for hit in git_hits
                             if not hit["this_repository"]})
                     if check_tracked else [])
@@ -1186,8 +729,7 @@ def search_this_machine(machine_plan, stem, name, check_tracked=False):
 
 
 def remote_command(machine_plan, query):
-    """The command line ssh hands the other machine's shell: this program,
-    read from stdin, told which surfaces to search."""
+    """Build the ssh shell command to run this program from stdin."""
     surfaces = {key: machine_plan[key]
                 for key in ("machine", "surfaces", "this_repository",
                             "spellings")
@@ -1198,12 +740,8 @@ def remote_command(machine_plan, query):
 
 
 def start_remote_search(other, query):
-    """(process, error) for the other machine's search. The ssh connection
-    starts at once, so its handshake overlaps this machine's search; the
-    program is sent on stdin, and the search there runs, only when
-    finish_remote_search is called. PR 703 review 5299114606 measured it: the
-    search there runs after this machine's, adding its own time, about 0.3 s,
-    in series."""
+    """Return (process, error) for a remote search."""
+    # Only the ssh handshake overlaps the local search; finish_remote_search sends the program.
     try:
         source = pathlib.Path(__file__).read_bytes()
         process = subprocess.Popen(
@@ -1217,7 +755,7 @@ def start_remote_search(other, query):
 
 
 def finish_remote_search(started, other):
-    """The other machine's result dict, or a string saying why there is none."""
+    """Return the remote result dict, or an error string."""
     process, source = started
     timeout = other.get("timeout_seconds", REMOTE_TIMEOUT_SECONDS)
     try:
@@ -1244,7 +782,7 @@ def format_time(epoch):
 
 
 def describe(hit, machine):
-    """The part of an entry's line after its time: machine, surface, what."""
+    """Format an entry's machine, surface, and location."""
     if hit["kind"] == "file":
         untracked = (", not tracked by git" if hit.get("untracked")
                      else ", tracking unknown" if hit.get("tracking_unknown")
@@ -1266,8 +804,7 @@ def read_command(hit, machine):
 
 
 def group_by_content(entries):
-    """Entries sharing a blob id become one group, newest member first; an
-    entry with no blob id is its own group. Groups are ordered newest first."""
+    """Group entries by blob ID, keeping unhashed entries separate and newest entries first."""
     groups, by_blob = [], {}
     for entry in sorted(entries, key=lambda item: -item["hit"]["time"]):
         blob = entry["hit"].get("blob")
@@ -1295,8 +832,7 @@ def render_group(group, lines):
 
 
 def render(query, target, results, not_searched, elapsed):
-    """(text, exit code) for the merged results of both machines. `query` is
-    the resolved query and `target` its query_target."""
+    """Return (report text, exit code) for both machines."""
     stem = query_stem(query)
     name = query_name(query)
     kind, wanted = target["kind"], target["parts"]
@@ -1304,9 +840,7 @@ def render(query, target, results, not_searched, elapsed):
                for result in results for hit in result["hits"]]
 
     def checkout_parts(entry):
-        """A hit's path inside this repository's checkout, or None when it is
-        not a copy of this repository: a git hit from another repository's
-        clone, or a file outside this repository's checkouts."""
+        """Return the hit path within this repository, or None for other repositories."""
         hit = entry["hit"]
         if hit["kind"] == "git":
             return parts_of(hit["path"]) if hit.get("this_repository") else None
@@ -1314,16 +848,12 @@ def render(query, target, results, not_searched, elapsed):
         return parts_of(place) if place else None
 
     def own_path_only(entry):
-        """A file git does not track in its checkout, or where git could not
-        say: it counts only at its own path."""
+        """Return whether an untracked or tracking-unknown file must match its own path."""
         hit = entry["hit"]
         return hit["kind"] == "file" and bool(
             hit.get("untracked") or hit.get("tracking_unknown"))
 
-    # Under a scratch tree the checkout's own directory is not in the path:
-    # its path inside the checkout is the longest tail of the query, two
-    # components or more, that a copy of this repository holds. A file git
-    # does not track is no copy of the repository's, so it sets no anchor.
+    # Use a repository-backed tail of at least two components: a basename alone could match a different directory.
     anchor = wanted if kind == "checkout" else None
     if kind == "scratch":
         held = [len(parts) for entry, parts in
@@ -1342,9 +872,6 @@ def render(query, target, results, not_searched, elapsed):
                             *hit.get("canonical_in_linked_worktrees", ()))
                if path):
             return True
-        # A file git does not track in its checkout counts only at its own
-        # path, just tested (PR 703 review 5299970582: another seat's
-        # CLAUDE.local.md was found for this seat's).
         if own_path_only(entry):
             return False
         parts = checkout_parts(entry)
@@ -1359,15 +886,10 @@ def render(query, target, results, not_searched, elapsed):
     def same_name(entry):
         return is_same_name(os.path.basename(entry["hit"]["path"]), name)
 
-    # Found copies and candidates are separated BEFORE copies are grouped by
-    # content, so an identical file at some other path stays a candidate
-    # rather than printing as "same content" under the found list (PR 703,
-    # Codex's review in 5299487158).
+    # Separate candidates before grouping: identical content at a different path must not count as found.
     same = group_by_content([entry for entry in entries if found_copy(entry)])
     other = group_by_content([entry for entry in entries
                               if not found_copy(entry)])
-    # A candidate group is led by its newest same-name copy, and candidate
-    # groups holding one come first.
     for group in other:
         group.sort(key=lambda entry: (not same_name(entry),
                                       -entry["hit"]["time"]))
@@ -1477,21 +999,16 @@ def render(query, target, results, not_searched, elapsed):
 
 
 def write_text(text):
-    """`text` on stdout, flushed at once. A path that is not valid UTF-8
-    prints with a replacement character rather than stopping the whole
-    answer with an encoding error."""
+    """Write and flush stdout, replacing characters the output encoding cannot represent."""
     sys.stdout.write(text.encode("utf-8", "surrogateescape")
                      .decode("utf-8", "replace"))
     sys.stdout.flush()
 
 
 def run_backup_search_after_nothing_found(query, git_search_complete):
-    """Run the backup search on `query`, a bare name or an absolute path in
-    its canonical spelling, as WHEN NOTHING IS FOUND in the module docstring
-    sets out, passing its output on line by line as it comes. Returns the
-    closing lines for what it answered. `git_search_complete` is whether
-    this program's own answer searched everything (exit 1), the only case
-    in which its git search covered what the skipped surfaces would."""
+    """Run the backup search and return closing lines describing the result."""
+    # Run as a subprocess to avoid circular imports; keep absolute paths to avoid matching another seat.
+    # Backup transcript hits can name files that never existed, so they cannot change the locator exit code.
     program = (os.environ.get(BACKUP_SEARCH_PROGRAM_VARIABLE)
                or str(pathlib.Path(__file__).resolve().parent
                       / BACKUP_SEARCH_PROGRAM_NAME))
@@ -1564,16 +1081,12 @@ def main(argv=None) -> int:
             f"When you report this, do not say the file does not exist: "
             f"nothing was searched.\n")
         return 3
-    # The query is now absolute or a bare name, so nothing below needs the
-    # current directory, and git refuses to start in one that no longer
-    # exists (see the module docstring).
+    # Git cannot start from a removed working directory; the resolved query no longer needs cwd.
     os.chdir("/")
     stem = query_stem(query)
     if not stem:
         parser.error("the query has no file name to match")
     name = query_name(query)
-    # Only a query with directories asks for a path, and only a path query
-    # needs to know which files git tracks.
     check_tracked = len(parts_of(query)) > 1
 
     if args.this_machine_json:

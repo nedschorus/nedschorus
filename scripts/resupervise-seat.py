@@ -101,13 +101,8 @@ SCRIPT_DIRECTORY = Path(__file__).resolve().parent
 
 
 def default_agents_root() -> Path:
-    """${NEDSCHORUS_AGENTS_ROOT:-~/agents}, as launch-claude-mac resolves it —
-    the same read as recover-crashed-seats.py's default_agents_root, for the
-    same reason: checks that resolve the root one way while the launcher
-    resolves it another act on different seats (user-ruled 2026-08-22:
-    allowed overrides must work). launch-claude-ubuntu reads no such
-    variable; a box seat is always ~/agents/<name> there, and nothing sets
-    the variable on the box, so this read gives ~/agents there too."""
+    """Return the agents root using the Mac launcher's environment override."""
+    # Checks and launcher must resolve the same root; the Ubuntu launcher always uses ~/agents.
     return Path(os.environ.get("NEDSCHORUS_AGENTS_ROOT") or "~/agents").expanduser()
 
 
@@ -117,14 +112,8 @@ def refuse(message: str) -> int:
 
 
 def handoff_is_waiting(handoff_path: Path, state_path: Path):
-    """Return (True, counter, note) when an unconsumed handoff is waiting.
-
-    Waiting means the supervisor's boot-ignition will act on this file: it
-    exists, it carries a readable restart-counter, and that counter is newer
-    than the one the last supervisor recorded as consumed. Killing the seat on
-    anything less would destroy a running session whose work has not been
-    handed off -- the one outcome this script must never produce.
-    """
+    """Return (waiting, counter, note) for an unconsumed handoff."""
+    # Require a counter the supervisor will consume before killing a session whose work needs recovery.
     if not handoff_path.is_file():
         return False, None, (
             f"no handoff at {handoff_path}. Ask the agent to hand off first (its handoff "
@@ -158,18 +147,7 @@ def handoff_is_waiting(handoff_path: Path, state_path: Path):
 
 
 def directory_occupancy_keep_reason(directory: Path):
-    """Why this seat directory must be left alone, or None when provably vacant.
-
-    Same contract as clean-worktrees.py's vacancy check, and for the same
-    reason: vacancy is proven, never assumed. An unusable lsof answer -- missing,
-    unrunnable, nonzero exit, or a listing naming no working directories at all
-    -- keeps the seat. A path match keeps regardless of how the run exited, since
-    a partial listing that names this directory is still positive evidence.
-
-    Here the stakes are inverted from the reaper's: a match means the SESSION we
-    intend to retire is alive, which is the normal case. This check exists to
-    report what is running, and to refuse when the answer cannot be trusted.
-    """
+    """Return a reason occupancy cannot be trusted, or None for a usable lsof answer."""
     if shutil.which("lsof") is None:
         return "lsof is not installed, so what is running in the seat cannot be checked"
     try:
@@ -187,7 +165,7 @@ def directory_occupancy_keep_reason(directory: Path):
             reported_paths += 1
             cwd = line[1:]
             if cwd == prefix or cwd.startswith(prefix + "/"):
-                return None  # a live process is rooted there: the session to retire
+                return None  # a live process is the session to retire
     if cwd_listing.returncode != 0:
         return (f"the occupancy check (lsof) failed with exit {cwd_listing.returncode}, "
                 "so what is running in the seat cannot be trusted")
@@ -197,21 +175,8 @@ def directory_occupancy_keep_reason(directory: Path):
 
 
 def run_tmux(*arguments_after_tmux, socket_name=None):
-    """Run one tmux command, or return None when tmux cannot be run at all.
-
-    Every tmux call here goes through this. subprocess raises FileNotFoundError
-    for a missing binary rather than returning a failure code, so an unguarded
-    call crashes on a machine without tmux -- including under --dry-run and
-    --prepare-only, which promise to change nothing and must not traceback.
-    The lsof check above already had this guard; tmux never got the sibling
-    treatment.
-
-    socket_name, when given, addresses the named tmux server (`tmux -L
-    <socket_name>`): per-seat tmux servers (2026-08-21) put each seat's
-    session on a server of its own, socket named after the seat. None keeps
-    plain resolution -- $TMUX's server when running inside tmux, else the
-    default socket.
-    """
+    """Run tmux, returning None if the command cannot run."""
+    # Without socket_name, tmux uses $TMUX inside a session and the default socket outside one.
     if shutil.which("tmux") is None:
         return None
     socket_arguments = [] if socket_name is None else ["-L", socket_name]
@@ -225,17 +190,8 @@ def run_tmux(*arguments_after_tmux, socket_name=None):
 
 
 def tmux_sockets_holding_seat_session(name: str) -> list:
-    """The -L socket names of every tmux server holding a session named for
-    this seat, in kill order.
-
-    Per-seat tmux servers (2026-08-21): a seat's session lives on its own
-    server, socket -L <seat name>, so one server crash cannot take a whole
-    machine's fleet down. Transition rule: seats launched before that change
-    still live on the DEFAULT server (socket name "default"), so both sockets
-    are checked -- and BOTH are returned when both hold the name, because a
-    decoy session left on either server is exactly the 2026-08-18 failure
-    this script exists to prevent.
-    """
+    """Return socket names holding the seat session, in kill order."""
+    # Check both seat and default servers: leaving either session alive creates a decoy seat.
     holding = []
     for socket_name in dict.fromkeys((name, "default")):
         completed = run_tmux("has-session", "-t", f"={name}", socket_name=socket_name)
@@ -245,20 +201,7 @@ def tmux_sockets_holding_seat_session(name: str) -> list:
 
 
 def retire_seat_tmux_session(name: str):
-    """(killed_sockets, failure_detail): kill every tmux session holding this
-    seat's name. failure_detail is None when nothing failed; killed_sockets
-    names the servers a session was actually killed on, and is empty when no
-    server held the name.
-
-    Killed on EVERY server that holds the name (the seat's own and, during the
-    per-seat-server transition, the default one): a survivor on either socket
-    is a decoy, which is the 2026-08-18 failure this script exists to prevent.
-
-    Step 4 of this script's procedure, and shared rather than copied:
-    recover-crashed-seats.py performs the same retire when an operator answers
-    yes to restarting a seat behind a leftover idle shell (ruled 2026-09-17,
-    reworded 2026-09-18). A second set of kill rules would drift from these.
-    """
+    """Retire every session named for the seat; return (killed_sockets, failure_detail)."""
     killed_sockets = []
     for socket_name in tmux_sockets_holding_seat_session(name):
         killed = run_tmux("kill-session", "-t", f"={name}", socket_name=socket_name)
@@ -279,21 +222,10 @@ BOX_SCRIPT_PATH = "$HOME/Projects/nedschorus/scripts/resupervise-seat.py"
 
 
 def resupervise_box_seat(arguments) -> int:
-    """Run the checks and the stale-session kill ON THE BOX, then launch here.
-
-    The launcher for a box seat is a Mac-side script -- it composes a command
-    and sends it over ssh, and the box cannot resolve its own ssh alias -- so
-    the two halves genuinely run on different machines. The box half is this
-    same script with --prepare-only, which is why its refusals reach the
-    operator unchanged: nothing is re-judged on this side.
-    """
+    """Prepare the seat on ned-box, then run the launcher on the Mac."""
+    # The Ubuntu launcher sends commands over ssh from the Mac; ned-box cannot resolve its own ssh alias.
     remote_arguments = ["--prepare-only", "--machine", "ubuntu"]
-    # The handoff directory is a path on one machine — for a box seat,
-    # box-local — so it travels verbatim (unexpanded, box expands its own ~)
-    # and only when the operator gave it; the default stays the box's own.
-    # shlex.quote, because the joined string is parsed once by the box's
-    # shell, and a hand-quoted apostrophe path breaks there (PR #134 review,
-    # finding 1). No agents root travels: main() refuses one for a box seat.
+    # Preserve remote paths unexpanded; quote for the one remote-shell parse.
     if arguments.handoff_dir:
         remote_arguments += ["--handoff-dir", shlex.quote(arguments.handoff_dir)]
     if arguments.dry_run:
@@ -305,9 +237,7 @@ def resupervise_box_seat(arguments) -> int:
         check=False,
     )
     if remote.returncode != 0:
-        # A missing script on the box is the one failure worth naming, because
-        # the box checkout is pulled by hand (nedschorus#45) and an operator
-        # would otherwise read "refused" as "the seat is fine".
+        # A missing remote script means preparation never ran, not that the seat is healthy.
         missing = subprocess.run(
             ["ssh", "-o", "ConnectTimeout=10", arguments.agent_box, f"test -f {BOX_SCRIPT_PATH}"],
             capture_output=True, text=True, check=False,
@@ -331,17 +261,9 @@ def resupervise_box_seat(arguments) -> int:
     if not launcher.is_file():
         return refuse(f"no launcher beside this script at {launcher}")
     print(f"resupervise-seat: box side is clear; running {launcher.name} {arguments.name}")
-    sys.stdout.flush()  # exec discards the buffer; see the note on the mac path
+    sys.stdout.flush()  # exec discards buffered output
     sys.stderr.flush()
-    # Carry --agent-box into the launcher, which reads it as NEDSCHORUS_AGENT_BOX
-    # and otherwise defaults to its own alias. Without this the flag steers both
-    # ssh checks above and is then ignored at the decisive step: a non-default
-    # box would be cleared, and the successor launched on the default one.
-    # The handoff directory rides the same way when given (a box-local path,
-    # verbatim): the launcher's extra-arguments hook hands --handoff-dir to
-    # the box-side supervisor — the same close recover-crashed-seats.py's
-    # codex finding A made on the mac side (user-ruled 2026-08-22: allowed
-    # overrides must work). No agents root rides: the launcher reads none.
+    # Forward the checked host and handoff directory so launch targets the seat just prepared.
     environment = {**os.environ, "NEDSCHORUS_AGENT_BOX": arguments.agent_box}
     if arguments.handoff_dir:
         environment["LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS"] = (
@@ -360,10 +282,7 @@ def main(argv=None) -> int:
         "--machine", default="mac", choices=("mac", "ubuntu"),
         help="which launcher seats the successor (default: mac)",
     )
-    # Both defaults are empty so a box seat can tell "operator gave a value"
-    # from "use the machine's own default": these are paths on one machine, and
-    # forwarding a Mac-expanded default to the box would name a Mac directory
-    # on a machine where it means nothing.
+    # Empty defaults distinguish explicit paths from machine-local defaults; never forward a Mac-expanded default.
     parser.add_argument("--handoff-dir", default="",
                         help="handoff directory on this machine only, not committed "
                              "(default ~/.claude/handoffs)")
@@ -392,10 +311,7 @@ def main(argv=None) -> int:
               "from the Mac. Nothing was changed.", file=sys.stderr)
         return 2
 
-    # A box seat's handoff file, supervisor state and tmux session all live on
-    # the box. Reading Mac state and killing a Mac tmux session for a box seat
-    # would check the wrong machine and destroy the wrong window, so the checks
-    # go where the state is: this same script, --prepare-only, over ssh.
+    # Run checks where the seat's handoff, supervisor state, and tmux session live.
     if arguments.machine == "ubuntu" and not arguments.prepare_only:
         return resupervise_box_seat(arguments)
 
@@ -406,15 +322,10 @@ def main(argv=None) -> int:
                    else default_agents_root())
     seat_directory = agents_root / arguments.name
 
-    # A live supervisor means the seat is not in the state this script repairs.
-    # Its own lock would refuse the second copy anyway; refusing here says why,
-    # before anything is killed.
+    # Refuse before killing anything when a supervisor already owns the seat.
     alive, explanation = supervisor.supervisor_liveness(state_path)
     if alive:
-        # Conditional for the same reason as handoff-write-and-check-supervisor:
-        # alive can be yes-by-assumption when ps cannot be asked, and the
-        # explanation in parentheses is what says which one this is
-        # (#328 follow-up round, nedschorus#242).
+        # alive can be assumed when ps fails; preserve the explanation distinguishing that case.
         return refuse(
             f"{arguments.name} already has a supervisor watching it ({explanation}). "
             "Nothing to recover -- if it is watching, it reincarnates the seat "
@@ -436,9 +347,7 @@ def main(argv=None) -> int:
               "the session being retired. Anything it did since writing the handoff "
               "ends with it.")
     else:
-        # Not fatal on its own: the session may already have exited, which is
-        # the easiest case of all. Report it so the operator sees what state
-        # the seat was actually in.
+        # The session may already have exited, so absence alone is not fatal.
         print(f"resupervise-seat: {occupancy_note}")
 
     launcher = launcher_for(arguments.machine)
@@ -448,18 +357,8 @@ def main(argv=None) -> int:
             "nedschorus checkout"
         )
 
-    # Killing the tmux session this script is running inside would take the
-    # operator's own terminal down mid-procedure and seat no successor. It
-    # happens whenever recovery is attempted from a shell in the very seat
-    # being recovered -- which is exactly where an operator lands after a
-    # supervisor exits, since the launcher leaves a shell in the seat.
-    # Gated on $TMUX: only a process inside tmux can be inside the seat's
-    # session, and plain `tmux display-message` resolves through $TMUX to the
-    # surrounding server whichever socket it is on (per-seat or default) --
-    # deliberately no -L here. Without the gate, a run from OUTSIDE tmux let
-    # the default server pick its own "current" session, and an arbitrary
-    # session could be false-read as the operator's own (bit the test suite
-    # on 2026-08-21, while seats moved to per-seat servers).
+    # Never kill the operator's own tmux session mid-recovery. Without $TMUX, display-message can select an unrelated session.
+    # Omit -L so tmux resolves the surrounding server through $TMUX.
     if os.environ.get("TMUX"):
         current_session = run_tmux("display-message", "-p", "#{session_name}")
         if (current_session is not None and current_session.returncode == 0
@@ -478,11 +377,7 @@ def main(argv=None) -> int:
               f"{'kill the stale tmux session and ' if stale_sockets else ''}{would_launch}")
         return 0
 
-    # The stale session must go before the launcher runs: `tmux new-session -A`
-    # ATTACHES to an existing name rather than starting the supervisor, so
-    # leaving it would drop the operator into the dead seat's shell and seat no
-    # successor at all. Killing it is also what keeps the recovered seat to one
-    # window -- the decoy of 2026-08-18 was a second window left behind.
+    # tmux new-session -A attaches to an existing session instead of starting the supervisor; retire the old session first.
     killed_sockets, retire_failure = retire_seat_tmux_session(arguments.name)
     for socket_name in killed_sockets:
         print(f"resupervise-seat: killed the stale tmux session {arguments.name} "
@@ -500,29 +395,11 @@ def main(argv=None) -> int:
 
     print(f"resupervise-seat: running {launcher.name} {arguments.name} -- the supervisor "
           "will ignite from the waiting handoff")
-    # exec, not a child: this terminal becomes the successor's seat, and a
-    # supervisor with no terminal refuses to reincarnate at all
-    # (handoff-supervisor.py, ruled 2026-08-14). Replacing this process hands
-    # the terminal over cleanly and leaves no python waiting behind the seat.
-    # Flush first: exec discards whatever python still holds in its buffer, and
-    # stdout is block-buffered whenever it is not a terminal -- so a piped or
-    # logged run silently lost every line above, which is the whole record of
-    # what was killed and why (measured 2026-08-19).
+    # exec hands this terminal to the successor; a supervisor without a terminal cannot reincarnate.
+    # Flush first because exec discards Python's buffered output.
     sys.stdout.flush()
     sys.stderr.flush()
-    # Carry the directories the checks above used into the launch, the same
-    # way the box path carries --agent-box: the launcher re-resolves the
-    # agents root itself (NEDSCHORUS_AGENTS_ROOT) and the supervisor it
-    # starts re-resolves the handoff directory, so a value that steered
-    # steps 1-4 and stopped here would clear one seat and watch another —
-    # the pattern recover-crashed-seats.py's launch_seat closes the same way
-    # (PR #131 round-3 codex findings A/B; user-ruled 2026-08-22: allowed
-    # overrides must work).
-    # shlex.quote: the hook value is parsed by exactly one shell (the
-    # launcher appends it verbatim; tmux runs the composed command), and a
-    # hand-quoted apostrophe path fails that parse AFTER the stale session
-    # was killed — the seat stays down while the record says the successor
-    # is starting (PR #134 review, finding 1).
+    # Forward the directories checked above so launch cannot switch seats; quote for the launcher's one shell parse.
     environment = dict(os.environ)
     environment["NEDSCHORUS_AGENTS_ROOT"] = str(agents_root)
     environment["LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS"] = (

@@ -142,99 +142,31 @@ _common_spec.loader.exec_module(common)
 
 PROGRAM = "cold-read-codex-cell"
 
-# cold-read-tier -> the Codex models to try, in order. Single-entry chains: an
-# Anthropic credit exhaustion — the failure that gave the Claude cold-read-cell
-# its fallback — does not touch these models, and no equivalent has been
-# observed here. The shape is a chain anyway so both cold-read-cells
-# run the same shared loop; adding a fallback is one entry, not a code
-# change. The version-prefixed ids are the accepted form (user's direction
-# 2026-08-11, live-verified the same day: the bare names "sol"/"luna" are
-# rejected by the CLI).
-#
-# Both pins were re-measured by the 2026-09-03 tier-roster campaign
-# (REPORT.md under
-# ~/agents/cold-read-research/cold-read-records/2026-09-03-cold-read-tier-roster-campaign/,
-# on that machine only and not committed, which is why the numbers are inline here; sections "Step-rule
-# tally, ALL SIX TARGETS", "Aggregate over all six targets" and "Addendum
-# 2026-09-04"). Sol keeps the `deep` cold-read-tier: it is in every top
-# cold-read-cell set, and gpt-6-astra at max did not beat it (net -19
-# unique-and-real over two designs and two runs). Luna keeps `second`:
-# added to opus at max plus sol at max it lifts 238-round-1 0.89 -> 0.94 and
-# 120-design 0.94 -> 0.97 at no wall-clock cost (mean 665 s, under sol's).
-#
-# 2026-09-22 (user direction, the day GPT-6 Sol shipped): both cold-read-tiers
-# move to the same-slot GPT-6 successors, gpt-6-sol and gpt-6-luna, at the
-# same efforts. The numbers above were measured on gpt-5.6-sol and
-# gpt-5.6-luna; the campaign never ran the GPT-6 pair, so those numbers are
-# the baseline a re-measurement compares against, not evidence for the new
-# pins. Live-verified the same day on codex-cli 0.156.0: both ids accepted at
-# xhigh and recorded as the answering model.
-#
-# 2026-10-01 (user direction, "use the latest version"): the `deep`
-# cold-read-tier moves to gpt-6.1-sol at the same effort. `second` stays on
-# gpt-6-luna: the model list codex-cli 0.159.3 fetched that day holds no
-# GPT-6.1 Luna. No campaign has measured gpt-6.1-sol, so the numbers above
-# stay the baseline a re-measurement compares against, not evidence for this
-# pin. The id needs codex-cli 0.159.1 or later: 0.156.0 refuses it with "The
-# 'gpt-6.1-sol' model is not supported when using Codex with a ChatGPT
-# account.", the text it gives any id it does not know. Live-verified the
-# same day on codex-cli 0.159.3: the id accepted at xhigh and recorded as the
-# answering model.
+# Use version-prefixed model IDs; gpt-6.1-sol requires codex-cli 0.159.1 or later.
 TIER_TO_CODEX_MODEL_CHAIN = {
     "deep": ("gpt-6.1-sol",),
     "second": ("gpt-6-luna",),
 }
 
-# cold-read-tier -> reasoning effort, pinned explicitly so a cold-read-cell's
-# behavior never depends on the machine's own ~/.codex/config.toml default.
-# xhigh for both cold-read-tiers by user calibration 2026-08-03 ("xhigh is
-# OK for codex"). The `deep` cold-read-tier was raised to max on the
-# 2026-09-03 campaign and PUT BACK TO XHIGH 2026-09-15 (user-ruled, "approved"), because
-# the campaign measured each cold-read-cell alone and the grid is a union.
-#
-# What max bought, measured per cold-read-cell: sol at max beat sol at
-# xhigh by +46 net unique-and-real findings. What it buys the GRID, computed
-# 2026-09-15 from the same campaign's cluster tables over its six targets:
-# ten findings of a 331-finding union, and three points of worst-target
-# recall, 0.86 to 0.83. What it costs: this is the slowest cold-read-cell
-# of the four and so sets the whole read's wall clock, mean 1339 s at max
-# against 1082 s at xhigh. Every cheaper roster on the measured frontier
-# gives up eighteen findings or more, so this is the one trade that sells
-# little fidelity for real time. The analysis is in the log-store at
-# nedlern@ned-box:/home/nedlern/nedschorus-logs/analysis/2026-09-15-cold-read-grid-union-and-effort-analysis.md
-#
-# The `second` cold-read-tier stays at xhigh because luna is the one model
-# the step does not help: max was +8 net alone, positive on only three of six
-# targets, and in the union it is worth -1. Fable stays at max, where the
-# union says the effort is worth 6 findings; see the claude cold-read-cell.
+# Pin effort so machine-local Codex defaults cannot change review behavior.
 TIER_TO_REASONING_EFFORT = {
     "deep": "xhigh",
     "second": "xhigh",
 }
 
 
-# The profile's name, as it appears in the reviewer's session.
 CREDENTIAL_DENYING_PERMISSION_PROFILE = "cold-read-no-credentials"
 
 
 def credential_denying_permission_profile_arguments(platform: str = sys.platform) -> list:
-    """The `-c` overrides that run the reviewer under a profile extending
-    `:workspace` and denying every credential path; see the docstring. Built
-    by the shared builder, which the sanity check's attacks and the Codex
-    code reviewer use too."""
+    """Return shared permission-profile overrides denying credential paths."""
     return common.codex_credential_denying_permission_profile_arguments(
         CREDENTIAL_DENYING_PERMISSION_PROFILE, ":workspace", platform, network=True)
 
 
 def invocation_builder(effort: str):
-    """The one thing that differs between the two cold-read-cells.
-
-    Returns the callback the shared chain runner uses: given a model and the
-    composed prompt, it yields the argv to run and the text to feed on stdin.
-    Codex takes the prompt as a positional argument, so the stdin slot is
-    None — which the shared runner turns into an explicitly closed stdin
-    rather than an inherited one.
-    """
+    """Return a callback producing (argv, stdin text) for each model and prompt."""
+    # Codex takes a positional prompt; None tells the runner to close stdin explicitly.
     def build_invocation(model: str, prompt: str):
         command = [
             "codex", "exec",
@@ -251,32 +183,8 @@ def invocation_builder(effort: str):
     return build_invocation
 
 
-# THE ONE TEXT THE `codex` AGENT-BINARY PRINTS WHEN AN ATTEMPT FAILS FOR A
-# REASON IT CAN NAME (nedschorus#413, design section 4). It is not guessed:
-# it is a real line, and the fixture rule (nedschorus#18, user-ruled
-# 2026-09-02) wants its source beside it. It arrives on the agent-binary's
-# standard error, which the shared chain runner re-emits into the
-# cold-read-cell's log.
-#
-#   logged-out     "ERROR codex_api::endpoint::responses_websocket: failed to connect to websocket: HTTP error: 401 Unauthorized"
-#       captured 2026-09-18 on ned-box (codex-cli 0.153.4) from a scratch
-#       directory outside any checkout, with an empty CODEX_HOME so the real
-#       login was untouched:
-#       `CODEX_HOME=$(mktemp -d) codex exec --sandbox read-only --skip-git-repo-check "say hi"`,
-#       exit 1, with lines of this form on stderr:
-#       `2026-09-18T19:37:41.140816Z ERROR codex_api::endpoint::responses_websocket: failed to connect to websocket: HTTP error: 401 Unauthorized, url: wss://api.openai.com/v1/responses`.
-#       The Codex CLI's tracing logger puts that timestamp at the head of
-#       every line it logs, so the shared classifier skips an optional
-#       leading timestamp and then matches by how the line starts, the one
-#       exception to column-0 matching the user ruled on 2026-09-18 (walk
-#       skill-sentences-and-shipper-questions-2026-09-18, item 4). The
-#       prefix ends at "401 Unauthorized", before the url, which is the
-#       part that may vary. Agent-binary-wide. The detail is the line after
-#       its timestamp, as the Claude launcher's logged-out text is the line.
-#
-# No quota text has been captured from a Codex run, so a Codex quota failure
-# still lands as exit-N, whose detail is the agent-binary's last stderr line,
-# until a real one is captured and added here.
+# The tracing logger may prefix a timestamp; the URL suffix varies.
+# Unrecognized quota failures remain exit-N until a captured CLI message defines a signature.
 def recognised_failure_texts_for_model(model: str) -> list:
     del model
     return [
