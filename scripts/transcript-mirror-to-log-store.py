@@ -88,7 +88,9 @@ fires StartInterval jobs on this Mac
 repository; com.nedlern.agent-ping was the casualty). Each machine runs its
 own `python3`: the Mac's Homebrew link and ned-box's system one. The lines,
 run from each machine's reference checkout, which the stop hook keeps on
-main:
+main, are installed by
+nc-systems/general-tools/install-scheduled-jobs-on-this-machine.py from the
+table beside that program, which is where a change to them is made:
 
   Mac:     * * * * * /opt/homebrew/bin/python3 /Users/el/Projects/nedschorus/scripts/transcript-mirror-to-log-store.py --failures-only >> /Users/el/.claude/transcript-mirror.log 2>&1
   ned-box: * * * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/scripts/transcript-mirror-to-log-store.py --failures-only >> /home/nedlern/.claude/transcript-mirror.log 2>&1

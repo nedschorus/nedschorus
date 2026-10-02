@@ -1,0 +1,43 @@
+{
+  "machines": {
+    "mac": {
+      "platform": "darwin",
+      "home": "/Users/el",
+      "python": "/opt/homebrew/bin/python3",
+      "clone": "/Users/el/Projects/nedschorus",
+      "launchd_path": "/Users/el/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+    },
+    "ned-box": {
+      "platform": "linux",
+      "home": "/home/nedlern",
+      "python": "/usr/bin/python3",
+      "clone": "/home/nedlern/Projects/nedschorus"
+    }
+  },
+  "jobs": [
+    {
+      "name": "transcript-mirror-to-log-store",
+      "program": "scripts/transcript-mirror-to-log-store.py",
+      "arguments": ["--failures-only"],
+      "output": ".claude/transcript-mirror.log",
+      "on": {
+        "mac": {"scheduler": "cron", "schedule": "* * * * *"},
+        "ned-box": {"scheduler": "cron", "schedule": "* * * * *"}
+      }
+    },
+    {
+      "name": "daily-full-test-run-of-main",
+      "program": "scripts/daily-full-test-run-of-main.py",
+      "arguments": [],
+      "output": ".claude/daily-full-test-run-of-main.log",
+      "on": {
+        "mac": {
+          "scheduler": "launchd",
+          "label": "com.nedschorus.daily-full-test-run-of-main",
+          "launchd_keys": {"StartCalendarInterval": {"Hour": 3, "Minute": 30}}
+        },
+        "ned-box": {"scheduler": "cron", "schedule": "30 3 * * *"}
+      }
+    }
+  ]
+}

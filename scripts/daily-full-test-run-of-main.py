@@ -130,8 +130,11 @@ scripts/run-all-test-suites.py is loaded the same way for the runner's name,
 its exit code for a held lock, and the environment its own git calls run in,
 which drops the variables that send git into another repository.
 
-SCHEDULE. Installed on each machine by hand; no scheduler file is in the
-repository.
+SCHEDULE. Installed on each machine by
+nc-systems/general-tools/install-scheduled-jobs-on-this-machine.py, from the
+table beside that program, scheduled-jobs-on-each-machine.json, which is where
+a change to either machine's schedule is made; its --check mode compares what
+a machine has installed with the table.
 
   ned-box: one cron line, run from the reference clone with the system's
   Python. ned-box's clock is America/Los_Angeles.
