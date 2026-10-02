@@ -7,6 +7,7 @@ Every project-term should be listed here; a term this page does not list is not 
 A term used by one system alone is defined in that system's glossary, not here. The system glossaries are `.claude/skills/skills-glossary.md`, the terms the skills alone use, and `docs/design-to-main/design-to-main-glossary.md`, the terms of the design-to-main workflow. A new system glossary is listed here when it is created; `scripts/system-glossaries-listed-on-the-project-glossary-test.py` fails until it is listed.
 
 - **/cold-read** — a skill used to improve the readability of prose.
+- **/explain** — a skill that re-explains a message the user could not follow, so he can understand the message without the agent-session's context.
 - **/ghi-write** — a skill used before any write to a GitHub issue.
 - **/handoff** — a skill that hands a session over to a new one.
 - **/sanity-check** — a skill used to improve designs.
