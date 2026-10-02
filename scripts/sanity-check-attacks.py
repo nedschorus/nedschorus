@@ -257,11 +257,12 @@ Running a sanity-check, and reading its output:
   the run stopped, so every agent-binary is in the process table the handler
   then reads. The one later start is the `--version` probe of a cell saving
   its report, for the report's provenance line; it reads the version and
-  exits. A signal that ends no cell stopped no agent: one that arrives after
-  every agent-binary has exited, and ends none of the git calls and version
-  probes a cell makes while it saves its report. The cells save their
-  reports, and the runner finishes the run's closing steps, prints what a
-  finished run prints, with no `STOPPED:` line, and ends by the signal. SIGKILL, and a
+  exits. A signal that arrives after every cell has finished, each having
+  saved its report or said why it could not, stopped nothing: the runner
+  finishes the run's closing steps, prints what a finished run prints, with
+  no `STOPPED:` line, and ends by the signal. A cell still running when the
+  signal arrives makes the run a stopped run, whatever its calls return
+  afterwards. SIGKILL, and a
   machine that stops, cannot be answered, so each run, before it makes its
   own copy, removes the copies no live run owns and prints `removed: a review
   copy an earlier run left behind, <path>` for each. A copy is a live run's
@@ -349,15 +350,17 @@ STOPPED_PROCESS_GRACE_SECONDS = 10.0
 # agent-binary: a cell stopped with its run is not relaunched, and the claude
 # chain does not go on to its next model.
 RUN_STOPPED = threading.Event()
-# The cells the stop ended before they could save a report: each one whose
-# thread found RUN_STOPPED set at one of run_cell's checks. Read once every
-# cell's thread has ended, to tell a stop that cut a cell short from one that
-# landed while the cells were only finishing their reports.
-CELLS_THE_RUN_STOP_ENDED = set()
-# The cell the current thread runs, set by run_cell, so a process the cell
-# starts can count the cell among CELLS_THE_RUN_STOP_ENDED when the stop ends
-# that process (count_this_threads_cell_as_ended_by_the_stop).
-CELL_RUN_BY_THIS_THREAD = threading.local()
+# The cells whose run_cell has returned: each saved its report or printed why
+# it could not. stop_run_on_signal copies it into CELLS_FINISHED_AT_THE_STOP
+# when the stop comes.
+CELLS_FINISHED = set()
+# The cells that had finished when the stop signal came, or None while the run
+# is not stopped. A stopped run ends as a finished run only when every cell is
+# in it. Decided at the signal, so no child's exit code is read: an
+# agent-binary or a version probe a signal ended may exit 0 (the npm codex
+# wrapper does), and a cell that had not finished when the signal came is
+# counted as ended by the stop whatever its calls returned.
+CELLS_FINISHED_AT_THE_STOP = None
 # Held while a cell's thread reads RUN_STOPPED and starts an agent-binary, and
 # by the stop handler while it sets RUN_STOPPED: see
 # run_agent_binary_unless_run_stopped. Re-entrant, so a handler that runs on a
@@ -743,29 +746,6 @@ def run_claude(prompt: str, checkout: pathlib.Path = None) -> tuple:
     return 1, "", "", "+".join(failed_attempts), last_cause
 
 
-def count_this_threads_cell_as_ended_by_the_stop() -> None:
-    """Count the cell this thread runs among CELLS_THE_RUN_STOP_ENDED, when
-    the run has been stopped. Called when a process the cell started has
-    ended and the stop may have ended it, so the run does not end as a
-    finished run over what that process left undone."""
-    if RUN_STOPPED.is_set():
-        cell = getattr(CELL_RUN_BY_THIS_THREAD, "name", None)
-        if cell is not None:
-            CELLS_THE_RUN_STOP_ENDED.add(cell)
-
-
-def note_a_call_the_stop_ended(completed: subprocess.CompletedProcess) -> None:
-    """After a git call or version probe a cell makes to save its report:
-    when a signal ended the call while the run is stopped, the stop's walk
-    ended it, and the cell counts among CELLS_THE_RUN_STOP_ENDED. Each such
-    call runs with check=False and the cell saves its report anyway, with
-    `commit=unknown` or `cli=unknown`, or after a write check that saw no
-    git entries; a run that ended as a finished run over that report would
-    hide what the stop cut short."""
-    if completed.returncode is not None and completed.returncode < 0:
-        count_this_threads_cell_as_ended_by_the_stop()
-
-
 def run_agent_binary_unless_run_stopped(command: list, input: str = None,
                                         timeout: float = None, **popen_keywords):
     """subprocess.run for an agent-binary, started only while the run is not
@@ -794,12 +774,6 @@ def run_agent_binary_unless_run_stopped(command: list, input: str = None,
     with process:
         try:
             stdout, stderr = process.communicate(input, timeout=timeout)
-            # Started before the run was marked stopped (the lock above), so
-            # when the run is stopped now, this agent-binary was running when
-            # the stop came, and the stop ended it, whatever its exit code:
-            # an agent-binary that answers SIGTERM by exiting 0 with what it
-            # had written so far would otherwise save that as its report.
-            count_this_threads_cell_as_ended_by_the_stop()
         except subprocess.TimeoutExpired:
             process.kill()
             process.wait()
@@ -877,9 +851,12 @@ def run_codex(prompt: str, checkout: pathlib.Path = None) -> tuple:
         if completed is None:
             # The run was stopped before codex could start: see run_claude.
             return 1, "", CODEX_MODEL, "", None
-        if completed.returncode != 0 and RUN_STOPPED.is_set():
-            # Ended because the run was stopped: see run_claude.
-            return completed.returncode, "", CODEX_MODEL, "", None
+        if RUN_STOPPED.is_set():
+            # Ended because the run was stopped, whatever its exit code: see
+            # run_claude. An agent-binary that answers SIGTERM by exiting 0
+            # would otherwise have what it had written so far saved as its
+            # report.
+            return 1, "", CODEX_MODEL, "", None
         if completed.returncode != 0:
             for stream in (completed.stderr, completed.stdout):
                 print(last_lines_of_stream(
@@ -962,7 +939,6 @@ def git_status_code_for_path(file_path: pathlib.Path,
         ["git", "status", "--porcelain", "-z", "-uall", "--", str(file_path)],
         cwd=repo_root, stdout=subprocess.PIPE, text=True, check=False,
     )
-    note_a_call_the_stop_ended(completed)
     entry = completed.stdout.split("\0")[0]
     return entry[:2] if entry else IGNORED_PATH_STATUS_CODE
 
@@ -1003,7 +979,6 @@ def worktree_snapshot(repo_root: pathlib.Path = REPO_ROOT) -> dict:
         ["git", "status", "--porcelain", "-z", "-uall"], cwd=repo_root,
         stdout=subprocess.PIPE, text=True, check=False,
     )
-    note_a_call_the_stop_ended(completed)
     snapshot = {}
     fields = completed.stdout.split("\0")
     index = 0
@@ -1125,17 +1100,12 @@ def runtime_cli_version(runtime: str) -> str:
                 [binary, "--version"], stdout=subprocess.PIPE,
                 stderr=subprocess.DEVNULL, text=True, check=False, timeout=60,
             )
-            note_a_call_the_stop_ended(completed)
             lines = (completed.stdout or "").strip().splitlines()
             measured = (
                 lines[0].strip().replace(" ", "-")
                 if completed.returncode == 0 and lines and lines[0].strip()
                 else "unknown"
             )
-            if completed.returncode is not None and completed.returncode < 0:
-                # A probe a signal ended measured nothing about the binary,
-                # so the next cell of this runtime probes again.
-                return measured
             CLI_VERSION_CACHE[runtime] = measured
         except (OSError, subprocess.TimeoutExpired):
             CLI_VERSION_CACHE[runtime] = "unknown"
@@ -1196,7 +1166,6 @@ def reviewed_revision(baseline: dict, checkout: pathlib.Path = None) -> str:
         ["git", "rev-parse", "--short", "HEAD"], cwd=checkout or REPO_ROOT,
         stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, check=False,
     )
-    note_a_call_the_stop_ended(completed)
     commit = completed.stdout.strip() or "unknown"
     # Watched ignored paths sit in the snapshot for write detection alone. They
     # belong to no commit, so a record directory left over from an earlier run
@@ -1765,7 +1734,9 @@ def stop_run_on_signal(signal_number: int, _frame) -> None:
         signal.signal(number, stop_signal_after_the_first_does_nothing)
     # Under the lock a cell's thread holds from reading RUN_STOPPED to
     # starting its agent-binary: see run_agent_binary_unless_run_stopped.
+    global CELLS_FINISHED_AT_THE_STOP
     with AGENT_BINARY_LAUNCH_LOCK:
+        CELLS_FINISHED_AT_THE_STOP = frozenset(CELLS_FINISHED)
         RUN_STOPPED.set()
     stop_processes_this_run_started()
     raise RunStoppedBySignal(signal_number)
@@ -2037,7 +2008,6 @@ def run_cell(attack: str, runtime: str, target: str, context: list,
     failed_launch_is_relaunched says the cause is not one a second launch can
     clear. A cell that ends with no report prints failed_cell_lines."""
     cell = f"{attack}-{runtime}"
-    CELL_RUN_BY_THIS_THREAD.name = cell
     checkout = checkout or REPO_ROOT
     prompt = assemble_prompt(attack, target, context, problem_statement,
                              str(cell_scratch_dir(scratch_record_dir or out_dir, cell)))
@@ -2048,17 +2018,16 @@ def run_cell(attack: str, runtime: str, target: str, context: list,
                                 relaunched_after)
 
     if RUN_STOPPED.is_set():
-        CELLS_THE_RUN_STOP_ENDED.add(cell)
         return cell, False
     failure = launch()
     if failure is None:
+        CELLS_FINISHED.add(cell)
         return cell, True
     if RUN_STOPPED.is_set():
         # The launch ended because the run was stopped. No second launch, and
         # none of the lines a failed cell ends on: they tell the requesting
         # agent how to go on with this run's reports, and the run's STOPPED
         # line says what a stopped run calls for instead.
-        CELLS_THE_RUN_STOP_ENDED.add(cell)
         return cell, False
     relaunched = failed_launch_is_relaunched(failure.cause_class)
     if relaunched:
@@ -2067,9 +2036,9 @@ def run_cell(attack: str, runtime: str, target: str, context: list,
               f"{separator}{failure.detail}", flush=True)
         failure = launch(relaunched_after=failure.cause_class)
         if failure is None:
+            CELLS_FINISHED.add(cell)
             return cell, True
         if RUN_STOPPED.is_set():
-            CELLS_THE_RUN_STOP_ENDED.add(cell)
             return cell, False
     # One write, so that another cell's lines, printed from its own thread,
     # cannot land between this cell's FAILED line and the instructions that
@@ -2079,6 +2048,7 @@ def run_cell(attack: str, runtime: str, target: str, context: list,
         rerun_command_for_cell(attack, runtime, target, context, problem_statement))
     sys.stdout.write("".join(line + "\n" for line in lines))
     sys.stdout.flush()
+    CELLS_FINISHED.add(cell)
     return cell, False
 
 
@@ -2346,7 +2316,9 @@ def run_cells_in_review_copy(args, target_path: pathlib.Path, run_log: RunOutput
         baseline_status = worktree_snapshot(checkout)
         corpus = tracked_files_corpus(checkout)
         report_ledger = RunnerReportWriteLedger(copy_record_dir, checkout)
-        CELLS_THE_RUN_STOP_ENDED.clear()
+        CELLS_FINISHED.clear()
+        global CELLS_FINISHED_AT_THE_STOP
+        CELLS_FINISHED_AT_THE_STOP = None
         futures = []
         try:
             with concurrent.futures.ThreadPoolExecutor(max_workers=len(cells)) as pool:
@@ -2362,19 +2334,19 @@ def run_cells_in_review_copy(args, target_path: pathlib.Path, run_log: RunOutput
                     saved_count += 1 if cell_ok else 0
                 run_log.reports_saved_once_cells_ended = saved_count
         except RunStoppedBySignal:
-            # The pool's exit waited for every cell's thread, so each cell has
-            # ended by now. A stop that ended none of them landed while the
-            # cells were only finishing: every agent-binary had exited, none
-            # of a cell's git calls or version probes was ended by the stop,
-            # and the reports were saved after the signal. That run saved
-            # every report it was going to, so it ends as a finished run
-            # ends, never with a STOPPED line telling the agent to run the
-            # whole command again.
+            # A stop that came after every cell had finished, saving its
+            # report or saying why it could not, cut nothing short: that run
+            # ends as a finished run ends, never with a STOPPED line telling
+            # the agent to run the whole command again. Any cell still
+            # running when the signal came makes it a stopped run, whatever
+            # the cell's calls returned afterwards.
             if (run_log.reports_saved_once_cells_ended is None
                     and len(futures) == len(cells)
+                    and CELLS_FINISHED_AT_THE_STOP is not None
+                    and {f"{attack}-{runtime}" for attack, runtime in cells}
+                        <= CELLS_FINISHED_AT_THE_STOP
                     and all(future.done() and future.exception() is None
-                            for future in futures)
-                    and not CELLS_THE_RUN_STOP_ENDED):
+                            for future in futures)):
                 run_log.reports_saved_once_cells_ended = sum(
                     1 for future in futures if future.result()[1])
             raise
