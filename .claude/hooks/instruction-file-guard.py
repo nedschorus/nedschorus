@@ -24,9 +24,7 @@ The glossary had defined soft-block as a hook refusal cleared by a reason the
 agent supplies, which no hook here has ever implemented — so an agent blocked
 by this one could read the glossary and conclude it need only state a reason.
 
-Root resolution (reworked 2026-08-17; rider 6 of
-docs/issues/queue/45-session-seat-and-isolation-riders.md, user-walked in the
-git-infra rules walk): the marker is looked for at the root of the SESSION'S
+Root resolution: the marker is looked for at the root of the SESSION'S
 OWN checkout — the enclosing repository of the hook payload's cwd — never via
 $CLAUDE_PROJECT_DIR. That variable lies in forked sessions: it names the main
 checkout while settings load from the worktree, and a stale marker sitting in

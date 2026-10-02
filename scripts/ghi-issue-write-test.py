@@ -1582,7 +1582,7 @@ def run_edit_cases(scratch: Path):
         "docs/issues/queue/3-bindings-still-waiting-in-the-queue.md\n"
         "docs/issues/queue/3-gatekeeper-checks-never-run-at-check-in.md\n"
         "docs/issues/queue/45-inventory-still-waiting-in-the-queue.md\n"
-        "docs/issues/queue/45-session-seat-and-isolation-riders.md\n"
+        "docs/issues/queue/45-riders-still-waiting-in-the-queue.md\n"
         "nc-systems/main-gatekeeper/main-gatekeeper-design.md\n")
 
     main_tree = Recorder({"git ls-tree": Completed(MAIN_TREE)})
