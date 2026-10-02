@@ -20,14 +20,30 @@ The legacy system's list failed as text alone. The legacy page records that "und
 
 ## What to build
 
-1. **A style guide page** in `docs/nedschorus-wiki/`, with a "Words to avoid" section: one row per word or phrase, giving the word, why it misleads, and what to write instead. The standard name for such a list is a style guide's word list; Google's and Microsoft's developer style guides each keep one. Entries come from the measurement below, not from opinion. Candidates already ruled or proposed:
+1. **A style guide page** in `docs/nedschorus-wiki/`, with a "Words to avoid" section: one row per word or phrase, giving the word, why it misleads, and what to write instead. The standard name for such a list is a style guide's word list; Google's and Microsoft's developer style guides each keep one. Entries come from the measurement below, not from opinion. The list is one for the whole project, not one per system as the glossaries are (user, 2026-10-01). Candidates already ruled or proposed:
    - "it", "its", "they", "this", and "that" used as a noun, as in the CLAUDE.md bullet of PR [CLAUDE.md: write the noun instead of a pronoun, and say which "or"](https://github.com/nedschorus/nedschorus/pull/828).
    - "land", "landed": write "merge", "merged" (user-ruled 2026-09-30: "land-on-main is bad then. We should use merge or merged").
    - "or" without saying which "or" is meant.
-   - bare "home" and bare "draft", once the glossary work names their meanings ("agent-home" and a "-draft" suffix were his proposals, 2026-09-30). The glossary work is task #417 of the merge-lane-backlog seat, "Glossary clarification of ambiguous project words".
+   - six words that each carry several project meanings, with the name the user approved for each meaning in the approval-walk glossary-names-for-ambiguous-project-words-2026-10-01; written bare, each word keeps only its ordinary English meaning. An entry of this kind does not forbid the word: it reminds the writer which name each meaning takes.
+     - "home": agent-home for the directory an agent-seat works in; canonical location for the one place a document or fact is kept.
+     - "draft": -draft for the filename suffix; "pending approval" for text that waits for the user's approval; "the `draft` label" for the GitHub label; `docs/drafts/` for the directory.
+     - "walk": approval-walk for the event; walk-document for the file `docs/walk/<name>.md`; approved-by-walk for the result; "put to the user in an approval-walk" for the act.
+     - "seat": agent-seat for the identity; agent-session for one running conversation; "the agent-seat's name" for the name of an agent-seat; working directory for where an agent-session works; cold-read-cell for one reviewer in a cold-read-full-run.
+     - "head": head commit for a pull request's newest commit; frozen-head for a head commit once pushed; `HEAD`, in capitals, for what a Git checkout has checked out.
+     - "drain": queue-drain for the procedure that empties a queue; "is promoted to" for an item that leaves a queue for its destination.
    - the legacy list's overloaded words and deceptive phrases, where the measurement shows agents still use them.
    - the status-inflation class, "a 100% fail indicator" (user-ruled 2026-07-22): phrases that declare a fresh thing established, such as "standing doctrine"; the measurement looks for siblings such as "is now doctrine" and "established practice".
-2. **A mechanical word checker**: a script holding the list, with no model in the loop, that prints each hit with its line and its replacement. The replacement is a word ("merge" for "land") or, where no single word fits, an instruction ("write the noun" for "it"). A script cannot tell every "that" used as a noun from a joining "that", so the checker flags candidates and the writer judges each one. Code and quoted text are exempt, as in the CLAUDE.md bullet. First place: a section of the cold-read-fast-read report, beside the section it already adds for bare issue numbers (`nc-systems/cold-read/cold-read-fast-read.py`). Second place, after the first is measured: a Stop hook that reads each message an agent sends the user and tells the agent which listed words it used. A Stop hook cannot change a message already shown; the legacy spec below records a `MessageDisplay` hook, measured on Claude Code 2.1.212, that runs before display, which must be re-verified before relying on the hook.
+2. **A mechanical word checker**: a script holding the list, with no model in the loop, that reports each hit with its line and its replacement. The replacement is a word ("merge" for "land"), the names to choose from ("head commit or `HEAD`" for "head"), or, where no single word fits, an instruction ("write the noun" for "it"). A script cannot tell every "that" used as a noun from a joining "that", so the checker flags candidates and the writer judges each one. Code and quoted text are exempt, as in the CLAUDE.md bullet.
+
+   **No model rewrites a flagged word; every hit goes back to the writer** (user-approved 2026-10-01, in the same approval-walk). Only the writer knows which meaning it intended: bare "head" is a head commit or `HEAD`, and a rewriting model without the session's context would guess. A guess shown to the user would also be text the writing agent never wrote and does not hold, so a sentence the user quotes back could not be found. The checker runs at four places, each through a Claude Code hook except the last:
+   - **A markdown file**: a PostToolUse hook on the Write and Edit tools checks the text just written and hands the agent each hit's line and the names to choose from, while the file is open.
+   - **A message to another agent**: a PreToolUse hook on the SendMessage tool stops the send until the agent rewrites the message, so the receiving agent never reads the listed word. A send the agent repeats unchanged passes, because the writer judges each candidate: a word used in its ordinary English meaning, or in quoted text, stays.
+   - **A message to the user**: a MessageDisplay hook marks the word on screen with its choices, such as "head (head commit or `HEAD`?)", without choosing one. The mark adds to the agent's words and removes none, so a sentence the user quotes back still holds the agent's own words. A Stop hook tells the writing agent which listed words its message used. No hook can make the agent rewrite a message before the user reads the message, because the message is the model's own output.
+   - **A document put to review**: a section of the cold-read-fast-read report on every document the fast read reads, as a second pass, placed beside the section the report already adds for bare issue numbers in walk drafts (`nc-systems/cold-read/cold-read-fast-read.py`).
+
+   The text each hook hands the agent follows CLAUDE.md's bullet on the text a program hands an agent at the moment the agent must act.
+
+   **The MessageDisplay hook, measured 2026-10-01 on Claude Code 2.1.287** (`nedlern@ned-box:/home/nedlern/nedschorus-logs/seats/merge-lane-backlog/message-display-hook-live-test-2026-10-01.md`): the hook runs before the text is shown, once per batch of completed lines. The screen showed only the hook's replacement and never the raw text, in an interactive run and in a headless run. The transcript, and what the model sees, keep the original text. The display waits for the hook: a hook that slept 3 seconds delayed the text by about 3 seconds, so the hook must be fast. Claude Code's code also has a path that shows the raw text first and rewrites the text when the hook returns; that path did not run in the test, and what selects that path is not measured. If that path runs, the mark appears a moment after the word instead of with the word.
 3. **A promise check**, separate from the word checker: a promise phrase in an agent's message (the measured forms: "I'll bring you X", "I'll report when…", "Noted", "I'll hold", "from now on") passes only when the same turn created a task or a reminder with one of Claude Code's tools TaskCreate, CronCreate or ScheduleWakeup. The check's message is "you promised X: create the task now, or take the promise back", not a replacement word.
 4. **CLAUDE.md points to the page**, in its terms bullet, so every agent reads the rule before acting. The terms bullet gained, by the user's approval on 2026-09-30, the sentence "When you describe something a glossary names, use the glossary's term, spelled as the glossary spells it." in a pull request of its own.
 
@@ -49,8 +65,15 @@ The nedlern repository is private; the fleet's `mac-claude` account cannot open 
 
 ## Next action
 
-Read the measurement, draft the page's first entries (word, why, write instead), and put them to the user in an approval-walk, one class of words per item. Then build the checker's cold-read-fast-read section, then the promise check, each in its own pull request.
+Read the measurement, draft the page's first entries (word, why, write instead), and put them to the user in an approval-walk, one class of words per item. The build need not wait for that approval-walk: the first build starts with the entries the user has already approved, the pronoun words, "land" and the six words of item 1.
+
+A subagent of the agent-seat merge-lane-backlog builds the checker (user, 2026-10-01), each step in its own pull request, in this order:
+1. the list and the script, with the PostToolUse hook on Write and Edit;
+2. the PreToolUse hook on SendMessage;
+3. the MessageDisplay mark, with the Stop hook;
+4. the cold-read-fast-read section;
+5. the promise check of item 3.
 
 ## Trigger to close
 
-The style guide page is on main with entries the user approved, the word checker runs in the cold-read-fast-read report, and the promise check runs; the Stop hook is built or ruled out on measured evidence.
+The style guide page is on main with entries the user approved, the word checker runs at the four places item 2 names, the promise check runs, and CLAUDE.md points to the page.
