@@ -41,6 +41,16 @@ from types import SimpleNamespace
 SYSTEM_DIRECTORY = Path(__file__).resolve().parent.parent
 REPOSITORY_ROOT = SYSTEM_DIRECTORY.parent.parent
 
+# Before anything runs git: a run started with GIT_DIR set, or with another
+# variable that redirects git, must still build this suite's scratch
+# repositories where the suite says, not in the repository the variable names.
+_git_environment_fixture_spec = importlib.util.spec_from_file_location(
+    "git_redirecting_environment_removal_test_fixture",
+    REPOSITORY_ROOT / "scripts" / "git-redirecting-environment-removal-test-fixture.py")
+_git_environment_fixture = importlib.util.module_from_spec(_git_environment_fixture_spec)
+_git_environment_fixture_spec.loader.exec_module(_git_environment_fixture)
+_git_environment_fixture.remove_git_redirecting_environment_variables_from_this_process()
+
 SCRIPT_PATH = SYSTEM_DIRECTORY / "handoff-supervisor.py"
 
 _spec = importlib.util.spec_from_file_location("handoff_supervisor", SCRIPT_PATH)
