@@ -380,16 +380,18 @@ MEMORY_REVIEW_CHECK_READ_TIMEOUT_SECONDS = 30
 
 # Appended to the memory-review-due report in the successor's first prompt,
 # as OVERVIEW_REFRESH_DUE_INSTRUCTION_TEMPLATE is to each overview report. A
-# template because the mark command's path and the two stores are filled in
+# template because the mark command's path and the stores' paths are filled in
 # from where they are defined. Why each part is there is in
 # memory_review_due_lines's docstring.
 MEMORY_REVIEW_DUE_INSTRUCTION_TEMPLATE = (
     " — Run `python3 {mark_script} started` first. Then walk the user through "
     "every entry of both memory stores, {mac_memory_store} on the Mac and "
-    "{ned_box_memory_store}, one entry at a time with the /walk-me-through "
-    "skill, asking him for each whether to keep it, move it into CLAUDE.md or "
-    "a skill, or delete it; write or delete nothing in either store without "
-    "his approval. When the walk closes, run `python3 {mark_script} done`."
+    "ned-box's at {ned_box_memory_store_mac_mount} (when that path does not "
+    "open, {ned_box_memory_store} over ssh), one entry at a time with the "
+    "/walk-me-through skill, asking him for each whether to keep it, move it "
+    "into CLAUDE.md or a skill, or delete it; write or delete nothing in "
+    "either store without his approval. When the walk closes, run "
+    "`python3 {mark_script} done`."
 )
 
 # The pointer at the script that composed the prompt, carried by every set of
@@ -1836,6 +1838,12 @@ def memory_review_due_lines(now: Optional[datetime] = None) -> tuple:
     the user decides: keep it, move it into CLAUDE.md or a skill, or delete
     it. The instruction repeats that nothing is written or deleted without his
     approval, because CLAUDE.md requires his approval for every memory write.
+    ned-box's store is named first by the Mac's Samba mount of ned-box's
+    home, so the seat reads each entry with its file tools and an edit goes
+    through the instruction-file guard, which does not see a change made over
+    ssh; the ssh form follows as the fallback for a day the share is not
+    mounted. This function itself still reads ned-box over ssh, which gives up
+    after ten seconds, where a read from a hung mount has no time limit.
     The done mark records the digest the next noon compares against.
 
     A SEAT THAT DIES MID-WALK leaves its started mark, which keeps every other
@@ -1889,6 +1897,8 @@ def memory_review_due_lines(now: Optional[datetime] = None) -> tuple:
             + MEMORY_REVIEW_DUE_INSTRUCTION_TEMPLATE.format(
                 mark_script=DAILY_MEMORY_REVIEW_MARK_PATH,
                 mac_memory_store=mark_module.MAC_MEMORY_STORE_DIRECTORY + "/",
+                ned_box_memory_store_mac_mount=(
+                    mark_module.NED_BOX_MEMORY_STORE_MAC_MOUNT_DIRECTORY + "/"),
                 ned_box_memory_store=mark_module.ned_box_memory_store_citation()),)
 
 

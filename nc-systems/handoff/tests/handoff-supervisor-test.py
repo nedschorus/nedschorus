@@ -2471,15 +2471,23 @@ def run_overview_refresh_due_prompt_cases(workspace: Path):
 
 
 # The memory-review-due instruction, word for word. A template: the mark
-# command's path and the two stores are filled in.
+# command's path and the stores' paths are filled in.
 EXPECTED_MEMORY_REVIEW_DUE_INSTRUCTION_TEMPLATE = (
     " — Run `python3 {mark_script} started` first. Then walk the user through "
     "every entry of both memory stores, {mac_memory_store} on the Mac and "
-    "{ned_box_memory_store}, one entry at a time with the /walk-me-through "
-    "skill, asking him for each whether to keep it, move it into CLAUDE.md or "
-    "a skill, or delete it; write or delete nothing in either store without "
-    "his approval. When the walk closes, run `python3 {mark_script} done`."
+    "ned-box's at {ned_box_memory_store_mac_mount} (when that path does not "
+    "open, {ned_box_memory_store} over ssh), one entry at a time with the "
+    "/walk-me-through skill, asking him for each whether to keep it, move it "
+    "into CLAUDE.md or a skill, or delete it; write or delete nothing in "
+    "either store without his approval. When the walk closes, run "
+    "`python3 {mark_script} done`."
 )
+
+# ned-box's store as the Mac opens it through the Samba mount of ned-box's
+# home. The fixtures leave it as it is: the supervisor never reads the mount,
+# it only names it.
+NED_BOX_MEMORY_STORE_MAC_MOUNT_PATH = (
+    "/Volumes/nedhome/.claude/projects/-home-nedlern-Projects-nedschorus/memory")
 
 DAILY_MEMORY_REVIEW_MARK_SCRIPT_PATH = SYSTEM_DIRECTORY / "daily-memory-review-mark.py"
 
@@ -2500,8 +2508,9 @@ def expected_memory_review_due_line(mac_store, ned_box_store, mac_entries,
         f"memory review due: the Mac's memory store holds {mac_entries} and "
         f"ned-box's holds {ned_box_entries}, {since} — Run `python3 {mark} started` "
         "first. Then walk the user through every entry of both memory stores, "
-        f"{mac_store}/ on the Mac and nedlern@ned-box:{ned_box_store}/, one entry "
-        "at a time with the /walk-me-through skill, asking him for each whether to "
+        f"{mac_store}/ on the Mac and ned-box's at {NED_BOX_MEMORY_STORE_MAC_MOUNT_PATH}/ "
+        f"(when that path does not open, nedlern@ned-box:{ned_box_store}/ over ssh), "
+        "one entry at a time with the /walk-me-through skill, asking him for each whether to "
         "keep it, move it into CLAUDE.md or a skill, or delete it; write or delete "
         "nothing in either store without his approval. When the walk closes, run "
         f"`python3 {mark} done`.")

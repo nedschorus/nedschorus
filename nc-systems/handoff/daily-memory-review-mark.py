@@ -90,6 +90,14 @@ NED_BOX_SSH_COMMAND = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10"]
 MAC_MEMORY_STORE_DIRECTORY = "/Users/el/.claude/projects/-Users-el-Projects-nedschorus/memory"
 NED_BOX_MEMORY_STORE_DIRECTORY = (
     "/home/nedlern/.claude/projects/-home-nedlern-Projects-nedschorus/memory")
+# The same store as the Mac opens it, through the Samba share of ned-box's home
+# (smb://nedlern@ned-box.local/nedhome) mounted at /Volumes/nedhome. The
+# reviewing seat reads the entries there with its file tools, so an edit goes
+# through the instruction-file guard, which does not see a change made over
+# ssh. This program never reads the mount: ssh gives up after ten seconds,
+# and a read from a hung mount has no time limit.
+NED_BOX_MEMORY_STORE_MAC_MOUNT_DIRECTORY = (
+    "/Volumes/nedhome/.claude/projects/-home-nedlern-Projects-nedschorus/memory")
 MEMORY_STORE_INDEX_FILE_NAME = "MEMORY.md"
 
 # On ned-box; see THE MARKS in the module docstring.
