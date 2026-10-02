@@ -65,9 +65,8 @@ AGY_CELL_LAUNCHER = COLD_READ_DIRECTORY / "cold-read-agy-cell.py"
 SHIP_DESTINATION_VARIABLE = "COLD_READ_RECORD_SHIP_DESTINATION"
 TELL_HIM_RECORD_INSTRUCTION = ("Tell the user what the record line above says, "
                                "remedy included, before your closing line.")
-TELL_HIM_LAUNCHER_INSTRUCTION = ("In the line saying the fresh-reader's read failed, "
-                                 "tell the user what the cell launcher's lines above "
-                                 "say, remedy included.")
+TELL_HIM_LAUNCHER_INSTRUCTION = ("Tell the user what the cell launcher's lines above "
+                                 "say, remedy included, before your closing line.")
 
 # A sentence that appears in the fixture's Question 1 section only, and one
 # that appears in its Question 2 section only; checked against the fixture
@@ -208,9 +207,9 @@ def main() -> int:
               expected_tail in output)
         check("success opens on the Question 2 heading",
               output.startswith(QUESTION_2_HEADING), output[:80])
-        check("success names the report's path and says not to cite the report",
+        check("success names the report's path and says not to cite the findings",
               f"Report: {report_copy}" in output
-              and "Do not cite this report to the user unless he asks." in output)
+              and "Do not cite the findings to the user unless he asks." in output)
         check("success keeps the fast read's progress lines off stdout",
               "stand-in progress line" not in output)
         check("success passes on the fast read's record-shipping line",
@@ -360,6 +359,17 @@ def main() -> int:
               misshapen_logged is not None and re.fullmatch(
                   r"explain-reply-draft-no-seat-\d{6}\.md", misshapen_logged["target_name"]),
               str(misshapen_logged))
+        # A misshapen id shorter than "nedschorus-" and "-tasks" together, 17
+        # characters, slices to nothing and reads no-seat even with the shape
+        # check gone. One of 18 or more characters does not: without the
+        # check, this one would name the seat "task-l".
+        _, long_misshapen_logged = run_program(scratch, success_plan, GOOD_INPUT,
+                                               seat_task_list_id="some-other-task-list-id")
+        check("a long task-list id of another shape is not sliced into a seat's name",
+              long_misshapen_logged is not None and re.fullmatch(
+                  r"explain-reply-draft-no-seat-\d{6}\.md",
+                  long_misshapen_logged["target_name"]),
+              str(long_misshapen_logged))
 
         # Oracle: stdout and exit code. Red: exit 0, or no instruction to send
         # anyway, or the fast read's FAILED line not passed on.

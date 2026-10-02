@@ -143,8 +143,8 @@ RECORD_SHIP_REFUSED_INSTRUCTION = (
 # own lines open `cold-read-fast-read: ` and do not match.
 CELL_LAUNCHER_LINE = re.compile(r"cold-read-[a-z-]+-cell: ")
 CELL_LAUNCHER_LINES_INSTRUCTION = (
-    "In the line saying the fresh-reader's read failed, tell the user what the "
-    "cell launcher's lines above say, remedy included.")
+    "Tell the user what the cell launcher's lines above say, remedy included, "
+    "before your closing line.")
 EXIT_FAST_READ_FAILED = 1
 EXIT_BAD_INPUT = 64
 
@@ -160,7 +160,7 @@ FAILURE_INSTRUCTIONS = (
     "fresh-reader's read failed.",
     "Do not run this command again for this reply.",
 )
-SUCCESS_INSTRUCTION = "Do not cite this report to the user unless he asks."
+SUCCESS_INSTRUCTION = "Do not cite the findings to the user unless he asks."
 
 
 def seat_name_from_environment():
