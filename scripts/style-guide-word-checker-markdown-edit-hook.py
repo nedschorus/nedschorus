@@ -6,7 +6,7 @@ THE DESIGN is GHI [A project style guide: words to avoid, a mechanical
 checker, and a check on unbacked promises](https://github.com/nedschorus/nedschorus/issues/14),
 item 2, the first of the four places the checker runs: "a PostToolUse hook on
 the Write and Edit tools checks the text just written and hands the agent each
-hit's line and the names to choose from, while the file is open." The list and
+hit and the names to choose from, while the file is open." The list and
 the scanner live in scripts/style-guide-word-checker.py, loaded by path; this
 file decides which files and which text are checked, and words the report.
 
@@ -25,19 +25,15 @@ reason to block a write or cost the agent a turn.
 
 ONLY THE TEXT JUST WRITTEN is reported, because a report on text the agent did
 not write in this call would be noise the agent cannot act on:
-  - Edit: the hits inside `new_string`, located in the file as it now stands
-    (the hook runs after the edit). The whole file is read for its fences, so
-    a `new_string` written inside a fenced code block is known to be code, and
-    a hit is reported with its line in the file. The occurrences this call
-    wrote are the ones that overlap a line the tool's own patch,
-    `tool_response.structuredPatch`, marks as added: the text of `new_string`
-    may already stand elsewhere in the file, and a `replace_all` adds
-    occurrences beside any the file already held. Each hunk gives `newStart`
-    and its `lines`, each line prefixed " " (unchanged), "-" (removed) or "+"
-    (added). When the patch is missing or unreadable, the first occurrence is
-    located, and every occurrence when `replace_all` is set. When `new_string`
-    cannot be found in the file (another writer changed the file in between,
-    say), nothing is reported.
+  - Edit: the hits inside `new_string` itself, scanned on its own and never
+    located in the file. Each hit is reported with the words around it in
+    `new_string`, not with a line number: the agent has just written that
+    text and finds the words in it. Locating `new_string` in the file took
+    three review rounds and still missed cases (the same text standing twice,
+    a patch's no-newline-at-end-of-file marker), so it was removed. The
+    accepted cost: fences are read from `new_string` alone, so text added
+    inside a fenced code block that `new_string` does not open may be
+    flagged; the writer judges each hit and leaves that one as written.
   - Write: the hits on lines whose text is absent from `git show
     HEAD:<path>`, so rewriting a file whole reports only its new lines. A file
     `HEAD` does not hold is new in every line.
@@ -51,7 +47,8 @@ walk-documents quote the user, and the user's words are not the writer's to
 change.
 
 THE TEXT HANDED TO THE AGENT says what was flagged and why, then one line per
-hit with the file, the line, the form and the names for its meanings. At most
+hit with the file, where the hit is (its line for a Write, the words around it
+for an Edit), the form and the names for its meanings. At most
 HIT_LINES_LISTED_AT_MOST hits are listed: a long new document can hold dozens,
 and a list the agent skims helps nobody. The text names none of the listed
 words bare, so the report is not itself a hit. Each hit line is the entry's
@@ -66,15 +63,15 @@ little as it can; measured on the user's Mac, each git call costs 10 to 15 ms
 and the interpreter's start about 45 ms. The checkout is found by walking up
 from `cwd` to the directory holding `.git`, the way
 .claude/hooks/instruction-file-guard.py finds it, with no git call. An Edit
-then makes one git call, `git check-ignore`. A Write makes one, `git show`,
-when the file is committed, since a committed file is tracked, and a second,
-`git check-ignore`, only when the file is not committed. Each call has a
-timeout. Only the lines just written are searched for words; the rest of the
-file is read only for its fences.
+then makes one git call, `git check-ignore`, and reads no file. A Write makes
+one, `git show`, when the file is committed, since a committed file is
+tracked, and a second, `git check-ignore`, only when the file is not
+committed. Each call has a timeout. Only the text just written is searched.
 """
 
 import importlib.util
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -96,6 +93,10 @@ REPORT_OPENING_LINES = (
     "Where the word has its ordinary English meaning, leave the word as written.",
 )
 HIT_LINE = '{path}:{line}: "{form}": {names}'
+EDIT_HIT_LINE = '{path}, in "{context}": "{form}": {names}'
+CONTEXT_WORDS_EACH_SIDE = 4
+WORDS_BEFORE_PATTERN = re.compile(r"(?:\S+\s+){0,%d}\S*$" % CONTEXT_WORDS_EACH_SIDE)
+WORDS_AFTER_PATTERN = re.compile(r"\S*(?:\s+\S+){0,%d}" % CONTEXT_WORDS_EACH_SIDE)
 MORE_HITS_LINE = ("{count} more hit(s) in the same text are not listed: reread the rest "
                   "of the text just written for the same words.")
 
@@ -164,80 +165,22 @@ def git_would_track(root: Path, relative_path: str) -> bool:
     return run_git(["check-ignore", "-q", "--", relative_path], root).returncode == 1
 
 
-def lines_added_by_structured_patch(tool_response):
-    """The 1-based line numbers, in the file as it now stands, that the tool's
-    patch marks as added, or None when the patch is missing or unreadable.
-
-    A real Edit result carries hunks of this shape (Claude Code 2.1.287):
-    {"oldStart": 49, "oldLines": 8, "newStart": 49, "newLines": 12,
-     "lines": [" unchanged", "-removed", "+added", ...]}.
-    """
-    if not isinstance(tool_response, dict):
-        return None
-    hunks = tool_response.get("structuredPatch")
-    if not isinstance(hunks, list) or not hunks:
-        return None
-    added = set()
-    for hunk in hunks:
-        if not isinstance(hunk, dict):
-            return None
-        new_line = hunk.get("newStart")
-        hunk_lines = hunk.get("lines")
-        if not isinstance(new_line, int) or not isinstance(hunk_lines, list):
-            return None
-        for hunk_line in hunk_lines:
-            if not isinstance(hunk_line, str):
-                return None
-            if hunk_line.startswith("+"):
-                added.add(new_line)
-                new_line += 1
-            elif hunk_line.startswith("\\"):
-                # "\ No newline at end of file" marks the line above it and
-                # is not a line of the file, so it moves no line number.
-                continue
-            elif not hunk_line.startswith("-"):
-                new_line += 1
-    return added
-
-
-def hits_in_edit(checker, root: Path, relative_path: str, tool_input: dict,
-                 tool_response=None):
+def hits_in_edit(checker, root: Path, relative_path: str, tool_input: dict):
     new_string = tool_input.get("new_string")
     if not isinstance(new_string, str) or not new_string.strip():
         return []
     if not git_would_track(root, relative_path):
         return []
-    try:
-        file_text = (root / relative_path).read_text(encoding="utf-8", errors="replace")
-    except OSError:
-        return []
-    occurrences = []
-    start = file_text.find(new_string)
-    while start != -1:
-        occurrences.append((start, start + len(new_string)))
-        start = file_text.find(new_string, start + len(new_string))
-    added_lines = lines_added_by_structured_patch(tool_response)
-    if added_lines is not None:
-        spans = [(span_start, span_end) for span_start, span_end in occurrences
-                 if added_lines.intersection(range(
-                     file_text.count("\n", 0, span_start) + 1,
-                     file_text.count("\n", 0, max(span_start, span_end - 1)) + 2))]
-    elif tool_input.get("replace_all") is True:
-        spans = occurrences
-    else:
-        spans = occurrences[:1]
-    if not spans:
-        return []
-    line_numbers = set()
-    for span_start, span_end in spans:
-        first_line = file_text.count("\n", 0, span_start) + 1
-        line_numbers.update(range(first_line,
-                                  first_line + file_text.count("\n", span_start, span_end) + 1))
-    # The lines bound the search; the offsets then drop the older text that
-    # shares a first or last line with new_string.
-    return [hit for hit in checker.find_style_guide_word_hits_in_markdown(
-                file_text, checker.APPLIES_TO_FILES, line_numbers)
-            if any(span_start <= hit.offset < span_end for span_start, span_end in spans)]
+    return checker.find_style_guide_word_hits_in_markdown(new_string, checker.APPLIES_TO_FILES)
+
+
+def words_around(text: str, offset: int, form: str) -> str:
+    """The form with up to CONTEXT_WORDS_EACH_SIDE words either side of it,
+    from the text the Edit added, its whitespace collapsed to single spaces.
+    A word joined to the form, as "(head" is, comes along with it."""
+    before = WORDS_BEFORE_PATTERN.search(text[:offset]).group(0)
+    after = WORDS_AFTER_PATTERN.match(text[offset + len(form):]).group(0)
+    return " ".join((before + form + after).split())
 
 
 def hits_in_write(checker, root: Path, relative_path: str, tool_input: dict):
@@ -258,8 +201,10 @@ def hits_in_write(checker, root: Path, relative_path: str, tool_input: dict):
         content, checker.APPLIES_TO_FILES, new_line_numbers)
 
 
-def word_report(relative_path: str, hits) -> str:
-    """The text handed to the agent: one hit per line and form, in file order."""
+def word_report(relative_path: str, hits, edit_text=None) -> str:
+    """The text handed to the agent: one hit per line and form, in order.
+    `edit_text` is the Edit's new_string, whose hits are shown with the words
+    around them instead of a line number."""
     seen = set()
     distinct_hits = []
     for hit in hits:
@@ -270,8 +215,13 @@ def word_report(relative_path: str, hits) -> str:
     lines = [line.format(path=relative_path, count=len(distinct_hits))
              for line in REPORT_OPENING_LINES]
     for hit in distinct_hits[:HIT_LINES_LISTED_AT_MOST]:
-        lines.append(HIT_LINE.format(path=relative_path, line=hit.line_number,
-                                     form=hit.form, names=hit.entry.names_to_choose_from))
+        if edit_text is None:
+            lines.append(HIT_LINE.format(path=relative_path, line=hit.line_number,
+                                         form=hit.form, names=hit.entry.names_to_choose_from))
+        else:
+            lines.append(EDIT_HIT_LINE.format(
+                path=relative_path, form=hit.form, names=hit.entry.names_to_choose_from,
+                context=words_around(edit_text, hit.offset, hit.form)))
     if len(distinct_hits) > HIT_LINES_LISTED_AT_MOST:
         lines.append(MORE_HITS_LINE.format(
             count=len(distinct_hits) - HIT_LINES_LISTED_AT_MOST))
@@ -307,16 +257,17 @@ def main() -> int:
     if checker is None:
         return 0
     if tool_name == "Edit":
-        hits = hits_in_edit(checker, root, relative_path, tool_input,
-                            payload.get("tool_response"))
+        hits = hits_in_edit(checker, root, relative_path, tool_input)
+        edit_text = tool_input.get("new_string")
     else:
         hits = hits_in_write(checker, root, relative_path, tool_input)
+        edit_text = None
     if not hits:
         return 0
 
     print(json.dumps({"hookSpecificOutput": {
         "hookEventName": "PostToolUse",
-        "additionalContext": word_report(relative_path, hits),
+        "additionalContext": word_report(relative_path, hits, edit_text),
     }}, ensure_ascii=False))
     return 0
 

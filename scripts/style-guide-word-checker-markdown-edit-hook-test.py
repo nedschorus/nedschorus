@@ -18,7 +18,6 @@ a repository at its own path before any case writes to it, so a GIT_DIR
 inherited from the caller cannot point these writes at another repository.
 """
 
-import difflib
 import importlib.util
 import json
 import os
@@ -242,51 +241,16 @@ def payload_common_keys(cwd, tool_name):
             "tool_use_id": "style-guide-word-checker-test-tool-use", "duration_ms": 1}
 
 
-def edit_payload(cwd, file_path, old_string, new_string, replace_all=False,
-                 structured_patch=None):
+def edit_payload(cwd, file_path, old_string, new_string, replace_all=False):
     payload = payload_common_keys(cwd, "Edit")
     payload["tool_input"] = {"file_path": str(file_path), "old_string": old_string,
                              "new_string": new_string, "replace_all": replace_all}
     payload["tool_response"] = {"filePath": str(file_path), "oldString": old_string,
                                 "newString": new_string, "originalFile": None,
                                 "replaceAll": replace_all,
-                                "structuredPatch": structured_patch or [],
+                                "structuredPatch": [],
                                 "userModified": False}
     return payload
-
-
-def structured_patch(old_text, new_text):
-    """The hunks Claude Code reports for an Edit, built from a unified diff:
-    {"oldStart", "oldLines", "newStart", "newLines", "lines"}, each line
-    prefixed " ", "-" or "+"; the shape of a real Edit result's
-    structuredPatch on Claude Code 2.1.287."""
-    hunks = []
-    for line in difflib.unified_diff(old_text.split("\n"), new_text.split("\n"),
-                                     lineterm="", n=3):
-        if line.startswith(("---", "+++")):
-            continue
-        if line.startswith("@@"):
-            old_part, new_part = line.split()[1:3]
-            old_start, _, old_count = old_part[1:].partition(",")
-            new_start, _, new_count = new_part[1:].partition(",")
-            hunks.append({"oldStart": int(old_start), "oldLines": int(old_count or 1),
-                          "newStart": int(new_start), "newLines": int(new_count or 1),
-                          "lines": []})
-        else:
-            hunks[-1]["lines"].append(line)
-    return hunks
-
-
-def edit_file_then_run(cwd, file_path, before, old_string, new_string, replace_all=False):
-    """Write `before`, apply the Edit the way the Edit tool does, then run the
-    hook with the patch the tool would report."""
-    if replace_all:
-        after = before.replace(old_string, new_string)
-    else:
-        after = before.replace(old_string, new_string, 1)
-    file_path.write_text(after, encoding="utf-8")
-    return run_hook(edit_payload(cwd, file_path, old_string, new_string, replace_all,
-                                 structured_patch(before, after)))
 
 
 def write_payload(cwd, file_path, content):
@@ -329,6 +293,18 @@ def hit_lines(result, relative_path):
     return found
 
 
+def edit_hits(result, relative_path):
+    """(form, the words around it) for every Edit hit line the agent was
+    handed: `<path>, in "<words around>": "<form>": <names>`."""
+    found = []
+    prefix = relative_path + ', in "'
+    for line in agent_text(result).split("\n"):
+        if line.startswith(prefix):
+            context, _, rest = line[len(prefix):].partition('": "')
+            found.append((rest.partition('": ')[0], context))
+    return found
+
+
 COMMITTED_TEXT = ("# Notes\n"
                   "\n"
                   "The seat was here before.\n"
@@ -363,12 +339,16 @@ with tempfile.TemporaryDirectory() as temporary_directory:
         committed_file.write_text(COMMITTED_TEXT, encoding="utf-8")
 
     # --- Edit -------------------------------------------------------------
+    # An Edit's hits come from its new_string alone, reported with the words
+    # around them and no line number: the file is never searched for the
+    # text, so text that already stood in the file is never reported.
     edited = COMMITTED_TEXT.replace("here before.", "here before the drain.")
     committed_file.write_text(edited, encoding="utf-8")
     result = run_hook(edit_payload(checkout, committed_file, "here before.",
                                    "here before the drain."))
-    check("an Edit flags only its new_string, on a line that also holds an older hit",
-          hit_lines(result, "docs/committed.md") == [(3, "drain")], result.stdout + result.stderr)
+    check("an Edit flags only its new_string, not an older hit on the same line",
+          edit_hits(result, "docs/committed.md") == [("drain", "here before the drain.")],
+          result.stdout + result.stderr)
 
     reply = json.loads(result.stdout) if result.stdout.strip() else {}
     check("the real stdin-to-stdout path: one PostToolUse JSON object, exit 0, nothing on stderr",
@@ -376,76 +356,50 @@ with tempfile.TemporaryDirectory() as temporary_directory:
           and reply.get("hookSpecificOutput", {}).get("hookEventName") == "PostToolUse"
           and agent_text(result).startswith("style-guide-word-checker: the text just written "
                                             "to docs/committed.md uses 1 word(s)")
-          and 'docs/committed.md:3: "drain": queue-drain for the procedure' in agent_text(result)
+          and 'docs/committed.md, in "here before the drain.": "drain": queue-drain for the '
+              'procedure' in agent_text(result)
           and "decision" not in reply,
           result.stdout + result.stderr)
 
-    edited = COMMITTED_TEXT.replace("code block\n", "code block\nthe seat in code\n")
-    committed_file.write_text(edited, encoding="utf-8")
+    committed_file.write_text("The seat stays.\nLater: the table.", encoding="utf-8")
+    result = run_hook(edit_payload(checkout, committed_file, "the chair.", "the table."))
+    check("an Edit whose new_string holds no listed word reports nothing, whatever the file "
+          "already holds", silent(result), result.stdout + result.stderr)
+
+    result = run_hook(edit_payload(checkout, committed_file, "x",
+                                   "```\nthe seat in code\n```\n"))
+    check("a fence that new_string opens is code", silent(result),
+          result.stdout + result.stderr)
+
+    # The accepted cost of not reading the file: text added inside a fence
+    # the file already holds is read as prose, and the writer leaves it.
     result = run_hook(edit_payload(checkout, committed_file, "code block\n",
                                    "code block\nthe seat in code\n"))
-    check("an Edit inside a fenced code block in the file is not flagged", silent(result),
+    check("text added inside a fence the file already holds is flagged, the accepted cost",
+          [form for form, _ in edit_hits(result, "docs/committed.md")] == ["seat"],
           result.stdout + result.stderr)
 
-    edited = COMMITTED_TEXT + "\nOne walk.\n\nTwo: One walk.\n"
-    committed_file.write_text(edited, encoding="utf-8")
-    result = run_hook(edit_payload(checkout, committed_file, "x", "One walk.", replace_all=True))
-    check("an Edit with replace_all flags every occurrence of its new_string",
-          hit_lines(result, "docs/committed.md") == [(9, "walk"), (11, "walk")],
+    result = run_hook(edit_payload(checkout, committed_file, "x", "One walk.",
+                                   replace_all=True))
+    check("a replace_all Edit reports its new_string's hits once",
+          edit_hits(result, "docs/committed.md") == [("walk", "One walk.")],
           result.stdout + result.stderr)
 
-    # The occurrence this call wrote, not the first in the file: each file
-    # below already holds the text of new_string, "seat", before the Edit's
-    # own line. Without the patch the hook located the first occurrence, so
-    # it reported the older line and lost the new one.
-    result = edit_file_then_run(checkout, committed_file,
-                                "The seat stays.\n\nLater: the chair.\n", "chair", "seat")
-    check("an Edit is located at the line the patch adds, not at the text's first occurrence",
-          hit_lines(result, "docs/committed.md") == [(3, "seat")],
-          result.stdout + result.stderr)
-    result = edit_file_then_run(checkout, committed_file,
-                                "```\nthe seat\n```\n\nFinal: the chair.\n", "chair", "seat")
-    check("an Edit is not lost when the text's first occurrence sits inside a fence",
-          hit_lines(result, "docs/committed.md") == [(5, "seat")],
-          result.stdout + result.stderr)
-    result = edit_file_then_run(checkout, committed_file,
-                                "The agent-seat stays.\n\nThe chair.\n", "chair", "seat")
-    check("an Edit is not lost when the text's first occurrence sits inside a compound",
-          hit_lines(result, "docs/committed.md") == [(3, "seat")],
-          result.stdout + result.stderr)
-    result = edit_file_then_run(checkout, committed_file,
-                                "The seat stays.\n\nThe chair one.\n\nThe chair two.\n",
-                                "chair", "seat", replace_all=True)
-    check("a replace_all Edit reports only the occurrences it wrote, not one already there",
-          hit_lines(result, "docs/committed.md") == [(3, "seat"), (5, "seat")],
-          result.stdout + result.stderr)
-    # The older occurrence on the line directly before the added one: this
-    # case fails if the overlap range around an occurrence is widened by a
-    # line on either side, which every case above, with a blank line between,
-    # lets pass.
-    result = edit_file_then_run(checkout, committed_file,
-                                "The seat stays.\nLater: the chair.", "chair", "seat")
-    check("an older occurrence on the line next to the added one is not reported",
-          hit_lines(result, "docs/committed.md") == [(2, "seat")],
-          result.stdout + result.stderr)
-    # A file that ends without a newline: Claude Code's patch then carries a
-    # "\ No newline at end of file" line after the removed last line and
-    # after the added one, the shape of real Edit results on 2.1.285 and
-    # 2.1.287. The marker is not a line of the file and moves no line number.
-    committed_file.write_text("Intro.\nThe seat.", encoding="utf-8")
     result = run_hook(edit_payload(
-        checkout, committed_file, "The chair.", "The seat.", structured_patch=[
-            {"oldStart": 1, "oldLines": 2, "newStart": 1, "newLines": 2,
-             "lines": [" Intro.", "-The chair.", "\\ No newline at end of file",
-                       "+The seat.", "\\ No newline at end of file"]}]))
-    check("an Edit of the last line of a file with no final newline is reported",
-          hit_lines(result, "docs/committed.md") == [(2, "seat")],
+        checkout, committed_file, "x",
+        "one two three four five six head seven eight nine ten eleven"))
+    check("an Edit hit is shown with four words either side of it",
+          edit_hits(result, "docs/committed.md")
+          == [("head", "three four five six head seven eight nine ten")],
           result.stdout + result.stderr)
 
-    reset_committed_file()
-    result = run_hook(edit_payload(checkout, committed_file, "x", "a walk the file never got"))
-    check("an Edit whose new_string is not in the file reports nothing", silent(result),
+    result = run_hook(edit_payload(checkout, committed_file, "x",
+                                   "Read it\n\nsee (head)\n\nfirst"))
+    check("the words around a hit keep the punctuation joined to the form and fold line "
+          "breaks into spaces",
+          edit_hits(result, "docs/committed.md") == [("head", "Read it see (head) first")],
           result.stdout + result.stderr)
+    reset_committed_file()
 
     # --- Write ------------------------------------------------------------
     result = write_then_run(checkout, committed_file, COMMITTED_TEXT + "\nThe drain is new.\n")
@@ -486,6 +440,10 @@ with tempfile.TemporaryDirectory() as temporary_directory:
 
     result = write_then_run(checkout, checkout / "ignored-notes" / "notes.md", "The seat.\n")
     check("a markdown file git ignores produces no output", silent(result),
+          result.stdout + result.stderr)
+    result = run_hook(edit_payload(checkout, checkout / "ignored-notes" / "notes.md",
+                                   "The chair.", "The seat."))
+    check("an Edit of a markdown file git ignores produces no output", silent(result),
           result.stdout + result.stderr)
 
     outside = tmp / "outside-the-checkout" / "notes.md"
