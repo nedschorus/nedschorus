@@ -148,11 +148,12 @@ with tempfile.TemporaryDirectory(prefix="cold-read-record-ship-test-") as scratc
     # 2026-09-27, walk file-naming-page-revision-2026-09-23, item 9): every
     # owner it names by path must exist, and no naming rule may come back.
     readme_text = (store_root / "README.md").read_text(encoding="utf-8")
-    check("the README lists all eight kinds",
+    check("the README lists all nine kinds",
           all(f"- `{kind}/` -- " in readme_text
               for kind in ("cold-read-records", "sanity-check-records", "walk",
                            "transcripts", "seats", "analysis",
-                           "daily-full-test-runs", "pull-request-head-test-runs")),
+                           "daily-full-test-runs", "pull-request-head-test-runs",
+                           "daily-memory-review-marks")),
           readme_text)
     readme_owner_paths = [token for token in readme_text.split("`")
                           if token.endswith(".py") and "/" in token]
@@ -1212,6 +1213,27 @@ with tempfile.TemporaryDirectory(prefix="cold-read-record-ship-test-") as scratc
           code == 1 and out.startswith("FAILED:") and "rsync exit 23" in out
           and sorted(p.name for p in failing_store.iterdir()) == [],
           f"exit {code}: {out}; left: {sorted(p.name for p in failing_store.iterdir())}")
+
+    # --- A local placing step that hits an OS error names that error ---------
+    denied_store = scratch / "denied-store" / "cold-read-records"
+    denied_record = make_record(scratch / "denied-records", "denied-2026-10-01",
+                                {"a.md": REPORT_A})
+    saved_place = racing.place_staged_files_and_read_them_back
+
+    def place_denied(request):
+        raise PermissionError(13, "Permission denied", request["store_dir"])
+
+    racing.place_staged_files_and_read_them_back = place_denied
+    try:
+        code, out, err = ship_in_process(denied_store, denied_record)
+    finally:
+        racing.place_staged_files_and_read_them_back = saved_place
+    check("a local placing step that hits an OS error prints that error as the "
+          "reason, not an ssh exit",
+          code == 1 and out.startswith("FAILED: denied-2026-10-01 — Permission denied "
+                                       "while placing the copied files; a later run finishes it.")
+          and "ssh" not in out,
+          f"exit {code}: {out}")
 
 print()
 if failures:

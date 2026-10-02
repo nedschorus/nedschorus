@@ -1,302 +1,5 @@
 #!/usr/bin/env python3
-"""Decide whether a search's empty result is evidence of absence.
-
-THE DEFECT. A command runs, finds nothing, and the agent reads "nothing" as
-"there is nothing" when it means "this could not have found anything". The
-project's name for the claim is the unvalidated-negative: a negative result is
-evidence only once that same check has been seen to return a positive. The rule
-was drafted 2026-09-21 after eight of them in one evening across three seats,
-and the user ruled this program's shape on 2026-09-23: "Can't you just rerun
-some old stuff that didn't work and see if it works? If so, dispatch a subagent
-to fix and then measure, don't wait." So: build the check, replay the known
-failures through it, and measure the noise on transcripts that already exist,
-rather than recording for a day first.
-
-THE FOUR FAILURES THIS WAS BUILT AGAINST, each measured by a seat of this fleet
-in the two days before 2026-09-23, and each written down under
-scripts/unvalidated-negative-result-check-fixtures/ before any of this was
-written:
-
-  1. A counter read six cold-read reports and reported 72 findings; the true
-     number was 176. Three whole reports, one of them 17 KB, counted as empty,
-     because the reviewers had numbered their findings in four markdown shapes
-     and the counter's pattern knew one. The record is
-     nedlern@ned-box:/home/nedlern/nedschorus-logs/cold-read-records/2026-09-15-handoff-system-overview-3/;
-     the fixture corpus here is that record's finding-heading lines, in the
-     shapes the reviewers used, and reproduces the failure at 33 counted out of
-     173. Caught by weakened-pattern-control-run-found-matches.
-  2. A seat grepped a file for a phrase, saw no match, and concluded the phrase
-     was absent. Its pipeline piped through `cut -c1-220`, so it had searched a
-     truncation of a one-paragraph line. Reading the file whole reversed the
-     conclusion. Caught by truncating-stage-upstream-of-the-search.
-  3. A search run over ned-box returned empty three times because `rg` is not
-     installed there; `rg: command not found` went to stderr, the pipeline
-     discarded it, and the empty stdout was read as a clean result. Caught by
-     stderr-discarded-by-the-search-stage, and, wherever the not-found line
-     survives into the result, by search-program-missing-on-this-machine and
-     exit-status-reports-an-error-not-an-absence. The same shape is in
-     the fleet's own transcripts as `timeout: command not found` (for instance
-     `timeout 540 python3 scripts/git-gatekeeper-test.py 2>&1 | tail -15;
-     echo "exit=${PIPESTATUS[0]}"`, which printed the not-found line and
-     `exit=` and was read as a test run).
-  4. A file move was checked by searching the codebase for the old path
-     `scripts/handoff-supervisor.py`. The search printed nothing, the move was
-     declared clean and merged, and two references broke -- they are composed
-     at run time as `Path(__file__).with_name("handoff-supervisor.py")`, which
-     holds no folder for a path search to match. One of them broke crash
-     recovery on ned-box. Caught by
-     weakened-pattern-control-run-found-matches.
-
-WHAT IS CHECKABLE AND WHAT IS A GUESS. Every signal below is decided from
-evidence, not from a reading of intent: an exit status, a stream that was
-written, a stage that appears ahead of the search in the same pipeline, or a
-second search actually run. One candidate signal was dropped for being a guess
-dressed as a check -- a PATH probe for the search program -- and the reason is
-under search-program-missing-on-this-machine. The one signal that runs
-anything is the control run, and it runs only a read-only weakened copy of the
-same search; it is off unless --run-control is given.
-
-THE GATE, applied before any signal. A pair is judged only when the command
-contains a search stage (the grep family, rg, ag, ack, fd, find, `git grep`,
-`git log --grep/-S/-G`) AND the result is empty-shaped: no output at all, a
-bare `0`, or `grep -c` count lines of which at least one is zero. Where the two
-streams were merged before the result was recorded -- a non-zero pair in a
-session transcript -- the error lines are set aside first, so a result that is
-nothing but `rg: command not found` counts as empty. Without the gate the
-noise measurement is meaningless, because thousands of ordinary
-`cp`/`mkdir`/`git add` pairs write stderr with an empty stdout.
-
-WHOSE STATUS, WHOSE ERROR. A command's exit status is its last pipeline's, and
-a pipeline's is its last stage's unless `pipefail` is set, so a status is read
-as the search's only where the search stands there: `grep -n needle notes.md;
-ls missing` exits 2 for ls. A not-found line is read as the search's only
-where it names a program in the search's own pipeline, or the ssh that
-carried it.
-
-THE SIGNALS.
-
-  search-program-missing-on-this-machine
-      the result says the program was not found: a shell's not-found line
-      naming the search's program or a stage feeding it (bash's `rg: command
-      not found`, zsh's `command not found: rg`), or an exit status of 127
-      that is the search's own. A missing path is not this signal: grep
-      reports "No such file or directory" while grep is installed, and the
-      instruction to install it would be wrong. Read off the result, never off
-      PATH. A PATH probe was tried first and dropped on the measurement of
-      2026-09-23: on the user's Mac `rg` is not a binary on PATH at all but a
-      shell function that Claude Code installs in its shell snapshot, so
-      `shutil.which("rg")` returns None while `rg` searches perfectly. A signal
-      that reports a working program as missing is the defect this file is
-      about, committed by the checker, so PATH is not evidence of absence here.
-  exit-status-reports-an-error-not-an-absence
-      the search's own exit status is one that means failure rather than
-      no-match: grep's 2, 126, 127, or ssh's 255. grep's 1 means no match and
-      is not this signal.
-  stderr-written-while-stdout-was-empty
-      stdout empty, stderr not. Computable only where the two streams were kept
-      apart, which for a session transcript means an exit-0 pair.
-  stderr-discarded-by-the-search-stage
-      the search stage carries `2>/dev/null` or `2>&-` outside its quotes, so
-      an error and a clean no-match print the same nothing. A quoted
-      `'2>/dev/null'` is a pattern being searched for, not a redirect.
-  search-exit-status-discarded-by-a-later-stage
-      the search is upstream of a pipe, or is followed by `; echo ...`/`|| true`,
-      and neither `pipefail` nor `PIPESTATUS` recovers its status. Corroborating
-      only: it never fires on its own where the search's stderr was observable
-      and empty, because an empty stderr is the proof that grep did not error.
-      The measurement made that rule: it was the only signal on 39 of 67
-      firings in the first pass, every one of them with an empty stderr
-      recorded beside it, and admitting it alone would have made three firings
-      in four wrong.
-  truncating-stage-upstream-of-the-search
-      `cut -c`/`cut -b`, `head -c`/`-n`, `tail -c`/`-n`, or `fold -w` stands
-      ahead of the search in the same pipeline, so the search read a cut-down
-      input. tail is head's mirror: both keep lines by position, not by
-      content. A `sed -n` range is not this signal; it names the lines it
-      wants. A truncating stage AFTER the search is not this signal; it
-      truncates the answer, not the question.
-  weakened-pattern-control-run-found-matches
-      a weakened copy of the same search, actually run over the same corpus,
-      matched where the original did not. Three weakenings, each derived from
-      the pattern and each tied to one of the four failures: a pattern holding
-      `/` is weakened to its last segment (failure 4); an anchored pattern is
-      unanchored; a pattern that is a literal head followed by a regex element
-      loses the literal head (failure 1). A glob in the search's arguments,
-      relative or absolute, is expanded the way the shell expanded it: only
-      where its glob character stood outside quotes, so `--include "*.py"`
-      is passed on as `*.py`. A `grep` is re-run over what the agent's own
-      `grep` read -- Claude Code's shell function, which runs ugrep and
-      skips version-control directories, binary files, and files that a
-      .gitignore at or below the directory it walked ignores, in a
-      repository or not, tracked or not -- so a match found only in
-      `.git/logs/HEAD` or a gitignored build output is not a match. The
-      control runs only where the whole command is one bare search -- one
-      pipeline of one stage, with no shell punctuation (a pipe, a redirect,
-      `;`, `&&`, backticks or `$(`) -- because a stage fed by a pipe read the
-      pipe, and a stage after `cd` ran somewhere the control is not. It runs
-      only programs that read and print: never find or fd, whose actions
-      (`-delete`, `-exec`, `-x`) a re-run would carry out, and never with an
-      option that runs another program (rg's `--pre`, ugrep's `--filter`, git
-      grep's `-O`).
-
-MEASURED NOISE, 2026-09-28, on transcripts that already existed -- nothing was
-recorded for it and nothing waited a day. 62,005 Bash command/result pairs,
-the transcripts as they stood that day: 52,537 on the Mac under
-~/.claude/projects, from 2026-07-17, and 9,468 on ned-box under
-/home/nedlern/.claude/projects, from 2026-08-23, subagents' transcripts
-included (31,549 of the pairs). The funnel:
-
-  62,005 pairs replayed
-  23,692 carried a search stage
-     329 of those returned an empty result
-      71 fired
-
-That is 1.15 firings per thousand commands. In the two weeks 2026-09-14 to
-2026-09-27 the fleet ran 42,893 Bash commands across both machines, about
-3,600 a day, and the check fired 51 times, about three or four a day -- not
-the hundreds a day that would argue against ever wiring it -- though unevenly:
-17 of them on 2026-09-22. Per signal, counting a pair once per signal it
-raised:
-
-      69  stderr-discarded-by-the-search-stage           (5 of them alone)
-      65  search-exit-status-discarded-by-a-later-stage  (2 alone, each where
-              the merged result held error lines, so stderr was not empty)
-       1  exit-status-reports-an-error-not-an-absence    (0 alone)
-
-EVERY FIRING SORTED, 2026-09-28, each on first-hand evidence -- `git grep` at
-the commit the checkout was on, a re-run without `2>/dev/null` over files that
-have not changed since, the session's own neighbouring commands -- and on what
-the agent did next.
-
-       4  REAL: the empty result could not have found what the agent was
-              looking for, and the agent went on as if it had searched. Two
-              are `rg` run over ssh on ned-box, where rg is not installed,
-              stderr sent to /dev/null -- failure 3 again. Two are
-              `grep -l ... */*.jsonl` in a transcript directory, whose names
-              all begin with `-`, so grep read them as options and exited 2;
-              the agent's report said no transcript held what several did.
-      11  the search could not have found it either, but the agent noticed at
-              once or never used the result. Six more of the `-`-named glob
-              kind, a failed `cd`, an unexpanded glob, a pattern ugrep
-              rejects as too complex, a directory that exists only on the
-              other machine, and a later `xargs ls` that failed.
-      56  NOISE: the search was fine, and its no-match true.
-       0  UNSURE.
-
-So the check was right that the empty result was not evidence in 15 of its
-71 firings, and an agent was misled in 4. None of the 4 is caught by the
-three triggers of scripts/empty-search-runs-locator-hook.py as it stands on
-branch empty-search-runs-locator-hook-stage-one: all four search for a phrase
-inside files.
-
-The measurement of 2026-09-24, on the transcripts of that day -- 63,467 pairs,
-56,027 on the Mac and 7,440 on ned-box -- fired 77 times, 1.21 per thousand,
-and was never sorted. That code over the transcripts of 2026-09-28 fires 72
-times; compared pair by pair with this code over the same transcripts, the
-one difference is the review's finding at :321 (see REVIEW FINDINGS). The
-transcripts changed between the two dates: sessions were added, and older
-ones were removed on both machines.
-
-THE GATE IS NARROW, and this is the measurement's other result. 19,807
-search-shaped commands on the Mac produced only 239 empty results, because
-this fleet writes compound commands -- `echo "==="; grep ...; echo` -- and a
-search's own emptiness is invisible inside one. The check sees a search only
-where the search is the whole command. Widening it means attributing output to
-stages, which is not built here.
-
-The control run is not exercised by this measurement: the corpora those
-commands searched are gone, and re-running thousands of searches is not a
-measurement. Its upper bound is 7 -- the empty results bare enough for a
-control to have been derived from them, 4 on the Mac and 3 on ned-box, as the
-measurement counts them. So the two review findings about the control run
-(see REVIEW FINDINGS) change no number above.
-
-REVIEW FINDINGS. merge-lane-2 left nine inline findings on the pull request
-that added this program, PR "A check that says when an empty search result
-could not have found anything"
-(https://github.com/nedschorus/nedschorus/pull/692). Each is named here by the
-line it was left on. Three were fixed on 2026-09-28, each with cases in the
-test that fail without it:
-  :761  the control ran the system grep, which reads `.git/`, gitignored and
-        binary files that the agent's `grep` never read;
-  :754  the control expanded a quoted glob, `--include "*.py"`, that the shell
-        had left alone;
-  :321  a result line quoting an error message was set aside as a diagnostic,
-        so a result that was not empty was judged empty.
-Six were left alone, because today's transcripts hold no instance that fixing
-them would change: :886 (a later command's error line lets the swallowed-status
-signal fire alone), :543 (`a && b` takes its status from the last pipeline
-only), :298 (git's 128 is not an error status), :814 (`2>&1` output is not
-split), :1002 (a missing --transcripts directory measures zero and exits 0),
-and :593, a question -- whether a zero count should be read only from a
-command that asked for a count. Its one instance is an `echo "exit:$?"` line
-read as a count, over a search whose output was indeed empty.
-
-The review of the pull request that made those fixes, PR "The empty-search
-check's measurement is redone over today's transcripts, and every firing is
-sorted" (https://github.com/nedschorus/nedschorus/pull/763), found more in two
-rounds, all fixed on 2026-09-28 with cases that fail without them. The
-first: a match in `helper-test.py` was taken for an ignored file `helper`
-and dropped; the ignore filter asked git's index and the corpus root's
-repository, where ugrep reads the .gitignore files alone -- so a force-added
-file, a tree outside any repository and a search root in another repository
-were read differently; a zero count was compared by its path's spelling
-(`a.py:0` against `./a.py:0`); and a `path:N:` match line whose text starts
-with a space was taken for a complaint. The second, both from narrowing
-what the first round fixed: a complaint from a program run by its path was
-no longer set aside -- and ned-box's Bash tool opens every complaint of its
-shell `/bin/bash: line 1: `, so a missing search program there went
-unreported; and a line printed without a file name (`-h`, or one named
-file) was credited to an ignored file whose path its text spelled. Two
-lesser ones went with them: a weakened pattern naming a directory was taken
-for a search root, and a file under two overlapping roots was skipped under
-one spelling only. Replayed over both machines' transcripts of that day and
-over the log-store's mirrors of both, the check fires on the same pairs as
-before either round, so the numbers above stand.
-
-NOT WIRED TO ANYTHING. This ships as a program with its tests. Whether it fires
-automatically -- in a hook, in the cold-read grid, in a reviewer's brief -- is a
-separate decision for the user, to be made after reading the measurement.
-
-USAGE.
-
-  unvalidated-negative-result-check.py --command CMD [--exit-code N]
-      [--stdout-file PATH] [--stderr-file PATH] [--stderr-not-captured]
-      [--run-control]
-      judge one command and its result; prints the instructions it would hand
-      an agent. Pass --stderr-not-captured when the two streams were merged
-      before you saw them, or an empty stderr is read as proof of no error.
-
-  unvalidated-negative-result-check.py --replay-fixtures [DIR] [--run-control]
-      judge every fixture in the directory (default: the fixtures directory
-      beside this file) and report, per fixture, whether the check fired. A
-      fixture that does not fire is this program failing its own rule, and the
-      exit status says so.
-
-  unvalidated-negative-result-check.py --transcripts DIR [--transcripts DIR ...]
-      [--limit N] [--top N]
-      extract every Bash command/result pair from the session transcripts under
-      those directories, at any depth, so subagents' transcripts are read too;
-      run the check over them, and print the funnel, the per-signal tally and
-      the commands that fire most often. --limit N stops after N pairs in all.
-      Controls are never run in this mode: the corpora those commands searched
-      are gone.
-
-EXIT STATUS. 0 when the check did not fire (--command) or when every fixture
-fired (--replay-fixtures) or when the measurement ran (--transcripts); 1 when
-the check fired (--command) or a fixture did not fire (--replay-fixtures);
-2 for a bad invocation.
-
-FIXTURE FORMAT. One JSON object per file in the fixtures directory:
-  case                 short name of the failure
-  provenance           where the command and its result come from
-  command              the command as it was run
-  exit_code            its exit status, or null when it was not recorded
-  stdout, stderr       what it printed
-  control_corpus_root  a directory, relative to the checkout, to run the
-                       control run in; absent when no control applies
-  must_fire            true for every fixture here
-"""
+"""Decide whether an empty search result is evidence of absence."""
 
 import argparse
 import glob
@@ -318,31 +21,18 @@ EXIT_BAD_INVOCATION = 2
 
 FIXTURES_DIRECTORY_NAME = "unvalidated-negative-result-check-fixtures"
 
-# The programs whose empty output an agent reads as "there is nothing".
 SEARCH_PROGRAMS = frozenset({
     "grep", "egrep", "fgrep", "zgrep", "rg", "ripgrep", "ag", "ack", "fd",
     "find", "ugrep",
 })
 
-# The programs a control run may re-run: the ones that only read and print.
-# find and fd are left out. find's first argument is a starting path, so
-# weakening it weakens nothing the search looked for, and both carry actions
-# -- find's `-delete` and `-exec`, fd's `-x` and `-X` -- that a re-run would
-# carry out. The fleet's transcripts held 19 `find ... -delete` or
-# `-exec rm` cleanups on 2026-09-24, 9 on the Mac and 10 on ned-box, and the
-# first review of this program reproduced a control run of one deleting two
-# files.
+# find and fd can execute actions, so replaying them could modify the corpus.
 CONTROL_PROGRAMS = SEARCH_PROGRAMS - {"find", "fd"}
 
-# Options that make a search run another program: rg's `--pre`, ugrep's
-# `--filter`, and git grep's `-O`/`--open-files-in-pager`. A control run is
-# refused for a stage carrying one.
 OPTION_THAT_RUNS_ANOTHER_PROGRAM = re.compile(
     r"^(?:--pre(?:=|$)|--filter(?:=|$)|--open-files-in-pager|-[A-Za-z]*O)")
 
-# Stages that cut the input down before the search reads it. The lookahead
-# after each flag letter, rather than \b, is deliberate: `cut -c1-220` -- the
-# stage that hid failure 2 -- has no word boundary between the `c` and the `1`.
+# Use lookahead, not a word boundary: compact flags such as -c1 have no boundary after c.
 TRUNCATING_STAGE = re.compile(
     r"^(?:cut\s+(?:[^|]*\s)?-[cb](?=[\d\s'\"-])"
     r"|(?:head|tail)\s+(?:[^|]*\s)?-[cn](?=[\d\s'\"+])"
@@ -350,52 +40,24 @@ TRUNCATING_STAGE = re.compile(
     r"|(?:head|tail)\s*$"
     r"|fold\s+(?:[^|]*\s)?-w(?=[\d\s'\"]))")
 
-# Read off a stage with its quoted spans removed, so that a search FOR the
-# text `2>/dev/null` is not read as a search that discards its stderr.
+# Ignore quoted redirects: a pattern containing 2>/dev/null does not discard stderr.
 STDERR_DISCARDED = re.compile(r"2>\s*/dev/null|2>&-|2>\s*&\s*-")
 
 QUOTED_SPAN = re.compile(r"'[^']*'|\"(?:[^\"\\]|\\.)*\"")
 
-# Exit statuses that mean the search failed, not that it found nothing. grep's
-# 1 is a clean no-match and is deliberately absent.
+# grep exit 1 means no match, not failure.
 ERROR_EXIT_STATUSES = frozenset({2, 126, 127, 255})
 
-# The shell's own status for a program it could not find.
 EXIT_STATUS_PROGRAM_NOT_FOUND = 127
 
-# A shell's report that a program is not installed, naming the program. bash
-# and sh print `rg: command not found` (after `bash: line 1: `); zsh prints
-# `command not found: rg`. A missing path, "No such file or directory", is
-# deliberately not here: grep reports a missing path that way while grep
-# itself is installed, and exit status 2 already reports that failure.
+# Missing-path errors do not mean the search program is missing.
 PROGRAM_NOT_FOUND = re.compile(
     r"(?:^|[\s:])(?P<named_before>[^\s:]+):\s*command not found\s*$"
     r"|command not found:\s*(?P<named_after>\S+)",
     re.IGNORECASE | re.MULTILINE)
 
-# What a failed search prints instead of results. A session transcript merges
-# the two streams for any command that exited non-zero, so without this a
-# search that printed only `rg: command not found` has a stdout that is not
-# empty, the gate turns it away, and the very failure this program was built
-# for -- failure 3, a missing search program -- goes unjudged. Applied only to
-# a non-zero result, where the merge is what happened.
-#
-# A line is a complaint only where it opens the way a program's complaint
-# opens: a program's name, a colon and a space (`grep: `, `ls: `, `bash: `,
-# `ugrep: warning: `), run by its path or not (`/bin/bash: `, which is how
-# ned-box's Bash tool opens every complaint of its shell, `/usr/bin/grep: `);
-# bash's `NAME: line N: ` for any NAME (`./find-it.sh: line 3: `); a shell's
-# name with a line number (`zsh:1: `); or Claude Code's `(eval):1: ` and
-# `(eval):cd:1: `. A program's own name holds no `.`, and only a shell puts
-# a line number straight after it. A search's matched line opens with its
-# line number (`3:find: /tmp/x: Permission denied`) or its path and line
-# number (`run.log:3:...`, `scripts/x.py:372:    r"...No such file..."`), so
-# it stays a result, even where its text starts with a space; only `grep -r`
-# without `-n` over a file with no `.` in its name can still print a result
-# that opens like a complaint. Until 2026-09-28 the phrase could sit anywhere
-# in the line, and a ned-box loop that printed ten grep results quoting
-# `find: ...: Permission denied` was judged empty and fired (the review's
-# finding at :321; see REVIEW FINDINGS in the docstring).
+# Nonzero transcript results merge stderr into stdout; diagnostic-only output is still empty.
+# Anchor diagnostics at the start so matched text quoting errors remains a result.
 DIAGNOSTIC_LINE = re.compile(
     r"^(?:\(eval\)(?::\w+)?:\d+"
     r"|(?:[^\s:]*/)?(?:zsh|bash|sh|dash|ksh)(?::\d+)?"
@@ -409,7 +71,7 @@ DIAGNOSTIC_LINE = re.compile(
 
 
 def split_diagnostics(text):
-    """(what the search printed as results, what it printed as complaints)."""
+    """Return (results, diagnostics)."""
     results = []
     diagnostics = []
     for line in (text or "").splitlines():
@@ -418,29 +80,19 @@ def split_diagnostics(text):
 
 COUNT_LINE = re.compile(r"^(?P<path>.*):(?P<count>\d+)$")
 
-# Lines the harness writes on stderr that are not the command's error output.
-# Measured 2026-09-23 over the Mac's transcripts: twelve empty search results
-# had anything at all on stderr, and in all twelve that stderr was this note
-# and nothing else. Without this the signal reports the harness talking, not a
-# search that failed.
+# Harness stderr notices are not errors from the search.
 HARNESS_NOTE_ON_STDERR = re.compile(r"^\s*Shell cwd was reset to \S+\s*$")
 
-# A signal that is real but not sufficient on its own. Measured 2026-09-23 over
-# 27,900 recorded Bash pairs: a swallowed exit status was the only signal on 39
-# of 67 firings, and in every one of them the search's stderr was recorded
-# separately and was empty -- which is the proof that grep did not error, and
-# so that the empty result is a clean no-match. Reported as corroboration, and
-# firing only where stderr was not observable.
+# A swallowed status alone cannot disprove a no-match when captured stderr is empty.
 CORROBORATING_ONLY = "search-exit-status-discarded-by-a-later-stage"
 
-# A pattern's regex elements, for the control run's third weakening.
 REGEX_ELEMENT = re.compile(r"\[[^\]]+\]|\\\+|\\\*|\\\{|\.\*|\.\+|\\d|\\w|\\s|\+|\*")
 
 SHELL_PUNCTUATION_THAT_REFUSES_A_CONTROL = re.compile(r"[|;&<>`]|\$\(")
 
 
 class Verdict:
-    """What the check decided about one command and its result."""
+    """The decision about one command and its result."""
 
     def __init__(self, applicable, empty_kind=None, signals=None,
                  instructions=None, control=None, reason=None,
@@ -469,15 +121,10 @@ class Verdict:
         }
 
 
-# ---------------------------------------------------------------- the shell
 
 def split_on_top_level(text, separators):
-    """Split text on those separators, ignoring ones inside quotes.
-
-    Heredoc bodies and `$(...)` are not parsed: a command built around them is
-    not a bare search, and every signal that matters for one is read off the
-    result rather than the text.
-    """
+    """Split on separators outside quotes."""
+    # Heredocs and command substitutions are not parsed; these are not bare searches.
     parts = []
     current = []
     quote = None
@@ -518,12 +165,7 @@ REMOTE_COMMAND = re.compile(r"""(?:^|\s)(?:'([^']*)'|"((?:[^"\\]|\\.)*)")""")
 
 
 def remote_command_of(stage):
-    """The command an `ssh host '...'` stage runs on the other machine.
-
-    Half this fleet's searches run over ssh, and a search that could not have
-    found anything is no better for being remote: failure 3 was exactly this
-    shape. The remote command is the longest quoted argument.
-    """
+    """Return the remote command in an ssh stage."""
     if stage_program(stage) != "ssh":
         return None
     quoted = [group for match in REMOTE_COMMAND.finditer(stage)
@@ -534,17 +176,7 @@ def remote_command_of(stage):
 
 
 def pipelines_of(command, _depth=0):
-    """Every pipeline in the command, as Pipeline records, in order.
-
-    A pipeline run on another machine through ssh is returned too, carrying the
-    ssh stage that launched it, so a remote search is judged by the whole
-    command: the remote pipeline's own stages and the local redirections and
-    stages that surround them.
-
-    `last` marks the last pipeline of its command, the one whose status is the
-    command's; `carrier_last` marks a remote pipeline whose ssh stage sits in
-    the last local pipeline.
-    """
+    """Return local and remote Pipeline records in command order."""
     segments = split_on_top_level(command, ["&&", "||", ";", "\n"])
     stage_lists = []
     for segment in segments:
@@ -574,7 +206,7 @@ def pipelines_of(command, _depth=0):
 
 
 def stage_program(stage):
-    """The program a stage runs, with leading env assignments and `sudo` skipped."""
+    """Return the program, skipping env assignments and sudo."""
     tokens = stage.split()
     for token in tokens:
         if "=" in token and not token.startswith("-") and "/" not in token.split("=")[0]:
@@ -587,7 +219,7 @@ def stage_program(stage):
 
 
 def search_stages_of(command, pipelines=None):
-    """(pipeline index, stage index, stage text, program) for every search stage."""
+    """Yield (pipeline index, stage index, text, program) for each search."""
     if pipelines is None:
         pipelines = pipelines_of(command)
     found = []
@@ -598,8 +230,7 @@ def search_stages_of(command, pipelines=None):
             if base in SEARCH_PROGRAMS:
                 found.append((pipeline_index, stage_index, stage, base))
             elif base == "git" and re.search(
-                    # `-S` and `-G` take their pattern attached as often as
-                    # not, `-Sneedle`, so no word boundary follows them.
+                    # Attached patterns such as -Sneedle have no word boundary after the flag.
                     r"\bgit\s+(?:-[^\s]+\s+)*(?:grep\b|log\b[^|]*\s(?:--grep|-S|-G))",
                     stage):
                 found.append((pipeline_index, stage_index, stage, "git"))
@@ -607,19 +238,12 @@ def search_stages_of(command, pipelines=None):
 
 
 def outside_quotes(text):
-    """The text with every quoted span removed, so a pattern is not read as syntax."""
+    """Remove quoted spans so patterns are not mistaken for shell syntax."""
     return QUOTED_SPAN.sub("", text)
 
 
 def exit_status_is_the_searchs(command, pipelines, search):
-    """Whether the command's exit status is this search's own.
-
-    A command's status is its last pipeline's, and a pipeline's is its last
-    stage's unless `pipefail` is set. `grep -n needle notes.md; ls missing`
-    exits 2 for ls, and blaming that on the grep hands the agent a wrong
-    instruction. A remote search's status reaches the local command only
-    through its ssh stage, so that stage must stand in the same place.
-    """
+    # A command reports its last pipeline's status; without pipefail, a pipeline reports its last stage's.
     pipeline_index, stage_index, _stage, _program = search
     pipeline = pipelines[pipeline_index]
     pipefail = "pipefail" in command
@@ -635,12 +259,7 @@ def exit_status_is_the_searchs(command, pipelines, search):
 
 
 def programs_feeding_a_search(pipelines, searches):
-    """The programs of every stage in a pipeline that holds a search.
-
-    A not-found line naming one of these is about the search: the search's own
-    program, a stage feeding it, or the ssh that carried it. One naming a
-    program elsewhere in the command is about that program.
-    """
+    """Return program names from search pipelines, including their ssh carriers."""
     programs = set()
     for pipeline_index, _, _, _ in searches:
         pipeline = pipelines[pipeline_index]
@@ -651,25 +270,14 @@ def programs_feeding_a_search(pipelines, searches):
 
 
 def programs_reported_not_found(output):
-    """The program names a shell's not-found lines in this output name."""
     return {os.path.basename(match.group("named_before")
                              or match.group("named_after"))
             for match in PROGRAM_NOT_FOUND.finditer(output or "")}
 
 
-# ------------------------------------------------------------- the emptiness
 
 def empty_shape_of(stdout):
-    """How the result is empty, or None when it is not.
-
-    Three shapes, because a search reports absence in three ways:
-      no-output          nothing on stdout at all
-      zero-count         a bare 0, from `grep -c` over one input
-      zero-count-lines   `path:0` lines from `grep -c` over several inputs, at
-                         least one of them zero. This is the shape that hid
-                         failure 1: the whole result is not empty, one input's
-                         share of it is.
-    """
+    """Return the empty-result shape, or None for a nonempty result."""
     text = (stdout or "").strip()
     if not text:
         return "no-output"
@@ -683,7 +291,6 @@ def empty_shape_of(stdout):
 
 
 def zero_counted_inputs(stdout):
-    """The paths a `path:0` result counted as empty."""
     paths = []
     for line in (stdout or "").splitlines():
         match = COUNT_LINE.match(line.strip())
@@ -692,18 +299,13 @@ def zero_counted_inputs(stdout):
     return paths
 
 
-# ---------------------------------------------------------- the control run
 
 def weaken_pattern(pattern):
-    """Weaker forms of a search pattern, strongest first, each with its name.
-
-    A weakening keeps what the search was looking for and drops what pinned it
-    to one shape. Each is tied to a failure this program was built against.
-    """
+    """Yield weaker patterns, strongest first, with their names."""
     weakenings = []
     stripped = pattern
     if "/" in stripped and not stripped.endswith("/"):
-        # Failure 4: a reference composed at run time holds no folder.
+        # Runtime-composed references may omit the directory.
         last_segment = stripped.rsplit("/", 1)[1]
         if last_segment and last_segment != stripped:
             weakenings.append(("last path segment", last_segment))
@@ -714,7 +316,6 @@ def weaken_pattern(pattern):
         unanchored = unanchored[:-1]
     if unanchored != stripped and unanchored:
         weakenings.append(("unanchored", unanchored))
-    # Failure 1: a literal head pins the shape around the thing being counted.
     element = REGEX_ELEMENT.search(unanchored)
     if element and element.start() > 0:
         tail = unanchored[element.start():]
@@ -724,11 +325,7 @@ def weaken_pattern(pattern):
 
 
 def search_pattern_and_rest(stage):
-    """(pattern, tokens) for a bare search stage, or (None, None).
-
-    Only a stage this program can take apart with certainty returns a pattern:
-    the first non-flag token after the program, with `-e PATTERN` honoured.
-    """
+    """Return (pattern, tokens) for a parseable search, otherwise (None, None)."""
     try:
         tokens = shlex.split(stage)
     except ValueError:
@@ -763,12 +360,7 @@ def search_pattern_and_rest(stage):
 
 
 def control_refusal(stage):
-    """Why a control run of this stage is refused, or None when it may run.
-
-    Only a read-only search is ever run: a stage carrying a pipe, a redirect,
-    `;`, `&&`, backticks or `$(` is refused, as is any program outside
-    CONTROL_PROGRAMS and any option that runs another program.
-    """
+    """Return the reason a control run is refused, or None."""
     if SHELL_PUNCTUATION_THAT_REFUSES_A_CONTROL.search(stage):
         return "the stage carries shell punctuation"
     try:
@@ -789,14 +381,8 @@ def control_refusal(stage):
 
 
 def control_candidates(pipelines, searches):
-    """[(stage, pattern)] for the search a control run may re-run, else [].
-
-    Only a command that is one bare search is re-run: one pipeline of one
-    stage, on this machine. A stage fed by a pipe read the pipe, not the
-    corpus, and a command after `cd` or `;` ran after something the control
-    does not repeat, so re-running either over the corpus searches files the
-    original never read.
-    """
+    """Return [(stage, pattern)] for a repeatable search, otherwise []."""
+    # Piped input and preceding commands cannot be reproduced by searching the corpus alone.
     if len(pipelines) != 1 or len(pipelines[0]["stages"]) != 1:
         return []
     if not searches or searches[0][:2] != (0, 0):
@@ -811,15 +397,8 @@ def control_candidates(pipelines, searches):
 
 
 def shell_words_marking_globs(stage):
-    """[(word, glob pattern or None)] for a stage, or None when it does not parse.
-
-    shlex.split drops the quotes that decide whether the shell expands a glob:
-    `--include "*.py"` reaches grep as `*.py` untouched, while an unquoted
-    `*.py` reaches it as the files it matched. So each word carries the glob
-    pattern the shell expanded it by -- its quoted and backslash-escaped
-    characters escaped, so they match only themselves -- or None where no glob
-    character stood outside quotes.
-    """
+    """Return (word, glob pattern or None) pairs, or None if parsing fails."""
+    # shlex.split loses the quoting that determines whether the shell expands a glob.
     words = []
     word, pattern, globbed, in_word = [], [], False, False
     quote = None
@@ -870,7 +449,7 @@ def shell_words_marking_globs(stage):
 
 
 def expand_like_the_shell(glob_pattern, corpus_root):
-    """The paths a shell in corpus_root expands this glob pattern to, or []."""
+    """Return matching paths relative to corpus_root, or []."""
     if os.path.isabs(glob_pattern):
         return sorted(glob.glob(glob_pattern))
     expanded = sorted(glob.glob(
@@ -878,21 +457,13 @@ def expand_like_the_shell(glob_pattern, corpus_root):
     return [os.path.relpath(path, corpus_root) for path in expanded]
 
 
-# The agent's `grep` is not the system grep. On both machines Claude Code's
-# shell snapshot defines `grep` as a shell function that runs its bundled
-# ugrep as `ugrep -G --ignore-files --hidden -I --exclude-dir=.git
-# --exclude-dir=.svn ...` (read with `type grep` on 2026-09-28), so the
-# agent's search never read a version-control directory, a binary file, or a
-# file git ignores. A control run through the system grep read all three, and
-# fired on a moved file's old path found only in `.git/logs/HEAD` and a
-# gitignored build output (the review's finding at :761). Only `grep` itself
-# is that function; `egrep`, `fgrep` and a path such as `/usr/bin/grep` run
-# the system program in the agent's shell too, and are re-run as they are.
+# Claude Code wraps bare grep with ugrep, skipping VCS directories, binaries, and ignored files.
+# Explicit grep paths, egrep, and fgrep still run the system programs.
 AGENTS_GREP_SKIPPED_DIRECTORIES = (".git", ".svn", ".hg", ".bzr", ".jj", ".sl")
 
 
 def as_the_agents_shell_runs_it(control_tokens):
-    """The control's argv, carrying the skips the agent's own `grep` made."""
+    """Return control argv with the skips used by the agent's grep."""
     if control_tokens[0] != "grep":
         return control_tokens
     return (["grep", "-I"]
@@ -901,13 +472,8 @@ def as_the_agents_shell_runs_it(control_tokens):
 
 
 def file_an_output_line_names(line, corpus_root):
-    """The file a search's output line opens with, or None.
-
-    A `-l` line is a path; a match line is a path followed by `:` (a match) or
-    `-` (a context line). Paths in this project hold hyphens, so each candidate
-    is tried against the corpus, longest first: in `helper-test.py:1:needle`,
-    `helper` may be a file too, and the line is not its.
-    """
+    """Return the file named by an output line, or None."""
+    # Try the longest path first: hyphens in filenames can also look like context separators.
     if os.path.isfile(os.path.join(corpus_root, line)):
         return line
     for separator in reversed(list(re.finditer(r"[:-]", line))):
@@ -922,17 +488,9 @@ def path_is_at_or_below(path, directory):
 
 
 def gitignore_rules_ignoring(relative_paths, search_root):
-    """The paths, relative to search_root, that a .gitignore at or below it ignores.
-
-    Handed an empty repository of its own, the search root as its work tree,
-    and --no-index, git answers from the .gitignore files alone. Like ugrep's
-    --ignore-files, it then does not ask whether the search root is in a
-    repository, which one, or whether a file is tracked. The empty repository
-    is made in the system temp directory and removed at once. Git's global
-    configuration is kept out, and a rule from any file that is not a
-    .gitignore inside the work tree -- info/exclude, a global excludes file --
-    is not counted, because ugrep reads neither.
-    """
+    """Return paths ignored by .gitignore files at or below search_root."""
+    # ugrep reads .gitignore rules regardless of tracked status or repository boundaries.
+    # Use an empty index and exclude global rules to match that behavior.
     environment = {key: value for key, value in os.environ.items()
                    if not key.startswith("GIT_")}
     environment.update(GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1")
@@ -960,8 +518,6 @@ def gitignore_rules_ignoring(relative_paths, search_root):
     return ignored
 
 
-# grep's options that take the next word as their argument, when written on
-# their own: that word is neither the pattern nor a file.
 GREP_SHORT_OPTIONS_TAKING_AN_ARGUMENT = frozenset("efmABCdD")
 GREP_LONG_OPTIONS_TAKING_AN_ARGUMENT = frozenset({
     "--regexp", "--file", "--max-count", "--after-context", "--before-context",
@@ -970,13 +526,8 @@ GREP_LONG_OPTIONS_TAKING_AN_ARGUMENT = frozenset({
 
 
 def grep_flags_and_file_operands(control_tokens):
-    """(the one-letter and long flags given, the file operands) of a grep argv.
-
-    An option's argument is not an operand, and the pattern -- the first
-    operand, unless `-e` or `-f` gave it -- is not a file. A word that names a
-    directory is a search root only where it is a file operand, so a weakened
-    pattern such as `docs` is never taken for one.
-    """
+    """Return (flags, file operands) from grep argv."""
+    # Option arguments and the search pattern are not file operands, even when they name directories.
     flags = []
     operands = []
     pattern_given_by_an_option = False
@@ -1018,22 +569,9 @@ def grep_flags_and_file_operands(control_tokens):
 
 
 def lines_the_agents_grep_could_read(lines, corpus_root, control_tokens):
-    """The output lines that do not come from a file the agent's grep skipped.
-
-    ugrep's --ignore-files reads only the .gitignore files it meets while
-    walking down from each directory it was given, so a file is skipped only
-    where a rule in a .gitignore at or below the search root it was found
-    under ignores it. Measured 2026-09-28: `grep -rn needle ledgers/` read
-    every file in a `ledgers/` that the repository's top .gitignore ignores,
-    `*.log` files included; a file named on the command line is read whatever
-    ignores it; a .gitignore outside any repository is obeyed; and a tracked
-    file a .gitignore lists is skipped.
-
-    Only a search that walked a directory can have skipped anything, and a
-    line is credited to a file only where the search printed file names: with
-    `-h`, or over files named one by one, a line is the matched text, and text
-    that spells an ignored file's path is still a match.
-    """
+    """Return output lines from files the agent's grep could read."""
+    # ugrep applies .gitignore rules below each directory operand, even to tracked files.
+    # Without filename output, matched text that spells a path must not be filtered as that file.
     flags, operands = grep_flags_and_file_operands(control_tokens)
     root = os.path.abspath(corpus_root)
     recursive = any(flag in ("r", "R", "--recursive", "--dereference-recursive",
@@ -1065,8 +603,7 @@ def lines_the_agents_grep_could_read(lines, corpus_root, control_tokens):
         found_at = os.path.normpath(os.path.join(root, path))
         for search_root in search_roots:
             if path_is_at_or_below(found_at, search_root):
-                # One file can be spelled twice, once under each of two
-                # overlapping roots (`grep -rn x . sub`); both spellings go.
+                # Overlapping search roots can print the same file under multiple spellings.
                 by_search_root.setdefault(search_root, {}).setdefault(
                     os.path.relpath(found_at, search_root), set()).add(path)
                 break
@@ -1078,11 +615,7 @@ def lines_the_agents_grep_could_read(lines, corpus_root, control_tokens):
 
 
 def run_control(stage, pattern, corpus_root, zero_inputs):
-    """Run weakened copies of a bare search and report the first that matches.
-
-    Refuses anything control_refusal refuses, so nothing but a read-only search
-    is ever run.
-    """
+    """Run weakened searches and report the first that matches."""
     if control_refusal(stage):
         return None
     tokens = shlex.split(stage)
@@ -1090,8 +623,6 @@ def run_control(stage, pattern, corpus_root, zero_inputs):
         return None
     words = shell_words_marking_globs(stage)
     if words is None or [word for word, _ in words] != tokens:
-        # The stage holds shell syntax this reader does not take apart, so
-        # which of its globs the shell expanded is not known.
         return None
     for name, weaker in weaken_pattern(pattern):
         control_tokens = []
@@ -1099,8 +630,6 @@ def run_control(stage, pattern, corpus_root, zero_inputs):
             if token == pattern:
                 control_tokens.append(weaker)
             elif glob_pattern is not None:
-                # The shell expanded this before the original ran; expand it
-                # the same way so the control reads the same corpus.
                 control_tokens.extend(
                     expand_like_the_shell(glob_pattern, corpus_root) or [token])
             else:
@@ -1128,10 +657,7 @@ def run_control(stage, pattern, corpus_root, zero_inputs):
                 "matched": matched[:5],
             }
         if control_shape == "zero-count-lines" and zero_inputs:
-            # Compared by the file each line names, not by its spelling: the
-            # agent's ugrep prints `a.py:0` where the system grep prints
-            # `./a.py:0`, and a path the control did not count is not
-            # recovered.
+            # Compare files, not spellings: ugrep may print a.py where system grep prints ./a.py.
             control_counts = {}
             for line in finished.stdout.splitlines():
                 match = COUNT_LINE.match(line.strip())
@@ -1151,10 +677,9 @@ def run_control(stage, pattern, corpus_root, zero_inputs):
     return None
 
 
-# ------------------------------------------------------------------ the check
 
 def meaningful_stderr(stderr):
-    """What the command itself wrote to stderr, the harness's own notes removed."""
+    """Remove harness notices from stderr."""
     lines = [line for line in (stderr or "").splitlines()
              if line.strip() and not HARNESS_NOTE_ON_STDERR.match(line)]
     return "\n".join(lines)
@@ -1162,16 +687,7 @@ def meaningful_stderr(stderr):
 
 def judge_command_result(command, exit_code=None, stdout="", stderr="",
                          control_corpus_root=None, stderr_was_captured=True):
-    """Whether this empty result is evidence of absence, and why not.
-
-    stderr_was_captured says whether the caller has the search's stderr as its
-    own stream. Where it does, and that stream is empty, the search printed no
-    error and the empty stdout is a clean no-match: a swallowed exit status
-    then adds nothing, and is reported as corroboration rather than fired on.
-    Where the two streams were merged before the caller saw them -- a non-zero
-    result in a session transcript, or `2>&1` in the command -- an empty stdout
-    already proves an empty stderr, so the same holds.
-    """
+    """Decide whether an empty result is evidence of absence."""
     pipelines = pipelines_of(command)
     searches = search_stages_of(command, pipelines)
     if not searches:
@@ -1214,8 +730,7 @@ def judge_command_result(command, exit_code=None, stdout="", stderr="",
 
         later_stages = list(stages[stage_index + 1:])
         if carrier is not None and not later_stages:
-            # The remote search is the last thing ssh ran, so ssh's own status
-            # is the one the local pipeline goes on to swallow.
+            # The remote search is last, so ssh carries the status the local pipeline swallows.
             later_stages = list(
                 pipeline["carrier_stages"][pipeline["carrier_index"] + 1:])
         swallowed = bool(later_stages)
@@ -1290,7 +805,6 @@ def judge_command_result(command, exit_code=None, stdout="", stderr="",
                    instructions=seen_instructions, control=control)
 
 
-# ------------------------------------------------------------- the transcripts
 
 EXIT_CODE_IN_RESULT = re.compile(r"^Error: Exit code (\d+)\n?")
 NOT_AN_EXECUTION = (
@@ -1301,20 +815,8 @@ NOT_AN_EXECUTION = (
 
 
 def bash_pairs_in_transcript(path):
-    """Every (command, exit_code, stdout, stderr) the transcript recorded for Bash.
-
-    A session transcript is JSONL, one object per line. A Bash call is a
-    tool_use block named Bash in an assistant message; its result is the
-    tool_result block carrying the same id, and the sibling `toolUseResult`
-    holds what ran. That field has two shapes, and both are parsed here:
-      a dict, for an exit-0 run, with stdout and stderr kept apart;
-      a string opening `Error: Exit code N`, for a non-zero run, with the two
-      streams already merged -- which is why stderr-written-while-stdout-was-empty
-      is computable only on the first shape.
-    Anything else in that field is the harness refusing, blocking or
-    interrupting rather than a command running, and is skipped, as are
-    background and timed-out runs, whose emptiness is not a search result.
-    """
+    """Yield (command, exit_code, stdout, stderr) for recorded Bash runs."""
+    # toolUseResult is a dict with separate streams on success, but a string with merged streams on failure.
     commands = {}
     try:
         handle = open(path, encoding="utf-8", errors="replace")
@@ -1357,13 +859,7 @@ def bash_pairs_in_transcript(path):
 
 
 def transcripts_under(directory):
-    """Every transcript at any depth under the directory.
-
-    A subagent's transcript sits in its session's `subagents/` folder, and the
-    review cells and reviewers that run most of this fleet's searches are
-    subagents, so a measurement that stopped at the session files would leave
-    most of the searches out.
-    """
+    # Subagent transcripts live below session directories; stopping at the top level omits their searches.
     root = pathlib.Path(directory)
     if not root.is_dir():
         return []
@@ -1371,7 +867,7 @@ def transcripts_under(directory):
 
 
 def bash_pairs_under(directories):
-    """(transcript, command, exit_code, stdout, stderr) for every recorded pair."""
+    """Yield (transcript, command, exit_code, stdout, stderr) for each recorded run."""
     for directory in directories:
         for transcript in transcripts_under(directory):
             for pair in bash_pairs_in_transcript(transcript):
@@ -1379,12 +875,7 @@ def bash_pairs_under(directories):
 
 
 def measure_transcripts(directories, limit=None, top=10, out=sys.stdout):
-    """Run the check over recorded pairs and print the funnel and the tally.
-
-    A pair counts as empty exactly when the check judges it, so a non-zero
-    pair whose merged output is only error lines -- failure 3's shape -- is
-    counted and judged rather than turned away as output.
-    """
+    """Print the check's funnel and signal tally over recorded runs."""
     total = 0
     from_subagents = 0
     search_shaped = 0
@@ -1460,7 +951,6 @@ def measure_transcripts(directories, limit=None, top=10, out=sys.stdout):
     }
 
 
-# ---------------------------------------------------------------- the fixtures
 
 def default_fixtures_directory():
     return pathlib.Path(__file__).resolve().with_name(FIXTURES_DIRECTORY_NAME)
@@ -1477,7 +967,7 @@ def load_fixtures(directory):
 
 
 def replay_fixtures(directory, run_control=False, checkout_root=None, out=sys.stdout):
-    """Judge every fixture and report whether the check fired on each."""
+    """Judge fixtures and report whether each fires."""
     fixtures = load_fixtures(directory)
     if not fixtures:
         print(f"{PROGRAM}: no fixtures in {directory}", file=out)
@@ -1526,7 +1016,6 @@ def _short(text, width=60):
     return repr(one_line[:width] + "...")
 
 
-# --------------------------------------------------------------------- main
 
 def main(argv=None):
     parser = argparse.ArgumentParser(

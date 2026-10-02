@@ -68,6 +68,20 @@ Modes:
                branch refs are deleted the same way, and a refusal there is
                a failure rather than a silence.
 
+SCHEDULED. --remove runs once a day on both machines, from the reference
+clone, so worktrees that sessions and subagents leave behind do not pile up
+between handoffs. The job is declared in
+nc-systems/general-tools/scheduled-jobs-on-each-machine.json and installed
+with nc-systems/general-tools/install-scheduled-jobs-on-this-machine.py: on
+the Mac a launchd job at 06:30, so a run missed while the Mac sleeps starts at
+the next wake; on ned-box the cron line
+
+    30 6 * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/scripts/clean-worktrees.py --remove >> /home/nedlern/.claude/daily-clean-worktrees.log 2>&1
+
+It does not fetch; a stale origin/main only keeps more. A worktree still
+locked by the claude process that made it fails to remove and is tried again
+the next day.
+
 Usage:
   scripts/clean-worktrees.py [--only-done | --remove] [--repo PATH]
 
@@ -83,32 +97,14 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
-# Ignored entries whose basename is one of these are regenerable junk, not
-# state: they never block a removal. Everything else ignored is somebody's
-# uncommitted state and keeps the worktree.
+# Only known regenerable ignored files are disposable; other ignored files may hold uncommitted state.
 DISPOSABLE_JUNK_BASENAMES = (".DS_Store", "__pycache__")
 
-# How long the vacancy check waits for lsof, which enumerates every process on
-# the machine. A timeout is an unusable answer, so it keeps every done worktree
-# and the report says the check could not be run -- correct, and a false red in
-# a suite run. OBSERVED 2026-09-17 ~00:44Z: a 52-suite run concurrent with
-# three backlog-recheck subagents, two reviewer subagents and another suite set
-# exceeded the 30 s this used to be; re-run alone at the same commit it passed
-# twice. A healthy run answers in about a second (measured 2026-08-19: 397 cwd
-# paths on the Mac, 382 on the box), so the only thing a larger number costs is
-# patience on a machine where lsof is genuinely wedged.
+# lsof scans all processes and can be slow under load; a timeout must keep worktrees.
 VACANCY_CHECK_TIMEOUT_SECONDS = 120
 
-# How long an Agent-tool subagent's worktree must have gone unwritten -- its
-# transcript and the worktree's own .git file both -- before it can be removed.
-# OBSERVED 2026-09-23 on ned-box, reviewing PR "Each handoff removes the
-# finished worktrees and merged branches": a probe subagent with worktree
-# isolation got .claude/worktrees/agent-a4443cb0b76c9fc83 while its parent
-# claude's cwd stayed /home/nedlern/agents/merge-lane-2, so between Bash calls
-# lsof saw nothing inside the worktree. Its transcript is
-# ~/.claude/projects/<parent's project>/<session>/subagents/agent-<id>.jsonl on
-# both machines. An hour is far longer than any one model turn, and a long
-# tool call is already seen by the vacancy check through its shell.
+# An isolated subagent's cwd may remain outside its worktree between tool calls.
+# Require transcript and .git quiet time as well as the process vacancy check.
 AGENT_WORKTREE_QUIET_SECONDS = 3600
 AGENT_WORKTREE_NAME_PREFIX = "agent-"
 
@@ -121,8 +117,7 @@ def run_git(repo, *arguments):
 
 
 def main_checkout_of(repo):
-    """The repository's primary checkout, regardless of which worktree this
-    script's copy lives in — the parent of the common git directory."""
+    """Return the primary checkout from the common git directory."""
     common = run_git(repo, "rev-parse", "--path-format=absolute", "--git-common-dir")
     if common.returncode != 0:
         return None
@@ -130,7 +125,7 @@ def main_checkout_of(repo):
 
 
 def list_worktrees(repo, main_checkout):
-    """(path, branch-or-None) per worktree, the main checkout excluded."""
+    """Return (path, branch-or-None) pairs excluding the primary checkout."""
     listing = run_git(repo, "worktree", "list", "--porcelain")
     worktrees = []
     path, branch = None, None
@@ -147,19 +142,8 @@ def list_worktrees(repo, main_checkout):
 
 
 def dead_worktree_registrations(repo):
-    """(path, git's reason) for each registration `git worktree prune` would
-    remove — typically because the worktree's directory is gone, which is what
-    a temp-area clearing leaves behind.
-
-    Deadness is git's own judgment, read from the `prunable` annotation of
-    `git worktree list --porcelain` (git >= 2.36), never from a filesystem
-    check of our own, and git's reason is carried rather than restated. The
-    two are not the same claim: a directory that still exists but has lost
-    its `.git` file is prunable too (verified, git 2.55.0), and pruning it
-    discards the registration for a directory that may still hold someone's
-    uncommitted work — so the reason the human reads must be the one git
-    actually gave. A locked registration is never named, because prune skips
-    it too."""
+    """Return (path, git reason) for unlocked prunable registrations."""
+    # A prunable directory can still exist and hold work; report git's reason without inferring absence.
     listing = run_git(repo, "worktree", "list", "--porcelain")
     dead = []
     path = None
@@ -174,49 +158,6 @@ def dead_worktree_registrations(repo):
 
 
 def branch_refs_with_no_worktree_fully_on_main(repo):
-    """Local branch names that no worktree has checked out AND that carry
-    nothing origin/main lacks — the refs removable losing nothing.
-
-    Removing a worktree does not remove the branch it was on. Three mechanisms
-    leave one behind: the Agent tool's worktree isolation, which creates a
-    `worktree-agent-<id>` branch whose worktree is later reaped; a seat home
-    retired by hand; and `git worktree remove` run directly. Counted on
-    2026-08-31 with `git for-each-ref refs/heads/`, BEFORE a hand sweep that
-    same night: 143 local branches, 81 of them landed orphans — every commit
-    already on origin/main, no worktree, and nothing in this project reaping
-    them. Those 81 were deleted by hand, along with 15 stale review refs, and
-    the count of commits reachable from local branches but from no remote did
-    not move (264 before, 264 after), which is what proved the 81 held nothing
-    of their own.
-
-    That is why counting again AFTER the sweep gives a different answer, and
-    why a later reader should not read it as the first count being wrong: 51
-    local branches remain, 41 with no worktree, and the landed-orphan
-    population is momentarily ZERO because the hand sweep just took all of
-    them. It does not stay zero. Each of the 41 becomes a landed ref the
-    moment its work reaches main, and the reaper's own removals are the only
-    thing that deletes a branch today — which is the whole reason this
-    function exists rather than a second hand sweep six weeks from now.
-
-    Orphaned refs that DO carry commits origin/main lacks are deliberately not
-    reported: 41 of the 51 local branches left after the sweep were in that
-    state. They are nobody's to delete on a boot-time report, and naming
-    them every run is noise that teaches a reader to skip the line. Their
-    disposal is a judgment, not a sweep.
-
-    A branch is treated as attached when any worktree — the main checkout
-    included — has it checked out, so a branch in use is never named. A
-    detached worktree contributes no name, which is git's own answer: its
-    porcelain record says `detached` where a branch line would be.
-
-    Containment is git's answer too — a reachability question asked once for
-    every ref, never inferred from a branch's name or from its upstream,
-    which can be configured to a remote branch that no longer exists. Asking
-    per branch with `rev-list` would instead cost one subprocess per branch
-    on a path the launchers run at boot: 51 of them here. Either query
-    failing yields nothing to report, so a repository this script cannot read
-    loses no refs.
-    """
     listing = run_git(repo, "worktree", "list", "--porcelain")
     if listing.returncode != 0:
         return []
@@ -225,11 +166,7 @@ def branch_refs_with_no_worktree_fully_on_main(repo):
         for line in listing.stdout.splitlines()
         if line.startswith("branch refs/heads/")
     }
-    # refs/heads/ scopes the question to local branches, so remote-tracking
-    # refs are never candidates. lstrip=2 rather than :short because :short
-    # answers `heads/<name>` for a branch that a tag of the same name shadows
-    # (verified, git 2.55.0) — a name that matches nothing in `attached` and
-    # that `git branch -d` cannot take, so an in-use branch would be named.
+    # Use lstrip=2: :short can return heads/<name> when a same-named tag shadows a branch.
     landed = run_git(repo, "for-each-ref", "--format=%(refname:lstrip=2)",
                      "--merged", "origin/main", "refs/heads/")
     if landed.returncode != 0:
@@ -239,13 +176,8 @@ def branch_refs_with_no_worktree_fully_on_main(repo):
 
 
 def delete_orphaned_branch_ref(branch, repo):
-    """Delete one orphaned ref. True on success.
-
-    `git branch -d` rather than `-D`, deliberately and for the same reason the
-    worktree path uses it: the containment test above and git's own refusal are
-    two independent answers to the same question, and a ref that only one of
-    them clears is a ref this script does not delete.
-    """
+    """Delete a ref and return whether git accepted the deletion."""
+    # Keep -d: git's merged-branch check is independent of our containment test.
     deletion = run_git(repo, "branch", "-d", branch)
     if deletion.returncode != 0:
         print(f"branch {branch}: deletion FAILED — {deletion.stderr.strip()[:120]}")
@@ -255,22 +187,8 @@ def delete_orphaned_branch_ref(branch, repo):
 
 
 def worktree_vacancy_keep_reason(worktree):
-    """Why this worktree must be kept on the vacancy check, or None when it is
-    provably vacant.
-
-    Ambiguity must keep, never reap, so this answers with a reason rather than
-    a bare boolean: a worktree kept because lsof could not be trusted has not
-    been shown to hold a live process, and the report must not say it does.
-
-    Vacancy is only ever proven by a usable listing that names no path inside
-    the worktree. lsof missing, failing to launch, timing out, exiting
-    nonzero, or returning a listing with no cwd paths at all are all
-    unusable answers, and each keeps. A path match keeps regardless of how the
-    run exited: a partial listing that names this worktree is still positive
-    evidence of occupancy, and the pre-existing warnings lsof prints on both
-    fleet machines (Time Machine snapshots on the Mac, docker overlayfs on the
-    box) do not make a match less true.
-    """
+    """Return why vacancy is unproven, or None for a provably vacant worktree."""
+    # Even a partial listing proves occupancy when it contains a matching cwd.
     if shutil.which("lsof") is None:
         return "lsof is not installed, so vacancy cannot be checked"
     try:
@@ -289,11 +207,7 @@ def worktree_vacancy_keep_reason(worktree):
             cwd = line[1:]
             if cwd == prefix or cwd.startswith(prefix + "/"):
                 return "a live process is rooted inside it"
-    # No match found — but only a usable listing can turn that into vacancy.
-    # Both fleet machines exit 0 here in normal operation (measured
-    # 2026-08-19: Mac 397 cwd paths, box 382, warnings on stderr, exit 0
-    # both), so a nonzero exit or an empty listing is genuinely abnormal
-    # rather than the everyday warning case.
+    # No match proves vacancy only when lsof returned a usable listing.
     if cwd_listing.returncode != 0:
         return (f"the vacancy check (lsof) failed with exit "
                 f"{cwd_listing.returncode}, so vacancy cannot be trusted")
@@ -303,23 +217,14 @@ def worktree_vacancy_keep_reason(worktree):
 
 
 def claude_projects_directory():
-    """Where Claude Code keeps its session transcripts on this machine."""
     configured = os.environ.get("CLAUDE_CONFIG_DIR")
     base = Path(configured) if configured else Path.home() / ".claude"
     return base / "projects"
 
 
 def agent_worktree_quiet_keep_reason(worktree, now=None):
-    """Why an Agent-tool subagent's worktree must be kept because its subagent
-    may still be working, or None when it has been quiet long enough.
-
-    Only a worktree named agent-<id> is judged here; every other name answers
-    None. The newest of two times counts: the subagent's transcript, found by
-    its id under any project and session, and the worktree's .git file, written
-    when the worktree was made -- so a worktree whose transcript has not been
-    written yet, or has been pruned, is judged by its own age. A time that
-    cannot be read is not evidence of quiet, so it keeps.
-    """
+    """Return why a subagent worktree must be kept, or None after sufficient quiet."""
+    # The .git timestamp covers new or pruned transcripts; unreadable times cannot prove quiet.
     if not worktree.name.startswith(AGENT_WORKTREE_NAME_PREFIX):
         return None
     agent_id = worktree.name[len(AGENT_WORKTREE_NAME_PREFIX):]
@@ -342,7 +247,7 @@ def agent_worktree_quiet_keep_reason(worktree, now=None):
 
 
 def classify(worktree, branch, main_checkout):
-    """Return (done: bool, reason: str) for one worktree."""
+    """Return (done, reason) for a worktree."""
     managed_area = (main_checkout / ".claude" / "worktrees").resolve()
     if managed_area not in worktree.resolve().parents:
         return False, "outside the managed area (.claude/worktrees/) — its owner decides its lifecycle"
@@ -378,7 +283,7 @@ def classify(worktree, branch, main_checkout):
 
 
 def remove_worktree(worktree, branch, repo):
-    """Remove one done worktree and its fully-merged branch. True on success."""
+    """Remove a done worktree and its merged branch; return success."""
     removal = run_git(repo, "worktree", "remove", str(worktree))
     if removal.returncode != 0:
         print(f"{worktree.name}: removal FAILED — {removal.stderr.strip()[:120]}")

@@ -18,9 +18,9 @@ Only #18's build has been triggered. Each of the other six records a 2026-07-24 
 
 | Issue | Skill | What it is for, and any material already written |
 |---|---|---|
-| [#18](https://github.com/nedschorus/nedschorus/issues/18) | `write-test-plan` | consequence-ranked test plans with observable oracles. Build triggered 2026-09-02, not yet built; riders drained into the issue body on 2026-09-02 (§ Riders, drained from the queue) from `docs/issues/queue/18-write-test-plan-agent-native-riders.md` |
-| [#20](https://github.com/nedschorus/nedschorus/issues/20) | `implement-with-evidence` | red/green evidence without delete-and-start-over mandates; riders in `docs/issues/queue/20-implement-with-evidence-agent-native-riders.md` |
-| [#21](https://github.com/nedschorus/nedschorus/issues/21) | `diagnose-failure` | bounded causal debugging that stops after three failed fixes rather than thrashing; detail in `docs/issues/queue/21-diagnose-failure-test-procedure.md` |
+| [#18](https://github.com/nedschorus/nedschorus/issues/18) | `write-test-plan` | consequence-ranked test plans with observable oracles. Build triggered 2026-09-02, not yet built; riders drained into the issue body on 2026-09-02 (§ Riders, drained from the queue), now in `docs/issues/18-write-test-plan-riders-and-test-evidence-rules.md` |
+| [#20](https://github.com/nedschorus/nedschorus/issues/20) | `implement-with-evidence` | red/green evidence without delete-and-start-over mandates; riders in `git show 7a99785c:docs/issues/queue/20-implement-with-evidence-agent-native-riders.md` |
+| [#21](https://github.com/nedschorus/nedschorus/issues/21) | `diagnose-failure` | bounded causal debugging that stops after three failed fixes rather than thrashing; detail in `git show 878bacb1:docs/issues/queue/21-diagnose-failure-test-procedure.md` |
 | [#22](https://github.com/nedschorus/nedschorus/issues/22) | `review-change` | defect-first code review at an exact revision, with a five-part gate a finding must pass to be reported |
 | [#23](https://github.com/nedschorus/nedschorus/issues/23) | `eval-agent-change` | A/B comparison of a baseline agent against a candidate over trigger cases, reporting raw counts |
 | [#19](https://github.com/nedschorus/nedschorus/issues/19) | `attack-artifact` | isolated adversarial review; filed as a comparison question rather than a settled design |
@@ -32,7 +32,7 @@ Only #18's build has been triggered. Each of the other six records a 2026-07-24 
 
 Three rules have caught previous builds:
 
-1. **A skill's files are agent-instructions files**, so a skill lands only when approved-by-walk, guarded by `.claude/hooks/instruction-file-guard.py` (a soft block on file-tool writes under `.claude/`).
+1. **A skill's files are agent-instructions files**, so a skill lands only when approved-by-walk, guarded by `.claude/hooks/instruction-file-guard.py` (a user-block on file-tool writes under `.claude/` and to MD files under `nc-systems/skills/`).
 2. **A skill is instructions, not an essay.** Rationale asides get cut; the text tells an agent what to do. Four such asides were removed from `walk-me-through` on 2026-08-06 for exactly this reason.
 3. **Fresh-reader readability is the bar**, ruled 2026-08-11: an agent must be able to follow the skill cold. A settled draft gets the `/cold-read` skill's full run before it lands.
 

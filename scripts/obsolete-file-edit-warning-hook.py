@@ -105,9 +105,13 @@ OBSOLETE_DIFF_TIMEOUT_SECONDS = 30
 COMMIT_COUNT_TIMEOUT_SECONDS = 15
 
 # Which head states mean "somebody else may have this branch". These are the
-# four of head_state()'s keys that imply a push happened; the frozen-head rule
-# (CLAUDE.md, ruled 2026-09-08) applies to every one of them. Its other three
-# — unpushed, detached, unknown — are handled separately below.
+# four of head_state()'s keys that imply a push of this branch happened; the
+# frozen-head rule (CLAUDE.md, ruled 2026-09-08) applies to every one of them.
+# Its others — unpushed, pushed-history, detached, unknown — are handled
+# separately in head_advice(). pushed-history is frozen too, but its commits
+# were pushed under another branch name, so "This branch is pushed" would be
+# false of it; it gets checkout-freshness-catch-up.py's PUSHED_HISTORY_ADVICE,
+# which says what was found.
 PUSHED_HEAD_STATE_KEYS = ("pushed", "pushed-with-local-commits",
                           "behind-remote", "diverged-from-remote")
 
@@ -266,6 +270,8 @@ def head_advice(freshness, checkout: Path):
     state_key, _text = freshness.head_state(checkout, branch)
     if state_key == "unpushed":
         return NEVER_PUSHED_ADVICE
+    if state_key == "pushed-history":
+        return freshness.PUSHED_HISTORY_ADVICE
     if state_key in PUSHED_HEAD_STATE_KEYS:
         return PUSHED_ADVICE
     return ""

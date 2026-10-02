@@ -112,56 +112,31 @@ _common_spec.loader.exec_module(common)
 
 PROGRAM = "cold-read-agy-cell"
 
-# cold-read-tier -> the Antigravity models to try, in order. One
-# cold-read-tier, one model (user-ruled 2026-09-07, after measurements,
-# superseding the earlier ruling for low): the cold-read-fast-read is
-# gemini-3.8-flash at medium, and Antigravity's id for that is the model name
-# with the effort as its suffix (`agy models` lists
-# gemini-3.8-flash-low, -medium, -high). A single-entry chain, like every
-# pinned chain on the other two legs: the shared loop still clears the report
-# path before the attempt and after a failed one, and a second entry is one
-# line if a ruling ever wants one.
+# Antigravity model IDs encode effort as a suffix.
 TIER_TO_AGY_MODEL_CHAIN = {
     "fast": ("gemini-3.8-flash-medium",),
 }
 
-# cold-read-tier -> reasoning effort, pinned explicitly so a cold-read-cell's
-# behavior never depends on the machine's own default. The CLI accepts low,
-# medium, high; medium is the ruling (2026-09-07: recall 42% at medium against
-# 19% at low on the ghi-write candidate defect list, and high hit the same
-# rows as medium). Passed alongside the suffixed model id exactly as the
-# 2026-09-04 campaign passed both.
+# Pin effort explicitly so machine defaults cannot change the review.
 TIER_TO_REASONING_EFFORT = {
     "fast": "medium",
 }
 
-# How long `agy --print` waits for the model before giving up on the turn.
-# The campaign's value, kept as measured: a cold-read-fast-read at medium
-# was measured at about 100-110 s per document (2026-09-07, single runs on
-# a 658-word skill and a 1,967-word walk draft), so a run that reaches this
-# limit has hung, and the CLI's non-zero exit then fails the cold-read-cell the
-# ordinary way. Shortening it is a calibration the user makes, here.
 AGY_PRINT_TIMEOUT = "30m"
 
-# The fewest words the runtime's stdout must hold to be taken as the review
-# when no report file was written -- the campaign's threshold, kept as
-# measured. See the docstring: a remark about having written the file is a
-# sentence, a review is hundreds of words, and a number between them keeps
-# the remark from being stamped as a review.
+# Exclude brief acknowledgements from stdout report recovery.
 STDOUT_REVIEW_MINIMUM_WORDS = 120
 
 
 def stdout_is_a_review(runtime_stdout: str) -> str:
-    """The rule the common module applies on the exit-0, no-file path: the
-    stdout to keep as the report body, or "" when it is not a review."""
+    """Return stdout as the report body when long enough, otherwise an empty string."""
     if len(runtime_stdout.split()) >= STDOUT_REVIEW_MINIMUM_WORDS:
         return runtime_stdout
     return ""
 
 
 def credential_sandbox_program(platform: str = sys.platform):
-    """The program agy runs inside on this platform, or None where there is
-    none this launcher knows."""
+    """Return the platform's sandbox program, or None when unsupported."""
     if platform == "darwin":
         return "sandbox-exec"
     if platform.startswith("linux"):
@@ -170,9 +145,7 @@ def credential_sandbox_program(platform: str = sys.platform):
 
 
 def sandbox_exec_profile() -> str:
-    """The macOS profile: allow everything, then deny the credential paths.
-    A file-name pattern becomes a regex on the path's tail: `*.token` any
-    path ending `.token`, `.env` any path whose last component is `.env`."""
+    """Return a macOS sandbox profile denying credential paths."""
     rules = [f'(subpath "{directory}")' for directory in common.CREDENTIAL_DIRECTORIES]
     rules += [f'(literal "{path}")'
               for path in common.reviewer_program_login_files(except_program="agy")]
@@ -184,7 +157,7 @@ def sandbox_exec_profile() -> str:
 
 
 def credential_sandbox_prefix(platform: str = sys.platform) -> list:
-    """The argv that goes in front of `agy`; see the docstring."""
+    """Return the sandbox argv prefix for agy."""
     if platform == "darwin":
         return ["sandbox-exec", "-p", sandbox_exec_profile()]
     prefix = ["bwrap", "--dev-bind", "/", "/"]
@@ -198,14 +171,8 @@ def credential_sandbox_prefix(platform: str = sys.platform) -> list:
 
 
 def invocation_builder(effort: str):
-    """The one thing that differs between the cold-read-cells.
-
-    Returns the callback the shared chain runner uses: given a model and the
-    composed prompt, it yields the argv to run and the text to feed on stdin.
-    agy takes the prompt as the value of --print, so the stdin slot is None —
-    which the shared runner turns into an explicitly closed stdin rather than
-    an inherited one.
-    """
+    """Return a callback producing (agy argv, None) for the shared runner."""
+    # agy takes the prompt through --print; None makes the runner close stdin.
     def build_invocation(model: str, prompt: str):
         command = [
             *credential_sandbox_prefix(),

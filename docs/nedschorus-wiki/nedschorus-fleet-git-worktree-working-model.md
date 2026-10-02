@@ -263,15 +263,15 @@ eleven seconds apart, first lost unread. Residuals: handoffs written before PR
 [handoff: the agent name defaults to the seat's directory, and a foreign claim is refused](https://github.com/nedschorus/nedschorus/pull/72)
 carry no stamp; directory basenames are not globally unique across machines
 (machine-suffixed names deferred — rider 5 in
-`docs/issues/queue/45-session-seat-and-isolation-riders.md`). A seat's
+`nedlern@ned-box:/home/nedlern/nedschorus-logs/seats/cold-read-research/45-session-seat-and-isolation-riders-retired-from-issues-queue-2026-10-02.md`). A seat's
 *first* handoff is written by its provisioner from elsewhere, the guard
 correctly refuses, and `--claim` is the sanctioned path.
 
 **R10. Agent-instructions files change only when approved-by-walk —
 built-live (root-resolution fixed by PR [guards: markers resolve from the session's own checkout, and the backup override lane is removed](https://github.com/nedschorus/nedschorus/pull/86)).**
 `.claude/hooks/instruction-file-guard.py`: CLAUDE.md, per-seat
-`CLAUDE.local.md`, and `.claude/` (minus `worktrees/` and `jobs/`) block
-on write; approval quoted into `.walk-approved`. **The shell-write gap is
+`CLAUDE.local.md`, `.claude/` (minus `worktrees/`, `jobs/` and `handoffs/`),
+reusable prompts, and the files the user reviews block on write; approval quoted into `.walk-approved`. **The shell-write gap is
 named and ruled unguarded** (2026-08-17): every recorded bypass was
 accidental, not adversarial. Build trigger: an actually observed
 shell-route bypass. A periodic drift sweep was rejected: it

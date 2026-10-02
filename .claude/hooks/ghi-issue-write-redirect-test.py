@@ -151,7 +151,29 @@ REFUSED = [
     ("comment with two -R flags after the subcommand, this one last",
      "gh issue comment 46 -R cli/cli -R nedschorus/nedschorus -b x",
      guard.COMMENT_REFUSAL),
+    # The shell runs a command substitution inside double quotes exactly as
+    # it runs a bare one, so the write inside either is refused.
+    ("create in a double-quoted command substitution",
+     'URL="$(gh issue create -t A -b B)"', guard.CREATE_REFUSAL),
+    ("create in a bare command substitution",
+     "URL=$(gh issue create -t A -b B)", guard.CREATE_REFUSAL),
+    ("comment in a double-quoted command substitution",
+     'echo "$(gh issue comment 46 -b x)"', guard.COMMENT_REFUSAL),
+    ("comment in a bare command substitution",
+     "echo $(gh issue comment 46 -b x)", guard.COMMENT_REFUSAL),
 ]
+
+# Claude Code's default commit form passes the message as a heredoc inside
+# "$(cat <<'EOF' ... )". The message is a heredoc body, so it is data wherever
+# its own quotes and backticks fall.
+HEREDOC_MESSAGE_QUOTING_A_COMMENT = (
+    "$(cat <<'EOF'\n"
+    "Drop the interim path\n"
+    "\n"
+    "The skill said: \"plain `gh issue comment` is the interim path.\" Gone now.\n"
+    "EOF\n"
+    ")"
+)
 
 # Each form that must pass untouched.
 ALLOWED = [
@@ -202,6 +224,13 @@ ALLOWED = [
     ("gh issue comment in a commit message",
      "git commit -m 'Refuse gh issue comment and gh issue create by hand'"),
     ("gh issue comment in a heredoc body", "cat > note.md <<'EOF'\ngh issue comment 46 -b x\nEOF"),
+    ("a heredoc commit message quoting a backticked gh issue comment",
+     f'git commit -m "{HEREDOC_MESSAGE_QUOTING_A_COMMENT}"'),
+    ("a heredoc pull request body quoting a backticked gh issue comment",
+     f'gh pr create --title "Drop the interim path" '
+     f'--body "{HEREDOC_MESSAGE_QUOTING_A_COMMENT}"'),
+    ("an escaped \\$( in double quotes, which the shell does not run",
+     'echo "\\$(gh issue comment 46 -b x)"'),
     ("a pull request comment", "gh pr comment 700 -b looks-good"),
     ("gh api", "gh api repos/nedschorus/nedschorus/issues/46/comments -f body=x"),
     ("gh issue with no subcommand", "gh issue"),
@@ -216,9 +245,12 @@ for name, command in ALLOWED:
     refusal = decision_for(command)
     check(f"allows: {name}", refusal is None, repr(refusal))
 
-# Every refusal is instructions only: no line gives a date, a ruling or a
-# reason (user-ruled 2026-09-18). A line starts with an imperative or with
-# the condition it applies under.
+# Every refusal line starts with an imperative or with the condition it
+# applies under. A line may give a reason, but it may not cite a ruling
+# or a date: a reason helps the agent act well, and a ruling or a date
+# only says who decided and when. For example:
+#   passes: "Do not delete issues; a deleted issue cannot be restored."
+#   fails:  "Do not delete issues (user-ruled 2026-09-18)."
 REFUSAL_TEXTS = [guard.COMMENT_REFUSAL, guard.CREATE_REFUSAL,
                  guard.EDIT_BODY_REFUSAL, guard.EDIT_TITLE_REFUSAL,
                  guard.DELETE_REFUSAL,
@@ -229,7 +261,7 @@ for text in REFUSAL_TEXTS:
     for line in text.splitlines():
         check(f"refusal line is an instruction: {line[:48]}",
               line.startswith(OPENING_WORDS)
-              and "because" not in line and "ruled" not in line
+              and "ruled" not in line
               and "2026" not in line, line)
 
 # edit-GHI retitles only an issue with one filed GHI-MD, and only when the

@@ -116,11 +116,7 @@ _common_spec = importlib.util.spec_from_file_location(
 common = importlib.util.module_from_spec(_common_spec)
 _common_spec.loader.exec_module(common)
 
-# The Claude leg itself, imported for its invocation: the judge is a Claude
-# cold-read-cell, and the one thing a cold-read-cell owns is how it invokes
-# its model. Importing rather than repeating means a change to the Claude
-# invocation -- a flag the CLI renames, a tool the cold-read-cells stop
-# allowing -- reaches the judge with it.
+# Share the Claude invocation so CLI changes reach the judge too.
 _claude_cell_spec = importlib.util.spec_from_file_location(
     "cold_read_claude_cell", pathlib.Path(__file__).with_name("cold-read-claude-cell.py")
 )
@@ -129,84 +125,35 @@ _claude_cell_spec.loader.exec_module(claude_cell)
 
 PROGRAM = "cold-read-restater-judge-cell"
 
-# The runtime and the two tokens the report's name and stamp carry. `cell` is
-# the pass; `tier` is a constant here for the reason in the docstring.
 JUDGE_RUNTIME = "claude"
 JUDGE_CELL = "restater-judge"
 JUDGE_TIER = "judge"
 
-# The chain, in order (user-ruled 2026-09-05). Fable 5.1 judges; Opus 5 judges
-# when Fable is unavailable, which the ruling names as the account limit or a
-# safeguard refusal that returned no report -- the two ways the shared chain
-# runner already recognises as an attempt that produced nothing (a non-zero
-# exit, and an exit 0 with no report). The fallback is that chain and no
-# separate mechanism: it clears the report path between attempts, records
-# every failed attempt in `fallback_from=` on the stamp, and prints the
-# shared FELL_BACK_PHRASE line the runner and the cold-read-grid lift out of
-# the log. This is the one chain in the fleet with a second entry; every
-# cold-read-tier the other legs pin has a single model (user-ruled 2026-09-04,
-# Opus falling back to Fable is not valid for a REVIEW). A judgment is not a
-# review, and the user ruled its backup explicitly, in those words.
 JUDGE_MODEL_CHAIN = ("claude-fable-5-1", "claude-opus-5")
 
-# Model -> the effort it judges at (user-ruled 2026-09-05: "fable at xhigh",
-# "Opus max is the backup"). Two models, two efforts, which is why the shared
-# chain runner takes this map: the stamp names the effort the model that
-# produced the report actually ran at.
+# Stamp the effort of the model that actually produced the report.
 JUDGE_MODEL_TO_REASONING_EFFORT = {
     "claude-fable-5-1": "xhigh",
     "claude-opus-5": "max",
 }
 
-# What --restater may be: the restater class under judgment, named as the
-# roster names its models (claude-opus-5, gpt-6-sol, gemini-3.8-flash-low).
-# Lowercase letters and digits joined by single hyphens or dots, so the label
-# is safe as a path segment -- the runner builds this restater's
-# cold-read-record name out of it -- and reads in a report as the
-# model it names.
+# The restater label becomes a path segment in the runner’s record name.
 RESTATER_CLASS_LABEL_PATTERN = re.compile(r"^[a-z0-9]+([.-][a-z0-9]+)*$")
 
-# The four files one case is made of, in the order --case takes them, each
-# with the words the prompt introduces it by. The order is the pipeline's own:
-# what the restater read, what it should have been, what is wrong with it,
-# what the restater made of it.
 CASE_FILE_ROLES = (
     ("rough draft", "the ROUGH DRAFT the restater read"),
     ("perfect version", "the PERFECT VERSION of that document"),
     ("defect list", "the DEFECT LIST, numbered, one row per defect"),
     ("restatement", "the RESTATEMENT under judgment"),
 )
-# The role whose paths become `target=` in the stamp: the restatements are
-# what this run judged.
+# The stamp’s target is the restatement being judged.
 JUDGED_ROLE_INDEX = 3
 
-# The judge's instructions are NOT in this program. --prompt-file names the
-# file that holds them, and it is required: see "WHERE THE JUDGE'S
-# INSTRUCTIONS COME FROM" in the docstring. The three substitutions
-# `compose_judge_prompt` makes in whatever that file holds are
-# {RESTATER_CLASS}, {CASES_BLOCK} and {REPORT_PATH} -- the other
-# cold-read-cells' templates take {TARGET_PATH} and {REPORT_PATH}, and this
-# one takes a block of cases instead of one cold-read-target because a judge
-# run reads twelve files.
-#
-# THE JUDGE COUNTS NOTHING, whatever the prompt file says about anything else.
-# The ruling's score is arithmetic over the items the judge reports, and the
-# 2026-08-29 trial's scorer "was wrong six ways until two agents hand-counted
-# it" (the walk, item 5). So the model reports items, one per line, each line
-# naming a defect number or quoting a sentence, and the runner counts the lines
-# and computes the composite. A total of the model's own beside a total of the
-# runner's would be two answers to one question.
+# The runner counts reported items; model-generated totals would create a second answer to the same question.
 
 
 def build_judge_argument_parser():
-    """This cold-read-cell's own argument surface, on the shared argparse subclass.
-
-    The subclass is what keeps a mistyped flag leaving by exit 64 rather than
-    argparse's default 2, which is the collision every cold-read-cell avoids.
-    The flags themselves cannot be the shared `build_argument_parser`'s: that
-    one names one --target and one --tier, and a judge run takes four paths per
-    case and has one cold-read-tier.
-    """
+    # The shared parser preserves exit 64 for invocation errors; the judge needs four paths per case.
     parser = common.BadInvocationArgumentParser(
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -254,7 +201,6 @@ def build_judge_argument_parser():
 
 
 def validate_restater_class(restater_class: str) -> None:
-    """The label names a model and becomes a path segment. Refuse anything else."""
     if not RESTATER_CLASS_LABEL_PATTERN.match(restater_class):
         raise common.CellRefusal(
             f"--restater {restater_class!r} cannot name a restater class: the "
@@ -265,17 +211,7 @@ def validate_restater_class(restater_class: str) -> None:
 
 
 def resolve_judge_prompt_file(path_argument: str) -> pathlib.Path:
-    """The file holding the judge's instructions: present, and not empty.
-
-    The shared `resolve_prompt_file` already refuses a path that names no
-    file. The empty check is this cold-read-cell's own, and lives here rather
-    than in the shared module because no other leg needs it: on every other
-    leg the prompt file is an override of a template the program carries, so
-    an empty one is a caller's mistake with a working default behind it. Here
-    there is no default -- an empty file would send the judge twelve paths
-    and no instructions, and that run would burn an xhigh judgment to produce
-    whatever a model does with a bare list of files.
-    """
+    # There is no default prompt; an empty file would launch a judge with no instructions.
     prompt_file = common.resolve_prompt_file(path_argument)
     if not prompt_file.read_text(encoding="utf-8").strip():
         raise common.CellRefusal(
@@ -286,13 +222,7 @@ def resolve_judge_prompt_file(path_argument: str) -> pathlib.Path:
 
 
 def resolve_case_file(case_number: int, role: str, path_argument: str) -> pathlib.Path:
-    """One of a case's four files, made absolute the way --target is.
-
-    Its own refusal rather than `resolve_target`'s, because "target not
-    found" would not say which of twelve paths was wrong: a judge run is
-    refused here with the case number and the role, which is what the caller
-    has to fix.
-    """
+    """Resolve a case path, reporting its case number and role on failure."""
     path = pathlib.Path(path_argument)
     if not path.is_absolute():
         path = common.REPO_ROOT / path
@@ -303,7 +233,6 @@ def resolve_case_file(case_number: int, role: str, path_argument: str) -> pathli
 
 
 def resolve_cases(case_arguments) -> list:
-    """Every case's four files, in order, numbered from 1 as the prompt numbers them."""
     cases = []
     for case_number, case_argument in enumerate(case_arguments, start=1):
         files = [
@@ -316,8 +245,6 @@ def resolve_cases(case_arguments) -> list:
 
 
 def render_cases_block(cases) -> str:
-    """The case list as the judge reads it: one block per case, numbered, each
-    path on its own line under the words the prompt introduces its role by."""
     blocks = []
     for case_number, files in enumerate(cases, start=1):
         lines = [f"Case {case_number}:"]
@@ -330,12 +257,6 @@ def render_cases_block(cases) -> str:
 def compose_judge_prompt(
     restater_class: str, cases, report: pathlib.Path, prompt_file: pathlib.Path,
 ) -> str:
-    """The exact text the judge receives: `prompt_file`, substituted.
-
-    No default behind the argument, deliberately -- see the docstring. This is
-    also what a test calls to see what the model would be given, so a check is
-    made against the text that runs rather than an approximation of it.
-    """
     template = prompt_file.read_text(encoding="utf-8")
     return (
         template
@@ -346,15 +267,8 @@ def compose_judge_prompt(
 
 
 def judge_invocation_builder(model_to_effort: dict, uniform_effort: str):
-    """The argv the judge runs under: the Claude leg's own, per model.
-
-    `model_to_effort` is empty when --effort was named, and `uniform_effort`
-    is then that level for every model in the chain; otherwise the map is the
-    ruled one and `uniform_effort` is the level for a model it does not name,
-    which the parser has already refused. The Claude launcher's builder is
-    called per attempt rather than once, because the effort is what its
-    closure holds and the two models in this chain do not share one.
-    """
+    """Return an invocation builder using each model’s effort."""
+    # Build per attempt: the Claude builder captures effort, and the models use different levels.
     def build_invocation(model: str, prompt: str):
         effort = model_to_effort.get(model, uniform_effort)
         return claude_cell.invocation_builder(effort)(model, prompt)
@@ -362,19 +276,12 @@ def judge_invocation_builder(model_to_effort: dict, uniform_effort: str):
 
 
 def main() -> int:
-    # The cold-read-cell's clock starts before anything else, so `duration_s=`
-    # in the stamp is the cost of the whole cold-read-cell -- a failed Fable
-    # attempt included -- rather than of the attempt that happened to succeed.
-    # The other legs take it in the shared `run_cell`, which this leg's
-    # argument surface cannot use.
+    # Start timing before fallback attempts so duration includes the whole run.
     cell_started_at = time.time()
     parser = build_judge_argument_parser()
     args = parser.parse_args()
 
-    # The baseline is taken BEFORE anything runs, so what the detector reports
-    # afterwards is what this run changed rather than what the tree already
-    # held. A snapshot that cannot be taken yields None, which every reader
-    # treats as "not checked" rather than as "nothing found".
+    # Snapshot before launch to distinguish this run’s writes; None means unchecked, not clean.
     try:
         baseline = common.working_tree_state()
     except common.WriteDetectorUnavailable as error:
@@ -382,9 +289,7 @@ def main() -> int:
         print(f"{PROGRAM}: could not snapshot the working tree ({error}); "
               "stray writes will not be checked for this run.", file=sys.stderr)
 
-    # None until resolve_report_path returns one: a refusal raised before that
-    # point still reports stray writes, and there is no report path to
-    # subtract from them yet.
+    # Refusals can precede report resolution, leaving no report path to exclude from stray writes.
     report = None
     try:
         validate_restater_class(args.restater)
@@ -393,11 +298,7 @@ def main() -> int:
         prompt_file = resolve_judge_prompt_file(args.prompt_file)
         prompt = compose_judge_prompt(args.restater, cases, report, prompt_file)
         chain = (args.model,) if args.model else JUDGE_MODEL_CHAIN
-        # --effort names one level for the whole chain; without it each model
-        # judges at the level the ruling pins for it. A --model this program
-        # pins no effort for is refused rather than run at a level nobody
-        # chose: the caller who named the model is the one who knows what to
-        # ask for.
+        # An unconfigured model needs explicit effort; do not invent an effort level.
         model_to_effort = {} if args.effort else JUDGE_MODEL_TO_REASONING_EFFORT
         unpinned = [model for model in chain if model not in model_to_effort]
         if unpinned and not args.effort:
@@ -412,8 +313,6 @@ def main() -> int:
         common.report_stray_writes(PROGRAM, baseline, report)
         return refusal.exit_code
 
-    # The effort for a model the map does not name -- which, past the refusal
-    # above, means --effort was given and holds for every model in the chain.
     uniform_effort = args.effort or JUDGE_MODEL_TO_REASONING_EFFORT[chain[0]]
     target_argument = ",".join(
         case_argument[JUDGED_ROLE_INDEX] for case_argument in args.case)

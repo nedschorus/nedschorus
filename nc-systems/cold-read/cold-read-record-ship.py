@@ -241,12 +241,11 @@ EXIT_BAD_INVOCATION = 64
 
 # The note at the door of the log-store, written into it by this program.
 #
-# AGENT-FACING TEXT, so it is instruction and nothing else: what the store is,
-# how to cite a file in it, which program or skill owns each kind, and what to
-# edit to change this file. No dates, no ruling citations, no account of why it reads
-# this way -- those live here and in `refresh_store_readme` below, where a
-# maintainer reads them (user-ruled 2026-09-18, on the force-push guard's
-# refusal, in CLAUDE.md).
+# AGENT-FACING TEXT, so it says what the store is, how to cite a file in it,
+# which program or skill owns each kind, and what to edit to change this file,
+# with a reason wherever the reason helps the reader act. It cites no ruling
+# and no date: a ruling or a date says only who decided and when, which does
+# not help a reader use the store.
 #
 # It used to list every kind and how its files were named. That restatement
 # went stale at each ruling that changed one, and when the cold-read-records'
@@ -291,6 +290,8 @@ in the nedschorus repository, which this machine also clones:
   main, written by `scripts/daily-full-test-run-of-main.py`
 - `pull-request-head-test-runs/` -- each machine's test log of a pull request's
   head, one per commit, written by `scripts/pull-request-head-test-run.py`
+- `daily-memory-review-marks/` -- the daily memory review's started and done
+  marks, written by `nc-systems/handoff/daily-memory-review-mark.py`
 
 To change this file, edit STORE_README in
 nc-systems/cold-read/cold-read-record-ship.py. The next shipment rewrites this file
@@ -576,7 +577,9 @@ def place_staged_files(host, staging_dir: pathlib.PurePosixPath,
         try:
             outcome = place_staged_files_and_read_them_back(request)
         except OSError as failed:
-            return subprocess.CompletedProcess([], 1, "", f"{failed}\n"), None
+            # stdout carries the OS's own reason, which the FAILED line prints.
+            return subprocess.CompletedProcess([], 1, failed.strerror or str(failed),
+                                               f"{failed}\n"), None
         return subprocess.CompletedProcess([], 0, "", ""), outcome
     completed = subprocess.run(
         SSH_COMMAND + [host, f"python3 -c {shlex.quote(place_staged_files_program())}"],
@@ -979,8 +982,12 @@ def ship_one(host, records_path: pathlib.PurePosixPath, record_dir: pathlib.Path
         return EXIT_FAILED
     placed, outcome = place_staged_files(host, staging_dir, store_dir, local)
     if outcome is None:
-        reason = ("ned-box unreachable" if placed.returncode == RSYNC_EXIT_CONNECTION_FAILED
-                  else f"ssh exit {placed.returncode}")
+        if host is None:
+            reason = placed.stdout
+        elif placed.returncode == RSYNC_EXIT_CONNECTION_FAILED:
+            reason = "ned-box unreachable"
+        else:
+            reason = f"ssh exit {placed.returncode}"
         print(f"FAILED: {name} — {reason} while placing the copied files; "
               f"a later run finishes it.")
         sys.stderr.write(placed.stderr)

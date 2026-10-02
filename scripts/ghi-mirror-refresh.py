@@ -77,27 +77,12 @@ DEFAULT_MIRROR_DIR = "ghi-mirror"
 CACHE_FILE_NAME = ".mirror-cache.json"
 OPEN_FILE_NAME = "issues-open.md"
 CLOSED_FILE_NAME = "issues-closed.md"
-# Issues per page; GitHub's search connection caps at 100.
+# GitHub's search connection allows at most 100 issues per page.
 PAGE_SIZE = 100
-# GitHub's search API returns at most 1000 results per query however you
-# paginate it, so 10 full pages is the real ceiling, not an arbitrary one.
-# A fetch that comes back short of the reported issueCount has hit that wall
-# (or some other truncation) and is REFUSED rather than written: a mirror
-# missing issues answers "no issue covers X" wrongly, and an absence claim
-# is exactly what the ghi-write skill's search receipt rests on. Corpus size
-# for scale: 45 issues measured 2026-08-07, 57 at this build.
+# GitHub search returns at most 1000 results per query, regardless of pagination.
 MAX_PAGES = 10
 
-# Raw GraphQL, not `gh issue list --json ...`: measured 2026-08-23 against
-# the box's gh 2.46.0 (Ubuntu's apt package, well behind the Mac's 2.97.0) —
-# `--json stateReason` is not in that version's field allowlist at all, so
-# the CLI-side flag would silently strip close reasons from the one machine
-# that actually runs this script. GraphQL's `stateReason` is a server-side
-# schema field, unaffected by the CLI's own version; querying it directly
-# with `gh api graphql` works identically on both machines. Comments ride
-# the same query (confirmed 2026-08-23: no separate per-issue call needed,
-# on either gh version) — the design's "comments fetched only for changed
-# issues (one call per issue)" predates this discovery either way.
+# Older gh versions lack --json stateReason; direct GraphQL reads the server field on both machines.
 SEARCH_QUERY = """
 query($searchQuery: String!, $cursor: String) {
   search(query: $searchQuery, type: ISSUE, first: %d, after: $cursor) {
@@ -122,20 +107,11 @@ query($searchQuery: String!, $cursor: String) {
 }
 """ % PAGE_SIZE
 
-# GitHub's search index is eventually consistent, so a delta can return a
-# later-stamped issue while an earlier-stamped one is still unindexed. The
-# cutoff then advances past the issue that was never returned, and a strict
-# `>` never asks for it again (PR #143 review, P3 — concrete on this corpus:
-# #142 and #138 landed 23 seconds apart). Re-asking for a small window
-# already covered costs a few redundant issues per delta and merges
-# idempotently; it does not close the hole for lag longer than the window,
-# which stays bounded by the reincarnation-time full rewrite, as designed.
+# Search indexing is eventually consistent: overlap recovers late-indexed issues behind the cutoff.
+# Lag beyond this window is recovered only by the next full refresh.
 DELTA_CUTOFF_OVERLAP_SECONDS = 120
 
-# A gh that never ran (missing binary, timeout) reports a code gh itself
-# cannot return, so "no answer" is never read as "ran and failed with 0
-# issues found" — same convention as checkout-freshness-catch-up.py's
-# GIT_DID_NOT_RUN.
+# Use a code gh cannot return to distinguish failure to run from an answered query.
 GH_DID_NOT_RUN = -1
 
 
@@ -169,9 +145,7 @@ def _issue_from_node(node: dict) -> dict:
 
 
 def fetch_issues(repo: str, search: str = None):
-    """Every issue (not PR) matching search, paginated. `is:issue` scopes the
-    search connection to issues since the same number sequence carries PRs
-    too. Returns (issues, error)."""
+    """Return (issues, error) for a paginated issue search."""
     search_query = f"repo:{repo} is:issue"
     if search:
         search_query += f" {search}"
@@ -198,9 +172,7 @@ def fetch_issues(repo: str, search: str = None):
         issues.extend(_issue_from_node(node) for node in search_result["nodes"])
         page_info = search_result["pageInfo"]
         if not page_info.get("hasNextPage"):
-            # The completeness check: GitHub told us how many issues match,
-            # so a short collection means the fetch was truncated and the
-            # mirror would silently under-report. Refuse rather than write it.
+            # A truncated mirror would make false absence claims; refuse incomplete results.
             if issue_count is not None and len(issues) < issue_count:
                 return None, (
                     f"fetch returned {len(issues)} of {issue_count} matching issues — "
@@ -213,12 +185,7 @@ def fetch_issues(repo: str, search: str = None):
 
 
 def overlapped_cutoff(last_refresh_at: str) -> str:
-    """The stored cutoff, rewound by DELTA_CUTOFF_OVERLAP_SECONDS.
-
-    Returned unchanged when it cannot be parsed: a delta from the recorded
-    cutoff still sees everything stamped after it, so an unreadable stamp
-    costs the overlap, not the refresh.
-    """
+    """Return the rewound cutoff, leaving an unparseable cutoff unchanged."""
     try:
         parsed = datetime.fromisoformat(last_refresh_at.replace("Z", "+00:00"))
     except (AttributeError, ValueError):
@@ -237,16 +204,7 @@ def read_cache(cache_path: Path) -> dict:
 
 
 def write_temp_then_rename(path: Path, content: str) -> None:
-    """Publish a mirror file atomically.
-
-    The temp name carries this process's pid. A fixed temp name would break
-    exactly the guarantee the design claims for this step ("Mirror writes go
-    temp-then-rename, so concurrent refreshes are safe"): two refreshes
-    running at once would share one temp path, and each could rename the
-    other's half-written file into place. Concurrency here is not
-    hypothetical — the ask path's contended-lock case (ghi-info-ask.py) runs
-    a full refresh while another ask already holds the session.
-    """
+    # Each process needs its own temporary path so concurrent refreshes cannot publish another's partial write.
     temp_path = path.with_name(f"{path.name}.tmp.{os.getpid()}")
     temp_path.write_text(content, encoding="utf-8")
     temp_path.replace(path)
@@ -297,7 +255,7 @@ def render_closed(issues_by_number: dict) -> str:
 
 
 def refresh(mirror_dir: Path, repo: str, full: bool):
-    """Do one refresh; returns (result_dict, error). Writes nothing on error."""
+    """Return (result_dict, error) for one refresh, writing nothing on error."""
     if full:
         cache = {"last_refresh_at": None, "issues": {}}
     else:
@@ -356,9 +314,6 @@ def main(argv=None) -> int:
     arguments = parser.parse_args(argv)
 
     mirror_dir = Path(arguments.mirror_dir)
-    # No prior cache means a delta query has no cutoff to search from — that
-    # is a full fetch in every way but name, so treat it as one rather than
-    # asking gh for "everything updated after nothing."
     full = arguments.full or not (mirror_dir / CACHE_FILE_NAME).exists()
     result, error = refresh(mirror_dir, arguments.repo, full)
     if result is None:

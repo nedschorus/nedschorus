@@ -14,6 +14,7 @@ hook makes), and that nothing in this hook ever fetches. Both are properties
 of a hook that runs at every edit an agent makes.
 """
 
+import importlib.util
 import json
 import os
 import shutil
@@ -21,6 +22,17 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+
+# Before anything runs git: a run started with GIT_DIR set, or with another
+# variable that redirects git, must still build this suite's scratch
+# repositories where the suite says, not in the repository the variable names.
+_git_environment_fixture_spec = importlib.util.spec_from_file_location(
+    "git_redirecting_environment_removal_test_fixture",
+    Path(__file__).resolve().with_name(
+        "git-redirecting-environment-removal-test-fixture.py"))
+_git_environment_fixture = importlib.util.module_from_spec(_git_environment_fixture_spec)
+_git_environment_fixture_spec.loader.exec_module(_git_environment_fixture)
+_git_environment_fixture.remove_git_redirecting_environment_variables_from_this_process()
 
 SCRIPT_PATH = Path(__file__).with_name("obsolete-file-edit-warning-hook.py")
 
@@ -334,6 +346,40 @@ with tempfile.TemporaryDirectory() as temporary_directory:
           pushed_warning != "" and "\n" not in pushed_warning, repr(pushed_warning))
     check("two commits on main touching the file are counted as two",
           "2 commit(s) on origin/main" in pushed_warning, pushed_warning)
+
+    # -----------------------------------------------------------------------
+    # PUSHED HISTORY UNDER A NEW NAME (GHI "The checkout-freshness hook treats
+    # a new branch cut at a pull request's pushed head as never pushed, and
+    # rebases it"). A fix-round agent cuts a NEW branch at a pull request's
+    # pushed head, so no origin/<that name> exists, yet the commits are the
+    # pull request's. Before the fix this warning told it "This branch has
+    # never been pushed, so nobody else has it" and to rebase.
+    # -----------------------------------------------------------------------
+    git(["checkout", "-q", "-b", "a-fix-round-under-a-new-name",
+         "origin/a-pushed-topic-branch"], pushed_checkout)
+    result = run_hook(hook_payload(pushed_checkout,
+                                   pushed_checkout / "scripts/recover-crashed-seats.py"),
+                      path_prefix=recording_git_directory)
+    history_warning = agent_text(result)
+    check("a new branch cut at a pushed head is not told it was never pushed",
+          "never been pushed" not in history_warning
+          and "git rebase origin/main" not in history_warning, history_warning)
+    check("it is told its commits are already on GitHub and not to rebase them, word for word",
+          "This branch's commits are already on GitHub under another branch name, so the "
+          "branch is treated as pushed and is not rebased: a pushed head may be under "
+          "review, and a rebase would rewrite it. Do not rebase or amend those commits. A "
+          "fix is a new commit on top. If it conflicts with main, clear the conflict with "
+          "the hand-merge that scripts/branch-conflict-check.py describes."
+          in history_warning, history_warning)
+    check("the pushed-history warning is one line", history_warning != ""
+          and "\n" not in history_warning, repr(history_warning))
+    commit_file(pushed_checkout, "scripts/the-fix.py", "fixed\n", "the fix-round's commit on top")
+    result = run_hook(hook_payload(pushed_checkout,
+                                   pushed_checkout / "scripts/recover-crashed-seats.py"),
+                      path_prefix=recording_git_directory)
+    check("with an unpushed fix commit on top, the advice is still the pushed-history advice",
+          "already on GitHub under another branch name" in agent_text(result)
+          and "never been pushed" not in agent_text(result), agent_text(result))
 
     # -----------------------------------------------------------------------
     # OUTSIDE THE CHECKOUT. Another worktree of the same repository, and a

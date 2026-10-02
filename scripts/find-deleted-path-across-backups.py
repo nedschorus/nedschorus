@@ -297,8 +297,7 @@ never count toward 0: the summary names them on a line of their own instead,
 because counting them told a wrapper "found" for a path that never existed.
 """
 
-# Deferred annotations keep this runnable on the Mac's system python3, which is
-# still 3.9 — the same constraint backup-health-check.py carries.
+# Deferred annotations support the Mac's system Python 3.9.
 from __future__ import annotations
 
 import argparse
@@ -312,23 +311,17 @@ import sys
 import time
 from pathlib import Path
 
-# What counts as an scp host prefix, and which hosts' homes are known: the
-# locator's rule, defined once there (see WHY THE CITED FORMS ARE READ).
 _locator_spec = importlib.util.spec_from_file_location(
     "locate_file_copies_across_machines", Path(__file__).with_name("locate-file-copies-across-machines.py"))
 locator = importlib.util.module_from_spec(_locator_spec)
 _locator_spec.loader.exec_module(locator)
 
-# How a printed git recovery command begins: the locator's, defined once
-# there, so both programs print the same form (see EVERY COMMAND THIS PROGRAM
-# STARTS).
 PRINTED_GIT_INVOCATION_WITHOUT_REDIRECTING_VARIABLES = locator.PRINTED_GIT_INVOCATION_WITHOUT_REDIRECTING_VARIABLES
 
 FOUND = "FOUND"
 NOT_FOUND = "NOT FOUND"
 UNAVAILABLE = "UNAVAILABLE"
 
-# The run's exit status, in the same three-outcome vocabulary (2 is argparse's).
 EXIT_FOUND = 0
 EXIT_NOT_FOUND_EVERYWHERE = 1
 EXIT_USAGE = 2
@@ -336,90 +329,48 @@ EXIT_INCOMPLETE = 3
 
 DEFAULT_BOX_SSH_HOST = "nedlern@ned-box"
 DEFAULT_TIMESHIFT_SNAPSHOT_ROOT = "/mnt/backup/timeshift/snapshots"
-# Roots on the box under which a repo-relative path is worth testing. The box
-# runs one seat per directory, so the same relative path can live under several.
+# Each seat has its own directory, so a repo-relative path may exist under several roots.
 DEFAULT_BOX_SEARCH_ROOTS = (
     "/home/nedlern/Projects/nedschorus",
     "/home/nedlern/agents/*",
 )
 DEFAULT_TRANSCRIPTS_DIR = "~/.claude/projects"
-# The log-store: where seats ship what git does not carry. It exists on the
-# box only; the Mac reaches it over ssh.
 DEFAULT_LOG_STORE_ROOT = "/home/nedlern/nedschorus-logs"
-# Where, under the log-store, transcript-mirror-to-log-store.py keeps its copy
-# of the Mac's ~/.claude/projects: transcripts/<machine>/projects, the Mac's
-# machine name there being "mac". A run on the box greps it for the Mac's half
-# of the transcripts surface (RUN ON NED-BOX ITSELF); the test suite holds
-# these parts to the mirror's own constants.
+# Keep this path aligned with transcript-mirror-to-log-store.py's destination.
 MAC_TRANSCRIPTS_COPY_UNDER_LOG_STORE = ("transcripts", "mac", "projects")
-# How many log-store matches the report lists; the count of the rest follows.
 LOG_STORE_HITS_SHOWN = 10
 
-# How many Time Machine snapshots to open when a password IS available. Each
-# mount costs seconds, and the git surface usually narrows the date first.
+# Limit mounts because each costs seconds; git usually narrows the date first.
 DEFAULT_TIME_MACHINE_SNAPSHOT_LIMIT = 4
 
-# The ONE directory a Time Machine snapshot is ever mounted on — by this script
-# and by every recovery command it prints. It is fixed because
-# config/sudoers-mount-apfs-readonly-for-backup-recovery pins this exact path:
-# the rule permits /sbin/mount_apfs, the read-only flag, and this mount point,
-# so a mount anywhere else does not match it and is asked for a password even
-# where the rule is installed. Changing this string without changing that file
-# silently puts the password wall back; the test suite fails the pair apart.
+# The sudoers rule pins this exact mount point; changing it requires changing
+# config/sudoers-mount-apfs-readonly-for-backup-recovery too.
 TIME_MACHINE_READONLY_MOUNT_POINT = "/private/tmp/nedschorus-backup-readonly-mount"
 
-# Time Machine snapshots on the external disk are named
-# com.apple.TimeMachine.<stamp>.backup, and the directory holding that
-# snapshot's files at its own root is <stamp>.backup — the name with this
-# prefix removed. See _time_machine_snapshot_data_root.
 TIME_MACHINE_SNAPSHOT_NAME_PREFIX = "com.apple.TimeMachine."
 
-# What the spoken line calls this tool. `say` reads it aloud, so it is the
-# script's name in words rather than its filename — long enough to be
-# unmistakable across a room, short enough to finish before he stops listening.
 SPOKEN_TOOL_NAME = "find deleted path across backups"
 
-# This Mac's Data volume, which is the one that carries the user-file local
-# snapshots: `diskutil apfs listSnapshots /` shows only com.apple.os.update-*
-# entries for the ROOT volume, so a builder who queries `/` finds nothing useful
-# (re-measured 2026-08-31). mount_apfs takes this mount point directly as its
-# source, so this surface resolves no device node and has none to go stale.
+# The Data volume holds user files; snapshots of / hold only system updates.
 MAC_DATA_VOLUME = "/System/Volumes/Data"
 
-# Local snapshots are com.apple.TimeMachine.<stamp>.local. The snapshots on the
-# EXTERNAL backup disk end .backup instead, and com.apple.os.update-* entries
-# are macOS system-update snapshots of the System volume, which could never hold
-# a working file. The suffix is the whole discriminator.
+# Only .local snapshots hold local user files; .backup is external and os.update is system-only.
 LOCAL_SNAPSHOT_NAME_SUFFIX = ".local"
 
-# A mount point of this surface's own, so that a local-snapshot search and a
-# Time Machine search in one run cannot collide on a single directory.
-#
-# SPELLED /private/tmp, NOT /tmp, AND THE SPELLING IS LOAD-BEARING. /tmp is a
-# symlink to /private/tmp on macOS and `mount` reports only the resolved form,
-# observed on this Mac as `... on /private/tmp/nedschorus-backup-readonly-mount
-# (apfs, ...)`. Under the /tmp spelling this script's own leftover mount never
-# compared equal to its own mount point: a mount point left occupied by a killed
-# run was filed as one macOS holds, the report said "nothing to mount, nothing
-# to release", and every later run searched 1 snapshot of 17 (PR #222 review,
-# finding 1). search_local_snapshots normalises its parameter the same way, so a
-# caller passing the /tmp spelling gets the same answer.
+# Use /private/tmp because mount reports the resolved path, not the /tmp symlink.
 LOCAL_SNAPSHOT_MOUNT_POINT = "/private/tmp/find-deleted-path-across-backups-local-snapshot-ro"
 
-# Command timeouts. ssh to a sleeping box must not hang a recovery.
+# Bound waits so an ssh to a sleeping box cannot hang recovery.
 SHORT_TIMEOUT_SECONDS = 20
 LONG_TIMEOUT_SECONDS = 120
-# The log-store's one ssh call gives up connecting sooner than the older box
-# surfaces' 10 s: the whole search takes under half a second when the box is up.
 BOX_LOG_STORE_CONNECT_TIMEOUT_SECONDS = 5
 
-# The box transcript grep's own exit status comes back through ssh: 0 hits,
-# 1 no hits, 2 grep failed. This one is ours: ~/.claude/projects is not there.
+# grep uses exits 0, 1 and 2; this separate status means the transcript directory is absent.
 BOX_TRANSCRIPTS_DIR_MISSING = 3
 
 
 class SurfaceReport:
-    """One surface's answer, in the three-outcome vocabulary above."""
+    """One surface's result and recovery instructions."""
 
     def __init__(self, surface, status, lines=None, recovery=None):
         self.surface = surface
@@ -428,8 +379,6 @@ class SurfaceReport:
         self.recovery = list(recovery or [])
 
     def render(self):
-        # Wide enough for the longest surface name, "local snapshots", so the
-        # status column stays aligned down the whole report.
         out = ["%-15s %s" % (self.surface, self.status)]
         for line in self.lines:
             out.append("    " + line)
@@ -439,23 +388,14 @@ class SurfaceReport:
 
 
 def running_on_ned_box(hostname=None):
-    """True on the box itself, by the locator's test: the host name before its
-    first dot is NED_BOX_HOSTNAME. `hostname` is for the tests; None reads this
-    machine's (see RUN ON NED-BOX ITSELF)."""
     if hostname is None:
         hostname = socket.gethostname()
     return hostname.split(".")[0] == locator.NED_BOX_HOSTNAME
 
 
 def run_command(argv, timeout=SHORT_TIMEOUT_SECONDS, cwd=None):
-    """Run a command and return (returncode, stdout, stderr).
-
-    Every external call in this file goes through here, so the tests can replace
-    one function instead of stubbing four programs. Each one runs with this
-    program's environment less the locator's GIT_REDIRECTING_VARIABLES, so a
-    git it starts answers for the repository it names (see EVERY COMMAND THIS
-    PROGRAM STARTS).
-    """
+    """Run a command and return (returncode, stdout, stderr)."""
+    # Git redirect variables override -C and must not leak into recovery commands.
     try:
         completed = subprocess.run(
             argv,
@@ -477,12 +417,6 @@ def run_command(argv, timeout=SHORT_TIMEOUT_SECONDS, cwd=None):
 
 
 def _strip_dot_slash(path):
-    """Drop a literal leading './' — and only that.
-
-    `str.lstrip("./")` strips every leading '.' and '/' CHARACTER, so '.env'
-    became 'env' and a request for a dotfile then matched any 'scripts/env'
-    in history — a FOUND with a recovery command for the wrong file.
-    """
     path = path.strip()
     while path.startswith("./"):
         path = path[2:]
@@ -490,7 +424,7 @@ def _strip_dot_slash(path):
 
 
 def path_matches(candidate, wanted):
-    """True when `candidate` ends at a path-component boundary with `wanted`."""
+    """Return whether candidate ends with wanted at a path-component boundary."""
     candidate = _strip_dot_slash(candidate)
     wanted = _strip_dot_slash(wanted)
     if candidate == wanted:
@@ -499,24 +433,11 @@ def path_matches(candidate, wanted):
 
 
 class CitedQueryCannotBePlaced(Exception):
-    """The query names a path this program cannot work out; the text says what to give instead."""
+    """A cited path cannot be resolved from the available host and directory information."""
 
 
 def _plain_path_from_cited_query(query, cwd=None):
-    """The path a query names, however it was written (see WHY THE CITED FORMS ARE READ).
-
-    * `[user@]host:path` loses its host by the locator's split_host. A path
-      after the host that is not absolute is inside that host's home, `~`
-      included, when KNOWN_HOST_HOMES knows the host.
-    * `~` and `~/...` are expanded on this machine.
-    * A path whose first component is `.` or `..`, or that has a `..`
-      component anywhere, is made absolute from `cwd` (the current
-      directory by default).
-
-    Anything else comes back exactly as given. Raises CitedQueryCannotBePlaced
-    for a relative path with directories after a host whose home is not
-    known, and when the current directory is needed and no longer exists.
-    """
+    """Resolve host, home and dot-relative forms, or raise CitedQueryCannotBePlaced."""
     host, path = locator.split_host(query)
     if host is not None and not path.startswith("/"):
         home = locator.KNOWN_HOST_HOMES.get(host.split(".")[0])
@@ -542,31 +463,9 @@ def _plain_path_from_cited_query(query, cwd=None):
     return os.path.normpath(os.path.join(cwd, path))
 
 
-# --------------------------------------------------------------------------
-# Surface 1 — local APFS snapshots, on this Mac's own internal disk
-# --------------------------------------------------------------------------
 
 def search_local_snapshots(wanted, repo, runner=run_command, mount_point=LOCAL_SNAPSHOT_MOUNT_POINT):
-    """Open each of this Mac's local snapshots read-only and test one path in it.
-
-    Searched first because it is the cheapest surface there is and the only
-    unprivileged one holding a point-in-time copy of the working tree: no
-    network, no external disk, and NO PASSWORD. It answers the case the archive
-    surfaces cannot — a file deleted minutes ago that was never committed, and
-    anything under a directory Time Machine is configured to exclude.
-
-    Every retained snapshot is searched rather than a chosen few, because NOT
-    FOUND here has to mean every one of them was tested, and macOS's own
-    retention bounds the walk: roughly a day, two dozen snapshots, ~20 ms each.
-
-    `mount_point` is a parameter so the tests can drive the whole surface
-    against a fake volume instead of this machine's real snapshots.
-    """
-    # /tmp and /private/tmp name one directory and `mount` prints only the
-    # second, so the mount point is resolved to the mount table's spelling
-    # before anything compares against it. The same normalisation the probe path
-    # already gets, for the same reason — see LOCAL_SNAPSHOT_MOUNT_POINT and
-    # _below_data_volume.
+    # Resolve /tmp to /private/tmp so comparisons use the mount table's spelling.
     mount_point = os.path.realpath(mount_point)
     probe_path, unavailable_lines = _local_snapshot_probe_path(wanted, repo, runner)
     if probe_path is None:
@@ -590,18 +489,8 @@ def search_local_snapshots(wanted, repo, runner=run_command, mount_point=LOCAL_S
         )
 
     already_mounted = _local_snapshots_already_mounted(runner)
-    # A mount point left occupied by an earlier run is the one state that
-    # degrades this whole surface: mount_apfs onto an occupied directory exits
-    # 77, "Operation not permitted", for every snapshot the walk has to mount
-    # for itself. It is detected HERE rather than inferred from the walk,
-    # because `stuck` below only ever learns about a release THIS run attempted
-    # — a leftover from a killed run contributed no clear command to the
-    # recovery at all (PR #222 review, finding 1, second layer).
-    #
-    # DETECTED AND REPORTED, NEVER CLEARED. This mount point is one fixed path
-    # for the whole fleet, so a second seat's live mount is indistinguishable
-    # from a dead run's leftover, and unmounting it would break a run in
-    # progress. Handing the operator the command is the honest half.
+    # An occupied mount point blocks later mounts, but may belong to a live seat.
+    # Report how to clear it; never unmount another run's snapshot automatically.
     occupying = sorted(name for name, where in already_mounted.items() if where == mount_point)
     hits = []
     searched = []
@@ -610,13 +499,7 @@ def search_local_snapshots(wanted, repo, runner=run_command, mount_point=LOCAL_S
     stuck = None
     for snapshot in snapshots:
         if stuck is not None:
-            # The walk stops at the first snapshot that will not release. Every
-            # later mount onto an occupied mount point fails with exit 77,
-            # "Operation not permitted", and letting the walk run on would file
-            # every remaining snapshot under that message instead of the real
-            # reason. Measured twice on 2026-08-31: an unchecked release left a
-            # snapshot mounted and the rest of the run was reported as though
-            # each one had refused on its own account.
+            # Stop after a failed release: later mounts would all fail on the occupied mount point.
             unsearched.append((snapshot, "not reached: " + stuck))
             continue
         outcome, where, release_failure, read_in_place = _local_snapshot_probe(
@@ -630,20 +513,14 @@ def search_local_snapshots(wanted, repo, runner=run_command, mount_point=LOCAL_S
             if outcome == "hit":
                 hits.append((snapshot, where, read_in_place))
         if release_failure is not None:
-            # Stored as the bare fact. "not reached: " is prepended at the one
-            # site that means it — a LATER snapshot the walk stopped short of.
-            # Prefixing it here mislabelled the final-return line added below,
-            # which is about a snapshot that WAS searched (PR #222, finding 2).
+            # Add "not reached" only for later snapshots; this snapshot was searched.
             stuck = "%s stayed mounted on %s — %s" % (snapshot, mount_point, release_failure)
 
     lines = ["%d local snapshot(s) retained, %d searched — no password needed for any of it"
              % (len(snapshots), len(searched)),
              "tested %s inside each" % probe_path]
     if occupying:
-        # Named on EVERY outcome, not only the UNAVAILABLE one. A run whose only
-        # readable snapshot is the occupier itself returns FOUND or NOT FOUND
-        # with nothing in `unsearched`, and before this line those two paths
-        # said nothing at all about the mount point that was wedging the tool.
+        # Report the occupied mount point even when every readable snapshot was searched.
         lines.append("the mount point %s already had %s on it when this run started, so every snapshot "
                      "this run had to mount for itself was refused — mount_apfs exits 77, \"Operation "
                      "not permitted\", on an occupied mount point"
@@ -652,27 +529,14 @@ def search_local_snapshots(wanted, repo, runner=run_command, mount_point=LOCAL_S
         lines.append("%d of them were read where macOS already had them mounted, mounting nothing: %s"
                      % (len(in_place), ", ".join(in_place[:3]) + (", ..." if len(in_place) > 3 else "")))
     for snapshot, reason, repeats in _grouped_by_reason(unsearched):
-        # Reported, never classified: a snapshot that would not open was not
-        # searched, and the failures reachable from mount_apfs were never
-        # enumerated, so its own words go through verbatim.
         lines.append("could not search %s — %s" % (snapshot, reason))
         if repeats:
             lines.append("    ... and %d more snapshot(s) with the same message" % repeats)
 
     if stuck and not unsearched:
-        # The LAST snapshot in the walk is the one case where a failed release
-        # reaches no `unsearched` entry to carry it: the loop ends, the guard at
-        # the top never runs again, and the run returned a bare NOT FOUND naming
-        # neither the snapshot still mounted nor the mount point it sits on —
-        # exit 1, which this file's docstring makes the only status meaning
-        # "stop looking", from a run that had just wedged its own mount point
-        # (PR #222 review, finding 2). The search itself WAS complete, so the
-        # status stays NOT FOUND; what was missing was saying this out loud.
+        # A failed release on the last snapshot has no later unsearched entry to report it.
         lines.append(stuck)
 
-    # A mount point needing a clear before any command below it can work, from
-    # either cause: this run failed to release one, or an earlier run's leftover
-    # was already there.
     clear_first = bool(stuck) or bool(occupying)
 
     if hits:
@@ -689,17 +553,11 @@ def search_local_snapshots(wanted, repo, runner=run_command, mount_point=LOCAL_S
     if searched:
         lines.append("searched %s .. %s and none of them has it" % (searched[-1], searched[0]))
     if not wanted.startswith("/"):
-        # The one interpretation this surface cannot check. A `test -e` needs a
-        # known path, so a relative one is read as repo-relative; if it was
-        # meant as a trailing fragment of some other path, the place tested was
-        # the wrong one, and naming it is what keeps this an honest NOT FOUND.
+        # A relative path is tested as repo-relative, so report the location in case a suffix was intended.
         lines.append("(%s was read as a path relative to the repository; a trailing fragment of some "
                      "other path would need a find over the volume, which this surface does not run)" % wanted)
     if unsearched:
-        # The command handed back has to be one that can work. A snapshot macOS
-        # already holds cannot be mounted a second time — that is what put it in
-        # this list — so offering `mount_apfs` for it would be handing over the
-        # very command whose refusal is quoted two lines above.
+        # macOS cannot mount a snapshot twice; recovery must read an existing mount in place.
         reachable = [snapshot for snapshot, _ in unsearched if snapshot not in already_mounted]
         if not reachable:
             lines.append("every snapshot that could not be searched is one macOS already has mounted; "
@@ -712,46 +570,20 @@ def search_local_snapshots(wanted, repo, runner=run_command, mount_point=LOCAL_S
             _local_snapshot_recovery(reachable[0], probe_path, mount_point, clear_first) if reachable
             else ([_local_snapshot_clear_mount_point_command(mount_point)] if clear_first else []),
         )
-    # NOT FOUND, and it stays NOT FOUND even when a mount was left behind: every
-    # snapshot WAS searched, and UNAVAILABLE means the surface could not be. The
-    # clear command rides along so the operator can undo what this run left.
+    # A failed release does not undo a completed search; keep NOT FOUND and provide the clear command.
     return SurfaceReport("local snapshots", NOT_FOUND, lines,
                          [_local_snapshot_clear_mount_point_command(mount_point)] if clear_first else [])
 
 
 def _local_snapshot_clear_mount_point_command(mount_point):
-    """The one command that frees this surface's mount point.
-
-    `diskutil unmount`, not `umount`: see _local_snapshot_probe for the run that
-    proved the difference. Named as a function because three call sites and the
-    recovery builder all have to emit the identical string.
-    """
     return "diskutil unmount %s" % shlex.quote(mount_point)
 
 
 def _local_snapshot_recovery(snapshot, probe_path, mount_point, clear_first=False, already_at=None):
-    """The exact commands that open a snapshot, take the file out, and close it.
-
-    No `sudo`, deliberately and in full: this is the surface whose entire value
-    is that reading it costs no password, and a recovery line that asked for one
-    anyway would send the reader after a credential nothing here needs.
-
-    A snapshot macOS already has mounted needs no mount and no unmount at all —
-    and must not be handed one, because mount_apfs against an already-mounted
-    snapshot exits 75, "Resource busy". So the copy comes straight out of where
-    it sits. Verified 2026-08-31 by reading a file out of one such mount: 43391
-    bytes, byte-identical to the live file.
-
-    When the mount point needs clearing — this run failed to release it, or an
-    earlier run's leftover was already on it — the clear comes first, or every
-    command below fails on the mount point rather than on the snapshot. The one
-    exception is a snapshot sitting on that mount point itself: see below.
-    """
+    """Return commands to copy the file and release any mount opened for recovery."""
+    # Internal Data snapshots need no sudo; an already-mounted snapshot must be read in place.
     if already_at == mount_point:
-        # The snapshot is sitting on this script's OWN mount point, left there by
-        # an earlier run — so one line both takes the file out and clears the
-        # occupation. A separate clear ahead of it would unmount the very tree
-        # the copy reads from (PR #222 review, finding 1).
+        # Copy before clearing this mount point, or recovery unmounts its own source.
         return [
             "cp %s . && %s"
             % (shlex.quote(already_at + probe_path), _local_snapshot_clear_mount_point_command(mount_point)),
@@ -771,12 +603,7 @@ def _local_snapshot_recovery(snapshot, probe_path, mount_point, clear_first=Fals
 
 
 def _grouped_by_reason(unsearched):
-    """[(first snapshot with this reason, the reason, how many more had it)].
-
-    A mount point left occupied by a killed run fails every snapshot with one
-    identical message, and two dozen copies of it would bury the rest of the
-    report. Grouping collapses the repetition without dropping the count.
-    """
+    """Return (first snapshot, reason, additional count) for each distinct failure."""
     grouped = []
     index = {}
     for snapshot, reason in unsearched:
@@ -789,54 +616,20 @@ def _grouped_by_reason(unsearched):
 
 
 def _local_snapshots(runner):
-    """([snapshot names, newest first], failure reason or None).
-
-    `tmutil listlocalsnapshots <volume>` prints a header line and then one name
-    per line, unprivileged. Only the .local names are ours — see
-    LOCAL_SNAPSHOT_NAME_SUFFIX for what the others are.
-
-    The failure comes back separately rather than as an empty list because
-    "tmutil is not on this machine" and "this Mac is keeping no local snapshots"
-    are different answers, and only the second of them describes a volume that
-    was actually looked at.
-    """
+    """Return (snapshot names newest first, failure reason or None)."""
     code, out, stderr = runner(["tmutil", "listlocalsnapshots", MAC_DATA_VOLUME])
     if code != 0:
         first = stderr.strip().splitlines()[0] if stderr.strip() else "tmutil exited %s" % code
         return [], first
     names = {line.strip() for line in out.splitlines()
              if line.strip().endswith(LOCAL_SNAPSHOT_NAME_SUFFIX)}
-    # The names embed an ISO-ish timestamp, so lexical order is time order.
+    # Snapshot timestamps sort lexically.
     return sorted(names, reverse=True), None
 
 
 def _local_snapshots_already_mounted(runner):
-    """{snapshot name: the mount point macOS already has it on}.
-
-    macOS mounts local snapshots for its own use, under
-    /Volumes/com.apple.TimeMachine.localsnapshots, and a snapshot that is
-    already mounted cannot be mounted a second time: mount_apfs exits 75,
-    "Resource busy" (measured 2026-08-31). The snapshot most likely to be in
-    that state is the NEWEST one — exactly the one the "I deleted it minutes
-    ago" case needs — so reading it where it already sits is not a nicety. On
-    2026-08-31 the two newest snapshots were both in that state within the hour.
-
-    Such a mount point IS the Data volume's root, so a path inside it has the
-    same shape as one inside a mount of this script's own, and reading it costs
-    nothing: verified that day by copying a 43391-byte file out of one,
-    byte-identical to the live original.
-
-    Some of these mounts are stale. Four on 2026-08-31 were listed by `mount`
-    while their mount points did not resolve at all, so the caller tests the
-    mount point before trusting it and falls back to mounting for itself; those
-    four then report Resource busy verbatim, which is the honest answer for a
-    snapshot nothing here can reach. They are macOS's own state and this script
-    does not try to clear them.
-
-    `mount` prints `<what>@<device> on <mount point> (<options>)`. The options
-    parenthesis is last, so splitting the tail off is safe for a mount point
-    that itself contains " (".
-    """
+    """Return a map from snapshot names to existing mount points."""
+    # macOS cannot mount a snapshot twice; mount table entries may be stale.
     code, out, _ = runner(["mount"])
     if code != 0:
         return {}
@@ -850,30 +643,8 @@ def _local_snapshots_already_mounted(runner):
 
 
 def _local_snapshot_probe_path(wanted, repo, runner):
-    """The absolute path to test inside a mounted snapshot: (path, why-not lines).
-
-    A mounted snapshot of the Data volume exposes this machine's own absolute
-    layout at the mount point — /Users, /private and the rest — so testing a
-    known path is one `test -e` against <mount point><absolute path> (verified
-    2026-08-31 by mounting one and listing it).
-
-    Three normalisations, each of which is a false NOT FOUND when it is skipped:
-
-      * /tmp, /etc and /var are symlinks that live on the SYSTEM volume. The
-        Data volume's snapshot root has no such entries at all — checked, its
-        top level is Applications, cores, home, Library, mnt, ... private,
-        System, Users, usr — so an unnormalised /tmp/x can never match a file
-        that is genuinely in there. realpath rewrites them to /private/...
-      * /System/Volumes/Data/Users/... is the firmlink spelling of /Users/...,
-        and realpath does NOT collapse it (checked 2026-08-31), so the prefix
-        comes off here instead.
-      * A repo-relative path — the form the usage block documents first — is
-        absolute only once the repository's top level is prepended.
-
-    A bare filename has no path to test, and finding it would need a `find`
-    across the whole volume rather than one `test -e`; this version runs that
-    fan-out on neither snapshot surface, so it returns None with the reason.
-    """
+    """Return (absolute snapshot path, why-not lines)."""
+    # A bare filename would require a whole-volume find, not a single path test.
     stripped = _strip_dot_slash(wanted)
     if stripped.startswith("/"):
         return _below_data_volume(stripped), []
@@ -895,7 +666,8 @@ def _local_snapshot_probe_path(wanted, repo, runner):
 
 
 def _below_data_volume(path):
-    """An absolute path as a snapshot of the Data volume spells it."""
+    """Return the absolute path as a Data-volume snapshot spells it."""
+    # /tmp, /etc and /var symlinks are on System; realpath does not strip the Data firmlink prefix.
     path = os.path.realpath(path)
     if path == MAC_DATA_VOLUME:
         return "/"
@@ -905,51 +677,8 @@ def _below_data_volume(path):
 
 
 def _local_snapshot_probe(snapshot, probe_path, mount_point, runner, already_mounted=None):
-    """Read one local snapshot and test one path in it.
-
-    Returns (outcome, where, release failure or None, read in place):
-      ("hit", mount point, ...)   — the path is in this snapshot, read there
-      ("miss", mount point, ...)  — read and tested; the path is not in it
-      ("unmounted", reason, ...)  — mount_apfs refused; this was NOT searched
-
-    The fourth value says whether the snapshot was read WHERE IT ALREADY SAT
-    rather than mounted here. The caller cannot infer it from `where`: a
-    leftover on this script's own mount point and a snapshot this run mounted
-    itself both report `where == mount_point`, and only the first is still
-    mounted when the report is written (PR #222 review, finding 1).
-
-    `already_mounted` is where macOS itself has this snapshot, when it has it.
-    That mount is read in place — no mount, no release — both because it is
-    free and because mounting an already-mounted snapshot cannot work. A stale
-    entry (the mount point does not resolve) falls through to mounting for
-    ourselves, which then reports its own refusal verbatim.
-
-    No sudo anywhere, which is this surface's whole point: mount_apfs against
-    this Mac's INTERNAL Data volume succeeds as the ordinary user, and so does
-    releasing it (measured 2026-08-31: about 7 ms to mount, 10 ms to release).
-    The external backup volume is the opposite case and Time Machine's probe
-    below still needs a password for it — the difference is the volume, not the
-    command.
-
-    Any nonzero exit from mount_apfs is reported verbatim and never classified.
-    The failures reachable here were not enumerated: an already-occupied mount
-    point gives exit 77 "Operation not permitted" and a snapshot macOS itself
-    already has mounted gives exit 75 "Resource busy" (both measured
-    2026-08-31), and others exist. A snapshot that never opened was not
-    searched, and rendering that as "not there" is the conflation this file
-    exists to refuse.
-
-    THE RELEASE IS `diskutil unmount`, NOT `umount`, AND ITS EXIT CODE IS
-    CHECKED. Plain `umount` intermittently fails on a freshly mounted snapshot
-    with "Resource busy -- try 'diskutil unmount'" — macOS's own words, seen
-    twice on 2026-08-31 partway through a walk of 18 snapshots. The first
-    version ignored that exit code, so the snapshot stayed mounted, every later
-    mount hit the occupied mount point, and a run that had searched six
-    snapshots reported the other twelve as though each had refused on its own
-    account. `diskutil unmount` cleared the same mount immediately. The release
-    is in a `finally` for the same reason the check exists: a snapshot this
-    script leaves mounted makes its own mount point refuse every later run.
-    """
+    """Return (outcome, location or reason, release failure, read in place)."""
+    # Internal Data snapshots need no sudo; diskutil unmount avoids plain umount's busy failures.
     if already_mounted:
         resolves, _, _ = runner(["test", "-d", already_mounted])
         if resolves == 0:
@@ -972,53 +701,32 @@ def _local_snapshot_probe(snapshot, probe_path, mount_point, runner, already_mou
     return outcome, mount_point, release_failure, False
 
 
-# --------------------------------------------------------------------------
-# Surface 2 — git
-# --------------------------------------------------------------------------
 
 def search_git(wanted, repo, runner=run_command):
-    """Search every ref's full history, including paths deleted long ago.
-
-    `git log --all --full-history` is the load-bearing pair: --all reaches refs
-    that HEAD cannot, and --full-history stops history simplification from
-    pruning the very commits that touched a since-deleted path.
-    """
+    """Search all refs without pruning history for deleted paths."""
     report = _search_git_revisions(
         wanted, repo, runner, "git", GIT_REVISIONS_EVERY_REF,
         "no ref in %s has ever contained a path matching %r",
         "matching paths appear in history, but neither the commits that touched them nor those commits' "
         "parents hold the content")
     if report.status == FOUND:
-        # The newest date on which git still had the file bounds where to look in
-        # the filesystem backups: any snapshot after it is unlikely to help.
         report.newest_date_held = max(report.dates_held) if report.dates_held else None
     return report
 
 
-# The revision sets the two git surfaces walk. Every other argument to their
-# `git log` calls is shared, so the git surface's commands are exactly what
-# they were before the reflog surface existed.
 GIT_REVISIONS_EVERY_REF = ("--all",)
 GIT_REVISIONS_REFLOG_ONLY = ("--reflog", "--not", "--all")
 
 
 def _search_git_revisions(wanted, repo, runner, surface, revisions, never_contained_template, none_held_line,
                           parents_outside_every_ref=False):
-    """One git history search, over `revisions`, reported as `surface`.
-
-    `never_contained_template` takes the repository and the path searched for.
-    `none_held_line` is the NOT FOUND line when matching paths were touched but
-    no candidate commit holds them. `parents_outside_every_ref` is passed on to
-    _git_newest_commit_holding.
-    """
+    """Search revisions and return a report for the named surface."""
     code, _, stderr = runner(["git", "-C", repo, "rev-parse", "--git-dir"])
     if code != 0:
         return SurfaceReport(surface, UNAVAILABLE, ["%s is not a git repository (%s)" % (repo, stderr.strip())])
 
     wanted, toplevel = _repo_relative_form(wanted, repo, runner)
     if wanted.startswith("/"):
-        # git can only be asked about paths inside its own work tree, and an
-        # absolute path that is not under it was not converted above.
         return SurfaceReport(
             surface,
             UNAVAILABLE,
@@ -1026,12 +734,7 @@ def _search_git_revisions(wanted, repo, runner, surface, revisions, never_contai
              "re-run with the path relative to the repository, or a trailing fragment of it"],
         )
 
-    # git reads a pathspec from the directory -C names, and every path asked
-    # about here is relative to the top level: the query is made so, and
-    # `--name-only` prints them so. The lookups therefore run at the top
-    # level. Run from a subdirectory with --repo ".", `../scripts/x.py` became
-    # scripts/x.py above and was then looked for as <subdirectory>/scripts/x.py:
-    # NOT FOUND for a file git held.
+    # git pathspecs are relative to -C, but these queries and --name-only results are repo-relative.
     code, out, _ = runner(["git", "-C", repo, "rev-parse", "--show-toplevel"])
     top_level = out.strip() if code == 0 and out.strip() else repo
 
@@ -1064,17 +767,8 @@ def _search_git_revisions(wanted, repo, runner, surface, revisions, never_contai
 
 
 def _repo_relative_form(wanted, repo, runner=run_command):
-    """(path to search for, the repository's top level or None).
-
-    An absolute path inside `repo` comes back repo-relative. That is the only
-    form git can address a blob by — `git log -- /abs/path` succeeds, but
-    `cat-file -e <sha>:/abs/path` fails for every commit, so the first version
-    answered NOT FOUND, "no commit still holds their content", for a file git
-    had the whole time. It is also the form the other surfaces search most
-    widely: the box roots for Timeshift, a suffix match for Time Machine.
-    A relative path, an absolute path outside the repository, and any path
-    when `repo` is not a repository all come back as given.
-    """
+    """Return (normalized query, repository top level or None)."""
+    # git log accepts absolute paths, but cat-file blob addresses require repo-relative paths.
     if not wanted.startswith("/"):
         return wanted, None
     code, out, _ = runner(["git", "-C", repo, "rev-parse", "--show-toplevel"])
@@ -1088,7 +782,7 @@ def _repo_relative_form(wanted, repo, runner=run_command):
 
 
 def _git_candidate_paths(wanted, repo, runner, revisions=GIT_REVISIONS_EVERY_REF):
-    """Exact pathspec first; fall back to a suffix scan of every path git knows."""
+    """Try the exact pathspec, then scan known paths for suffix matches."""
     code, out, _ = runner(["git", "-C", repo, "log"] + list(revisions)
                           + ["--full-history", "-1", "--format=%H", "--", wanted])
     if code == 0 and out.strip():
@@ -1099,8 +793,7 @@ def _git_candidate_paths(wanted, repo, runner, revisions=GIT_REVISIONS_EVERY_REF
         timeout=LONG_TIMEOUT_SECONDS,
     )
     if code != 0:
-        # An empty list here would render as "no ref has ever contained a
-        # path matching", which is a NOT FOUND for a search that did not run.
+        # An empty list would falsely report NOT FOUND when git did not complete the search.
         raise _GitCommandFailed(stderr.strip() or "git log --name-only exited %s" % code)
     seen = []
     for line in out.splitlines():
@@ -1113,42 +806,14 @@ def _git_candidate_paths(wanted, repo, runner, revisions=GIT_REVISIONS_EVERY_REF
 
 
 class _GitCommandFailed(Exception):
-    """A git call the surface depends on returned non-zero; the text is its stderr."""
+    """A required git command failed; the exception text is stderr."""
 
 
 def _git_newest_commit_holding(path, repo, runner, revisions=GIT_REVISIONS_EVERY_REF,
                                parents_outside_every_ref=False):
-    """The newest commit whose tree actually contains `path`: (sha, date, subject), or None.
-
-    `git log -- <path>` lists the commits that TOUCHED the path, newest first,
-    and the newest of those is usually the one that deleted it. The first
-    version walked that list back to the first commit whose tree still had
-    the blob — which is the last MODIFICATION, not the last commit that held
-    the file. For the file this tool was built for that gave 2026-08-12; the
-    deletion was 2026-08-14 and the merge just before it still held the blob,
-    so the Time Machine candidate chosen from the date was one snapshot too
-    old, on the unprivileged path too, under a confident label.
-
-    A commit that deleted the path has a parent whose tree still holds it, on
-    the side the file came from — testing each parent rather than `<sha>^` is
-    what survives merges. The candidates are therefore every touching commit
-    that holds the blob and every holding parent of a touching commit that
-    does not; the newest by commit time wins. The list is newest-first and a
-    parent is never newer than its child, so the walk stops at the first line
-    older than the best candidate so far.
-
-    `parents_outside_every_ref` keeps a parent only when no branch or tag
-    reaches it. The reflog surface needs this: `--reflog --not --all` limits
-    the TOUCHING commits to ones no ref reaches, but a reflog-only commit that
-    deleted the path usually sits on a parent main does reach. Without the
-    check the reflog surface reported that parent as reflog-only, with its
-    "copy the file out now" line, while the git surface reported the same
-    commit (review 5298465965 on PR 702, reproduced in ned-box's clone at
-    3ee2553bc, an ancestor of origin/main).
-
-    Raises _GitCommandFailed when git itself fails, so the caller reports
-    UNAVAILABLE rather than a NOT FOUND for a search that did not run.
-    """
+    """Return the newest holding commit as (sha, date, subject), or None."""
+    # Deleting commits may have multiple parents; test each for the last surviving blob.
+    # Reflog-only children can have ref-reachable parents; filter parents separately.
     code, out, stderr = runner(
         ["git", "-C", repo, "log"] + list(revisions)
         + ["--full-history", "--format=%H|%P|%ct|%ad|%s", "--date=short", "--", path],
@@ -1190,29 +855,14 @@ def _git_tree_holds(sha, path, repo, runner):
 
 
 def _git_some_ref_reaches(sha, repo, runner):
-    """True when a branch or tag reaches `sha`: `rev-list <sha> --not --all` then prints nothing."""
     code, out, stderr = runner(["git", "-C", repo, "rev-list", "-n", "1", sha, "--not", "--all"])
     if code != 0:
         raise _GitCommandFailed(stderr.strip() or "git rev-list exited %s" % code)
     return not out.strip()
 
 
-# --------------------------------------------------------------------------
-# Surface 3 — commits only a reflog still names
-# --------------------------------------------------------------------------
 
 def search_git_reflog(wanted, repo, runner=run_command):
-    """Search the commits that no branch or tag reaches and only a reflog names.
-
-    Surface 2 cannot see these: `--all` starts from refs, and a commit left
-    behind by a recreated branch, a reset or a rebase has none. `--reflog
-    --not --all` walks exactly the rest, and a deleting commit's parent is
-    kept only when no ref reaches it either, so this surface and the git
-    surface never report the same commit. git's `--reflog` covers the HEAD reflog of
-    every worktree of the clone, not just the one `repo` names (measured with
-    git 2.55 on 2026-09-23: a fresh worktree whose own HEAD reflog did not
-    name commit 12c18b5c still listed it, from the merge-lane worktree's).
-    """
     report = _search_git_revisions(
         wanted, repo, runner, "git reflog", GIT_REVISIONS_REFLOG_ONLY,
         "no commit that only a reflog names in %s has ever contained a path matching %r",
@@ -1225,53 +875,10 @@ def search_git_reflog(wanted, repo, runner=run_command):
     return report
 
 
-# --------------------------------------------------------------------------
-# Surface 4 — the log-store on the box, matched by name
-# --------------------------------------------------------------------------
 
 def search_log_store(wanted, log_store_root, box_ssh_host, runner=run_command, store_is_here=None):
-    """Look for the wanted file's name in every file name under the log-store.
-
-    The log-store is where seats ship what git does not carry, and a copy is
-    usually RENAMED on the way in: docs/drafts/pr-main-process-design.md was
-    shipped as seats/merge-lane/pr-main-process-design-draft-from-origin-
-    merge-lane-28e4f5f.md. So this surface LISTS every name containing the
-    file's stem, case-insensitively, newest first.
-
-    ONLY A COPY AT THE WANTED PATH IS FOUND: its path ends with the path
-    asked for, at a component boundary and whatever the case
-    — `path_matches`, the rule git's surface uses. A cold-read-record keeps
-    its target's repository path under `target/`, so that is the copy the
-    path identifies. Every other hit is a candidate: listed, never counted.
-    Counting a stem match made a path that never existed come back FOUND,
-    exit 0, "Recoverable from: log-store.", with a cp of an unrelated file
-    and the password speech silenced (`nowhere/never-existed/plan.md`
-    matched 88 names in the real store; mac-claude's review 5298558956 on
-    PR 702). Counting the same file NAME did the same one level down: the
-    store reuses names across records, 40 `dispositions.md` and 11
-    `SKILL.md` on 2026-09-24, so `nowhere/never-existed/dispositions.md`,
-    and this tool's own founding path, came back FOUND with a cp of another
-    record's file (mac-claude's review 5298738764; Codex P1). A bare file
-    name still matches every copy of that name, as it does in git.
-
-    So with no copy at the wanted path the surface is NOT FOUND, or
-    UNAVAILABLE when a directory went unread, and it still lists the
-    candidates and marks the report `candidate_copies`, which the summary
-    names. With one, the recovery copies the newest copy at the wanted
-    path, and a line says when other candidates are newer: research episode
-    E13 was an agent handing over a cold-read-record's frozen copy older
-    than the renamed drafts ("that's not the latest reference"; review
-    5298465965 on PR 702). A listing cut at LOG_STORE_HITS_SHOWN names how
-    many it left out and the command that lists them all (Codex P2 on
-    review 5298743638).
-
-    The store is read in place when it is on this machine, which is the box,
-    and through one ssh call otherwise. `store_is_here` lets the tests drive the
-    ssh branch against a local tree; None decides by whether the root exists
-    here. The walk is one Python program either way, so both branches match by
-    the same rule: measured 2026-09-23 on the box, it read 17,089 names in
-    0.07 s, and the whole call from the Mac took 0.44 s.
-    """
+    """Return a report of exact-path copies and possible renamed copies."""
+    # Stem matches can be unrelated files; only a component-boundary path match proves FOUND.
     name = _name_to_match_in_the_log_store(wanted)
     if store_is_here is None:
         store_is_here = os.path.isdir(log_store_root)
@@ -1304,8 +911,7 @@ def search_log_store(wanted, log_store_root, box_ssh_host, runner=run_command, s
 
     first_error = stderr.strip().splitlines()[0] if stderr.strip() else ""
     if code != 0:
-        # The runner's 124 on timeout, a missing python3, or the walk itself
-        # failing. Falling through would call an unsearched store searched.
+        # A failed walk cannot count as a searched store.
         return SurfaceReport(
             "log-store",
             UNAVAILABLE,
@@ -1340,10 +946,6 @@ def search_log_store(wanted, log_store_root, box_ssh_host, runner=run_command, s
     list_every_name = _command_listing_every_log_store_name(log_store_root, name, store_is_here, box_ssh_host)
 
     if not at_wanted_path:
-        # Only candidates: not a find. The status, exit code, summary and
-        # speech are NOT FOUND's (or UNAVAILABLE's, when a directory went
-        # unread and could hold the file), and the names are still listed,
-        # because E11 and E14's copies were renamed ones.
         if unread:
             head = [unread_line, "the rest were searched, and no file there is at a path ending in %r"
                     % shown_path]
@@ -1364,14 +966,7 @@ def search_log_store(wanted, log_store_root, box_ssh_host, runner=run_command, s
         report.candidate_copies = len(hits)
         return report
 
-    # A FOUND stands alone. The copies at the wanted path are listed first,
-    # on their own, so no count of other names can push them out of the
-    # listing: with the listing cut at LOG_STORE_HITS_SHOWN across every
-    # name, twelve newer skill-notes-*.md left .claude/skills/ghi-write/SKILL.md
-    # unlisted beside its own FOUND (PR 702 review 5298941029). Of the other
-    # names only the ones newer than the newest copy there are listed, because
-    # one of those may be the later version (E13); the older ones are a count
-    # and the command that lists them.
+    # List exact-path copies separately so newer candidates cannot push FOUND evidence out of the limit.
     found_copies = set(at_wanted_path)
     newer_candidates = [hit for hit in hits if hit not in found_copies and hit[0] > at_wanted_path[0][0]]
     older_candidates = len(hits) - len(at_wanted_path) - len(newer_candidates)
@@ -1395,7 +990,7 @@ def search_log_store(wanted, log_store_root, box_ssh_host, runner=run_command, s
 
 
 def _log_store_listing(hits, list_every_name):
-    """One line per hit, newest first as given, cut at LOG_STORE_HITS_SHOWN with a count and the command for the rest."""
+    """Format a capped hit list with the count and command for omitted matches."""
     listing = ["    %s  %s" % (time.strftime("%Y-%m-%d %H:%M", time.localtime(mtime)), path)
                for mtime, path in hits[:LOG_STORE_HITS_SHOWN]]
     if len(hits) > LOG_STORE_HITS_SHOWN:
@@ -1405,32 +1000,22 @@ def _log_store_listing(hits, list_every_name):
 
 
 def _path_to_find_in_the_log_store(wanted):
-    """The path asked for, as the store is searched for it: 'docs/drafts/pr-main-process-design.md'.
-
-    Compared lower-cased; shown as given, so the report names the file the caller named.
-    """
     return _strip_dot_slash(wanted).rstrip("/")
 
 
 def _command_listing_every_log_store_name(log_store_root, name, store_is_here, box_ssh_host):
-    """The command that lists every name the walk matched, newest first; `find` and `ls` as both machines have them."""
     pattern = "*%s*" % re.sub(r"([*?\[\\])", r"\\\1", name)
     command = "find %s ! -type d -iname %s -exec ls -lt {} +" % (shlex.quote(log_store_root), shlex.quote(pattern))
     return command if store_is_here else "ssh %s %s" % (box_ssh_host, shlex.quote(command))
 
 
 def _name_to_match_in_the_log_store(wanted):
-    """The wanted file's name without its last extension, lower-cased: 'pr-main-process-design'."""
+    """Return the lower-case filename stem without its last extension."""
     base = os.path.basename(_strip_dot_slash(wanted).rstrip("/"))
     return (os.path.splitext(base)[0] or base).lower()
 
 
-# The walk that runs on whichever machine holds the store. Prints HIT <mtime>
-# <path> per matching file, NOROOT when the root is absent, and PROBEFAIL
-# <dir> per directory os.walk could not read, so an unreadable corner is
-# reported rather than counted as searched. Python rather than find, because
-# BSD find on the Mac and GNU find on the box disagree on printing a file's
-# time, and the tests run this same text on the Mac.
+# Use Python because BSD and GNU find disagree on printing modification times.
 _LOG_STORE_NAME_PROBE = "\n".join([
     "import os, sys",
     "root, name = sys.argv[1], sys.argv[2].lower()",
@@ -1451,24 +1036,9 @@ _LOG_STORE_NAME_PROBE = "\n".join([
 ])
 
 
-# --------------------------------------------------------------------------
-# Surface 5 — agent transcripts, on this Mac and on the box
-# --------------------------------------------------------------------------
 
 def search_transcripts(wanted, transcripts_dir, box_ssh_host, runner=run_command, on_ned_box=False,
                        mac_copy_dir=None):
-    """Grep session JSONL for the path string, locally and on the box.
-
-    A transcript holds what a tool call returned, so a file read by any agent
-    survives there verbatim — the recovery route the user pointed out on
-    2026-08-23 ("you almost always can find missing stuff by looking in the
-    agents jsonl"), and the only one of the four that survives a repo history
-    rewrite.
-
-    `on_ned_box`: the local grep is then the box's, so nothing goes over ssh,
-    and the Mac's half is the log-store's copy of the Mac's transcripts,
-    `mac_copy_dir`, grepped in place (RUN ON NED-BOX ITSELF).
-    """
     lines = []
     recovery = []
     statuses = []
@@ -1533,23 +1103,14 @@ def search_transcripts(wanted, transcripts_dir, box_ssh_host, runner=run_command
         lines.append("the box: not searched — no ssh host given (--skip box, or an empty --box-ssh-host)")
 
     if FOUND in statuses:
-        # The searching agent's own transcript matches as soon as it types the
-        # path, so a lone hit is often this session quoting itself rather than a
-        # surviving copy of the content. True of a box hit as much as a Mac one.
+        # The searching session quotes the path too; a lone transcript hit may contain no recovered content.
         lines.append("(a session's own transcript matches merely because the path was typed in it —")
         lines.append(" check that a hit actually contains the CONTENT before calling it recovered)")
     return SurfaceReport("transcripts", _combine(statuses), lines, recovery)
 
 
 def _search_mac_transcripts_copy(wanted, copy_dir, runner, lines, recovery):
-    """The Mac's half of the transcripts surface on the box: the log-store's copy.
-
-    Appends this half's lines (and a recovery command on a hit) and returns
-    its status. The copy counts as searched: see RUN ON NED-BOX ITSELF for
-    why, and for what its age line is there to say. A copy that is missing,
-    holds no transcript, or cannot be grepped keeps the line a run on the box
-    printed before the copy was searched, and stays UNAVAILABLE.
-    """
+    """Append the Mac copy's search results and return its status."""
     not_searched = "the Mac: not searched — %s" % locator.MAC_NOT_REACHABLE_FROM_NED_BOX
     if copy_dir is None:
         lines.append(not_searched)
@@ -1595,11 +1156,8 @@ def _search_mac_transcripts_copy(wanted, copy_dir, runner, lines, recovery):
 
 
 def _newest_transcript_write(copy_dir):
-    """The newest modification time among the copy's *.jsonl files, or None
-    when it holds none. The mirror's `rsync -a` keeps each file's time from
-    the Mac, so this is when the Mac last wrote the newest transcript the
-    copy holds; the copy's last pass may be later, and nothing on the box
-    records when it was."""
+    """Return the newest JSONL modification time, or None."""
+    # rsync -a preserves Mac write times; this does not date the last mirror pass.
     newest = None
     for directory, _, files in os.walk(copy_dir):
         for base in files:
@@ -1615,7 +1173,7 @@ def _newest_transcript_write(copy_dir):
 
 
 def _age_in_words(seconds):
-    """A span as a reader says it: minutes under two hours, hours under two days, else days."""
+    """Format a duration in minutes, hours or days."""
     seconds = max(0, int(seconds))
     if seconds < 2 * 3600:
         return "%d min" % (seconds // 60)
@@ -1625,15 +1183,8 @@ def _age_in_words(seconds):
 
 
 def _box_transcript_grep_script(wanted):
-    """The shell that runs on the box; its exit status is the grep's own.
-
-    The first version was `grep ... 2>/dev/null | head -20`, and a pipeline's
-    status is its LAST command's: `head` succeeding replaced `grep` failing, so
-    a missing or unreadable ~/.claude/projects came back as exit 0 with empty
-    output and the caller said it had searched it. Never pipe a command whose
-    failure is supposed to be detected. The directory is tested explicitly,
-    grep's stderr is kept, and the hit list is capped by the caller instead.
-    """
+    """Return the box search script, preserving grep's exit status."""
+    # Piping through head would replace grep failures with head's success.
     return "\n".join([
         'd="$HOME/.claude/projects"',
         'if [ ! -d "$d" ]; then echo "$d does not exist" >&2; exit %d; fi' % BOX_TRANSCRIPTS_DIR_MISSING,
@@ -1641,30 +1192,8 @@ def _box_transcript_grep_script(wanted):
     ])
 
 
-# --------------------------------------------------------------------------
-# Surface 6 — Timeshift on the box
-# --------------------------------------------------------------------------
 
 def search_timeshift(wanted, box_ssh_host, snapshot_root, search_roots, runner=run_command, on_ned_box=False):
-    """Test the path under every Timeshift snapshot on the box.
-
-    Timeshift stores a snapshot as an ordinary directory tree rooted at
-    <snapshot>/localhost/<the absolute path it had>, world-readable (verified
-    2026-08-23: drwxr-xr-x, and passwordless sudo exists there anyway). So this
-    surface needs no privilege at all — the opposite of Time Machine.
-
-    A repo-relative path is tested under each configured root because the same
-    relative path exists under several seats on the box. It is tested exactly
-    first, and when that misses the root is searched by path suffix, the way
-    git's suffix scan and Time Machine's `find -path` already treat a trailing
-    fragment. The first version only ever tested <root>/<wanted>, so the
-    documented fragment form ("dispositions.md") could not hit, and the
-    surface said "searched every snapshot" for a file in every snapshot.
-
-    `on_ned_box`: the snapshots are on this machine, so the same script runs
-    through a local bash instead of ssh, and a hit is copied with cp
-    (RUN ON NED-BOX ITSELF).
-    """
     script = _timeshift_probe_script(wanted, snapshot_root, search_roots)
     if on_ned_box:
         where = locator.NED_BOX_HOSTNAME
@@ -1685,8 +1214,7 @@ def search_timeshift(wanted, box_ssh_host, snapshot_root, search_roots, runner=r
              "the snapshots are fine; this machine just cannot see them right now"],
         )
     if code != 0:
-        # The runner's 124 on timeout, or the script itself failing. Falling
-        # through would count the snapshots it never reached as searched.
+        # A failed probe may leave snapshots unsearched.
         return SurfaceReport(
             "timeshift",
             UNAVAILABLE,
@@ -1724,18 +1252,8 @@ def search_timeshift(wanted, box_ssh_host, snapshot_root, search_roots, runner=r
 
 
 def _timeshift_probe_script(wanted, snapshot_root, search_roots):
-    """The shell that runs on the box. Prints HIT <path> per match, NOROOT if
-    the snapshot root is absent, PROBEFAIL <dir> when a find could not finish.
-
-    Quote the CALLER's path, never the roots. The roots are constants that
-    deliberately carry a `*` (one seat per directory on the box), and
-    shlex.quote would wrap that glob in single quotes, making it a literal
-    asterisk that matches nothing — a surface reporting "searched every
-    snapshot" while never having looked at the seat directories. An unquoted
-    `*` still expands when the rest of the word is quoted. The find pattern
-    is the opposite case: `*/<wanted>` must reach find as ONE quoted word, or
-    the shell expands the `*` against its own cwd first.
-    """
+    """Return a shell probe emitting HIT, NOROOT and PROBEFAIL records."""
+    # Keep root globs expandable, but quote the caller's path and find pattern.
     script = ["set -u", "ROOT=%s" % shlex.quote(snapshot_root)]
     script.append('if [ ! -d "$ROOT" ]; then echo "NOROOT"; exit 0; fi')
     script.append('for snap in "$ROOT"/*; do')
@@ -1756,54 +1274,9 @@ def _timeshift_probe_script(wanted, snapshot_root, search_roots):
     return "\n".join(script)
 
 
-# --------------------------------------------------------------------------
-# Surface 7 — Time Machine on the Mac's EXTERNAL backup disk
-# --------------------------------------------------------------------------
 
 def search_time_machine(wanted, newest_date_held=None, snapshot_limit=DEFAULT_TIME_MACHINE_SNAPSHOT_LIMIT,
                         runner=run_command, prompt_for_root=False):
-    """Enumerate Time Machine snapshots, and read inside them when root is reachable.
-
-    The measured split (2026-08-23): `tmutil` and `diskutil apfs listSnapshots`
-    both answer unprivileged, but `sudo mount_apfs -o ro -s <snapshot>` refused
-    without a password, so the CONTENT of a snapshot was unreachable to an
-    unattended agent. This function therefore always enumerates, then TRIES the
-    mount, and hands back the exact command to run only once sudo has actually
-    refused it — rather than reporting an empty search.
-
-    THREE WAYS ROOT CAN BE REACHABLE, and the code takes whichever it is given:
-
-      * the sudoers rule beside this script is installed, so the MOUNT COMMAND
-        itself matches a NOPASSWD entry and runs with nothing cached and
-        nobody asked — the unattended case this whole thing exists for;
-      * a credential is already cached from something the person ran a moment
-        ago, which is what `sudo -n true` tests for;
-      * `prompt_for_root` is set, meaning a person is at the terminal and has
-        asked to be prompted, so the mount runs as plain `sudo` and prompts on
-        the tty. The flag drops `-n` rather than warming the credential with
-        `sudo -v` first, because `-v` validates for EVERY command the user may
-        run and so prompts even where the sudoers rule would have made this
-        one mount free.
-
-    THE WALL IS DECLARED BY THE MOUNT'S OWN REFUSAL, NEVER BY `sudo -n true`.
-    That probe still runs, but only to tell a warm credential from the rule in
-    the report's wording — it can never stand in for the rule, because sudo's
-    NOPASSWD tag applies to the COMMANDS IN THAT ENTRY and the rule covers one
-    mount_apfs invocation and nothing else. `true` is not that command, so
-    `sudo -n true` matches the ordinary passworded admin entry and exits
-    non-zero with the rule installed exactly as it does without it (measured
-    2026-08-31: "sudo: a password is required"). An earlier version of this
-    change stopped the surface on that probe, which would have left the rule
-    doing nothing at all: the one run it was written for — no credential, no
-    person, rule installed — would have reported UNAVAILABLE without ever
-    trying the mount that would have succeeded.
-
-    So the candidates are walked, and the wall is declared only when a mount
-    comes back with sudo's own non-interactive refusal. Then no later
-    candidate can do better, the report is marked `root_credential_needed`,
-    and the assembly step decides whether this is worth waking a human for.
-    Any other mount failure is one snapshot's problem and the walk goes on.
-    """
     destination = _time_machine_destination(runner)
     if destination is None:
         return SurfaceReport("time machine", UNAVAILABLE, ["no Time Machine destination is configured on this Mac"])
@@ -1820,9 +1293,6 @@ def search_time_machine(wanted, newest_date_held=None, snapshot_limit=DEFAULT_TI
         )
 
     if not mount_point:
-        # Attached but not mounted — the state the user hits when the disk sleeps
-        # or is replugged. Mounting a disk he already attached is how you read a
-        # backup; it does not modify one.
         code, _, stderr = runner(["diskutil", "mount", name])
         device, mount_point, attached = _time_machine_volume_state(name, runner)
         if not mount_point:
@@ -1851,11 +1321,7 @@ def search_time_machine(wanted, newest_date_held=None, snapshot_limit=DEFAULT_TI
     stuck = None
     for snapshot in candidates:
         if stuck is not None:
-            # The same shape as the local-snapshot walk, for the same reason:
-            # this mount point is fixed by the sudoers rule, so once one
-            # snapshot will not release, every later mount onto it fails with
-            # one identical message and filing each candidate under that
-            # message hides the real cause.
+            # A failed release blocks every later mount on this fixed mount point.
             unsearched.append((snapshot, "not reached: " + stuck))
             continue
         outcome, detail, release_failure = _time_machine_probe(snapshot, device, wanted, runner, prompt_for_root)
@@ -1863,9 +1329,7 @@ def search_time_machine(wanted, newest_date_held=None, snapshot_limit=DEFAULT_TI
             stuck = "%s stayed mounted on %s — %s" % (
                 snapshot, TIME_MACHINE_READONLY_MOUNT_POINT, release_failure)
         if outcome == "no credential":
-            # sudo refused for want of a password. Every remaining candidate
-            # would refuse identically, so the walk stops here rather than
-            # filing each one under the same message.
+            # A missing credential blocks every candidate; another snapshot cannot help.
             return _time_machine_root_wall(snapshots, candidates, dated_by_git, device, detail, unsearched)
         if outcome == "hit":
             hits.append((snapshot, detail))
@@ -1879,17 +1343,13 @@ def search_time_machine(wanted, newest_date_held=None, snapshot_limit=DEFAULT_TI
     elif prompt_for_root:
         how = "with --prompt-for-root, which let sudo ask at the terminal"
     else:
-        # Nothing was cached and nobody was asked, and the mounts went through
-        # anyway: that can only be the sudoers rule, and it is the whole point.
         how = "with no credential cached and nobody asked — the sudoers rule is installed"
     lines = ["%d snapshots present; %d of %d candidates searched %s"
              % (len(snapshots), len(searched), len(candidates), how)]
     for snapshot, reason in unsearched:
         lines.append("could not search %s — %s" % (snapshot, reason))
     if stuck and not unsearched:
-        # The LAST candidate in the walk reaches no `unsearched` entry to carry
-        # its failed release, so without this the run says nothing at all about
-        # the mount it left on a mount point every later run needs.
+        # The last candidate has no later unsearched entry to carry a failed release.
         lines.append(stuck)
     if hits:
         for snapshot, hit in hits:
@@ -1900,33 +1360,17 @@ def search_time_machine(wanted, newest_date_held=None, snapshot_limit=DEFAULT_TI
     if searched:
         lines.append("searched %s and did not find it" % ", ".join(searched))
     if unsearched:
-        # A snapshot that would not open was not searched; saying "did not
-        # find it" about it is the conflation this file's contract forbids.
         return SurfaceReport("time machine", UNAVAILABLE, lines,
                              _time_machine_manual_recovery(unsearched[0][0], device,
                                                            clear_first=bool(stuck)))
-    # NOT FOUND stands even when a mount was left behind: every candidate WAS
-    # opened and searched. The clear command rides along so the mount point the
-    # next run needs can be freed.
+    # A failed release does not undo a completed search; provide the clear command for the next run.
     return SurfaceReport("time machine", NOT_FOUND, lines,
                          [_time_machine_clear_mount_point_command()] if stuck else [])
 
 
 def _time_machine_root_wall(snapshots, candidates, dated_by_git, device, refusal, unsearched):
-    """The UNAVAILABLE report for a mount sudo would not run without a password.
-
-    Built here rather than inline because it is the report the whole announce
-    half turns on: `root_credential_needed` is what tells the assembly step
-    that this surface stopped at a CREDENTIAL and not at a missing disk, an
-    unconfigured destination, or a snapshot that happened to be busy. Those
-    other stops are UNAVAILABLE too, and speaking about any of them would send
-    the user to type a password that could not help.
-
-    The mark is stronger than "no credential is cached": it means the mount
-    was actually attempted and sudo refused it, so neither a cached credential
-    nor the sudoers rule was there to carry it. `sudo -n true` alone could
-    never have established that.
-    """
+    """Return an UNAVAILABLE report marked as requiring a root credential."""
+    # Only the mount's sudo refusal proves this; sudo -n true does not test the mount's NOPASSWD rule.
     lines = [
         "%d snapshots present, %s .. %s — enumerated fine, but the mount was refused: %s"
         % (len(snapshots), snapshots[-1], snapshots[0], refusal),
@@ -1936,8 +1380,6 @@ def _time_machine_root_wall(snapshots, candidates, dated_by_git, device, refusal
         "at a terminal, --prompt-for-root runs the mount below from here instead of printing it",
     ]
     for snapshot, reason in unsearched:
-        # Snapshots that refused for some other reason before the credential
-        # wall was reached. Reported, never classified, like everywhere else.
         lines.append("could not search %s — %s" % (snapshot, reason))
     lines.append(_candidate_line(candidates[0], dated_by_git))
     lines.append(_alternative_line(snapshots, candidates[0], dated_by_git))
@@ -1949,50 +1391,19 @@ def _time_machine_root_wall(snapshots, candidates, dated_by_git, device, refusal
 
 
 def _is_sudo_non_interactive_refusal(stderr):
-    """True when `sudo -n` refused for want of a password, rather than mount_apfs failing.
-
-    The two are not the same thing and must not be conflated: sudo refusing
-    means NO snapshot on this disk can be opened until a credential or the
-    sudoers rule appears, while mount_apfs refusing is one snapshot's problem
-    and the next candidate may well open.
-
-    The signature is sudo's own `-n` message, "sudo: a password is required"
-    (measured on this Mac 2026-08-31). It is matched case-insensitively and by
-    substring, because the surrounding wording has varied across sudo versions
-    — older ones say "sorry, a password is required to run sudo" — while that
-    phrase has not.
-    """
+    """Distinguish sudo's password refusal from a snapshot mount failure."""
+    # sudo versions vary the surrounding text but retain "a password is required".
     return "password is required" in (stderr or "").lower()
 
 
 def _time_machine_clear_mount_point_command():
-    """The one command that frees the fixed Time Machine mount point."""
     return "diskutil unmount %s" % shlex.quote(TIME_MACHINE_READONLY_MOUNT_POINT)
 
 
 def _time_machine_manual_recovery(snapshot, device, path_inside=None, clear_first=False):
-    """The exact commands that open one Time Machine snapshot and close it again.
-
-    TIME_MACHINE_READONLY_MOUNT_POINT in every line, and the same directory the
-    probe below mounts on, because the sudoers rule beside this script pins that
-    one path: a printed command naming anywhere else asks for a password on a
-    machine where the rule would have made it free, and a reader who follows a
-    printed command that differs from what the script itself runs is debugging
-    two things at once.
-
-    THE RELEASE IS `diskutil unmount` AND CARRIES NO SUDO. Unmounting needs no
-    privilege at all, so `sudo umount` asked for a password to undo something
-    that never needed one; and plain `umount` does not reliably release a
-    freshly mounted snapshot — it fails with "Resource busy — try 'diskutil
-    unmount'", macOS's own words, measured twice on 2026-08-31 on the
-    local-snapshot surface, where an ignored release left the mount point
-    occupied and every later snapshot failed against it.
-    """
+    """Return commands to mount a snapshot, copy the file and unmount."""
     mount = shlex.quote(TIME_MACHINE_READONLY_MOUNT_POINT)
-    # The mount point is where the SNAPSHOT lands; the files are a level down,
-    # under <stamp>.backup/Data. A cp naming the mount point directly is the
-    # blocking defect of PR #223 in printed form — it would not find the file
-    # any more than the probe did.
+    # Snapshot files live under <stamp>.backup/Data, not directly under the mount point.
     data_root = _time_machine_snapshot_data_root(snapshot, TIME_MACHINE_READONLY_MOUNT_POINT)
     clear = [_time_machine_clear_mount_point_command()] if clear_first else []
     open_it = "mkdir -p %s && sudo mount_apfs -o ro -s %s %s %s" % (mount, snapshot, device, mount)
@@ -2024,11 +1435,8 @@ def _time_machine_destination(runner):
 
 
 def _time_machine_volume_state(name, runner):
-    """Resolve (device node, mount point, attached) from the volume NAME.
-
-    Never from a remembered device node: /dev/disk5s2 was the backup volume on
-    2026-08-23 and a replug can renumber it.
-    """
+    """Return (device node, mount point, attached) resolved from the volume name."""
+    # Device numbers change when disks are replugged.
     code, out, _ = runner(["diskutil", "info", name])
     if code != 0:
         return None, None, False
@@ -2058,23 +1466,12 @@ def _time_machine_snapshots(device, runner):
             value = stripped.split(":", 1)[1].strip()
             if value:
                 names.append(value)
-    # Snapshot names embed an ISO-ish timestamp, so lexical order is time order.
+    # Snapshot timestamps sort lexically.
     return sorted(names, reverse=True)
 
 
 def _time_machine_candidates(snapshots, newest_date_held, limit):
-    """Prefer snapshots from around the last date git still had the file.
-
-    When the git surface reports "last held on 2026-08-13", the snapshot that
-    matters is the newest one at or before that date — not the newest overall,
-    which is from after the deletion and will not have it.
-
-    This is deliberately the newest snapshot git can PROVE predates the
-    deletion, which is a safe bet rather than the optimal one: the file
-    normally survived on disk for a while after that commit, so a slightly
-    newer snapshot often holds it too. The report names that next-newer
-    snapshot as the alternative rather than silently narrowing the search.
-    """
+    """Prefer snapshots near the last date git held the file."""
     if newest_date_held:
         compact = newest_date_held.replace("-", "")
         before = [s for s in snapshots if _snapshot_datestamp(s) <= compact]
@@ -2091,13 +1488,8 @@ def _candidate_line(candidate, dated_by_git):
 
 
 def _alternative_line(snapshots, candidate, dated_by_git):
-    """Point at the next snapshot worth trying, in the direction that can help.
-
-    With a git date the risk is that the candidate predates the file's creation,
-    so the next NEWER one is the alternative. Without a git date the candidate is
-    the newest on the disk and the risk is the opposite — it postdates the
-    deletion — so the alternative has to be OLDER, and walking newer is useless.
-    """
+    """Suggest a newer snapshot with a git bound, otherwise an older one."""
+    # A bounded candidate may predate creation; an unbounded newest candidate may postdate deletion.
     try:
         index = snapshots.index(candidate)
     except ValueError:
@@ -2112,63 +1504,21 @@ def _alternative_line(snapshots, candidate, dated_by_git):
 
 
 def _snapshot_datestamp(snapshot_name):
-    """'com.apple.TimeMachine.2026-08-13-183101.backup' -> '20260813'."""
+    """Return the first eight timestamp digits as YYYYMMDD."""
     digits = "".join(ch for ch in snapshot_name if ch.isdigit())
     return digits[:8]
 
 
 def _snapshot_timestamp(snapshot_name):
-    """'com.apple.TimeMachine.2026-08-13-183101.backup' -> '20260813183101', or None.
-
-    The FULL stamp, to the second, and never the date above. A date cannot
-    order a snapshot against a deletion that happened the same day, and
-    same-day is the ordinary case rather than an edge: 7 of the 62 backups on
-    the measured volume share 2026-08-23. The speech gate compares against a
-    git commit timestamp rendered in the same 14 digits, so the comparison is
-    a plain string comparison between two fixed-width local-time stamps.
-
-    None when the name carries no such stamp, so a snapshot this cannot place
-    in time is never counted as predating anything.
-    """
+    """Return the snapshot time as YYYYMMDDhhmmss, or None."""
+    # Date-only comparisons cannot place a snapshot relative to a same-day deletion.
     digits = "".join(ch for ch in snapshot_name if ch.isdigit())
     return digits[:14] if len(digits) >= 14 else None
 
 
 def _time_machine_snapshot_data_root(snapshot, mount_point):
-    """Where a mounted Time Machine snapshot actually keeps the backed-up files.
-
-    NOT the mount point, WHICH IS WHAT THIS SCRIPT USED TO TEST. Measured on
-    this Mac's backup volume on 2026-08-31 by mounting
-    com.apple.TimeMachine.2026-08-31-175312.backup read-only and listing it:
-    the root holds one <stamp>.backup directory, 87 <stamp>.previous ones, two
-    .interrupted ones and backup_manifest.plist. There is NO /Users at the
-    root — `ls <mount>/Users` is "No such file or directory". The files are one
-    level further down, under <stamp>.backup/Data, which does carry the
-    machine's own absolute layout: <mount>/2026-08-31-175312.backup/Data/Users/
-    el/Projects/nedschorus/README.md is 6130 bytes, the live file's size.
-
-    The stamp is the snapshot's OWN: the volume seen through snapshot
-    com.apple.TimeMachine.<stamp>.backup has <stamp>.backup at its root, so the
-    directory is the name with TIME_MACHINE_SNAPSHOT_NAME_PREFIX removed. One
-    .backup entry existed at that root, and its stamp was the mounted
-    snapshot's.
-
-    THE .previous DIRECTORIES ARE NOT SEARCHED, and that is deliberate rather
-    than an omission. Each holds a Data tree, but a PARTIAL one: the README.md
-    present under the .backup root is absent from
-    2026-07-27-163922.previous/Data on the same mount. Treating one as a
-    point-in-time root would report "searched and did not find it" about a tree
-    that never held the file in the first place — the exact conflation the
-    honesty contract at the top of this file exists to refuse. Reaching further
-    back in time is what the OTHER candidate snapshots are for.
-
-    WHY THIS WENT WRONG. The old code tested <mount><absolute path> and its own
-    comment said the /Users layout was "UNVERIFIED here: confirming it needs the
-    password this whole branch exists because we do not have". The sudoers rule
-    removed that wall, the mount then succeeded, and an unverified assumption
-    became a confident NOT FOUND — exit 1, "stop looking" — for a file sitting
-    in the backup (PR #223 review, blocking finding).
-    """
+    """Return the snapshot's <stamp>.backup/Data directory."""
+    # .previous trees are partial and cannot stand in for complete snapshots.
     stamp = snapshot
     if stamp.startswith(TIME_MACHINE_SNAPSHOT_NAME_PREFIX):
         stamp = stamp[len(TIME_MACHINE_SNAPSHOT_NAME_PREFIX):]
@@ -2176,42 +1526,8 @@ def _time_machine_snapshot_data_root(snapshot, mount_point):
 
 
 def _time_machine_probe(snapshot, device, wanted, runner, prompt_for_root=False):
-    """Open one snapshot read-only and look for `wanted` in it.
-
-    Returns (outcome, detail):
-      ("hit", path inside the snapshot)   — the file is there
-      ("miss", None)                      — mounted and searched, not there
-      ("no credential", reason)           — SUDO refused for want of a password;
-                                            NOT searched, and no later candidate
-                                            on this disk can do better
-      ("unmounted", reason)               — MOUNT_APFS refused; NOT searched,
-                                            but the next candidate may open
-      ("unreadable", reason)              — mounted, but the tree could not be
-                                            read; NOT searched
-    plus a third value: the release failure, or None. `diskutil unmount`'s exit
-    code was discarded here while the local-snapshot twin checked it — the same
-    lesson, not carried across (PR #223 review). This mount point is fixed by
-    the sudoers rule, so one snapshot left mounted refuses every later run.
-
-    The first version returned a bare None for both a mount failure and an
-    absent file, and the caller rendered both as "searched ... and did not
-    find it". A snapshot that never opened was not searched. "no credential"
-    is split off from "unmounted" for the mirror-image reason: one of them is
-    a wall across the whole surface and the other is one snapshot's bad luck,
-    and only the first is worth interrupting a person about.
-
-    THE MOUNT POINT IS THE FIXED ONE, and the argv is exactly the shape the
-    sudoers rule permits — `mount_apfs -o ro -s <snapshot> <device>
-    <TIME_MACHINE_READONLY_MOUNT_POINT>`. sudoers matches argument for
-    argument, so reordering the flags or mounting elsewhere puts the password
-    prompt back on a machine where the rule is installed.
-
-    `prompt_for_root` drops sudo's `-n`, which is the whole of what the flag
-    does here: with `-n` sudo fails rather than ask, which is right for an
-    unattended run; without it sudo prompts on the tty — and on a machine with
-    the sudoers rule installed it does not have to ask at all, because the
-    command matches a NOPASSWD entry either way.
-    """
+    """Return (outcome, detail, release failure) for one snapshot."""
+    # sudoers matches argument order and the fixed mount point; preserve the mount command's shape.
     mount_point = TIME_MACHINE_READONLY_MOUNT_POINT
     runner(["mkdir", "-p", mount_point])
     sudo = ["sudo"] if prompt_for_root else ["sudo", "-n"]
@@ -2220,23 +1536,14 @@ def _time_machine_probe(snapshot, device, wanted, runner, prompt_for_root=False)
     if code != 0:
         first = stderr.strip().splitlines()[0] if stderr.strip() else "exit %s" % code
         if _is_sudo_non_interactive_refusal(stderr):
-            # Verbatim, and with no prefix of ours: sudo's own message already
-            # names sudo, and "sudo said: sudo: ..." reads like a bug.
             return "no credential", first, None
         return "unmounted", "mount_apfs said: %s" % first, None
-    # HELD IN A VARIABLE, NOT RETURNED FROM THE `try`. A `return` inside a try
-    # block computes its value before the `finally` runs, so a release failure
-    # discovered down there could never reach the caller.
+    # Return after finally so a release failure reaches the caller.
     try:
-        # The files are under <stamp>.backup/Data, never at the mount point
-        # itself — see _time_machine_snapshot_data_root for the measurement.
         data_root = _time_machine_snapshot_data_root(snapshot, mount_point)
         laid_out, _, _ = runner(["test", "-d", data_root])
         if laid_out != 0:
-            # Mounted, but not shaped like the volume this was measured against.
-            # NOT a miss: "searched and did not find it" about a tree that was
-            # never opened is the conflation this file's contract forbids, and
-            # is exactly how the old wrong-root probe failed.
+            # An unreadable data root is unsearched, not evidence that the file is absent.
             outcome = ("unreadable", "mounted, but %s is not there — a snapshot of this backup "
                                      "volume keeps its files under <stamp>.backup/Data" % data_root)
         elif wanted.startswith("/"):
@@ -2249,9 +1556,6 @@ def _time_machine_probe(snapshot, device, wanted, runner, prompt_for_root=False)
             )
             found = next((line.strip() for line in out.splitlines() if line.strip()), None)
             if found is not None:
-                # Rendered as the machine's own absolute path, which is what the
-                # data root carries — the mount point and the <stamp>.backup/Data
-                # prefix are this script's plumbing, not the reader's path.
                 outcome = ("hit", found[len(data_root):])
             elif code != 0:
                 first = stderr.strip().splitlines()[0] if stderr.strip() else "exit %s" % code
@@ -2259,10 +1563,7 @@ def _time_machine_probe(snapshot, device, wanted, runner, prompt_for_root=False)
             else:
                 outcome = ("miss", None)
     finally:
-        # `diskutil unmount`, unprivileged, for the reason spelled out in
-        # _time_machine_manual_recovery: plain `umount` does not reliably
-        # release a freshly mounted snapshot, and this mount point is fixed, so
-        # one snapshot left mounted breaks every later run of this script.
+        # diskutil unmount needs no sudo; plain umount can leave a freshly mounted snapshot busy.
         released, _, release_error = runner(["diskutil", "unmount", mount_point],
                                             timeout=LONG_TIMEOUT_SECONDS)
     if released != 0:
@@ -2271,30 +1572,10 @@ def _time_machine_probe(snapshot, device, wanted, runner, prompt_for_root=False)
     return outcome[0], outcome[1], release_failure
 
 
-# --------------------------------------------------------------------------
-# The one channel to the user that does not run through an agent
-# --------------------------------------------------------------------------
 
 def announce_root_password_wall_by_speech(wanted, reports, repo, skip, runner):
-    """Speak one sentence when a person is genuinely needed. Return it, or None.
-
-    WHY SPEECH AT ALL. On 2026-08-31 this script's Time Machine surface said
-    "needs your password" and the agent reading it put that four paragraphs
-    into a long message; the user never saw it. Printing louder cannot fix
-    that, because the failure was in the relay and not in the wording. `say`
-    reaches the room directly. It is the user's own convention for the same
-    reason: he works in other seats' terminals and does not read transcripts.
-
-    It is spoken after the last surface's section is printed and before the
-    summary, and blocks for the few seconds the sentence takes. That is deliberate rather than backgrounded: a spoken
-    line whose process is orphaned when the script exits is a line nobody
-    hears, and this path is rare enough that a few seconds cost nothing.
-
-    NO PLATFORM GUARD, and that is not an oversight. Nothing can reach this
-    call except through a report that `tmutil destinationinfo` and `diskutil
-    info` both answered, which is macOS by construction; ned-box has no Time
-    Machine destination and never gets a wall report to speak about.
-    """
+    """Speak and return the password request, or return None."""
+    # Wait for speech to finish so script exit does not orphan the announcement.
     sentence = speech_line_when_root_password_is_needed(wanted, reports, repo, skip, runner)
     if sentence is None:
         return None
@@ -2303,50 +1584,8 @@ def announce_root_password_wall_by_speech(wanted, reports, repo, skip, runner):
 
 
 def speech_line_when_root_password_is_needed(wanted, reports, repo, skip, runner):
-    """The sentence to speak, or None when he must not be disturbed.
-
-    FOUR CONDITIONS, ALL REQUIRED, because a channel that reaches the room is
-    only worth having while it stays rare. Any one of them failing is silence.
-
-      1. Nothing else found it. A run whose git or transcripts surface came
-         back FOUND needs no password and no person: the file is already
-         recoverable and the report says how. UNAVAILABLE elsewhere does NOT
-         excuse the wall — a Timeshift surface that could not be reached
-         because the box is asleep leaves him just as needed, so the test is
-         "did any surface FIND it", not "was every surface searched".
-      2. The Time Machine surface stopped at the credential rather than at
-         anything else. That is the `root_credential_needed` mark, which the
-         surface sets only after it has enumerated snapshots on an attached,
-         mounted disk, ATTEMPTED the mount, and had sudo itself refuse for
-         want of a password. It carries the design's third condition and "there
-         is something in there to search" in one flag: a missing disk, an
-         unconfigured destination, a warm credential and an installed sudoers
-         rule all leave it unset. `sudo -n` refuses WITHOUT prompting, so
-         finding out costs nothing and can never summon a password window by
-         accident — and it is the mount's refusal rather than a `sudo -n true`
-         probe, because that probe fails whether or not the rule is installed
-         and would have made the rule useless.
-      3. A backup exists whose timestamp predates the deletion. Without one,
-         the password cannot help and sending him after it would waste his
-         walk. The bound is the DELETION commit's timestamp, not the newest
-         commit whose tree still holds the blob — that one is usually older
-         than the deletion and would rule out backups that do have the file.
-         A PATH GIT NEVER TRACKED CANNOT SATISFY THIS, and a builder reading
-         only the list above will not derive it: no deletion commit means no
-         bound, no bound means no backup can be shown to predate anything, so
-         the line never speaks for a never-committed file. That is the right
-         answer rather than a gap — a never-committed file is what local
-         snapshots and transcripts are there to answer, and Time Machine
-         excludes the scratchpad those files mostly live in anyway.
-      4. The search is for a known path, not a bare filename. A fragment
-         cannot be tested with one `stat` inside a snapshot; it needs a `find`
-         across the whole tree, which no snapshot surface here runs. Waking
-         him for a search that could not use the mount is the worst of both.
-
-    Condition 2 is also why `--prompt-for-root` is silent: with the flag the
-    surface walks past the wall and never sets the mark, which is correct —
-    the person is already at the terminal, and sudo is about to ask him there.
-    """
+    """Return a password request only when mounting a backup can help recovery."""
+    # No deletion timestamp means no proof a backup predates deletion; never-committed paths stay silent.
     wall = next((r for r in reports if getattr(r, "root_credential_needed", False)), None)
     if wall is None:
         return None
@@ -2356,8 +1595,7 @@ def speech_line_when_root_password_is_needed(wanted, reports, repo, skip, runner
     if "/" not in stripped:
         return None
     if "git" in skip:
-        # No git surface ran, so there is no deletion commit to bound with, and
-        # asking git anyway would contradict the flag the caller typed.
+        # Do not query git when the caller skipped that surface.
         return None
     deleted_at = _git_deletion_timestamp(stripped, repo, runner)
     if deleted_at is None:
@@ -2370,23 +1608,8 @@ def speech_line_when_root_password_is_needed(wanted, reports, repo, skip, runner
 
 
 def _git_deletion_timestamp(wanted, repo, runner):
-    """When the deletion of `wanted` was committed, as '20260813183101', or None.
-
-    `--diff-filter=D` is the whole point: it selects the commit that REMOVED
-    the path, which is the moment after which a backup can no longer hold it.
-    `--all --full-history` gives it the same reach the git surface has, so a
-    path deleted on a branch HEAD cannot see is still bounded.
-
-    The date is asked for as local-time digits rather than %cI, so the
-    comparison against a snapshot name is between two fixed-width strings in
-    one coordinate system — snapshot names carry local time — with no
-    timezone-offset parsing on the system python this file has to run under.
-
-    It runs at the top level, as _search_git_revisions' lookups do, because
-    `wanted` is relative to the top level: run from a subdirectory with --repo
-    ".", `../a/b.md` became a/b.md and was looked for as <subdirectory>/a/b.md,
-    so no deletion was found and the line stayed silent.
-    """
+    """Return the deletion commit's local timestamp as YYYYMMDDhhmmss, or None."""
+    # Snapshot names use local time; query from the repo root because wanted is repo-relative.
     code, out, _ = runner(["git", "-C", repo, "rev-parse", "--show-toplevel"])
     top_level = out.strip() if code == 0 and out.strip() else repo
     code, out, _ = runner(["git", "-C", top_level, "log", "--all", "--full-history", "-1",
@@ -2398,20 +1621,9 @@ def _git_deletion_timestamp(wanted, repo, runner):
     return stamp if len(stamp) == 14 and stamp.isdigit() else None
 
 
-# --------------------------------------------------------------------------
-# Assembly
-# --------------------------------------------------------------------------
 
 def _combine(statuses):
-    """One status for a surface made of several parts, in the contract's terms.
-
-    FOUND anywhere is FOUND. Otherwise, one part that could not be searched
-    makes the whole surface UNAVAILABLE: NOT FOUND means "genuinely searched
-    and does not have it", and a surface half of which was never looked at
-    cannot claim that. The first version ranked NOT FOUND above UNAVAILABLE,
-    so a transcripts search with the Mac directory missing and the box grep
-    empty rendered NOT FOUND and dropped out of the "Could NOT search" line.
-    """
+    """Return FOUND for any hit, otherwise UNAVAILABLE for any unsearched part."""
     if FOUND in statuses:
         return FOUND
     if UNAVAILABLE in statuses or not statuses:
@@ -2422,25 +1634,19 @@ def _combine(statuses):
 def build_report(wanted, repo, transcripts_dir, box_ssh_host, snapshot_root, search_roots, skip=(),
                  runner=run_command, prompt_for_root=False, log_store_root=DEFAULT_LOG_STORE_ROOT,
                  on_surface_done=None, on_ned_box=None):
-    # `on_ned_box`: None decides by this machine's name (RUN ON NED-BOX ITSELF).
     if on_ned_box is None:
         on_ned_box = running_on_ned_box()
     reports = []
     newest_date_held = None
 
     def finished(report):
-        # Handed on the moment the surface answers, so main() can print it
-        # while the slower surfaces after it are still searching.
         reports.append(report)
         if on_surface_done is not None:
             on_surface_done(report)
         return report
 
     if "localsnapshots" not in skip:
-        # First, on the design's ruling: no network, no privilege, and it is the
-        # surface that answers "I deleted it minutes ago" outright. It takes no
-        # date hint from git — every retained snapshot is cheap enough to search,
-        # so there is nothing for a bound to narrow.
+        # Local snapshots are cheap, unprivileged and can hold files deleted minutes ago.
         finished(search_local_snapshots(wanted, repo, runner))
     if "git" not in skip:
         git_report = finished(search_git(wanted, repo, runner))
@@ -2448,20 +1654,12 @@ def build_report(wanted, repo, transcripts_dir, box_ssh_host, snapshot_root, sea
     if "reflog" not in skip:
         finished(search_git_reflog(wanted, repo, runner))
     if "box" in skip:
-        # Nothing on the box is contacted: the transcripts surface's box half
-        # as well as Timeshift. The reason to type --skip box is that the box
-        # is asleep, and an ssh with ConnectTimeout=10 inside a 120-second
-        # window is exactly the wait the flag exists to avoid.
+        # --skip box must also avoid transcript ssh waits when the box is asleep.
         box_ssh_host = ""
     if "logstore" not in skip and ("box" not in skip or os.path.isdir(log_store_root)):
-        # Before transcripts, Timeshift and Time Machine because it answers in
-        # under a second, so a run killed during the slow surfaces has already
-        # printed it. Under --skip box it runs only where the store is local,
-        # which sends nothing over ssh.
+        # Search the fast log-store before slower surfaces so interrupted runs retain its result.
         finished(search_log_store(wanted, log_store_root, box_ssh_host, runner))
     if "transcripts" not in skip:
-        # On the box, the Mac's half is the log-store's copy of its transcripts,
-        # read in place (THE MAC'S HALF OF TRANSCRIPTS, ON THE BOX).
         mac_copy_dir = os.path.join(log_store_root, *MAC_TRANSCRIPTS_COPY_UNDER_LOG_STORE) if on_ned_box else None
         finished(search_transcripts(wanted, transcripts_dir, box_ssh_host, runner, on_ned_box=on_ned_box,
                                     mac_copy_dir=mac_copy_dir))
@@ -2470,9 +1668,7 @@ def build_report(wanted, repo, transcripts_dir, box_ssh_host, snapshot_root, sea
     if "timemachine" not in skip:
         finished(search_time_machine(wanted, newest_date_held, runner=runner,
                                      prompt_for_root=prompt_for_root))
-    # Here rather than in main(), because this is the first point at which every
-    # surface's answer exists, and it is what the designed recovery hook will
-    # call: the hook assembles a report, it does not run the command line.
+    # Assemble the speech decision here so callers that bypass main receive it too.
     announce_root_password_wall_by_speech(wanted, reports, repo, skip, runner)
     return reports
 
@@ -2500,7 +1696,7 @@ def render_summary(reports):
 
 
 def render(wanted, reports):
-    """The whole report as one text: exactly what main() prints, piece by piece, for a run that completes."""
+    """Return the complete report as text."""
     out = [render_header(wanted), ""]
     for report in reports:
         out.append(report.render())
@@ -2510,8 +1706,7 @@ def render(wanted, reports):
 
 
 def print_surface_as_it_finishes(report):
-    # flush, because stdout into a pipe is block-buffered and a run killed by
-    # `timeout` would otherwise take every finished surface down with it.
+    # Flush pipe buffers so a timeout cannot erase results from completed surfaces.
     print(report.render() + "\n", flush=True)
 
 
@@ -2542,9 +1737,6 @@ def main(argv=None, runner=run_command):
                              "pass this by hand: a hook has no terminal to answer a prompt in")
     args = parser.parse_args(argv)
 
-    # One form for every surface: the path a cited form names, and then an
-    # absolute path inside the repository by its repo-relative name. The
-    # header says so.
     try:
         named = _plain_path_from_cited_query(args.path)
     except CitedQueryCannotBePlaced as refusal:
@@ -2571,12 +1763,7 @@ def main(argv=None, runner=run_command):
 
 
 def exit_status(reports):
-    """The exit code the docstring promises, from the surfaces' statuses.
-
-    FOUND anywhere is 0. Otherwise 1 only when at least one surface ran and
-    every one of them was searched; if any surface was UNAVAILABLE — or no
-    surface ran at all — the run was not exhaustive, and 3 says so.
-    """
+    """Return 0 for a hit, 1 for an exhaustive miss, or 3 for an incomplete search."""
     if any(r.status == FOUND for r in reports):
         return EXIT_FOUND
     if not reports or any(r.status == UNAVAILABLE for r in reports):

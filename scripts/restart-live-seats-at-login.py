@@ -103,43 +103,21 @@ _supervisor_spec = importlib.util.spec_from_file_location(
 supervisor = importlib.util.module_from_spec(_supervisor_spec)
 _supervisor_spec.loader.exec_module(supervisor)
 
-# The recovery tool is what launches a seat (build step 4 runs step 3): this
-# program runs it as a subprocess, one per seat, and reads its report. The
-# import is for the report markers only — a report carrying one of them is a
-# seat that did not come back — so the two programs agree on what a failure
-# looks like without this one parsing free text.
+# Share recovery report markers so failures do not depend on parsing free text.
 RECOVERY_TOOL_PATH = Path(__file__).with_name("recover-crashed-seats.py")
 _recovery_spec = importlib.util.spec_from_file_location(
     "recover_crashed_seats", RECOVERY_TOOL_PATH)
 recovery = importlib.util.module_from_spec(_recovery_spec)
 _recovery_spec.loader.exec_module(recovery)
 
-# Ruled 2026-09-02: twice the heartbeat interval, not one. Supervisors stamp
-# on independent cycles, so a live seat can trail the newest stamp by a full
-# interval through timing alone; the two live seats of the 2026-09-01
-# measurement were stamped 8 seconds apart.
+# Independent supervisor cycles can differ by a full heartbeat interval.
 LIVE_SET_WINDOW_SECONDS = 2 * supervisor.HEARTBEAT_INTERVAL_SECONDS
-# One JSON object per line, appended, never rewritten (user-ruled 2026-09-11:
-# "a log ... not a single file"). It lives beside the state files, as
-# recover-crashed-seats-log.txt does.
 RUN_LOG_FILE_NAME = "restart-live-seats-at-login-log.txt"
-# A run log line is matched to this boot within a few seconds rather than
-# exactly, because neither machine stores its boot instant — both recompute it
-# from a realtime clock that NTP may have corrected since (measured
-# 2026-09-11, in review). The Mac adjusts kern.boottime when the clock is
-# corrected: the same boot read sec=1789103232 usec=162719 in the morning and
-# usec=223179 that evening. The box computes `uptime -s` as now minus
-# /proc/uptime and prints whole seconds (procps-ng 4.0.4, NTP active), so a
-# clock step of half a second flips the second it prints — and a step right
-# after boot is exactly when this program runs. Five seconds is far below the
-# shortest interval two real boots can be apart, shutdown and POST included,
-# so the tolerance cannot reach a different boot.
+# Boot instants are recomputed from clocks NTP can correct; match within a few seconds.
 BOOT_MATCH_TOLERANCE_SECONDS = 5
 
 
 def parse_darwin_kern_boottime(text: str) -> datetime:
-    """`sysctl -n kern.boottime` on the Mac:
-    "{ sec = 1789103232, usec = 162719 } Thu Sep 10 22:07:12 2026"."""
     match = re.search(r"\bsec = (\d+)", text)
     if match is None:
         raise ValueError(f"no sec field in kern.boottime output: {text!r}")
@@ -147,14 +125,11 @@ def parse_darwin_kern_boottime(text: str) -> datetime:
 
 
 def parse_uptime_since(text: str) -> datetime:
-    """`uptime -s` on the box: local time, "2026-08-20 02:01:00"."""
+    """Parse uptime -s in the machine’s local timezone."""
     return datetime.strptime(text.strip(), "%Y-%m-%d %H:%M:%S").astimezone()
 
 
 def machine_boot_time() -> datetime:
-    """This machine's boot time — the reference the anchor is validated
-    against (the design: previous shutdown time is not available on either
-    machine, measured 2026-09-02)."""
     if sys.platform == "darwin":
         command, parse = ["sysctl", "-n", "kern.boottime"], parse_darwin_kern_boottime
     else:
@@ -176,8 +151,7 @@ def describe_gap(gap: timedelta) -> str:
 
 
 def read_supervisor_heartbeat(state_path: Path, now: datetime):
-    """(stamp, "") when the state file carries a usable last_poll_at, else
-    (None, why it cannot be read)."""
+    """Return (stamp, empty string), or (None, failure reason)."""
     try:
         state = json.loads(state_path.read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
@@ -191,39 +165,16 @@ def read_supervisor_heartbeat(state_path: Path, now: datetime):
         return None, f"last_poll_at {stamped!r} does not parse"
     if stamp.tzinfo is None:
         return None, f"last_poll_at {stamped!r} carries no timezone"
-    # A supervisor stamping while this runs lands a moment after `now`; that
-    # is a seat running now, not a stamp from the future.
+    # A running supervisor may stamp just after now was sampled.
     if (stamp - now).total_seconds() > LIVE_SET_WINDOW_SECONDS:
         return None, f"last_poll_at {stamped} is in the future"
     return stamp, ""
 
 
 def read_earlier_run_for_this_boot(handoff_directory: Path, boot_at: datetime):
-    """(the stop an earlier run in THIS boot recorded, whether there was one).
-
-    Two answers rather than one, because they come apart: a run that could not
-    tell where the stop was records a line carrying no stop, so "no recorded
-    stop" and "no earlier run" are different states. The selection only needs
-    the first; the report needs both, or it says this boot's restart "left no
-    line in the run log" about a boot whose log holds exactly that line (found
-    in review of bbb66d4, where the verdicts were right and only the sentence
-    was false).
-
-    The evidence of when the machine stopped is the heartbeats from before
-    boot, and the seats a first run brings back stamp over their own within
-    ten seconds. So the first run writes the stop down and every later run in
-    the same boot reads it back here (user-ruled 2026-09-11).
-
-    Boots are matched as instants, not as strings: the box reads its boot
-    time from `uptime -s` in local time, so the same boot can be written with
-    a different offset. They are matched within BOOT_MATCH_TOLERANCE_SECONDS
-    rather than exactly, because each machine recomputes the instant from a
-    clock that may have been corrected since. The first line recorded for this
-    boot wins outright — it saw the least disturbed state, and it settles the
-    stop even when it carries none. A line that cannot be read is skipped and
-    is not evidence of anything, and a log that cannot be read at all is
-    simply no earlier run: the record must never block the restart.
-    """
+    """Return (recorded stop, whether an earlier run exists for this boot)."""
+    # The first readable line wins: restarted seats overwrite the original heartbeats.
+    # A recorded null stop differs from no earlier run; unreadable logs must not block restart.
     try:
         lines = (handoff_directory / RUN_LOG_FILE_NAME).read_text(
             encoding="utf-8").splitlines()
@@ -255,14 +206,8 @@ def read_earlier_run_for_this_boot(handoff_directory: Path, boot_at: datetime):
 
 
 def read_stop_of_run_log_line(entry: dict):
-    """(the stop this line carries, whether the line could be read at all).
-
-    A null stop is deliberate — a run that could not tell where the stop was
-    records exactly that — so it reads fine and carries None. A stop that is
-    present but corrupt is a line nobody wrote on purpose: it reads as
-    unreadable, and the caller skips the whole line rather than taking its
-    silence for a deliberate one.
-    """
+    """Return (stop, whether the line is readable)."""
+    # A null stop is deliberate; a corrupt stop makes the whole line unreadable.
     if "stop_at" not in entry:
         return None, False
     recorded_stop = entry["stop_at"]
@@ -280,34 +225,9 @@ def read_stop_of_run_log_line(entry: dict):
 def append_selection_to_run_log(handoff_directory: Path, boot_at: datetime,
                                 anchor, anchor_is_the_stop: bool, decisions,
                                 run_at: datetime, launched=None, box_windows=None):
-    """One line per run, appended: the run, the boot, the stop, the anchor it
-    worked from, the verdict per seat, and what was actually launched.
-
-    A verdict is what the run decided, not what happened, and the two are not
-    the same thing: a decided restart can fail to come up. So `launched`
-    records the outcome beside the decision — the seats that came up, an
-    empty list when the run launched and none came back or had nothing to
-    launch, and null only when the caller did not launch at all. A cold
-    reader can then tell a seat that was never launched from one whose
-    launch failed, which a verdict alone cannot say.
-
-    User-ruled 2026-09-11, a log and not a single overwritten file, so that
-    the runs of one boot can be read in order afterwards. Dry runs do not
-    write it: --dry-run promises to change nothing. A write that fails is
-    reported and nothing more — a machine that has just booted needs its
-    seats back more than it needs the record (the same rule as the recovery
-    tool's append_to_recovery_log). It returns whether it wrote, so the
-    report can say what actually happened rather than announcing a record
-    that is not there.
-
-    A run that could not tell where the stop was — its derived anchor already
-    stamped over by seats brought back earlier in this boot — records
-    stop_at null, and keeps what it did work from in anchor_at. Otherwise the
-    next run would read that degraded anchor back as the stop, drop the
-    degradation because the stop was "recorded", and restart a seat that died
-    before the real stop: the defect #318's review blocked, returning by the
-    back door.
-    """
+    """Append decisions and launch outcomes; return whether the write succeeded."""
+    # Record no stop when the derived anchor is degraded, or later runs may restart older dead seats.
+    # A null launched field means no attempt; an empty list means an attempt brought no seats up.
     log_path = handoff_directory / RUN_LOG_FILE_NAME
     entry = {
         "run_at": run_at.isoformat(timespec="seconds"),
@@ -316,10 +236,7 @@ def append_selection_to_run_log(handoff_directory: Path, boot_at: datetime,
         "anchor_at": None if anchor is None else anchor.isoformat(),
         "seats": {seat: verdict for seat, verdict, _ in decisions},
         "launched": None if launched is None else sorted(launched),
-        # The window role's outcome (the Mac only): null when it was not
-        # attempted, else whether the box answered and the seats a window
-        # was opened onto, so a later reader can tell "no live box seats"
-        # from "the box never answered".
+        # Distinguish no live box seats from a box that never answered.
         "box_windows": None if box_windows is None or not box_windows.get("attempted")
         else {"answered": box_windows["answered"],
               "opened": sorted(box_windows["opened"])},
@@ -337,14 +254,7 @@ def append_selection_to_run_log(handoff_directory: Path, boot_at: datetime,
 
 def select_seats_live_at_the_stop(handoff_directory: Path, boot_at: datetime,
                                   now: datetime, recorded_stop=None):
-    """(anchor, decisions, anchor_is_the_stop).
-
-    The anchor is recorded_stop when an earlier run in this boot wrote one
-    down, else the newest heartbeat before boot, or None. decisions is one
-    (seat, verdict, reason) per supervisor state file; the verdicts are
-    restart, offer, not-running-at-the-stop and stamped-since-boot.
-    anchor_is_the_stop says whether the anchor can be written down as the
-    moment the machine stopped — see append_selection_to_run_log."""
+    """Return (anchor, per-seat decisions, whether the anchor is the stop)."""
     if not handoff_directory.is_dir():
         return None, [], False
     readings = []
@@ -359,16 +269,10 @@ def select_seats_live_at_the_stop(handoff_directory: Path, boot_at: datetime,
     anchor = recorded_stop if recorded_stop is not None else max(
         (heartbeat_at for _, heartbeat_at, _, _, _ in readings
          if heartbeat_at < boot_at), default=None)
-    # The 2026-09-11 amendment degrades a restart to an offer once any seat
-    # has been written since boot, because the anchor derived then may no
-    # longer be the stop. A stop read back from the run log is not derived,
-    # so there is nothing to degrade: a seat still stamped at the recorded
-    # stop is one that did not come back, and it is restarted.
+    # Post-boot writes can erase the true stop’s heartbeats; only a recorded stop remains trustworthy.
     restart_already_ran = (recorded_stop is None
                            and any(since_boot for _, _, _, since_boot, _ in readings))
-    # The same condition, read the other way: a derived anchor that seats
-    # brought back since boot may have stamped over is not the stop, and must
-    # not be recorded as one.
+    # Do not persist a degraded anchor as the stop for later runs.
     anchor_is_the_stop = anchor is not None and not restart_already_ran
 
     decisions = []
@@ -396,31 +300,15 @@ def select_seats_live_at_the_stop(handoff_directory: Path, boot_at: datetime,
     return anchor, decisions, anchor_is_the_stop
 
 
-# The window role's pieces, all beside this program: the launcher that attaches
-# a window to a box seat (and reconnects when the box drops), and the opener,
-# the only sanctioned way to open an iTerm window running a command.
 BOX_LAUNCHER_PATH = Path(__file__).with_name("launch-claude-ubuntu")
 WINDOW_OPENER_PATH = Path(__file__).with_name("open-iterm-window-running-command")
-# ssh reaches the box the way launch-claude-ubuntu does. Under the LaunchAgent
-# there is no terminal, so ssh must never wait on a prompt: BatchMode.
+# A LaunchAgent has no terminal for SSH prompts.
 BOX_QUERY_SSH_OPTIONS = ("-o", "BatchMode=yes", "-o", "ConnectTimeout=10")
-# When both machines rebooted, the box may still be coming up while the Mac
-# logs in; a connection-level failure (ssh exit 255) is retried this long
-# before the windows are reported missing. Any other failure is not retried:
-# the box answered, and the answer is what the report says.
+# The box may still be booting at Mac login; retry connection failures, not answers from the box.
 BOX_QUERY_DEADLINE_SECONDS = 150.0
 BOX_QUERY_RETRY_SECONDS = 5.0
-# One name per line: every session on every per-seat tmux server (and the
-# default server, where seats launched before per-seat servers live), kept
-# only when a seat home of that name exists — fleet-anchor, the box's tmux
-# keep-alive session, has none. A seat's after-exit shell keeps its session
-# name and counts: that is where the user typed exit, and the window belongs
-# there. The listing is the one launch-claude-ubuntu's usage() prints. A seat
-# home is ~/agents/<name> on the box, always: launch-claude-ubuntu reads no
-# agents-root variable (user-ruled 2026-09-22), and nothing sets
-# NEDSCHORUS_AGENTS_ROOT on the box, so the listing reads none either
-# (user-ruled 2026-09-28T16:37:05Z, closing question 1 of merge-lane-2's walk
-# merge-lane-2-meta-walk-open-items-2026-09-23).
+# Seat homes exclude the fleet-anchor keep-alive session; after-exit shells still need windows.
+# The box launcher always uses ~/agents and reads no agents-root override.
 LIST_LIVE_BOX_SEATS_REMOTE_COMMAND = (
     'for seat_socket_path in "${TMUX_TMPDIR:-/tmp}/tmux-$(id -u)"/*; do '
     '[ -S "$seat_socket_path" ] || continue; '
@@ -432,7 +320,7 @@ LIST_LIVE_BOX_SEATS_REMOTE_COMMAND = (
 
 
 def agent_box() -> str:
-    """The ssh destination for the box, as launch-claude-ubuntu resolves it."""
+    """Return the SSH destination using the launcher’s resolution rules."""
     return os.environ.get("NEDSCHORUS_AGENT_BOX", "ned")
 
 
@@ -443,11 +331,7 @@ def box_seat_query_command(box: str = None) -> list:
 def ask_the_box_which_seats_are_alive(run=subprocess.run, deadline_seconds=BOX_QUERY_DEADLINE_SECONDS,
                                       retry_seconds=BOX_QUERY_RETRY_SECONDS, sleep=time.sleep,
                                       monotonic=time.monotonic):
-    """(seats, detail): the live seat names the box reported, or None with why
-    not. ssh exit 255 — the box down, not up yet, unreachable — is retried
-    until the deadline; any other nonzero exit is the box's own answer and
-    is returned at once. A run that cannot start ssh at all is a failure of
-    the same kind as an answer, reported, not retried."""
+    """Return (seat names, detail), using None when the query fails."""
     started = monotonic()
     attempts = 0
     while True:
@@ -470,15 +354,11 @@ def ask_the_box_which_seats_are_alive(run=subprocess.run, deadline_seconds=BOX_Q
 
 
 def window_command_for_box_seat(seat: str) -> list:
-    """The opener, the launcher by absolute path, the seat: two plain words
-    after the opener, so its multi-argument form is safe."""
     return [str(WINDOW_OPENER_PATH), str(BOX_LAUNCHER_PATH), seat]
 
 
 def open_windows_onto_box_seats(seats, run=subprocess.run):
-    """(opened, reports): the seats a window was opened onto, and one
-    (seat, opened, detail) per attempt. One seat's failure leaves the rest
-    to be tried."""
+    """Return (opened seats, per-seat reports), trying every seat despite failures."""
     opened, reports = [], []
     for seat in seats:
         try:
@@ -498,11 +378,7 @@ def open_windows_onto_box_seats(seats, run=subprocess.run):
 
 def restore_box_windows(dry_run: bool, platform: str = sys.platform, run=subprocess.run,
                         sleep=time.sleep, monotonic=time.monotonic):
-    """The window role, on the Mac only. Returns a dict: attempted (False on
-    the box, and nothing else is set), answered (whether the box reported),
-    detail (how the query went), seats (what it reported), opened (the
-    seats a window was opened onto), reports (per window). A dry run asks
-    the box once — a read — and opens nothing."""
+    """Return the attempted, answered, detail, seats, opened and reports fields."""
     if platform != "darwin":
         return {"attempted": False}
     seats, detail = ask_the_box_which_seats_are_alive(
@@ -517,16 +393,6 @@ def restore_box_windows(dry_run: bool, platform: str = sys.platform, run=subproc
 
 def recovery_command_for_seat(seat: str, handoff_directory: Path,
                               platform: str = sys.platform) -> list:
-    """The recovery tool's command line for one seat, as this program runs
-    it. On the Mac the seat is born attached in its own iTerm window (build
-    step 3): the recovery tool itself refuses that flag anywhere else, so it
-    is passed only on darwin. The handoff directory is passed through so a
-    run against a test directory recovers against that directory too; the
-    agents root is not, because this program has no argument for it, and
-    the recovery tool resolves it as the machine's launcher does:
-    ${NEDSCHORUS_AGENTS_ROOT:-~/agents} on the Mac, and always ~/agents on
-    the box, reading no variable there — the ~/agents the box listing above
-    reads (user-ruled 2026-09-28T16:37:05Z)."""
     command = [sys.executable, str(RECOVERY_TOOL_PATH), seat,
                "--handoff-dir", str(handoff_directory)]
     if platform == "darwin":
@@ -535,31 +401,14 @@ def recovery_command_for_seat(seat: str, handoff_directory: Path,
 
 
 def seat_came_up(exit_code, report: str) -> bool:
-    """Whether one recovery run brought its seat back. The recovery tool
-    exits nonzero when any seat it was given failed — one seat, so this
-    seat — and marks each failed report; either says the seat is down. A
-    seat the recovery tool found already running — a live supervisor of it
-    confirmed by ps, never merely a live tmux session or a supervisor
-    assumed because ps could not be run, both of which it refuses — is
-    reported ALREADY RUNNING, which is not a failure (user-ruled
-    2026-09-16): it exits zero and carries no marker, so it reads here as
-    up, and is listed with the seats that came up although nothing was
-    launched for it."""
+    # A confirmed already-running supervisor counts as up even though no seat was launched.
     return exit_code == 0 and not any(
         marker in report for marker in recovery.SEAT_NOT_RECOVERED_REPORT_MARKERS)
 
 
 def launch_seats_decided_restart(decisions, handoff_directory: Path,
                                  run=subprocess.run, platform: str = sys.platform):
-    """Run the recovery tool for every seat whose verdict is restart, in the
-    order decided, and return (launched, reports): the seats that came up,
-    and one (seat, came_up, report) per attempt. Each seat is its own
-    subprocess, so one seat's failure — a refusal, a launch that failed, a
-    seat that never came up — leaves the seats after it to be tried. The
-    recovery tool's stdout is its report, one line per seat; stderr is
-    passed through to this program's stderr. A recovery tool that cannot be
-    run at all is a failure of every seat, reported per seat so the run log
-    and the report still say which seats are down."""
+    """Return (seats that came up, per-seat reports), trying every restart independently."""
     launched, reports = [], []
     for seat, verdict, _ in decisions:
         if verdict != "restart":
@@ -572,8 +421,7 @@ def launch_seats_decided_restart(decisions, handoff_directory: Path,
             continue
         report = finished.stdout.strip()
         if not report:
-            # An argparse refusal prints usage to stderr and nothing to
-            # stdout; the exit code is then the only thing to record.
+            # argparse refusals can leave stdout empty, making the exit code the only report.
             report = f"(no report; exit {finished.returncode}, see stderr)"
         came_up = seat_came_up(finished.returncode, report)
         if came_up:
@@ -603,16 +451,12 @@ def main(argv=None) -> int:
         arguments.handoff_dir, boot_at)
     anchor, decisions, anchor_is_the_stop = select_seats_live_at_the_stop(
         arguments.handoff_dir, boot_at, now, recorded_stop=recorded_stop)
-    # Launch first, record after: the line records what came up, and a run
-    # killed mid-launch then leaves no line, which the next run reads as
-    # "already run, offer everything" — the direction that starts nothing
-    # twice. Dry runs launch nothing and record nothing.
+    # Record after launch so outcomes are known; interruption leaves later runs offering seats instead of duplicating starts.
     if arguments.dry_run:
         launched, reports = None, []
     else:
         launched, reports = launch_seats_decided_restart(decisions, arguments.handoff_dir)
-    # Then the windows onto the box's seats: every login has lost them,
-    # whatever the verdicts above, so this runs on every Mac run.
+    # Every Mac login loses the windows onto box seats, regardless of local seat verdicts.
     box_windows = restore_box_windows(arguments.dry_run)
     recorded = None if arguments.dry_run else append_selection_to_run_log(
         arguments.handoff_dir, boot_at, anchor, anchor_is_the_stop, decisions, now,
@@ -634,10 +478,7 @@ def main(argv=None) -> int:
               f"{describe_gap(boot_at - anchor)} before boot")
     if recorded_stop is None and any(verdict == "stamped-since-boot"
                                      for _, verdict, _ in decisions):
-        # Three states, not two: no line for this boot at all, or a line from
-        # a run that could not tell where the stop was either. Saying "left no
-        # line" about the second is false, and the log is what an investigator
-        # reads (found in review of bbb66d4).
+        # A recorded run with an unknown stop differs from no recorded run.
         print("  seats have been written since boot: this boot's restart has already run "
               + (f"and an earlier run recorded no stop in {log_path}"
                  if an_earlier_run_ran else "and left no line in the run log")
@@ -653,8 +494,7 @@ def main(argv=None) -> int:
             came_up, report = outcome_by_seat[seat]
             print(f"    {'came up' if came_up else 'DID NOT COME BACK'}: {report}")
         elif verdict == "offer":
-            # The command this run would have used, so the hint names the
-            # same handoff directory the run did (PR #354 review, finding 2).
+            # Use this run’s handoff directory in the manual recovery command.
             print("    not launched; to bring it back by hand: " + " ".join(
                 recovery_command_for_seat(seat, arguments.handoff_dir)[1:]))
     windows_not_opened = []

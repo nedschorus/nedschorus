@@ -208,9 +208,8 @@ check("the refusal tells an agent that already rewrote locally how to recover",
 check("the recovery never discards uncommitted work (no reset --hard)",
       reason and "reset --hard" not in reason, reason)
 
-# User-ruled 2026-09-18: agents need clear, direct, specific instructions.
-# Nothing an agent reads carries a date, a citation or a ruling's name; those
-# belong in the module docstring, where maintainers read them.
+# Nothing an agent reads carries a date, a citation or a ruling's name: those
+# say only who decided and when, which does not help the agent act.
 for label, text in [
     ("the refusal", reason),
     ("the unresolvable refusal", decide("cd $WORKTREE && git push --force")[1]),
@@ -581,6 +580,195 @@ heredoc_command = (
 decision, reason = decide(heredoc_command, runner)
 check("a heredoc body naming the command is data, not an invocation",
       decision is None, f"{decision}: {reason}")
+
+# ---------------------------------------------------------------------------
+# A command substitution inside double quotes is a command list: the shell
+# runs "$( ... )" exactly as it runs a bare $( ... ). Read as one data word, a
+# force push inside it passed unchecked. A heredoc opened inside it was never
+# split out, so the first " in the message ended the string, and a backticked
+# push after it was refused as if it had been run.
+# ---------------------------------------------------------------------------
+
+HEREDOC_MESSAGE_QUOTING_A_FORCE_PUSH = (
+    "$(cat <<'EOF'\n"
+    "Teach the remedy\n"
+    "\n"
+    "The refusal says: \"never `git push --force origin the-pr-branch` at a "
+    "head under review.\" Stated now.\n"
+    "EOF\n"
+    ")"
+)
+for command in [
+    f'git commit -m "{HEREDOC_MESSAGE_QUOTING_A_FORCE_PUSH}"',
+    f'gh pr create --title "Teach the remedy" '
+    f'--body "{HEREDOC_MESSAGE_QUOTING_A_FORCE_PUSH}"',
+]:
+    runner = ProbeRunner(open_pull_requests={"the-pr-branch": FAST_READ_PULL_REQUEST})
+    decision, reason = decide(command, runner)
+    check(f"a heredoc message inside a quoted substitution is data: {command[:24]}",
+          decision is None and not runner.calls,
+          f"{decision}: {reason} {runner.calls}")
+
+for command in [
+    'OUTPUT="$(git push --force origin the-pr-branch 2>&1)"',
+    'echo "$(git push --force-with-lease origin the-pr-branch)"',
+    'echo "pushed: $(cd /elsewhere/wt-fast-read && git push -f origin the-pr-branch | tail -1)"',
+]:
+    runner = ProbeRunner(open_pull_requests={"the-pr-branch": FAST_READ_PULL_REQUEST})
+    decision, reason = decide(command, runner)
+    check(f"a force push inside a quoted substitution is found: {command[:44]}",
+          decision == "deny", f"{decision}: {reason}")
+
+runner = ProbeRunner(branch="the-pr-branch",
+                     open_pull_requests={"the-pr-branch": FAST_READ_PULL_REQUEST})
+decision, reason = decide('OUTPUT="$(git push --force 2>&1)"', runner)
+check("a bare force push inside a quoted substitution resolves the current branch",
+      decision == "deny"
+      and ["git", "-C", SESSION_WORKTREE, "rev-parse", "--abbrev-ref", "HEAD"]
+      in runner.calls, f"{decision}: {reason} {runner.calls}")
+
+# Commit and push in one command. With the message left in the text, a single
+# " in it flipped the reader's quote state, and the push after the commit was
+# read as part of a string.
+runner = ProbeRunner(open_pull_requests={"the-pr-branch": FAST_READ_PULL_REQUEST})
+decision, reason = decide(
+    "git commit -m \"$(cat <<'EOF'\nA 27\" monitor fits\nEOF\n)\" "
+    "&& git push --force origin the-pr-branch", runner)
+check("a lone \" in the heredoc message does not hide the force push after the commit",
+      decision == "deny", f"{decision}: {reason}")
+
+# Controls: forms the reading of a quoted substitution must leave as they were.
+runner = ProbeRunner(open_pull_requests={"the-pr-branch": FAST_READ_PULL_REQUEST})
+decision, reason = decide(
+    'echo "run \\$(git push --force origin the-pr-branch) yourself"', runner)
+check("an escaped \\$( in double quotes is prose, not a substitution",
+      decision is None and not runner.calls, f"{decision}: {reason} {runner.calls}")
+
+runner = ProbeRunner()
+decision, reason = decide(
+    'git -C "$(git rev-parse --show-toplevel)" push --force', runner)
+check("a substitution as the -C directory is still refused as unresolvable",
+      decision == "deny" and "written out" in (reason or "") and not runner.calls,
+      f"{decision}: {reason} {runner.calls}")
+
+# A quoted substitution must never hide a push the shell runs. In each command
+# the shell runs the force push, and the reader that read a double-quoted
+# string as one word found it.
+for case_name, command in [
+    ("a ( inside ${...} in a quoted substitution does not hide the force push after it",
+     'echo "$(a ${x%(*})"; git push --force origin the-pr-branch'),
+    ("a $'...' string holding \\' in a quoted substitution does not hide the force push after it",
+     "NOTE=\"$(a $'it\\'s')\"; git push --force origin the-pr-branch"),
+    ("a backticked force push in an unquoted-delimiter heredoc message is found: the shell runs it",
+     'git commit -m "$(cat <<EOF\nsay "never `git push --force origin the-pr-branch` here."\n'
+     'EOF\n)"'),
+]:
+    runner = ProbeRunner(open_pull_requests={"the-pr-branch": FAST_READ_PULL_REQUEST})
+    decision, reason = decide(command, runner)
+    check(case_name, decision == "deny", f"{decision}: {reason}")
+
+# A `cd` inside a quoted substitution moves the shell that runs the
+# substitution and no other: the push after the string runs where the command
+# began, and that is where the guard must look for the branch.
+runner = ProbeRunner(branch="the-pr-branch",
+                     open_pull_requests={"the-pr-branch": FAST_READ_PULL_REQUEST})
+decision, reason = decide(
+    'X="$(cd /another/repository && pwd)"; git push --force', runner)
+check("a cd inside a quoted substitution does not move the push after the string",
+      decision == "deny"
+      and ["git", "-C", SESSION_WORKTREE, "rev-parse", "--abbrev-ref", "HEAD"] in runner.calls
+      and not any("/another/repository" in argv for argv in runner.calls),
+      f"{decision}: {reason} {runner.calls}")
+
+runner = ProbeRunner(branch="the-pr-branch",
+                     open_pull_requests={"the-pr-branch": FAST_READ_PULL_REQUEST})
+decision, reason = decide(
+    'NAME="$(cd /another/repository && git config user.name)"; cd /a/third/place '
+    '&& git push --force', runner)
+check("a cd after the string still moves the push that follows it",
+      decision == "deny"
+      and ["git", "-C", "/a/third/place", "rev-parse", "--abbrev-ref", "HEAD"] in runner.calls,
+      f"{decision}: {reason} {runner.calls}")
+
+# Controls: a cd still moves a push inside the same substitution, and a
+# substitution nested in it starts where the outer one stands.
+runner = ProbeRunner(branch="the-pr-branch",
+                     open_pull_requests={"the-pr-branch": FAST_READ_PULL_REQUEST})
+decision, reason = decide(
+    'echo "pushed: $(cd /elsewhere/wt-fast-read && git push -f | tail -1)"', runner)
+check("a cd inside a quoted substitution moves the push inside the same substitution",
+      decision == "deny"
+      and ["git", "-C", "/elsewhere/wt-fast-read", "rev-parse", "--abbrev-ref", "HEAD"]
+      in runner.calls, f"{decision}: {reason} {runner.calls}")
+
+runner = ProbeRunner(branch="the-pr-branch",
+                     open_pull_requests={"the-pr-branch": FAST_READ_PULL_REQUEST})
+decision, reason = decide(
+    'echo "$(cd /elsewhere/wt-fast-read && echo "$(git push -f)")"', runner)
+check("a substitution nested in another starts in the outer substitution's directory",
+      decision == "deny"
+      and ["git", "-C", "/elsewhere/wt-fast-read", "rev-parse", "--abbrev-ref", "HEAD"]
+      in runner.calls, f"{decision}: {reason} {runner.calls}")
+
+# The second reading must not hide a push the shell runs either. In each
+# command bash 3.2 and bash 5.3 run the force push, and the reader that read
+# a double-quoted string as one word found it.
+for case_name, command in [
+    ("a lone ' in a backticked command in an unquoted body does not hide the force push after it",
+     "cat > notes.md <<EOF\nuse the `don't` form\nEOF\ngit push --force origin the-pr-branch"),
+    ("a <<\\EOF heredoc inside a quoted substitution ends at EOF: the force push after it is found",
+     'X="$(cat <<\\EOF\nplain\nEOF\n)"; git push --force origin the-pr-branch'),
+    ("$$ before a single-quoted string ending in \\ does not hide the force push after it",
+     "a $$'a\\'; git push --force origin the-pr-branch"),
+    ("a subshell inside a $( ... ) inside ${ ... } is read: the force push in it is found",
+     "echo ${y:-$(a && (git push --force origin the-pr-branch))}"),
+    # The third reading: forms the second reading passed.
+    ("a process substitution inside ${ ... } is read: the force push in it is found",
+     "cat ${output:-<(git push --force origin the-pr-branch)}"),
+    ("a heredoc in a quoted substitution ending EOF)\" ends there: the force push after is found",
+     "git commit -m \"$(cat <<'EOF'\nmessage\nEOF)\"\ngit push --force origin the-pr-branch"),
+    ("a case pattern's ) in a quoted substitution ends the pattern: the force push is found",
+     "X=\"$(b \"$(case x in x) git push --force origin the-pr-branch;; esac)\")\""),
+    ("a backticked command inside double quotes is read: the force push in it is found",
+     "echo $'it\\'s' \"'`git push --force origin the-pr-branch`\""),
+]:
+    runner = ProbeRunner(open_pull_requests={"the-pr-branch": FAST_READ_PULL_REQUEST})
+    decision, reason = decide(command, runner)
+    check(case_name, decision == "deny", f"{decision}: {reason}")
+
+# A `cd` in a substitution in an unquoted-delimiter heredoc body moves the
+# shell that runs the substitution and no other, and the shell runs the
+# body's substitutions when it runs the heredoc's command, before anything
+# after that command on its line.
+runner = ProbeRunner(branch="the-pr-branch",
+                     open_pull_requests={"the-pr-branch": FAST_READ_PULL_REQUEST})
+decision, reason = decide(
+    "cat > notes.md <<EOF\npath: $(cd /another/repository && pwd)\nEOF\n"
+    "git push --force", runner)
+check("a cd inside a heredoc body's substitution does not move the push after the heredoc",
+      decision == "deny"
+      and ["git", "-C", SESSION_WORKTREE, "rev-parse", "--abbrev-ref", "HEAD"] in runner.calls
+      and not any("/another/repository" in argv for argv in runner.calls),
+      f"{decision}: {reason} {runner.calls}")
+
+runner = ProbeRunner(branch="the-pr-branch",
+                     open_pull_requests={"the-pr-branch": FAST_READ_PULL_REQUEST})
+decision, reason = decide(
+    "cat <<EOF && cd /another/repository\n$(git push --force)\nEOF", runner)
+check("a push in a heredoc body runs before a cd after the heredoc's command on its line",
+      decision == "deny"
+      and ["git", "-C", SESSION_WORKTREE, "rev-parse", "--abbrev-ref", "HEAD"] in runner.calls
+      and not any("/another/repository" in argv for argv in runner.calls),
+      f"{decision}: {reason} {runner.calls}")
+
+runner = ProbeRunner(branch="the-pr-branch",
+                     open_pull_requests={"the-pr-branch": FAST_READ_PULL_REQUEST})
+decision, reason = decide(
+    "cat <<EOF\n$(cd /elsewhere/wt-fast-read && git push --force)\nEOF", runner)
+check("a cd inside a heredoc body's substitution moves the push inside the same substitution",
+      decision == "deny"
+      and ["git", "-C", "/elsewhere/wt-fast-read", "rev-parse", "--abbrev-ref", "HEAD"]
+      in runner.calls, f"{decision}: {reason} {runner.calls}")
 
 # ---------------------------------------------------------------------------
 # The escape hatch: the one sanctioned rewrite, and the one form of it.

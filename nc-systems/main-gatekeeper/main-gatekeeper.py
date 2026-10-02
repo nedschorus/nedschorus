@@ -1,89 +1,7 @@
 #!/usr/bin/env python3
-"""The single program through which every change reaches main in nedschorus.
+"""Check declared changes into main, or return a refusal with a fix."""
 
-Specification: nc-systems/main-gatekeeper/main-gatekeeper-design.md (canonical).
-Build bindings: docs/issues/queue/3-gatekeeper-build-bindings.md (B1-B6).
-Build order and the design points left to the builder:
-docs/issues/3-main-gatekeeper-build-slice-plan.md. Issue: nedschorus#3.
-
-Slices 1 to 5 of five are built, slice 5's CLAUDE.md workflow line included
-(user-walked 2026-08-12, commit c37f25d). For each request the program does
-exactly one of two things — checks the work in, or refuses and teaches the fix.
-On success four things are true: the change is on main, the checks ran against
-exactly the content pushed, the commit's trailers carry the whole
-machine-readable record, and the caller has the commit id.
-
-Built: a synchronous check-in end to end (slice 1); the entry checkpoint — the
-recorded gate every legacy import crosses (slice 2; the import record is read
-straight from history with `git log origin/main --grep "Gatekeeper-import:"` —
-an `imports` table subcommand was built here and deleted by user ruling
-2026-08-10, the trailer being the record and the git command the view); and
-concurrent check-ins, where a request that loses the race is integrated over
-the newer commits by the program rather than by the calling agent (slice 3).
-
-Check-ins run in parallel with no queue and no lock, because GitHub already
-provides the one property the design rests on: a push either wins cleanly or
-is rejected whole. The winner never learns there was a race. The loser fetches
-the new main and re-applies its declared changes onto it, which is clean
-whenever the two requests touched different paths — the usual case. When they
-touched the same path, re-applying would mean choosing whose version survives,
-so the request is refused as `conflict` instead: the program never guesses at
-an author's intent.
-
-Slice 4 (built 2026-08-12): --no-wait detaches a worker into its own
-session (process group), whose outcome lands in history on success or as
-the retained B4d refusal record on refusal; status answers checked-in /
-in-progress / abandoned / the retained record (once, then swept) / unknown;
-cancel kills the worker's whole process group, waits, then lets history
-arbitrate — four outcomes. Every invocation opportunistically sweeps stale
-workspaces (30-day refusal records, day-old screening scratch and
-dead-worker leftovers). Slice 5 (built 2026-08-12): the branch-protection
-audit — `audit` reads main's live protection via gh and answers B3c's three
-outcomes, protection-ok / protection-wrong (facts naming every differing
-setting) / audit-failed (gh missing, unauthenticated, API error — a loud
-finding, never a silent skip); it rides each session reincarnation via the
-fast-handoff writer. Exit code 2 stays reserved for a defect in this
-program; the parser layer refuses malformed command lines as JSON, exit 1.
-
-The entry checkpoint's guarantee is that the record cannot lag the system: an
-import is declared as a triple, validated against the legacy repository at
-instant screening, and written into the trailer of the very commit that
-carries it. A second import in one request is inexpressible by construction —
-it is a second check-in.
-
-Resubmitting is always safe. The digest identifies the WORK — base, paths and
-their bytes — and not the metadata around it, so identical work resubmitted
-under a different message deduplicates, and work that already went through
-answers already-checked-in with its commit id. An agent that crashed never
-reconstructs what happened; it submits again.
-
-The base — the main commit the work started from — is computed by the
-program (`git merge-base HEAD origin/main`, after a fetch, in the caller's
-checkout), never declared: user ruling 2026-08-10, replacing a --base field
-and its two hand-off refusals. Same exact id, no relay step to garble.
-
-Reply contract (B1): exactly one JSON object on stdout, always carrying a
-human-readable `summary`. Exit 0 for success and informational answers, 1 for
-a catalog refusal (the gatekeeper working correctly), 2 for a program defect.
-
-Records: git history and the invoking session's transcript, and nothing else.
-The workspace exists only while a request is in flight and is swept on both
-endings, so a refusal leaves the repository and the disk untouched.
-
-Usage:
-  main-gatekeeper.py check-in --files <path>... --message <text>
-                    --issue none|<n> --agent <runtime/model>
-                    (--import none | --import-commit <40-hex>
-                     --import-source <path> --import-dest <path>)
-                    [--wait] [--repo <dir>] [--remote <url-or-path>]
-                    [--legacy-repo <dir>]
-"""
-
-# Annotations stay strings, so the `X | Y` unions below load under Apple's
-# Python 3.9, which is `python3` on the Mac: the handoff writer runs the
-# audit with sys.executable, and under 3.9 the module raised at import and
-# every Mac handoff's audit failed silently (nedschorus#451; the user,
-# 2026-09-18: "who cares which python as long as it works").
+# Keep union annotations unevaluated so this module imports under Python 3.9.
 from __future__ import annotations
 
 import argparse
@@ -107,41 +25,24 @@ MAIN_BRANCH = "main"
 FULL_COMMIT_ID = re.compile(r"^[0-9a-f]{40}$")
 ISSUE_NUMBER = re.compile(r"^[1-9][0-9]*$")
 
-# B2: start tight. Relaxing later is forward-compatible; tightening later
-# strands history. Verified 2026-07-30 that both repositories have zero paths
-# matching any of these classes, so the rule costs nothing today.
+# Tightening accepted path rules later would strand existing history.
 UNSAFE_PATH_MARKER = "->"
 
-# The gate does not check in its own source (user-ruled 2026-08-17,
-# docs/issues/3-slice-6-review-evidence-not-built.md). The deployed copy updates
-# itself from main, so admitting a change to this file would let the gate install
-# its own replacement; and once checks run here, a gate reviewing a change to
-# itself would be reviewing the code performing the review. Both disappear if the
-# path simply never comes through this door: it reaches main by pull request,
-# reviewed before merge.
+# The deployed gate updates itself from main; its own source must receive independent review by pull request.
 GATEKEEPER_SOURCE_PATH = "nc-systems/main-gatekeeper/main-gatekeeper.py"
 
-# The integration loop is bounded rather than open: refusing beats spinning.
 MAX_INTEGRATION_ROUNDS = 5
 
 EXIT_SUCCESS = 0
 EXIT_REFUSED = 1
 EXIT_DEFECT = 2
 
-# 'unknown' — an unreadable or absent worker.pid — is treated as live
-# everywhere except the age-gated sweep (ruled 2026-08-12, see worker_state):
-# a workspace is never destroyed on the strength of a file we could not read.
+# An unreadable worker PID is not evidence that a workspace is safe to destroy.
 LIVE_STATES = ("alive", "unknown")
 
 
 class Refusal(Exception):
-    """A named catalog refusal: the error, the facts, and the exact next act.
-
-    Never a bare error code. B5: the next action is verb-first and specific —
-    "resubmit without that path", never "fix the problem" — and
-    one term is used per concept across the whole catalog, because agents
-    pattern-match this text. A path is always a "path", never a "file".
-    """
+    """A catalog refusal carrying facts and a specific next action."""
 
     def __init__(self, error: str, facts: str, next_action: str):
         super().__init__(f"{error}: {facts}")
@@ -151,11 +52,7 @@ class Refusal(Exception):
 
 
 class AlreadyCheckedIn(Exception):
-    """This exact work reached main while the request was in flight.
-
-    Not a refusal: the caller wanted the work on main and it is on main. The
-    race was lost in the only way that costs nothing.
-    """
+    """The requested work reached main while the request was in flight."""
 
     def __init__(self, commit: str):
         super().__init__(commit)
@@ -163,26 +60,15 @@ class AlreadyCheckedIn(Exception):
 
 
 def workspace_root() -> Path:
-    """B4a: outside every repository, discoverable from the digest alone —
-    on the host that created it (§ States; host locality ruled 2026-08-12)."""
+    """Return the host-local workspace root outside the repositories."""
     state_home = os.environ.get("XDG_STATE_HOME")
     base = Path(state_home) if state_home else Path.home() / ".local" / "state"
     return base / WORKSPACE_ROOT_NAME
 
 
 def workspace_for(digest: str) -> Path | None:
-    """The workspace a digest names, or None — found by enumeration, never by
-    joining the digest onto the root (ruled 2026-08-12).
-
-    `status` and `cancel` take their digest from the caller, and path arithmetic
-    on caller text escapes the root: an absolute argument discards the root
-    entirely, and `..` climbs out of it. `cancel` deleted the named directory
-    and answered `cancelled`; `status` returned a foreign refusal record as its
-    own reply and then deleted it. Matching a name against the entries the
-    program itself created cannot escape whatever the argument says, so the
-    property holds by construction rather than by filtering — which is why no
-    separate format check on the digest exists.
-    """
+    """Return the workspace matching a digest, or None."""
+    # Enumerate names instead of joining caller input, which could escape the root.
     try:
         entries = list(workspace_root().iterdir())
     except OSError:
@@ -197,7 +83,7 @@ def emit(payload: dict, exit_code: int) -> int:
 
 
 def run_git(arguments: list[str], cwd: Path | None = None, check: bool = True):
-    """Run git and return the completed process; stdout and stderr as text."""
+    """Return the git process result with stdout and stderr as text."""
     completed = subprocess.run(
         ["git", *arguments], cwd=str(cwd) if cwd else None,
         capture_output=True, text=True, check=False,
@@ -211,9 +97,7 @@ def run_git(arguments: list[str], cwd: Path | None = None, check: bool = True):
     return completed
 
 
-# --- Instant screening -----------------------------------------------------
-# Form validation is synchronous and in memory: nothing touches disk until a
-# request has passed it, so a malformed request cannot leave a trace.
+# Screen in memory so malformed requests leave no disk state.
 
 
 def screen_unsafe_path(path: str, position: str) -> None:
@@ -237,19 +121,7 @@ def screen_unsafe_path(path: str, position: str) -> None:
 
 
 def screen_gatekeeper_source_path(path: str) -> None:
-    """Refuse a declared path that is the gate's own source (ruled 2026-08-17).
-
-    Not resubmittable: the same request refuses identically every time, which is
-    the point. The next action names the lane that does admit it.
-    """
-    # Case-folded, deliberately (merge-lane review of PR #92, 2026-08-18).
-    # A case-sensitive comparison let a differently-cased path (then
-    # `scripts/Main-Gatekeeper.py`) through every screen and land as a distinct
-    # file on main; on a case-insensitive checkout — every Mac clone — an
-    # ordinary pull then writes that file over the gate's own source on disk. That is exactly the self-replacement
-    # this refusal exists to prevent, defeated by one character. Over-refusing a
-    # differently-cased path costs nothing: there is one such file, and no
-    # legitimate check-in needs a case variant of it.
+    # Case-fold to prevent a case variant from overwriting the gate on case-insensitive checkouts.
     if Path(path).as_posix().casefold() != GATEKEEPER_SOURCE_PATH.casefold():
         return
     raise Refusal(
@@ -302,12 +174,6 @@ def screen_paths(raw_paths: list[str]) -> list[str]:
 
 
 def screen_import(arguments, declared_paths: list[str]) -> dict | None:
-    """The entry checkpoint's declaration: `none`, or all three parts.
-
-    Every import crosses this gate and is recorded in the commit that carries
-    it, so the record can never lag the system. A second import in one request
-    is inexpressible by construction — it is a second check-in.
-    """
     parts = {
         "commit": arguments.import_commit,
         "source": arguments.import_source,
@@ -372,7 +238,7 @@ def screen_import(arguments, declared_paths: list[str]) -> dict | None:
 
 
 def import_record(import_declaration: dict | None) -> str:
-    """The canonical one-line form, used by both the digest and the trailer."""
+    """Return the canonical import record shared by the digest and trailer."""
     if import_declaration is None:
         return "none"
     return (f"{import_declaration['commit']} {import_declaration['source']}"
@@ -380,7 +246,7 @@ def import_record(import_declaration: dict | None) -> str:
 
 
 def read_legacy_content(legacy_repository: str, import_declaration: dict) -> bytes:
-    """One transaction: the bytes as they stood at the declared legacy commit."""
+    """Return the bytes at the declared legacy commit."""
     inside = subprocess.run(
         ["git", "-C", legacy_repository, "rev-parse", "--git-dir"],
         capture_output=True, text=True, check=False,
@@ -424,7 +290,7 @@ def read_legacy_content(legacy_repository: str, import_declaration: dict) -> byt
 
 
 def screen_form(arguments) -> dict:
-    """Validate every field that can be judged without touching a repository."""
+    """Validate fields that require no repository access."""
     if not arguments.message or not arguments.message.strip():
         raise Refusal(
             "malformed-field", "--message is empty",
@@ -453,31 +319,20 @@ def screen_form(arguments) -> dict:
     return {
         "paths": paths,
         "message": arguments.message.strip(),
-        # The base joins the request after screening: it is computed from the
-        # caller's checkout (which screening never touches), never declared.
+        # Screening cannot read the caller’s checkout, so the computed base is added afterwards.
         "issue": arguments.issue,
         "agent": arguments.agent.strip(),
         "import": import_declaration,
-        # B4c, the resolve-once rule: every environment-derived field is
-        # resolved here, at screening, and written into the request record.
-        # Nothing downstream re-derives it from its own environment.
+        # Resolve environment-derived fields once; detached workers must use the same values.
         "origin": os.environ.get("CLAUDE_CODE_SESSION_ID") or "none",
     }
 
 
-# --- Reading the caller's worktree and computing the base ------------------
 
 
 def compute_base(repository: Path) -> str:
-    """The exact main commit the work started from — computed, never declared.
-
-    `git merge-base HEAD origin/main`, after a fetch, in the caller's checkout
-    (user ruling 2026-08-10, replacing a caller-supplied --base field): every
-    caller gets the exact right value deterministically, with no relay step to
-    garble. The result is on main by construction. Accepted residual, recorded
-    in the specification: a caller who refreshed from main mid-task presents a
-    too-new fork point — a blind spot the wrapper-derived design shared.
-    """
+    """Return the merge base of the caller’s HEAD and origin/main."""
+    # Refreshing from main mid-task can make this fork point too new.
     run_git(["fetch", "--quiet", "origin", MAIN_BRANCH], cwd=repository, check=False)
     merged = subprocess.run(
         ["git", "merge-base", "HEAD", f"origin/{MAIN_BRANCH}"],
@@ -496,31 +351,8 @@ def compute_base(repository: Path) -> str:
 
 
 def refuse_symlinked_component(root: Path, path: str, side: str) -> None:
-    """No component of a declared path may be a symlink, on either side of the
-    comparison (ruled 2026-08-12, widening WALK-1 of 2026-08-11).
-
-    WALK-1 was applied as one lstat on the declared path's final component, and
-    the specification's rationale — "a link's target can live outside the
-    repository, and the security boundary does not follow it" — was delivered in
-    neither direction.
-
-    Reading: with `esc` a symlink to a directory outside the repository,
-    declaring `esc/secret.txt` passed every screen, because the leaf is a
-    regular file reached *through* the link; its bytes were read from outside
-    and checked in to main.
-
-    Writing: the candidate commit is built by checking out main and writing
-    declared bytes over it, so a symlink carried in **main's own tree** was
-    recreated in the clone and the write followed it out of the repository — a
-    file outside every repository was overwritten with the caller's content, and
-    the caller's own worktree is innocent in that case, so no check on the
-    caller's files can catch it.
-
-    Containment (`resolve()` inside the root) is deliberately not used as the
-    primary form: on its own it would reverse WALK-1, since a symlink whose
-    target sits inside the repository passes containment while the ruling
-    refuses it.
-    """
+    # Check every component on both read and write paths to prevent following links outside the repository.
+    # Links within the repository are also forbidden; containment alone is insufficient.
     current = root
     for part in Path(path).parts:
         current = current / part
@@ -550,13 +382,7 @@ def refuse_symlinked_component(root: Path, path: str, side: str) -> None:
 def read_worktree_content(
     repository: Path, paths: list[str], import_declaration: dict | None = None
 ) -> dict[str, bytes | None]:
-    """The new content of each declared path; None where the path is absent.
-
-    This is the program's only read of the caller's working copy for content.
-    An import destination is the one exception: its bytes come from the legacy
-    repository at the declared commit, so the caller need not — and should not
-    — stage a hand-made copy of it.
-    """
+    """Return declared content, using None for absent paths and legacy bytes for imports."""
     import_destination = import_declaration["dest"] if import_declaration else None
     content: dict[str, bytes | None] = {}
     for path in paths:
@@ -578,7 +404,7 @@ def read_worktree_content(
 
 
 def read_base_content(clone: Path, base: str, paths: list[str]) -> dict[str, bytes | None]:
-    """The content of each declared path at the declared base, None if absent."""
+    """Return each declared path’s base content, or None if absent."""
     content: dict[str, bytes | None] = {}
     for path in paths:
         shown = subprocess.run(
@@ -592,7 +418,7 @@ def read_base_content(clone: Path, base: str, paths: list[str]) -> dict[str, byt
 def classify_changes(
     worktree: dict[str, bytes | None], base: dict[str, bytes | None]
 ) -> dict[str, str]:
-    """Infer added / modified / deleted per path, refusing dishonest claims."""
+    """Classify paths as added, modified or deleted, refusing unchanged paths."""
     changes: dict[str, str] = {}
     for path in sorted(worktree):
         new, old = worktree[path], base[path]
@@ -612,25 +438,16 @@ def classify_changes(
                 "unchanged path in the list is a mistake somewhere.",
             )
         changes[path] = "deleted" if new is None else ("added" if old is None else "modified")
-    # No aggregate nothing-differs branch exists: it was unreachable — the
-    # first unchanged path refuses `unchanged-path` before any aggregate check
-    # could run — and was deleted as dead code (user ruling 2026-08-10).
     return changes
 
 
 def compute_digest(base: str, worktree: dict[str, bytes | None], import_declaration: str) -> str:
-    """SHA-256 over the WORK: base, sorted paths, each path's new bytes.
-
-    Deliberately excluded: message, issue, mode, origin, agent, time. The
-    digest identifies the work, so identical work resubmitted under different
-    metadata still deduplicates — which is what makes resubmission safe.
-    """
+    """Return a digest of the base, sorted paths and new bytes."""
+    # Exclude metadata so identical work deduplicates even under a different message.
     digest = hashlib.sha256()
 
     def frame(tag: bytes, content: bytes) -> None:
-        # Length-prefixed under a NUL-framed tag (2026-08-12): tag-only
-        # framing was collidable — one file whose bytes contained the tag
-        # sequence serialized identically to two files (Codex finding G25).
+        # Length prefixes prevent file content containing framing tags from colliding with another file sequence.
         digest.update(b"\x00" + tag + b"\x00")
         digest.update(str(len(content)).encode("ascii") + b":")
         digest.update(content)
@@ -648,24 +465,10 @@ def compute_digest(base: str, worktree: dict[str, bytes | None], import_declarat
 
 
 def undeclared_changes(repository: Path, declared: list[str]) -> list[str]:
-    """Paths the caller's worktree also modifies — an advisory, never a refusal.
-
-    Unrelated work in progress in the same worktree is legitimate, so this
-    never blocks; the likeliest cause of a surprise here is a forgotten
-    declaration, which is worth saying out loud.
-    """
-    # Untracked files included (user-ruled 2026-08-11): a forgotten NEW file is
-    # the advisory's likeliest target; .gitignore still hides scratch.
-    #
-    # -z and -uall are the ruling's second half (2026-08-12). Plain --porcelain
-    # collapses a wholly-new directory to a single 'newdir/' entry, so declaring
-    # 'newdir/new.txt' produced "the working copy also differs at newdir/" —
-    # the advisory named the caller's own declared work and sent an agent after
-    # a change it had just made deliberately, while a genuinely forgotten file
-    # inside a new directory was never named either. And untracked names are
-    # arbitrary, unlike declared paths, which are screened: spaces and
-    # non-ASCII came back C-quoted, so the advisory reported a string that was
-    # not a path. -z is NUL-delimited and unquoted; -uall names the files.
+    """Return undeclared worktree changes as an advisory."""
+    # Unrelated work in the same worktree is legitimate and must not block check-in.
+    # Include untracked files so forgotten new files are reported.
+    # -z preserves arbitrary names; -uall lists files instead of collapsing new directories.
     status = run_git(["status", "--porcelain", "-z", "--untracked-files=all"],
                      cwd=repository, check=False)
     if status.returncode != 0:
@@ -678,16 +481,10 @@ def undeclared_changes(repository: Path, declared: list[str]) -> list[str]:
     return sorted(others)
 
 
-# --- The trailer -----------------------------------------------------------
 
 
 def trailer_block(request: dict, digest: str) -> str:
-    """Three facts, a writer, and a pointer; nothing else.
-
-    The issue value is written in #<n> form deliberately: any commit reaching
-    the default branch with #<n> in its message appears in that issue's GitHub
-    timeline, so an issue collects all its check-ins with zero machinery.
-    """
+    # GitHub adds commits mentioning #<issue> to that issue’s timeline.
     issue = "none" if request["issue"] == "none" else f"#{request['issue']}"
     return "\n".join([
         f"Gatekeeper-origin: {request['origin']}",
@@ -698,7 +495,6 @@ def trailer_block(request: dict, digest: str) -> str:
     ])
 
 
-# --- The procedure ---------------------------------------------------------
 
 
 def resolve_repository(argument: str | None) -> Path:
@@ -717,11 +513,6 @@ def resolve_repository(argument: str | None) -> Path:
 
 
 def resolve_remote(repository: Path, argument: str | None) -> str:
-    """D1: the remote defaults to the invoking repository's origin.
-
-    Taking it as an argument is what lets a test hand the program a throwaway
-    bare repository (B3a) without any test-only path inside the program.
-    """
     if argument:
         return argument
     remote = run_git(["remote", "get-url", "origin"], cwd=repository, check=False)
@@ -734,11 +525,7 @@ def resolve_remote(repository: Path, argument: str | None) -> str:
 
 
 def prepare_clone(workspace: Path, remote: str) -> Path:
-    """Clone main into the program's own workspace — never the agent's worktree.
-
-    Unchanged files come from main, so a stale working copy cannot smuggle old
-    content into the candidate: the candidate is built FROM the declaration.
-    """
+    # Build from main so stale, undeclared worktree content cannot enter the candidate.
     clone = workspace / "candidate"
     cloned = subprocess.run(
         ["git", "clone", "--quiet", "--no-checkout", remote, str(clone)],
@@ -756,7 +543,6 @@ def prepare_clone(workspace: Path, remote: str) -> Path:
 
 
 def find_existing_check_in(clone: Path, digest: str, ref: str | None = None) -> str | None:
-    """The digest screen: work that already went through is never redone."""
     found = run_git(
         ["log", ref or f"origin/{MAIN_BRANCH}", "--format=%H",
          "--grep", f"Gatekeeper-digest: {digest}"],
@@ -772,18 +558,10 @@ def build_candidate(
     clone: Path, request: dict, worktree: dict[str, bytes | None], digest: str,
     target: str | None = None,
 ) -> str:
-    """Start from main at `target` and apply exactly what was declared.
-
-    `target` is the declared base on the first attempt, and the newer main tip
-    on each integration round. Either way the candidate is built FROM the
-    declaration, so an undeclared edit can never reach it.
-    """
     run_git(["checkout", "--quiet", "-B", CANDIDATE_BRANCH, target or request["base"]], cwd=clone)
 
     for path in request["paths"]:
-        # The base tree gets the same check as the caller's worktree (ruled
-        # 2026-08-12): checkout recreates any symlink main carries, and the
-        # write below would follow it out of the repository.
+        # Checkout recreates main’s symlinks; writes must not follow them outside the repository.
         refuse_symlinked_component(clone, path, side="base")
         target = clone / path
         content = worktree[path]
@@ -809,12 +587,8 @@ def build_candidate(
 
 
 def attempt_push(clone: Path) -> tuple[bool, str]:
-    """One atomic push attempt. Returns (won, stderr).
-
-    Everything rests on the one property GitHub provides: a push either wins
-    cleanly or is rejected whole — never partial, never interleaved. That is
-    the arbiter, which is why no queue and no lock exist here.
-    """
+    """Return (won, stderr) from one push attempt."""
+    # GitHub accepts or rejects the entire push, so concurrent check-ins need no lock.
     pushed = subprocess.run(
         ["git", "push", "--quiet", "origin", f"{CANDIDATE_BRANCH}:{MAIN_BRANCH}"],
         cwd=str(clone), capture_output=True, text=True, check=False,
@@ -823,7 +597,6 @@ def attempt_push(clone: Path) -> tuple[bool, str]:
 
 
 def classify_push_failure(stderr: str) -> str:
-    """Lost the race, or something else entirely."""
     lowered = stderr.lower()
     if "non-fast-forward" in lowered or "fetch first" in lowered or "rejected" in lowered:
         return "lost-the-race"
@@ -850,24 +623,13 @@ def describe_commits(clone: Path, older: str, newer: str) -> str:
 def integrate_and_push(
     clone: Path, request: dict, worktree: dict[str, bytes | None], digest: str
 ) -> tuple[str, int]:
-    """Push, and integrate over anyone who got there first. Returns (commit, N).
-
-    The winner of a race completes unaware of it. The loser is handled here,
-    not by the calling agent: fetch the new main and re-apply the declared
-    changes onto it. Clean re-application is the usual case, because two
-    requests usually touch different paths. A real conflict — the new main
-    changed a path this request also changes — is refused rather than guessed
-    at, because re-applying would mean choosing whose version survives, and
-    the program never chooses that.
-    """
+    """Return (commit, attempt count) after pushing over concurrent changes."""
+    # Refuse overlapping paths rather than choosing which author’s content survives.
     base = request["base"]
     target = base
 
     for _ in range(MAX_INTEGRATION_ROUNDS):
         commit = build_candidate(clone, request, worktree, digest, target)
-        # Version 1 re-runs every check against the rebuilt candidate; there
-        # are none beyond construction yet, so this is where a test suite
-        # attaches when one exists.
         won, stderr = attempt_push(clone)
         if won:
             integrated_over = run_git(
@@ -890,7 +652,7 @@ def integrate_and_push(
 
         target = fetch_main_tip(clone)
 
-        # Someone may have checked in this very work while we were building.
+        # Identical work may have reached main while this candidate was being built.
         already = find_existing_check_in(clone, digest, target)
         if already:
             raise AlreadyCheckedIn(already)
@@ -920,11 +682,6 @@ def integrate_and_push(
 
 
 
-# --- The worker lifecycle (slice 4) -----------------------------------------
-# The caller's process is the worker in --wait mode; --no-wait detaches one.
-# Everything here rests on the same invariant as crash recovery: the atomic
-# push is the only durable effect, so every state question is answered from
-# history plus what the workspace holds.
 
 STALE_SCREENING_SECONDS = 24 * 60 * 60
 STALE_WORKSPACE_SECONDS = 24 * 60 * 60
@@ -932,44 +689,24 @@ REFUSAL_RECORD_RETENTION_SECONDS = 30 * 24 * 60 * 60
 
 
 def process_start_time(pid: int) -> str:
-    """The /proc start-time of a pid (clock ticks since boot); '' unreadable.
-
-    3.13: a recycled pid can masquerade as a live worker; the start-time
-    unmasks it. Linux-specific by design — this box is the gate's home.
-    """
+    """Return a process start token, or an empty string if unreadable."""
+    # The start token distinguishes a worker from a recycled PID.
     try:
         stat = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8")
         return stat.rsplit(")", 1)[1].split()[19]
     except (OSError, IndexError):
         pass
-    # No /proc: ask ps (ruled 2026-08-12). The fleet runs agents on macOS and
-    # Ubuntu, and reading /proc alone made this return "" for every process on
-    # macOS — the recorded value fell back to the placeholder, the comparison
-    # was skipped, and the pid-reuse guard the specification credits to slice 4
-    # was dead code on half the fleet, with nothing announcing which behaviour a
-    # given host had.
+    # macOS has no /proc; use ps for the process start token.
     started = subprocess.run(
         ["ps", "-o", "lstart=", "-p", str(pid)],
         capture_output=True, text=True, check=False,
     )
-    # One whitespace-free token: worker.pid is "<pid> <start>" split on
-    # whitespace, and ps prints "Tue Aug 12 13:45:01 2026", whose first word
-    # alone would be recorded and then never match.
+    # worker.pid splits on whitespace, so the ps timestamp must be a single token.
     return "_".join(started.stdout.split())
 
 
 def write_atomically(target: Path, content: str) -> None:
-    """Write through a temporary sibling and rename into place (ruled
-    2026-08-12).
-
-    Every writer of `worker.pid` and of the retained refusal record used to
-    truncate in place, and every reader treated an unreadable file as proof the
-    worker was dead. Between those lay a window in which the file was empty on
-    disk while the worker was alive: `status` answered `abandoned`, and a twin
-    submission deleted the live worker's clone and spawned a rival on the same
-    digest. A rename is atomic, so a reader sees the old contents or the new and
-    never nothing.
-    """
+    # Rename keeps readers from seeing an empty or partially written state file.
     temporary = target.with_name(f".{target.name}.writing")
     temporary.write_text(content, encoding="utf-8")
     os.replace(temporary, target)
@@ -981,38 +718,15 @@ def write_worker_identity(workspace: Path) -> None:
 
 
 def signal_worker(pid: int, signal_number: int) -> None:
-    """Signal the worker's process group, or the process alone when it leads no
-    group (ruled 2026-08-12).
-
-    WALK-4 kills the group because a worker may already have spawned `git push`,
-    and a pid-only kill leaves that child racing the history query. But
-    `worker.pid` is written above the `--no-wait` branch, so a waiting check-in
-    records its *own* pid, and that process is not a session leader — its group
-    is the invoking shell's or harness's. Cancelling such a request signalled
-    every process in the caller's group: a launcher, an unrelated sibling, and
-    the check-in itself all died in the PR #49 review's demonstration.
-
-    The kernel answers whether this pid leads a group. A recorded "this one was
-    detached" flag would be exactly the data that goes stale, tears, or names a
-    recycled process.
-    """
-    # pid 1 is init, and pids 0 and below address process groups or — at -1 —
-    # every process this account may signal: killpg(pgrp) resolves to
-    # kill(-pgrp) in glibc and Apple libc alike (POSIX leaves pgrp <= 1
-    # undefined), so killpg(1) is kill(-1), the broadcast. On both Linux and
-    # macOS os.getpgid(1) succeeds and returns 1, so pid 1 sailed through the
-    # leads-own-group check below and the "cancel an unstoppable worker" test
-    # case broadcast SIGTERM to every process this account owned — the whole
-    # agent fleet, the tmux server, and the systemd user manager (ned-box,
-    # twice on 2026-08-17; nedschorus#62). A recorded worker can never be a
-    # pid below 2, so refuse them all here; the worker then still reads as
-    # alive and cancel walks its wait to cancel-failed, the truthful outcome.
+    # Kill children only when the worker leads the group; a waiting worker may share the caller’s group.
+    # PID 1 is init; zero and negative PIDs target groups.
+    # killpg(1) can become kill(-1), broadcasting to every process this user may signal.
     if pid < 2:
         return
     try:
         leads_own_group = os.getpgid(pid) == pid
     except (OSError, ProcessLookupError, PermissionError):
-        leads_own_group = False  # cannot tell: never widen the blast radius
+        leads_own_group = False  # Cannot establish group ownership; signal only the worker.
     try:
         if leads_own_group:
             os.killpg(pid, signal_number)
@@ -1023,12 +737,7 @@ def signal_worker(pid: int, signal_number: int) -> None:
 
 
 def worker_stopped(workspace: Path, seconds: float) -> bool:
-    """Wait up to `seconds` for the worker to stop; True if it did.
-
-    Monotonic, and each wait computes its own deadline: the post-SIGKILL loop
-    used to reuse the already-expired SIGTERM deadline, so a forward wall-clock
-    step skipped it entirely (fixed 2026-08-12).
-    """
+    """Wait up to seconds for the worker to stop and return whether it did."""
     deadline = time.monotonic() + seconds
     while time.monotonic() < deadline:
         if worker_state(workspace) not in LIVE_STATES:
@@ -1038,17 +747,8 @@ def worker_stopped(workspace: Path, seconds: float) -> bool:
 
 
 def worker_state(workspace: Path) -> str:
-    """'alive', 'dead', 'unknown', or 'none' — the whole state machine's oracle.
-
-    Death requires positive evidence (ruled 2026-08-12). An unreadable or absent
-    `worker.pid` used to return 'dead', which is the strongest conclusion drawn
-    from the weakest evidence: it let a twin delete a live worker's clone and
-    let `status` report a running request as abandoned. It now returns
-    'unknown', which every caller treats as live, because the asymmetry is
-    decisive — guessing alive wrongly leaves a directory the aged sweep collects
-    later, while guessing dead wrongly destroys work in flight and loses its
-    reason silently.
-    """
+    """Return alive, dead, unknown or none."""
+    # Unreadable state is not proof of death; treating it as dead could destroy live work.
     if not workspace.is_dir():
         return "none"
     try:
@@ -1058,34 +758,19 @@ def worker_state(workspace: Path) -> str:
         return "unknown"
     recorded_start = tokens[1] if len(tokens) > 1 else "0"
     try:
-        # Known limit, recorded rather than guarded (2026-08-12): os.kill(pid, 0)
-        # also succeeds for a zombie — a dead process its parent has not reaped.
-        # Unreachable for a real worker, whose parent exits immediately after
-        # spawning it, so the worker reparents to init and is reaped the moment
-        # it dies. A guard would need per-platform process-state reads for a
-        # case the design cannot produce.
         os.kill(pid, 0)
     except ProcessLookupError:
         return "dead"
     except PermissionError:
-        pass  # alive under another user; still alive
+        pass  # Permission denial still proves the process exists.
     live_start = process_start_time(pid)
-    # "" and "0" both mean the start time is unavailable — the file carries one
-    # token, or this platform answered neither /proc nor ps — and an unavailable
-    # value is not evidence, so the comparison is skipped rather than failed. No
-    # writer produces "0" deliberately since the placeholder was removed
-    # (2026-08-13); it survives here only as the one-token fallback's value.
+    # An unavailable start time is not evidence of PID reuse; skip comparison for either sentinel.
     if recorded_start not in ("", "0") and live_start and recorded_start != live_start:
         return "dead"
     return "alive"
 
 
 def sweep_stale_workspaces() -> None:
-    """Opportunistic housekeeping at every invocation (ruled 2026-08-10):
-    refusal records older than 30 days, screening scratch and dead-worker
-    workspaces older than a day. Never blocks, never reports — a caller
-    whose record aged out resubmits, the same recovery as every lost reason.
-    """
     try:
         entries = list(workspace_root().iterdir())
     except OSError:
@@ -1104,9 +789,7 @@ def sweep_stale_workspaces() -> None:
                 if age > REFUSAL_RECORD_RETENTION_SECONDS:
                     shutil.rmtree(entry, ignore_errors=True)
                 continue
-            # Age-gated, so a transient 'unknown' (the moment between a
-            # workspace being created and its worker stamping itself) is
-            # never collected, while a day-old one still is.
+            # Age-gate unknown workers so the gap before the initial PID write is not swept.
             if age > STALE_WORKSPACE_SECONDS and worker_state(entry) in ("dead", "unknown"):
                 shutil.rmtree(entry, ignore_errors=True)
         except OSError:
@@ -1114,19 +797,10 @@ def sweep_stale_workspaces() -> None:
 
 
 def retain_refusal_record(workspace: Path, digest: str, refusal: Refusal) -> None:
-    """B4d: a refused --no-wait request keeps its workspace holding just the
-    JSON refusal record; status returns it once, then sweeps."""
+    """Keep the refusal for status to return once before sweeping the workspace."""
     for entry in ("candidate", "declared"):
         shutil.rmtree(workspace / entry, ignore_errors=True)
-    # The record is written before anything else is removed, and atomically
-    # (ruled 2026-08-12). The old order unlinked worker.pid and request.json
-    # first, so a status arriving in that gap saw no record and no worker and
-    # answered "abandoned — resubmit safely" for a request that had in fact
-    # refused with a real reason; and the in-place write left an instant where
-    # the file existed but was empty, which status read as unparseable, replaced
-    # with a generic workspace-io-error, and then swept — destroying the only
-    # copy of the reason. Never demolish the old state before the new state
-    # exists.
+    # Publish the refusal atomically before removing worker state, so status never loses the reason.
     write_atomically(workspace / "refusal.json", json.dumps({
         "outcome": "refused", "error": refusal.error, "facts": refusal.facts,
         "next_action": refusal.next_action, "digest": digest,
@@ -1148,19 +822,8 @@ def require_digest(arguments, command: str) -> str:
 
 
 def fetch_and_find(repository: Path, digest: str) -> str | None:
-    """The commit this digest reached main as, or None — never a guess.
-
-    The fetch failure is NOT swallowed here (ruled 2026-08-12). A stale
-    origin/main made `cancel` assert 'nothing reached main' while the commit sat
-    on the remote, and `status` answer 'unknown — submit it' for work already
-    checked in: both are asserted facts resting on a question that was never
-    asked. `network-down` is already in the catalog and already documented as
-    safely resubmittable.
-
-    Deliberately different from the base computation, where a failed fetch stays
-    tolerated: there it degrades to a staler base which the behind-main
-    integration absorbs, while here it decides whether the answer is true.
-    """
+    """Return the commit for this digest, or None."""
+    # A failed fetch must propagate: stale history cannot establish whether the work reached main.
     fetched = run_git(["fetch", "--quiet", "origin", MAIN_BRANCH],
                       cwd=repository, check=False)
     if fetched.returncode != 0:
@@ -1174,23 +837,13 @@ def fetch_and_find(repository: Path, digest: str) -> str | None:
     return find_existing_check_in(repository, digest)
 
 
-# The named-phase test seam (ruled 2026-08-12, built 2026-08-13). It replaces a
-# single pre-git sleep that every liveness, twin and refusal-record case had to
-# fit its own work inside — a status call, a full second check-in and a rival's
-# git work in three seconds, about five times margin on an idle machine and
-# nothing on a loaded one. When the sleep won, the assertions inverted quietly
-# into the opposite outcome rather than failing. A test now waits for the file
-# the worker writes on arrival at a phase, and releases it by creating the
-# release file, so no case depends on how long anything takes.
-#
-# Inert unless GATEKEEPER_TEST_WORKER_PAUSE_AT is set: it then names the one
-# phase the worker blocks at, and arrival files are written at every phase.
+# Tests synchronize on phase files instead of timing assumptions; inert unless explicitly enabled.
 WORKER_PHASES = ("before-git", "before-push", "after-push")
 WORKER_PHASE_RELEASE_TIMEOUT = 120
 
 
 def worker_phase(workspace: Path, phase: str) -> None:
-    """Announce arrival at `phase`; block there when a test asked for it."""
+    """Announce a phase and pause there when requested by a test."""
     paused_at = os.environ.get("GATEKEEPER_TEST_WORKER_PAUSE_AT")
     if not paused_at:
         return
@@ -1198,11 +851,7 @@ def worker_phase(workspace: Path, phase: str) -> None:
     if paused_at != phase:
         return
     if os.environ.get("GATEKEEPER_TEST_WORKER_IGNORES_TERM"):
-        # Stands in for the two ways a real worker outlives its cancellation: a
-        # `git push` child that survived a single-process kill, and a worker the
-        # canceller lacks permission to signal. Neither is constructible from
-        # inside one test process, and both pose cancel the same question —
-        # does it answer only what it verified?
+        # Simulate an unsignalable worker or surviving push child so cancellation must verify its outcome.
         signal.signal(signal.SIGTERM, signal.SIG_IGN)
     release = workspace / f".release-{phase}"
     deadline = time.monotonic() + WORKER_PHASE_RELEASE_TIMEOUT
@@ -1211,17 +860,11 @@ def worker_phase(workspace: Path, phase: str) -> None:
 
 
 def run_worker(arguments) -> int:
-    """The detached half of --no-wait. Detached means nobody is listening:
-    outcomes land in history (success) or the B4d record (refusal), where
-    status finds them. Never prints; the reply channel is the workspace."""
+    """Run the detached worker, reporting through history or the refusal record."""
     workspace = workspace_for(arguments.digest)
     if workspace is None:
         return EXIT_DEFECT
-    # The worker's first act (ruled 2026-08-12, applied 2026-08-13): it is the
-    # only writer of worker.pid in --no-wait mode, so there is nothing to yield
-    # to and no race to lose. The former loop waited for the file to exist and
-    # the spawner had already created it, so the loop returned at once and the
-    # two writes raced for the file.
+    # Only the detached worker writes its PID, avoiding a race with the spawner.
     write_worker_identity(workspace)
     record_path = workspace / "request.json"
     if not record_path.is_file():
@@ -1275,22 +918,16 @@ def status_query(arguments) -> int:
                                 "always safe"}, EXIT_SUCCESS)
     record_path = workspace / "refusal.json"
     if record_path.is_file():
-        # B4d's "returned once, then swept" is enforced by the filesystem
-        # (ruled 2026-08-12): the record is claimed with an atomic rename, so of
-        # two concurrent status calls exactly one wins it — before, both
-        # received the full record.
+        # Atomic rename gives only one concurrent status call ownership of the refusal record.
         claimed = workspace / "refusal.claimed.json"
         try:
             os.replace(record_path, claimed)
         except OSError:
-            claimed = record_path  # lost the claim, or cannot rename: read in place
+            claimed = record_path  # Read in place if claiming failed.
         try:
             payload = json.loads(claimed.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
-            # An unreadable record is unknown, not spent: it is left in place
-            # for a retry rather than swept (ruled 2026-08-12). Sweeping here
-            # destroyed the caller's only copy of the reason whenever a status
-            # landed mid-write.
+            # Leave an unreadable refusal for retry; sweeping would destroy the only copy of the reason.
             return emit({"outcome": "refused", "error": "workspace-io-error",
                          "facts": "the retained refusal record could not be read; "
                                   "it is left in place",
@@ -1300,7 +937,7 @@ def status_query(arguments) -> int:
                          "digest": digest,
                          "summary": "refused: workspace-io-error — record unreadable, "
                                     "retained"}, EXIT_REFUSED)
-        shutil.rmtree(workspace, ignore_errors=True)  # returned once, then swept (B4d)
+        shutil.rmtree(workspace, ignore_errors=True)
         return emit(payload, EXIT_REFUSED)
     state = worker_state(workspace)
     if state in LIVE_STATES:
@@ -1313,16 +950,10 @@ def status_query(arguments) -> int:
 
 
 def cancel_request(arguments) -> int:
-    """Outcomes, exactly five (spec § States, crashes, cancel, and errors):
-    too-late, cancelled from a live worker, cancelled from a dead one,
-    unknown-request, and cancel-failed (added 2026-08-12)."""
     digest = require_digest(arguments, "cancel")
     repository = resolve_repository(getattr(arguments, "repo", None))
     commit = fetch_and_find(repository, digest)
     if commit:
-        # This branch used to return before any cleanup, alone among cancel's
-        # endings, leaving the workspace of an already-checked-in request on
-        # disk until the day-old sweep (fixed 2026-08-12).
         leftover = workspace_for(digest)
         if leftover is not None:
             shutil.rmtree(leftover, ignore_errors=True)
@@ -1339,10 +970,7 @@ def cancel_request(arguments) -> int:
                     EXIT_SUCCESS)
     pid = None
     if worker_state(workspace) in LIVE_STATES:
-        # WALK-4 (ruled 2026-08-12): stop the worker and WAIT — a kill that does
-        # not wait leaves an already-spawned git push child racing the history
-        # query below. Scope ruled the same day: the group only when the
-        # recorded pid leads one (see signal_worker).
+        # Wait for the worker and push children before consulting history, or a push can race the answer.
         try:
             pid = int((workspace / "worker.pid").read_text(encoding="utf-8").split()[0])
         except (OSError, ValueError, IndexError):
@@ -1353,12 +981,7 @@ def cancel_request(arguments) -> int:
                 signal_worker(pid, signal.SIGKILL)
                 worker_stopped(workspace, seconds=5)
 
-    # Every path leaves through this door (ruled 2026-08-12). The history
-    # re-check used to live inside the live-worker branch alone, so a worker
-    # that pushed and died was answered "cancelled — nothing reached main"
-    # while status reported the commit a second later; and nothing confirmed
-    # the kill, so a worker this user cannot signal produced the same false
-    # "cancelled" after fifteen seconds of trying. Both demonstrated.
+    # Recheck history even for a dead worker: it may have pushed before exiting.
     commit = fetch_and_find(repository, digest)
     if commit:
         shutil.rmtree(workspace, ignore_errors=True)
@@ -1381,39 +1004,9 @@ def cancel_request(arguments) -> int:
                             "main"}, EXIT_SUCCESS)
 
 
-# --- The branch-protection audit (slice 5) ----------------------------------
-# B3c: three named outcomes — protection-ok / protection-wrong / audit-failed
-# — failing loudly as its own outcome, never a silent skip into green. Rides
-# each session reincarnation (ruled 2026-08-12) via the fast-handoff writer.
 
-# The contract the audit checks (spec § The credential and enforcement, LIVE
-# since 2026-07-21). The C3 amendment moves the pusher to the dedicated
-# account — update this set in the same commit that applies it.
-#
-# The accounts main's push restriction may name, per the design's
-# § The credential and enforcement (amended 2026-08-19): the user's own account
-# and the merge-lane seat's, which was added so a merge is approved under an
-# identity other than the author's. Both must be listed — an allow-list naming
-# the user alone would close merge-lane's PR process, and one naming merge-lane
-# alone would close the pull-request lane the gatekeeper's own source
-# depends on.
-#
-# Spelled the human-readable way; GitHub stores canonical logins lowercase
-# ("nedlern") and treats account names as case-insensitive for identity, so the
-# comparison below casefolds both sides rather than these constants being
-# lowercased — a lowercase constant reads as a typo against the spelling the
-# design uses everywhere, and the next reader restores the case and the bug
-# with it. Case-insensitive, still whole-name: the comparison is set equality
-# over whole logins and never becomes a substring test. (The older caution that
-# `NedLern` prefixes `NedLerner` is retired: that account was renamed to
-# `ned-review-merge` on 2026-08-19. The case-insensitivity caution stands.)
-#
-# KEEP THIS IN STEP WITH THE DESIGN. This audit is the sole detector of
-# protection drift, so a stale expectation here does not fail quietly — it
-# reports protection-wrong against correct settings and tells the user to
-# "restore" them, which is an instruction to undo a deliberate change. That is
-# what happened between 2026-08-19 and 2026-08-22, when the design gained the
-# second account and this constant did not.
+# Keep expected accounts aligned with protection policy; stale expectations recommend undoing valid changes.
+# GitHub identities are case-insensitive, but comparisons must match whole logins.
 EXPECTED_MAIN_PUSHER_ACCOUNTS = {"NedLern", "ned-review-merge"}
 
 
@@ -1448,10 +1041,7 @@ def fetch_branch_protection(repo_slug: str) -> dict:
         ) from None
     if completed.returncode != 0:
         detail = completed.stderr.strip() or completed.stdout.strip() or "no detail"
-        # GitHub answers 404 both for "no such protection" and for "your
-        # credential may not read protection settings", deliberately, so that
-        # an unauthorized caller cannot learn whether protection exists. The
-        # refusal must not let a reader collapse those two into an alarm.
+        # GitHub uses 404 for both missing protection and credentials forbidden to read it.
         unreadable = "404" in detail or "Not Found" in detail
         raise Refusal(
             "audit-failed",
@@ -1480,7 +1070,7 @@ def fetch_branch_protection(repo_slug: str) -> dict:
 
 
 def compare_protection(protection: dict) -> list[str]:
-    """Every way the live settings differ from the design, in plain words."""
+    """Return descriptions of differences between live and expected protection."""
     problems: list[str] = []
     restrictions = protection.get("restrictions")
     if not restrictions:
@@ -1513,7 +1103,7 @@ def compare_protection(protection: dict) -> list[str]:
 
 def audit_branch_protection(arguments) -> int:
     try:
-        if arguments.protection_file:  # test seam, C7 class: replaces only the fetch
+        if arguments.protection_file:
             try:
                 protection = json.loads(
                     Path(arguments.protection_file).read_text(encoding="utf-8"))
@@ -1562,11 +1152,7 @@ def check_in(arguments) -> int:
     workspace: Path | None = None
     clone_parent: Path | None = None
     try:
-        # Per-process scratch, never a shared fixed path: check-ins run in
-        # parallel by design, and a shared screening directory would have one
-        # request delete another's clone out from under it. The digest is not
-        # known yet — it needs the base content — so the per-digest workspace
-        # cannot be used until screening is done.
+        # Concurrent screening needs separate scratch directories; the digest is not known until content is read.
         workspace_root().mkdir(parents=True, exist_ok=True)
         clone_parent = Path(tempfile.mkdtemp(prefix="screening-", dir=workspace_root()))
         clone = prepare_clone(clone_parent, remote)
@@ -1582,8 +1168,7 @@ def check_in(arguments) -> int:
                 "summary": f"already-checked-in {already}",
             }, EXIT_SUCCESS)
 
-        # 4.1 (ruled 2026-08-10): concurrent identical submissions share one
-        # digest workspace — a live twin is answered, never swept from under.
+        # Identical submissions share a workspace; never sweep a live twin.
         existing = workspace_root() / digest
         if worker_state(existing) in LIVE_STATES:
             return emit({
@@ -1593,12 +1178,7 @@ def check_in(arguments) -> int:
             }, EXIT_SUCCESS)
         shutil.rmtree(existing, ignore_errors=True)
 
-        # The claim IS the creation (ruled 2026-08-12). Testing whether the
-        # workspace was occupied and then creating it left a gap between the
-        # two: a twin arriving inside it saw a directory with no pid file,
-        # concluded the owner was dead, and deleted the live sibling's request
-        # and clone — the exact case 4.1 exists to prevent. An exclusive mkdir
-        # cannot be raced, so the claim needs no pid file to hold it.
+        # Exclusive mkdir claims the workspace atomically, including the gap before a PID file exists.
         workspace = existing
         try:
             workspace.mkdir(parents=True)
@@ -1608,27 +1188,17 @@ def check_in(arguments) -> int:
                 "summary": "in-progress — another submission claimed this exact "
                            f"work first; collect the outcome with: status {digest}",
             }, EXIT_SUCCESS)
-        # One writer for worker.pid (ruled 2026-08-12, applied 2026-08-13).
-        # In waiting mode the caller IS the worker, so it stamps itself here.
-        # In --no-wait mode nothing stamps until the detached worker's first
-        # act: the spawner used to write a "<pid> 0" placeholder after Popen
-        # and race the worker for the file, and a worker dying before its own
-        # stamp left that placeholder forever — the reader skips the
-        # start-time comparison on a placeholder, so that workspace's
-        # pid-reuse guard was off for good. The gap now reads as unknown,
-        # which every caller treats as alive.
+        # Only the worker writes its PID; a spawner placeholder could overwrite the PID-reuse token.
+        # Until the detached worker stamps itself, unknown state is treated as live.
         if not getattr(arguments, "no_wait", False):
             write_worker_identity(workspace)
-        # The request record: written once, read by everything downstream.
         submitting_host = socket.gethostname()
         (workspace / "request.json").write_text(
             json.dumps({**request, "digest": digest, "remote": remote,
                         "host": submitting_host}, indent=2),
             encoding="utf-8",
         )
-        # The declaration snapshot: the worker (and any resubmit-side rebuild)
-        # reads declared bytes from here, never from the caller's live
-        # worktree, whose state at worker time is nobody's promise (B4c).
+        # Snapshot declared bytes now; the caller’s worktree may change before the worker reads it.
         for declared_path, declared_content in worktree.items():
             if declared_content is None:
                 continue
@@ -1644,15 +1214,8 @@ def check_in(arguments) -> int:
                 start_new_session=True, stdin=subprocess.DEVNULL,
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             )
-            workspace = None  # ownership passed to the worker; do not sweep
-            # The digest is handed out with the machine it belongs to (ruled
-            # 2026-08-12). Workspaces are host-local — the worker, the state
-            # directory and the refusal record live on this host and nowhere
-            # else — and the fleet spans macOS and Ubuntu, so a digest carried
-            # to another machine answers "unknown" for work proceeding
-            # normally, and cancel there answers unknown-request while the
-            # worker runs on. The absence replies already say where they
-            # looked; this one now says where it came from.
+            workspace = None  # Ownership passed to the worker; do not sweep.
+            # Workspaces and workers are host-local, so the digest must identify its host.
             return emit({
                 "outcome": "accepted", "digest": digest,
                 "next_action": f"Collect the outcome with: main-gatekeeper.py "
@@ -1692,12 +1255,8 @@ def check_in(arguments) -> int:
 
 
 class TeachingArgumentParser(argparse.ArgumentParser):
-    """Command-line-form errors join the JSON contract (user-ruled 2026-08-11).
-
-    argparse's default is usage text on stderr and exit 2 — the defect code.
-    A caller's typo is not a gatekeeper defect: it refuses like every other
-    malformed field, teaching form intact, exit 1.
-    """
+    """Return command-line errors through the JSON refusal contract."""
+    # argparse’s default exit 2 is reserved here for program defects.
 
     def error(self, message):
         raise Refusal(
@@ -1750,17 +1309,7 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-# Hidden from --help (ruled 2026-08-12): `worker` is an internal re-entry the
-# program makes into itself, not a caller-facing subcommand, and it prints
-# nothing — its reply channel is the workspace. The caller-facing surface must
-# match the caller-facing one-JSON-object contract, and the specification names
-# this and --help as its two exemptions.
-#
-# So `worker` is parsed by its own parser, never registered on the public one.
-# It used to be registered there with `help=argparse.SUPPRESS`, which argparse
-# honors for add_argument but not for add_parser: --help printed the literal
-# line `worker  ==SUPPRESS==`, and the usage line and the unknown-subcommand
-# refusal both listed `worker` among the choices.
+# Use a separate internal parser: argparse does not honor SUPPRESS for subparsers.
 def build_internal_worker_parser() -> argparse.ArgumentParser:
     worker = TeachingArgumentParser(prog="main-gatekeeper.py worker")
     worker.add_argument("digest")

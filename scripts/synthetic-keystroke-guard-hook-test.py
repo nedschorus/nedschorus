@@ -570,6 +570,371 @@ check("F3: prose inside a dashed-terminator heredoc stays data (no probes)",
       runner.calls)
 
 
+# --- a command substitution inside double quotes is a command list ---
+# The shell runs "$( ... )" exactly as it runs a bare $( ... ). Read as one
+# data word, a guarded command inside it passed, and a heredoc opened inside
+# it was never split out, so the first " in the heredoc's body ended the
+# string and a backticked command after it was read as an invocation.
+
+commit_message_quoting_a_backticked_command = (
+    "git commit -m \"$(cat <<'EOF'\n"
+    "Document the rule\n"
+    "\n"
+    "The brief says: \"never `tmux send-keys -t $SEAT Enter` into a seat.\" Stated now.\n"
+    "EOF\n"
+    ")\""
+)
+runner = StubRunner()
+reason = decide(commit_message_quoting_a_backticked_command, runner)
+check("a heredoc commit message inside \"$(cat <<'EOF' ...)\" is data, quotes and backticks included",
+      reason is None and not runner.calls, (reason, runner.calls))
+
+reason = decide('echo "$(tmux send-keys -t seat-a x)"', StubRunner(stdout="1\n"))
+check("send-keys inside a double-quoted command substitution is denied like the bare form",
+      reason is not None and "attached client" in reason, reason)
+
+reason = decide('OUTPUT="$(tmux paste-buffer -t seat-a 2>&1)"', StubRunner(stdout="1\n"))
+check("paste-buffer captured into a double-quoted assignment is denied",
+      reason is not None and "attached client" in reason, reason)
+
+quoted_substitution_feeding_osascript_a_heredoc = (
+    "RESULT=\"$(osascript <<'EOF'\n"
+    'tell application "iTerm" to tell current session of front window to write text "ls"\n'
+    "EOF\n"
+    ")\""
+)
+reason = decide(quoted_substitution_feeding_osascript_a_heredoc, StubRunner())
+check("osascript consuming a heredoc inside a double-quoted substitution is denied",
+      reason is not None and "write text" in reason, reason)
+
+runner = StubRunner(stdout="1\n")
+reason = decide("git commit -m \"$(cat <<'EOF'\nA 27\" monitor fits\nEOF\n)\"\n"
+                "tmux send-keys -t seat-a x", runner)
+check("a lone \" in the heredoc message does not hide the command after the commit",
+      reason is not None and "attached client" in reason, reason)
+
+runner = StubRunner(stdout="1\n")
+reason = decide('echo "$(tmux send-keys -t seat-a x', runner)
+check("an unterminated \"$( is read as commands to the end of the text",
+      reason is not None and "attached client" in reason, reason)
+
+words = guard.tokenize_simple_commands('echo "at $(date +%H) today" done')
+check("the substitution's commands come first and the word keeps its text unexpanded",
+      words == [["date", "+%H"], ["echo", "at $(date +%H) today", "done"]], words)
+
+words = guard.tokenize_simple_commands('cd "$(dirname "$(git rev-parse --git-dir)")" && ls')
+check("a substitution nested in another, both double-quoted, is read innermost first",
+      words == [["git", "rev-parse", "--git-dir"],
+                ["dirname", "$(git rev-parse --git-dir)"],
+                ["cd", '$(dirname "$(git rev-parse --git-dir)")'], ["ls"]], words)
+
+words = guard.tokenize_simple_commands(
+    'echo "$(printf \')\'; printf "%s)" x; (cd /tmp; ls); tmux send-keys -t seat-a x) end"')
+check("a ) in quotes or closing a subshell does not close the substitution",
+      words[:5] == [["printf", ")"], ["printf", "%s)", "x"], ["cd", "/tmp"], ["ls"],
+                    ["tmux", "send-keys", "-t", "seat-a", "x"]]
+      and len(words) == 6 and words[5][0] == "echo" and words[5][1].endswith(" end"),
+      words)
+
+# Controls: forms the fix must leave as they were.
+runner = StubRunner(stdout="1\n")
+check("an escaped \\$( in double quotes is not a substitution (stays data, no probes)",
+      decide('echo "\\$(tmux send-keys -t seat-a x)"', runner) is None
+      and not runner.calls, runner.calls)
+
+runner = StubRunner()
+reason = decide('tmux send-keys -t "$(cat seat-name)" x', runner)
+check("a substitution as the target is still an unresolved target, not probed",
+      reason is not None and "unexpanded variable" in reason and not runner.calls,
+      (reason, runner.calls))
+
+runner = StubRunner(stdout="1\n")
+reason = decide('echo "$((1<<20))"\ntmux send-keys -t seat-a x', runner)
+check("double-quoted arithmetic 1<<20 opens no heredoc; the next line is still guarded",
+      reason is not None and "attached client" in reason, reason)
+
+shell_view, heredocs = guard.split_out_heredocs(commit_message_quoting_a_backticked_command)
+check("the heredoc inside the double-quoted substitution is split out, body and all",
+      shell_view == "git commit -m \"$(cat <<'EOF'\n)\""
+      and [body.splitlines()[0] for _line, body in heredocs] == ["Document the rule"],
+      (shell_view, heredocs))
+
+# --- a quoted substitution must never hide a command the shell runs ---
+# In each command below the shell runs the tmux command. The reader that read
+# a double-quoted string as one word listed that command, by reading on past
+# the string's closing quote. Reading the substitution as commands must not
+# lose it: these are the shapes where the first version of that reading did.
+
+for case_name, command in [
+    ("a ( inside ${...} does not hold the substitution open: the command after it is read",
+     'echo "$(a ${x%(*})"; tmux send-keys -t seat-a x'),
+    ("a $'...' string holding \\' ends at its own quote: the command after it is read",
+     "NOTE=\"$(a $'it\\'s')\"; tmux send-keys -t seat-a x"),
+    ("a heredoc in quoted arithmetic with a lone ' in its body: the command after it is read",
+     "N=\"$(( $(cat <<'EOF'\nit's 1\nEOF\n) + 1 ))\"; tmux send-keys -t seat-a x"),
+    # The shell rejects this one. It stands for every reading of a
+    # substitution that loses its place and never finds the closing ).
+    ("a substitution the reader cannot close: the command after the string is still read",
+     'echo "$(a \'unclosed)"; tmux send-keys -t seat-a x'),
+]:
+    reason = decide(command, StubRunner(stdout="1\n"))
+    check(case_name, reason is not None and "attached client" in reason, reason)
+
+words = guard.tokenize_simple_commands('echo "$(a ${x%(*}; b ${y:-$(c)})" && d')
+check("inside ${...} a parenthesis is a word character, and a $( there is still read",
+      words == [["a", "${x%(*}"], ["b", "${y:-$"], ["c"], ["}"],
+                ["echo", "$(a ${x%(*}; b ${y:-$(c)})"], ["d"]], words)
+
+words = guard.tokenize_simple_commands("a $'it\\'s' b; echo $'x'; c 'it\\'s'")
+check("$'...' ends at its first unescaped quote, and a plain '...' at its first quote",
+      words[0] == ["a", "$it\\'s", "b"] and words[1] == ["echo", "$x"]
+      and words[2][0] == "c", words)
+
+# The bare form, $( ... ) outside quotes, read the $'...' string the same
+# wrong way before this change, so the command after it passed there too.
+reason = decide("NOTE=$(a $'it\\'s'); tmux send-keys -t seat-a x", StubRunner(stdout="1\n"))
+check("the same $'...' string in a bare substitution no longer hides the command after it",
+      reason is not None and "attached client" in reason, reason)
+
+# A heredoc whose delimiter is not quoted is not plain data: the shell expands
+# its body, and runs every $( ... ) and backticked command in it, before the
+# consumer sees it. Those commands are read; the rest of the body is data.
+unquoted_heredoc_message_running_a_backticked_command = (
+    'git commit -m "$(cat <<EOF\n'
+    'say "never `tmux send-keys -t seat-a x` here."\n'
+    "EOF\n"
+    ')"'
+)
+reason = decide(unquoted_heredoc_message_running_a_backticked_command, StubRunner(stdout="1\n"))
+check("a backticked command in an unquoted-delimiter heredoc inside \"$( ... )\" is read",
+      reason is not None and "attached client" in reason, reason)
+
+for case_name, command in [
+    ("a backticked command in an unquoted-delimiter heredoc at the top level is read",
+     "cat > notes.md <<EOF\nnever `tmux send-keys -t seat-a x` here\nEOF"),
+    ("a $( ... ) in an unquoted-delimiter heredoc at the top level is read",
+     "cat > notes.md <<-EOF\n\tseat: $(tmux send-keys -t seat-a x)\n\tEOF"),
+]:
+    reason = decide(command, StubRunner(stdout="1\n"))
+    check(case_name, reason is not None and "attached client" in reason, reason)
+
+runner = StubRunner(stdout="1\n")
+check("escaped \\` and \\$( in an unquoted-delimiter heredoc stay data (no probes)",
+      decide("cat > notes.md <<EOF\nnever \\`tmux send-keys -t seat-a x\\` "
+             "or \\$(tmux send-keys -t seat-b y) here\nEOF", runner) is None
+      and not runner.calls, runner.calls)
+
+shell_view, heredocs = guard.split_out_heredocs(
+    "cat <<EOF\nnever `tmux send-keys -t seat-a x` or $(date +%H) here\nEOF\nls")
+mark = guard.EXPANDED_BODY_COMMANDS_MARK
+check("an unquoted-delimiter heredoc leaves its substitutions in the shell view, marked, at its <<",
+      shell_view == (f"cat {mark}{'tmux send-keys -t seat-a x'.encode().hex()}{mark}"
+                     f"{mark}{'date +%H'.encode().hex()}{mark}<<EOF\nls")
+      and heredocs == [("cat <<EOF",
+                        "never `tmux send-keys -t seat-a x` or $(date +%H) here")],
+      (shell_view, heredocs))
+# A guard that scans the shell view's text itself, as the leading-dash guard
+# marks unquoted glob characters, must not see a body's quotes or globs: a
+# lone ' there would hide every glob after the heredoc.
+shell_view_with_quotes, _heredocs = guard.split_out_heredocs(
+    "cat <<EOF\nuse the `don't \"*\" #` form\nEOF\ngrep phrase *.txt")
+check("a marked command list holds no quote, glob character or # in the shell view",
+      shell_view_with_quotes.endswith("<<EOF\ngrep phrase *.txt")
+      and not any(c in shell_view_with_quotes[:-len("<<EOF\ngrep phrase *.txt")]
+                  for c in "'\"`*#"),
+      shell_view_with_quotes)
+words = guard.tokenize_simple_commands(shell_view)
+check("each marked command list is read as a substitution, ahead of the heredoc's command",
+      words == [["tmux", "send-keys", "-t", "seat-a", "x"], ["date", "+%H"],
+                ["cat", "<<EOF"], ["ls"]]
+      and [type(w).__name__ for w in words] == ["SubstitutionCommand", "SubstitutionCommand",
+                                                 "list", "list"],
+      words)
+
+# The heredoc scan keeps its place past the same two forms: a heredoc opened
+# on the line after either is still split out, and its body is data.
+for case_name, first_line in [
+    ("the heredoc scan reads past ${x%(*}: a heredoc on the next line is split out",
+     'X="$(a ${x%(*})"'),
+    ("the heredoc scan reads past $'it\\'s': a heredoc on the next line is split out",
+     "X=\"$(a $'it\\'s')\""),
+]:
+    runner = StubRunner(stdout="1\n")
+    check(case_name,
+          decide(first_line + "\ncat <<'EOF'\nnever `tmux send-keys -t seat-a x`\nEOF",
+                 runner) is None and not runner.calls, runner.calls)
+
+# Controls for the heredoc scan inside a quoted substitution: each passes
+# before this change too, and each fails if the scan closes the substitution
+# at the first ), opens one at an escaped \$(, or does not return to the
+# string when the substitution closes.
+runner = StubRunner(stdout="1\n")
+check("a heredoc opened after a subshell inside the quoted substitution is split out",
+      decide("X=\"$( (a); cat <<'EOF'\nnever `tmux send-keys -t seat-a x`\nEOF\n)\"",
+             runner) is None and not runner.calls, runner.calls)
+
+reason = decide("echo \"run \\$(cat <<'EOF' yourself\"\ntmux send-keys -t seat-a x",
+                StubRunner(stdout="1\n"))
+check("an escaped \\$( opens no substitution for the heredoc scan: << after it is data",
+      reason is not None and "attached client" in reason, reason)
+
+reason = decide('echo "$(a) see <<EOF"\ntmux send-keys -t seat-a x\nEOF',
+                StubRunner(stdout="1\n"))
+check("after the substitution closes the scan is back in the string: << there is data",
+      reason is not None and "attached client" in reason, reason)
+
+# --- the second reading must not hide a command the shell runs either ---
+# In each command below bash 3.2 and bash 5.3 run the tmux command, and the
+# reader that read a double-quoted string as one word listed it. These are
+# the shapes where the reading of quoted substitutions and expanded heredoc
+# bodies, as first fixed, lost it.
+for case_name, command in [
+    ("a lone ' in a backticked command in an unquoted body does not hide the command after it",
+     "cat > notes.md <<EOF\nuse the `don't` form\nEOF\ntmux send-keys -t seat-a x"),
+    ("a lone ' in a $( ... ) in an unquoted body does not hide the command after it",
+     "cat > notes.md <<EOF\nuse $(a it's) form\nEOF\ntmux send-keys -t seat-a x"),
+    ("a lone \" in a backticked command in an unquoted body does not hide the command after it",
+     'cat > notes.md <<EOF\nuse `a "b` form\nEOF\ntmux send-keys -t seat-a x'),
+    ("a lone \" in a $( ... ) in an unquoted body does not hide the command after it",
+     'cat > notes.md <<EOF\nuse $(a "x) form\nEOF\ntmux send-keys -t seat-a x'),
+    ("a <<\\EOF heredoc inside \"$( ... )\" ends at EOF: the command after the string is read",
+     'X="$(cat <<\\EOF\nplain\nEOF\n)"; tmux send-keys -t seat-a x'),
+    ("a <<E\"O\"F heredoc inside \"$( ... )\" ends at EOF: the command after the string is read",
+     'X="$(cat <<E"O"F\nplain\nEOF\n)"; tmux send-keys -t seat-a x'),
+    ("a <<\\EOF heredoc at the top level ends at EOF: the command after it is read",
+     "cat <<\\EOF\nplain\nEOF\ntmux send-keys -t seat-a x"),
+    ("$$ before a single-quoted string ending in \\ does not open $'...': the command after is read",
+     "a $$'a\\'; tmux send-keys -t seat-a x"),
+    ("$$$' still opens $'...' after the process id: the command after it is read",
+     "a $$$'a\\''; tmux send-keys -t seat-a x"),
+    ("a subshell inside a $( ... ) inside ${ ... } is read as commands",
+     "echo ${y:-$(a && (tmux send-keys -t seat-a x))}"),
+    ("a subshell after a pipe inside a $( ... ) inside ${ ... } is read as commands",
+     "echo ${y:-$(a | (tmux send-keys -t seat-a x))}"),
+    ("a subshell opening a $( ... ) inside ${ ... } is read as commands",
+     "echo ${y:-$( (tmux send-keys -t seat-a x) )}"),
+    ("a ; inside ${ ... } still ends nothing but the pattern: the command after it is read",
+     "echo ${x:-a;}; tmux send-keys -t seat-a x"),
+]:
+    reason = decide(command, StubRunner(stdout="1\n"))
+    check(case_name, reason is not None and "attached client" in reason, reason)
+
+# The heredoc scan keeps its place past the same forms: a heredoc opened on
+# the line after either is still split out, and its body is data.
+for case_name, first_line in [
+    ("the heredoc scan reads $$'a\\' as the process id and a plain string",
+     "a $$'a\\'"),
+    ("the heredoc scan reads $$'a\\' inside a quoted substitution the same way",
+     "X=\"$(a $$'a\\')\""),
+    ("the heredoc scan reads a subshell inside ${y:-$( ... )} as a subshell",
+     'X="$(a ${y:-$(b && (c))})"'),
+]:
+    runner = StubRunner(stdout="1\n")
+    check(case_name,
+          decide(first_line + "\ncat <<'EOF'\nnever `tmux send-keys -t seat-a x`\nEOF",
+                 runner) is None and not runner.calls, runner.calls)
+
+# Forms where bash runs no tmux command, and the reader must not refuse one.
+for case_name, command in [
+    ("a body behind <<\\EOF is not expanded: its backticked command is data",
+     "cat <<\\EOF\nsay `tmux send-keys -t seat-a x` here\nEOF\nc"),
+    ("a body behind <<E\"O\"F is not expanded: its backticked command is data",
+     'cat <<E"O"F\nsay `tmux send-keys -t seat-a x` here\nEOF\nc'),
+    ("a lone backtick in an unquoted body runs nothing: the prose after it is data",
+     "cat > notes.md <<EOF\nthe ` character; never tmux send-keys -t seat-a x\nEOF"),
+    ("a $( in an unquoted body that never closes runs nothing",
+     "cat > notes.md <<EOF\nthen $(tmux send-keys -t seat-a x\nEOF"),
+    ("$$( in an unquoted body is the process id and a parenthesis, not a substitution",
+     "cat <<EOF\npid $$(tmux send-keys -t seat-a x)\nEOF"),
+    # bash rejects this one whole. A substitution that loses its place keeps
+    # the commands it found, and the rest of its string is data: a later $(
+    # in the same string is not read again.
+    ("after a substitution loses its place, a later $( in the same string is data",
+     "echo \"$(a 'x) $(tmux send-keys -t seat-a x)\""),
+]:
+    runner = StubRunner(stdout="1\n")
+    check(case_name, decide(command, runner) is None and not runner.calls, runner.calls)
+
+reason = decide("cat > notes.md <<EOF\n$(tmux send-keys -t seat-a x) then $(date\nEOF",
+                StubRunner(stdout="1\n"))
+check("a substitution before one that never closes still runs and is read",
+      reason is not None and "attached client" in reason, reason)
+
+# Nesting far past any real command reads the deep part as data, the way the
+# reader did before it read substitutions at all, instead of exhausting
+# Python's recursion and crashing the guard, which lets the command through.
+deeply_nested = "tmux send-keys -t seat-a x"
+for _level in range(1500):
+    deeply_nested = 'echo "$(' + deeply_nested + ')"'
+try:
+    reason = decide(deeply_nested, StubRunner(stdout="1\n"))
+    crashed = None
+except RecursionError as error:
+    reason, crashed = None, error
+check("1,500 nested quoted substitutions do not crash the guard, which still denies",
+      crashed is None and reason is not None and "attached client" in reason,
+      (crashed, reason))
+
+# --- the third reading: forms where bash runs the tmux command ---
+# Each was refused before quoted substitutions were read, and the second
+# reading passed it.
+for case_name, command in [
+    ("a process substitution <( ... ) inside ${ ... } is read as commands",
+     "cat ${output:-<(tmux send-keys -t seat-a x)}"),
+    ("a process substitution >( ... ) inside ${ ... } is read as commands",
+     "tee ${output:->(tmux send-keys -t seat-a x)} < notes.md"),
+    ("a heredoc inside \"$( ... )\" ending EOF)\" ends there: the command after the string is read",
+     "git commit -m \"$(cat <<'EOF'\nmessage\nEOF)\"\ntmux send-keys -t seat-a x"),
+    ("an empty-delimiter heredoc inside \"$( ... )\" ends at its ): the command after is read",
+     "git commit -m \"$(cat <<''\nmessage\n)\"\ntmux send-keys -t seat-a x"),
+    ("a case pattern's ) inside \"$( ... )\" ends the pattern, not the substitution",
+     "X=\"$(b \"$(case x in x) tmux send-keys -t seat-a x;; esac)\")\""),
+    ("a case pattern's ) inside a bare \"$( ... )\" ends the pattern, not the substitution",
+     "X=\"$(case x in x) tmux send-keys -t seat-a x;; esac)\""),
+    ("a heredoc opened in a $( ... ) inside $(( ... )) is a heredoc, not a shift",
+     "X=1 a \"$(( $(cat <<EOF | cat\na b # $(echo \"$(tmux send-keys -t seat-a x)\") $(a it's)\n"
+     "EOF\nc \"$(( $(c) + 1 ))\"\n) + 1 ))\""),
+    ("a backticked command inside double quotes is read as commands",
+     "echo $'it\\'s' \"'`tmux send-keys -t seat-a x`\""),
+    ("a backticked command in a string after a quoted substitution is read as commands",
+     "X=\"$(a ${y:-$(b && (c))}) <<'EOF'\n`tmux send-keys -t seat-a x`\nEOF\n\""),
+    ("three quoted substitutions deep, the innermost command is read",
+     'echo "$(echo "$(echo "$(tmux send-keys -t seat-a x)")")"'),
+    ("a NUL in the command is dropped, as the shell drops it: the command after it is read",
+     "a \x00 b; case x in x) c;; esac; tmux send-keys -t seat-a x"),
+]:
+    reason = decide(command, StubRunner(stdout="1\n"))
+    check(case_name, reason is not None and "attached client" in reason, reason)
+
+# Forms where bash runs no tmux command: no refusal, no probe.
+for case_name, command in [
+    ("$$( inside double quotes is the process id and a parenthesis, not a substitution",
+     'echo "$$(tmux send-keys -t seat-a x)"'),
+    ("$$( mid-string inside double quotes is not a substitution either",
+     'echo "a $$(tmux send-keys -t seat-a x) b"; c'),
+    ("a heredoc after ${y:-$( (b) )} inside \"$( ... )\" is split out: its body is data",
+     "X=\"$(a ${y:-$( (b)\n)}; cat <<'EOF'\n`tmux send-keys -t seat-a x`\nEOF\n)\""),
+    ("an escaped backtick inside double quotes is data",
+     'echo "\\`tmux send-keys -t seat-a x\\`"'),
+    ("text between two NULs the command holds is not read as a marked command list",
+     "a \x00" + "tmux send-keys -t seat-a x".encode().hex() + "\x00 c"),
+    ("a quoted-delimiter heredoc inside a substitution in an unquoted body is data",
+     "cat <<EOF\n$(cat <<'X'\n$(tmux send-keys -t seat-a x)\nX\n)\nEOF\nc"),
+    ("a single-quoted $( inside a backticked command inside double quotes is data",
+     "echo \"`printf '%s' '$(tmux send-keys -t seat-a x)'`\""),
+    ("a ${x:- pattern going on to the next line keeps the heredoc scan in place",
+     "X=\"$(echo ${x:-\n(*})\"\ncat <<'EOF'\n`tmux send-keys -t seat-a x`\nEOF"),
+]:
+    runner = StubRunner(stdout="1\n")
+    check(case_name, decide(command, runner) is None and not runner.calls, runner.calls)
+
+words = guard.tokenize_simple_commands('X="$(case $v in (a|b) c;; *) d;;& e) f;& esac)" && g')
+check("inside a quoted substitution a case's patterns and branches are read as commands",
+      words[:-2] == [["case", "$v", "in"], ["a"], ["b"], ["c"], ["*"], ["d"], ["e"],
+                     ["f"], ["esac"]]
+      and words[-2][0].startswith("X=$(case") and words[-1] == ["g"], words)
+
+
 # --- the ssh invocation parser ---
 
 host, carried, remote = guard.parse_ssh_invocation(
