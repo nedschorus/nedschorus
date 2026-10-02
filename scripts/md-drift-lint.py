@@ -58,95 +58,32 @@ DATE_TOKEN = re.compile(r"\b(20\d{2})-(\d{2})-(\d{2})\b")
 FLAG_TOKEN = re.compile(r"--[a-z][a-z0-9-]+")
 NUMBER_ONLY = re.compile(r"\d[\d_,]*(?:\.\d+)?")
 
-# Numbers are checked only against code sources; MD-to-MD number claims are
-# counts and cardinalities, not values quoted from an implementation.
+# Prose-to-prose numbers are counts, not values quoted from code.
 CODE_SOURCE_EXTENSIONS = (".py", ".sh")
 
-# Tokens that look like paths but are not checkable file references.
 SKIP_MARKERS = ("://", "<", "{", "*", "$", "~", "…")
 
-# A `<placeholder>` in a backtick span stands for a value the reader supplies,
-# not a file, and "<" above already says so. That marker is tested per WORD,
-# though, and check_backtick_paths splits the span on whitespace first, so a
-# placeholder containing a space was split before the marker could fire:
-# `<component's directory>/design-to-main-record/user-rulings.md` became the
-# words "<component's" and "directory>/design-to-main-record/user-rulings.md",
-# and the second carries no "<" left to catch. Five of the 66 standing findings
-# on main 2026-09-20 were this shape, every one of them correct template prose
-# that a reader sorting the backlog would have been told to "fix"
-# (https://github.com/nedschorus/nedschorus/issues/572). Collapsing each
-# placeholder to a single marker-bearing word before the split restores the
-# reach of the rule SKIP_MARKERS already states, and leaves the real paths in
-# the same span checkable: in `scripts/x.py --out <run dir>/y.json`,
-# scripts/x.py is still checked, and so is a path inside a redirect or an
-# HTML comment.
-# A placeholder's angle brackets hug their content: `<component's directory>`.
-# The first version of this pattern was `<[^<>]*>`, which matched any pair of
-# angle brackets and so swallowed two shapes that carry real paths (found in
-# review of the pull request that added it, 2026-09-20):
-#
-#     `cat < docs/missing.md > scripts/out.py`   a shell redirect
-#     `<!-- see docs/ghost.md -->`               an HTML comment
-#
-# Both stopped being checked, silently, which is the failure this lint exists
-# to prevent. Requiring a non-space immediately inside each bracket rejects the
-# redirect, and rejecting a leading "!", "/" or "?" rejects a comment, a
-# closing tag and a processing instruction. `<docs/x.md >docs/y.md` is rejected
-# by the same non-space rule at the closing bracket.
-#
-# "/" was excluded here too, to reject a closing tag, and came out again on
-# 2026-09-20: it was the only part of this pattern no case could fail on, and
-# it was buying a WRONG finding rather than nothing. `</path to clone>/docs/x.md`
-# is a placeholder like any other -- the reader supplies the clone's path -- and
-# excluding "/" stopped it collapsing, so the tail was reported as the
-# nonexistent path "clone>/docs/x.md". A plain `</section>` collapses now and
-# carries no path either way, so nothing is lost. The case below fails if "/"
-# is put back.
+# Collapse spaced placeholders before tokenizing; reject redirects and HTML comments.
+# A leading slash may belong to a placeholder path, so do not exclude it.
 PLACEHOLDER_SPAN = re.compile(r"<(?![!?])[^\s<>](?:[^<>]*[^\s<>])?>")
 
 
 def unwrap_angle_link_target(target: str) -> str:
-    """The path a link target written in angle brackets names, or the target
-    unchanged.
-
-    Markdown lets a link target be written inside angle brackets,
-    `[x](<docs/file.md>)`, and that target is the path inside them. The same
-    shape is also how a template writes an address the reader supplies,
-    `[<title>](<URL>)`, which PLACEHOLDER_SPAN matches and the link checks
-    skip. What is inside tells the two apart: a path ends in a file extension
-    this lint knows, before any "#anchor", and a placeholder does not. Without
-    this, every angle-bracket target was skipped as a placeholder, so a
-    missing file behind one went unreported.
-    """
+    """Unwrap angle-bracket file paths while leaving template placeholders intact."""
     inner = target[1:-1]
     if (PLACEHOLDER_SPAN.fullmatch(target)
             and inner.split("#", 1)[0].endswith(PATH_EXTENSIONS)):
         return inner
     return target
 
-# A line saying a file lives in git history references something deliberately
-# absent from the working tree; its paths are not drift.
+# Historical citations deliberately name paths absent from the working tree.
 HISTORY_MARKERS = ("git history", "git show")
 
-# A line pointing outside this repository names files this repo cannot vouch
-# for (added 2026-08-14). The legacy tree is read-only reference material and
-# is absent from some hosts entirely, so `git-clean-slate-plan.md` on a line
-# that also names ~/Projects/nedlern is a correct citation, not drift.
-# nedsmessenger joined the list on 2026-09-17, when paths cited with a line
-# number began resolving: `adapter/adapter.py:379` is that project's file,
-# named on a line that also says ~/Projects/nedsmessenger, and checking it
-# here would report a correct citation as drift.
+# References to another repository cannot be checked against this checkout.
 FOREIGN_ROOT_MARKERS = ("~/Projects/nedlern", "nedlern/docs", "legacy system",
                         "~/Projects/nedsmessenger")
 
-# Directories whose content is frozen measured data: every citation in them
-# records what a document said when it was measured, so a finding there is
-# never a defect and "fixing" one silently re-tunes every score already
-# published against those files. cold-read-reviewer-test-cases/README.md makes
-# this a requirement and names this script: "every mechanical reference or
-# drift check must exclude this directory rather than report it". It is also
-# carried as a requirement on nedschorus#42. Nine findings stood here when the
-# README was written and nine stand today (user-ruled 2026-09-17).
+# These citations are frozen measurements; changing them invalidates published scores.
 FROZEN_MEASURED_DATA_DIRECTORIES = ("cold-read-reviewer-test-cases",)
 
 _basename_index_cache = {}
@@ -155,44 +92,20 @@ _git_ignore_warned = set()
 
 
 def repo_relative_candidates(token: str, md_path: Path, repo_root: Path):
-    """The repo-relative paths a token could name, whether or not they exist.
-
-    Mirrors resolve()'s two candidates. Built with normpath rather than
-    Path.resolve because the whole point is a path that is NOT on disk:
-    resolve() of a missing file under a missing directory is unreliable, and
-    a link target like `../wiki/page.md` has to be folded against the citing
-    document's directory before git can be asked about it.
-    """
+    """Return possible repo-relative paths without requiring files to exist."""
     token = token.lstrip("/") or token
     for base in (repo_root, md_path.parent):
         candidate = os.path.normpath(os.path.join(str(base), token))
         try:
             relative = os.path.relpath(candidate, str(repo_root))
-        except ValueError:  # different drive on Windows
+        except ValueError:  # Different drive on Windows.
             continue
         if not relative.startswith(".."):
             yield relative
 
 
 def ignored_by_git(token: str, md_path: Path, repo_root: Path) -> bool:
-    """True when this repository deliberately does not track what the token names.
-
-    A path under a record store (`cold-read-records/`, `sanity-check-records/`,
-    `md-review-records/`), under the walk minutes (`docs/walk/`,
-    `walk-ledgers/`), under the issue mirror (`ghi-mirror/`), or a seat's own
-    `CLAUDE.local.md`, is a correct citation of a real file that lives in the
-    log-store on ned-box or in the seat that wrote it. It can never exist in a
-    clean checkout, so the lint reported it forever and no edit could satisfy
-    it -- while "fixing" one would delete accurate provenance. Ten of the
-    standing findings on main `bb6df3f` were exactly this (user-ruled
-    2026-09-17).
-
-    Asking git, rather than listing those directories here, also makes the
-    lint answer the same in a clean checkout and in a seat's own, where such a
-    file IS present: present-and-ignored resolves, absent-and-ignored is
-    skipped, and neither is reported. Running the lint in the wrong checkout
-    is what put a wrong pair of numbers into a merged comment on 2026-09-17.
-    """
+    """Return whether the repository's ignore rules exclude the cited path."""
     return any(
         _git_says_ignored(relative, repo_root)
         for relative in repo_relative_candidates(token, md_path, repo_root)
@@ -208,16 +121,10 @@ def _git_says_ignored(relative: str, repo_root: Path) -> bool:
 
 
 def _ask_git_check_ignore(relative: str, repo_root: Path) -> bool:
-    # Outside a git repository nothing is ignored. That is the answer, not a
-    # degraded fallback, so it is silent: this script's own test fixtures are
-    # plain temporary directories, and warning there would print on every run.
-    # (A worktree's .git is a file, not a directory, so .exists() is the test.)
+    # A worktree's .git is a file, so test existence rather than is_dir().
     if not (repo_root / ".git").exists():
         return False
-    # core.excludesFile is neutralized so the answer comes from the
-    # repository's own .gitignore. The fleet runs this lint on the Mac and on
-    # ned-box, and a machine's global ignore file would otherwise make the two
-    # report different findings for the same commit.
+    # Ignore rules must be repository-local so both machines report the same findings.
     command = ["git", "-c", "core.excludesFile=/dev/null",
                "check-ignore", "--quiet", "--", relative]
     try:
@@ -225,8 +132,7 @@ def _ask_git_check_ignore(relative: str, repo_root: Path) -> bool:
     except OSError as error:
         _warn_once(repo_root, f"git could not be run ({error})")
         return False
-    # 0 ignored, 1 not ignored; anything else is git failing to answer, and a
-    # fallback is never silent (project ruling).
+    # git check-ignore uses 0 for ignored and 1 for not ignored; other exits are failures.
     if completed.returncode in (0, 1):
         return completed.returncode == 0
     detail = completed.stderr.decode("utf-8", "replace").strip() or f"exit {completed.returncode}"
@@ -246,39 +152,21 @@ LINE_SUFFIXED_PATH = re.compile(r"^(?P<path>[^\s:]+):(?P<line>\d+)$")
 
 
 def without_line_suffix(token: str) -> str:
-    """`design.md:120` names design.md. A citation's line number is not part
-    of the path, and rejecting the whole token for its colon left every
-    line-numbered citation in this project unchecked (added 2026-09-17).
-    Only a trailing all-digit suffix is stripped, so `git show REF:path`,
-    a URL and a Windows drive letter are untouched.
-
-    For backtick citations only, never for a markdown link target: GitHub
-    serves a link to `design.md:120` as a 404, so a link carrying a line
-    number is a broken link and must still be reported as one.
-    """
+    """Remove a trailing :line number from a backtick citation."""
     match = LINE_SUFFIXED_PATH.match(token)
     return match.group("path") if match else token
 
 
 def looks_like_repo_path(token: str) -> bool:
-    # Only ever called on words from a backtick span, so the line-number
-    # strip is safe here; see without_line_suffix.
     token = without_line_suffix(token)
     if any(marker in token for marker in SKIP_MARKERS):
         return False
-    if ":" in token:  # git show REF:path, URLs, drive letters
+    if ":" in token:  # git show REF:path, URLs and drive letters.
         return False
-    # A bare ".ext" is a file TYPE, not a file: prose naming `.meta.json` or
-    # `.gitignore` means the kind of file, and demanding one exist at the repo
-    # root is noise (added 2026-08-14).
+    # Bare extensions describe file types, not files required at the repository root.
     if token.startswith(".") and "/" not in token:
         return False
-    # A leading "/" is repo-root-relative when its first component names
-    # something at the repo root, and a filesystem path otherwise (added
-    # 2026-08-14). `/scripts/x.py` is this repo and is checked — including
-    # when it is missing, which is real drift. `/usr/local/lib/...` is a
-    # deploy location describing where something WILL live, correctly absent
-    # from every development host, and is not this repo's business.
+    # Only known repo-root components make an absolute-looking path this repository's concern.
     if token.startswith("/"):
         first = token.lstrip("/").split("/", 1)[0]
         if not (REPO_ROOT / first).exists():
@@ -287,7 +175,7 @@ def looks_like_repo_path(token: str) -> bool:
 
 
 def basename_index(repo_root: Path) -> set:
-    """All file basenames under the root, for resolving bare-name references."""
+    """Return an index of files by basename."""
     if repo_root not in _basename_index_cache:
         _basename_index_cache[repo_root] = {
             item.name for item in repo_root.rglob("*")
@@ -297,23 +185,13 @@ def basename_index(repo_root: Path) -> set:
 
 
 def resolve(token: str, md_path: Path, repo_root: Path):
-    """Return the existing Path a token names (or a truthy marker), or None.
-
-    A leading "/" is read as repo-root-relative, never filesystem-absolute
-    (fixed 2026-08-14). Treating it as filesystem-absolute produced standing
-    false positives on correct content: the design's intended install path
-    `/usr/local/lib/nedschorus-gatekeeper/main-gatekeeper.py` is deliberately
-    absent from this machine, and `/CLAUDE.md` means the repo's own file. A
-    linter that always complains about the central design document is one
-    every reader learns to skim past.
-    """
+    """Return an existing Path, a truthy marker, or None."""
     token = token.lstrip("/") or token
     candidates = [repo_root / token, md_path.parent / token]
     for candidate in candidates:
         if candidate.exists():
             return candidate
-    # A bare basename (no directory) may name a file anywhere in the repo —
-    # documents legitimately say "handoff-supervisor.py" without its path.
+    # Prose may cite a basename without its directory.
     if "/" not in token and token in basename_index(repo_root):
         matches = sorted(
             item for item in repo_root.rglob(token) if ".git" not in item.parts
@@ -333,47 +211,18 @@ def check_dates(line: str):
 def check_backtick_paths(line: str, md_path: Path, repo_root: Path):
     for match in BACKTICK_TOKEN.finditer(line):
         token = match.group(1).strip()
-        # A command line: first word may be a script, later words flags.
-        # Placeholders collapse first; see PLACEHOLDER_SPAN.
         words = PLACEHOLDER_SPAN.sub("<placeholder>", token).split()
         for word in words:
-            # A name with no directory is not a claim about where the file
-            # sits: prose writes `notes.md` or `state-exit.json` for a file
-            # inside some directory it is discussing, or one a run creates.
-            # Measured on main 2026-09-17, in a clean checkout: 138 of the 212
-            # missing-path findings were such names, and the noise is what
-            # would teach a reviewer to skim past this lint. Measure this in a
-            # clean worktree: a first figure of 126 of 200 came from a seat's
-            # own checkout, where gitignored files let bare names resolve that
-            # a clean one cannot. User-ruled 2026-09-17, the
-            # first of the three choices nedschorus#336 named: not checked at
-            # all. A path carrying a directory is checked as before, and that
-            # is where real drift shows. This is the existence check only —
-            # looks_like_repo_path still admits a bare name for
-            # referenced_files, whose job is finding the code file a
-            # backticked number is checked against.
+            # A bare filename makes no claim about location and may describe a generated file.
             if "/" not in word:
                 continue
-            # A line-numbered citation, `docs/design.md:120`, is checked as
-            # the file it names. The stripped path goes to BOTH questions:
-            # git check-ignore does not match `CLAUDE.local.md:4` against a
-            # `CLAUDE.local.md` pattern, so asking it about the raw word
-            # reported ignored files as missing. The finding still quotes the
-            # word as written.
+            # Strip line numbers before check-ignore too; ignore patterns match paths, not citations.
             path = without_line_suffix(word)
             if (looks_like_repo_path(word)
                     and resolve(path, md_path, repo_root) is None
                     and not ignored_by_git(path, md_path, repo_root)):
                 yield f"path does not exist: {word}"
-        # Flag check: a command whose FIRST word is a project script must name
-        # only flags that script's source contains.
-        #
-        # Anchored at the first word (fixed 2026-08-14). Scanning the whole
-        # token for any resolvable .py bound every flag in the line to that
-        # script no matter which program owned it: `git log --follow --oneline
-        # scripts/md-drift-lint.py` reported --follow and --oneline missing
-        # from md-drift-lint.py. These documents are full of git commands
-        # naming script paths, so the class was one sentence from firing.
+        # Only the command's script owns its flags; a script path in git arguments does not.
         first = words[0] if words else ""
         if first in ("python", "python3", "python3.13") and len(words) > 1:
             first = words[1]
@@ -384,10 +233,7 @@ def check_backtick_paths(line: str, md_path: Path, repo_root: Path):
             except OSError:
                 continue
             for flag in FLAG_TOKEN.findall(token):
-                # Whole-flag match (fixed 2026-08-14): a plain substring test
-                # let a prefix of a real flag pass, so a doc that drifted from
-                # --dry-run to --dry reported nothing — exactly the drift this
-                # check exists to catch.
+                # Reject flag prefixes such as --dry when only --dry-run exists.
                 if not re.search(rf"{re.escape(flag)}(?![a-z0-9-])", source):
                     yield f"flag {flag} not found in {script.name}"
 
@@ -397,10 +243,9 @@ def canonical_number(token: str) -> str:
 
 
 def referenced_files(line: str, md_path: Path, repo_root: Path):
-    """The distinct existing files a line names in backticks or links."""
+    """Return distinct existing files named in backticks or links."""
     tokens = []
-    # A backticked `scripts/x.py:40` names scripts/x.py. A link target keeps
-    # its suffix, as it does in check_markdown_links: see without_line_suffix.
+    # Backtick citations allow :line suffixes; GitHub link targets do not.
     for match in BACKTICK_TOKEN.finditer(line):
         tokens.extend(without_line_suffix(word)
                       for word in match.group(1).strip().split()
@@ -421,9 +266,7 @@ def referenced_files(line: str, md_path: Path, repo_root: Path):
 
 
 def check_code_numbers(line: str, md_path: Path, repo_root: Path):
-    """A backtick span that is only a number is a value quoted from code; it
-    must appear in the one code file the line names. Prose numbers stay
-    unchecked — backticks are the opt-in that marks a number as from-code."""
+    """Yield findings for backticked numbers absent from the line's sole referenced code file."""
     number_spans = [
         match.group(1).strip() for match in BACKTICK_TOKEN.finditer(line)
         if NUMBER_ONLY.fullmatch(match.group(1).strip())
@@ -453,17 +296,7 @@ def check_markdown_links(line: str, md_path: Path, repo_root: Path):
         target = unwrap_angle_link_target(match.group(1))
         if "://" in target or target.startswith(("mailto:", "#")):
             continue
-        # A target that is nothing but a `<placeholder>` is a template: the
-        # reader supplies the address, as in `PR [<title>](<URL>)`. The
-        # backtick check has skipped placeholders since 2026-09-20 and this
-        # check had no such skip. Measured 2026-10-01: the six templates of
-        # that shape in explain-how-to-write-an-identifier-instructions.md,
-        # the explain skill's identifier file, text the user approved word
-        # for word, were each reported "link target does not exist: <URL>",
-        # here and by scripts/dangling-path-citation-check.py, which reads
-        # link targets through this function and exited 1 on that file's pull
-        # request. Only a target that is a placeholder and nothing else is
-        # skipped: a placeholder inside a longer target is reported as before.
+        # A whole placeholder target is a template address supplied by the reader.
         if PLACEHOLDER_SPAN.fullmatch(target):
             continue
         bare = target.split("#", 1)[0]
@@ -475,11 +308,7 @@ def check_markdown_links(line: str, md_path: Path, repo_root: Path):
 
 
 def find_duplicate_keys(pairs, collisions):
-    """Collect every duplicate key rather than raising on the first.
-
-    Raising stopped at the first collision, so a file with three duplicated
-    keys took three edit-and-rerun cycles to clear (fixed 2026-08-14).
-    """
+    """Record all duplicate keys and return the last value for each key."""
     seen = {}
     for key, value in pairs:
         if key in seen:
@@ -489,11 +318,7 @@ def find_duplicate_keys(pairs, collisions):
 
 
 def find_key_line(text: str, key: str, occurrence: int) -> int:
-    """The line of the Nth occurrence of a JSON key, 1-based; 1 if not found.
-
-    The docstring promises `path:line: problem` and every duplicate used to
-    report line 1, which was actively wrong (fixed 2026-08-14).
-    """
+    """Return the 1-based line of the Nth key occurrence, or 1 if absent."""
     pattern = re.compile(rf'"{re.escape(key)}"\s*:')
     hits = 0
     for line_number, line in enumerate(text.splitlines(), 1):
@@ -505,18 +330,14 @@ def find_key_line(text: str, key: str, occurrence: int) -> int:
 
 
 def in_frozen_measured_data(path: Path, repo_root: Path) -> bool:
-    """True for a file under a directory whose citations are frozen data."""
     try:
         parts = path.resolve().relative_to(repo_root.resolve()).parts
-    except ValueError:  # a file outside the repository is not frozen data
+    except ValueError:
         return False
     return bool(parts) and parts[0] in FROZEN_MEASURED_DATA_DIRECTORIES
 
 
 def lint_markdown(path: Path, repo_root: Path):
-    # Skipped whole, not per check, and skipped even when the file is named
-    # explicitly on the command line: the requirement is that no drift check
-    # reports this directory, however the file was reached.
     if in_frozen_measured_data(path, repo_root):
         return
     in_code_fence = False
@@ -545,12 +366,11 @@ def lint_json(path: Path):
     collisions = []
     try:
         json.loads(text, object_pairs_hook=lambda pairs: find_duplicate_keys(pairs, collisions))
-    except ValueError as error:  # malformed JSON: report it and stop
+    except ValueError as error:
         yield 1, str(error)
         return
     for key in collisions:
-        # The second occurrence is the one that silently wins, so that is the
-        # line a reader needs to see.
+        # The second occurrence silently wins, so report that line.
         yield find_key_line(text, key, 2), f"duplicate key: {key!r}"
 
 
@@ -567,10 +387,7 @@ def main(argv=None) -> int:
             print(f"{name}:0: file not found", file=sys.stdout)
             findings += 1
             continue
-        # Guarded here as well as in lint_markdown, and for the same reason
-        # in both: whatever the file type. lint_json has no repo_root to test
-        # against, and the frozen directory holds only Markdown today, so this
-        # is the check that would still hold if a .json landed there.
+        # Check here too: JSON linting has no repository root with which to enforce frozen-data exclusions.
         if in_frozen_measured_data(path, REPO_ROOT):
             continue
         if path.suffix == ".json":

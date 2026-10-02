@@ -1,23 +1,9 @@
 #!/usr/bin/env python3
-"""The design-to-main state machine's tables, as data.
-
-Source: docs/design-to-main/design-to-main-state-machine-design.md.
-  STATE_TABLE        is section 3.1, one entry per row.
-  TRANSITION_TABLE   is section 3.2, one entry per row, numbered in the
-                     order the design lists them (row 1 is
-                     `initiate-design-to-main / invoked`, row 78 the last
-                     gatekeeper-refusal). Every row has source "3.2".
-  COUNTER_TABLE      is section 7, one entry per counter.
-
-Nothing here routes. The machine (design-to-main-state-machine.py) reads
-these tables; the guards are named here with the design's own words and
-evaluated there, so that a row of the design maps to a row of this file.
-"""
+"""State, transition, and counter tables for the design-to-main machine."""
 
 from dataclasses import dataclass
 from typing import Optional, Tuple
 
-# --- The states of section 3.1 -------------------------------------------
 
 INITIATE_DESIGN_TO_MAIN = "initiate-design-to-main"
 DESIGN_WRITING = "design-writing"
@@ -36,7 +22,6 @@ INVESTIGATE_WORKFLOW = "investigate-workflow"
 SUBMIT_TO_PR_GATE = "submit-to-PR-gate"
 ENDED = "ended"
 
-# Sub-states (the acceptance-checks of the reviewing states).
 CONTRACT_ACCEPTANCE_BY_PROGRAM = "contract-acceptance-by-program"
 CONTRACT_ACCEPTANCE_BY_AGENT = "contract-acceptance-by-agent"
 CONTRACT_ACCEPTANCE_BY_USER = "contract-acceptance-by-user"
@@ -49,51 +34,36 @@ TEST_DESIGN_ACCEPTANCE_BY_USER = "test-design-acceptance-by-user"
 TEST_ACCEPTANCE_BY_AGENT = "test-acceptance-by-agent"
 TEST_ACCEPTANCE_BY_USER = "test-acceptance-by-user"
 
-# A work-stream's position when its last reviewing state has advanced and
-# the other work-stream has not (glossary: ready-for-test-suite).
+# One work-stream can be ready while the other is still under review.
 READY_FOR_TEST_SUITE = "ready-for-test-suite"
 
 IMPLEMENTATION_WORK_STREAM = "implementation-work-stream"
 TEST_WORK_STREAM = "test-work-stream"
 
-# The outcomes of `ended` (section 3.4).
 OUTCOME_PASSED = "passed"
 OUTCOME_STOPPED_BY_USER = "stopped-by-user"
 OUTCOME_FAILED = "failed"
 
-# Investigation-focus values (section 6.6).
 FOCUS_DESIGN = "design"
 FOCUS_CONTRACT = "contract"
 FOCUS_TEST_DESIGN = "test-design"
 FOCUS_UNKNOWN = "unknown"
 
-# The inputs an input-quick-check-failed may name (section 4).
 INPUT_DESIGN = "design"
 INPUT_DESIGN_CONTRACT = "design-contract"
 INPUT_TEST_DESIGN = "test-design"
 
-# The classes of a gatekeeper-refusal (section 3.4).
 REFUSAL_INFRASTRUCTURE = "infrastructure"
 REFUSAL_INTEGRATION = "integration"
 REFUSAL_SCOPE = "scope"
 REFUSAL_FORM = "form"
 
-# Coverage-types (section 2); the two that are agent-instructions.
 COVERAGE_TYPES_THAT_ARE_AGENT_INSTRUCTIONS = ("prompt", "script-and-prompt")
-# The fourth value, a test-design's only (section 2): a test-requirement
-# marked `no-tests` runs nothing and counts as neither pass nor fail
-# (section 6.4). A `test-writing` `emitted` carries it alone when the set
-# is empty, never beside a type that is present (user-ruled 2026-09-14,
-# the tenth walk, item 6).
+# no-tests runs nothing and counts as neither pass nor fail; emit it alone when the coverage set is empty.
 COVERAGE_TYPE_NO_TESTS = "no-tests"
-# Section 6.4: each test-requirement carries its coverage-type on a line
-# of its own, which is what the machine reads for the check of the test
-# writer's set against the test-design (user-ruled 2026-09-11, the ninth
-# walk, item 7). The rest of the test-design's syntax is step 1's
-# (section 11), so this prefix is all the machine reads of the file.
+# Only coverage-type lines are machine-readable; the rest of the test-design syntax belongs to its author.
 TEST_DESIGN_COVERAGE_TYPE_LINE_PREFIX = "coverage-type:"
 
-# Verdicts (the exit words of sections 3.1 and 6.1).
 V_INVOKED = "invoked"
 V_EMITTED = "emitted"
 V_ADVANCE = "advance"
@@ -102,13 +72,10 @@ V_REJECT_DESIGN = "reject design"
 V_REJECT_IMPLEMENTATION = "reject implementation"
 V_REJECT_TESTS = "reject tests"
 V_REJECT_TEST_DESIGN = "reject test-design"
-# The arbitrator's one ruling against both sibling artifacts (sections 3.1
-# and 6.1: "one or both of the implementation and the tests"; "both are
-# named and both are re-entered"). The design fixes no spelling for the
-# word; this one is reported with the slice.
+# Rejecting both sibling artifacts re-enters both writers.
 V_REJECT_IMPLEMENTATION_AND_TESTS = "reject implementation and tests"
 V_DISCUSS = "discuss"
-V_REDESIGN = "redesign"          # the user's, at contract-acceptance-by-user only
+V_REDESIGN = "redesign"          # only at contract-acceptance-by-user
 V_INPUT_QUICK_CHECK_FAILED = "input-quick-check-failed"
 V_ESCALATE_TO_USER = "escalate-to-user"
 V_PASS = "pass"
@@ -122,9 +89,6 @@ V_ACCEPTED = "accepted"
 V_GATE_REJECTION = "gate-rejection"
 V_GATEKEEPER_REFUSAL = "gatekeeper-refusal"
 
-# The writer's counter that a `reject <artifact>` or `flaky-test` against a
-# counted writer refers to (section 3.2, rows 61 to 63, "whose writer's
-# counter"), and the writer the verdict sends the run to.
 WRITER_COUNTER_FOR_VERDICT = {
     V_REJECT_IMPLEMENTATION: "implementation-writes",
     V_REJECT_TESTS: "test-writes",
@@ -139,13 +103,11 @@ WRITER_STATE_FOR_VERDICT = {
 
 @dataclass(frozen=True)
 class StateTableRow:
-    """One row of section 3.1."""
+    """A state and the role that performs its work."""
     name: str
     sub_states: Tuple[str, ...]
     package_beyond_standard: str
     verdicts: Tuple[str, ...]
-    # Who does the work (section 1): "conversation", "agent", "program",
-    # "machine", "composite", "terminal".
     work: str
     work_stream: Optional[str] = None
 
@@ -224,13 +186,10 @@ STATE_TABLE = (
 
 STATE_TABLE_BY_NAME = {row.name: row for row in STATE_TABLE}
 
-# Every sub-state, mapped to its composite state.
 COMPOSITE_STATE_OF_SUB_STATE = {
     sub_state: row.name for row in STATE_TABLE for sub_state in row.sub_states
 }
 
-# The states that also have `escalate-to-user` (section 3.1, the paragraph
-# after the table): every reviewing sub-state by agent, and these three.
 ACCEPTANCE_CHECKS_BY_AGENT = tuple(
     s for s in COMPOSITE_STATE_OF_SUB_STATE if s.endswith("-acceptance-by-agent"))
 STATES_WITH_ESCALATE_TO_USER = (
@@ -238,13 +197,7 @@ STATES_WITH_ESCALATE_TO_USER = (
 
 WRITING_STATES = (CONTRACT_REVISING, IMPLEMENTATION_WRITING,
                   TEST_DESIGN_WRITING, TEST_WRITING)
-# Section 4's writing states, design-writing among them: the initiator
-# writes the design and the design-contract as the others write theirs.
-# WRITING_STATES above is the four whose entry reason the counters' buckets
-# read (section 7), which design-writing has no part in; this is the set
-# section 2 means by "a writing state's `emitted`", whose empty
-# `named-files` is a machine error (user-ruled 2026-09-14, the tenth walk,
-# item 3).
+# Design-writing emits artifacts but does not use the four writing states' counter buckets.
 WRITING_STATES_INCLUDING_DESIGN_WRITING = (DESIGN_WRITING,) + WRITING_STATES
 COUNTED_WRITING_STATES = {
     IMPLEMENTATION_WRITING: "implementation-writes",
@@ -252,31 +205,18 @@ COUNTED_WRITING_STATES = {
 }
 
 
-# --- The counters of section 7 -------------------------------------------
 
 @dataclass(frozen=True)
 class CounterCeilingRule:
-    """One row of section 7's table.
-
-    `ceiling` is the design's number. `at_ceiling_from_value` is the
-    counter value at which section 3.2's guard "the counter at its ceiling"
-    holds, taken from the row's own words in the "Ceiling" column: "a third
-    entry is refused" and "the third write" put it at the ceiling itself;
-    "one revision: the user is called after the original and one
-    contract-revision have both failed review, and no second is written"
-    (and the same for test-design-corrections) puts it one below
-    (user-ruled 2026-09-08, the seventh walk, item 2).
-    """
+    """A counter ceiling and the value at which the ceiling guard applies."""
+    # Revision counters stop one below the stated ceiling: the original and one revision exhaust the allowance.
     name: str
     increments_when: str
     ceiling: int
     at_ceiling_from_value: int
     at_the_ceiling: str
     per_design_version: bool = True
-    # Section 7 after the eighth walk (item 6, user-ruled 2026-09-09): a
-    # write the user's discuss forces is counted like any other and may
-    # take the two write counters past their ceiling, which the ceiling
-    # guards then read as "at or above". No other counter goes past.
+    # User discussion can force counted writes past the ceiling; only the two write counters allow this.
     may_be_taken_past_its_ceiling_by_the_users_discuss: bool = False
 
 
@@ -331,23 +271,13 @@ COUNTER_TABLE = (
 COUNTER_TABLE_BY_NAME = {rule.name: rule for rule in COUNTER_TABLE}
 COUNTER_NAMES = tuple(rule.name for rule in COUNTER_TABLE)
 
-# Section 7's counters that are charged when a state is ENTERED, not by a
-# row of section 3.2: the rows say "on entry" for these (and, for the
-# arbitrator, section 6.5 says every entry).
 COUNTER_CHARGED_ON_ENTRY = {
     TEST_SUITE_ARBITRATING: "arbitrator-rulings",
-    # redesigns: only when entered from investigate-workflow; the machine
-    # checks the previous state.
+    # Count redesigns only when entered from investigate-workflow.
     DESIGN_WRITING: "redesigns",
 }
 
-# The three buckets (section 7, first paragraph): a write that is thrown
-# out is counted by why it was thrown out. Keyed by why a writing state was
-# re-entered; the value names whose counter that write spends. "the
-# writer's counter" is the writing state's own (COUNTED_WRITING_STATES)
-# and is charged when the write is emitted; the other two were charged
-# already, on the arbitrator's entry or on the document's re-write, so the
-# emitted write charges nothing.
+# Charge emitted writes by re-entry reason; arbitrator and document-rewrite buckets were already charged upstream.
 BUCKET_FAILED_REVIEW = "failed-review"
 BUCKET_ARBITRATOR_RULED = "arbitrator-ruled"
 BUCKET_UPSTREAM_DOCUMENT_CHANGED = "upstream-document-changed"
@@ -358,7 +288,6 @@ DISCARDED_WRITE_BUCKETS = {
     BUCKET_UPSTREAM_DOCUMENT_CHANGED: "that document's counter, and nothing else",
 }
 
-# Why a writing state was entered -> the bucket its write is charged to.
 ENTRY_REASON_FIRST_WRITE = "first-write"
 ENTRY_REASON_REJECT_FROM_REVIEW = "reject-from-review"
 ENTRY_REASON_DISCUSS_BY_USER = "discuss-by-user"
@@ -369,36 +298,26 @@ ENTRY_REASON_REDESIGN = "redesign"
 ENTRY_REASON_USER_NAMED_DESTINATION = "user-named-destination"
 
 WRITING_STATE_ENTRY_REASON_TO_BUCKET = {
-    ENTRY_REASON_FIRST_WRITE: BUCKET_FAILED_REVIEW,            # "or as the first write"
+    ENTRY_REASON_FIRST_WRITE: BUCKET_FAILED_REVIEW,
     ENTRY_REASON_REJECT_FROM_REVIEW: BUCKET_FAILED_REVIEW,
-    ENTRY_REASON_DISCUSS_BY_USER: BUCKET_FAILED_REVIEW,        # "counted like any other"
+    ENTRY_REASON_DISCUSS_BY_USER: BUCKET_FAILED_REVIEW,
     ENTRY_REASON_ARBITRATOR_RULING: BUCKET_ARBITRATOR_RULED,
     ENTRY_REASON_CONTRACT_REVISION: BUCKET_UPSTREAM_DOCUMENT_CHANGED,
     ENTRY_REASON_TEST_DESIGN_CORRECTION: BUCKET_UPSTREAM_DOCUMENT_CHANGED,
     ENTRY_REASON_REDESIGN: BUCKET_UPSTREAM_DOCUMENT_CHANGED,
-    # The user naming a writing state on resume is his own time: uncounted
-    # (user-ruled 2026-09-08, the seventh walk, item 8, kept as built).
+    # A writing state selected by the user on resume is uncounted.
     ENTRY_REASON_USER_NAMED_DESTINATION: BUCKET_UPSTREAM_DOCUMENT_CHANGED,
 }
 
 
-# --- The transitions of section 3.2 --------------------------------------
 
-# Destination markers that are not plain state names.
 TO_HOLD_READY_FOR_TEST_SUITE = "hold at ready-for-test-suite"
 TO_BOTH_WORK_STREAMS_RE_ENTER = "both work-streams re-enter their writing states"
 TO_RESUME_DESTINATION = "the resume destination (section 6.6)"
-# A resume destination that is not a state: from the investigation the
-# arbitrator's third entry opened (row 65), a resume that names no
-# destination applies the ruling the arbitrator held in its report,
-# routed through test-suite-arbitrating's rows without entering it.
+# A resume without a destination applies the held ruling without re-entering the arbitrator.
 TO_APPLY_THE_HELD_RULING = "the ruling the arbitrator held in its report (section 6.6)"
-# The two names of section 3.1 a resume may not name (section 6.1).
 RESUME_MAY_NOT_NAME = (ENDED, INITIATE_DESIGN_TO_MAIN)
-# The rulings a resume from that investigation may carry as `held-ruling`
-# (section 6.6): the arbitrator's six, never escalate-to-user, since the
-# arbitrator is already talking to the user (user-ruled 2026-09-09, the
-# eighth walk, item 5).
+# A held ruling cannot escalate: the arbitrator is already consulting the user.
 HELD_RULINGS_A_RESUME_MAY_CARRY = (
     V_REJECT_IMPLEMENTATION, V_REJECT_TESTS, V_REJECT_IMPLEMENTATION_AND_TESTS,
     V_FLAKY_TEST, V_REJECT_CONTRACT, V_ADVANCE)
@@ -406,16 +325,10 @@ TO_RETRY_SAME_STATE = "the same state (retry)"
 TO_THE_NEXT_ACCEPTANCE_CHECK = "the state's next acceptance-check, in the order section 3.1 lists"
 TO_THE_WRITER_THE_VERDICT_NAMES = "that writer anyway, fresh"
 TO_BOTH_WRITERS_FRESH = "both writers, fresh"
-# Row 60: the arbitrator, entered from a reviewer's ceiling, advances —
-# the reviewer was wrong (section 6.5), and the artifact continues as if
-# that reviewer had advanced it: the machine routes an `advance` from the
-# sub-state whose reject entered test-suite-arbitrating, by that reviewing
-# state's own rows.
+# An arbitrator advance overturns the rejecting reviewer and follows that reviewer's advance route.
 TO_WHEREVER_THAT_REVIEWING_STATES_ADVANCE_GOES = (
     "wherever that reviewing state's own advance goes")
 
-# Guard words. Each is a phrase of the design; the machine holds one
-# predicate per phrase (GUARD_PREDICATES in design-to-main-state-machine.py).
 G_FROM_PROGRAM_CHECK = "from the program check"
 G_FIRST_TIME = "first time"
 G_SECOND_CONSECUTIVE_TIME = "second consecutive time"
@@ -446,25 +359,14 @@ G_IMPLEMENTATION_WORK_STREAM_READY = "the implementation-work-stream at ready-fo
 G_IMPLEMENTATION_WORK_STREAM_NOT_READY = "the implementation-work-stream not yet there"
 G_COULD_NOT_RUN_FIRST = "the first of consecutive entries"
 G_COULD_NOT_RUN_SECOND = "the second consecutive"
-# Row 60 reads why test-suite-arbitrating was entered — the state or
-# sub-state whose state-exit entered it, recorded in the run-state
-# (section 9, "why each state was entered"). Entered on a failed suite or
-# a could-not-run, the arbitrator's advance has no row: a suite that
-# failed is never advanced because a run of it passed (section 6.5;
-# user-ruled 2026-09-14, the tenth walk, item 16).
+# An advance is valid only after a reviewer ceiling, never after a failed or unrun suite.
 G_ENTERED_FROM_A_REVIEWERS_CEILING = "entered from a reviewer's ceiling"
-# Rows 35 to 37 (user-ruled 2026-09-14, the tenth walk, item 7): the
-# test-design reviewer's reject is uncounted before the test-design's
-# approval and a test-design-correction after it (section 7).
+# Test-design rejection is uncounted before approval and a test-design-correction afterward.
 G_BEFORE_THE_TEST_DESIGNS_APPROVAL = "before the test-design's approval"
 G_AFTER_THE_TEST_DESIGNS_APPROVAL = "after the test-design's approval"
 G_WRITERS_COUNTER_BELOW_CEILING = "the writer's counter below its ceiling"
 G_WRITERS_COUNTER_AT_OR_ABOVE_CEILING = "the writer's counter at or above its ceiling"
-# Row 63 reads the writer's counter and nothing else: arbitrator-rulings is
-# charged on entry and bounds the arbitrator's entries (row 65 opens the
-# investigation on the third), and past the ceilings every further cycle
-# is gated by the user's resume (section 7; user-ruled 2026-09-09, the
-# eighth walk, item 5).
+# The reject route reads only the writer's counter; arbitrator entries are bounded separately.
 G_FOCUS_NAMED_DESIGN_OR_TEST_DESIGN = "investigation-focus design or test-design as the agent names it"
 G_FOCUS_NOT_NAMED = "no investigation-focus named by the agent"
 G_ENTERED_FOR_THE_THIRD_TIME_IN_THE_DESIGN_VERSION = (
@@ -489,26 +391,16 @@ def counter_at_ceiling(name):
 
 
 def counter_at_or_above_ceiling(name):
-    """The write counters' ceiling guard (section 3.2, rows 28 and 50; the
-    eighth walk, item 6): the same predicate as counter_at_ceiling — the
-    machine reads every ceiling as ">=" — under the design's words for
-    the two counters a discuss may take past their ceiling."""
+    # The design uses a separate name for write ceilings because a user discussion can force writes past them.
     return "the %s counter at or above its ceiling" % name
 
 
-# The views of section 3.3 a row is drawn in (user-ruled 2026-09-16, the
-# walk design-tables-checker-findings-from-pr-409, item 4), in the order
-# section 3.3 shows them; design-to-main-state-diagram-generator.py draws
-# each view from the rows that name it.
-# The edges a run takes when every state advances, invocation to ended.
+# Diagram views retain the design's display order.
 DIAGRAM_VIEW_MAIN_PATH = "main-path"
-# Each writer and its reviewer's rejections, the ceilings to the arbitrator, its rulings, and the return to the suite.
 DIAGRAM_VIEW_REWORK_AND_ARBITRATION = "rework-and-arbitration"
-# Every way into investigate-workflow and every way out of it.
 DIAGRAM_VIEW_INVESTIGATION = "investigation"
-# The acceptance-checks of each reviewing state, and every edge that ends at one.
 DIAGRAM_VIEW_INSIDE_THE_REVIEWING_STATES = "inside-the-reviewing-states"
-# A row section 3.3 does not draw: a retry loop, the user's discuss return, row 60.
+# Retry loops, user discussion returns, and arbitrator advances are omitted from the diagrams.
 DIAGRAM_VIEW_NOT_DRAWN = "not-drawn"
 DIAGRAM_VIEWS_DRAWN = (
     DIAGRAM_VIEW_MAIN_PATH, DIAGRAM_VIEW_REWORK_AND_ARBITRATION,
@@ -517,7 +409,7 @@ DIAGRAM_VIEWS_DRAWN = (
 
 @dataclass(frozen=True)
 class TransitionTableRow:
-    """One row of section 3.2."""
+    """A transition with its guard, destination, counter effect, and diagram view."""
     row: str
     from_states: Tuple[str, ...]
     verdicts: Tuple[str, ...]
@@ -529,7 +421,6 @@ class TransitionTableRow:
     outcome: Optional[str] = None
     source: str = "3.2"
     note: str = ""
-    # Section 3.3's view that draws the row: one of DIAGRAM_VIEWS_DRAWN, or DIAGRAM_VIEW_NOT_DRAWN.
     view: Optional[str] = None
 
 
@@ -603,12 +494,7 @@ TRANSITION_TABLE = (
          (G_FROM_DESIGN_ACCEPTANCE_BY_AGENT, counter_at_ceiling("design-revisions")),
          DESIGN_WRITING, note="the same initiator brings the user into the conversation",
          view=DIAGRAM_VIEW_REWORK_AND_ARBITRATION),
-    # Row 16 says "any reviewing state". contract-reviewing is left out
-    # because its checks are the design's own rows: the program check's
-    # advance is row 5 or 6, and the agent check's advance on a revision
-    # is row 9 whatever the revisions counter reads — the user's check is
-    # reached only by a reject (rows 8 and 67), never by an advance
-    # (section 6.6: the ceiling guarantees a FAILED revision reaches him).
+    # Contract-reviewing has separate routes: only rejection at the revision ceiling reaches the user check.
     _row("16", (DESIGN_REVIEWING, IMPLEMENTATION_REVIEWING,
                 TEST_DESIGN_REVIEWING, TEST_REVIEWING),
          V_ADVANCE, (G_FROM_AN_EARLIER_ACCEPTANCE_CHECK,), TO_THE_NEXT_ACCEPTANCE_CHECK,
@@ -800,9 +686,7 @@ TRANSITION_TABLE = (
          note="both artifacts contradicting the design-contract; the "
               "implementation-work-stream runs first (section 3.1)",
          view=DIAGRAM_VIEW_REWORK_AND_ARBITRATION),
-    # Row 65 has no verdict: it is applied when test-suite-arbitrating is
-    # ENTERED with arbitrator-rulings at its ceiling (the machine's enter()),
-    # before any arbitrator is launched there. Its guard is the entry check.
+    # Apply this ceiling on entry, before launching the arbitrator; no verdict is required.
     _row("65", TEST_SUITE_ARBITRATING, (),
          (G_ENTERED_FOR_THE_THIRD_TIME_IN_THE_DESIGN_VERSION,), INVESTIGATE_WORKFLOW,
          investigation_focus=FOCUS_UNKNOWN,
@@ -873,39 +757,29 @@ TRANSITION_TABLE = (
 
 TRANSITION_TABLE_BY_ROW = {row.row: row for row in TRANSITION_TABLE}
 
-# The rows the machine applies by number, beyond the row's own destination
-# and counter: named here so that the machine never carries a bare number
-# that the design's next renumbering would silently mis-aim.
-ROW_TOPIC_BRANCH_CUT = "1"                        # row 1 cuts the topic branch first
-ROW_DESIGN_APPROVED = "18"                        # sets design-approved; enters implementation-writing
-ROW_TESTS_BEGIN = "24"                            # sets tests-begun; enters test-design-writing
-ROW_IMPLEMENTATION_TO_TEST_SUITE = "25"           # the implementation-work-stream is ready
-ROW_TEST_DESIGN_APPROVED = "41"                   # sets test-design-approved; enters test-writing
-ROW_TESTS_TO_TEST_SUITE = "47"                    # the test-work-stream is ready
-ROW_THE_ARBITRATORS_THIRD_ENTRY = "65"            # applied on entry, no verdict
-ROW_REDESIGN_ORDERED_AT_THE_CONTRACT_CHECK = "11"  # the investigation holds design-writing
+# Name rows used by the machine so design renumbering cannot silently redirect special handling.
+ROW_TOPIC_BRANCH_CUT = "1"
+ROW_DESIGN_APPROVED = "18"
+ROW_TESTS_BEGIN = "24"
+ROW_IMPLEMENTATION_TO_TEST_SUITE = "25"
+ROW_TEST_DESIGN_APPROVED = "41"
+ROW_TESTS_TO_TEST_SUITE = "47"
+ROW_THE_ARBITRATORS_THIRD_ENTRY = "65"
+ROW_REDESIGN_ORDERED_AT_THE_CONTRACT_CHECK = "11"
 for _row_number in (ROW_TOPIC_BRANCH_CUT, ROW_DESIGN_APPROVED, ROW_TESTS_BEGIN,
                     ROW_IMPLEMENTATION_TO_TEST_SUITE, ROW_TEST_DESIGN_APPROVED,
                     ROW_TESTS_TO_TEST_SUITE, ROW_THE_ARBITRATORS_THIRD_ENTRY,
                     ROW_REDESIGN_ORDERED_AT_THE_CONTRACT_CHECK):
     assert _row_number in TRANSITION_TABLE_BY_ROW, _row_number
 
-# The design's own row numbers (source 3.2), for the coverage assertion in
-# the transitions test: every one must be hit by a legality case.
 DESIGN_TRANSITION_ROWS = tuple(row.row for row in TRANSITION_TABLE if row.source == "3.2")
 
 
-# --- The paths of section 9 ----------------------------------------------
 
-# Before code exists, the design is its issue's GHI-MD, refined in place, and
-# the design-contract sits beside it (user-ruled 2026-09-18); the
-# invocation names the GHI-MD. When code starts both move into the
-# component's directory as <component>-design.md and <component>-contract.md.
+# Before code exists, refine the design in its issue document with the contract beside it; move both when code starts.
 
 def contract_path_beside_design(design_path):
-    """The design-contract's path while no code exists: beside the design,
-    named like it, with `-design.md` (or plain `.md`) replaced by
-    `-contract.md`."""
+    """Return the contract path beside the design before the component has code."""
     stem = design_path[:-len(".md")] if design_path.endswith(".md") else design_path
     if stem.endswith("-design"):
         stem = stem[:-len("-design")]
@@ -913,28 +787,18 @@ def contract_path_beside_design(design_path):
 
 
 RECORD_DIRECTORY_NAME = "design-to-main-record"
-# The `Write:` trailer of a write the writer's counter does not count — one
-# forced by an upstream change or ordered by the arbitrator (section 9).
+# Forced writes do not spend the writer's counter.
 WRITE_TRAILER_FORCED = "forced"
 RUN_STATE_FILE_NAME = "run-state.json"
 USER_RULINGS_FILE_NAME = "user-rulings.md"
-# `<record>/evidence/<state or sub-state>-<n>/`, for the nth instance of
-# that state or sub-state counted from 1 (`implementation-writing-1` is
-# the first), holding the instance's notes and its state-exit (section 9;
-# user-ruled 2026-09-08, the eighth walk, item 3).
+# Evidence instance numbers start at one and span the run.
 EVIDENCE_DIRECTORY_NAME = "evidence"
 NOTES_FILE_NAME = "notes.md"
 STATE_EXIT_FILE_NAME = "state-exit.json"
-# `<record>/reports/investigation-<n>.md`, each investigation report, `<n>`
-# the count of the investigate-workflow instance that wrote it, counted as
-# the evidence directory counts (section 9; user-ruled 2026-09-14, the
-# tenth walk, item 17).
+# Report numbers use the investigation instance count.
 INVESTIGATION_REPORTS_DIRECTORY_NAME = "reports"
 INVESTIGATION_REPORT_FILE_NAME_FORMAT = "investigation-%d.md"
 
-# The fields of state-exit.json (section 2), spelled with hyphens, mapped
-# to StateExitRecord's fields (design-to-main-state-machine.py). The
-# reader is state_exit_record_from_json_file there.
 STATE_EXIT_JSON_FIELDS = {
     "state": "state",
     "verdict": "verdict",
@@ -942,19 +806,15 @@ STATE_EXIT_JSON_FIELDS = {
     "destination": "destination",
     "input-named": "input_named",
     "investigation-focus": "investigation_focus",
-    "coverage-type": "coverage_types",       # a comma-separated string: every type in the set
+    "coverage-type": "coverage_types",       # comma-separated coverage types
     "refusal-class": "refusal_class",
     "held-ruling": "held_ruling",
-    "named-files": "named_files",            # a list, always written (section 2)
-    "rulings": "rulings",                    # a list, the user's words verbatim
+    "named-files": "named_files",
+    "rulings": "rulings",                    # the user's words verbatim
 }
-# `named-files` is always written, an empty list when the agent produced
-# no artifact, so an absent field is a malformed state-exit (section 2;
-# user-ruled 2026-09-14, the tenth walk, item 3).
+# named-files must be present even when empty; omission makes the state-exit malformed.
 STATE_EXIT_JSON_FIELDS_REQUIRED = ("state", "verdict", "package-commit", "named-files")
 
-# On `resume`, the earliest state downstream of what the user changed
-# (section 6.6), in the order the design lists the documents.
 RESUME_DESTINATION_BY_EDITED_DOCUMENT = (
     ("design", DESIGN_WRITING),
     ("design-contract", CONTRACT_REVIEWING),

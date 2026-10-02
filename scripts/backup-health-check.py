@@ -32,9 +32,7 @@ Exit code is 0 when healthy and 1 when any check fails, so a caller can branch o
 it without parsing the text.
 """
 
-# The status line loads this module, and the status line has to survive a Mac's
-# Xcode-provided python3, which is still 3.9. Deferring annotations keeps both
-# running from 3.7 up; see the same note in session-statusline-command.py.
+# The status line imports this module under the Mac's system Python 3.9.
 from __future__ import annotations
 
 import argparse
@@ -44,7 +42,6 @@ import sys
 import time
 from pathlib import Path
 
-# Overridable so the test can build a fake layout in a temporary directory.
 BACKUP_MOUNT = Path(os.environ.get("NEDSCHORUS_BACKUP_MOUNT", "/mnt/backup"))
 TIMESHIFT_LOG_DIRECTORY = Path(
     os.environ.get("NEDSCHORUS_TIMESHIFT_LOG_DIRECTORY", "/var/log/timeshift"))
@@ -52,18 +49,15 @@ TIMESHIFT_SNAPSHOT_DIRECTORY = Path(
     os.environ.get("NEDSCHORUS_TIMESHIFT_SNAPSHOT_DIRECTORY",
                    "/mnt/backup/timeshift/snapshots"))
 
-# Hourly snapshots run at :00. Ninety minutes is one interval plus half again,
-# so a single late or slow run does not raise an alarm but a stopped scheduler
-# does within two cycles.
+# Allow a late hourly run without hiding a stopped scheduler beyond two cycles.
 MAXIMUM_LOG_AGE_SECONDS = 90 * 60
 
-# Three hours exceeds the hourly interval by enough to absorb the legitimate
-# skip described above, where a manual snapshot has taken the H tag.
+# Manual snapshots can take the hourly tag and legitimately delay the next scheduled snapshot.
 MAXIMUM_SNAPSHOT_AGE_SECONDS = 3 * 60 * 60
 
 
 def format_age(seconds: float) -> str:
-    """Compact and unambiguous: 47m, 4h12m, 3d4h."""
+    """Format an age compactly, such as 47m or 4h12m."""
     seconds = max(0, int(seconds))
     minutes, hours = seconds // 60, seconds // 3600
     if hours < 1:
@@ -75,12 +69,8 @@ def format_age(seconds: float) -> str:
 
 
 def is_mounted(path: Path) -> bool:
-    """A separate device is mounted there, rather than an empty stand-in directory.
-
-    os.path.ismount is the right test: when the drive is absent, /mnt/backup
-    still exists as an ordinary directory on the root filesystem, so existence
-    proves nothing.
-    """
+    """Return whether a device is mounted at the path."""
+    # The backup directory still exists when the drive is absent.
     try:
         return os.path.ismount(path)
     except OSError:
@@ -88,7 +78,7 @@ def is_mounted(path: Path) -> bool:
 
 
 def newest_run_log_age(log_directory: Path):
-    """Seconds since Timeshift last ran at all, or None if it has never run here."""
+    """Return seconds since the newest run log, or None if unavailable."""
     try:
         stamps = [entry.stat().st_mtime for entry in log_directory.iterdir()
                   if entry.is_file()]
@@ -100,14 +90,8 @@ def newest_run_log_age(log_directory: Path):
 
 
 def newest_scheduled_snapshot_age(snapshot_directory: Path):
-    """Seconds since the newest *scheduled* snapshot, or None if there is none.
-
-    On-demand snapshots are excluded unless they also carry a scheduled tag,
-    because a person taking one by hand says nothing about whether the schedule
-    is working — which is the entire question here. Directory names sort
-    chronologically, so the newest scheduled snapshot is usually the first or
-    second entry examined.
-    """
+    """Return seconds since the newest scheduled snapshot, or None."""
+    # A purely on-demand snapshot says nothing about scheduler health.
     try:
         entries = sorted((entry for entry in snapshot_directory.iterdir()
                           if entry.is_dir()), reverse=True)
@@ -131,12 +115,8 @@ def newest_scheduled_snapshot_age(snapshot_directory: Path):
 
 
 def diagnose():
-    """Return (headline, detail_lines). headline is None when everything is healthy."""
-    # Timeshift runs only on ned-box. On any other machine every check below
-    # fails forever (/mnt/backup is never a mount there), so a Mac would show a
-    # permanent false alarm; other platforms report healthy silence instead.
-    # The env override marks a simulated tree (the test suite), which is
-    # diagnosed regardless of platform.
+    """Return (headline, detail lines), with headline None when healthy."""
+    # Timeshift runs only on ned-box; the environment override permits simulated layouts elsewhere.
     if sys.platform != "linux" and "NEDSCHORUS_BACKUP_MOUNT" not in os.environ:
         return None, []
 

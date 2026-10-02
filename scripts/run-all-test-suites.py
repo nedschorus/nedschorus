@@ -387,17 +387,13 @@ from pathlib import Path
 PROGRAM = "run-all-test-suites"
 
 TEST_SUITE_PATHSPEC = "*-test.py"
-# A shell suite runs under sh and keeps no recording of its inputs: the
-# recorder is a Python audit hook, which never sees what sh reads, and
-# without strace (the Mac has none) a recording of a shell suite would hold
-# nothing but the suite file, so an unchanged suite would wrongly go NOT
-# SELECTED. With no recording, every selective run selects it.
+# Python audit hooks cannot see shell reads; without strace, a shell recording
+# would miss inputs. Leave shell suites unrecorded so selection always runs them.
 SHELL_TEST_SUITE_PATHSPEC = "*-test.sh"
 SKIPPED_CASE_LINE = re.compile(r"^SKIP\s")
 
-# Stripped from the environment each suite is launched with; the docstring
-# says what each one was measured to do, and why GIT_NAMESPACE and
-# GIT_CEILING_DIRECTORIES are deliberately not here.
+# Git redirection variables can send scratch-repository writes into a live repository.
+# Keep GIT_CEILING_DIRECTORIES: removing it widens repository discovery.
 GIT_REDIRECTING_ENVIRONMENT_VARIABLES = (
     "GIT_DIR",
     "GIT_WORK_TREE",
@@ -410,47 +406,32 @@ GIT_REDIRECTING_ENVIRONMENT_VARIABLES = (
 DEFAULT_LOCK_FILE = Path.home() / ".claude" / ".run-all-test-suites.lock"
 REPORT_FILE_NAME = "report.txt"
 
-# Recorded inputs; the docstring's RECORDED INPUTS and SELECTION say how
-# each piece is used.
 DEFAULT_RECORDED_INPUTS_DIRECTORY = (
     Path.home() / ".cache" / "nedschorus-test-suite-recorded-inputs")
-# Raised whenever what a recording holds changes, so an older recording is
-# never read as a newer one: its suite runs, and is recorded afresh.
+# Bump when the recording format changes so older recordings trigger a fresh run.
 RECORDED_INPUTS_FORMAT_VERSION = 3
 RECORDED_INPUTS_LOG_VARIABLE = "RUN_ALL_TEST_SUITES_RECORDED_INPUTS_LOG"
 RECORDED_INPUTS_CHECKOUT_VARIABLE = "RUN_ALL_TEST_SUITES_RECORDED_INPUTS_CHECKOUT"
-# Its presence marks a directory as holding this program's recorder, so a
-# recorder chaining to the sitecustomize.py it shadows skips every recorder
-# directory — a run inside a run has two on its PYTHONPATH.
+# Nested runs put multiple recorders on PYTHONPATH; skip all when chaining sitecustomize.
 PYTHON_INPUT_RECORDER_MARKER_FILE_NAME = "run-all-test-suites-python-input-recorder"
 PYTHON_INPUT_RECORDER_METHOD = "python-audit-hook"
 STRACE_INPUT_RECORDER_METHOD = "strace"
-# A change to any of these reaches every suite: this program holds the
-# recorder and launches each suite, and the hooks and settings shape every
-# session a suite may start.
+# The runner, hooks and settings can affect every suite or session a suite starts.
 EVERY_SUITE_RUNS_WHEN_THESE_CHANGE = (
     "scripts/run-all-test-suites.py", ".claude/hooks/", ".claude/settings.json")
-# Git commands that read the checkout's list of files or its history, never
-# the contents of its files; any other git command run on the checkout is
-# taken to read contents no recorder can see — strace sees git open a
-# working file, but not a file's content read from the object store, as
-# `git show HEAD:<path>` reads it. `status` is not here: it reads a working
-# file whose timestamps no longer match the index, to tell whether it changed.
+# Object-store content reads evade recorders; only metadata-only commands belong here.
+# status is excluded because stale timestamps can make it read working files.
 GIT_COMMANDS_THAT_ONLY_LIST = frozenset((
     "ls-files", "ls-tree", "rev-parse", "rev-list", "log", "branch", "config",
     "remote", "worktree", "for-each-ref", "symbolic-ref", "merge-base",
     "describe", "show-ref", "check-ignore", "var", "version", "fetch", "init"))
-# These say where the checkout and its git directory are, from the current
-# directory and the repository's location alone, without reading a file of
-# the checkout.
+# These options read repository location, not checkout files.
 GIT_REV_PARSE_OPTIONS_THAT_SEE_NO_FILE = frozenset((
     "--show-toplevel", "--git-dir", "--absolute-git-dir", "--git-common-dir",
     "--is-inside-work-tree", "--show-prefix"))
-# A single-key config read answers from the git directory or the user's home,
-# rather than from a file of the checkout.
+# Single-key config reads use the git directory or home, not checkout files.
 GIT_CONFIG_OPTIONS_THAT_READ_ONE_KEY = ("--get", "--get-all")
-# These read objects, refs and configuration without using the current
-# directory as a work tree; `worktree list` does the same.
+# These commands do not treat the current directory as a work tree.
 GIT_COMMANDS_THAT_READ_NO_WORK_TREE = frozenset((
     "rev-parse", "log", "show", "cat-file", "for-each-ref", "config"))
 GIT_CALL_SEES_NO_FILE = "sees no file"
@@ -459,9 +440,7 @@ GIT_CALL_READS_THE_CHECKOUT = "reads the checkout"
 PYCACHE_FILE = re.compile(
     r"^(?P<directory>(?:.*/)?)__pycache__/(?P<stem>[^/]+?)\.[^/.]+(?:\.opt-\d)?\.pyc$")
 
-# The recorder each suite's Python processes load at startup. Kept here, not
-# in a file of its own, so a change to it is a change to this program, which
-# runs every suite.
+# Keep the recorder here so editing it selects every suite.
 PYTHON_INPUT_RECORDER_SOURCE = r'''
 import os as _os
 import sys as _sys
@@ -653,8 +632,6 @@ def _run_all_test_suites_run_the_shadowed_sitecustomize():
 _run_all_test_suites_run_the_shadowed_sitecustomize()
 '''
 
-# One line of `strace -y` output: the call, its arguments, and its result,
-# with the path of a returned file descriptor when -y knows it.
 STRACE_LINE = re.compile(
     r"^(?P<call>[a-z_0-9]+)\((?P<arguments>.*)\)\s+=\s+(?P<result>-?\d+|\?)"
     r"(?:<(?P<result_path>[^>]*)>)?")
@@ -699,8 +676,8 @@ def git_call_global_options_command_and_arguments(arguments):
 
 @functools.lru_cache(maxsize=None)
 def git_common_directory_of_checkout(top):
-    """Include the shared git directory so a linked worktree's own repository
-    is not mistaken for another repository outside its top directory."""
+    """Return the checkout repository's shared git directory."""
+    # A linked worktree's git directory can lie outside its top directory.
     answer = git(top, "rev-parse", "--git-common-dir")
     if answer.returncode != 0:
         return None
@@ -761,7 +738,7 @@ def what_a_git_call_run_from_the_checkout_reads(call, top, git_common_directory)
 
 
 def checkout_top_directory(given):
-    """The checkout's top directory, when `given` is it; otherwise a refusal."""
+    """Return the checkout top directory or refuse a non-top-level path."""
     answer = git(given, "rev-parse", "--show-toplevel")
     if answer.returncode != 0:
         raise CouldNotRun(
@@ -825,13 +802,8 @@ def commit_and_state(top):
 
 
 def take_machine_lock(lock_file, top):
-    """(the open, locked handle, None, what the lock's last holder wrote of
-    itself) when this run takes the lock; (None, the holder's description of
-    itself, None, None) when another run holds it.
-
-    Opened for append, so a run that loses the race never truncates the
-    holder's description of itself before reading it.
-    """
+    """Return (handle, refusal, previous holder), with None for unavailable fields."""
+    # Append mode preserves the holder's description when another run wins the lock.
     lock_file.parent.mkdir(parents=True, exist_ok=True)
     handle = open(lock_file, "a+")
     try:
@@ -852,20 +824,17 @@ def take_machine_lock(lock_file, top):
 
 
 def name_log_directory_in_lock(handle, log_dir):
-    """Adds the log directory to the holder's description, so the next run
-    to take the lock can find the traces this run leaves if it is killed."""
+    # The next lock holder needs the log directory to remove traces after a killed run.
     handle.seek(0)
     description = handle.read().rstrip("\n")
-    # Opened for append, so every write lands at the end: empty it first.
+    # Append mode ignores seek for writes; truncate before replacing the description.
     handle.truncate(0)
     handle.write(f"{description}, logs in {log_dir}\n")
     handle.flush()
 
 
 def remove_traces_the_last_lock_holder_left(previous_holder):
-    """A run killed by SIGKILL or SIGTERM never removes the strace directory
-    of the suites it was running; the next run to take the lock, which the
-    killed run can no longer hold, removes them. The removed directories."""
+    """Return the trace directories removed from the previous lock holder's logs."""
     named = re.search(r", logs in (?P<log_dir>[^\n]+)$", previous_holder.strip())
     if named is None:
         return []
@@ -876,8 +845,7 @@ def remove_traces_the_last_lock_holder_left(previous_holder):
 
 
 def log_path_for(log_dir, suite):
-    # The whole relative path, so two suites with one file name in
-    # different directories cannot overwrite each other's log.
+    # Include the relative path to distinguish suites with the same filename.
     return log_dir / (suite.replace("/", "__") + ".log")
 
 
@@ -890,9 +858,7 @@ def skipped_case_lines(log_file):
 
 
 def environment_without_git_redirecting_variables():
-    """This program's environment, less the variables that send a suite's git
-    commands into whatever repository the environment names. A fresh dict per
-    call, because suites are launched from several threads at once."""
+    # Use a fresh dict because suites launch concurrently.
     environment = dict(os.environ)
     for variable in GIT_REDIRECTING_ENVIRONMENT_VARIABLES:
         environment.pop(variable, None)
@@ -900,8 +866,8 @@ def environment_without_git_redirecting_variables():
 
 
 def being_traced():
-    """True when a tracer is attached to this process, which a second strace
-    could not attach beneath. Linux says so in /proc/self/status."""
+    """Return whether Linux reports an attached tracer."""
+    # A second strace cannot attach beneath an existing tracer.
     try:
         for line in Path("/proc/self/status").read_text().splitlines():
             if line.startswith("TracerPid:"):
@@ -912,8 +878,7 @@ def being_traced():
 
 
 def strace_usable():
-    """strace's path when it can record here, else None: Linux, installed,
-    this process not already traced, and a trial trace that succeeds."""
+    """Return the strace path if a trial trace succeeds, otherwise None."""
     if not sys.platform.startswith("linux") or being_traced():
         return None
     found = shutil.which("strace")
@@ -925,7 +890,7 @@ def strace_usable():
 
 
 def recording_paths_for(recording_dir, suite):
-    """(the audit hook's log, the directory strace writes one file per process into)."""
+    """Return (audit log path, strace directory)."""
     name = suite.replace("/", "__")
     return recording_dir / (name + ".hook"), recording_dir / (name + ".strace")
 
@@ -945,16 +910,13 @@ def is_shell_test_suite(suite):
 
 
 def run_one_suite(top, interpreter, suite, log_dir, recorder=None):
-    """Runs one suite; with `recorder` (the recorder directory, the recording
-    directory, and strace's path or None) its inputs are recorded as it runs."""
     log_file = log_path_for(log_dir, suite)
     environment = environment_without_git_redirecting_variables()
     command = ["sh", suite] if is_shell_test_suite(suite) else [interpreter, "-u", suite]
     if recorder is not None:
         recorder_dir, recording_dir, strace = recorder
         hook_log, strace_dir = recording_paths_for(recording_dir, suite)
-        # A --log-dir used before holds the last run's logs, and the hook
-        # appends: what an earlier run read must not be credited to this one.
+        # The audit hook appends; clear old logs so earlier reads do not count for this run.
         hook_log.unlink(missing_ok=True)
         shutil.rmtree(strace_dir, ignore_errors=True)
         environment["PYTHONPATH"] = os.pathsep.join(
@@ -1047,8 +1009,7 @@ def inside_git_directory(relative):
 
 
 def checkout_files(top):
-    """Every file on disk that git tracks, or would add because no ignore
-    rule covers it: the files selection compares."""
+    """Return tracked and nonignored untracked files currently on disk."""
     listed = git(top, "ls-files", "-z", "--cached", "--others", "--exclude-standard")
     if listed.returncode != 0:
         raise CouldNotRun(
@@ -1068,8 +1029,7 @@ def files_at_commit(top, commit):
 
 
 def directory_entries(files):
-    """{directory: the names directly inside it} for every directory holding
-    one of `files`; the top directory is ''."""
+    """Return directory-to-entry-name mappings; the top directory is the empty string."""
     entries = {}
     for path in files:
         parts = path.split("/")
@@ -1084,8 +1044,7 @@ def file_list_fingerprint(files):
 
 
 def recording_of(top, suite, result, recording_dir, files, commit, strace_used):
-    """What `suite` read, looked for, listed and ran git on, from both
-    recorders' logs; `files` is checkout_files() as the run began."""
+    """Return the suite's recorded files, path checks, directory listings and git calls."""
     hook_log, strace_dir = recording_paths_for(recording_dir, suite)
     touched, probed, listed, git_commands = {suite}, set(), set(), set()
     git_calls = {}
@@ -1133,10 +1092,8 @@ def recording_of(top, suite, result, recording_dir, files, commit, strace_used):
             if relative is not None:
                 touched.add(source_of_cached_bytecode(relative))
     entries = directory_entries(files)
-    # A path the suite opened or checked that is not there is kept, so the
-    # suite is selected when it is added. One that is there but ignored, a
-    # directory it only opened, and git's and the bytecode cache's own files
-    # are not selection's business.
+    # Retain missing paths so their creation selects the suite. Ignore existing
+    # untracked ignored paths, directory opens, git internals and bytecode caches.
     looked_for = {}
     for path in sorted(probed | (touched - files)):
         if path in files or path in entries:
@@ -1165,8 +1122,7 @@ def recording_of(top, suite, result, recording_dir, files, commit, strace_used):
 
 
 def recordings_directory_for(given, top):
-    """One directory per repository, named by its root commit, so every clone
-    and worktree of one repository shares its recordings."""
+    # Key by root commit so clones and worktrees share recordings.
     roots = git(top, "rev-list", "--max-parents=0", "HEAD").stdout.split()
     return Path(given).expanduser() / (min(roots)[:16] if roots else "no-commit")
 
@@ -1201,8 +1157,7 @@ def resolved_commit(top, given):
 
 
 def files_that_differ_since(top, commit):
-    """{path: 'A', 'M' or 'D'} for every file that differs between `commit`
-    and the checkout's files, untracked files git does not ignore as 'A'."""
+    """Return path-to-A/M/D changes, including nonignored untracked files as additions."""
     differ = {}
     diff = git(top, "diff", "--no-renames", "--name-status", "-z", commit)
     if diff.returncode != 0:
@@ -1220,9 +1175,7 @@ def files_that_differ_since(top, commit):
 
 
 class CheckoutComparedWithCommit:
-    """What selection compares a recording with: the files that differ since
-    COMMIT, the files at COMMIT and in the checkout with the directories
-    holding them, and the checkout's blob hash of every file a recording read."""
+    """Checkout and commit facts used to compare recorded suite inputs."""
 
     def __init__(self, top, commit, differ, recordings):
         self.differ = differ
@@ -1251,10 +1204,8 @@ def added_or_deleted_name(before, after):
 
 
 def selection_reason(suite, recording, checkout, commit):
-    """(selected, why) for one suite. A suite is NOT SELECTED only when
-    everything its recording saw is the same at COMMIT, in the recording and
-    in the checkout: the recording may come from another branch, because
-    every clone and worktree on a machine shares the store."""
+    """Return (selected, reason) for one suite."""
+    # Recordings are shared across branches; compare both against COMMIT and the recording.
     short, differ = commit[:12], checkout.differ
     if recording is None:
         return True, "no recording of its inputs on this machine yet"
@@ -1263,8 +1214,7 @@ def selection_reason(suite, recording, checkout, commit):
         return True, "its recording was made by an older version of this program"
     exit_code = recording.get("exit")
     if exit_code != 0:
-        # A run that failed, or was killed or interrupted partway, recorded
-        # only what it read before it stopped.
+        # An unsuccessful run recorded only the inputs reached before it stopped.
         return True, ("its last recorded run did not pass: "
                       + (describe_exit(exit_code) if isinstance(exit_code, int)
                          else "no exit code recorded"))
@@ -1273,7 +1223,6 @@ def selection_reason(suite, recording, checkout, commit):
     reads, looked_for = recording["reads"], recording["looked_for"]
     lists, git_commands = recording["lists"], recording["git_commands_on_the_checkout"]
 
-    # Between COMMIT and the checkout.
     changed_reads = [path for path in reads if path in differ]
     if changed_reads:
         more = f" and {len(changed_reads) - 1} more" if len(changed_reads) > 1 else ""
@@ -1300,7 +1249,6 @@ def selection_reason(suite, recording, checkout, commit):
         return True, (f"it runs git {', '.join(reading)} on the checkout, which reads "
                       f"files no recorder here saw, and {sorted(differ)[0]} differs")
 
-    # Between the recording and the checkout.
     stale = [path for path, blob in reads.items()
              if checkout.hashes_now.get(path, "not in the checkout") != blob]
     if stale:
@@ -1479,7 +1427,7 @@ def main(argv=None):
                 save_recording(recordings_dir, recording_of(
                     top, suite, result, recording_dir, files, commit, strace is not None))
             except OSError as error:
-                # The earlier recording must not stand in for this run.
+                # A failed save must not leave the previous run's recording usable.
                 earlier = recording_file_for(recordings_dir, suite)
                 try:
                     earlier.unlink(missing_ok=True)
@@ -1492,8 +1440,7 @@ def main(argv=None):
                     report.line(f"inputs of {suite} not recorded: {error}. Its earlier "
                                 f"recording is removed, so the next run with "
                                 f"--only-suites-whose-recorded-inputs-changed-since selects it.")
-            # strace writes hundreds of megabytes for the heaviest suites;
-            # once read into the recording, the trace is not kept.
+            # Raw strace logs can occupy hundreds of megabytes per suite.
             shutil.rmtree(recording_paths_for(recording_dir, suite)[1], ignore_errors=True)
             return result
 
