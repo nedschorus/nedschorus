@@ -16,7 +16,7 @@ The twenty ned-box session transcripts this file first pointed to are gone. Chec
 
 **Close condition:** the project starts (seat launched, work begun) or the user revokes the intention.
 
-Search receipt: `gh issue list --state all --limit 100 --search "nedsmessenger"` returned nothing before this issue was filed; the only prior written trace is one paragraph in `docs/issues/queue/45-ubuntu-fleet-open-work-inventory.md` (2026-08-13 snapshot).
+Search receipt: `gh issue list --state all --limit 100 --search "nedsmessenger"` returned nothing before this issue was filed; the only prior written trace is one paragraph in `nedlern@ned-box:/home/nedlern/nedschorus-logs/seats/cold-read-research/45-ubuntu-fleet-open-work-inventory-retired-from-issues-queue-2026-10-02.md` (2026-08-13 snapshot).
 
 
 **Correction (2026-08-17, same day; true until the stop on 2026-09-30, recorded below):** deferred does not mean fully dormant — the box runs a live component, `nm-adapter.service` ("nedsmessenger adapter, claude bot"), which connects as bot @ubuntu-claude, listens on :8066, and auto-restarts (journal restart counter 9 as of today). The future builder seat inherits this running service as part of the project's existing state; whether it should stay up during the deferral is the boss's call, not decided here.

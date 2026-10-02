@@ -263,7 +263,7 @@ eleven seconds apart, first lost unread. Residuals: handoffs written before PR
 [handoff: the agent name defaults to the seat's directory, and a foreign claim is refused](https://github.com/nedschorus/nedschorus/pull/72)
 carry no stamp; directory basenames are not globally unique across machines
 (machine-suffixed names deferred — rider 5 in
-`docs/issues/queue/45-session-seat-and-isolation-riders.md`). A seat's
+`nedlern@ned-box:/home/nedlern/nedschorus-logs/seats/cold-read-research/45-session-seat-and-isolation-riders-retired-from-issues-queue-2026-10-02.md`). A seat's
 *first* handoff is written by its provisioner from elsewhere, the guard
 correctly refuses, and `--claim` is the sanctioned path.
 
