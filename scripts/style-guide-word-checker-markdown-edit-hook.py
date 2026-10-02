@@ -191,6 +191,10 @@ def lines_added_by_structured_patch(tool_response):
             if hunk_line.startswith("+"):
                 added.add(new_line)
                 new_line += 1
+            elif hunk_line.startswith("\\"):
+                # "\ No newline at end of file" marks the line above it and
+                # is not a line of the file, so it moves no line number.
+                continue
             elif not hunk_line.startswith("-"):
                 new_line += 1
     return added

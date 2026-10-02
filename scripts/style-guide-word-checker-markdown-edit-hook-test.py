@@ -419,6 +419,28 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     check("a replace_all Edit reports only the occurrences it wrote, not one already there",
           hit_lines(result, "docs/committed.md") == [(3, "seat"), (5, "seat")],
           result.stdout + result.stderr)
+    # The older occurrence on the line directly before the added one: this
+    # case fails if the overlap range around an occurrence is widened by a
+    # line on either side, which every case above, with a blank line between,
+    # lets pass.
+    result = edit_file_then_run(checkout, committed_file,
+                                "The seat stays.\nLater: the chair.", "chair", "seat")
+    check("an older occurrence on the line next to the added one is not reported",
+          hit_lines(result, "docs/committed.md") == [(2, "seat")],
+          result.stdout + result.stderr)
+    # A file that ends without a newline: Claude Code's patch then carries a
+    # "\ No newline at end of file" line after the removed last line and
+    # after the added one, the shape of real Edit results on 2.1.285 and
+    # 2.1.287. The marker is not a line of the file and moves no line number.
+    committed_file.write_text("Intro.\nThe seat.", encoding="utf-8")
+    result = run_hook(edit_payload(
+        checkout, committed_file, "The chair.", "The seat.", structured_patch=[
+            {"oldStart": 1, "oldLines": 2, "newStart": 1, "newLines": 2,
+             "lines": [" Intro.", "-The chair.", "\\ No newline at end of file",
+                       "+The seat.", "\\ No newline at end of file"]}]))
+    check("an Edit of the last line of a file with no final newline is reported",
+          hit_lines(result, "docs/committed.md") == [(2, "seat")],
+          result.stdout + result.stderr)
 
     reset_committed_file()
     result = run_hook(edit_payload(checkout, committed_file, "x", "a walk the file never got"))
