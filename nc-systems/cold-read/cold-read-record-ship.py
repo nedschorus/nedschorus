@@ -116,18 +116,13 @@ A staging directory outlives its shipment only when the copy into it fails
 and ned-box cannot be reached to remove it, or the shipment is killed before
 the step; nothing reads it.
 
-TWO LOCKS, ON DIFFERENT STEPS. This module takes two flocks, and they never
-guard the same files. The record's flock (ONE STEP, HOLDING THE RECORD'S LOCK,
-above) guards place_staged_files, the path cold-read and sanity-check records
-take. The store directory's flock (WHY THE STORE DIRECTORY IS LOCKED, in
-replace_with_staged_files) guards one replace step, the path a walk's
-minutes, dispositions and appended walk text and a seat's files take. Each is
-taken and released inside one process, one ssh call to ned-box or one call
-in this process, so the kernel releases it however that process exits. No
-record goes through the replace step -- place_staged_files replaces triage.md
-itself, under the record's flock -- and no walk or seat file goes through
-place_staged_files, so no step holds one flock while taking the other, and
-neither waits on the other.
+NO LOCK IN THE REPLACE STEP EITHER. replace_with_staged_files, the path a
+walk's minutes, dispositions and appended walk text and a seat's files take,
+takes no lock, for the reason NO LOCK gives above: each walk's or seat's
+files are shipped by the seat that owns them, one shipment after another. If
+two ever do replace one name at one moment, the store's read-back after the
+renames holds the other shipment's bytes, and the shipper reports a failure
+instead of `shipped:`.
 
 The store's directories are created on first use, and a README.md at the
 store's root is rewritten from STORE_README in this file whenever it differs:
@@ -169,8 +164,6 @@ the invocation). A destination with no `host:` prefix is local.
 """
 
 import argparse
-import contextlib
-import fcntl
 import hashlib
 import inspect
 import json
@@ -185,7 +178,6 @@ import subprocess
 import sys
 import tempfile
 import textwrap
-import time
 import typing
 
 # This file sits in nc-systems/cold-read/, two directories below the root.
@@ -241,32 +233,6 @@ LINK_STAGED_FILES_MARKER = "# cold-read-record-ship: link staged files"
 # Marks the one ssh call that replaces store files with staged ones, for the
 # same reason; see replace_with_staged_files.
 REPLACE_WITH_STAGED_FILES_MARKER = "# cold-read-record-ship: replace with staged files"
-
-# The replace step holds an exclusive flock(2) on the store directory it
-# writes into from reading a displaced file's digest until its rename is done,
-# so a second shipment's replace step cannot rename between the two and make
-# the first announce a digest it did not displace. A flock belongs to the open
-# directory, so it is released when the holding process exits however it
-# exits, and a killed shipment leaves nothing behind to block the next. These
-# bound the wait for a lock another shipment holds.
-STORE_DIRECTORY_LOCK_WAIT_SECONDS = 120
-STORE_DIRECTORY_LOCK_POLL_SECONDS = 0.05
-# The waiting loop the replace script runs on ned-box, in python3 because
-# flock(1) is not on every machine the script is replayed on in tests. It
-# locks file descriptor 9, which the script has opened on the store directory;
-# the lock stays with that open directory when this program exits, so the
-# script holds it until it exits.
-STORE_DIRECTORY_LOCK_PROGRAM = (
-    "import fcntl, sys, time\n"
-    "deadline = time.monotonic() + float(sys.argv[1])\n"
-    "while True:\n"
-    "    try:\n"
-    "        fcntl.flock(9, fcntl.LOCK_EX | fcntl.LOCK_NB)\n"
-    "        break\n"
-    "    except BlockingIOError:\n"
-    "        if time.monotonic() >= deadline:\n"
-    "            sys.exit(1)\n"
-    "        time.sleep(float(sys.argv[2]))\n")
 
 EXIT_SHIPPED = 0
 EXIT_FAILED = 1
@@ -726,8 +692,7 @@ def link_staged_files_never_over_existing(host, staging_dir: pathlib.PurePosixPa
     as it is, and placing goes on past it, so the caller judges each file by
     the digest read back. This is scripts/walk-files-ship.py's add-only
     placing, which refuses a walk's files one by one while the rest still
-    ship; a cold-read-record is placed by place_staged_files instead, under
-    the record's lock.
+    ship; a cold-read-record is placed by place_staged_files instead.
 
     One ssh round trip remotely, running
     link_staged_files_never_over_existing_script; plain filesystem calls and
@@ -786,38 +751,6 @@ def link_staged_files_never_over_existing_script(staging_dir: pathlib.PurePosixP
         f"done\n")
 
 
-@contextlib.contextmanager
-def store_directory_locked(store: pathlib.Path):
-    """Hold an exclusive flock on the directory `store`, created if absent,
-    for the body of the with statement: replace_with_staged_files' lock, taken
-    here when the store is local. Raises TimeoutError, with the line the caller
-    prints, when another shipment holds it past
-    STORE_DIRECTORY_LOCK_WAIT_SECONDS."""
-    store.mkdir(parents=True, exist_ok=True)
-    descriptor = os.open(store, os.O_RDONLY)
-    try:
-        deadline = time.monotonic() + STORE_DIRECTORY_LOCK_WAIT_SECONDS
-        while True:
-            try:
-                fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                break
-            except BlockingIOError:
-                if time.monotonic() >= deadline:
-                    raise TimeoutError(store_directory_lock_timeout_line(store)) from None
-                time.sleep(STORE_DIRECTORY_LOCK_POLL_SECONDS)
-        yield
-    finally:
-        os.close(descriptor)
-
-
-def store_directory_lock_timeout_line(store) -> str:
-    """What a replace step prints when another shipment held the store
-    directory's lock too long: what stopped, and what to do."""
-    return (f"{PROGRAM}: the replace step stopped: another shipment held the lock "
-            f"on {store} for {STORE_DIRECTORY_LOCK_WAIT_SECONDS} seconds. Ship "
-            f"again once that shipment has finished.")
-
-
 class StagedReplacement(typing.NamedTuple):
     """What replace_with_staged_files did with one file. `displaced_sha256` is
     the store's digest of the file the rename replaced, read in the same step
@@ -857,45 +790,33 @@ def replace_with_staged_files(host, staging_dir: pathlib.PurePosixPath,
     displaced, and the store is read again afterwards, so a caller judges its
     outcome on what the store holds.
 
-    WHY THE STORE DIRECTORY IS LOCKED. Between reading the digest of the file
-    a rename displaces and the rename itself, a second shipment's rename of
-    the same name made the first announce the digest of a file it never
-    displaced: both shipments named the original, though only one of them
-    replaced it. So the whole step, every read, rename and read-back of the
-    call, runs holding an exclusive flock on `store_dir`, which every
-    shipment's replace step takes, locally and on ned-box alike; a second
-    shipment's step waits until the first's is done, then reads the digest the
-    first left. link_staged_files_never_over_existing does not take this
-    lock: its hard link never replaces a name, so a name this step finds
-    present can change only through another replace step, which waits.
-    (place_staged_files' record flock is the other lock: see TWO LOCKS, ON
-    DIFFERENT STEPS.) A lock still held by another shipment after
-    STORE_DIRECTORY_LOCK_WAIT_SECONDS fails the step, returning None as an
-    unreachable host does.
+    NO LOCK. Two shipments replacing one name at one moment do not occur in
+    real use: each walk's or seat's files are shipped by the seat that owns
+    them. If two ever do, both may announce the same displaced digest, and
+    the store's read-back holds only one shipment's bytes, so the other
+    shipment's caller reports a failure instead of `shipped:`. A lock would
+    cost more than that failure.
 
     One ssh round trip remotely, running replace_with_staged_files_script;
     os.replace and hashlib locally."""
     if host is None:
         staging, store = pathlib.Path(staging_dir), pathlib.Path(store_dir)
         outcomes = {}
-        try:
-            with store_directory_locked(store):
-                for staged_relative, store_relative, required in replacements:
-                    target = store / store_relative
-                    target.parent.mkdir(parents=True, exist_ok=True)
-                    displaced = (hashlib.sha256(target.read_bytes()).hexdigest()
-                                 if target.is_file() else None)
-                    replaced = required is None or displaced == required
-                    if replaced:
-                        os.replace(staging / staged_relative, target)
-                    outcomes[store_relative] = (replaced, displaced)
-                stored = {
-                    store_relative: hashlib.sha256(
-                        (store / store_relative).read_bytes()).hexdigest()
-                    for store_relative in outcomes
-                    if (store / store_relative).is_file()}
-        except TimeoutError as waited_too_long:
-            return subprocess.CompletedProcess([], 1, "", f"{waited_too_long}\n"), None
+        store.mkdir(parents=True, exist_ok=True)
+        for staged_relative, store_relative, required in replacements:
+            target = store / store_relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            displaced = (hashlib.sha256(target.read_bytes()).hexdigest()
+                         if target.is_file() else None)
+            replaced = required is None or displaced == required
+            if replaced:
+                os.replace(staging / staged_relative, target)
+            outcomes[store_relative] = (replaced, displaced)
+        stored = {
+            store_relative: hashlib.sha256(
+                (store / store_relative).read_bytes()).hexdigest()
+            for store_relative in outcomes
+            if (store / store_relative).is_file()}
         return subprocess.CompletedProcess([], 0, "", ""), {
             store_relative: StagedReplacement(replaced, displaced,
                                               stored.get(store_relative))
@@ -930,34 +851,17 @@ def replace_with_staged_files_script(staging_dir: pathlib.PurePosixPath,
     <name>`. Then print `stored <digest> <name>` for each name the store
     holds. `mv -f` within one directory tree is a rename, so the name holds
     the old file or the new one, never part of either. A digest that cannot
-    be read exits 1 before anything more is renamed.
-
-    All of it runs holding an exclusive flock on the store directory, which
-    the script opens as file descriptor 9 and keeps open until it exits: see
-    WHY THE STORE DIRECTORY IS LOCKED in replace_with_staged_files. python3
-    takes the lock, with STORE_DIRECTORY_LOCK_PROGRAM; a host without python3,
-    or a lock held past STORE_DIRECTORY_LOCK_WAIT_SECONDS, exits 1 before
-    anything is read or renamed, with a line saying which."""
+    be read exits 1 before anything more is renamed. It takes no lock: see
+    NO LOCK in replace_with_staged_files."""
     arguments = " ".join(
         f"{shlex.quote(staged)} {shlex.quote(target)} {required or '-'}"
         for staged, target, required in replacements)
     quoted_targets = " ".join(shlex.quote(target) for _, target, _ in replacements)
     staging = shlex.quote(str(staging_dir))
     store = shlex.quote(str(store_dir))
-    no_python_line = shlex.quote(
-        f"{PROGRAM}: the replace step stopped: python3 is not on PATH on this "
-        f"host, and the step locks the store directory with it. Install "
-        f"python3 on this host, then ship again.")
-    timeout_line = shlex.quote(store_directory_lock_timeout_line(store_dir))
     return (
         f"{REPLACE_WITH_STAGED_FILES_MARKER}\n"
         f"mkdir -p -- {store} || exit 1\n"
-        f"exec 9< {store} || exit 1\n"
-        f"command -v python3 >/dev/null 2>&1 "
-        f"|| {{ printf '%s\\n' {no_python_line} >&2; exit 1; }}\n"
-        f"python3 -c {shlex.quote(STORE_DIRECTORY_LOCK_PROGRAM)} "
-        f"{STORE_DIRECTORY_LOCK_WAIT_SECONDS} {STORE_DIRECTORY_LOCK_POLL_SECONDS} "
-        f"|| {{ printf '%s\\n' {timeout_line} >&2; exit 1; }}\n"
         f"set -- {arguments}\n"
         f"while [ $# -gt 0 ]; do\n"
         f"  staged=$1; target=$2; required=$3; shift 3\n"

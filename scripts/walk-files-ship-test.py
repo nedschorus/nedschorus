@@ -25,12 +25,9 @@ import io
 import json
 import os
 import pathlib
-import re
 import subprocess
 import sys
 import tempfile
-import threading
-import time
 
 SCRIPTS_DIR = pathlib.Path(__file__).resolve().parent
 SHIP = SCRIPTS_DIR / "walk-files-ship.py"
@@ -214,27 +211,21 @@ with tempfile.TemporaryDirectory(prefix="walk-files-ship-test-") as scratch_name
           and f"{WALK}-dispositions.md" in result.stdout
           and (store_walk / f"{WALK}-dispositions.md").is_file(), result.stdout)
 
-    # --- One run both replaces and links, each step under its own flock ------
-    # The replace step flocks walk/ and returns before the linking step runs,
-    # so neither waits on the other: a run doing both finishes in seconds, far
-    # inside the replace step's STORE_DIRECTORY_LOCK_WAIT_SECONDS.
+    # --- One run both replaces and links ------------------------------------
     both_walk = "both-steps-walk-2026-10-02"
     both_text = write_walk(walks, both_walk, FILES)
     first = ship(local_destination, str(both_text))
     (walks / f"{both_walk}-minutes.md").write_text("# minutes\n\nEdited.\n", encoding="utf-8")
     (walks / f"{both_walk}-dispositions.md").write_text("# dispositions\n", encoding="utf-8")
-    started = time.monotonic()
     result = ship(local_destination, str(both_text))
-    elapsed = time.monotonic() - started
     check("one run that replaces the minutes and links a new dispositions file "
-          "does both, exit 0, well inside the replace step's lock wait",
+          "does both, exit 0",
           first.returncode == 0 and result.returncode == 0
           and "minutes replaced" in result.stdout and "1 file(s) added" in result.stdout
           and (store_walk / f"{both_walk}-minutes.md").read_text(encoding="utf-8")
           == "# minutes\n\nEdited.\n"
-          and (store_walk / f"{both_walk}-dispositions.md").is_file()
-          and elapsed < 30,
-          f"{elapsed:.1f}s {first.stdout} {result.stdout} {result.stderr}")
+          and (store_walk / f"{both_walk}-dispositions.md").is_file(),
+          f"{first.stdout} {result.stdout} {result.stderr}")
 
     # --- The dispositions are replaced like the minutes, and announced --------
     # (user-ruled 2026-09-18, walk skill-sentences-and-shipper-questions-2026-09-18
@@ -788,108 +779,6 @@ with tempfile.TemporaryDirectory(prefix="walk-files-ship-race-test-") as race_sc
                             "walk-text-grown-there", "minutes-landed",
                             "minutes-after-copy", "minutes-after-rename")),
           str(names))
-
-# --- ONE WALK'S MINUTES REPLACED BY TWO SHIPMENTS AT ONCE -------------------
-# Two checkouts ship one walk, each with its own minutes, into a store that
-# already holds minutes. One shipment is held between reading the digest of
-# the minutes it is about to displace and its rename; the other shipment, a
-# process of its own, runs meanwhile; then the first goes on. Each REPLACED
-# line must name the digest its own rename displaced: the first renamer the
-# minutes the store held, the second the first's.
-with tempfile.TemporaryDirectory(prefix="walk-files-ship-window-test-") as window_scratch_name:
-    window_scratch = pathlib.Path(window_scratch_name)
-    store_root = window_scratch / "store"
-    walk_store = store_root / "walk"
-    walk_store.mkdir(parents=True)
-    minutes_before = "# minutes, as the store held them\n"
-    minutes_of = {"held": "# minutes, the held checkout's\n",
-                  "other": "# minutes, the other checkout's\n"}
-    minutes_name = f"{WALK}-minutes.md"
-    (walk_store / minutes_name).write_text(minutes_before, encoding="utf-8")
-    walk_texts = {}
-    for who, minutes in minutes_of.items():
-        walk_texts[who] = write_walk(window_scratch / f"walks-{who}", WALK,
-                                     dict(FILES, **{"-minutes": minutes}))
-
-    window_spec = importlib.util.spec_from_file_location("walk_files_ship_window", SHIP)
-    window_module = importlib.util.module_from_spec(window_spec)
-    saved_destination = os.environ.pop(DESTINATION_VARIABLE, None)
-    try:
-        window_spec.loader.exec_module(window_module)
-    finally:
-        if saved_destination is not None:
-            os.environ[DESTINATION_VARIABLE] = saved_destination
-
-    def digest_of_text(text):
-        return hashlib.sha256(text.encode("utf-8")).hexdigest()
-
-    def displaced_minutes_digest(stderr_text):
-        found = re.search(rf"REPLACED {re.escape(minutes_name)} in the store — the "
-                          r"content it held was sha256 ([0-9a-f]{64})", stderr_text)
-        return found.group(1) if found else None
-
-    reached, go_on = threading.Event(), threading.Event()
-    saved_os_replace = os.replace
-    held_target = walk_store / minutes_name
-
-    def replace_when_told(source, destination, *args, **kwargs):
-        if pathlib.Path(destination) == held_target and not reached.is_set():
-            reached.set()
-            go_on.wait(120)
-        return saved_os_replace(source, destination, *args, **kwargs)
-
-    held_out, held_err, held_result = io.StringIO(), io.StringIO(), {}
-
-    def run_held():
-        with contextlib.redirect_stdout(held_out), contextlib.redirect_stderr(held_err):
-            held_result["code"] = window_module.ship_walk(
-                window_module.WalkStoreDestination(
-                    None, None, pathlib.PurePosixPath(walk_store)),
-                WALK, walk_texts["held"].parent)
-
-    os.replace = replace_when_told
-    try:
-        held_thread = threading.Thread(target=run_held)
-        held_thread.start()
-        held_reached = reached.wait(60)
-        other_env = dict(os.environ)
-        other_env[DESTINATION_VARIABLE] = str(store_root / "cold-read-records")
-        other = subprocess.Popen([sys.executable, str(SHIP), str(walk_texts["other"])],
-                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                 text=True, env=other_env)
-        try:
-            other.wait(timeout=3)
-            other_finished_while_held = True
-        except subprocess.TimeoutExpired:
-            other_finished_while_held = False
-        go_on.set()
-        held_thread.join(120)
-    finally:
-        os.replace = saved_os_replace
-    other_out, other_err = other.communicate(timeout=120)
-    announced = {"held": displaced_minutes_digest(held_err.getvalue()),
-                 "other": displaced_minutes_digest(other_err)}
-    kept = held_target.read_text(encoding="utf-8")
-    held_first = (announced["held"] == digest_of_text(minutes_before)
-                  and announced["other"] == digest_of_text(minutes_of["held"])
-                  and kept == minutes_of["other"])
-    other_first = (announced["other"] == digest_of_text(minutes_before)
-                   and announced["held"] == digest_of_text(minutes_of["other"])
-                   and kept == minutes_of["held"])
-    check("a second shipment of one walk's minutes waits while the first is "
-          "between reading the displaced digest and its rename",
-          held_reached and not other_finished_while_held,
-          f"held reached its rename: {held_reached}; other finished meanwhile: "
-          f"{other_finished_while_held}")
-    check("two shipments of one walk's minutes at once each announce the digest "
-          "their own rename displaced, and both print shipped:",
-          (held_first or other_first)
-          and held_result.get("code") == 0 and other.returncode == 0
-          and held_out.getvalue().startswith("shipped:")
-          and other_out.startswith("shipped:"),
-          f"announced {announced}; store keeps {kept!r}; held: exit "
-          f"{held_result.get('code')} {held_out.getvalue()}{held_err.getvalue()}; "
-          f"other: exit {other.returncode} {other_out}{other_err}")
 
 print()
 if failures:

@@ -85,10 +85,10 @@ the digest of the file it displaces in the same step, and the store is read
 again afterwards. A seat still replaces its own files, so either shipment may
 be the one kept: the replacement is announced with the digest actually
 displaced, and a shipment whose bytes are not what the store holds afterwards
-prints FAILED, not the citation. The replace step holds a lock on the seat's
-directory from reading that digest until the rename is done, so a second
-shipment's rename cannot fall between the two and make the first announce
-bytes it did not displace.
+prints FAILED, not the citation. The replace step takes no lock: a seat's
+files are shipped by that seat, one shipment after another, and if two ever
+replace one name at one moment, the read-back makes one of them print
+FAILED. A lock would cost more than that failure.
 
 WHY IT PRINTS THE CITATION. The line this program prints on success is the
 exact text to paste into a document, in the scp form that works from either

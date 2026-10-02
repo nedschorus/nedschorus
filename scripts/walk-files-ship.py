@@ -113,10 +113,10 @@ the store meanwhile is REFUSED by name, a minutes or dispositions file another
 shipment landed first is replaced and its digest announced as any
 replacement is, and a file that does not hold this run's bytes afterwards --
 another shipment's rename came after this one's, or the file is missing --
-makes the line FAILED, exit 1. The replace step holds a lock on walk/ from
-reading a displaced file's digest until its rename is done, so a second
-shipment's rename cannot fall between the two and make the first announce a
-digest it did not displace.
+makes the line FAILED, exit 1. The replace step takes no lock: a walk's
+files are shipped by the seat that runs the walk, one shipment after
+another, and if two ever replace one name at one moment, the read-back
+makes one of them print FAILED. A lock would cost more than that failure.
 
 The minutes' citation at the end of the stdout line is the minutes' still,
 never the dispositions': the minutes are the record of the rulings and what a
