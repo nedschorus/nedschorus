@@ -981,12 +981,7 @@ and approving identity of its own), and a squash merge (the reviewed head
 would no longer be an ancestor of main, so the pin would be a record on the
 pull request rather than a fact in the history).
 
-**One consequence, named so it is not rediscovered.** Under shape A a fix
-round on a gate-opened pull request is not "a fresh agent's commit on top
-of the frozen head", because the head is a commit the gate composed. It is
-a second check-in through the gate, which opens a second pull request:
-the rule is written in the specification § Check-in through a pull request
-(designed 2026-10-01), the bullet "A fix round".
+**One consequence, named so it is not rediscovered.** Under shape A, correcting a gate-opened pull request is not "a fresh agent's commit on top of the frozen head", because the head is a commit the gate composed. It is a second check-in through the gate, after a `cancel` of the first, which opens a second pull request: the rule is written in the specification § Check-in through a pull request, the bullet "Correcting a request in review".
 
 Shape B and gate-merges-itself remain available under shape 2 (below) and
 nothing in this ruling forecloses them. Shape A and shape B are the pull
@@ -1008,13 +1003,7 @@ here; slice 9's owner is unruled, and this table proposes no answer to it.
 Cross-machine callers (C8, specification § Open) stay open and are not a
 slice.
 
-One edit outside the program is due at activation, and it is not a slice
-either. CLAUDE.md's "How a change reaches main" line says merges consolidate
-at the merge-lane seat "until the gatekeeper activates". Under shape 1 the
-merge lane keeps reviewing, approving and merging the gate's pull requests
-after activation, so that clause becomes false the day the gate goes live.
-The new wording is CLAUDE.md text, so it must be approved-by-walk.
-Found in the walk of the five seat-brief cold reads, 2026-09-16.
+One edit outside the program is due at activation, and it is not a build-slice either. CLAUDE.md's "How a change reaches main" bullet says merges consolidate at the agent-seat merge-lane-2, and says nothing about pull requests the gate opens. Under shape 1 merge-lane keeps reviewing, approving and merging the gate's pull requests after activation. Two sentences are owed there, and the new wording is CLAUDE.md text, so it must be approved-by-walk: that merge-lane reviews, checks the merge result of, and merges the pull requests the gate opens; and that CLAUDE.md's fix-round and hand-merge rules do not apply to a pull request the gate opens, because a correction is a `cancel` and a new check-in (ruled 2026-10-02, walk ghi-3-main-gatekeeper-specification-cold-read-findings-2026-10-01, item 2). Found in the walk of the five seat-brief cold reads, 2026-09-16.
 
 ### The per-file staleness report — slice 8's requirement
 
