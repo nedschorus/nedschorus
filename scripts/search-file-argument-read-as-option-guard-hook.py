@@ -34,13 +34,16 @@ DECISIONS, in order:
   The agent's `grep` and `rg` are shell functions with those names, so they
   are covered by name.
 - Only a word whose glob characters stood outside quotes is expanded, the way
-  the shell expands it. The shared tokenizer resolves quotes, so before it
-  runs, every unquoted `*`, `?`, `[` and `]` is swapped for a private-use
-  character (mark_unquoted_glob_characters); a quoted `"*.jsonl"` reaches the
+  the shell expands it. The shared tokenizer resolves quotes, and swaps each
+  unquoted `*`, `?`, `[` and `]` it reads for a private-use character
+  (GLOB_CHARACTER_MARKERS, passed as its glob_markers), so the quotes this
+  guard sees are the ones the reader sees; a quoted `"*.jsonl"` reaches the
   program as itself, and passes.
 - A word is expanded in the directory the command runs in: the payload's cwd,
   or a literal `cd` earlier in the same command, as the force-push guard
-  resolves it.
+  resolves it. A `cd` inside a double-quoted `$( ... )`, or inside a
+  substitution in a heredoc body, moves the shell that runs that
+  substitution and no other, so the directory is carried per substitution.
 - Words after `--` are file names to every one of these programs, so they
   pass. Every other word holding an unquoted glob character is expanded, one
   that begins with `-` included: an option such as `--include=*.py` names no
@@ -78,10 +81,6 @@ guard that blocks ordinary searches when it cannot tell would cost more than
 the mistake it prevents.
 
 WHAT IT CANNOT SEE, so a later reader does not mistake a limit for a check:
-- A command inside a double-quoted command substitution, `"$(grep ...)"`, is
-  one data word to the shared tokenizer: GHI "The Bash guards' shared shell
-  reader does not read inside a double-quoted command substitution"
-  (https://github.com/nedschorus/nedschorus/issues/710).
 - A file name reaching the program through a variable, as in `for f in
   */*.jsonl; do grep -l word "$f"; done`, which fails the same way: variables
   are not expanded.
@@ -90,10 +89,11 @@ WHAT IT CANNOT SEE, so a later reader does not mistake a limit for a check:
 - xargs, find -exec, sh -c, eval, and a heredoc fed to a shell.
 - `git grep`, whose file arguments are pathspecs.
 - Brace expansion, `{a,b}`, which is left as literal text.
-- Where a subshell ends. The shared tokenizer cuts at parentheses and keeps
-  no record of them, so a `cd` inside `( ... )` or `$( ... )` still sets the
-  directory for the commands after it, and a search there can be refused
-  for a folder it does not run in. The command the refusal gives still works.
+- Where a bare subshell ends. The shared tokenizer cuts at parentheses and
+  keeps no record of them, so a `cd` inside `( ... )` or an unquoted
+  `$( ... )` still sets the directory for the commands after it, and a
+  search there can be refused for a folder it does not run in. The command
+  the refusal gives still works.
 - Whether the agent's shell recurses on `**`. Bash without globstar matches
   one level where this guard matches every level, so a search can be refused
   for a name only the deeper levels hold; the command the refusal gives works.
@@ -151,8 +151,8 @@ REDIRECTION_WORD_PATTERN = re.compile(r"^[0-9]*(?:>>|>|<<<|<>|<)")
 # A `cd` target this guard cannot resolve without running the shell.
 UNRESOLVABLE_DIRECTORY_PATTERN = re.compile(r"[$`]")
 
-# Unquoted glob characters, swapped for private-use characters before the
-# shared tokenizer resolves quotes, so a word still says which of its glob
+# Unquoted glob characters, swapped for private-use characters by the shared
+# tokenizer as it reads each word, so a word still says which of its glob
 # characters the shell would expand.
 GLOB_CHARACTER_MARKERS = {"*": "", "?": "", "[": "",
                           "]": ""}
@@ -186,62 +186,6 @@ REFUSAL_WITHOUT_COMMAND_TEMPLATE = (
 
 class ExpansionBudgetSpent(Exception):
     """All glob expansion in one command shares one wall-clock budget."""
-
-
-def mark_unquoted_glob_characters(shell_text):
-    """Return shell_text with every glob character that stands outside quotes,
-    and is not backslash-escaped, swapped for its private-use marker.
-
-    Quote rules follow the shared tokenizer exactly, so the tokenizer still
-    sees the same quotes and comments: single quotes take everything
-    literally; inside double quotes a backslash escapes only `"`, `\\`, `$`
-    and a backtick; outside quotes a backslash escapes the next character;
-    and a `#` opening a word starts a comment that runs to the end of its
-    line, whose quotes must not change the state."""
-    marked = []
-    in_single = in_double = False
-    index, length = 0, len(shell_text)
-    while index < length:
-        character = shell_text[index]
-        if in_single:
-            marked.append(character)
-            if character == "'":
-                in_single = False
-            index += 1
-            continue
-        if in_double:
-            if character == "\\" and index + 1 < length \
-                    and shell_text[index + 1] in '"\\$`':
-                marked.append(shell_text[index:index + 2])
-                index += 2
-                continue
-            if character == '"':
-                in_double = False
-            marked.append(character)
-            index += 1
-            continue
-        if character == "\\":
-            marked.append(shell_text[index:index + 2])
-            index += 2
-            continue
-        if character == "'":
-            in_single = True
-        elif character == '"':
-            in_double = True
-        elif character == "#" and (index == 0
-                                   or shell_text[index - 1] in " \t\n;&|()`"):
-            end_of_line = shell_text.find("\n", index)
-            end_of_line = length if end_of_line == -1 else end_of_line
-            marked.append(shell_text[index:end_of_line])
-            index = end_of_line
-            continue
-        elif character in GLOB_CHARACTER_MARKERS:
-            marked.append(GLOB_CHARACTER_MARKERS[character])
-            index += 1
-            continue
-        marked.append(character)
-        index += 1
-    return "".join(marked)
 
 
 def word_holds_unquoted_glob(word):
@@ -357,7 +301,7 @@ def read_simple_commands(command):
     dropped (a body is data here, see the module docstring's limits), and
     every unquoted glob character marked."""
     shell_view, _heredoc_bodies = split_out_heredocs(command)
-    return tokenize_simple_commands(mark_unquoted_glob_characters(shell_view))
+    return tokenize_simple_commands(shell_view, glob_markers=GLOB_CHARACTER_MARKERS)
 
 
 def command_with_double_dash_before_word(command, commands, command_index,
@@ -454,10 +398,18 @@ def resolve_directory(base, target):
 def first_refused_search(command, payload_cwd, deadline, clock):
     """Walk the command's simple commands in order, carrying the directory a
     literal `cd` puts them in, and return what the first refused search is
-    refused for (see refused_search), or None."""
+    refused for (see refused_search), or None.
+
+    A substitution starts in the directory of the one around it, and what a
+    `cd` inside it does ends with it."""
     commands = read_simple_commands(command)
-    directory = payload_cwd
+    directories = {(): payload_cwd}  # per substitution
     for command_index, words in enumerate(commands):
+        substitution = getattr(words, "substitution", ())
+        enclosing = substitution
+        while enclosing not in directories:
+            enclosing = enclosing[:-1]
+        directory = directories[enclosing]
         program_index = 0
         while (program_index < len(words)
                and ENVIRONMENT_ASSIGNMENT_PATTERN.match(words[program_index])):
@@ -472,6 +424,7 @@ def first_refused_search(command, payload_cwd, deadline, clock):
                 directory = None
             else:
                 directory = resolve_directory(directory or "/", plain_word(target))
+            directories[substitution] = directory
             continue
         if directory is None:
             continue
