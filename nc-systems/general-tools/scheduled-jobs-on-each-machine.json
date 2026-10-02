@@ -48,9 +48,9 @@
         "mac": {
           "scheduler": "launchd",
           "label": "com.nedschorus.daily-clean-worktrees",
-          "launchd_keys": {"StartCalendarInterval": {"Hour": 4, "Minute": 30}}
+          "launchd_keys": {"StartCalendarInterval": {"Hour": 6, "Minute": 30}}
         },
-        "ned-box": {"scheduler": "cron", "schedule": "30 4 * * *"}
+        "ned-box": {"scheduler": "cron", "schedule": "30 6 * * *"}
       }
     }
   ]

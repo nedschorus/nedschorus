@@ -73,10 +73,10 @@ clone, so worktrees that sessions and subagents leave behind do not pile up
 between handoffs. The job is declared in
 nc-systems/general-tools/scheduled-jobs-on-each-machine.json and installed
 with nc-systems/general-tools/install-scheduled-jobs-on-this-machine.py: on
-the Mac a launchd job at 04:30, so a run missed while the Mac sleeps starts at
+the Mac a launchd job at 06:30, so a run missed while the Mac sleeps starts at
 the next wake; on ned-box the cron line
 
-    30 4 * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/scripts/clean-worktrees.py --remove >> /home/nedlern/.claude/daily-clean-worktrees.log 2>&1
+    30 6 * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/scripts/clean-worktrees.py --remove >> /home/nedlern/.claude/daily-clean-worktrees.log 2>&1
 
 It does not fetch; a stale origin/main only keeps more. A worktree still
 locked by the claude process that made it fails to remove and is tried again

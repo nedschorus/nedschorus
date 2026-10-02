@@ -76,7 +76,7 @@ MAC_DAILY_PLIST = {
 # The daily worktree cleanup, added to the table after the two jobs above; no
 # machine had it installed by hand.
 NED_BOX_CLEAN_LINE = (
-    "30 4 * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/scripts/"
+    "30 6 * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/scripts/"
     "clean-worktrees.py --remove >> /home/nedlern/.claude/daily-clean-worktrees.log 2>&1")
 MAC_CLEAN_PLIST = {
     "Label": "com.nedschorus.daily-clean-worktrees",
@@ -85,7 +85,7 @@ MAC_CLEAN_PLIST = {
     "EnvironmentVariables": {
         "PATH": "/Users/el/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:"
                 "/usr/sbin:/sbin"},
-    "StartCalendarInterval": {"Hour": 4, "Minute": 30},
+    "StartCalendarInterval": {"Hour": 6, "Minute": 30},
     "StandardOutPath": "/Users/el/.claude/daily-clean-worktrees.log",
     "StandardErrorPath": "/Users/el/.claude/daily-clean-worktrees.log",
 }
@@ -180,12 +180,12 @@ check("the Mac's daily full test run is a launchd job at 03:30, not a cron line:
       "while the Mac sleeps starts at the next wake",
       daily["on"]["mac"]["scheduler"] == "launchd" and mac_plist == MAC_DAILY_PLIST
       and list(mac_plist) == list(MAC_DAILY_PLIST), mac_plist)
-check("the table gives ned-box the daily worktree cleanup's cron line at 04:30, an hour after "
+check("the table gives ned-box the daily worktree cleanup's cron line at 06:30, two hours after "
       "the daily full test run",
       installer.cron_line(ned_box, clean, clean["on"]["ned-box"]) == NED_BOX_CLEAN_LINE,
       installer.cron_line(ned_box, clean, clean["on"]["ned-box"]))
 mac_clean_plist = installer.launch_agent_plist(mac, clean, clean["on"]["mac"])
-check("the Mac's daily worktree cleanup is a launchd job at 04:30, so a run missed while the Mac "
+check("the Mac's daily worktree cleanup is a launchd job at 06:30, so a run missed while the Mac "
       "sleeps starts at the next wake",
       clean["on"]["mac"]["scheduler"] == "launchd" and mac_clean_plist == MAC_CLEAN_PLIST
       and list(mac_clean_plist) == list(MAC_CLEAN_PLIST), mac_clean_plist)
