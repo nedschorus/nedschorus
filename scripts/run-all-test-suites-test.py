@@ -339,8 +339,8 @@ with tempfile.TemporaryDirectory() as scratch:
     root = pathlib.Path(scratch)
     make_repo(root, {"first-test.py": rendezvous("first.flag", "second.flag"),
                      "second-test.py": rendezvous("second.flag", "first.flag")})
-    result = run(root, rendezvous_seconds="0.5")
-    check("the default runs one suite at a time", result.returncode == 1
+    result = run(root, "-j", "1", rendezvous_seconds="0.5")
+    check("-j 1 runs one suite at a time", result.returncode == 1
           and lines(result.stdout)[-1].startswith("SUMMARY: 1 passed, 1 failed"),
           (result.returncode, result.stdout))
 
@@ -1009,7 +1009,7 @@ check("--checkout defaults to the checkout this program is in",
       pathlib.Path(defaults.checkout) == SCRIPTS_DIR.parent, defaults.checkout)
 check("--python defaults to the interpreter running the program",
       defaults.python == sys.executable, defaults.python)
-check("-j defaults to 1", defaults.jobs == 1, defaults.jobs)
+check("-j defaults to 4", defaults.jobs == 4, defaults.jobs)
 check("--lock-file defaults to one file per machine under ~/.claude",
       pathlib.Path(defaults.lock_file) == pathlib.Path.home() / ".claude"
       / ".run-all-test-suites.lock", defaults.lock_file)
