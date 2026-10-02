@@ -169,6 +169,26 @@ with tempfile.TemporaryDirectory(prefix="seat-shared-file-ship-test-") as scratc
           and result.stdout.count("\n") == 1,
           repr(result.stdout))
 
+    # --- Another shipment's staging directory stops the replace -----------
+    stored_before = (seats_root / "cold-read-research" / "measurement.md").read_bytes()
+    other_staging = (seats_root / "cold-read-research"
+                     / ".ship-staging-measurement.md-0123456789ab")
+    other_staging.mkdir()
+    fresh.write_text("# measurement\n\nrevised while another shipment ran\n",
+                     encoding="utf-8")
+    result = ship(local_destination, str(fresh), "--seat", "cold-read-research")
+    check("another shipment's staging directory for the file makes it FAILED, "
+          "exit 1, naming that directory, with nothing replaced",
+          result.returncode == 1
+          and result.stdout.startswith("FAILED: cold-read-research/measurement.md")
+          and str(other_staging) in result.stdout
+          and str(other_staging) in result.stderr
+          and (seats_root / "cold-read-research" / "measurement.md").read_bytes()
+          == stored_before,
+          result.stdout + result.stderr)
+    other_staging.rmdir()
+    fresh.write_text("# measurement\n", encoding="utf-8")
+
     # --- Byte-identical copies nothing; a difference REPLACES and says so --
     stored = seats_root / "cold-read-research" / "measurement.md"
     mtime_before = stored.stat().st_mtime_ns

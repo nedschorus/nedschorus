@@ -115,8 +115,10 @@ replacement is, and a file that does not hold this run's bytes afterwards --
 another shipment's rename came after this one's, or the file is missing --
 makes the line FAILED, exit 1. The replace step takes no lock: a walk's
 files are shipped by the seat that runs the walk, one shipment after
-another, and if two ever replace one name at one moment, the read-back
-makes one of them print FAILED. A lock would cost more than that failure.
+another. A read-back cannot see a rename that runs after it, so instead the
+replace step renames nothing while another staging directory for the same
+walk exists, and the line is FAILED naming it (see NO LOCK; A CHECK INSTEAD
+in the record shipper's replace_with_staged_files).
 
 The minutes' citation at the end of the stdout line is the minutes' still,
 never the dispositions': the minutes are the record of the rulings and what a
@@ -505,6 +507,12 @@ def ship_walk(destination: WalkStoreDestination, name: str,
                 destination.copy_host, staging_dir, destination.walk_path,
                 [(planned.source.name, planned.source.name, planned.required_sha256)
                  for planned in to_replace])
+            if isinstance(outcomes, shipper.OtherShipmentStaging):
+                shipper.remove_staging_directory(destination.copy_host, staging_dir)
+                failed, instruction = shipper.other_shipment_failure_lines(name, outcomes)
+                print(failed)
+                sys.stderr.write(instruction + "\n")
+                return EXIT_FAILED
             if outcomes is None:
                 shipper.remove_staging_directory(destination.copy_host, staging_dir)
                 reason = ("ned-box unreachable"

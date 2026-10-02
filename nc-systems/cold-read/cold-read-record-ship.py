@@ -766,6 +766,42 @@ class StagedReplacement(typing.NamedTuple):
     stored_sha256: typing.Optional[str]
 
 
+class OtherShipmentStaging(typing.NamedTuple):
+    """replace_with_staged_files found another shipment's staging directory
+    for the same name and replaced nothing. `paths` names each one."""
+
+    paths: tuple
+
+
+# The random part of a staging directory's name: secrets.token_hex(6).
+STAGING_DIRECTORY_TOKEN_LENGTH = 12
+
+
+def other_staging_directories_local(staging_dir: pathlib.Path) -> tuple:
+    """Every other staging directory beside this one for the same name."""
+    stem = staging_dir.name[:-STAGING_DIRECTORY_TOKEN_LENGTH]
+    others = []
+    if staging_dir.parent.is_dir():
+        for entry in sorted(staging_dir.parent.iterdir()):
+            token = entry.name[len(stem):]
+            if (entry.name != staging_dir.name and entry.name.startswith(stem)
+                    and len(token) == STAGING_DIRECTORY_TOKEN_LENGTH
+                    and all(c in "0123456789abcdef" for c in token)
+                    and entry.is_dir()):
+                others.append(str(entry))
+    return tuple(others)
+
+
+def other_shipment_failure_lines(label: str, staging: OtherShipmentStaging) -> tuple:
+    """The FAILED line for stdout and the instruction line for stderr, shared
+    by every shipper whose replace step returned OtherShipmentStaging."""
+    paths = ", ".join(staging.paths)
+    return (f"FAILED: {label} — another shipment of it is running, or one left "
+            f"its staging directory behind: {paths}; nothing was replaced.",
+            f"When no other shipment of {label} is running, delete {paths} and "
+            f"run this again.")
+
+
 def replace_with_staged_files(host, staging_dir: pathlib.PurePosixPath,
                               store_dir: pathlib.PurePosixPath,
                               replacements: list):
@@ -793,17 +829,24 @@ def replace_with_staged_files(host, staging_dir: pathlib.PurePosixPath,
     displaced, and the store is read again afterwards, so a caller judges its
     outcome on what the store holds.
 
-    NO LOCK. Two shipments replacing one name at one moment do not occur in
-    real use: each walk's or seat's files are shipped by the seat that owns
-    them. If two ever do, both may announce the same displaced digest, and
-    the store's read-back holds only one shipment's bytes, so the other
-    shipment's caller reports a failure instead of `shipped:`. A lock would
-    cost more than that failure.
+    NO LOCK; A CHECK INSTEAD. Two shipments of one name at one moment do not
+    occur in real use: each walk's or seat's files are shipped by the seat
+    that owns them. A read-back cannot see a rename that runs after it, so an
+    overlap is caught before it can do harm: each shipment's staging directory
+    exists from its copy until its placing ends, and this step renames
+    nothing when another staging directory for the same name is there,
+    returning OtherShipmentStaging. Two shipments that overlap therefore both
+    stop, or the later one replaces what the earlier one placed and names its
+    digest. A leftover staging directory from a crashed shipment stops every
+    shipment of that name until it is deleted; nothing here reclaims it.
 
     One ssh round trip remotely, running replace_with_staged_files_script;
     os.replace and hashlib locally."""
     if host is None:
         staging, store = pathlib.Path(staging_dir), pathlib.Path(store_dir)
+        others = other_staging_directories_local(staging)
+        if others:
+            return subprocess.CompletedProcess([], 0, "", ""), OtherShipmentStaging(others)
         outcomes = {}
         store.mkdir(parents=True, exist_ok=True)
         for staged_relative, store_relative, required in replacements:
@@ -829,16 +872,20 @@ def replace_with_staged_files(host, staging_dir: pathlib.PurePosixPath,
                                capture_output=True, text=True, check=False)
     if completed.returncode != 0:
         return completed, None
-    acted, stored = {}, {}
+    acted, stored, others = {}, {}, []
     for line in completed.stdout.splitlines():
         word, _, rest = line.partition(" ")
         digest, _, relative = rest.partition(" ")
         if not relative:
             continue
-        if word in ("replaced", "kept"):
+        if word == "other":
+            others.append(relative)
+        elif word in ("replaced", "kept"):
             acted[relative] = (word == "replaced", None if digest == "-" else digest)
         elif word == "stored":
             stored[relative] = digest
+    if others:
+        return completed, OtherShipmentStaging(tuple(others))
     return completed, {
         relative: StagedReplacement(replaced, displaced, stored.get(relative))
         for relative, (replaced, displaced) in acted.items()}
@@ -854,8 +901,10 @@ def replace_with_staged_files_script(staging_dir: pathlib.PurePosixPath,
     <name>`. Then print `stored <digest> <name>` for each name the store
     holds. `mv -f` within one directory tree is a rename, so the name holds
     the old file or the new one, never part of either. A digest that cannot
-    be read exits 1 before anything more is renamed. It takes no lock: see
-    NO LOCK in replace_with_staged_files."""
+    be read exits 1 before anything more is renamed. First it prints
+    `other - <path>` for each other staging directory of the same name and,
+    if there is one, renames nothing: see NO LOCK; A CHECK INSTEAD in
+    replace_with_staged_files."""
     arguments = " ".join(
         f"{shlex.quote(staged)} {shlex.quote(target)} {required or '-'}"
         for staged, target, required in replacements)
@@ -864,6 +913,14 @@ def replace_with_staged_files_script(staging_dir: pathlib.PurePosixPath,
     store = shlex.quote(str(store_dir))
     return (
         f"{REPLACE_WITH_STAGED_FILES_MARKER}\n"
+        f"self={staging}; others=0\n"
+        f"stem=$(basename -- \"$self\"); stem=${{stem%{'?' * STAGING_DIRECTORY_TOKEN_LENGTH}}}\n"
+        f"for other in \"$(dirname -- \"$self\")\"/\"$stem\"{'[0-9a-f]' * STAGING_DIRECTORY_TOKEN_LENGTH}; do\n"
+        f"  if [ -d \"$other\" ] && [ \"$other\" != \"$self\" ]; then\n"
+        f"    printf 'other - %s\\n' \"$other\"; others=1\n"
+        f"  fi\n"
+        f"done\n"
+        f"[ $others = 0 ] || exit 0\n"
         f"mkdir -p -- {store} || exit 1\n"
         f"set -- {arguments}\n"
         f"while [ $# -gt 0 ]; do\n"

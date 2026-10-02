@@ -1235,6 +1235,41 @@ with tempfile.TemporaryDirectory(prefix="cold-read-record-ship-test-") as scratc
           and "ssh" not in out,
           f"exit {code}: {out}")
 
+# --- The replace step renames nothing beside another shipment's staging ----
+_overlap_spec = importlib.util.spec_from_file_location("cold_read_record_ship_overlap", SHIP)
+overlap_shipper = importlib.util.module_from_spec(_overlap_spec)
+_overlap_spec.loader.exec_module(overlap_shipper)
+with tempfile.TemporaryDirectory(prefix="cold-read-record-ship-overlap-test-") as overlap_name:
+    overlap_store = pathlib.Path(overlap_name) / "store"
+    own = overlap_store / ".ship-staging-walk b-0123456789ab"
+    other = overlap_store / ".ship-staging-walk b-aaaaaaaaaaaa"
+    longer_name = overlap_store / ".ship-staging-walk b-c-bbbbbbbbbbbb"
+    for directory in (own, other, longer_name):
+        directory.mkdir(parents=True)
+    (own / "x").write_text("this shipment\n", encoding="utf-8")
+    (overlap_store / "x").write_text("the other shipment\n", encoding="utf-8")
+    script = overlap_shipper.replace_with_staged_files_script(
+        pathlib.PurePosixPath(own), pathlib.PurePosixPath(overlap_store), [("x", "x", None)])
+    ran = subprocess.run(["sh", "-c", script], capture_output=True, text=True, check=False)
+    check("the remote replace step, run by a real sh, names another staging directory "
+          "of the same name and renames nothing; one for a longer name is not counted",
+          ran.returncode == 0 and ran.stdout == f"other - {other}\n"
+          and (overlap_store / "x").read_text(encoding="utf-8") == "the other shipment\n",
+          repr(ran.stdout) + ran.stderr)
+    _, local_outcome = overlap_shipper.replace_with_staged_files(
+        None, own, overlap_store, [("x", "x", None)])
+    check("the local replace step returns OtherShipmentStaging naming it, and renames nothing",
+          isinstance(local_outcome, overlap_shipper.OtherShipmentStaging)
+          and local_outcome.paths == (str(other),)
+          and (overlap_store / "x").read_text(encoding="utf-8") == "the other shipment\n",
+          repr(local_outcome))
+    other.rmdir()
+    ran = subprocess.run(["sh", "-c", script], capture_output=True, text=True, check=False)
+    check("with no other staging directory, the remote replace step renames as before",
+          ran.returncode == 0 and ran.stdout.startswith("replaced ")
+          and (overlap_store / "x").read_text(encoding="utf-8") == "this shipment\n",
+          repr(ran.stdout) + ran.stderr)
+
 print()
 if failures:
     print(f"{len(failures)} case(s) FAILED:")

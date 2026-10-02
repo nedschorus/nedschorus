@@ -86,9 +86,11 @@ again afterwards. A seat still replaces its own files, so either shipment may
 be the one kept: the replacement is announced with the digest actually
 displaced, and a shipment whose bytes are not what the store holds afterwards
 prints FAILED, not the citation. The replace step takes no lock: a seat's
-files are shipped by that seat, one shipment after another, and if two ever
-replace one name at one moment, the read-back makes one of them print
-FAILED. A lock would cost more than that failure.
+files are shipped by that seat, one shipment after another. A read-back
+cannot see a rename that runs after it, so instead the replace step renames
+nothing while another staging directory for the same file exists, and this
+program prints FAILED naming it (see NO LOCK; A CHECK INSTEAD in the record
+shipper's replace_with_staged_files).
 
 WHY IT PRINTS THE CITATION. The line this program prints on success is the
 exact text to paste into a document, in the scp form that works from either
@@ -365,6 +367,12 @@ def ship_one_file(destination: SeatsStoreDestination, seat: str,
         destination.copy_host, staging_dir, seat_directory,
         [(source.name, stored_name, None)])
     shipper.remove_staging_directory(destination.copy_host, staging_dir)
+    if isinstance(outcomes, shipper.OtherShipmentStaging):
+        failed, instruction = shipper.other_shipment_failure_lines(
+            f"{seat}/{stored_name}", outcomes)
+        print(failed, flush=True)
+        print(instruction, file=sys.stderr)
+        return EXIT_FAILED
     if outcomes is None or stored_name not in outcomes:
         print(f"FAILED: {seat}/{stored_name} — the store could not be written; "
               f"a later run finishes it", flush=True)
