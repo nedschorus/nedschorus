@@ -91,7 +91,7 @@ on check 12's closing line.
    referred to.** For "as I said", "above", an option letter, an item number on
    its own, or a label you gave something earlier, say the thing itself. Write
    the noun instead of "it", "its", "they" or "this", and instead of "that" used
-   as a noun, unless the noun is in the same sentence and no other noun there
+   as a pronoun, unless the noun is in the same sentence and no other noun there
    could be meant. When "or" could mean one-or-the-other or one-or-both, write
    which. Write each identifier in full, in the form the file
    `nc-systems/skills/explain/explain-how-to-write-an-identifier-instructions.md` gives. After a
