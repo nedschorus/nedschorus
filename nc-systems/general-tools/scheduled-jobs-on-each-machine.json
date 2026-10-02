@@ -38,6 +38,20 @@
         },
         "ned-box": {"scheduler": "cron", "schedule": "30 3 * * *"}
       }
+    },
+    {
+      "name": "daily-clean-worktrees",
+      "program": "scripts/clean-worktrees.py",
+      "arguments": ["--remove"],
+      "output": ".claude/daily-clean-worktrees.log",
+      "on": {
+        "mac": {
+          "scheduler": "launchd",
+          "label": "com.nedschorus.daily-clean-worktrees",
+          "launchd_keys": {"StartCalendarInterval": {"Hour": 6, "Minute": 30}}
+        },
+        "ned-box": {"scheduler": "cron", "schedule": "30 6 * * *"}
+      }
     }
   ]
 }

@@ -73,6 +73,22 @@ MAC_DAILY_PLIST = {
     "StandardOutPath": "/Users/el/.claude/daily-full-test-run-of-main.log",
     "StandardErrorPath": "/Users/el/.claude/daily-full-test-run-of-main.log",
 }
+# The daily worktree cleanup, added to the table after the two jobs above; no
+# machine had it installed by hand.
+NED_BOX_CLEAN_LINE = (
+    "30 6 * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/scripts/"
+    "clean-worktrees.py --remove >> /home/nedlern/.claude/daily-clean-worktrees.log 2>&1")
+MAC_CLEAN_PLIST = {
+    "Label": "com.nedschorus.daily-clean-worktrees",
+    "ProgramArguments": ["/opt/homebrew/bin/python3",
+                         "/Users/el/Projects/nedschorus/scripts/clean-worktrees.py", "--remove"],
+    "EnvironmentVariables": {
+        "PATH": "/Users/el/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:"
+                "/usr/sbin:/sbin"},
+    "StartCalendarInterval": {"Hour": 6, "Minute": 30},
+    "StandardOutPath": "/Users/el/.claude/daily-clean-worktrees.log",
+    "StandardErrorPath": "/Users/el/.claude/daily-clean-worktrees.log",
+}
 DOMAIN = f"gui/{os.getuid()}"
 
 
@@ -148,6 +164,7 @@ real_table = installer.load_table(REAL_TABLE_PATH)
 real_jobs = {job["name"]: job for job in real_table["jobs"]}
 mac, ned_box = real_table["machines"]["mac"], real_table["machines"]["ned-box"]
 mirror, daily = real_jobs["transcript-mirror-to-log-store"], real_jobs["daily-full-test-run-of-main"]
+clean = real_jobs["daily-clean-worktrees"]
 
 check("the table gives ned-box the transcript mirror's cron line it has installed, byte for byte",
       installer.cron_line(ned_box, mirror, mirror["on"]["ned-box"]) == NED_BOX_MIRROR_LINE,
@@ -163,44 +180,63 @@ check("the Mac's daily full test run is a launchd job at 03:30, not a cron line:
       "while the Mac sleeps starts at the next wake",
       daily["on"]["mac"]["scheduler"] == "launchd" and mac_plist == MAC_DAILY_PLIST
       and list(mac_plist) == list(MAC_DAILY_PLIST), mac_plist)
-check("the two jobs typed by hand before this program are the table's jobs, and no other",
-      sorted(real_jobs) == ["daily-full-test-run-of-main", "transcript-mirror-to-log-store"],
+check("the table gives ned-box the daily worktree cleanup's cron line at 06:30, two hours after "
+      "the daily full test run",
+      installer.cron_line(ned_box, clean, clean["on"]["ned-box"]) == NED_BOX_CLEAN_LINE,
+      installer.cron_line(ned_box, clean, clean["on"]["ned-box"]))
+mac_clean_plist = installer.launch_agent_plist(mac, clean, clean["on"]["mac"])
+check("the Mac's daily worktree cleanup is a launchd job at 06:30, so a run missed while the Mac "
+      "sleeps starts at the next wake",
+      clean["on"]["mac"]["scheduler"] == "launchd" and mac_clean_plist == MAC_CLEAN_PLIST
+      and list(mac_clean_plist) == list(MAC_CLEAN_PLIST), mac_clean_plist)
+check("the table's jobs are the two typed by hand before this program and the daily worktree "
+      "cleanup, and no other",
+      sorted(real_jobs) == ["daily-clean-worktrees", "daily-full-test-run-of-main",
+                            "transcript-mirror-to-log-store"],
       sorted(real_jobs))
 check("every job's program is a file of this repository",
       all((REPOSITORY_ROOT / job["program"]).is_file() for job in real_table["jobs"]),
       [job["program"] for job in real_table["jobs"]])
 mirror_documentation = (REPOSITORY_ROOT / mirror["program"]).read_text(encoding="utf-8")
 daily_documentation = (REPOSITORY_ROOT / daily["program"]).read_text(encoding="utf-8")
+clean_documentation = (REPOSITORY_ROOT / clean["program"]).read_text(encoding="utf-8")
 check("the lines each program documents are the table's lines, and each names this installer",
       f"  Mac:     {MAC_MIRROR_LINE}\n" in mirror_documentation
       and f"  ned-box: {NED_BOX_MIRROR_LINE}\n" in mirror_documentation
       and f"    {NED_BOX_DAILY_LINE}\n" in daily_documentation
+      and f"    {NED_BOX_CLEAN_LINE}\n" in clean_documentation
       and all("nc-systems/general-tools/install-scheduled-jobs-on-this-machine.py" in text
-              for text in (mirror_documentation, daily_documentation)))
+              for text in (mirror_documentation, daily_documentation, clean_documentation)))
 
 printed, errors = io.StringIO(), io.StringIO()
 stub = MachineStub()
 with redirect_stdout(printed), redirect_stderr(errors):
     exit_code = installer.main(["--print"], platform="linux", home=Path("/home/nedlern"), run=stub)
-check("--print as ned-box prints ned-box's two cron lines from the real table and runs nothing",
+check("--print as ned-box prints ned-box's three cron lines from the real table and runs nothing",
       exit_code == 0 and stub.commands == []
       and printed.getvalue().splitlines() == [
           "machine: ned-box (linux, /home/nedlern)",
           "transcript-mirror-to-log-store — cron line:", NED_BOX_MIRROR_LINE,
-          "daily-full-test-run-of-main — cron line:", NED_BOX_DAILY_LINE],
+          "daily-full-test-run-of-main — cron line:", NED_BOX_DAILY_LINE,
+          "daily-clean-worktrees — cron line:", NED_BOX_CLEAN_LINE],
       (exit_code, printed.getvalue(), errors.getvalue()))
 printed, errors = io.StringIO(), io.StringIO()
 with redirect_stdout(printed), redirect_stderr(errors):
     exit_code = installer.main(["--print"], platform="darwin", home=Path("/Users/el"), run=stub)
 mac_printed = printed.getvalue()
-check("--print as the Mac prints the mirror's cron line and the daily run's plist, and runs nothing",
-      exit_code == 0 and stub.commands == []
-      and mac_printed.startswith(
+clean_heading = ("daily-clean-worktrees — launchd job, /Users/el/Library/LaunchAgents/"
+                 "com.nedschorus.daily-clean-worktrees.plist:\n")
+daily_part, _, clean_part = mac_printed.partition(clean_heading)
+check("--print as the Mac prints the mirror's cron line and the two daily jobs' plists, and runs "
+      "nothing",
+      exit_code == 0 and stub.commands == [] and clean_part.startswith("<?xml")
+      and daily_part.startswith(
           "machine: mac (darwin, /Users/el)\ntranscript-mirror-to-log-store — cron line:\n"
           f"{MAC_MIRROR_LINE}\ndaily-full-test-run-of-main — launchd job, /Users/el/Library/"
           "LaunchAgents/com.nedschorus.daily-full-test-run-of-main.plist:\n<?xml")
-      and plistlib.loads(mac_printed[mac_printed.index("<?xml"):].encode("utf-8"))
-      == MAC_DAILY_PLIST,
+      and plistlib.loads(daily_part[daily_part.index("<?xml"):].encode("utf-8"))
+      == MAC_DAILY_PLIST
+      and plistlib.loads(clean_part.encode("utf-8")) == MAC_CLEAN_PLIST,
       (exit_code, mac_printed, errors.getvalue()))
 
 
@@ -229,6 +265,12 @@ with tempfile.TemporaryDirectory() as temporary:
     LAUNCH_AGENTS = root / "LaunchAgents"
     FIXTURE_TABLE_PATH = root / "table.json"
     fixture_table = json.loads(REAL_TABLE_PATH.read_text(encoding="utf-8"))
+    # The cases below test the installer's mechanism on one cron job and one
+    # launchd job per machine, so the fixture keeps the real table's first two
+    # jobs; the real-table cases above cover every job the table holds.
+    fixture_table["jobs"] = [job for job in fixture_table["jobs"]
+                             if job["name"] in ("transcript-mirror-to-log-store",
+                                                "daily-full-test-run-of-main")]
     for machine_name in ("mac", "ned-box"):
         machine_home = root / f"{machine_name}-home"
         clone = machine_home / "Projects" / "nedschorus"
