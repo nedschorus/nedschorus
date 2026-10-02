@@ -199,7 +199,12 @@ suite depends on. Two recorders, whose findings are added together:
   suite's own directory), and each git command run on the checkout itself —
   where a clone counts by its source and an init by the directory it names,
   since both are run from the checkout on repositories that are not it, and
-  an option's value (`-b main`) is not taken for either. Python raises no
+  an option's value (`-b main`) is not taken for either. For each git call it
+  writes every argument after the program name, unchanged, the absolute
+  normalised starting directory before any -C, and GIT_DIR and GIT_WORK_TREE
+  from the call's environment (the inherited environment when none is
+  given). These facts are JSON, so an argument's newline cannot break the
+  log's line format. The recorder does not classify the calls. Python raises no
   audit event for a stat, so the recorder also wraps os.path's exists,
   lexists, isfile, isdir and islink, which pathlib's exists, is_file and
   is_dir call, and writes down each path inside the checkout they check. An
@@ -224,8 +229,14 @@ suite depends on. Two recorders, whose findings are added together:
 A recording keeps, per suite: its exit code; each file read, with its git
 blob hash; each path it opened or checked for, and whether the path was
 there; each directory it listed, with the entries the directory held; the
-git commands it ran on the checkout, with a fingerprint of the checkout's
-list of files; and which recorders made it. The files are those git tracks
+git calls run from the checkout, with their arguments, starting directory,
+GIT_DIR, GIT_WORK_TREE and what each call reads; the command names of only
+the calls that read the checkout, with a fingerprint of the checkout's
+list of files; and which recorders made it. A starting directory inside the
+checkout is kept relative to its top directory, with '.' for the top itself;
+one outside is kept absolute. Format 3 keeps these git call facts and their
+classification; every older recording selects its suite once to record
+the facts afresh. The files are those git tracks
 or would add, untracked and not ignored, as the run found them when it
 started. A `.pyc` read is recorded as the source file beside its
 `__pycache__`, because an import that finds a valid cache never opens the
@@ -239,6 +250,52 @@ last run ended; the daily full run refreshes them all. A recording that
 cannot be saved removes the earlier one.
 
 SELECTION, with --only-suites-whose-recorded-inputs-changed-since COMMIT.
+Two explicit allowlists set aside git calls that read no file of the
+checkout. Every call is checked against its full arguments:
+
+  a call sees no file when its only global options are -C <dir> pairs, and
+  its command is rev-parse followed by at least one argument, all from
+  --show-toplevel, --git-dir, --absolute-git-dir, --git-common-dir,
+  --is-inside-work-tree and --show-prefix; or its command is config followed
+  by exactly one key, exactly --get <key>, or exactly --get-all <key>.
+  A key does not start with '-', contains a '.', contains no '=' and no
+  whitespace; user.* keys are included. The six rev-parse options say where
+  the checkout and its git directory are, from the current directory and
+  the repository's location alone. Config reads answer from configuration
+  in the git directory or the user's home, never from a file of the
+  checkout. Anything else on the call fails this allowlist, including
+  rev-parse --verify <abbreviated hash>, whose answer depends on the object
+  store, which every commit changes: a new object can make the abbreviation
+  ambiguous.
+
+  a call runs on another repository when its only global options are
+  -C <dir>, --git-dir <path>, --git-dir=<path>, --work-tree <path> and
+  --work-tree=<path>; it names a git directory by its last --git-dir value,
+  or otherwise its recorded GIT_DIR; that directory resolves outside both
+  the checkout's top directory and its common git directory; and either
+  its last --work-tree value, or otherwise its recorded GIT_WORK_TREE,
+  resolves outside the top directory, or its command reads no work tree:
+  rev-parse, log, show, cat-file, for-each-ref, config, or worktree whose
+  first argument is list. Relative paths resolve against the starting
+  directory after applying every -C in order, then through realpath.
+  The common git directory is git rev-parse --git-common-dir, resolved
+  against the top directory when relative, then through realpath; when
+  unknown, only the top directory counts as the checkout. A linked
+  worktree's own git directory is outside its top directory but inside
+  its common git directory, so still belongs to the checkout's repository.
+  The listed commands read the other repository's objects, refs and
+  configuration. Status, diff, add, checkout, ls-files and stash given
+  --git-dir without a work tree use the current directory as their work
+  tree, so still read the checkout.
+
+Anything else stays git on the checkout and follows the rules below,
+including calls with no parseable command, a clone whose source is inside
+the checkout, and an init naming a directory inside it. A call set aside
+does not trigger any of the three git reasons below; the recorded files,
+paths and directory listings are still compared. When every recorded git
+call is set aside and those comparisons pass, the NOT SELECTED line says
+which calls see no file and which commands run on another repository.
+
 The files that differ are `git diff --no-renames COMMIT` against the
 checkout's files, plus untracked files git does not ignore, as added. Every
 suite runs when one of them is this program (it holds the recorder), under
@@ -308,6 +365,7 @@ import codecs
 import concurrent.futures
 import datetime
 import fcntl
+import functools
 import hashlib
 import json
 import os
@@ -347,7 +405,7 @@ DEFAULT_RECORDED_INPUTS_DIRECTORY = (
     Path.home() / ".cache" / "nedschorus-test-suite-recorded-inputs")
 # Raised whenever what a recording holds changes, so an older recording is
 # never read as a newer one: its suite runs, and is recorded afresh.
-RECORDED_INPUTS_FORMAT_VERSION = 2
+RECORDED_INPUTS_FORMAT_VERSION = 3
 RECORDED_INPUTS_LOG_VARIABLE = "RUN_ALL_TEST_SUITES_RECORDED_INPUTS_LOG"
 RECORDED_INPUTS_CHECKOUT_VARIABLE = "RUN_ALL_TEST_SUITES_RECORDED_INPUTS_CHECKOUT"
 # Its presence marks a directory as holding this program's recorder, so a
@@ -371,6 +429,22 @@ GIT_COMMANDS_THAT_ONLY_LIST = frozenset((
     "ls-files", "ls-tree", "rev-parse", "rev-list", "log", "branch", "config",
     "remote", "worktree", "for-each-ref", "symbolic-ref", "merge-base",
     "describe", "show-ref", "check-ignore", "var", "version", "fetch", "init"))
+# These say where the checkout and its git directory are, from the current
+# directory and the repository's location alone, without reading a file of
+# the checkout.
+GIT_REV_PARSE_OPTIONS_THAT_SEE_NO_FILE = frozenset((
+    "--show-toplevel", "--git-dir", "--absolute-git-dir", "--git-common-dir",
+    "--is-inside-work-tree", "--show-prefix"))
+# A single-key config read answers from the git directory or the user's home,
+# rather than from a file of the checkout.
+GIT_CONFIG_OPTIONS_THAT_READ_ONE_KEY = ("--get", "--get-all")
+# These read objects, refs and configuration without using the current
+# directory as a work tree; `worktree list` does the same.
+GIT_COMMANDS_THAT_READ_NO_WORK_TREE = frozenset((
+    "rev-parse", "log", "show", "cat-file", "for-each-ref", "config"))
+GIT_CALL_SEES_NO_FILE = "sees no file"
+GIT_CALL_RUNS_ON_ANOTHER_REPOSITORY = "runs on another repository"
+GIT_CALL_READS_THE_CHECKOUT = "reads the checkout"
 PYCACHE_FILE = re.compile(
     r"^(?P<directory>(?:.*/)?)__pycache__/(?P<stem>[^/]+?)\.[^/.]+(?:\.opt-\d)?\.pyc$")
 
@@ -435,7 +509,7 @@ def _run_all_test_suites_install_input_recorder():
     }
     is_file = _os.path.isfile
 
-    def started(program, arguments, working_directory):
+    def started(program, arguments, working_directory, environment):
         if isinstance(arguments, (str, bytes, _os.PathLike)):
             arguments = [arguments]
         arguments = list(arguments or [])
@@ -445,8 +519,10 @@ def _run_all_test_suites_install_input_recorder():
                 write("read", path)
         if not arguments or _os.path.basename(_os.fsdecode(arguments[0])) != "git":
             return
-        target = working_directory or _os.getcwd()
-        rest = [_os.fsdecode(argument) for argument in arguments[1:]]
+        directory = absolute(working_directory) if working_directory is not None else _os.getcwd()
+        target = directory
+        git_arguments = [_os.fsdecode(argument) for argument in arguments[1:]]
+        rest = git_arguments
         index = 0
         while index < len(rest) and rest[index].startswith("-"):
             if rest[index] == "-C" and index + 1 < len(rest):
@@ -475,13 +551,30 @@ def _run_all_test_suites_install_input_recorder():
             # A clone reads its source, not the directory it is run from.
             sources = [absolute(operand[len("file://"):] if operand.startswith("file://")
                                 else operand, target) for operand in operands[:1]]
-            if any(inside(_os.path.realpath(source)) for source in sources if source):
-                write("git", command)
-            return
-        if command == "init" and operands:
-            target = absolute(operands[0], target)
-        if inside(_os.path.realpath(target or "")):
-            write("git", command)
+            if not any(inside(_os.path.realpath(source)) for source in sources if source):
+                return
+        else:
+            if command == "init" and operands:
+                target = absolute(operands[0], target)
+            if not inside(_os.path.realpath(target or "")):
+                return
+        import json
+        environment = _os.environ if environment is None else environment
+        call = {
+            "arguments": git_arguments,
+            "directory": directory,
+        }
+        for name in ("GIT_DIR", "GIT_WORK_TREE"):
+            value = None
+            for key in (name, _os.fsencode(name)):
+                try:
+                    value = environment.get(key)
+                except TypeError:
+                    continue
+                if value is not None:
+                    break
+            call[name] = _os.fsdecode(value) if value is not None else None
+        write("git", json.dumps(call))
 
     def hook(event, arguments):
         try:
@@ -497,9 +590,9 @@ def _run_all_test_suites_install_input_recorder():
                 if inside(path):
                     write("list", path)
             elif event == "subprocess.Popen":
-                started(arguments[0], arguments[1], arguments[2])
+                started(arguments[0], arguments[1], arguments[2], arguments[3])
             elif event in ("os.exec", "os.posix_spawn"):
-                started(None, arguments[1], None)
+                started(None, arguments[1], None, arguments[2])
         except Exception:
             pass
 
@@ -571,6 +664,89 @@ def git(checkout, *arguments):
     return subprocess.run(["git", "-C", str(checkout), *arguments],
                           env=environment_without_git_redirecting_variables(),
                           capture_output=True, text=True, check=False)
+
+
+def git_call_global_options_command_and_arguments(arguments):
+    """Separate global options from the command without guessing at operands."""
+    global_options, index = [], 0
+    while index < len(arguments):
+        option = arguments[index]
+        if not option.startswith("-"):
+            return global_options, option, arguments[index + 1:]
+        if option.startswith("--") and "=" in option:
+            global_options.append(tuple(option.split("=", 1)))
+        elif option in ("-C", "-c", "--git-dir", "--work-tree", "--namespace", "--config-env"):
+            if index + 1 >= len(arguments):
+                return None
+            index += 1
+            global_options.append((option, arguments[index]))
+        else:
+            global_options.append((option, None))
+        index += 1
+    return None
+
+
+@functools.lru_cache(maxsize=None)
+def git_common_directory_of_checkout(top):
+    """Include the shared git directory so a linked worktree's own repository
+    is not mistaken for another repository outside its top directory."""
+    answer = git(top, "rev-parse", "--git-common-dir")
+    if answer.returncode != 0:
+        return None
+    return os.path.realpath(os.path.join(top, answer.stdout.strip()))
+
+
+def what_a_git_call_run_from_the_checkout_reads(call, top, git_common_directory):
+    """Set aside only calls whose full arguments satisfy one of the allowlists."""
+    if not isinstance(call, dict) or not isinstance(call.get("arguments"), list) \
+            or not all(isinstance(argument, str) for argument in call["arguments"]):
+        return GIT_CALL_READS_THE_CHECKOUT
+    parsed = git_call_global_options_command_and_arguments(call["arguments"])
+    if parsed is None:
+        return GIT_CALL_READS_THE_CHECKOUT
+    global_options, command, command_arguments = parsed
+    if all(option == "-C" and value is not None for option, value in global_options):
+        if command == "rev-parse" and command_arguments \
+                and all(argument in GIT_REV_PARSE_OPTIONS_THAT_SEE_NO_FILE
+                        for argument in command_arguments):
+            return GIT_CALL_SEES_NO_FILE
+        if command == "config":
+            operands = command_arguments
+            if len(operands) == 2 and operands[0] in GIT_CONFIG_OPTIONS_THAT_READ_ONE_KEY:
+                operands = operands[1:]
+            if len(operands) == 1:
+                key = operands[0]
+                if not key.startswith("-") and "." in key and "=" not in key \
+                        and not any(character.isspace() for character in key):
+                    return GIT_CALL_SEES_NO_FILE
+    if any(option not in ("-C", "--git-dir", "--work-tree") or value is None
+           for option, value in global_options):
+        return GIT_CALL_READS_THE_CHECKOUT
+    directory = call.get("directory")
+    if not isinstance(directory, str):
+        return GIT_CALL_READS_THE_CHECKOUT
+    git_directory, work_tree = call.get("GIT_DIR"), call.get("GIT_WORK_TREE")
+    for option, value in global_options:
+        if option == "-C":
+            directory = os.path.join(directory, value)
+        elif option == "--git-dir":
+            git_directory = value
+        elif option == "--work-tree":
+            work_tree = value
+    if not isinstance(git_directory, str) or not git_directory:
+        return GIT_CALL_READS_THE_CHECKOUT
+    git_directory = os.path.realpath(os.path.join(directory, git_directory))
+    if relative_inside(top, git_directory) is not None \
+            or (git_common_directory is not None
+                and relative_inside(git_common_directory, git_directory) is not None):
+        return GIT_CALL_READS_THE_CHECKOUT
+    if isinstance(work_tree, str) and relative_inside(
+            top, os.path.realpath(os.path.join(directory, work_tree))) is None:
+        return GIT_CALL_RUNS_ON_ANOTHER_REPOSITORY
+    if command in GIT_COMMANDS_THAT_READ_NO_WORK_TREE \
+            or (command == "worktree" and command_arguments[:1] == ["list"]):
+        return GIT_CALL_RUNS_ON_ANOTHER_REPOSITORY
+    return GIT_CALL_READS_THE_CHECKOUT
 
 
 def checkout_top_directory(given):
@@ -897,6 +1073,7 @@ def recording_of(top, suite, result, recording_dir, files, commit, strace_used):
     recorders' logs; `files` is checkout_files() as the run began."""
     hook_log, strace_dir = recording_paths_for(recording_dir, suite)
     touched, probed, listed, git_commands = {suite}, set(), set(), set()
+    git_calls = {}
     try:
         hook_lines = hook_log.read_text(errors="surrogateescape").splitlines()
     except OSError:
@@ -904,7 +1081,27 @@ def recording_of(top, suite, result, recording_dir, files, commit, strace_used):
     for line in hook_lines:
         kind, _, value = line.partition("\t")
         if kind == "git":
-            git_commands.add(value)
+            try:
+                call = json.loads(value)
+            except ValueError:
+                call = None
+            if not isinstance(call, dict):
+                call = {}
+            call = {key: call.get(key) for key in (
+                "arguments", "directory", "GIT_DIR", "GIT_WORK_TREE")}
+            call["reads"] = what_a_git_call_run_from_the_checkout_reads(
+                call, top, git_common_directory_of_checkout(str(top)))
+            if call["reads"] == GIT_CALL_READS_THE_CHECKOUT:
+                arguments = call["arguments"]
+                parsed = (git_call_global_options_command_and_arguments(arguments)
+                          if isinstance(arguments, list)
+                          and all(isinstance(argument, str) for argument in arguments) else None)
+                git_commands.add(parsed[1] if parsed is not None else "(unparsed)")
+            if isinstance(call["directory"], str):
+                relative = relative_inside(top, call["directory"])
+                if relative is not None:
+                    call["directory"] = relative
+            git_calls[json.dumps(call, sort_keys=True)] = call
             continue
         relative = relative_inside(top, value)
         if relative is None or inside_git_directory(relative):
@@ -947,6 +1144,7 @@ def recording_of(top, suite, result, recording_dir, files, commit, strace_used):
         "looked_for": looked_for,
         "lists": {directory: sorted(entries.get(directory, ())) for directory in sorted(listed)},
         "git_commands_on_the_checkout": sorted(git_commands),
+        "git_calls_run_from_the_checkout": [git_calls[key] for key in sorted(git_calls)],
         "files_fingerprint": file_list_fingerprint(files),
     }
 
@@ -1107,8 +1305,27 @@ def selection_reason(suite, recording, checkout, commit):
     if git_commands and recording.get("files_fingerprint") != checkout.fingerprint_now:
         return True, (f"it runs git {', '.join(git_commands)} on the checkout, and its "
                       f"recording was made on another set of files")
-    return False, (f"none of the {len(reads)} files it read "
-                   f"differs since {short}")
+    reason = f"none of the {len(reads)} files it read differs since {short}"
+    calls = recording.get("git_calls_run_from_the_checkout", [])
+    if calls and all(call["reads"] != GIT_CALL_READS_THE_CHECKOUT for call in calls):
+        sees_no_file, another_repository = set(), set()
+        for call in calls:
+            _, command, arguments = git_call_global_options_command_and_arguments(
+                call["arguments"])
+            if call["reads"] == GIT_CALL_SEES_NO_FILE:
+                sees_no_file.add(" ".join(["git", command, *arguments]))
+            elif call["reads"] == GIT_CALL_RUNS_ON_ANOTHER_REPOSITORY:
+                another_repository.add("git " + command
+                                       + (" list" if command == "worktree" else ""))
+        groups = []
+        if sees_no_file:
+            verb = "sees" if len(sees_no_file) == 1 else "see"
+            groups.append(f"{', '.join(sorted(sees_no_file))} {verb} no file")
+        if another_repository:
+            verb = "runs" if len(another_repository) == 1 else "run"
+            groups.append(f"{', '.join(sorted(another_repository))} {verb} on another repository")
+        reason += ", and its git calls read no file of the checkout: " + "; ".join(groups)
+    return False, reason
 
 
 def suites_selected_since(top, suites, recordings_dir, commit):

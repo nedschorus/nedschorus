@@ -641,7 +641,9 @@ with tempfile.TemporaryDirectory() as scratch:
     check("git init and git clone of a repository outside the checkout, run from the "
           "checkout, are not recorded as git on the checkout, with option values or without",
           recording(root, "runs-git-on-its-own-repository-test.py").get(
-              "git_commands_on_the_checkout") == [],
+              "git_commands_on_the_checkout") == []
+          and recording(root, "runs-git-on-its-own-repository-test.py").get(
+              "git_calls_run_from_the_checkout") == [],
           recording(root, "runs-git-on-its-own-repository-test.py"))
     check("a run records what its suite read in that run, not what an earlier run into "
           "the same log directory read",
@@ -979,6 +981,251 @@ with tempfile.TemporaryDirectory() as scratch:
     check("the lock names its holder's log directory, on one line",
           holder.endswith(f", logs in {(root / 'logs').resolve()}\n")
           and holder.count("\n") == 1 and holder.startswith("pid "), holder)
+
+# --- Git calls that read no file of the checkout -----------------------------
+# Full arguments distinguish location and config reads from calls whose
+# answers depend on files or objects, and another repository from this one.
+for arguments in (
+        *(["rev-parse", option] for option in (
+            "--show-toplevel", "--git-dir", "--absolute-git-dir", "--git-common-dir",
+            "--is-inside-work-tree", "--show-prefix")),
+        ["rev-parse", "--show-toplevel", "--git-dir"],
+        ["-C", "sub", "rev-parse", "--show-toplevel"],
+        ["config", "user.email"], ["config", "--get", "user.name"],
+        ["config", "--get-all", "user.name"], ["config", "user.useConfigOnly"]):
+    call = {"arguments": arguments, "directory": "/checkout-top",
+            "GIT_DIR": None, "GIT_WORK_TREE": None}
+    answer = module.what_a_git_call_run_from_the_checkout_reads(
+        call, "/checkout-top", "/checkout-top/.git")
+    check(f"git {' '.join(arguments)} sees no file",
+          answer == module.GIT_CALL_SEES_NO_FILE, answer)
+
+for arguments in (
+        ["rev-parse", "--short", "HEAD"], ["rev-parse", "HEAD"],
+        ["rev-parse", "--verify", "--quiet", "08ddce3^{commit}"],
+        ["rev-parse", "--show-toplevel", "HEAD"], ["rev-parse"],
+        ["config", "user.name", "value"], ["config", "--unset", "user.name"],
+        ["config", "--local", "--get", "user.name"],
+        ["config", "--get", "user.name", "a-value-pattern"],
+        ["-c", "core.hooksPath=/dev/null", "rev-parse", "--show-toplevel"],
+        ["ls-files", "-z"], ["status", "--porcelain"],
+        ["--no-pager", "rev-parse", "--show-toplevel"],
+        ["config", "--global", "--get", "user.name"],
+        ["config", "--file", "config.txt", "user.name"],
+        ["config", "get", "user.name"], ["config", "user.name=value"],
+        ["config", "user.name value"], ["config", "name"],
+        ["--git-dir"], []):
+    call = {"arguments": arguments, "directory": "/checkout-top",
+            "GIT_DIR": None, "GIT_WORK_TREE": None}
+    answer = module.what_a_git_call_run_from_the_checkout_reads(
+        call, "/checkout-top", "/checkout-top/.git")
+    check(f"git {' '.join(arguments)} stays git on the checkout",
+          answer == module.GIT_CALL_READS_THE_CHECKOUT, answer)
+
+for arguments, git_directory, work_tree in (
+        (["--git-dir", "/tmp/elsewhere/origin.git", "rev-parse", "--verify", "--quiet",
+          "refs/heads/clean"], None, None),
+        (["--git-dir=/tmp/elsewhere/.git", "log", "--oneline"], None, None),
+        (["--git-dir", "/tmp/elsewhere/.git", "worktree", "list", "--porcelain"], None, None),
+        (["cat-file", "-t", "HEAD"], "/tmp/elsewhere/.git", None),
+        (["--git-dir", "/tmp/elsewhere/.git", "for-each-ref"], None, None),
+        (["--git-dir", "/tmp/elsewhere/.git", "show", "HEAD"], None, None),
+        (["--git-dir", "/tmp/elsewhere/.git", "config", "user.name"], None, None),
+        (["--git-dir", "/tmp/elsewhere/.git", "--work-tree", "/tmp/elsewhere",
+          "status"], None, None),
+        (["add", "-A"], "/tmp/elsewhere/.git", "/tmp/elsewhere"),
+        (["--git-dir", "../elsewhere.git", "log"], None, None),
+        (["-C", "sub", "-C", "../..", "--git-dir", "elsewhere.git", "log"], None, None),
+        (["--git-dir", "/checkout-top/.git", "--git-dir", "/tmp/elsewhere/.git", "log"],
+         "/checkout-top/.git", None),
+        (["--git-dir", "/tmp/elsewhere/.git", "--work-tree=/tmp/elsewhere", "status"],
+         None, "/checkout-top"),
+        (["--git-dir", "/tmp/elsewhere/.git", "--work-tree", "/checkout-top", "log"],
+         None, None)):
+    call = {"arguments": arguments, "directory": "/checkout-top",
+            "GIT_DIR": git_directory, "GIT_WORK_TREE": work_tree}
+    answer = module.what_a_git_call_run_from_the_checkout_reads(
+        call, "/checkout-top", "/checkout-top/.git")
+    check(f"git {' '.join(arguments)} with environment {git_directory}, {work_tree} "
+          "runs on another repository", answer == module.GIT_CALL_RUNS_ON_ANOTHER_REPOSITORY,
+          answer)
+
+for arguments in (
+        *(["--git-dir", "/tmp/elsewhere/.git", *command] for command in (
+            ["status"], ["diff"], ["add", "-A"], ["checkout", "main"], ["ls-files"],
+            ["stash"], ["worktree", "add", "x"])),
+        ["--git-dir", "/tmp/elsewhere/.git", "--work-tree", "/checkout-top", "status"],
+        ["--git-dir", "/checkout-top/.git", "log"],
+        ["--git-dir", "/tmp/elsewhere/.git", "-c", "a.b=c", "log"],
+        ["--git-dir", "/tmp/elsewhere/.git", "--namespace", "elsewhere", "log"],
+        ["--git-dir", "/tmp/elsewhere/.git", "--config-env", "a.b=VALUE", "log"],
+        ["--git-dir", "/tmp/elsewhere/.git", "--no-pager", "log"],
+        ["--git-dir", "/tmp/elsewhere/.git", "--git-dir", "/checkout-top/.git", "log"],
+        ["--git-dir", "/tmp/elsewhere/.git", "--work-tree", "/tmp/elsewhere",
+         "--work-tree", "/checkout-top", "status"]):
+    call = {"arguments": arguments, "directory": "/checkout-top",
+            "GIT_DIR": None, "GIT_WORK_TREE": None}
+    answer = module.what_a_git_call_run_from_the_checkout_reads(
+        call, "/checkout-top", "/checkout-top/.git")
+    check(f"git {' '.join(arguments)} still reads the checkout",
+          answer == module.GIT_CALL_READS_THE_CHECKOUT, answer)
+
+for git_directory in ("/main-clone/.git/worktrees/wt", "/main-clone/.git"):
+    call = {"arguments": ["--git-dir", git_directory, "log"], "directory": "/checkout-top",
+            "GIT_DIR": None, "GIT_WORK_TREE": None}
+    answer = module.what_a_git_call_run_from_the_checkout_reads(
+        call, "/checkout-top", "/main-clone/.git")
+    check(f"git naming {git_directory} reads the linked worktree's own repository",
+          answer == module.GIT_CALL_READS_THE_CHECKOUT, answer)
+
+for call in (None, {"arguments": None}, {}, {"arguments": [b"log"]}):
+    answer = module.what_a_git_call_run_from_the_checkout_reads(
+        call, "/checkout-top", "/checkout-top/.git")
+    check(f"an unrecognised git call {call!r} reads the checkout",
+          answer == module.GIT_CALL_READS_THE_CHECKOUT, answer)
+
+with tempfile.TemporaryDirectory() as scratch:
+    root = pathlib.Path(scratch)
+    # Scratch setup runs with -C outside the checkout, so only the calls
+    # made from the checkout are recorded.
+    scratch_setup = '''import subprocess, tempfile, shutil
+scratch = tempfile.mkdtemp()
+subprocess.run(['git', '-C', scratch, 'init', '-q'], check=True, capture_output=True)
+pathlib.Path(scratch, 'one.txt').write_text('one\\n')
+subprocess.run(['git', '-C', scratch, 'add', 'one.txt'], check=True, capture_output=True)
+subprocess.run(['git', '-C', scratch, '-c', 'user.name=x', '-c', 'user.email=x@invalid',
+                '-c', 'commit.gpgsign=false', '-c', 'core.hooksPath=/dev/null',
+                'commit', '-q', '-m', 'one'], check=True, capture_output=True)
+'''
+    positive_suites = {
+        "git-sees-no-file-test.py": '''import subprocess
+subprocess.run(['git', 'rev-parse', '--show-toplevel'], check=True, capture_output=True)
+subprocess.run(['git', 'rev-parse', '--show-toplevel'], cwd='sub',
+               check=True, capture_output=True)
+subprocess.run(['git', '-C', 'sub', 'rev-parse', '--git-dir'], check=True, capture_output=True)
+subprocess.run(['git', 'config', 'user.email'], capture_output=True)
+subprocess.run(['git', 'config', '--get', 'user.name'], capture_output=True)
+''',
+        "git-on-another-repository-test.py": scratch_setup + '''try:
+    subprocess.run(['git', '--git-dir', scratch + '/.git', 'rev-parse', '--verify',
+                    '--quiet', 'HEAD'], check=True, capture_output=True)
+    subprocess.run(['git', '--git-dir=' + scratch + '/.git', 'log', '--oneline'],
+                   check=True, capture_output=True)
+    subprocess.run(['git', '--git-dir', scratch + '/.git', 'worktree', 'list', '--porcelain'],
+                   check=True, capture_output=True)
+    subprocess.run(['git', 'cat-file', '-t', 'HEAD'],
+                   env=dict(os.environ, GIT_DIR=scratch + '/.git'),
+                   check=True, capture_output=True)
+    subprocess.run(['git', '--git-dir', scratch + '/.git', '--work-tree', scratch,
+                    'status', '--porcelain'], check=True, capture_output=True)
+finally:
+    shutil.rmtree(scratch)
+'''}
+    negative_suites = {
+        "git-status-with-git-dir-test.py": scratch_setup + '''try:
+    subprocess.run(['git', '--git-dir', scratch + '/.git', 'status', '--porcelain'],
+                   check=True, capture_output=True)
+finally:
+    shutil.rmtree(scratch)
+''',
+        "git-rev-parse-unknown-option-test.py": (
+            "import subprocess\n"
+            "subprocess.run(['git', 'rev-parse', '--short', 'HEAD'], "
+            "check=True, capture_output=True)\n"),
+        "git-config-write-test.py": (
+            "import subprocess\n"
+            "subprocess.run(['git', 'config', 'run-all-test-suites-test.written', 'value'], "
+            "check=True, capture_output=True)\n")}
+    repo = make_repo(root, dict(positive_suites, **negative_suites))
+    base = commit_files(repo, {"input.txt": "one\n", "sub/tracked.txt": "sub\n"}, "inputs")
+    result = run(root)
+    check("the git call fixture's full run passes", result.returncode == 0,
+          (result.stdout, result.stderr))
+    for suite, expected in (
+            ("git-sees-no-file-test.py", module.GIT_CALL_SEES_NO_FILE),
+            ("git-on-another-repository-test.py", module.GIT_CALL_RUNS_ON_ANOTHER_REPOSITORY)):
+        recorded = recording(root, suite)
+        calls = recorded.get("git_calls_run_from_the_checkout", [])
+        check(f"{suite} records its calls with only {expected} classifications",
+              recorded.get("git_commands_on_the_checkout") == [] and bool(calls)
+              and all(call["reads"] == expected for call in calls), recorded)
+    calls = recording(root, "git-on-another-repository-test.py").get(
+        "git_calls_run_from_the_checkout", [])
+    scratch_git_directory = next((call["arguments"][0].split("=", 1)[1]
+                                  for call in calls if call["arguments"][0].startswith(
+                                      "--git-dir=")), None)
+    check("the cat-file call records the environment's scratch git directory and top cwd",
+          any(call["arguments"] == ["cat-file", "-t", "HEAD"]
+              and call["GIT_DIR"] == scratch_git_directory and call["directory"] == "."
+              for call in calls) and scratch_git_directory is not None, calls)
+    check("the other repository's status call keeps its work-tree argument",
+          any(call["arguments"] == ["--git-dir", scratch_git_directory, "--work-tree",
+                                    str(pathlib.Path(scratch_git_directory).parent),
+                                    "status", "--porcelain"] for call in calls), calls)
+    calls = recording(root, "git-sees-no-file-test.py").get(
+        "git_calls_run_from_the_checkout", [])
+    check("a git call started with cwd sub records that starting directory",
+          any(call["directory"] == "sub"
+              and call["arguments"] == ["rev-parse", "--show-toplevel"] for call in calls),
+          calls)
+    commands = {"git-status-with-git-dir-test.py": "status",
+                "git-rev-parse-unknown-option-test.py": "rev-parse",
+                "git-config-write-test.py": "config"}
+    for suite, command in commands.items():
+        recorded = recording(root, suite)
+        check(f"{suite} records git {command} as reading the checkout",
+              recorded.get("git_commands_on_the_checkout") == [command], recorded)
+
+    added_head = commit_files(repo, {"notes/added.txt": "new\n"}, "add an unrelated file")
+    result = select_since(root, added_head)
+    out = lines(result.stdout)
+    check("only calls reading the checkout select suites recorded on another set of files",
+          result.returncode == 0 and ran(root) == sorted(negative_suites),
+          (ran(root), result.stdout, result.stderr))
+    for suite, command in commands.items():
+        check(f"{suite} keeps the existing fingerprint SELECTED reason",
+              f"SELECTED {suite}: it runs git {command} on the checkout, and its recording "
+              "was made on another set of files" in out, out)
+    recorded = recording(root, "git-sees-no-file-test.py")
+    expected_calls = sorted(("git config --get user.name", "git config user.email",
+                             "git rev-parse --git-dir", "git rev-parse --show-toplevel"))
+    expected_line = (f"NOT SELECTED git-sees-no-file-test.py: none of the "
+                     f"{len(recorded['reads'])} files it read differs since {added_head[:12]}, "
+                     "and its git calls read no file of the checkout: "
+                     + ", ".join(expected_calls) + " see no file")
+    check("the location and config calls' NOT SELECTED line explains every distinct call",
+          expected_line in out, out)
+    check("the other repository calls' NOT SELECTED line explains every distinct command",
+          any(line.startswith("NOT SELECTED git-on-another-repository-test.py: ")
+              and line.endswith("its git calls read no file of the checkout: git cat-file, "
+                                "git log, git rev-parse, git status, git worktree list "
+                                "run on another repository") for line in out), out)
+
+    result = select_since(root, base)
+    out = lines(result.stdout)
+    check("an unrelated added file selects only suites whose calls read the checkout",
+          result.returncode == 0 and ran(root) == sorted(negative_suites),
+          (ran(root), result.stdout))
+    for suite, command in commands.items():
+        check(f"{suite} keeps the existing added-file SELECTED reason",
+              f"SELECTED {suite}: it runs git {command} on the checkout, and "
+              "notes/added.txt was added" in out, out)
+
+with tempfile.TemporaryDirectory() as scratch:
+    root = pathlib.Path(scratch)
+    repo = make_repo(root, {"a-test.py": PASSES})
+    base = head(repo)
+    run(root)
+    stored = next((root / "recordings").glob("*/a-test.py.json"))
+    recorded = json.loads(stored.read_text())
+    recorded["format"] = 2
+    stored.write_text(json.dumps(recorded))
+    result = select_since(root, base)
+    check("format 2 selects a suite once so its git calls can be recorded with format 3",
+          result.returncode == 0 and ran(root) == ["a-test.py"]
+          and "SELECTED a-test.py: its recording was made by an older version of this program"
+          in lines(result.stdout) and recording(root, "a-test.py").get("format") == 3,
+          (ran(root), result.stdout))
 
 # --- The recorder runs the sitecustomize.py it shadows ------------------------
 # Both machines' Pythons ship one (Homebrew's on the Mac sets sys.executable),
