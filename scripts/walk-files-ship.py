@@ -103,9 +103,9 @@ https://github.com/nedschorus/nedschorus/issues/910, measured for the record
 shipper). So the files are copied into a staging directory in walk/
 (`.ship-staging-<name>-<random>`, removed once they are in place) and put in
 place by the record shipper's two steps: an add-only file by hard link, which
-is never made over an existing file (place_staged_files), and a replaced file
-by rename, the store's digest of what it displaces read in the same step
-(replace_with_staged_files). A walk text the walk only added to is renamed
+is never made over an existing file (link_staged_files_never_over_existing),
+and a replaced file by rename, the store's digest of what it displaces read
+in the same step (replace_with_staged_files). A walk text the walk only added to is renamed
 in only while the store still holds the copy it was tested against. The
 outcome is judged on what the store holds afterwards: an add-only file
 holding another shipment's bytes is REFUSED by name, a walk text changed in
@@ -516,10 +516,9 @@ def ship_walk(destination: WalkStoreDestination, name: str,
                 return EXIT_FAILED
         after = {}
         if to_place:
-            placed, after = shipper.place_staged_files(
+            placed, after = shipper.link_staged_files_never_over_existing(
                 destination.copy_host, staging_dir, destination.walk_path,
-                [source.name for source in to_place], local_digests,
-                stop_at_first_taken=False)
+                [source.name for source in to_place])
             if after is None:
                 reason = ("ned-box unreachable"
                           if placed.returncode == shipper.RSYNC_EXIT_CONNECTION_FAILED

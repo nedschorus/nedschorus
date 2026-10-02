@@ -40,20 +40,22 @@ RULED_WALK_PATH = "/home/nedlern/nedschorus-logs/walk"
 
 # What a stub `ssh` answers to the two calls that put the copied files in
 # place, as a store no other shipment is writing to answers: every placed file
-# holds the bytes its digest names on the placing script's `set --` line, and
-# every replaced file holds the staged file's bytes, read from the walk's own
-# directory (WALK_SHIP_TEST_WALK_DIRECTORY), displacing the stored file
-# WALK_SHIP_TEST_STORED_DIGEST_LINE names, if it is that one.
+# and every replaced file holds the staged file's bytes, read from the walk's
+# own directory (WALK_SHIP_TEST_WALK_DIRECTORY), a replaced one displacing the
+# stored file WALK_SHIP_TEST_STORED_DIGEST_LINE names, if it is that one.
 STUB_ANSWER_TO_PUTTING_IN_PLACE = """
 script = sys.argv[-1]
 def set_line_words():
     import shlex
     return shlex.split(next(line for line in script.splitlines()
                             if line.startswith("set -- "))[len("set -- "):])
-if "# cold-read-record-ship: place staged files" in script:
-    words = set_line_words()
-    for relative, digest in zip(words[0::2], words[1::2]):
-        print(digest + "  " + relative)
+if "# cold-read-record-ship: link staged files" in script:
+    import hashlib, shlex
+    loop = next(line for line in script.splitlines()
+                if line.startswith("for relative in "))
+    for relative in shlex.split(loop[len("for relative in "):-len("; do")]):
+        with open(os.path.join(os.environ["WALK_SHIP_TEST_WALK_DIRECTORY"], relative), "rb") as f:
+            print(hashlib.sha256(f.read()).hexdigest() + "  " + relative)
     sys.exit(0)
 if "# cold-read-record-ship: replace with staged files" in script:
     import hashlib
@@ -211,6 +213,28 @@ with tempfile.TemporaryDirectory(prefix="walk-files-ship-test-") as scratch_name
           result.returncode == 0 and "1 file(s) added" in result.stdout
           and f"{WALK}-dispositions.md" in result.stdout
           and (store_walk / f"{WALK}-dispositions.md").is_file(), result.stdout)
+
+    # --- One run both replaces and links, each step under its own flock ------
+    # The replace step flocks walk/ and returns before the linking step runs,
+    # so neither waits on the other: a run doing both finishes in seconds, far
+    # inside the replace step's STORE_DIRECTORY_LOCK_WAIT_SECONDS.
+    both_walk = "both-steps-walk-2026-10-02"
+    both_text = write_walk(walks, both_walk, FILES)
+    first = ship(local_destination, str(both_text))
+    (walks / f"{both_walk}-minutes.md").write_text("# minutes\n\nEdited.\n", encoding="utf-8")
+    (walks / f"{both_walk}-dispositions.md").write_text("# dispositions\n", encoding="utf-8")
+    started = time.monotonic()
+    result = ship(local_destination, str(both_text))
+    elapsed = time.monotonic() - started
+    check("one run that replaces the minutes and links a new dispositions file "
+          "does both, exit 0, well inside the replace step's lock wait",
+          first.returncode == 0 and result.returncode == 0
+          and "minutes replaced" in result.stdout and "1 file(s) added" in result.stdout
+          and (store_walk / f"{both_walk}-minutes.md").read_text(encoding="utf-8")
+          == "# minutes\n\nEdited.\n"
+          and (store_walk / f"{both_walk}-dispositions.md").is_file()
+          and elapsed < 30,
+          f"{elapsed:.1f}s {first.stdout} {result.stdout} {result.stderr}")
 
     # --- The dispositions are replaced like the minutes, and announced --------
     # (user-ruled 2026-09-18, walk skill-sentences-and-shipper-questions-2026-09-18
@@ -405,7 +429,7 @@ with tempfile.TemporaryDirectory(prefix="walk-files-ship-test-") as scratch_name
     check("the store is prepared over ssh: mkdir -p of walk/ and the README when absent",
           any("mkdir -p" in " ".join(c) and "README.md" in " ".join(c)
               and RULED_WALK_PATH in " ".join(c) for c in ssh_calls), str(ssh_calls))
-    placing_marker = "# cold-read-record-ship: place staged files"
+    placing_marker = "# cold-read-record-ship: link staged files"
     replacing_marker = "# cold-read-record-ship: replace with staged files"
     listing_calls = [c for c in ssh_calls if "sha256sum" in " ".join(c)
                      and placing_marker not in c[-1] and replacing_marker not in c[-1]]

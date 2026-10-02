@@ -136,23 +136,18 @@ A staging directory outlives its shipment only when the copy into it fails
 and ned-box cannot be reached to remove it, or the shipment is killed before
 the step; nothing reads it.
 
-TWO LOCKS, ON DIFFERENT STEPS. This module holds two locks, and they never
-guard the same files. The record's lock above guards ship_one, the path
-cold-read and sanity-check records take. It spans the inventory, the copy and
-the placing, which are several ssh round trips, so it is a directory made with
-mkdir and removed with rmdir, with a stale limit for a shipment killed while
-holding it. The store directory's flock (WHY THE STORE DIRECTORY IS LOCKED, in
+TWO LOCKS, ON DIFFERENT STEPS. This module takes two flocks, and they never
+guard the same files. The record's flock (ONE STEP, HOLDING THE RECORD'S LOCK,
+above) guards place_staged_files, the path cold-read and sanity-check records
+take. The store directory's flock (WHY THE STORE DIRECTORY IS LOCKED, in
 replace_with_staged_files) guards one replace step, the path a walk's
-minutes, dispositions and appended walk text and a seat's files take. That
-step runs in one shell, so the lock belongs to that shell, is released however
-the shell exits, and needs no stale limit. No record goes through the replace
-step -- ship_one replaces triage.md with its own copy, under the record's
-lock -- and no walk or seat file goes through ship_one, so a shipment never
-holds both locks and neither waits on the other. A flock could stand in for
-the record's lock only by keeping an ssh session open for the whole shipment
-to hold it; a killed shipment's leftover lock costs at most
-RECORD_LOCK_STALE_MINUTES of FAILED lines asking to ship again later, and
-loses nothing.
+minutes, dispositions and appended walk text and a seat's files take. Each is
+taken and released inside one process, one ssh call to ned-box or one call
+in this process, so the kernel releases it however that process exits. No
+record goes through the replace step -- place_staged_files replaces triage.md
+itself, under the record's flock -- and no walk or seat file goes through
+place_staged_files, so no step holds one flock while taking the other, and
+neither waits on the other.
 
 The store's directories are created on first use, and a README.md at the
 store's root is rewritten from STORE_README in this file whenever it differs:
@@ -264,6 +259,9 @@ RECORD_LOCK_POLL_SECONDS = 0.05
 # Marks the one ssh call that runs the step under the record's lock, so a
 # test's stub `ssh` can tell it from the inventory.
 PLACE_STAGED_FILES_MARKER = "# cold-read-record-ship: place staged files"
+# Marks the one ssh call that links a walk's add-only files into the store,
+# for the same reason; see link_staged_files_never_over_existing.
+LINK_STAGED_FILES_MARKER = "# cold-read-record-ship: link staged files"
 # Marks the one ssh call that replaces store files with staged ones, for the
 # same reason; see replace_with_staged_files.
 REPLACE_WITH_STAGED_FILES_MARKER = "# cold-read-record-ship: replace with staged files"
@@ -906,10 +904,11 @@ def replace_with_staged_files(host, staging_dir: pathlib.PurePosixPath,
     call, runs holding an exclusive flock on `store_dir`, which every
     shipment's replace step takes, locally and on ned-box alike; a second
     shipment's step waits until the first's is done, then reads the digest the
-    first left. place_staged_files does not take this lock: its hard link never
-    replaces a name, so a name this step finds present can change only through
-    another replace step, which waits. (ship_one's record lock, around its own
-    placing, is the other lock: see TWO LOCKS, ON DIFFERENT STEPS.) A lock still held by another shipment after
+    first left. link_staged_files_never_over_existing does not take this
+    lock: its hard link never replaces a name, so a name this step finds
+    present can change only through another replace step, which waits.
+    (place_staged_files' record flock is the other lock: see TWO LOCKS, ON
+    DIFFERENT STEPS.) A lock still held by another shipment after
     STORE_DIRECTORY_LOCK_WAIT_SECONDS fails the step, returning None as an
     unreachable host does.
 

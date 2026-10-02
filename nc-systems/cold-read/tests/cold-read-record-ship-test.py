@@ -1026,8 +1026,8 @@ with tempfile.TemporaryDirectory(prefix="cold-read-record-ship-test-") as scratc
           and time.monotonic() - started < 10,
           f"{outcome} {replayed.stderr}")
 
-    # The go-on form of the placing script, scripts/walk-files-ship.py's: a
-    # name taken by other bytes is left as it was, and placing goes on past it.
+    # The walk shipper's add-only linking script, scripts/walk-files-ship.py's:
+    # a name taken by other bytes is left as it was, and placing goes on past it.
     staging = scratch / "placing-go-on" / ".ship-staging-w-0"
     store = scratch / "placing-go-on" / "w"
     go_on_contents = {"a.md": "a\n", "b.md": "b, this shipment's\n", "c.md": "c\n"}
@@ -1036,17 +1036,18 @@ with tempfile.TemporaryDirectory(prefix="cold-read-record-ship-test-") as scratc
         (staging / relative).write_text(text, encoding="utf-8")
     store.mkdir(parents=True, exist_ok=True)
     (store / "b.md").write_text("b, the other's\n", encoding="utf-8")
-    replayed = subprocess.run(["/bin/sh", "-c", racing.place_staged_files_script(
-        pathlib.PurePosixPath(staging), pathlib.PurePosixPath(store),
-        sorted(go_on_contents),
-        {relative: hashlib.sha256(text.encode()).hexdigest()
-         for relative, text in go_on_contents.items()},
-        stop_at_first_taken=False)], capture_output=True, text=True, check=False)
-    check("replayed by a real sh, the go-on placing script leaves a name taken "
-          "by other bytes as it was and places the files after it",
+    replayed = subprocess.run(
+        ["/bin/sh", "-c", racing.link_staged_files_never_over_existing_script(
+            pathlib.PurePosixPath(staging), pathlib.PurePosixPath(store),
+            sorted(go_on_contents))], capture_output=True, text=True, check=False)
+    check("replayed by a real sh, the walk shipper's linking script leaves a name "
+          "taken by other bytes as it was, places the files after it, and prints "
+          "the store's digest of each",
           replayed.returncode == 0 and not staging.exists()
           and {p.name: p.read_text(encoding="utf-8") for p in store.iterdir()}
-          == {"a.md": "a\n", "b.md": "b, the other's\n", "c.md": "c\n"},
+          == {"a.md": "a\n", "b.md": "b, the other's\n", "c.md": "c\n"}
+          and (hashlib.sha256("b, the other's\n".encode()).hexdigest() + "  b.md"
+               in replayed.stdout.splitlines()),
           f"{replayed.stdout} {replayed.stderr}")
 
     # The replacing script ned-box runs for the walk and seat shippers,
