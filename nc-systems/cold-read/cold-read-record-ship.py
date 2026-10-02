@@ -770,18 +770,6 @@ def ship_one(host, records_path: pathlib.PurePosixPath, record_dir: pathlib.Path
     displaced_triage_digest = outcome["displaced"]
     if displaced_triage_digest is not None and TRIAGE_FILE_REPLACED_IN_THE_STORE in added:
         added.remove(TRIAGE_FILE_REPLACED_IN_THE_STORE)
-    taken = sorted(relative for relative in added
-                   if relative in stored and stored[relative] != local[relative])
-    if taken:
-        return refuse(taken)
-    missing = sorted(relative for relative in added if relative not in stored)
-    if missing:
-        print(f"FAILED: {name} — not in the store after the copy: "
-              f"{', '.join(missing)}; a later run finishes it.")
-        sys.stderr.write(placed.stderr)
-        return EXIT_FAILED
-    if not added and displaced_triage_digest is None:
-        return nothing_new()
     if displaced_triage_digest is not None:
         triage_relative = TRIAGE_FILE_REPLACED_IN_THE_STORE
         # The triage's path in the store on ned-box, which the snapshots copy:
@@ -803,6 +791,23 @@ def ship_one(host, records_path: pathlib.PurePosixPath, record_dir: pathlib.Path
               f"snapshots: on ned-box, run `sha256sum "
               f"/mnt/backup/timeshift/snapshots/*/localhost{stored_triage}` and "
               f"take a snapshot whose line shows that digest.", file=sys.stderr)
+    # The replaced triage.md is read back and judged like an added file: an
+    # overlapping shipment's replacement can land after this one's, and then
+    # the store holds the other shipment's triage, not this one's.
+    judged = added + ([TRIAGE_FILE_REPLACED_IN_THE_STORE]
+                      if displaced_triage_digest is not None else [])
+    taken = sorted(relative for relative in judged
+                   if relative in stored and stored[relative] != local[relative])
+    if taken:
+        return refuse(taken)
+    missing = sorted(relative for relative in judged if relative not in stored)
+    if missing:
+        print(f"FAILED: {name} — not in the store after the copy: "
+              f"{', '.join(missing)}; a later run finishes it.")
+        sys.stderr.write(placed.stderr)
+        return EXIT_FAILED
+    if not added and displaced_triage_digest is None:
+        return nothing_new()
     summary = []
     if added:
         summary.append(f"{len(added)} file(s) added")

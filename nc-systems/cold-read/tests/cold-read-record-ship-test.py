@@ -24,6 +24,7 @@ import importlib.util
 import io
 import json
 import os
+import re
 import socket
 import pathlib
 import shlex
@@ -700,8 +701,7 @@ with tempfile.TemporaryDirectory(prefix="cold-read-record-ship-test-") as scratc
           len(rsync_calls) == 1 and "-a" in rsync_calls[0]
           and "ssh -o BatchMode=yes -o ConnectTimeout=10" in rsync_calls[0]
           and rsync_calls[0][-2] == f"{demo.resolve()}/"
-          and rsync_calls[0][-1].startswith(staging_prefix)
-          and rsync_calls[0][-1].endswith("/"),
+          and re.fullmatch(re.escape(staging_prefix) + "[0-9a-f]{12}/", rsync_calls[0][-1]),
           str(rsync_calls))
     placing_calls = [c for c in ssh_calls
                      if "# cold-read-record-ship: place staged files" in c[-1]]
@@ -1067,6 +1067,33 @@ with tempfile.TemporaryDirectory(prefix="cold-read-record-ship-test-") as scratc
           "displaced one, on stderr",
           "REPLACED triage.md" in err
           and hashlib.sha256(theirs.encode()).hexdigest() in err, err)
+
+    # --- An overlapping replacement of triage.md lands after this one's -----
+    # Both shipments replace triage.md; the other's rename lands second, so
+    # this shipment's read-back holds the other's triage: never shipped:.
+    overtaken_store = scratch / "overtaken-store" / "cold-read-records"
+    overtaken_record = make_record(scratch / "overtaken-records", "overtaken-2026-10-02",
+                                   {"a.md": "# shared\n", "triage.md": "# triage, ours\n"})
+    overtaken_triage = overtaken_store / overtaken_record.name / "triage.md"
+    overtaken_triage.parent.mkdir(parents=True)
+    overtaken_triage.write_text("# triage, the store's\n", encoding="utf-8")
+    saved_replace = os.replace
+
+    def replace_then_the_other_replaces(source, target, *args, **kwargs):
+        saved_replace(source, target, *args, **kwargs)
+        if pathlib.Path(target).name == "triage.md":
+            pathlib.Path(target).write_text(theirs, encoding="utf-8")
+
+    os.replace = replace_then_the_other_replaces
+    try:
+        code, out, err = ship_in_process(overtaken_store, overtaken_record)
+    finally:
+        os.replace = saved_replace
+    check("a triage.md another shipment replaces after this one's replacement "
+          "is REFUSED naming triage.md, and never shipped:",
+          code == 2 and out.startswith("REFUSED:") and "triage.md" in out
+          and "shipped:" not in out,
+          f"exit {code}: {out}{err}")
 
     # --- A new file the placing leaves out is FAILED, never shipped: ---------
     unplaced_store = scratch / "unplaced-store" / "cold-read-records"
