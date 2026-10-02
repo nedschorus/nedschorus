@@ -89,26 +89,43 @@ same second did exactly this (PR "The explain skill is installed, with the
 script that gives a draft reply its fresh read",
 https://github.com/nedschorus/nedschorus/pull/894, mac-claude's review item 2,
 2026-10-01): both printed `shipped:`, and the store kept one checkout's
-fast-read.md beside the other's target/. The copy was `rsync
---ignore-existing` straight into the record's directory, which skips a file
-that has appeared since the inventory without a word, and whose rename can
-also replace one that appeared while it was copying. So the new files are
-copied into a staging directory beside the record's
-(`.ship-staging-<name>-<random>`, removed once they are placed) and placed
-into the record's directory by HARD LINK, one at a time, in a fixed order. A
-hard link is never made over an existing file -- the link call itself fails
-when the name exists, in one step -- so a file another shipment landed first
-is never replaced. The store's digests of the new files are then read back,
-and the outcome is judged on what the store holds, not on what was asked:
-a file holding other bytes is REFUSED under rule 2, a file the store does not
-hold is FAILED, and `shipped:` is printed only when every new file holds this
-shipment's bytes. Identical bytes landed by the other shipment are not a
-difference. Placing stops at the first file found holding other bytes, so the
-shipment that loses the race adds nothing after it; files it placed before
-that one stay, add-only like the rest. A staging directory outlives its
-shipment only when ned-box drops the connection mid-run; nothing reads it,
-and it can be removed by hand. The triage.md replacement of rule 4 is
-outside this: it replaces by design.
+fast-read.md beside the other's target/. Two things now hold that apart.
+
+  THE RECORD'S LOCK. A shipment holds a lock on its record's name from
+  before the inventory until its files are placed: the directory
+  `.ship-lock-<name>` beside the record's, made with mkdir, which fails when
+  it exists and creates it in one step when it does not. A second shipment of
+  the name waits for it, so it takes its inventory after the first has
+  finished and is refused under rule 2 before it copies anything, or replaces
+  triage.md under rule 4, as when the two are shipped one after the other.
+  Without it the loser of the race could place a file the winner lacks before
+  it reached the one they both hold, and that file stayed in the winner's
+  record after the -2 reshipment the refusal asks for (PR "A cold-read-record
+  shipment prints shipped: only when the store holds its own files",
+  https://github.com/nedschorus/nedschorus/pull/912, round 1, both reviews).
+  A shipment that waits RECORD_LOCK_WAIT_SECONDS without getting it prints
+  FAILED and leaves the record on disk for a later run. A lock older than
+  RECORD_LOCK_STALE_MINUTES is the leftover of a shipment that was killed,
+  every shipment taking seconds, and the next shipment removes it.
+
+  PLACING BY HARD LINK, JUDGED BY WHAT THE STORE HOLDS. The new files are
+  copied into a staging directory beside the record's
+  (`.ship-staging-<name>-<random>`, removed once they are placed) and placed
+  into the record's directory by hard link, one at a time, in a fixed order.
+  A hard link is never made over an existing file -- the link call fails when
+  the name exists, in one step -- so a file another shipment landed is never
+  replaced, and placing stops at the first name holding other bytes. The
+  store's digests of the new files are then read back: a file holding other
+  bytes is REFUSED under rule 2, a triage.md holding other bytes is replaced
+  under rule 4, a file the store does not hold is FAILED, and `shipped:` is
+  printed only when every new file holds this shipment's bytes. Under the
+  lock this finds nothing; it is what still holds when the lock does not --
+  a shipper from before the lock, or a lock removed as stale while its
+  shipment was alive.
+
+A staging directory or a lock outlives its shipment only when the shipment is
+killed or ned-box drops the connection mid-run; nothing reads either, and the
+next shipment of the name removes a stale lock.
 
 The store's directories are created on first use, and a README.md at the
 store's root is rewritten from STORE_README in this file whenever it differs:
@@ -209,6 +226,21 @@ PROVENANCE_COMMENT_PREFIX = "<!-- provenance:"
 # ONE NAME AT ONCE above. A leading dot keeps it out of an ordinary listing of
 # the store; the record's name and a random part keep two shipments apart.
 STAGING_DIRECTORY_PREFIX = ".ship-staging-"
+# The lock a shipment holds on its record's name, from before the inventory
+# until its files are placed; see THE RECORD'S LOCK above. A directory beside
+# the record's, so mkdir makes it or fails in one step on either route.
+RECORD_LOCK_DIRECTORY_PREFIX = ".ship-lock-"
+# How long a shipment waits for another shipment of the same name before it
+# prints FAILED; a shipment takes seconds.
+RECORD_LOCK_WAIT_SECONDS = 60
+# A lock older than this was left by a shipment that was killed, and the next
+# shipment removes it. In minutes, the unit `find -mmin` takes on ned-box.
+RECORD_LOCK_STALE_MINUTES = 10
+# The lock script's exit when the lock stayed held for the whole wait:
+# EX_TEMPFAIL, apart from ssh's 255 for an unreachable host.
+RECORD_LOCK_HELD_EXIT = 75
+# Marks the one ssh call that takes the lock, for a test's stub `ssh`.
+LOCK_RECORD_MARKER = "# cold-read-record-ship: lock the record"
 # Marks the one ssh call that places the staged files, so a test's stub `ssh`
 # can tell it from the inventory, which also runs sha256sum.
 PLACE_STAGED_FILES_MARKER = "# cold-read-record-ship: place staged files"
@@ -872,6 +904,76 @@ def replace_with_staged_files_script(staging_dir: pathlib.PurePosixPath,
         f"done\n")
 
 
+def acquire_record_lock(host, lock_dir: pathlib.PurePosixPath) -> subprocess.CompletedProcess:
+    """Take the record's lock: make `lock_dir`, waiting while another shipment
+    holds it, and removing it first when it is older than
+    RECORD_LOCK_STALE_MINUTES. Exit 0 when taken, RECORD_LOCK_HELD_EXIT when
+    it stayed held for RECORD_LOCK_WAIT_SECONDS, ssh's 255 for an unreachable
+    host. One ssh round trip remotely; os.mkdir locally. See THE RECORD'S LOCK
+    in the docstring."""
+    if host is None:
+        lock = pathlib.Path(lock_dir)
+        waited = 0
+        while True:
+            try:
+                lock.mkdir()
+                return subprocess.CompletedProcess([], 0, "", "")
+            except FileExistsError:
+                pass
+            try:
+                age_seconds = time.time() - lock.stat().st_mtime
+            except FileNotFoundError:
+                continue
+            if age_seconds > RECORD_LOCK_STALE_MINUTES * 60:
+                try:
+                    lock.rmdir()
+                except FileNotFoundError:
+                    pass
+                except OSError:
+                    return subprocess.CompletedProcess([], RECORD_LOCK_HELD_EXIT, "", "")
+                continue
+            if waited >= RECORD_LOCK_WAIT_SECONDS:
+                return subprocess.CompletedProcess([], RECORD_LOCK_HELD_EXIT, "", "")
+            time.sleep(1)
+            waited += 1
+    return subprocess.run(SSH_COMMAND + [host, acquire_record_lock_script(lock_dir)],
+                          capture_output=True, text=True, check=False)
+
+
+def acquire_record_lock_script(lock_dir: pathlib.PurePosixPath) -> str:
+    """The POSIX sh script acquire_record_lock runs on ned-box. `mkdir` makes
+    the lock or fails in one step; `find -mmin` says whether a held lock is
+    older than RECORD_LOCK_STALE_MINUTES, in the form GNU and BSD find both
+    take. A stale lock that cannot be removed counts as held."""
+    lock = shlex.quote(str(lock_dir))
+    return (
+        f"{LOCK_RECORD_MARKER}\n"
+        f"waited=0\n"
+        f"until mkdir -- {lock} 2>/dev/null; do\n"
+        f"  if [ -n \"$(find {lock} -maxdepth 0 -mmin +{RECORD_LOCK_STALE_MINUTES} 2>/dev/null)\" ]; then\n"
+        f"    rmdir -- {lock} 2>/dev/null || [ ! -e {lock} ] || exit {RECORD_LOCK_HELD_EXIT}\n"
+        f"    continue\n"
+        f"  fi\n"
+        f"  [ \"$waited\" -lt {RECORD_LOCK_WAIT_SECONDS} ] || exit {RECORD_LOCK_HELD_EXIT}\n"
+        f"  sleep 1\n"
+        f"  waited=$((waited + 1))\n"
+        f"done\n")
+
+
+def release_record_lock(host, lock_dir: pathlib.PurePosixPath) -> None:
+    """Remove the record's lock. Best effort: when ned-box has become
+    unreachable this fails too, and the next shipment of the name waits for
+    the lock to be stale and removes it."""
+    if host is None:
+        try:
+            pathlib.Path(lock_dir).rmdir()
+        except OSError:
+            pass
+        return
+    subprocess.run(SSH_COMMAND + [host, f"rmdir -- {shlex.quote(str(lock_dir))}"],
+                   capture_output=True, text=True, check=False)
+
+
 def remove_staging_directory(host, staging_dir: pathlib.PurePosixPath) -> None:
     """Remove a staging directory a failed copy may have left. Best effort: the
     copy that failed may have failed because ned-box is unreachable, and then
@@ -902,6 +1004,32 @@ def ship_one(host, records_path: pathlib.PurePosixPath, record_dir: pathlib.Path
         sys.stderr.write(ensured.stderr)
         return EXIT_FAILED
 
+    lock_dir = records_path / f"{RECORD_LOCK_DIRECTORY_PREFIX}{name}"
+    locked = acquire_record_lock(host, lock_dir)
+    if locked.returncode != 0:
+        reason = ("ned-box unreachable" if locked.returncode == RSYNC_EXIT_CONNECTION_FAILED
+                  else f"another shipment of this record has held its lock in the "
+                       f"store for {RECORD_LOCK_WAIT_SECONDS} seconds"
+                  if locked.returncode == RECORD_LOCK_HELD_EXIT
+                  else f"ssh exit {locked.returncode}")
+        print(f"FAILED: {name} — {reason}; the record stays on disk, unshipped. "
+              f"Ship it again later.")
+        sys.stderr.write(locked.stderr)
+        return EXIT_FAILED
+    try:
+        return ship_one_holding_the_record_lock(host, records_path, record_dir,
+                                                store_dir, citation)
+    finally:
+        release_record_lock(host, lock_dir)
+
+
+def ship_one_holding_the_record_lock(host, records_path: pathlib.PurePosixPath,
+                                     record_dir: pathlib.Path,
+                                     store_dir: pathlib.PurePosixPath,
+                                     citation: str) -> int:
+    """ship_one's inventory, judgement, copy and placing, run while this
+    shipment holds the record's lock."""
+    name = record_dir.name
     listed, in_store = store_inventory(host, store_dir)
     if in_store is None:
         reason = ("ned-box unreachable" if listed.returncode == RSYNC_EXIT_CONNECTION_FAILED
@@ -972,6 +1100,12 @@ def ship_one(host, records_path: pathlib.PurePosixPath, record_dir: pathlib.Path
             return EXIT_FAILED
         taken = sorted(relative for relative in new_files
                        if relative in after and after[relative] != local[relative])
+        # Rule 4 again: a triage.md another shipment placed first is replaced,
+        # as one already in the store is, never refused with the -2 rename.
+        if TRIAGE_FILE_REPLACED_IN_THE_STORE in taken:
+            taken.remove(TRIAGE_FILE_REPLACED_IN_THE_STORE)
+            new_files.remove(TRIAGE_FILE_REPLACED_IN_THE_STORE)
+            displaced_triage_digest = after[TRIAGE_FILE_REPLACED_IN_THE_STORE]
         if taken:
             return refuse(taken)
         missing = sorted(relative for relative in new_files if relative not in after)
