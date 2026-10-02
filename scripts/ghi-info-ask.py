@@ -42,6 +42,17 @@ whatever the other response is makes no sense"): `out-of-scope` became
 `not-about-issues`, and `escalate:` became `ask-user-about-ruling:`. The old
 words are still read for a while; see RETIRED_BOUNDARY_REPLY_WORDS.
 
+A draft that conflicts with a ruling the user made gets the ruling question,
+not a verdict line. too-similar is a soft block an agent may pass on its own
+judgment, and a ruling is the user's to settle; the GHI write tool stops on
+the ruling question until the user has answered. Every ruling question opens
+with the number of the issue holding the ruling, because the write tool's
+rerun goes on only for a question naming an issue the agent says the user
+answered. The prompt reaches ghi-info at a cold start, so a session started
+earlier keeps its old prompt until it is next reincarnated; the write tool's
+own request offers the ruling reply on every draft, so its stop does not
+wait for that.
+
 Seat and machine: ghi-info lives ONLY on the Ubuntu box, at ~/agents/ghi-info
 there — its mirror, session id, and reincarnation counters all live in that
 one checkout, per the design's "wrapper state ... lives there." This script is the SAME file on
@@ -218,15 +229,15 @@ GitHub is the source of truth; the mirror is your working copy of it. Answer fro
 Requests arrive in four forms:
 
 1. **You are asked for a reading list**: what should an agent read before it files or edits an issue on some topic. Reply with a bare list — "read #13, #24, #31" — plus, only when needed, note lines in plain sentences. Closed issues belong in a reply only when the request says closed history is wanted; tag each truthfully: "#31 (closed 2026-08-08)".
-2. **You are shown a draft issue** — title and body — and asked whether the corpus already covers it. When the draft is an edit of an existing issue, the request names that issue: leave it out of the comparison. Reply with exactly one line, nothing else: `verdict: too-similar #n` (an existing issue already covers this ground; #n is that issue), or `verdict: related #n,#m` (no collision, but the author should know these), or `verdict: unrelated`. In these shapes #n,#m stands for one or more issue numbers. A reply in any other shape is thrown away.
+2. **You are shown a draft issue** — title and body — and asked whether the corpus already covers it. When the draft is an edit of an existing issue, the request names that issue: leave it out of the comparison. Reply with exactly one line, nothing else: `verdict: too-similar #n` (an existing issue already covers this ground; #n is that issue), or `verdict: related #n,#m` (no collision, but the author should know these), or `verdict: unrelated`. In these shapes #n,#m stands for one or more issue numbers. When the draft conflicts with a ruling the user made, reply instead with the ruling question under Boundaries. A reply in any other shape is thrown away.
 3. **You are told a fact that corrects your last reply** — an issue you cited has closed — and asked to redo that one judgment. The fact is already established by script from the refreshed mirror: do not question or verify it; re-read the named entry in issues-closed.md, including any Superseded-by: link, and reply with a corrected reading list.
 4. **You are asked to repair a link** — a cross-reference the maintenance sweep found broken. The request states the defect; repair exactly that link and nothing else. Issue edits go through gh as normal; document-side changes are committed with a message stating what and why and landed on main immediately (on a push race, re-pull and retry once; else report blocked). Reply done: <the repair>, done: no change needed — <why>, or blocked: <what stopped you>.
 
 Boundaries:
 
 - Asked a question about anything beyond the issue corpus — the wiki, the code, anything else — reply exactly: not-about-issues.
-- Whether an old ruling still binds is never yours to judge. Reply: ask-user-about-ruling: <one sentence naming the ruling and the doubt>.
-- These boundary replies apply to questions. A draft-body request always gets a verdict line — conflict with a ruled issue is exactly what too-similar covers. A question beyond the corpus gets not-about-issues even when it touches a ruling."""
+- Whether an old ruling still binds is never yours to judge. Reply: ask-user-about-ruling: #<issue> <one sentence naming the ruling and the doubt>, where #<issue> is the issue that holds the ruling. Every ruling question starts with that issue number.
+- A draft-body request gets a verdict line, except that a draft that conflicts with a ruling the user made gets the ruling question: whether the ruling still binds, or still binds this draft, is the user's to settle. A question beyond the corpus gets not-about-issues even when it touches a ruling."""
 
 
 def compose_resume_ask_prompt(question: str, include_closed: bool, changed_numbers,
