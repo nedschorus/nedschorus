@@ -1564,8 +1564,9 @@ def run_edit_cases(scratch: Path):
     # cut to the entries that decide the question — the filed names
     # directly under docs/issues/, the same issues' numbers under its
     # queue/ and archived/ subdirectories, and a system's own directory.
-    # Its first two queue/ entries are stand-in names: the two files the
-    # tree held there on that date have since left the queue.
+    # A queue/ entry named `…-still-waiting-in-the-queue.md` is a stand-in
+    # name: the file the tree held there on that date has since left the
+    # queue.
     # `create`'s step 5 calls this same function, so a rule that descended
     # would have rewritten these issues' bodies on the next create run.
 
@@ -1580,8 +1581,8 @@ def run_edit_cases(scratch: Path):
         "docs/issues/queue/18-riders-still-waiting-in-the-queue.md\n"
         "docs/issues/queue/3-bindings-still-waiting-in-the-queue.md\n"
         "docs/issues/queue/3-gatekeeper-checks-never-run-at-check-in.md\n"
+        "docs/issues/queue/45-inventory-still-waiting-in-the-queue.md\n"
         "docs/issues/queue/45-session-seat-and-isolation-riders.md\n"
-        "docs/issues/queue/45-ubuntu-fleet-open-work-inventory.md\n"
         "nc-systems/main-gatekeeper/main-gatekeeper-design.md\n")
 
     main_tree = Recorder({"git ls-tree": Completed(MAIN_TREE)})
