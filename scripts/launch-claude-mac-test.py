@@ -111,6 +111,13 @@ def environment_lines(capture: Path) -> dict:
     return recorded
 
 
+def tmux_argv_sets_mouse_mode_and_pbcopy(tmux_argv):
+    """True when the tmux argv sets mouse mode on and pipes mouse copies to
+    pbcopy, each as its own set-option command."""
+    joined = "\n".join(tmux_argv)
+    return ("set-option\n-g\nmouse\non" in joined
+            and "set-option\n-s\ncopy-command\npbcopy" in joined)
+
 class MacLaunchSandbox:
     """A per-case sandbox: recording stubs, throwaway HOME and cwd."""
 
@@ -452,6 +459,9 @@ def main() -> int:
         check("detached: the launcher runs to its tmux launch (exit 0)",
               result.returncode == 0 and sandbox.tmux_argv(),
               (result.returncode, result.stderr[:300]))
+        check("detached: tmux gets mouse mode on and copy-command pbcopy",
+              tmux_argv_sets_mouse_mode_and_pbcopy(sandbox.tmux_argv()),
+              sandbox.tmux_argv())
         check("task list: the pin reaches the supervisor as nedschorus-<seat>-tasks",
               sandbox.supervisor_environment().get("CLAUDE_CODE_TASK_LIST_ID")
               == "nedschorus-seat-a-tasks",
@@ -541,6 +551,9 @@ def main() -> int:
         check("attached: new-session -A with the wrapper executes to exit 0",
               result.returncode == 0 and "-A" in sandbox.tmux_argv(),
               (result.returncode, result.stderr[:300]))
+        check("attached: tmux gets mouse mode on and copy-command pbcopy",
+              tmux_argv_sets_mouse_mode_and_pbcopy(sandbox.tmux_argv()),
+              sandbox.tmux_argv())
         check("task list (attached): the supervisor gets nedschorus-<seat>-tasks",
               sandbox.supervisor_environment().get("CLAUDE_CODE_TASK_LIST_ID")
               == "nedschorus-seat-c-tasks"

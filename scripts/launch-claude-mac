@@ -575,12 +575,18 @@ cd '$QUOTED_AGENT_DIRECTORY'; exec \${SHELL:-/bin/sh}"
 # it. They ride the same tmux invocation (\; separates tmux commands, not
 # shell ones) because the seat's server does not exist before its first
 # session does — a standalone set-option beforehand would find no server —
-# and repeating them on an attach is harmless.
+# and repeating them on an attach is harmless. Mouse mode makes the scroll
+# wheel scroll the seat's tmux history: without it the wheel scrolls iTerm2's
+# own buffer, which holds stale text from before tmux last redrew, and a reply
+# taller than the window loses its top. With mouse mode on, a mouse selection
+# is tmux's, so copy-command pipes it to pbcopy to reach the Mac clipboard.
 if [ "$ATTACH" = yes ]; then
     exec tmux -L "$SEAT_TMUX_SOCKET" new-session -A -s "$AGENT_NAME" -c "$AGENT_DIRECTORY" \
         "trap ':' INT QUIT; $SUPERVISOR_COMMAND; $AFTER_EXIT_COMMAND" \; \
-        set-option -g set-titles on \; set-option -g set-titles-string '#S'
+        set-option -g set-titles on \; set-option -g set-titles-string '#S' \; \
+        set-option -g mouse on \; set-option -s copy-command pbcopy
 fi
 tmux -L "$SEAT_TMUX_SOCKET" new-session -d -s "$AGENT_NAME" -c "$AGENT_DIRECTORY" "$SUPERVISOR_COMMAND" \; \
-        set-option -g set-titles on \; set-option -g set-titles-string '#S' 2>/dev/null \
+        set-option -g set-titles on \; set-option -g set-titles-string '#S' \; \
+        set-option -g mouse on \; set-option -s copy-command pbcopy 2>/dev/null \
     || echo "launch-claude-mac: a tmux session named $AGENT_NAME already exists — a running seat, or its after-exit shell (attach with: launch-claude-mac $AGENT_NAME)"
