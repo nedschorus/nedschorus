@@ -875,6 +875,65 @@ check("1,500 nested quoted substitutions do not crash the guard, which still den
       crashed is None and reason is not None and "attached client" in reason,
       (crashed, reason))
 
+# --- the third reading: forms where bash runs the tmux command ---
+# Each was refused before quoted substitutions were read, and the second
+# reading passed it.
+for case_name, command in [
+    ("a process substitution <( ... ) inside ${ ... } is read as commands",
+     "cat ${output:-<(tmux send-keys -t seat-a x)}"),
+    ("a process substitution >( ... ) inside ${ ... } is read as commands",
+     "tee ${output:->(tmux send-keys -t seat-a x)} < notes.md"),
+    ("a heredoc inside \"$( ... )\" ending EOF)\" ends there: the command after the string is read",
+     "git commit -m \"$(cat <<'EOF'\nmessage\nEOF)\"\ntmux send-keys -t seat-a x"),
+    ("an empty-delimiter heredoc inside \"$( ... )\" ends at its ): the command after is read",
+     "git commit -m \"$(cat <<''\nmessage\n)\"\ntmux send-keys -t seat-a x"),
+    ("a case pattern's ) inside \"$( ... )\" ends the pattern, not the substitution",
+     "X=\"$(b \"$(case x in x) tmux send-keys -t seat-a x;; esac)\")\""),
+    ("a case pattern's ) inside a bare \"$( ... )\" ends the pattern, not the substitution",
+     "X=\"$(case x in x) tmux send-keys -t seat-a x;; esac)\""),
+    ("a heredoc opened in a $( ... ) inside $(( ... )) is a heredoc, not a shift",
+     "X=1 a \"$(( $(cat <<EOF | cat\na b # $(echo \"$(tmux send-keys -t seat-a x)\") $(a it's)\n"
+     "EOF\nc \"$(( $(c) + 1 ))\"\n) + 1 ))\""),
+    ("a backticked command inside double quotes is read as commands",
+     "echo $'it\\'s' \"'`tmux send-keys -t seat-a x`\""),
+    ("a backticked command in a string after a quoted substitution is read as commands",
+     "X=\"$(a ${y:-$(b && (c))}) <<'EOF'\n`tmux send-keys -t seat-a x`\nEOF\n\""),
+    ("three quoted substitutions deep, the innermost command is read",
+     'echo "$(echo "$(echo "$(tmux send-keys -t seat-a x)")")"'),
+    ("a NUL in the command is dropped, as the shell drops it: the command after it is read",
+     "a \x00 b; case x in x) c;; esac; tmux send-keys -t seat-a x"),
+]:
+    reason = decide(command, StubRunner(stdout="1\n"))
+    check(case_name, reason is not None and "attached client" in reason, reason)
+
+# Forms where bash runs no tmux command: no refusal, no probe.
+for case_name, command in [
+    ("$$( inside double quotes is the process id and a parenthesis, not a substitution",
+     'echo "$$(tmux send-keys -t seat-a x)"'),
+    ("$$( mid-string inside double quotes is not a substitution either",
+     'echo "a $$(tmux send-keys -t seat-a x) b"; c'),
+    ("a heredoc after ${y:-$( (b) )} inside \"$( ... )\" is split out: its body is data",
+     "X=\"$(a ${y:-$( (b)\n)}; cat <<'EOF'\n`tmux send-keys -t seat-a x`\nEOF\n)\""),
+    ("an escaped backtick inside double quotes is data",
+     'echo "\\`tmux send-keys -t seat-a x\\`"'),
+    ("text between two NULs the command holds is not read as a marked command list",
+     "a \x00" + "tmux send-keys -t seat-a x".encode().hex() + "\x00 c"),
+    ("a quoted-delimiter heredoc inside a substitution in an unquoted body is data",
+     "cat <<EOF\n$(cat <<'X'\n$(tmux send-keys -t seat-a x)\nX\n)\nEOF\nc"),
+    ("a single-quoted $( inside a backticked command inside double quotes is data",
+     "echo \"`printf '%s' '$(tmux send-keys -t seat-a x)'`\""),
+    ("a ${x:- pattern going on to the next line keeps the heredoc scan in place",
+     "X=\"$(echo ${x:-\n(*})\"\ncat <<'EOF'\n`tmux send-keys -t seat-a x`\nEOF"),
+]:
+    runner = StubRunner(stdout="1\n")
+    check(case_name, decide(command, runner) is None and not runner.calls, runner.calls)
+
+words = guard.tokenize_simple_commands('X="$(case $v in (a|b) c;; *) d;;& e) f;& esac)" && g')
+check("inside a quoted substitution a case's patterns and branches are read as commands",
+      words[:-2] == [["case", "$v", "in"], ["a"], ["b"], ["c"], ["*"], ["d"], ["e"],
+                     ["f"], ["esac"]]
+      and words[-2][0].startswith("X=$(case") and words[-1] == ["g"], words)
+
 
 # --- the ssh invocation parser ---
 

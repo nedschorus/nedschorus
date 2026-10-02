@@ -722,6 +722,15 @@ for case_name, command in [
      "a $$'a\\'; git push --force origin the-pr-branch"),
     ("a subshell inside a $( ... ) inside ${ ... } is read: the force push in it is found",
      "echo ${y:-$(a && (git push --force origin the-pr-branch))}"),
+    # The third reading: forms the second reading passed.
+    ("a process substitution inside ${ ... } is read: the force push in it is found",
+     "cat ${output:-<(git push --force origin the-pr-branch)}"),
+    ("a heredoc in a quoted substitution ending EOF)\" ends there: the force push after is found",
+     "git commit -m \"$(cat <<'EOF'\nmessage\nEOF)\"\ngit push --force origin the-pr-branch"),
+    ("a case pattern's ) in a quoted substitution ends the pattern: the force push is found",
+     "X=\"$(b \"$(case x in x) git push --force origin the-pr-branch;; esac)\")\""),
+    ("a backticked command inside double quotes is read: the force push in it is found",
+     "echo $'it\\'s' \"'`git push --force origin the-pr-branch`\""),
 ]:
     runner = ProbeRunner(open_pull_requests={"the-pr-branch": FAST_READ_PULL_REQUEST})
     decision, reason = decide(command, runner)

@@ -171,6 +171,30 @@ try:
     check("refused after cd with a relative path",
           run_main("cd .. && grep -l needle */*.jsonl", elsewhere) is not None)
 
+    # A command substitution runs in a shell of its own: a `cd` inside a
+    # double-quoted one, or inside one in a heredoc body, moves that shell
+    # and no other. The search after it still runs in the folder it ran in.
+    for command in [
+        'X="$(cd /tmp && pwd)"; grep -l needle */*.jsonl',
+        'ROOT="$(cd "$(dirname "$0")" && pwd)"; grep -l needle */*.jsonl',
+        "cat > /dev/null <<EOF\npath: $(cd /tmp && pwd)\nEOF\ngrep -l needle */*.jsonl",
+        'git commit -m "$(cd /tmp; echo m)"; grep -l needle */*.jsonl',
+    ]:
+        check(f"refused: a cd inside a substitution does not move the search after it: "
+              f"{command!r}", run_main(command, scratch) is not None)
+    check("refused: a cd inside a quoted substitution moves the search in the same one",
+          run_main(f'echo "$(cd {scratch} && grep -l needle */*.jsonl)"', elsewhere)
+          is not None)
+    check("passes: a cd inside a quoted substitution does not move the search after it",
+          run_main(f'echo "$(cd {scratch})"; grep -l needle */*.jsonl', elsewhere) is None)
+
+    # The globs this guard expands are the ones the shared reader reads as
+    # unquoted, inside a double-quoted substitution too.
+    check("refused: a search inside a double-quoted substitution",
+          run_main('n="$(grep -l needle */*.jsonl)"', scratch) is not None)
+    check("passes: a quoted glob inside a double-quoted substitution",
+          run_main('n="$(grep -c "*/*.jsonl" notes.txt)"', scratch) is None)
+
     refusal = run_main("grep -l needle */*.jsonl -n", scratch)
     check("an option after the glob gets the instruction without a rebuilt command",
           refusal == (
