@@ -66,6 +66,8 @@ low reasoning effort:
   - Before `exec`: 0 of 2 carried the marker or a NOTES.md finding.
   - Between `exec` and `review`: 0 of 1.
   - Without the instruction: no marker and no NOTES.md finding.
+  - On ned-box, codex-cli 0.159.3, after `review`: 1 of 1 opened with the
+    marker and reported the NOTES.md command.
 
 One earlier ad hoc run with the override before `exec`, under `--sandbox
 read-only --ephemeral` and without `--disable memories`, did carry it, so
@@ -403,15 +405,41 @@ PULL_REQUEST_DESCRIPTION_FRAMING = (
 )
 
 
+# The most of a description the cell passes, in UTF-8 bytes. The override
+# travels as one command-line argument, and Linux refuses any one argument
+# of 128 KiB or more (MAX_ARG_STRLEN) with E2BIG, which would end the review
+# with no report. A longer description is cut here and the cut is said, so
+# the review still runs.
+PULL_REQUEST_DESCRIPTION_MAXIMUM_BYTES = 64 * 1024
+
+
+def cut_pull_request_description(description: str) -> str:
+    """The description, cut to PULL_REQUEST_DESCRIPTION_MAXIMUM_BYTES on a
+    character boundary, with a line saying it was cut."""
+    encoded = description.encode("utf-8")
+    if len(encoded) <= PULL_REQUEST_DESCRIPTION_MAXIMUM_BYTES:
+        return description
+    kept = encoded[:PULL_REQUEST_DESCRIPTION_MAXIMUM_BYTES].decode("utf-8", errors="ignore")
+    return (kept + f"\n\n[The description was cut here: it holds {len(encoded)} bytes, "
+            f"and the cell passes at most {PULL_REQUEST_DESCRIPTION_MAXIMUM_BYTES}.]")
+
+
 def developer_instructions_override(description: str) -> str:
     """The `-c` value carrying the description, as a TOML basic string.
 
-    json.dumps writes a string TOML parses back to the same text: both use
-    double quotes and the same escapes for a backslash, a quote, a newline,
-    a tab and a code point, and json.dumps never writes the one JSON escape
-    TOML lacks, an escaped forward slash. The test parses it with tomllib.
+    json.dumps writes a double-quoted string with a backslash, a quote and
+    every control character below 0x20 escaped, which TOML reads back to the
+    same text. Two differences are handled:
+      - ensure_ascii=False, because with the default json.dumps writes a
+        character outside the Basic Multilingual Plane, such as an emoji in
+        an attribution line, as a pair of surrogate escapes, which TOML
+        refuses;
+      - DEL (0x7f), which json.dumps leaves raw and TOML requires escaped.
+    json.dumps never writes the one JSON escape TOML lacks, an escaped
+    forward slash. The test parses the result with tomllib.
     """
-    return "developer_instructions=" + json.dumps(PULL_REQUEST_DESCRIPTION_FRAMING + description)
+    text = json.dumps(PULL_REQUEST_DESCRIPTION_FRAMING + description, ensure_ascii=False)
+    return "developer_instructions=" + text.replace("\x7f", "\\u007f")
 
 
 # This script's own refusals, kept off every code `codex exec` produces so a
@@ -471,8 +499,9 @@ def main(argv=None) -> int:
     description = ""
     if arguments.pull_request_description_file:
         try:
-            description = pathlib.Path(arguments.pull_request_description_file).read_text(
-                encoding="utf-8").strip()
+            description = cut_pull_request_description(
+                pathlib.Path(arguments.pull_request_description_file).read_text(
+                    encoding="utf-8").strip())
         except (OSError, UnicodeDecodeError) as error:
             print(f"code-review-codex-cell: cannot read --pull-request-description-file: "
                   f"{type(error).__name__}: {error}", file=sys.stderr)

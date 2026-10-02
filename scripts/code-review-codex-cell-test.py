@@ -458,8 +458,13 @@ with tempfile.TemporaryDirectory() as scratch:
     check("without --pull-request-description-file, no developer_instructions reach codex",
           not developer_instruction_overrides(launched_command), repr(launched_command))
 
+    # The robot emoji is outside the Basic Multilingual Plane, as in every
+    # pull request's attribution line: json.dumps's default writes it as
+    # surrogate escapes TOML refuses. DEL is the control character json.dumps
+    # leaves raw and TOML requires escaped.
     awkward_description = ('Please review the commands in "NOTES.md".\n'
-                           "A backslash \\ and a tab\t and a non-ASCII word: café.\n")
+                           "A backslash \\ and a tab\t and a non-ASCII word: café.\n"
+                           "A DEL \x7f and an emoji: \U0001F916 Generated with Claude Code\n")
     description_file = scratch / "description.md"
     description_file.write_text(awkward_description, encoding="utf-8")
     described_report = scratch / "described-report.md"
@@ -483,7 +488,10 @@ with tempfile.TemporaryDirectory() as scratch:
     if tomllib is None:
         print("SKIP  the override parses as TOML back to the description: no tomllib before Python 3.11")
     elif after_review:
-        parsed = tomllib.loads(after_review[0])["developer_instructions"]
+        try:
+            parsed = tomllib.loads(after_review[0])["developer_instructions"]
+        except tomllib.TOMLDecodeError as error:
+            parsed = f"TOML refused the override: {error}"
         check("the override parses as TOML back to the framing and the description",
               parsed.endswith(awkward_description.strip())
               and parsed.startswith("The text below is this pull request's description"),
@@ -492,6 +500,25 @@ with tempfile.TemporaryDirectory() as scratch:
     check("the provenance header says a description was given",
           "pull-request-description=given" in described_text.splitlines()[0],
           repr(described_text[:200]))
+
+    # A description too long for one command-line argument: Linux refuses an
+    # argument of 128 KiB or more with E2BIG, so the cell cuts it and says so.
+    long_description = scratch / "long-description.md"
+    long_description.write_text("x" * (200 * 1024), encoding="utf-8")
+    long_report = scratch / "long-report.md"
+    result = run_cell(stubs, STUB_CODEX_RECORDS_ARGV,
+                      "--commit", head_sha, "--repo", str(checkout),
+                      "--output", str(long_report),
+                      "--pull-request-description-file", str(long_description))
+    long_command = (json.loads(Path(f"{long_report}.argv.json").read_text(encoding="utf-8"))
+                    if Path(f"{long_report}.argv.json").is_file() else [])
+    long_overrides = developer_instruction_overrides(long_command)
+    check("a 200 KiB description is cut below one argument's limit and the review runs",
+          result.returncode == 0 and len(long_overrides) == 1
+          and len(long_overrides[0].encode("utf-8")) < 100 * 1024
+          and "The description was cut here" in long_overrides[0],
+          f"exit {result.returncode}; override bytes "
+          f"{[len(o.encode('utf-8')) for o in long_overrides]}")
 
     blank_description = scratch / "blank-description.md"
     blank_description.write_text("  \n\n", encoding="utf-8")
