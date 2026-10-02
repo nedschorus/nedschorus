@@ -619,6 +619,12 @@ with tempfile.TemporaryDirectory() as scratch:
           "five criteria, with the criteria numbers per item and a closing counts "
           "line; triage them the same way as the defect-hunt reports." in closing_text,
           repr(result.stdout))
+    check("the closing text counts one reviewer's problem and defers to step 9 of the skill",
+          "A problem one reviewer alone reports is real. Then apply your changes, "
+          "and take to the user only what step 9 of the /cold-read skill sends to "
+          "the user." in closing_text
+          and "walk-me-through" not in closing_text,
+          repr(result.stdout))
 
     # --- A target that moves while reviewers are still reading ---------------
     # The run stops at the first poll that sees the move (user-ruled

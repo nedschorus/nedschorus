@@ -167,8 +167,9 @@ way as the defect-hunt reports.
 Keep your judgments provisional until you have read {read_until}, as later
 reports may offer more insight than earlier ones. Then formulate your draft
 response: which problems are real, and what you propose to do about each.
-Walk that with the user using the walk-me-through skill, ordered from most
-important to least.{record_absences}
+A problem one reviewer alone reports is real. Then apply your changes, and
+take to the user only what step 9 of the /cold-read skill sends to the
+user.{record_absences}
 
 This record was shipped to the log-store on ned-box when the run ended (the
 `record:` line above says whether it arrived); once triage.md is written,
