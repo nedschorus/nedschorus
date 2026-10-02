@@ -58,3 +58,5 @@ The system is half moved into `nc-systems/handoff/`: the supervisor, the writer 
 **Pinned to what landed:** commit [08ddce3](https://github.com/nedschorus/nedschorus/commit/08ddce3c9504f19140101ea6265ece5d29e36236) on 2026-09-30 — the handoff-supervisor's "memory review due" line, and `nc-systems/handoff/daily-memory-review-mark.py`, which writes the marks that line reads.
 
 **Pinned to what landed:** commit [233de8b](https://github.com/nedschorus/nedschorus/commit/233de8b3e70357f347f601a8129932efff227533) on 2026-10-01 — the handoff-supervisor's "branch sync" line sends an open pull request that conflicts with main to the hand-merge that `scripts/branch-conflict-check.py` describes.
+
+**Pinned to what landed:** commit [4de5909](https://github.com/nedschorus/nedschorus/commit/4de590966dd5f5cf00ef1ed35eb0967d1e4e1a88) on 2026-10-02 — `nc-systems/handoff/tests/handoff-supervisor-test.py` takes the git-redirecting variables out of its own process, through `scripts/git-redirecting-environment-removal-test-fixture.py`, before it builds a scratch repository.
