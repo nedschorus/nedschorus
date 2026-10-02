@@ -108,10 +108,8 @@ does not lag. A --base that names no branch (a bare hash under --no-fetch) canno
 be matched to any pull request, so GitHub is not consulted and the output says so.
 
 WHAT EACH MESSAGE INSTRUCTS, AND WHY. Every message an agent acts on is one
-instruction per line, each with the condition it applies under; the reasons live
-here, where maintainers read them (CLAUDE.md, user-ruled 2026-09-18 on the
-force-push guard's refusal; applied to this program by the user 2026-09-22 in
-the walk "merge-lane rulings owed and concerns", item 1).
+instruction per line, each with the condition it applies under, and cites no
+ruling and no date. The reason for each instruction is below.
 
   - UNFETCHED: a failed fetch stops the run because a stale base gives a
     confident wrong answer (WHY IT FETCHES BEFORE IT ANSWERS, above). The
