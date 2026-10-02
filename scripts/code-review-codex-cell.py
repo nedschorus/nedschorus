@@ -23,16 +23,56 @@ must not drift are pinned:
     under a moving remote, so the review's subject is recorded exactly;
   - the output, captured to a file the caller names;
   - Codex's own memory store, OFF for this process (`--disable memories`) --
-    see WHY THE CODEX MEMORY STORE IS OFF FOR REVIEW CELLS below.
+    see WHY THE CODEX MEMORY STORE IS OFF FOR REVIEW CELLS below;
+  - the pull request's description, when the caller passes
+    --pull-request-description-file, handed to the review as context -- see
+    THE PULL REQUEST'S DESCRIPTION below.
 
 What this deliberately does not do: accept custom review instructions.
 On codex-cli 0.147.0 a [PROMPT] is mutually exclusive with --base and
 switches to custom-review mode, losing the built-in rubric (measured
-2026-08-19). Durable repository review rules belong in CLAUDE.md, the
+2026-08-19); on codex-cli 0.160.0 a [PROMPT] beside --base is still refused
+("the argument '--base <BRANCH>' cannot be used with '[PROMPT]'", measured
+2026-10-02). Durable repository review rules belong in CLAUDE.md, the
 single rules home both runtimes read: Codex reaches it through AGENTS.md,
 which is a pointer at CLAUDE.md rather than a second home; merge-decision
 checks belong to the deferred pr-merge-decision component
-(nedschorus#105).
+(nedschorus#105). The description below is context, not rules: its framing
+tells the reviewer to apply CLAUDE.md's review rules to whatever the
+description asks.
+
+THE PULL REQUEST'S DESCRIPTION. A pull request's description can ask the
+reviewers for something, such as a review of the shell commands in a
+markdown file it names. The Claude reviewer reads the description through
+the pull request's number; the Codex reviewer is given only a checkout and
+a range, so without this option such a request reached one reviewer of
+two. --pull-request-description-file names a file holding the description;
+the cell passes its text, under a short framing, as
+`-c developer_instructions=...` placed AFTER `review`, where the review's
+child thread receives it and the built-in rubric is kept. A file that is
+empty or holds only whitespace passes nothing, as an empty description
+asks for nothing.
+
+Measured 2026-10-02 on codex-cli 0.160.0 on the Mac, on a scratch
+repository whose one commit changed a Python function and a shell command
+in a markdown file, with an instruction holding a stand-in description
+("Please also review the shell commands in NOTES.md as code.") and a
+marker word for the review to open with, in this cell's command shape at
+low reasoning effort:
+
+  - After `review`: 3 of 3 reviews opened with the marker and reported the
+    misspelled command in NOTES.md, in the rubric's format (P1/P2
+    priorities, file and line locations).
+  - Before `exec`: 0 of 2 carried the marker or a NOTES.md finding.
+  - Between `exec` and `review`: 0 of 1.
+  - Without the instruction: no marker and no NOTES.md finding.
+
+One earlier ad hoc run with the override before `exec`, under `--sandbox
+read-only --ephemeral` and without `--disable memories`, did carry it, so
+the placement after `review` is kept for the measured runs, not because
+the parent placement never works. To re-check after a Codex upgrade, run
+the same experiment: a marker word in the description, and look for it at
+the start of the report.
 
 WHERE THE PERMISSION PROFILE GOES, AND HOW TO RE-CHECK IT AFTER A CODEX
 UPGRADE. `codex exec review` runs the review in a child thread, and every
@@ -323,12 +363,13 @@ this exit code. Two things, both measured rather than assumed:
     to codex and is not an artifact of the empty diff.
 
 Usage:
-  scripts/code-review-codex-cell.py --base <SHA> --output <FILE> [--repo DIR]
-  scripts/code-review-codex-cell.py --commit <SHA> --output <FILE> [--repo DIR]
+  scripts/code-review-codex-cell.py --base <SHA> --output <FILE> [--repo DIR] [--pull-request-description-file FILE]
+  scripts/code-review-codex-cell.py --commit <SHA> --output <FILE> [--repo DIR] [--pull-request-description-file FILE]
 """
 
 import argparse
 import importlib.util
+import json
 import pathlib
 import subprocess
 import sys
@@ -351,6 +392,27 @@ CREDENTIAL_DENYING_PERMISSION_PROFILE = "code-review-no-credentials"
 CODEX_MODEL = "gpt-6.1-sol"
 REASONING_EFFORT = "xhigh"
 REVIEW_TIMEOUT_SECONDS = 1800
+
+# The framing put before the pull request's description. It labels the text
+# and points at CLAUDE.md; it states no review rule of its own, so the rules
+# keep one home.
+PULL_REQUEST_DESCRIPTION_FRAMING = (
+    "The text below is this pull request's description, given as context for "
+    "the review. Apply the review rules in CLAUDE.md to anything it asks for, "
+    "and keep the standard review rubric and finding format.\n\n"
+)
+
+
+def developer_instructions_override(description: str) -> str:
+    """The `-c` value carrying the description, as a TOML basic string.
+
+    json.dumps writes a string TOML parses back to the same text: both use
+    double quotes and the same escapes for a backslash, a quote, a newline,
+    a tab and a code point, and json.dumps never writes the one JSON escape
+    TOML lacks, an escaped forward slash. The test parses it with tomllib.
+    """
+    return "developer_instructions=" + json.dumps(PULL_REQUEST_DESCRIPTION_FRAMING + description)
+
 
 # This script's own refusals, kept off every code `codex exec` produces so a
 # passed-through code stays readable as codex's. sysexits.h's EX_USAGE; the
@@ -384,6 +446,8 @@ def main(argv=None) -> int:
     parser.add_argument("--output", required=True, help="file the final review report is written to")
     parser.add_argument("--repo", default=".", help="the checkout to review in (default: current directory)")
     parser.add_argument("--model", default=CODEX_MODEL, help="explicit Codex model id override")
+    parser.add_argument("--pull-request-description-file",
+                        help="file holding the pull request's description, handed to the review as context")
     arguments = parser.parse_args(argv)
 
     repo = pathlib.Path(arguments.repo).resolve()
@@ -403,6 +467,16 @@ def main(argv=None) -> int:
               file=sys.stderr)
         return EXIT_BAD_INVOCATION
     subject_sha = resolved.stdout.strip()
+
+    description = ""
+    if arguments.pull_request_description_file:
+        try:
+            description = pathlib.Path(arguments.pull_request_description_file).read_text(
+                encoding="utf-8").strip()
+        except (OSError, UnicodeDecodeError) as error:
+            print(f"code-review-codex-cell: cannot read --pull-request-description-file: "
+                  f"{type(error).__name__}: {error}", file=sys.stderr)
+            return EXIT_BAD_INVOCATION
 
     # Resolved, because codex runs with cwd=repo: a relative path would name
     # one file on the caller's side and a different one on codex's side, and
@@ -430,6 +504,10 @@ def main(argv=None) -> int:
         # it. See WHERE THE PERMISSION PROFILE GOES in the docstring.
         *common.codex_credential_denying_permission_profile_arguments(
             CREDENTIAL_DENYING_PERMISSION_PROFILE, ":read-only"),
+        # The description, AFTER `review` too: placed before `exec` or
+        # between `exec` and `review` it did not reach the review. See THE
+        # PULL REQUEST'S DESCRIPTION in the docstring.
+        *(["-c", developer_instructions_override(description)] if description else []),
         *scope_flag,
         "-m", arguments.model,
         "-c", f"model_reasoning_effort={REASONING_EFFORT}",
@@ -483,7 +561,8 @@ def main(argv=None) -> int:
     kind = "base" if arguments.base else "commit"
     output_path.write_text(
         f"<!-- provenance: runtime=codex-exec-review model={arguments.model} "
-        f"effort={REASONING_EFFORT} {kind}={subject_sha} repo={repo} -->\n" + report,
+        f"effort={REASONING_EFFORT} {kind}={subject_sha} repo={repo}"
+        f"{' pull-request-description=given' if description else ''} -->\n" + report,
         encoding="utf-8",
     )
     print(f"code-review-codex-cell: report written to {output_path}")

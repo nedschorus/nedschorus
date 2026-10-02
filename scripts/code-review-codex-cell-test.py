@@ -445,6 +445,75 @@ with tempfile.TemporaryDirectory() as scratch:
           and f'"{scratch_home}/.config/gh"="deny"' in denied_table
           and f'"{login_canary}"="deny"' in denied_table, denied_table)
 
+    # --- The pull request's description -----------------------------------
+    # The description reaches Codex's review as `-c developer_instructions=`
+    # placed AFTER `review`, the one placement measured to reach the
+    # review's child thread on codex-cli 0.160.0 (the cell's docstring, under
+    # THE PULL REQUEST'S DESCRIPTION). Without the option, the command must
+    # carry no such override, so callers that pass nothing review exactly as
+    # before.
+    def developer_instruction_overrides(arguments):
+        return [value for value in config_overrides(arguments)
+                if value.startswith("developer_instructions=")]
+    check("without --pull-request-description-file, no developer_instructions reach codex",
+          not developer_instruction_overrides(launched_command), repr(launched_command))
+
+    awkward_description = ('Please review the commands in "NOTES.md".\n'
+                           "A backslash \\ and a tab\t and a non-ASCII word: café.\n")
+    description_file = scratch / "description.md"
+    description_file.write_text(awkward_description, encoding="utf-8")
+    described_report = scratch / "described-report.md"
+    result = run_cell(stubs, STUB_CODEX_RECORDS_ARGV,
+                      "--commit", head_sha, "--repo", str(checkout),
+                      "--output", str(described_report),
+                      "--pull-request-description-file", str(description_file))
+    check("a run given a description succeeds",
+          result.returncode == 0, f"exit {result.returncode}; stderr={result.stderr!r}")
+    described_command = json.loads(
+        Path(f"{described_report}.argv.json").read_text(encoding="utf-8"))
+    described_review_index = described_command.index("review")
+    after_review = developer_instruction_overrides(described_command[described_review_index + 1:])
+    before_review = developer_instruction_overrides(described_command[:described_review_index])
+    check("the description reaches codex as one developer_instructions override after `review`",
+          len(after_review) == 1 and not before_review, repr(described_command))
+    try:
+        import tomllib
+    except ImportError:  # Apple's Python 3.9 has no tomllib
+        tomllib = None
+    if tomllib is None:
+        print("SKIP  the override parses as TOML back to the description: no tomllib before Python 3.11")
+    elif after_review:
+        parsed = tomllib.loads(after_review[0])["developer_instructions"]
+        check("the override parses as TOML back to the framing and the description",
+              parsed.endswith(awkward_description.strip())
+              and parsed.startswith("The text below is this pull request's description"),
+              repr(parsed))
+    described_text = described_report.read_text(encoding="utf-8")
+    check("the provenance header says a description was given",
+          "pull-request-description=given" in described_text.splitlines()[0],
+          repr(described_text[:200]))
+
+    blank_description = scratch / "blank-description.md"
+    blank_description.write_text("  \n\n", encoding="utf-8")
+    blank_report = scratch / "blank-report.md"
+    result = run_cell(stubs, STUB_CODEX_RECORDS_ARGV,
+                      "--commit", head_sha, "--repo", str(checkout),
+                      "--output", str(blank_report),
+                      "--pull-request-description-file", str(blank_description))
+    blank_command = json.loads(Path(f"{blank_report}.argv.json").read_text(encoding="utf-8"))
+    check("a blank description passes no developer_instructions",
+          result.returncode == 0 and not developer_instruction_overrides(blank_command),
+          f"exit {result.returncode}; command {blank_command}")
+
+    result = run_cell(stubs, STUB_CODEX_RECORDS_ARGV,
+                      "--commit", head_sha, "--repo", str(checkout),
+                      "--output", str(scratch / "missing-description-report.md"),
+                      "--pull-request-description-file", str(scratch / "no-such-description.md"))
+    check("an unreadable description file exits 64, reported and not thrown",
+          result.returncode == 64 and "cannot read --pull-request-description-file" in result.stderr
+          and "Traceback" not in result.stderr,
+          f"exit {result.returncode}; stderr={result.stderr!r}")
+
 print()
 if failures:
     print(f"{len(failures)} case(s) failed: {', '.join(failures)}")
