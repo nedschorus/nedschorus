@@ -118,11 +118,10 @@ the step; nothing reads it.
 
 NO LOCK IN THE REPLACE STEP EITHER. replace_with_staged_files, the path a
 walk's minutes, dispositions and appended walk text and a seat's files take,
-takes no lock, for the reason NO LOCK gives above: each walk's or seat's
-files are shipped by the seat that owns them, one shipment after another. If
-two ever do replace one name at one moment, the store's read-back after the
-renames holds the other shipment's bytes, and the shipper reports a failure
-instead of `shipped:`.
+takes no lock, for the reason NO LOCK gives above. Before any rename it looks
+for another staging directory of the same name; if one is there, another
+shipment is running or left it behind, so the step replaces nothing and the
+shipper prints FAILED naming it.
 
 The store's directories are created on first use, and a README.md at the
 store's root is rewritten from STORE_README in this file whenever it differs:
