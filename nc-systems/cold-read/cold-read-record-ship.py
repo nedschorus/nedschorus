@@ -226,6 +226,8 @@ in the nedschorus repository, which this machine also clones:
   main, written by `scripts/daily-full-test-run-of-main.py`
 - `pull-request-head-test-runs/` -- each machine's test log of a pull request's
   head, one per commit, written by `scripts/pull-request-head-test-run.py`
+- `daily-memory-review-marks/` -- the daily memory review's started and done
+  marks, written by `nc-systems/handoff/daily-memory-review-mark.py`
 
 To change this file, edit STORE_README in
 nc-systems/cold-read/cold-read-record-ship.py. The next shipment rewrites this file
