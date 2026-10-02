@@ -371,7 +371,9 @@ def citation_tokens_on_line(line: str, citing_path: pathlib.Path, lint):
     through the same lint, already reports "link target does not exist" about
     exactly that text. A URL, a mail address and a bare fragment are not
     repository paths, and a target's "#anchor" is not part of the file name;
-    all four are the lint's own rules in check_markdown_links.
+    all four are the lint's own rules in check_markdown_links, as is the
+    fifth: a target in angle brackets, `[x](<docs/file.md>)`, is the path
+    inside them when that path ends in an extension the lint knows.
 
     And any word, in a file of any type, that carries a directory separator.
     A name with no separator is not a claim about where a file sits
@@ -391,6 +393,7 @@ def citation_tokens_on_line(line: str, citing_path: pathlib.Path, lint):
     """
     if citing_path.suffix == ".md":
         for target in lint.MARKDOWN_LINK.findall(line):
+            target = lint.unwrap_angle_link_target(target)
             if "://" in target or target.startswith(("mailto:", "#")):
                 continue
             bare = lint.without_line_suffix(target.split("#", 1)[0])

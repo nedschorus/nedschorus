@@ -587,6 +587,31 @@ echo hello
     check("the full-path citation of the same move is still reported",
           "docs/cites-by-full-path.md:1: cites docs/moving-target.md" in out, out)
 
+    # --- BACKWARD: a markdown link written in angle brackets -------------
+    # `[x](<target.md>)` is the same citation as `[x](target.md)`. The lint
+    # reports a missing file behind it FORWARD, through check_markdown_links,
+    # so the backward direction must see it too, or a move that breaks such a
+    # link passes silently. Before unwrap_angle_link_target the "<" marked the
+    # target as a placeholder and the backward direction dropped it.
+    git(root, "checkout", "-q", "-b", "angle-bracket-link-backward", base)
+    (root / "docs").mkdir(exist_ok=True)
+    (root / "docs" / "moving-angle-target.md").write_text(
+        "# the target\n\n" + "An unrelated paragraph, carrying no citation.\n\n" * 12,
+        encoding="utf-8")
+    (root / "docs" / "cites-in-angle-brackets.md").write_text(
+        "The design is [the target](<moving-angle-target.md>) and stands.\n",
+        encoding="utf-8")
+    git(root, "add", "-A")
+    git(root, "commit", "-qm", "add a target and a document citing it in angle brackets")
+    angle_link_base = git(root, "rev-parse", "HEAD").stdout.strip()
+    (root / "nc-systems").mkdir(parents=True, exist_ok=True)
+    git(root, "mv", "docs/moving-angle-target.md", "nc-systems/moving-angle-target.md")
+    git(root, "commit", "-qm", "move the target, sweeping no citation")
+    code, out, err = run_check(root, angle_link_base)
+    check("an angle-bracket markdown link to a moved file is reported",
+          code == 1 and "docs/cites-in-angle-brackets.md:1: cites docs/moving-angle-target.md"
+          in out, f"{code} {out!r} {err!r}")
+
     # --- BACKWARD: a backticked citation inside a non-Markdown file ------
     # Not a pin for a fix but a pin against the rework narrowing: the literal
     # search this replaced saw a path wherever it was written, and ten such
