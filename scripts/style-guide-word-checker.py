@@ -16,9 +16,6 @@ APPLIES_TO_AGENT_MESSAGES = "messages to other agents"
 APPLIES_TO_USER_MESSAGES = "messages to the user"
 APPLIES_TO_VALUES = (APPLIES_TO_FILES, APPLIES_TO_AGENT_MESSAGES, APPLIES_TO_USER_MESSAGES)
 
-APPLIES_TO_EVERY_PLACE = APPLIES_TO_VALUES
-APPLIES_TO_MESSAGES_ONLY = (APPLIES_TO_AGENT_MESSAGES, APPLIES_TO_USER_MESSAGES)
-
 
 class StyleGuideWordListEntry(NamedTuple):
     word: str
@@ -34,6 +31,7 @@ WORDS_TO_AVOID_HEADING = "## Words to avoid"
 WORDS_TO_AVOID_COLUMNS = ("Word", "Forms flagged", "Forms not flagged", "Write instead",
                           "Applies to")
 CODE_SPAN_CONTENT_PATTERN = re.compile(r"`([^`]+)`")
+TABLE_SEPARATOR_ROW_PATTERN = re.compile(r"^\|(?:\s*:?-+:?\s*\|)+$")
 
 
 class StyleGuidePageError(ValueError):
@@ -58,17 +56,29 @@ def parse_words_to_avoid_table(page_text: str) -> Tuple[StyleGuideWordListEntry,
         heading_index = [line.rstrip() for line in lines].index(WORDS_TO_AVOID_HEADING)
     except ValueError:
         raise StyleGuidePageError("no line reads " + WORDS_TO_AVOID_HEADING)
+    # The table runs from its header line to the first blank line or heading. Every
+    # line in that run must be a row: GFM renders a row without its leading pipe, so
+    # skipping such a line would drop a row the page shows.
     table_lines = []
     for line in lines[heading_index + 1:]:
+        line = line.rstrip()
         if line.startswith("#"):
             break
-        if line.lstrip().startswith("|"):
-            table_lines.append(line)
-        elif table_lines:
-            break
+        if not line.strip():
+            if table_lines:
+                break
+            continue
+        if not table_lines and not line.lstrip().startswith("|"):
+            continue
+        if not line.lstrip().startswith("|"):
+            raise StyleGuidePageError("a table line does not start with |: " + line)
+        table_lines.append(line.strip())
     if len(table_lines) < 3 or tuple(_table_cells(table_lines[0])) != WORDS_TO_AVOID_COLUMNS:
         raise StyleGuidePageError("the table under %s must have the columns %s"
                                   % (WORDS_TO_AVOID_HEADING, ", ".join(WORDS_TO_AVOID_COLUMNS)))
+    if not TABLE_SEPARATOR_ROW_PATTERN.match(table_lines[1]):
+        raise StyleGuidePageError("the table's second line is not its separator row: "
+                                  + table_lines[1])
     entries = []
     for row in table_lines[2:]:
         cells = _table_cells(row)
@@ -151,16 +161,16 @@ def _compile_scope(applies_to: str):
                                         for form in sorted(entry.exempt_forms, key=len,
                                                            reverse=True)))
         for entry in entries if entry.exempt_forms}
-    # Every inflected form begins with its entry's word, so this prefilter cannot discard a hit.
-    words = tuple(entry.word for entry in entries)
+    # A row's forms need not begin with its word (go, went), so the prefilter holds every form.
+    words = tuple(sorted({form.lower() for entry in entries for form in entry.inflected_forms}))
     return words, word_pattern, exempt_pattern_by_word, entry_by_form
 
 
 COMPILED_SCOPES: Dict[str, Tuple[Tuple[str, ...], Pattern, Dict[str, Pattern],
                                  Dict[str, StyleGuideWordListEntry]]] = {
     applies_to: _compile_scope(applies_to) for applies_to in APPLIES_TO_VALUES}
-LONGEST_EXEMPT_FORM_LENGTH = max(len(form) for entry in STYLE_GUIDE_WORD_LIST
-                                 for form in entry.exempt_forms)
+LONGEST_EXEMPT_FORM_LENGTH = max((len(form) for entry in STYLE_GUIDE_WORD_LIST
+                                  for form in entry.exempt_forms), default=0)
 
 
 def _blank(match) -> str:

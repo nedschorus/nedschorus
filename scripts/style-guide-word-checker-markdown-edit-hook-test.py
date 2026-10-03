@@ -18,6 +18,7 @@ a repository at its own path before any case writes to it, so a GIT_DIR
 inherited from the caller cannot point these writes at another repository.
 """
 
+import atexit
 import importlib.util
 import json
 import os
@@ -66,8 +67,35 @@ def load_module(name, path):
     return module
 
 
-checker = load_module("style_guide_word_checker", CHECKER_PATH)
-hook = load_module("style_guide_word_checker_markdown_edit_hook", HOOK_PATH)
+# The behavioural cases run against FIXTURE_PAGE, a copy of the page's table
+# frozen here, through copies of the hook and the checker laid out as in the
+# repository, so a row edited on the real page needs no edit to these cases.
+# The real page is checked only for loading into a well-formed list.
+FIXTURE_PAGE = '# Style guide (test fixture)\n\n## Words to avoid\n\n| Word | Forms flagged | Forms not flagged | Write instead | Applies to |\n|---|---|---|---|---|\n| `land` | `land`, `lands`, `landed`, `landing` | | "merge", "merges", "merged" or "merging", matching the form written | files, messages to other agents, messages to the user |\n| `home` | `home`, `homes` | `agent-home`, `/home/`, `home directory` | agent-home for the directory an agent-seat works in; canonical location for the one authoritative place a document or fact is kept | files, messages to other agents, messages to the user |\n| `draft` | `draft`, `drafts` | `-draft`, `docs/drafts/`, `draft pull request` | -draft for the filename suffix; "pending approval" for text that waits for the user\'s approval; "the `draft` label" for the GitHub label; `docs/drafts/` for the directory | files, messages to other agents, messages to the user |\n| `walk` | `walk`, `walks`, `walked`, `walking` | `approval-walk`, `approved-by-walk`, `walk-document`, `walk-minutes`, `/walk-me-through`, `docs/walk/` | approval-walk for the event; walk-document for the file `docs/walk/<name>.md`; approved-by-walk for what the user approved in an approval-walk; "put to the user in an approval-walk" for the act | files, messages to other agents, messages to the user |\n| `seat` | `seat`, `seats`, `seated` | `agent-seat`, `seat-branch`, `seat-brief`, `reincarnate-seat`, `retire-seat` | agent-seat for the identity; agent-session for one running conversation; "the agent-seat\'s name" for the name of an agent-seat; working directory for where an agent-session works when that is not its agent-seat\'s agent-home; cold-read-cell for one reviewer in a cold-read-full-run | files, messages to other agents, messages to the user |\n| `head` | `head`, `heads` | `head commit`, `frozen-head`, `HEAD`, `head branch` | head commit for the commit at the tip of a pull request\'s branch; frozen-head when the point is that the pushed head commit must not be amended; `HEAD`, in capitals, for what a Git checkout has checked out | files, messages to other agents, messages to the user |\n| `drain` | `drain`, `drains`, `drained`, `draining` | `queue-drain` | queue-drain for the procedure that empties the four queue directories and `docs/drafts/`; "is promoted to" for an item that leaves a queue for its approved location | files, messages to other agents, messages to the user |\n| `it` | `it` | | the noun the pronoun stands for, unless the noun is in the same sentence and no other noun there could be meant; a pronoun with no noun behind it, as in "it is raining", stays | messages to other agents, messages to the user |\n| `its` | `its` | | the noun the pronoun stands for, unless the noun is in the same sentence and no other noun there could be meant; a pronoun with no noun behind it, as in "it is raining", stays | messages to other agents, messages to the user |\n| `they` | `they` | | the noun the pronoun stands for, unless the noun is in the same sentence and no other noun there could be meant; a pronoun with no noun behind it, as in "it is raining", stays | messages to other agents, messages to the user |\n| `this` | `this` | | where "this" is used as a pronoun, the noun it stands for, unless the noun is in the same sentence and no other noun there could be meant; a pronoun with no noun behind it, as in "it is raining", stays | messages to other agents, messages to the user |\n| `that` | `that` | | where "that" is used as a pronoun, the noun it stands for, unless the noun is in the same sentence and no other noun there could be meant; a pronoun with no noun behind it, as in "it is raining", stays | messages to other agents, messages to the user |\n'
+
+
+def build_checker_tree(root, page_text):
+    """Lay out scripts/ and the style guide page under root; return (checker, hook) paths."""
+    scripts_directory = Path(root) / "scripts"
+    scripts_directory.mkdir(parents=True)
+    page_path = Path(root) / "docs" / "nedschorus-wiki" / "nedschorus-style-guide.md"
+    page_path.parent.mkdir(parents=True)
+    page_path.write_text(page_text, encoding="utf-8")
+    checker_copy = scripts_directory / CHECKER_PATH.name
+    hook_copy = scripts_directory / HOOK_PATH.name
+    shutil.copy(str(CHECKER_PATH), str(checker_copy))
+    shutil.copy(str(HOOK_PATH), str(hook_copy))
+    return checker_copy, hook_copy
+
+
+FIXTURE_TREES_ROOT = Path(tempfile.mkdtemp(prefix="style-guide-word-checker-fixture-"))
+atexit.register(shutil.rmtree, str(FIXTURE_TREES_ROOT), True)
+FIXTURE_CHECKER_PATH, FIXTURE_HOOK_PATH = build_checker_tree(
+    FIXTURE_TREES_ROOT / "fixture-page", FIXTURE_PAGE)
+
+live_checker = load_module("style_guide_word_checker_live", CHECKER_PATH)
+checker = load_module("style_guide_word_checker", FIXTURE_CHECKER_PATH)
+hook = load_module("style_guide_word_checker_markdown_edit_hook", FIXTURE_HOOK_PATH)
 
 
 def file_hit_forms(text):
@@ -168,21 +196,21 @@ check("the pronoun entries apply to agent messages", message_forms == ["It", "th
       message_forms)
 
 schema_problems = []
-for entry in checker.STYLE_GUIDE_WORD_LIST:
+for entry in live_checker.STYLE_GUIDE_WORD_LIST:
     if entry.word not in entry.inflected_forms:
         schema_problems.append(f"{entry.word}: the word is not among its forms")
     if not entry.names_to_choose_from.strip():
         schema_problems.append(f"{entry.word}: no names to choose from")
     if not entry.applies_to or not set(entry.applies_to) <= set(checker.APPLIES_TO_VALUES):
         schema_problems.append(f"{entry.word}: applies_to {entry.applies_to!r}")
-check("every entry carries its forms, names and where it applies", not schema_problems,
+check("every entry of the real page carries its forms, names and where it applies", not schema_problems,
       schema_problems)
 
 # The page is the list: a row edited on the page changes what the checker
-# reports with no code change, so this test checks only that the real page
-# parses into a non-empty, well-formed list.
+# reports with no code change, so the real page is checked only for parsing
+# into a non-empty, well-formed list.
 check("the style guide page's table loads at least one entry",
-      len(checker.STYLE_GUIDE_WORD_LIST) > 0, len(checker.STYLE_GUIDE_WORD_LIST))
+      len(live_checker.STYLE_GUIDE_WORD_LIST) > 0, len(live_checker.STYLE_GUIDE_WORD_LIST))
 
 WELL_FORMED_PAGE = """# Style guide
 
@@ -208,6 +236,14 @@ MALFORMED_PAGES = {
         WELL_FORMED_PAGE.replace("`land`, `landed`", "land, landed"),
     "a page without the heading": WELL_FORMED_PAGE.replace("## Words to avoid", "## Words"),
     "a table with other columns": WELL_FORMED_PAGE.replace("| Applies to |", "| Where |"),
+    "a row without its leading pipe":
+        WELL_FORMED_PAGE + "`home` | `home` | | agent-home | files |\n",
+    "a row without its leading pipe between two rows":
+        WELL_FORMED_PAGE + "`home` | `home` | | agent-home | files |\n"
+        + "| `seat` | `seat` | | agent-seat | files |\n",
+    "a table without its separator row":
+        WELL_FORMED_PAGE.replace("|---|---|---|---|---|\n", "")
+        + "| `seat` | `seat` | | agent-seat | files |\n",
 }
 for case_name, page in MALFORMED_PAGES.items():
     try:
@@ -216,6 +252,30 @@ for case_name, page in MALFORMED_PAGES.items():
     except checker.StyleGuidePageError:
         raised = True
     check(f"malformed table: {case_name} raises StyleGuidePageError", raised)
+
+
+
+def load_checker_from_page(tree_name, page_text):
+    checker_copy, _ = build_checker_tree(FIXTURE_TREES_ROOT / tree_name, page_text)
+    return load_module("style_guide_word_checker_" + tree_name.replace("-", "_"), checker_copy)
+
+
+try:
+    no_exemptions = load_checker_from_page("no-forms-not-flagged", WELL_FORMED_PAGE)
+    forms = [hit.form for hit in no_exemptions.find_style_guide_word_hits_in_markdown(
+        "It landed.\n", no_exemptions.APPLIES_TO_FILES)]
+    check("a page whose rows have no forms not flagged loads and flags", forms == ["landed"],
+          forms)
+except Exception as error:
+    check("a page whose rows have no forms not flagged loads and flags", False, repr(error))
+
+go_went_page = WELL_FORMED_PAGE.replace("| `land` | `land`, `landed` | | \"merge\" |",
+                                        "| `go` | `go`, `went` | `go-ahead` | \"proceed\" |")
+go_went = load_checker_from_page("form-not-beginning-with-its-word", go_went_page)
+forms = [hit.form for hit in go_went.find_style_guide_word_hits_in_markdown(
+    "They went home.\n", go_went.APPLIES_TO_FILES)]
+check("a flagged form that does not begin with its row's word is flagged", forms == ["went"],
+      forms)
 
 report_text = "\n".join(hook.REPORT_OPENING_LINES) + "\n" + hook.MORE_HITS_LINE
 forms = file_hit_forms(report_text)
@@ -231,7 +291,7 @@ def git(arguments, cwd):
                           text=True, check=False, env=CLEAN_ENVIRONMENT)
 
 
-def run_hook(payload, hook_path=HOOK_PATH):
+def run_hook(payload, hook_path=FIXTURE_HOOK_PATH):
     text = payload if isinstance(payload, str) else json.dumps(payload)
     return subprocess.run([sys.executable, str(hook_path)], input=text,
                           capture_output=True, text=True, check=False, env=CLEAN_ENVIRONMENT)
@@ -506,6 +566,23 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     shutil.copy(str(CHECKER_PATH), str(pageless_scripts_directory / CHECKER_PATH.name))
     result = run_hook(write_payload(checkout, new_page, "The seat.\n"), hook_path=pageless_hook)
     check("a checker without its style guide page exits 0 with no output", silent(result),
+          result.stdout + result.stderr)
+
+    # A page whose table is broken: the checker refuses to load rather than
+    # flagging against the rows it could read, and the hook stays silent.
+    broken_checker_path, broken_hook_path = build_checker_tree(
+        tmp / "broken-page-checkout",
+        FIXTURE_PAGE.replace("\n| `seat` |", "\n`seat` |"))
+    try:
+        load_module("style_guide_word_checker_broken_page", broken_checker_path)
+        broken_load_raised = False
+    except Exception as error:
+        broken_load_raised = type(error).__name__ == "StyleGuidePageError"
+    check("a broken style guide page makes the checker raise StyleGuidePageError at load",
+          broken_load_raised)
+    result = run_hook(write_payload(checkout, new_page, "The seat.\n"),
+                      hook_path=broken_hook_path)
+    check("a hook whose style guide page is broken exits 0 with no output", silent(result),
           result.stdout + result.stderr)
 
     # The last-resort handler: git missing from PATH raises FileNotFoundError
