@@ -1259,14 +1259,70 @@ with tempfile.TemporaryDirectory() as scratch:
     run(root)
     stored = next((root / "recordings").glob("*/a-test.py.json"))
     recorded = json.loads(stored.read_text())
-    recorded["format"] = 2
+    recorded["format"] = 3
+    recorded.pop("seconds", None)
     stored.write_text(json.dumps(recorded))
     result = select_since(root, base)
-    check("format 2 selects a suite once so its git calls can be recorded with format 3",
+    check("a format 3 recording, which kept no seconds, selects its suite once so it is "
+          "recorded afresh in format 4",
           result.returncode == 0 and ran(root) == ["a-test.py"]
           and "SELECTED a-test.py: its recording was made by an older version of this program"
-          in lines(result.stdout) and recording(root, "a-test.py").get("format") == 3,
+          in lines(result.stdout) and recording(root, "a-test.py").get("format") == 4
+          and isinstance(recording(root, "a-test.py").get("seconds"), float),
           (ran(root), result.stdout))
+
+# --- Suites start longest first, by the seconds their recordings kept --------
+# At -j 1 suites start one at a time in the order they were submitted, so the
+# order the suites appended their paths to the ran file is that order.
+LONGEST_FIRST_SUITES = {
+    "a-sleeps-test.py": "time.sleep(0.3)\n",
+    "b-test.py": PASSES, "c-test.py": PASSES, "d-test.py": PASSES, "e-test.py": PASSES,
+    "f-fails-test.py": "sys.exit(1)\n", "g-test.py": PASSES,
+}
+
+
+def ran_in_starting_order(root):
+    path = root / "ran.txt"
+    return path.read_text().split() if path.exists() else []
+
+
+with tempfile.TemporaryDirectory() as scratch:
+    root = pathlib.Path(scratch)
+    make_repo(root, LONGEST_FIRST_SUITES)
+    first = run(root, "-j", "1")
+    check("with no recording yet, suites start in the order git lists them",
+          ran_in_starting_order(root) == sorted(LONGEST_FIRST_SUITES),
+          (ran_in_starting_order(root), first.stdout))
+    recorded = recording(root, "a-sleeps-test.py")
+    seconds = recorded.get("seconds")
+    check("a recording keeps the seconds its suite ran, the number the suite's line prints",
+          isinstance(seconds, float) and seconds >= 0.3
+          and f"PASS a-sleeps-test.py ({seconds:.1f}s)" in lines(first.stdout),
+          (recorded, first.stdout))
+    check("a failed suite's recording keeps its seconds too",
+          isinstance(recording(root, "f-fails-test.py").get("seconds"), float),
+          recording(root, "f-fails-test.py"))
+
+    def set_recorded(suite, change):
+        stored = next((root / "recordings").glob(f"*/{suite}.json"))
+        recorded = json.loads(stored.read_text())
+        change(recorded)
+        stored.write_text(json.dumps(recorded))
+
+    set_recorded("b-test.py", lambda recorded: recorded.update(seconds=5.0))
+    set_recorded("c-test.py", lambda recorded: recorded.update(seconds=30.0))
+    set_recorded("d-test.py", lambda recorded: recorded.update(seconds=5.0))
+    next((root / "recordings").glob("*/e-test.py.json")).unlink()
+    set_recorded("f-fails-test.py", lambda recorded: recorded.update(seconds=0.01))
+    set_recorded("g-test.py", lambda recorded: recorded.pop("seconds", None))
+    (root / "ran.txt").unlink()
+    run(root, "-j", "1")
+    check("suites start longest recorded first, ties in git's order, after every suite with "
+          "no recording, a recorded run that did not pass, or no recorded seconds",
+          ran_in_starting_order(root) == [
+              "e-test.py", "f-fails-test.py", "g-test.py",
+              "c-test.py", "b-test.py", "d-test.py", "a-sleeps-test.py"],
+          ran_in_starting_order(root))
 
 # --- The recorder runs the sitecustomize.py it shadows ------------------------
 # Both machines' Pythons ship one (Homebrew's on the Mac sets sys.executable),

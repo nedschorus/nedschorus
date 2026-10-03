@@ -155,9 +155,12 @@ prints it.
 
 CONCURRENCY. -j N runs N suites at once. The default is the machine's core
 count (4 when Python cannot tell), or the number of suites to run when that
-is fewer. A run lasts at least as long as its longest suite, so more jobs
-pay off only once no single suite dominates. Measured on ned-box (16 cores)
-2026-10-03 over 92 suites: 311 s at -j 4 and 345 s at -j 16, because
+is fewer. Suites start longest first, by the seconds their recordings
+kept, ties in the order git lists them; a suite with no recording, or whose
+recorded run did not pass, starts before them all, since it may be long. A
+run lasts at least as long as its longest suite, so more jobs pay off only
+once no single suite dominates. Measured on ned-box (16 cores) 2026-10-03
+over 92 suites: 311 s at -j 4 and 345 s at -j 16, because
 nc-systems/cold-read/tests/cold-read-grid-test.py took 288 s of the run at
 -j 4 and 325 s at -j 16, slowed by the other suites competing for the
 machine. -j 1 still runs one suite at a time when a run must.
@@ -233,17 +236,17 @@ suite depends on. Two recorders, whose findings are added together:
   full run that runs this program's own test) a second strace cannot
   attach, so the audit hook works alone there.
 
-A recording keeps, per suite: its exit code; each file read, with its git
-blob hash; each path it opened or checked for, and whether the path was
-there; each directory it listed, with the entries the directory held; the
-git calls run from the checkout, with their arguments, starting directory,
-GIT_DIR, GIT_WORK_TREE and what each call reads; the command names of only
-the calls that read the checkout, with a fingerprint of the checkout's
-list of files; and which recorders made it. A starting directory inside the
-checkout is kept relative to its top directory, with '.' for the top itself;
-one outside is kept absolute. Format 3 keeps these git call facts and their
-classification; every older recording selects its suite once to record
-the facts afresh. The files are those git tracks
+A recording keeps, per suite: its exit code and seconds; each file read,
+with its git blob hash; each path it opened or checked for, and whether the
+path was there; each directory it listed, with the entries the directory
+held; the git calls run from the checkout, with their arguments, starting
+directory, GIT_DIR, GIT_WORK_TREE and what each call reads; the command
+names of only the calls that read the checkout, with a fingerprint of the
+checkout's list of files; and which recorders made it. A starting directory
+inside the checkout is kept relative to its top directory, with '.' for the
+top itself; one outside is kept absolute. A recording made in an older
+format than this program writes selects its suite once, so the suite is
+recorded afresh. The files are those git tracks
 or would add, untracked and not ignored, as the run found them when it
 started. A `.pyc` read is recorded as the source file beside its
 `__pycache__`, because an import that finds a valid cache never opens the
@@ -412,7 +415,7 @@ SUITES_RUN_AT_ONCE_WHEN_CORE_COUNT_UNKNOWN = 4
 DEFAULT_RECORDED_INPUTS_DIRECTORY = (
     Path.home() / ".cache" / "nedschorus-test-suite-recorded-inputs")
 # Bump when the recording format changes so older recordings trigger a fresh run.
-RECORDED_INPUTS_FORMAT_VERSION = 3
+RECORDED_INPUTS_FORMAT_VERSION = 4
 RECORDED_INPUTS_LOG_VARIABLE = "RUN_ALL_TEST_SUITES_RECORDED_INPUTS_LOG"
 RECORDED_INPUTS_CHECKOUT_VARIABLE = "RUN_ALL_TEST_SUITES_RECORDED_INPUTS_CHECKOUT"
 # Nested runs put multiple recorders on PYTHONPATH; skip all when chaining sitecustomize.
@@ -1112,6 +1115,7 @@ def recording_of(top, suite, result, recording_dir, files, commit, strace_used):
             "%Y-%m-%dT%H:%M:%SZ"),
         "commit": commit,
         "exit": result["exit"],
+        "seconds": result["seconds"],
         "skipped_cases": len(result["skips"]),
         "recorded_by": [PYTHON_INPUT_RECORDER_METHOD]
                        + ([STRACE_INPUT_RECORDER_METHOD] if strace_used else []),
@@ -1147,6 +1151,21 @@ def load_recording(recordings_dir, suite):
         return json.loads(recording_file_for(recordings_dir, suite).read_text())
     except (OSError, ValueError):
         return None
+
+
+def suites_longest_recorded_first(suites, recordings_dir):
+    """Return the suites in starting order: no usable duration first, then longest first."""
+    def starting_order(suite):
+        recording = load_recording(recordings_dir, suite)
+        # A run that did not pass may have stopped early, so its seconds may understate the suite.
+        if not isinstance(recording, dict) or recording.get("exit") != 0:
+            return (0, 0.0)
+        seconds = recording.get("seconds")
+        if isinstance(seconds, bool) or not isinstance(seconds, (int, float)):
+            return (0, 0.0)
+        return (1, -seconds)
+    # sorted is stable, so ties keep the order git listed the suites in.
+    return sorted(suites, key=starting_order)
 
 
 def resolved_commit(top, given):
@@ -1409,7 +1428,8 @@ def main(argv=None):
         except CouldNotRun as refusal:
             print(refusal, file=sys.stderr)
             return EXIT_COULD_NOT_RUN
-        chosen = [suite for suite, selected, _ in selection if selected]
+        chosen = suites_longest_recorded_first(
+            [suite for suite, selected, _ in selection if selected], recordings_dir)
         jobs = suites_run_at_once(arguments.jobs, len(chosen), os.cpu_count())
         strace = strace_usable()
         recording_dir = log_dir / "recorded-inputs"
