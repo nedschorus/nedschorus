@@ -4,7 +4,8 @@ through importlib (hyphenated file names), builds a throwaway repository
 with a bare `origin` carrying `main`, and drives the machine through a
 scripted launcher.
 
-Not a test file; the three *-test.py files beside it load it.
+Not a test file; several *-test.py files beside it, and
+design-to-main-scenario-runner.py, load it.
 """
 
 import importlib.util
