@@ -4,7 +4,8 @@ through importlib (hyphenated file names), builds a throwaway repository
 with a bare `origin` carrying `main`, and drives the machine through a
 scripted launcher.
 
-Not a test file; the three *-test.py files beside it load it.
+Not a test file; several *-test.py files beside it, and
+design-to-main-scenario-runner.py, load it.
 """
 
 import importlib.util
@@ -168,6 +169,24 @@ def drive(machine, run, max_steps=200):
         if steps > max_steps:
             raise RuntimeError("did not finish within %d steps" % max_steps)
     return run
+
+
+class EachTestDrivesTheMachineOverItsOwnThrowawayRepository:
+    """A mixin for a unittest.TestCase, listed before it among the bases:
+    each test gets its own ThrowawayRepository, removed after the test, and
+    `self.drive(script)` runs a machine over it until the script is spent,
+    returning the machine, the run and the record."""
+
+    def setUp(self):
+        self.repository = ThrowawayRepository()
+
+    def tearDown(self):
+        self.repository.remove()
+
+    def drive(self, script):
+        machine, run, record, _ = make_machine(script, self.repository)
+        drive(machine, run)   # the module's drive(), not this method
+        return machine, run, record
 
 
 # Scripts that reach known points of a run.
