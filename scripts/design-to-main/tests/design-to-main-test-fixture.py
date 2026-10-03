@@ -171,6 +171,24 @@ def drive(machine, run, max_steps=200):
     return run
 
 
+class EachTestDrivesTheMachineOverItsOwnThrowawayRepository:
+    """A mixin for a unittest.TestCase, listed before it among the bases:
+    each test gets its own ThrowawayRepository, removed after the test, and
+    `self.drive(script)` runs a machine over it until the script is spent,
+    returning the machine, the run and the record."""
+
+    def setUp(self):
+        self.repository = ThrowawayRepository()
+
+    def tearDown(self):
+        self.repository.remove()
+
+    def drive(self, script):
+        machine, run, record, _ = make_machine(script, self.repository)
+        drive(machine, run)   # the module's drive(), not this method
+        return machine, run, record
+
+
 # Scripts that reach known points of a run.
 
 def prefix_to_design_approved():
