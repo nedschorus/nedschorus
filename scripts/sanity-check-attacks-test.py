@@ -6,8 +6,14 @@ not a report, the relaunch of a cell that saved no report with the
 instructions a failed cell ends on (cases 38 to 43), and how a run ends when
 it is stopped from outside, what the next run removes after a killed one, the
 bytes an agent-binary may write, and the record of a run that saved no report
-(cases 44 to 48), and a stop that lands as a launch is prepared, after the
-cells have ended, or while a review copy is claimed (cases 49 to 53).
+(cases 44 to 48), a stop that lands as a launch is prepared, after the
+cells have ended, or while a review copy is claimed (cases 49 to 53), and an
+agent-binary started as the stop begins, a stop that lands while a report is
+saved, a review copy whose removal fails, and a cell that first runs after
+the stop (cases 54 to 57), and a stop that lands while a cell's git call,
+version probe or agent-binary runs as the cell saves its report (cases 58 to
+60). No case
+starts a real agent-binary: see CONTAINMENT below.
 
 The detector's only value is being trustworthy about whether a review cell
 wrote to the worktree. A hole in it is silent by construction, and a warning
@@ -109,6 +115,30 @@ SUITE_SCRATCH_LOG_STORE_PATH = pathlib.Path(SUITE_SCRATCH_LOG_STORE.name)
 os.environ[RECORD_SHIP_DESTINATION_VARIABLE] = str(
     SUITE_SCRATCH_LOG_STORE_PATH / "cold-read-records")
 
+# CONTAINMENT, second half: no case starts a real agent-binary. The cases
+# replace the runner's run_agent_binary_unless_run_stopped with stand-ins, and
+# a runner whose launchers do not call that function (an older runner, or a
+# deliberate break a reviewer runs this suite against) starts whatever
+# `claude` or `codex` is on PATH, which costs a model call and lets an agent
+# read the machine. So the suite runs with a `claude` and a `codex` first on
+# PATH that write their arguments to a log and exit 1. main() checks before
+# the first case that both names resolve to them, and after the last that
+# none was asked for more than its version. A case that runs the runner as a
+# process puts its own stand-ins first on that process's PATH.
+AGENT_BINARY_TRIPWIRES = tempfile.TemporaryDirectory(
+    prefix="sanity-check-attacks-test-agent-binary-tripwires-")
+AGENT_BINARY_TRIPWIRE_DIRECTORY = pathlib.Path(AGENT_BINARY_TRIPWIRES.name).resolve()
+AGENT_BINARY_TRIPWIRE_LOG = AGENT_BINARY_TRIPWIRE_DIRECTORY / "calls.log"
+for _tripwire_name in ("claude", "codex"):
+    _tripwire = AGENT_BINARY_TRIPWIRE_DIRECTORY / _tripwire_name
+    _tripwire.write_text(
+        "#!/bin/sh\n"
+        f"printf '%s\\n' \"{_tripwire_name} $*\" >> {shlex.quote(str(AGENT_BINARY_TRIPWIRE_LOG))}\n"
+        "exit 1\n", encoding="utf-8")
+    _tripwire.chmod(0o755)
+os.environ["PATH"] = os.pathsep.join(
+    [str(AGENT_BINARY_TRIPWIRE_DIRECTORY), os.environ.get("PATH", "")])
+
 failures = []
 
 
@@ -125,6 +155,20 @@ def load_runner():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+def agent_binary_launch_a_case_replaces(runner):
+    """The runner's run_agent_binary_unless_run_stopped, which a case is about
+    to replace with a stand-in and put back afterwards. Raises when the runner
+    has none: a stand-in set on a name the launchers never call is never
+    used, and the case would start the agent-binary on PATH instead."""
+    launch = getattr(runner, "run_agent_binary_unless_run_stopped", None)
+    if launch is None:
+        raise AssertionError(
+            "the runner under test has no run_agent_binary_unless_run_stopped, "
+            "so the stand-ins these cases set on it would never be called; no "
+            "further case runs")
+    return launch
 
 
 def git(repo, *arguments):
@@ -169,10 +213,16 @@ def main():
           shipper_host is None
           and pathlib.Path(shipper_path).is_relative_to(SUITE_SCRATCH_LOG_STORE_PATH),
           f"the shipper would ship to {shipper_host}:{shipper_path}")
+    for name in ("claude", "codex"):
+        resolved = shutil.which(name)
+        check(f"`{name}` resolves to this suite's tripwire, which starts no agent",
+              resolved is not None
+              and pathlib.Path(resolved).resolve().parent == AGENT_BINARY_TRIPWIRE_DIRECTORY,
+              f"`{name}` resolves to {resolved}")
     if failures:
         print("containment failed: no case runs, because a case that drove the "
               "runner to completion would ship this suite's fixture reports to "
-              "the log-store on ned-box.")
+              "the log-store on ned-box, or start a real agent-binary.")
         return 1
 
     runner = load_runner()
@@ -971,7 +1021,7 @@ def main():
             list(command), keywords.get("timeout"),
             output=b"next model: partial review", stderr=b"next model: still reading")
 
-    real_chain_timeout_run = getattr(runner_chain_timeout, "run_agent_binary_unless_run_stopped", None)
+    real_chain_timeout_run = agent_binary_launch_a_case_replaces(runner_chain_timeout)
     buffer = io.StringIO()
     cell_ok = None
     try:
@@ -1147,7 +1197,7 @@ def main():
     # replaced for the length of one call only, and goes back in a finally.
     runner_memories = load_runner()
     captured = {}
-    real_memories_launch = getattr(runner_memories, "run_agent_binary_unless_run_stopped", None)
+    real_memories_launch = agent_binary_launch_a_case_replaces(runner_memories)
 
     def capture_command(command, *arguments, **keywords):
         captured["command"] = list(command)
@@ -1221,7 +1271,7 @@ def main():
         # the last model's after a fallback.
         return subprocess.CompletedProcess(list(command), 0, "a review\n", "")
 
-    real_claude_run = getattr(runner_tools, "run_agent_binary_unless_run_stopped", None)
+    real_claude_run = agent_binary_launch_a_case_replaces(runner_tools)
     try:
         runner_tools.run_agent_binary_unless_run_stopped = capture_claude_command
         runner_tools.run_claude("a prompt no model ever sees")
@@ -1263,7 +1313,7 @@ def main():
             return subprocess.CompletedProcess(list(command), code, out, "")
         return fake_run
 
-    real_chain_run = getattr(runner_chain, "run_agent_binary_unless_run_stopped", None)
+    real_chain_run = agent_binary_launch_a_case_replaces(runner_chain)
     try:
         runner_chain.run_agent_binary_unless_run_stopped = answering({fable: (0, "fable's review\n")})
         answered = runner_chain.run_claude("a prompt no model ever sees")
@@ -1558,7 +1608,7 @@ def main():
         return subprocess.CompletedProcess(list(command), 0, "a review\n", "")
 
     review_checkout = pathlib.Path("/a/review/copy/of/the/commit")
-    real_launch_run = getattr(runner_launch, "run_agent_binary_unless_run_stopped", None)
+    real_launch_run = agent_binary_launch_a_case_replaces(runner_launch)
     # On Linux the codex cell's profile lists the credential files under the
     # home by running `find` there: emptied, so the real home is not scanned.
     real_launch_files_found = runner_launch.common.credential_files_found_now
@@ -2169,7 +2219,7 @@ def main():
     # (nc-systems/cold-read/cold-read-claude-cell.py and
     # cold-read-codex-cell.py, recognised_failure_texts_for_model).
     runner_classes = load_runner()
-    real_classes_run = getattr(runner_classes, "run_agent_binary_unless_run_stopped", None)
+    real_classes_run = agent_binary_launch_a_case_replaces(runner_classes)
     # On Linux the codex cell's permission profile lists the credential files
     # under the home, which it finds by running `find` there: emptied for
     # these launches, as the launch-flag case above does, so the real home is
@@ -2291,7 +2341,7 @@ def main():
     runner_chain_relaunch = load_runner()
     runner_chain_relaunch.CLI_VERSION_CACHE.update({"claude": "1.1.1-test",
                                                     "codex": "2.2.2-test"})
-    real_chain_relaunch_run = getattr(runner_chain_relaunch, "run_agent_binary_unless_run_stopped", None)
+    real_chain_relaunch_run = agent_binary_launch_a_case_replaces(runner_chain_relaunch)
     chain_calls = []
 
     def chain_across_a_relaunch(command, *arguments, **keywords):
@@ -2510,9 +2560,14 @@ time.sleep(300)
         cell's second launch while its profile is built, after run_cell has
         read RUN_STOPPED unset, until that file exists (`<file>.held` says the
         hold has begun); DRIVER_STOP_WALK_DONE is written once the stop
-        handler has stopped the processes under the runner; and
+        handler has stopped the processes under the runner;
         DRIVER_HOLD_FIRST_SHIP holds the first shipping of the record until a
-        signal ends the hold (`<file>.held` again)."""
+        signal ends the hold (`<file>.held` again); and
+        DRIVER_HOLD_LAST_REPORT_CHECK holds the second cell to finish, after
+        its agent-binary has exited and before its report is saved, until that
+        file exists (`<file>.held` again). DRIVER_PROBE_VERSIONS, set to any
+        value, leaves the CLI version cache empty, so a cell probes the
+        stand-in's `--version` as a real run does."""
         driver = base / "run-the-runner.py"
         driver.write_text(f"""
 import importlib.util, os, pathlib, sys, time
@@ -2522,7 +2577,8 @@ spec.loader.exec_module(module)
 module.REPO_ROOT = pathlib.Path({str(repo)!r})
 module.RECORDS_ROOT = module.REPO_ROOT / "sanity-check-records"
 module.REVIEW_COPIES_ROOT = pathlib.Path({str(base / "review-copies")!r})
-module.CLI_VERSION_CACHE.update({{"claude": "1.1.1-test", "codex": "2.2.2-test"}})
+if not os.environ.get("DRIVER_PROBE_VERSIONS"):
+    module.CLI_VERSION_CACHE.update({{"claude": "1.1.1-test", "codex": "2.2.2-test"}})
 module.common.credential_files_found_now = lambda: []
 if hasattr(module, "STOPPED_PROCESS_GRACE_SECONDS"):
     module.STOPPED_PROCESS_GRACE_SECONDS = 3.0
@@ -2550,6 +2606,16 @@ if walk_done:
         stop_processes()
         pathlib.Path(walk_done).write_text("", encoding="utf-8")
     module.stop_processes_this_run_started = stop_processes_then_say_so
+report_check_hold = os.environ.get("DRIVER_HOLD_LAST_REPORT_CHECK")
+if report_check_hold:
+    check_report = module.missing_report_phrases
+    reports_checked = []
+    def last_report_check_held(*arguments, **keywords):
+        reports_checked.append(1)
+        if len(reports_checked) == 2:
+            held_until(report_check_hold)
+        return check_report(*arguments, **keywords)
+    module.missing_report_phrases = last_report_check_held
 ship_hold = os.environ.get("DRIVER_HOLD_FIRST_SHIP")
 if ship_hold:
     ship = module.ship_record
@@ -3142,6 +3208,7 @@ sys.exit(module.main())
                 list(command), -signal.SIGINT, "",
                 "Traceback (most recent call last):\nKeyboardInterrupt\n")
 
+        agent_binary_launch_a_case_replaces(runner_ended)
         runner_ended.run_agent_binary_unless_run_stopped = ended_by_the_stop
         real_ended_profile = runner_ended.common.codex_credential_denying_permission_profile_arguments
         runner_ended.common.codex_credential_denying_permission_profile_arguments = (
@@ -3249,6 +3316,357 @@ sys.exit(module.main())
         if owner_file is not None:
             owner_file.close()
 
+    # Case 54: an agent-binary started in the moment the stop handler waits
+    # for the launch lock. The handler makes later stop signals do nothing
+    # before it waits, and a cell's thread may be starting an agent-binary
+    # under the lock right then. With SIG_IGN that disposition survived the
+    # agent-binary's exec, so the SIGTERM that stops it did nothing and it ran
+    # on until the SIGKILL after the grace. Here the launch is held inside the
+    # lock until the handler has changed the dispositions, and the program it
+    # starts reports which of the three stop signals it starts with ignored.
+    runner_inherit = load_runner()
+    stop_signal_numbers = (signal.SIGTERM, signal.SIGINT, signal.SIGHUP)
+    dispositions_before = {number: signal.getsignal(number) for number in stop_signal_numbers}
+
+    def before_the_handler(_number, _frame):
+        pass
+
+    for number in stop_signal_numbers:
+        signal.signal(number, before_the_handler)
+    reports_dispositions = (
+        "import signal\n"
+        "print(' '.join(str(signal.getsignal(number) == signal.SIG_IGN) for number in "
+        "(signal.SIGTERM, signal.SIGINT, signal.SIGHUP)))\n"
+        "# reports-its-stop-signal-dispositions\n")
+    real_inherit_popen = runner_inherit.subprocess.Popen
+    launch_entered = threading.Event()
+
+    def launch_held_until_the_handler_has_begun(command, *arguments, **keywords):
+        if command[-1] == reports_dispositions:
+            launch_entered.set()
+            deadline = time.monotonic() + 10
+            while (any(signal.getsignal(number) is before_the_handler
+                       for number in stop_signal_numbers)
+                   and time.monotonic() < deadline):
+                time.sleep(0.01)
+        return real_inherit_popen(command, *arguments, **keywords)
+
+    launched = {}
+    handler_error = None
+    try:
+        runner_inherit.subprocess.Popen = launch_held_until_the_handler_has_begun
+        runner_inherit.stop_processes_this_run_started = lambda: None
+        launching = threading.Thread(target=lambda: launched.setdefault(
+            "result", runner_inherit.run_agent_binary_unless_run_stopped(
+                [sys.executable, "-c", reports_dispositions],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)))
+        launching.start()
+        launch_entered.wait(10)
+        try:
+            runner_inherit.stop_run_on_signal(signal.SIGTERM, None)
+        except BaseException as error:
+            handler_error = error
+        launching.join(30)
+    finally:
+        runner_inherit.subprocess.Popen = real_inherit_popen
+        for number, handler in dispositions_before.items():
+            if handler is not None:
+                signal.signal(number, handler)
+    result = launched.get("result")
+    check("an agent-binary started while the stop handler waits for the launch lock "
+          "starts with SIGTERM, SIGINT and SIGHUP not ignored, so the stop's SIGTERM "
+          "can end it",
+          launch_entered.is_set()
+          and type(handler_error).__name__ == "RunStoppedBySignal"
+          and result is not None and result.stdout.split() == ["False", "False", "False"],
+          f"entered {launch_entered.is_set()}, handler raised {handler_error!r}, "
+          f"launched {result!r}")
+
+    # Case 55: a stop signal that lands after the last cell's agent-binary has
+    # exited and before its report is saved. The run is decided at the
+    # signal, and that cell had not finished then, so the run ends with its
+    # STOPPED line; the report the cell saves after the signal is kept.
+    with tempfile.TemporaryDirectory() as scratch:
+        base = pathlib.Path(scratch).resolve()
+        target = "docs/stopped-while-a-report-is-saved.md"
+        repo = scratch_repository_with_design(base, target)
+        programs, recorded = stand_in_agent_binaries(base)
+        report_check_hold = base / "report-check-hold"
+        walk_done = base / "stop-walk-done"
+        environment = runner_process_environment(
+            programs, recorded, codex="report", claude="report")
+        environment["DRIVER_HOLD_LAST_REPORT_CHECK"] = str(report_check_hold)
+        environment["DRIVER_STOP_WALK_DONE"] = str(walk_done)
+        process = subprocess.Popen(
+            [sys.executable, "-B", str(runner_driver(base, repo)),
+             "--target", target, "--attack", "cut"],
+            env=environment, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        try:
+            held = wait_until(lambda: pathlib.Path(str(report_check_hold) + ".held").exists())
+            process.send_signal(signal.SIGTERM)
+            walked = wait_until(walk_done.exists)
+            report_check_hold.write_text("", encoding="utf-8")
+            try:
+                out, err = process.communicate(timeout=30)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                out, err = process.communicate()
+            records = sorted((repo / "sanity-check-records").glob("*"))
+            record = records[0] if len(records) == 1 else None
+            check("a stop that lands while the last cell saves its report ends the run "
+                  "with its STOPPED line, and the report is kept",
+                  held and walked and record is not None
+                  and (record / "cut-codex.md").is_file() and (record / "cut-claude.md").is_file()
+                  and "STOPPED: SIGTERM ended this run" in out
+                  and "sanity-check complete" not in out
+                  and sum(line.startswith("record: shipped: ") for line in out.splitlines()) == 1,
+                  f"held {held}, walked {walked}, record {record}, stdout {out!r}, "
+                  f"stderr {err!r}")
+            check("and that run still ends by the signal, its copy removed",
+                  process.returncode == -signal.SIGTERM and left_in_copies_root(base) == [],
+                  f"exit {process.returncode}, copies root {left_in_copies_root(base)}")
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.communicate()
+            end_stand_ins(recorded)
+
+    # Case 56: a review copy whose removal fails. The run says so and tells
+    # the requesting agent to leave it, because the copy's owner file stays
+    # and the next run removes the copy: both the run that made the copy and
+    # a later run's sweep of copies no live run owns print the line, and the
+    # sweep after them removes the copy.
+    with tempfile.TemporaryDirectory() as scratch:
+        base = pathlib.Path(scratch).resolve()
+        (base / "repository").mkdir()
+        repo = new_repo(base / "repository")
+        head = git(repo, "rev-parse", "HEAD").strip()
+        runner_removal = load_runner()
+        runner_removal.REVIEW_COPIES_ROOT = base / "review-copies"
+        real_removal = runner_removal.remove_directory_whatever_signal_arrives
+        own_copy_output, sweep_output, next_sweep_output = io.StringIO(), io.StringIO(), io.StringIO()
+        holders = []
+        try:
+            runner_removal.remove_directory_whatever_signal_arrives = lambda directory: None
+            with contextlib.redirect_stdout(own_copy_output):
+                with runner_removal.review_copy_of_commit(head, "design", repo) as checkout:
+                    holders.append(checkout.parent)
+            with contextlib.redirect_stdout(sweep_output):
+                runner_removal.remove_review_copies_no_live_run_owns()
+        finally:
+            runner_removal.remove_directory_whatever_signal_arrives = real_removal
+        with contextlib.redirect_stdout(next_sweep_output):
+            removed = runner_removal.remove_review_copies_no_live_run_owns()
+        holder = holders[0] if holders else None
+        expected = (f"WARNING: the review copy could not be removed: {holder}. "
+                    f"Leave it; the next sanity-check run removes it.\n")
+        check("a copy whose removal fails is named with the instruction to leave it, by "
+              "the run that made it and by a later run's sweep",
+              holder is not None and own_copy_output.getvalue() == expected
+              and sweep_output.getvalue() == expected,
+              f"holder {holder}, the run printed {own_copy_output.getvalue()!r}, "
+              f"the sweep printed {sweep_output.getvalue()!r}")
+        check("and the next sweep removes it, as the line says",
+              holder is not None and removed == [holder]
+              and next_sweep_output.getvalue()
+              == f"removed: a review copy an earlier run left behind, {holder}\n"
+              and not any(runner_removal.REVIEW_COPIES_ROOT.iterdir()),
+              f"removed {removed}, printed {next_sweep_output.getvalue()!r}, root holds "
+              f"{sorted(path.name for path in runner_removal.REVIEW_COPIES_ROOT.iterdir())}")
+
+    # Case 57: a cell whose thread first runs after the run is stopped. It
+    # launches nothing and does not count as finished, so the run ends with
+    # its STOPPED line: a run that never launched that cell has not saved
+    # every report it was going to.
+    runner_late = load_runner()
+    late_launches = []
+
+    def launch_recorded(*arguments, **keywords):
+        late_launches.append(1)
+        return 0, "a review\n", "a-model", "", None
+
+    runner_late.run_codex = launch_recorded
+    runner_late.RUN_STOPPED.set()
+    late_ok, late_output, late_raised, _ = run_cell_capturing(runner_late, "codex")
+    check("a cell whose thread finds the run already stopped launches nothing, and is "
+          "not counted as finished",
+          late_raised is None and late_ok is False and not late_launches
+          and late_output == ""
+          and getattr(runner_late, "CELLS_FINISHED", None) == set(),
+          f"raised {late_raised!r}, ok {late_ok}, launches {len(late_launches)}, "
+          f"printed {late_output!r}, "
+          f"finished {getattr(runner_late, 'CELLS_FINISHED', None)}")
+
+    # Case 58: a stop signal that lands while the last cell is in a git call
+    # it makes to save its report, after its agent-binary has exited. The
+    # stop's walk ends that call; the call runs with check=False, so the cell
+    # saves its report anyway, with `commit=unknown`. That report is what the
+    # stop cut short, so the run ends with its STOPPED line, not as a finished
+    # run over it. A stand-in `git`, first on the runner's PATH, holds the
+    # cell inside its `git rev-parse --short HEAD`.
+    with tempfile.TemporaryDirectory() as scratch:
+        base = pathlib.Path(scratch).resolve()
+        target = "docs/stopped-in-a-git-call.md"
+        repo = scratch_repository_with_design(base, target)
+        programs, recorded = stand_in_agent_binaries(base)
+        real_git = shutil.which("git")
+        (programs / "git").write_text(
+            "#!/bin/sh\n"
+            'if [ -n "$GIT_HOLD_REV_PARSE" ] && [ "$1" = rev-parse ] && [ "$2" = --short ]; then\n'
+            '    : > "$GIT_HOLD_REV_PARSE.held"\n'
+            '    while [ ! -e "$GIT_HOLD_REV_PARSE" ]; do sleep 0.05; done\n'
+            "fi\n"
+            f'exec {shlex.quote(real_git)} "$@"\n', encoding="utf-8")
+        (programs / "git").chmod(0o755)
+        git_hold = base / "git-hold"
+        walk_done = base / "stop-walk-done"
+        environment = runner_process_environment(programs, recorded, codex="report")
+        environment["GIT_HOLD_REV_PARSE"] = str(git_hold)
+        environment["DRIVER_STOP_WALK_DONE"] = str(walk_done)
+        process = subprocess.Popen(
+            [sys.executable, "-B", str(runner_driver(base, repo)),
+             "--target", target, "--attack", "cut", "--runtime", "codex"],
+            env=environment, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        try:
+            held = wait_until(lambda: pathlib.Path(str(git_hold) + ".held").exists())
+            process.send_signal(signal.SIGTERM)
+            walked = wait_until(walk_done.exists)
+            try:
+                out, err = process.communicate(timeout=30)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                out, err = process.communicate()
+            records = sorted((repo / "sanity-check-records").glob("*"))
+            record = records[0] if len(records) == 1 else None
+            report = record / "cut-codex.md" if record is not None else None
+            report_text = (report.read_text(encoding="utf-8")
+                           if report is not None and report.is_file() else "")
+            check("a stop that ends the git call a cell makes to save its report ends "
+                  "the run with its STOPPED line, not as a finished run",
+                  held and walked and "commit=unknown" in report_text
+                  and "STOPPED: SIGTERM ended this run" in out
+                  and "sanity-check complete" not in out,
+                  f"held {held}, walked {walked}, report {report_text[:200]!r}, "
+                  f"stdout {out!r}, stderr {err!r}")
+            check("and that run ends by the signal, its copy removed",
+                  process.returncode == -signal.SIGTERM and left_in_copies_root(base) == [],
+                  f"exit {process.returncode}, copies root {left_in_copies_root(base)}")
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.communicate()
+            end_stand_ins(recorded)
+
+    # Case 59: a stop signal that lands while the last cell probes its
+    # agent-binary's version to save its report, where the probe answers the
+    # signal by exiting 0 with nothing on stdout, as the npm `codex` wrapper
+    # on ned-box does when a signal ends its native child. The run is decided
+    # at the signal: the cell had not finished then, so the run ends with its
+    # STOPPED line, whatever the probe returned.
+    with tempfile.TemporaryDirectory() as scratch:
+        base = pathlib.Path(scratch).resolve()
+        target = "docs/stopped-in-a-version-probe.md"
+        repo = scratch_repository_with_design(base, target)
+        programs, recorded = stand_in_agent_binaries(base)
+        # The stand-in reads its mode from its own name, so it keeps the name
+        # `codex`, in a directory of its own.
+        (base / "stand-in-behind-the-wrapper").mkdir()
+        behind_the_wrapper = base / "stand-in-behind-the-wrapper" / "codex"
+        (programs / "codex").rename(behind_the_wrapper)
+        (programs / "codex").write_text(
+            "#!/bin/sh\n"
+            'if [ "$1" = --version ] && [ -n "$CODEX_HOLD_VERSION" ]; then\n'
+            '    : > "$CODEX_HOLD_VERSION.held"\n'
+            "    trap 'exit 0' TERM\n"
+            "    while :; do sleep 0.05; done\n"
+            "fi\n"
+            f'exec {shlex.quote(str(behind_the_wrapper))} "$@"\n',
+            encoding="utf-8")
+        (programs / "codex").chmod(0o755)
+        probe_hold = base / "probe-hold"
+        environment = runner_process_environment(programs, recorded, codex="report")
+        environment["CODEX_HOLD_VERSION"] = str(probe_hold)
+        environment["DRIVER_PROBE_VERSIONS"] = "1"
+        process = subprocess.Popen(
+            [sys.executable, "-B", str(runner_driver(base, repo)),
+             "--target", target, "--attack", "cut", "--runtime", "codex"],
+            env=environment, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        try:
+            held = wait_until(lambda: pathlib.Path(str(probe_hold) + ".held").exists())
+            process.send_signal(signal.SIGTERM)
+            try:
+                out, err = process.communicate(timeout=30)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                out, err = process.communicate()
+            check("a stop during a cell's version probe, which then exits 0, ends the run "
+                  "with its STOPPED line, not as a finished run",
+                  held and "STOPPED: SIGTERM ended this run" in out
+                  and "sanity-check complete" not in out
+                  and process.returncode == -signal.SIGTERM,
+                  f"held {held}, exit {process.returncode}, stdout {out!r}, "
+                  f"stderr {err!r}")
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.communicate()
+            end_stand_ins(recorded)
+
+    # Case 60: an agent-binary that is running when the run is stopped was
+    # ended by the stop, whatever its exit code: one that answered SIGTERM by
+    # exiting 0 with what it had written so far must not have that saved as a
+    # report. run_codex returns a failed launch with no review.
+    for stopped_while_it_ran in (True, False):
+        runner_exit_zero = load_runner()
+        real_exit_zero_popen = runner_exit_zero.subprocess.Popen
+
+        class RunStoppedWhileItRuns(real_exit_zero_popen):
+            def __init__(self, command, *arguments, **keywords):
+                # A stand-in codex: writes its last message where the runner
+                # reads the review from, and exits 0. Any other command
+                # run_codex starts (on Linux, more than the codex launch goes
+                # through Popen) runs as given.
+                if "--output-last-message" in command:
+                    last_message = command[command.index("--output-last-message") + 1]
+                    command = [sys.executable, "-c",
+                               "import sys; open(sys.argv[1], 'w').write("
+                               "'what it had written so far\\n')", last_message]
+                super().__init__(command, *arguments, **keywords)
+
+            def communicate(self, *arguments, module=runner_exit_zero,
+                            stop=stopped_while_it_ran, **keywords):
+                answered = super().communicate(*arguments, **keywords)
+                if stop:
+                    module.RUN_STOPPED.set()
+                return answered
+
+        with tempfile.TemporaryDirectory() as exit_zero_copy:
+            try:
+                runner_exit_zero.subprocess.Popen = RunStoppedWhileItRuns
+                code, review, _, _, _ = runner_exit_zero.run_codex(
+                    "a prompt", pathlib.Path(exit_zero_copy))
+            except Exception as error:
+                code, review = f"raised {error!r}", None
+            finally:
+                runner_exit_zero.subprocess.Popen = real_exit_zero_popen
+        if stopped_while_it_ran:
+            check("an agent-binary that exits 0 while the run is stopped is a failed "
+                  "launch with no review saved",
+                  code == 1 and review == "", f"exit {code!r}, review {review!r}")
+        else:
+            check("and one that exits 0 in a run not stopped returns its review",
+                  code == 0 and "what it had written so far" in (review or ""),
+                  f"exit {code!r}, review {review!r}")
+
+    # The containment set at import: no case asked the PATH's `claude` or
+    # `codex` for more than its version.
+    tripwire_calls = (AGENT_BINARY_TRIPWIRE_LOG.read_text(encoding="utf-8").splitlines()
+                      if AGENT_BINARY_TRIPWIRE_LOG.exists() else [])
+    check("no case started a real agent-binary: the PATH's claude and codex were asked "
+          "for nothing but their version",
+          all(call.split(" ", 1)[1:] == ["--version"] for call in tripwire_calls),
+          f"calls: {tripwire_calls}")
+
     print()
     if failures:
         print(f"{len(failures)} failing case(s): {', '.join(failures)}")
@@ -3262,3 +3680,4 @@ if __name__ == "__main__":
         sys.exit(main())
     finally:
         SUITE_SCRATCH_LOG_STORE.cleanup()
+        AGENT_BINARY_TRIPWIRES.cleanup()
