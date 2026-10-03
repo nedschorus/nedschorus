@@ -387,7 +387,12 @@ def run_grid(repository, stub_directory, environment_overrides=None,
         stub = stub_directory / runtime_name
         stub.write_text(STUB_MODEL_RUNTIME, encoding="utf-8")
         stub.chmod(0o755)
+    # Every Codex cell scans HOME for credential files at launch, and the
+    # real home takes seconds to walk.
+    scratch_home = repository.parent / "scratch-home"
+    scratch_home.mkdir(exist_ok=True)
     environment = dict(os.environ)
+    environment["HOME"] = str(scratch_home)
     environment["PATH"] = f"{stub_directory}{os.pathsep}{environment.get('PATH', '')}"
     environment[RECORD_SHIP_DESTINATION_VARIABLE] = str(repository / SCRATCH_LOG_STORE_RELATIVE)
     environment[RECORD_CLOCK_OVERRIDE_VARIABLE] = FIXED_RECORD_CLOCK_FOR_TESTS
