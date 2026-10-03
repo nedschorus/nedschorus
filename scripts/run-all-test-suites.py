@@ -158,12 +158,9 @@ count (4 when Python cannot tell), or the number of suites to run when that
 is fewer. Suites start longest first, by the seconds their recordings
 kept, ties in the order git lists them; a suite with no recording, or whose
 recorded run did not pass, starts before them all, since it may be long. A
-run lasts at least as long as its longest suite, so more jobs pay off only
-once no single suite dominates. Measured on ned-box (16 cores) 2026-10-03
-over 92 suites: 311 s at -j 4 and 345 s at -j 16, because
-nc-systems/cold-read/tests/cold-read-grid-test.py took 288 s of the run at
--j 4 and 325 s at -j 16, slowed by the other suites competing for the
-machine. -j 1 still runs one suite at a time when a run must.
+run lasts at least as long as its longest suite, and a suite slows when the
+machine is busy, so more jobs pay off only once no single suite dominates.
+-j 1 still runs one suite at a time when a run must.
 
 NO PER-SUITE TIMEOUT. No suite has been seen to hang, so none is imposed.
 A hung suite hangs the run.
