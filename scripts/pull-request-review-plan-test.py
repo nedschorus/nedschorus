@@ -287,7 +287,11 @@ def run_fix_round_cases(fixture):
     logic_head = fixture.commit_fixture_changes("logic fix")
     fixture.configure_github_answers(logic_head, reviews=[[fixture_review(101, earlier)]])
     plan = fixture.read_review_plan()
-    check("a logic delta voids delta-only review and names the program", not plan["delta_only_review_applies"] and any("scripts/example-program.py" in reason for reason in plan["delta_only_review_reasons"]), plan)
+    check("a program logic delta keeps delta-only review at the full-reviewer delta tier",
+          plan["delta_only_review_applies"] is True and plan["delta_only_review_reasons"] == []
+          and [entry["path"] for entry in plan["delta_files"]] == ["scripts/example-program.py"]
+          and plan["delta_tier"] == "full-reviewer"
+          and "scripts/example-program.py" in plan["delta_tier_decided_by"], plan)
     fixture.configure_github_answers(logic_head, reviews=[[fixture_review(101, "a" * 40)]])
     plan = fixture.read_review_plan()
     check("an unavailable earlier head voids delta-only review without a delta tier", plan["delta_tier"] is None and not plan["delta_only_review_applies"] and "not in this repository" in plan["delta_only_review_reasons"][0], plan)
@@ -406,7 +410,7 @@ def run_hook_registration_and_delta_boundary_cases(fixture):
                                    if entry["path"] == "scripts/sibling-program.py")
     check("delta hook registrations include the diff base when main registers the program after the branch was cut",
           delta_hook_program_entry["class"] == "hook" and delta_hook_program_entry["tier"] == "full-reviewer"
-          and plan["delta_only_review_applies"] is False, plan)
+          and plan["delta_tier"] == "full-reviewer" and plan["delta_only_review_applies"] is True, plan)
 
     fixture.reset_fixture_to_base()
     fixture.write_fixture_file(".claude/settings.json", sibling_hook_settings)
@@ -435,11 +439,11 @@ def run_hook_registration_and_delta_boundary_cases(fixture):
     head = fixture.git_command("rev-parse", "HEAD")
     fixture.configure_github_answers(head, reviews=[[fixture_review(101, earlier)]], live_base=main_head)
     plan = fixture.read_review_plan()
-    check("delta-only review lists merge, rewritten history and behaviour reasons together",
-          len(plan["delta_only_review_reasons"]) == 3
+    check("a full-reviewer program delta after a merge and rewritten history lists only those two reasons",
+          plan["delta_only_review_applies"] is False and plan["delta_tier"] == "full-reviewer"
+          and len(plan["delta_only_review_reasons"]) == 2
           and head[:12] in plan["delta_only_review_reasons"][0]
-          and "history was rewritten" in plan["delta_only_review_reasons"][1]
-          and "scripts/example-program.py" in plan["delta_only_review_reasons"][2], plan)
+          and "history was rewritten" in plan["delta_only_review_reasons"][1], plan)
 
     fixture.reset_fixture_to_base()
     fixture.write_fixture_file("scripts/example-program.py", BASELINE_FILE_CONTENTS["scripts/example-program.py"].replace('"old"', '"earlier"'))
