@@ -131,6 +131,7 @@ Run: python3 nc-systems/cold-read/tests/cold-read-grid-test.py
 
 import datetime
 import importlib.util
+import inspect
 import json
 import os
 import shutil
@@ -170,6 +171,11 @@ FIXED_RECORD_CLOCK_FOR_TESTS = "2026-09-16T10:42"
 # cells at random. A case about the mid-run stop leaves it unset.
 TARGET_CHECK_INTERVAL_OVERRIDE_VARIABLE = "COLD_READ_GRID_TARGET_CHECK_INTERVAL_SECONDS"
 END_OF_RUN_COMPARISON_ONLY = {TARGET_CHECK_INTERVAL_OVERRIDE_VARIABLE: "86400"}
+# Every run here polls its cells this often instead of every 5 seconds, through
+# the grid's override: the stubs finish at once, so the production poll is only
+# waiting.
+CELL_POLL_INTERVAL_OVERRIDE_VARIABLE = "COLD_READ_GRID_CELL_POLL_INTERVAL_SECONDS"
+CELL_POLL_INTERVAL_FOR_TESTS_SECONDS = "0.1"
 
 TARGET_RELATIVE_PATH = "docs/drafts/cold-read-grid-test-target.md"
 
@@ -381,10 +387,16 @@ def run_grid(repository, stub_directory, environment_overrides=None,
         stub = stub_directory / runtime_name
         stub.write_text(STUB_MODEL_RUNTIME, encoding="utf-8")
         stub.chmod(0o755)
+    # Every Codex cell scans HOME for credential files at launch, and the
+    # real home takes seconds to walk.
+    scratch_home = repository.parent / "scratch-home"
+    scratch_home.mkdir(exist_ok=True)
     environment = dict(os.environ)
+    environment["HOME"] = str(scratch_home)
     environment["PATH"] = f"{stub_directory}{os.pathsep}{environment.get('PATH', '')}"
     environment[RECORD_SHIP_DESTINATION_VARIABLE] = str(repository / SCRATCH_LOG_STORE_RELATIVE)
     environment[RECORD_CLOCK_OVERRIDE_VARIABLE] = FIXED_RECORD_CLOCK_FOR_TESTS
+    environment[CELL_POLL_INTERVAL_OVERRIDE_VARIABLE] = CELL_POLL_INTERVAL_FOR_TESTS_SECONDS
     environment["COLD_READ_GRID_TEST_STUB_ATTEMPT_COUNTER_DIRECTORY"] = str(
         repository.parent / "stub-attempt-counts" / repository.name / str(time.time_ns()))
     environment.update(environment_overrides or {})
@@ -716,8 +728,10 @@ with tempfile.TemporaryDirectory() as scratch:
     # The other side of the same check: readers slow enough to be polled more
     # than once, and a target nobody edits, finish as an ordinary run.
     repository = build_scratch_repository(scratch, "checkout-target-still-over-polls")
+    # Readers that take ten of this suite's polls to finish.
+    still_reading_seconds = 10 * float(CELL_POLL_INTERVAL_FOR_TESTS_SECONDS)
     result = run_grid(repository, scratch / "stub-bin-target-still-over-polls",
-                      {"COLD_READ_GRID_TEST_STUB_SLEEP_SECONDS": "12"})
+                      {"COLD_READ_GRID_TEST_STUB_SLEEP_SECONDS": str(still_reading_seconds)})
     check("a settled target over several polls stops nothing: six reviews, exit 0",
           result.returncode == 0
           and len([line for line in result.stdout.splitlines()
@@ -1207,6 +1221,15 @@ with tempfile.TemporaryDirectory() as scratch:
     grid_module = importlib.util.module_from_spec(grid_spec)
     grid_spec.loader.exec_module(grid_module)
     clock_at_1042 = datetime.datetime(2026, 9, 16, 10, 42)
+
+    # Every run in this suite overrides the poll, so no run shows the default.
+    cell_poll_parameter = inspect.signature(grid_module.wait_for_cells).parameters.get(
+        "cell_poll_interval_seconds")
+    check("grid: the cell poll interval's default, and wait_for_cells', is 5 seconds",
+          grid_module.CELL_POLL_INTERVAL_DEFAULT_SECONDS == 5
+          and cell_poll_parameter is not None and cell_poll_parameter.default == 5,
+          f"default {grid_module.CELL_POLL_INTERVAL_DEFAULT_SECONDS!r}, "
+          f"parameter {cell_poll_parameter!r}")
 
     def grid_record_name(path, clock=clock_at_1042):
         return grid_module.record_directory_name_for_target(Path(path), clock)

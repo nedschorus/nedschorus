@@ -204,7 +204,12 @@ def run_fast_read(repository, stub_directory, plan, expected_report, target_argu
     stub.write_text(STUB_AGY, encoding="utf-8")
     stub.chmod(0o755)
     counter_path.unlink(missing_ok=True)
+    # The agy cell scans HOME for credential files at launch, and the real
+    # home takes seconds to walk.
+    scratch_home = repository.parent / "scratch-home"
+    scratch_home.mkdir(exist_ok=True)
     environment = dict(os.environ)
+    environment["HOME"] = str(scratch_home)
     environment["PATH"] = f"{stub_directory}{os.pathsep}{environment.get('PATH', '')}"
     environment["COLD_READ_AGY_CELL_TEST_STUB_PLAN"] = json.dumps(plan)
     environment["COLD_READ_AGY_CELL_TEST_STUB_REPORT_PATH"] = str(expected_report)

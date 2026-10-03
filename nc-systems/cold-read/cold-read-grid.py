@@ -186,6 +186,9 @@ RECORD_CLOCK_OVERRIDE_FORMAT = "%Y-%m-%dT%H:%M"
 
 # Tests can defer polling to isolate the end-of-run comparison from cell-exit timing.
 TARGET_CHECK_INTERVAL_OVERRIDE_VARIABLE = "COLD_READ_GRID_TARGET_CHECK_INTERVAL_SECONDS"
+# Tests shorten the poll so stub cells that finish at once are not waited on for seconds.
+CELL_POLL_INTERVAL_OVERRIDE_VARIABLE = "COLD_READ_GRID_CELL_POLL_INTERVAL_SECONDS"
+CELL_POLL_INTERVAL_DEFAULT_SECONDS = 5.0
 
 
 def record_clock_reading() -> datetime.datetime:
@@ -538,7 +541,9 @@ def stop_process_tree(process: subprocess.Popen, grace_seconds: float = 5.0) -> 
 
 def wait_for_cells(running: dict,
                    target_move: typing.Callable[[], typing.Optional[tuple]],
-                   target_check_interval_seconds: float = 0.0) -> RunOutcome:
+                   target_check_interval_seconds: float = 0.0,
+                   cell_poll_interval_seconds: float = CELL_POLL_INTERVAL_DEFAULT_SECONDS,
+                   ) -> RunOutcome:
     """Retry failed cells once and wait for reports, absences or a changed target."""
     # A successful exit alone does not prove a review exists; require a nonempty report.
     outcome = RunOutcome([], {}, {}, [], None)
@@ -548,7 +553,7 @@ def wait_for_cells(running: dict,
         cells_by_runtime.setdefault(
             runtime_of(cell_name_of(report_path)), []).append(cell_name_of(report_path))
     while running:
-        time.sleep(5)
+        time.sleep(cell_poll_interval_seconds)
         for report_path in list(running):
             attempt = running[report_path]
             code = None if attempt.process is None else attempt.process.poll()
@@ -681,7 +686,9 @@ def main() -> int:
     outcome = wait_for_cells(
         launch_cells(frozen_target, record_dir, target),
         lambda: moved_target(target, frozen_target, target_before),
-        float(os.environ.get(TARGET_CHECK_INTERVAL_OVERRIDE_VARIABLE) or 0))
+        float(os.environ.get(TARGET_CHECK_INTERVAL_OVERRIDE_VARIABLE) or 0),
+        float(os.environ.get(CELL_POLL_INTERVAL_OVERRIDE_VARIABLE)
+              or CELL_POLL_INTERVAL_DEFAULT_SECONDS))
     # Prefer the final comparison: the frozen copy may change after a poll detects a changed original.
     # Retain the poll result if the changed bytes were restored before the final comparison.
     move = moved_target(target, frozen_target, target_before) or outcome.moved_mid_run
