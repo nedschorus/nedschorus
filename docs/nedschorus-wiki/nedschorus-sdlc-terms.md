@@ -4,4 +4,5 @@ Standard software-engineering terms this project relies on, each used with its s
 
 - **canonical location** — the one place where a document or fact is kept and updated, which every other mention points to.
 - **head commit** — the newest commit of a pull request's branch, the commit a review is made against.
+- **mutation testing** — putting a small fault into code on purpose and running the tests, to see whether a test fails; in this project, how a reviewer or an author shows that a change's tests check what the change does: with a key line of the change broken, at least one of those tests must fail.
 - **topic branch** — in Git's sense, a branch for one topic, a feature or a bugfix; in this project, the branch a pull request merges. Not a seat-branch.
