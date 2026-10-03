@@ -574,7 +574,9 @@ def run_process_identity_cases(workspace: Path):
     hanging_ps_directory = workspace / "hanging-ps"
     hanging_ps_directory.mkdir()
     hanging_ps = hanging_ps_directory / "ps"
-    hanging_ps.write_text("#!/bin/sh\nsleep 30\n", encoding="utf-8")
+    # exec, so the reader's kill at its timeout reaches the sleep itself rather
+    # than leaving it running for half a minute after this case.
+    hanging_ps.write_text("#!/bin/sh\nexec sleep 30\n", encoding="utf-8")
     hanging_ps.chmod(0o755)
     real_read_timeout = supervisor.PROCESS_COMMAND_LINE_READ_TIMEOUT_SECONDS
     try:
@@ -2861,12 +2863,14 @@ def run_no_seat_recycle_refusal_case(workspace: Path):
     handoff_directory = workspace / "noseat"
     handoff_directory.mkdir(parents=True, exist_ok=True)
     stub_agent = handoff_directory / "stub-agent"
+    session_process_id_path = handoff_directory / "stub-agent.pid"
     stub_agent.write_text(
         "#!/bin/sh\n"
         "exec >/dev/null 2>&1\n"  # release the supervisor's pipes, or the test waits out the sleep
+        f"echo $$ > '{session_process_id_path}'\n"
         "printf 'written-at: 2026-08-14T00:00:00Z\\nnext-step: recycle me\\nrestart-counter: 9\\n' "
         f"> '{handoff_directory}/noseat-handoff.md'\n"
-        "sleep 30\n",
+        "exec sleep 30\n",
         encoding="utf-8",
     )
     stub_agent.chmod(0o755)
@@ -2887,6 +2891,12 @@ def run_no_seat_recycle_refusal_case(workspace: Path):
     check("a stop that leaves the session up records no agent exit",
           supervisor.agent_exit_record_from_supervisor_state(state) is None
           and supervisor.AGENT_EXIT_CODE_STATE_KEY not in state, str(state))
+
+    # The supervisor leaves the session running at this stop, so the case
+    # stops it: the stub execs its sleep, so the recorded id is the sleep's.
+    if session_process_id_path.is_file():
+        with contextlib.suppress(ProcessLookupError):
+            os.kill(int(session_process_id_path.read_text(encoding="utf-8")), signal.SIGKILL)
 
 
 class StubLaunchedSession:
@@ -4686,8 +4696,9 @@ with tempfile.TemporaryDirectory() as update_workspace:
 
 with tempfile.TemporaryDirectory() as update_workspace:
     # A hung update is killed at the timeout and the launch proceeds. The
-    # launchers allow 120s for a real download; 1s here bounds the case.
-    agent = an_agent_recording_its_invocations(update_workspace, body="sleep 30")
+    # launchers allow 120s for a real download; 1s here bounds the case. exec,
+    # so the kill at the timeout reaches the sleep and nothing outlives the case.
+    agent = an_agent_recording_its_invocations(update_workspace, body="exec sleep 30")
     started = time.monotonic()
     captured = io.StringIO()
     with contextlib.redirect_stderr(captured):
