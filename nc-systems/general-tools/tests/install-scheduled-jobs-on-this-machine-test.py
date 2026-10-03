@@ -104,8 +104,10 @@ class MachineStub:
         self.crontab_list_failure = None      # (exit code, stderr bytes)
         self.exit_codes = {}                  # "crontab-write" | "lint" | "bootstrap" | "kickstart" | "bootout" | "print"
         self.bootstrap_loads_the_job = True
+        # The macOS failure: `crontab` exits 0 and leaves an empty crontab.
+        self.crontab_write_installs_empty_crontab = False
 
-    def __call__(self, command, stdout=None, stderr=None):
+    def __call__(self, command, stdout=None, stderr=None, input=None):
         command = list(command)
         self.commands.append(command)
         code, out, err = 0, b"", b""
@@ -116,12 +118,11 @@ class MachineStub:
                 code, err = 1, b"crontab: no crontab for someone\n"
             else:
                 out = self.crontab
-        elif command[0] == "crontab":
+        elif command == ["crontab", "-"]:
             code = self.exit_codes.get("crontab-write", 0)
-            written = Path(command[1]).read_bytes()
-            self.crontab_writes.append(written)
+            self.crontab_writes.append(input)
             if code == 0:
-                self.crontab = written
+                self.crontab = b"" if self.crontab_write_installs_empty_crontab else input
         elif command[:2] == ["plutil", "-lint"]:
             code = self.exit_codes.get("lint", 0)
         elif command[:2] == ["launchctl", "print"]:
@@ -332,7 +333,7 @@ with tempfile.TemporaryDirectory() as temporary:
     check("--install for a user with no crontab writes the table's lines in one crontab call",
           exit_code == 0 and stub.crontab_writes == [f"{BOX_MIRROR}\n{BOX_DAILY}\n".encode()]
           and printed.count("installed: ") == 2
-          and [command[0] for command in stub.commands] == ["crontab", "crontab"],
+          and stub.commands == [["crontab", "-l"], ["crontab", "-"], ["crontab", "-l"]],
           (exit_code, printed, errors, stub.crontab_writes))
     exit_code, printed, errors = run_main(["--install"] + TWO_JOBS, NED_BOX, stub)
     check("and a second --install changes nothing",
@@ -417,9 +418,42 @@ with tempfile.TemporaryDirectory() as temporary:
     exit_code, printed, errors = run_main(["--install"] + TWO_JOBS, NED_BOX, stub)
     check("a `crontab` write that fails is FAILED with its exit code, exit 1, and no job is "
           "reported installed",
-          exit_code == 1 and "FAILED: `crontab` exited 1; no cron line was changed." in errors
+          exit_code == 1 and "FAILED: `crontab -` exited 1; no cron line was changed." in errors
           and "installed:" not in printed and stub.crontab is None,
           (exit_code, printed, errors))
+    stub = MachineStub(crontab=f"{NED_BOX_FOREIGN_COMMENT}\n".encode())
+    stub.crontab_write_installs_empty_crontab = True
+    exit_code, printed, errors = run_main(["--install"] + TWO_JOBS, NED_BOX, stub)
+    check("a `crontab -` write that exits 0 but reads back empty is FAILED, exit 1, naming the "
+          "line counts, and no job is reported installed",
+          exit_code == 1
+          and "FAILED: `crontab -` exited 0, but `crontab -l` reads back 0 line(s) where 3 were "
+              "written" in errors
+          and "Run `crontab -l` to see what the crontab now holds" in errors
+          and "installed:" not in printed and "replaced:" not in printed,
+          (exit_code, printed, errors))
+    stub = MachineStub(crontab=as_installed_today)
+    stub.crontab_write_installs_empty_crontab = True
+    exit_code, printed, errors = run_main(["--remove", "--job", "daily-full-test-run-of-main"],
+                                          NED_BOX, stub)
+    check("--remove: a write that exits 0 but reads back different is FAILED, exit 1, and no "
+          "line is reported removed",
+          exit_code == 1 and "FAILED: `crontab -` exited 0, but `crontab -l` reads back" in errors
+          and "removed:" not in printed, (exit_code, printed, errors))
+    stub = MachineStub(crontab=None)
+    real_stub_call = MachineStub.__call__
+    def unreadable_after_write(command, stdout=None, stderr=None, input=None):
+        if command == ["crontab", "-l"] and stub.crontab_writes:
+            stub.crontab_list_failure = (1, b"crontab: tmp/tmp.123: Permission denied\n")
+        return real_stub_call(stub, command, stdout=stdout, stderr=stderr, input=input)
+    exit_code, printed, errors = run_main(["--install"] + TWO_JOBS, NED_BOX,
+                                          unreadable_after_write)
+    check("a write that exits 0 but cannot be read back is FAILED, exit 1, quoting why, and no "
+          "job is reported installed",
+          exit_code == 1
+          and "FAILED: `crontab -` exited 0, but the crontab could not be read back to confirm "
+              "the write: " in errors and "Permission denied" in errors
+          and "installed:" not in printed, (exit_code, printed, errors))
 
     # --- cron: check ------------------------------------------------------
     stub = MachineStub(crontab=f"{NED_BOX_FOREIGN_COMMENT}\n{differing_daily}\n".encode())
@@ -720,7 +754,7 @@ with tempfile.TemporaryDirectory() as temporary:
     exit_code, printed, errors = run_main(["--install"], MAC, stub)
     check("a failed crontab write does not stop the launchd job from being installed, and "
           "the run still exits 1",
-          exit_code == 1 and "FAILED: `crontab` exited 1; no cron line was changed." in errors
+          exit_code == 1 and "FAILED: `crontab -` exited 1; no cron line was changed." in errors
           and "installed: daily-full-test-run-of-main" in printed, (exit_code, printed, errors))
 
     # --- launchd: remove ----------------------------------------------------
@@ -821,7 +855,7 @@ with tempfile.TemporaryDirectory() as temporary:
     stub.crontab = f"{retired_line}\n".encode()
     exit_code, printed, errors = run_main(["--remove-not-in-table"], NED_BOX, stub)
     check("a failed crontab write in --remove-not-in-table is FAILED, exit 1, nothing reported "
-          "removed", exit_code == 1 and "FAILED: `crontab` exited 1" in errors
+          "removed", exit_code == 1 and "FAILED: `crontab -` exited 1" in errors
           and "removed:" not in printed, (exit_code, printed, errors))
 
     # Which crontab lines run a program from the clone: the program is the

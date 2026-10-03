@@ -90,10 +90,14 @@ its old line is replaced and not left beside the new one. A line already equal
 to the table's is left alone, and a crontab that needs no change is not
 written at all. A differing line is replaced and the line removed is printed.
 Every other line, comments included, goes back byte for byte: the crontab is
-read with `crontab -l` as bytes and written back whole in one
-`crontab <file>` call. When `crontab -l` fails for any reason but "no crontab
-for <user>", nothing is written: an unreadable crontab taken for an empty one
-would be replaced by the table's lines alone.
+read with `crontab -l` as bytes and written back whole in one `crontab -`
+call, the text on its standard input, then read back with `crontab -l` and
+compared with what was written. A write that exits 0 but reads back different
+is FAILED, and no line is reported installed, replaced or removed: on macOS,
+`crontab <file>` has installed an empty crontab and still exited 0. When
+`crontab -l` fails for any reason but "no crontab for <user>", nothing is
+written: an unreadable crontab taken for an empty one would be replaced by the
+table's lines alone.
 
 WHAT A LAUNCHD INSTALL DOES. Writes ~/Library/LaunchAgents/<label>.plist,
 checks it with `plutil -lint`, boots out a job of that label that is already
@@ -145,7 +149,6 @@ import re
 import shlex
 import subprocess
 import sys
-import tempfile
 from pathlib import Path
 
 PROGRAM = "install-scheduled-jobs-on-this-machine"
@@ -365,20 +368,32 @@ def crontab_without(text: str, jobs: list):
     return "".join(line + "\n" for line in lines), removed
 
 
-def write_crontab(text: str, run) -> int:
-    with tempfile.NamedTemporaryFile("wb", suffix=".crontab", delete=False) as crontab_file:
-        crontab_file.write(text.encode("utf-8", "surrogateescape"))
+def write_crontab(text: str, run):
+    """Write the crontab and read it back; return None when it holds the text, else why not."""
+    written = run(["crontab", "-"], input=text.encode("utf-8", "surrogateescape"))
+    if written.returncode != 0:
+        return (f"`crontab -` exited {written.returncode}; no cron line was changed.",
+                "Read what crontab printed above, and run this again after that cause is removed.")
     try:
-        return run(["crontab", crontab_file.name]).returncode
-    finally:
-        os.unlink(crontab_file.name)
+        read_back = read_crontab(run)
+    except Refusal as refusal:
+        return (f"`crontab -` exited 0, but the crontab could not be read back to confirm the "
+                f"write: {refusal.lines[0]}",
+                "Run `crontab -l` to see what the crontab now holds, and run this again after "
+                "it prints the crontab.")
+    if read_back != text:
+        return (f"`crontab -` exited 0, but `crontab -l` reads back "
+                f"{len(crontab_lines(read_back))} line(s) where {len(crontab_lines(text))} "
+                f"were written; the crontab does not hold what was written.",
+                "Run `crontab -l` to see what the crontab now holds, restore any lost line, and "
+                "run this again.")
+    return None
 
 
-def report_failed_crontab_write(exit_code: int) -> None:
-    print(f"FAILED: `crontab` exited {exit_code}; no cron line was changed.",
-          file=sys.stderr)
-    print("Read what crontab printed above, and run this again after that cause is removed.",
-          file=sys.stderr)
+def report_failed_crontab_write(failure) -> None:
+    what_failed, what_to_do = failure
+    print(f"FAILED: {what_failed}", file=sys.stderr)
+    print(what_to_do, file=sys.stderr)
 
 
 
@@ -591,9 +606,9 @@ def install_mode(machine, placed, launch_agents_directory: Path, start_once: boo
     if wanted:
         installed_text = read_crontab(run)
         new_text, outcomes = crontab_with(installed_text, wanted)
-        exit_code = write_crontab(new_text, run) if new_text != installed_text else 0
-        if exit_code != 0:
-            report_failed_crontab_write(exit_code)
+        failure = write_crontab(new_text, run) if new_text != installed_text else None
+        if failure:
+            report_failed_crontab_write(failure)
             every_step_worked = False
         else:
             for (job, outcome, old_lines), (_, line) in zip(outcomes, wanted):
@@ -621,9 +636,9 @@ def remove_mode(machine, placed, launch_agents_directory: Path, run) -> int:
     if cron_jobs:
         installed_text = read_crontab(run)
         new_text, removed = crontab_without(installed_text, cron_jobs)
-        exit_code = write_crontab(new_text, run) if new_text != installed_text else 0
-        if exit_code != 0:
-            report_failed_crontab_write(exit_code)
+        failure = write_crontab(new_text, run) if new_text != installed_text else None
+        if failure:
+            report_failed_crontab_write(failure)
             return 1
         for job, old_lines in removed:
             if not old_lines:
@@ -651,9 +666,9 @@ def remove_not_in_table_mode(machine, placed, launch_agents_directory: Path, run
     stray = cron_lines_not_in_table(machine, placed, lines)
     if stray:
         kept = [line for index, line in enumerate(lines) if index not in stray]
-        exit_code = write_crontab("".join(line + "\n" for line in kept), run)
-        if exit_code != 0:
-            report_failed_crontab_write(exit_code)
+        failure = write_crontab("".join(line + "\n" for line in kept), run)
+        if failure:
+            report_failed_crontab_write(failure)
             return 1
         for index in stray:
             print(f"removed: not in the table — the line removed from the crontab: "
