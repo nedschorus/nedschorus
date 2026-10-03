@@ -620,6 +620,24 @@ def run_repository_and_output_cases(fixture):
     result = fixture.run_review_plan("--brief-skeleton", str(fixture.control_directory / "missing-directory" / "brief.md"))
     check("a missing brief directory is refused", refusal_has_expected_prefix(result), result.stderr)
 
+    # The split suite lands on main first, so the pull request changes only the
+    # program and the parts are found by name, not as changed tests.
+    fixture.reset_fixture_to_base()
+    for path in ("scripts/sibling-program-launch-test.py", "scripts/tests/sibling-program-resume-test.py",
+                 "tests/sibling-program-parent-directory-test.py", "scripts/sibling-programmer-test.py",
+                 "scripts/sibling-program-test-fixture.py", "scripts/elsewhere/sibling-program-elsewhere-test.py"):
+        fixture.write_fixture_file(path, "assert True\n")
+    main_with_a_split_suite = fixture.commit_fixture_changes("a sibling suite split by topic lands on main")
+    fixture.git_command("update-ref", "refs/remotes/origin/main", main_with_a_split_suite)
+    fixture.write_fixture_file("scripts/sibling-program.py", 'print("new")\n')
+    head = fixture.commit_fixture_changes("change the program whose suite was split")
+    fixture.configure_github_answers(head, live_base=main_with_a_split_suite)
+    plan = fixture.read_review_plan()
+    check("a changed program discovers each part of its split suite in every test directory, and no file that only shares the name's start",
+          plan["test_files_to_run"] == ["scripts/sibling-program-launch-test.py", "scripts/sibling-program-test.py",
+                                        "scripts/tests/sibling-program-resume-test.py",
+                                        "tests/sibling-program-parent-directory-test.py"], plan)
+
 
 def run_refusal_and_call_shape_cases(fixture):
     fixture.reset_fixture_to_base()

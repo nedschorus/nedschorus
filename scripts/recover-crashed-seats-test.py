@@ -1434,8 +1434,8 @@ with tempfile.TemporaryDirectory() as temporary:
     # recovery marker reaches the successor, never what the prompt says; and
     # it composes with an empty branch-sync report, so the branch-state
     # sentence is not in this fixture at all. The wording is pinned in
-    # nc-systems/handoff/tests/handoff-supervisor-test.py, by the boot-recovery
-    # check that pull request [the ignition prompt's sentences are constants,
+    # nc-systems/handoff/tests/handoff-supervisor-successor-prompt-test.py, by
+    # the boot-recovery check that pull request [the ignition prompt's sentences are constants,
     # and both branch-state call sites are pinned whole]
     # (https://github.com/nedschorus/nedschorus/pull/590) added. Look there,
     # not here, before trusting that a wording change is guarded.
