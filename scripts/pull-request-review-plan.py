@@ -7,16 +7,16 @@ Python behaviour changes and other code get full-reviewer. Prose gets
 seat-alone. Settings, Bash guards and registered hooks always get a full
 reviewer; all of .claude/hooks/ does too, including test files there.
 
-Rule 2: a fix round reviews only its new commits, unless the delta contains
-a merge, the branch history was rewritten, or the delta changes behaviour
-in a program the earlier round's check exercised. That last condition is
-approximated by a non-test, non-Markdown delta file getting full-reviewer:
-the review history does not record exactly which checks were exercised.
-Rounds count distinct reviewed heads other than the current head, so a
-review already posted on the current head does not start another round.
-When a delta holds a merge, or follows rewritten history, its files are
-restricted to the pull request's own files on either head; main's unrelated
-files should not decide the delta tier. All applicable reasons remain listed.
+Rule 2: a fix round is reviewed by its new commits alone, at the tier those
+commits need, and the seat runs the round's deciding check again on the new
+head. It is reviewed whole when those commits merge main or rewrite the
+branch's history; any merge commit on the delta's first-parent history
+counts as merging main. Rounds count distinct reviewed heads other than the
+current head, so a review already posted on the current head does not start
+another round. When a delta holds a merge, or follows rewritten history, its
+files are restricted to the pull request's own files on either head; main's
+unrelated files should not decide the delta tier. All applicable reasons
+remain listed.
 
 Rule 3: list changed agent-facing strings, with their context and old text.
 Tests are excluded: a test's copy of an expected message is not handed to
@@ -649,11 +649,6 @@ def compute_pull_request_review_plan(arguments):
                 reasons.append("the delta holds merge commit(s): " + ", ".join(commit[:12] for commit in merge_commits))
             if rewritten:
                 reasons.append("the branch's history was rewritten")
-            changed_programs = [entry["path"] for entry in delta_files
-                                if not path_is_test_file(entry["path"]) and not entry["path"].endswith(".md")
-                                and entry["tier"] == "full-reviewer"]
-            if changed_programs:
-                reasons.append("the delta changes behaviour in a program the earlier round's check exercised: " + ", ".join(changed_programs))
             plan["delta_only_review_applies"] = not reasons
     return plan
 
