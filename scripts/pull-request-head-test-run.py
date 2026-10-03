@@ -256,7 +256,7 @@ def main(argv=None, now=None, wait=time.sleep, monotonic=time.monotonic) -> int:
         command = [
             sys.executable, str(runner), "--checkout", str(checkout),
             "--only-suites-whose-recorded-inputs-changed-since", since,
-            "-j", daily.DAILY_FULL_TEST_RUN_SUITES_AT_ONCE, "--log-dir", str(logs)]
+            "--log-dir", str(logs)]
         if arguments.recorded_inputs_directory:
             command += ["--recorded-inputs-directory", arguments.recorded_inputs_directory]
         completed, seconds_waiting_for_lock, lock_never_released = (

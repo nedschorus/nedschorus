@@ -371,6 +371,19 @@ with tempfile.TemporaryDirectory() as scratch:
     check("-j 1 runs one suite at a time", result.returncode == 1
           and lines(result.stdout)[-1].startswith("SUMMARY: 1 passed, 1 failed"),
           (result.returncode, result.stdout))
+    check("-j 1 overrides the default, and the first line names it",
+          "; -j 1; logs in " in lines(result.stdout)[0], lines(result.stdout)[:1])
+with tempfile.TemporaryDirectory() as scratch:
+    root = pathlib.Path(scratch)
+    make_repo(root, {"first-test.py": rendezvous("first.flag", "second.flag"),
+                     "second-test.py": rendezvous("second.flag", "first.flag")})
+    result = run(root)
+    expected_jobs = min(os.cpu_count() or 4, 2)
+    check("with no -j, the run uses one job per core, capped at the 2 suites it runs, and "
+          "the first line names the number used",
+          f"; -j {expected_jobs}; logs in " in lines(result.stdout)[0]
+          and result.returncode == (0 if expected_jobs == 2 else 1),
+          (result.returncode, result.stdout))
 
 # --- --python: the given interpreter runs each suite and names itself ---------
 with tempfile.TemporaryDirectory() as scratch:
@@ -1246,14 +1259,70 @@ with tempfile.TemporaryDirectory() as scratch:
     run(root)
     stored = next((root / "recordings").glob("*/a-test.py.json"))
     recorded = json.loads(stored.read_text())
-    recorded["format"] = 2
+    recorded["format"] = 3
+    recorded.pop("seconds", None)
     stored.write_text(json.dumps(recorded))
     result = select_since(root, base)
-    check("format 2 selects a suite once so its git calls can be recorded with format 3",
+    check("a format 3 recording, which kept no seconds, selects its suite once so it is "
+          "recorded afresh in format 4",
           result.returncode == 0 and ran(root) == ["a-test.py"]
           and "SELECTED a-test.py: its recording was made by an older version of this program"
-          in lines(result.stdout) and recording(root, "a-test.py").get("format") == 3,
+          in lines(result.stdout) and recording(root, "a-test.py").get("format") == 4
+          and isinstance(recording(root, "a-test.py").get("seconds"), float),
           (ran(root), result.stdout))
+
+# --- Suites start longest first, by the seconds their recordings kept --------
+# At -j 1 suites start one at a time in the order they were submitted, so the
+# order the suites appended their paths to the ran file is that order.
+LONGEST_FIRST_SUITES = {
+    "a-sleeps-test.py": "time.sleep(0.3)\n",
+    "b-test.py": PASSES, "c-test.py": PASSES, "d-test.py": PASSES, "e-test.py": PASSES,
+    "f-fails-test.py": "sys.exit(1)\n", "g-test.py": PASSES,
+}
+
+
+def ran_in_starting_order(root):
+    path = root / "ran.txt"
+    return path.read_text().split() if path.exists() else []
+
+
+with tempfile.TemporaryDirectory() as scratch:
+    root = pathlib.Path(scratch)
+    make_repo(root, LONGEST_FIRST_SUITES)
+    first = run(root, "-j", "1")
+    check("with no recording yet, suites start in the order git lists them",
+          ran_in_starting_order(root) == sorted(LONGEST_FIRST_SUITES),
+          (ran_in_starting_order(root), first.stdout))
+    recorded = recording(root, "a-sleeps-test.py")
+    seconds = recorded.get("seconds")
+    check("a recording keeps the seconds its suite ran, the number the suite's line prints",
+          isinstance(seconds, float) and seconds >= 0.3
+          and f"PASS a-sleeps-test.py ({seconds:.1f}s)" in lines(first.stdout),
+          (recorded, first.stdout))
+    check("a failed suite's recording keeps its seconds too",
+          isinstance(recording(root, "f-fails-test.py").get("seconds"), float),
+          recording(root, "f-fails-test.py"))
+
+    def set_recorded(suite, change):
+        stored = next((root / "recordings").glob(f"*/{suite}.json"))
+        recorded = json.loads(stored.read_text())
+        change(recorded)
+        stored.write_text(json.dumps(recorded))
+
+    set_recorded("b-test.py", lambda recorded: recorded.update(seconds=5.0))
+    set_recorded("c-test.py", lambda recorded: recorded.update(seconds=30.0))
+    set_recorded("d-test.py", lambda recorded: recorded.update(seconds=5.0))
+    next((root / "recordings").glob("*/e-test.py.json")).unlink()
+    set_recorded("f-fails-test.py", lambda recorded: recorded.update(seconds=0.01))
+    set_recorded("g-test.py", lambda recorded: recorded.pop("seconds", None))
+    (root / "ran.txt").unlink()
+    run(root, "-j", "1")
+    check("suites start longest recorded first, ties in git's order, after every suite with "
+          "no recording, a recorded run that did not pass, or no recorded seconds",
+          ran_in_starting_order(root) == [
+              "e-test.py", "f-fails-test.py", "g-test.py",
+              "c-test.py", "b-test.py", "d-test.py", "a-sleeps-test.py"],
+          ran_in_starting_order(root))
 
 # --- The recorder runs the sitecustomize.py it shadows ------------------------
 # Both machines' Pythons ship one (Homebrew's on the Mac sets sys.executable),
@@ -1284,7 +1353,17 @@ check("--checkout defaults to the checkout this program is in",
       pathlib.Path(defaults.checkout) == SCRIPTS_DIR.parent, defaults.checkout)
 check("--python defaults to the interpreter running the program",
       defaults.python == sys.executable, defaults.python)
-check("-j defaults to 4", defaults.jobs == 4, defaults.jobs)
+check("-j defaults to not given, so the run chooses the job count", defaults.jobs is None,
+      defaults.jobs)
+for jobs_given, suites_to_run, cores, expected, case in (
+        (None, 100, 16, 16, "with no -j, one suite runs per core"),
+        (None, 3, 16, 3, "with no -j, no more suites run at once than the run has"),
+        (None, 0, 16, 1, "with no -j and no suite to run, the job count is 1, not 0"),
+        (None, 100, None, 4, "with no -j and the core count unknown, 4 suites run at once"),
+        (2, 100, 16, 2, "-j N overrides the core count"),
+        (5, 2, 16, 5, "-j N is used as given, even above the number of suites")):
+    answer = module.suites_run_at_once(jobs_given, suites_to_run, cores)
+    check(case, answer == expected, (jobs_given, suites_to_run, cores, answer))
 check("--lock-file defaults to one file per machine under ~/.claude",
       pathlib.Path(defaults.lock_file) == pathlib.Path.home() / ".claude"
       / ".run-all-test-suites.lock", defaults.lock_file)
