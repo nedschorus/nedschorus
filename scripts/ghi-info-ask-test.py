@@ -622,6 +622,24 @@ try:
                   and prefix not in err, err)
             check(f"a {prefix} reply prints nothing on stdout", out == "", out)
 
+        # ghi-info opens every ruling question with the issue holding the
+        # ruling. The number reaches the caller first in the sentence, and,
+        # the reply being a ruling question, it is not checked against the
+        # mirror: the issue it names is not open there, and no drift turn is asked
+        # (the fake answers two turns only).
+        seat_numbered = root / "seat-ruling-question-numbered"
+        seat_numbered.mkdir()
+        numbered = ("#783 the ruling that a closed issue is frozen may not "
+                    "cover a reopened issue")
+        exit_code, out, err = main_with_reply(
+            seat_numbered, "ask-user-about-ruling: " + numbered)
+        check("a ruling question opening with its issue number reaches the "
+              "caller with the number first, and asks ghi-info nothing more",
+              exit_code == 3 and out == ""
+              and ("ghi-info found a ruling of the user's that it cannot tell "
+                   "still applies: " + numbered + "\n") in err,
+              (exit_code, out, err))
+
         seat_list = root / "seat-reading-list"
         seat_list.mkdir()
         exit_code, out, err = main_with_reply(seat_list, "read #1")
@@ -639,10 +657,23 @@ try:
           and ghi_ask.caller_message_for_passthrough_reply("Escalate: x")[1] == 3)
     check("the cold-start prompt teaches ghi-info the new reply words, not the old ones",
           "reply exactly: not-about-issues." in ghi_ask.COLD_START_PROMPT_TEMPLATE
-          and "Reply: ask-user-about-ruling: <" in ghi_ask.COLD_START_PROMPT_TEMPLATE
+          and "Reply: ask-user-about-ruling: #<issue> <" in ghi_ask.COLD_START_PROMPT_TEMPLATE
           and "out-of-scope" not in ghi_ask.COLD_START_PROMPT_TEMPLATE
           and "escalate:" not in ghi_ask.COLD_START_PROMPT_TEMPLATE,
           ghi_ask.COLD_START_PROMPT_TEMPLATE[-600:])
+    check("the cold-start prompt has every ruling question start with the "
+          "issue holding the ruling",
+          "Every ruling question starts with that issue number."
+          in ghi_ask.COLD_START_PROMPT_TEMPLATE,
+          ghi_ask.COLD_START_PROMPT_TEMPLATE[-900:])
+    check("and gives a draft that conflicts with a ruling the ruling question, "
+          "not a verdict line",
+          "a draft that conflicts with a ruling the user made gets the ruling "
+          "question" in ghi_ask.COLD_START_PROMPT_TEMPLATE
+          and "When the draft conflicts with a ruling the user made, reply "
+          "instead with the ruling question" in ghi_ask.COLD_START_PROMPT_TEMPLATE
+          and "always gets a verdict line" not in ghi_ask.COLD_START_PROMPT_TEMPLATE,
+          ghi_ask.COLD_START_PROMPT_TEMPLATE[-1500:])
 finally:
     patch_module_function(ghi_ask.mirror_refresh, "refresh", mirror_orig)
     patch("run_claude", run_claude_orig)

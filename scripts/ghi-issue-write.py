@@ -20,6 +20,14 @@ forget to read them. Better to update the ghi-Md"). The PreToolUse hook
 `gh issue comment`, `gh issue create` or body edit on this repository and
 sends the author here.
 
+The one comment the tool itself posts records a ruling conflict for the
+user, not for agents: when ghi-info answers a draft with a question about a
+ruling of the user's, the write goes ahead, and the tool comments the
+question on the issue and labels the issue `conflicts-with-a-ruling`. The
+ruling stands until the user changes it. A stop that waited for the user's
+answer, with a rerun option, was built and held as too complicated; the
+user asked for it simpler and automatic.
+
 THE SEQUENCE, and what makes each step safe to run twice:
 
   1. Validate   the file exists, opens with a heading, and is not already
@@ -33,6 +41,8 @@ THE SEQUENCE, and what makes each step safe to run twice:
                 throwaway worktree cut from a just-fetched origin/main,
                 commit, push, open a pull request.
   5. Link       rewrite the body as one link per file of docs/issues/<n>-*.
+  6. Record     only when step 2 got a ruling question: comment it on the
+                issue and add the label `conflicts-with-a-ruling`.
 
 RESUMING, and why there is no state file. Steps 3 to 5 are three separate
 remote operations and any of them can fail, leaving an issue with a
@@ -361,12 +371,57 @@ GHI_INFO_ASK_REPLIED_WITHOUT_A_LIST_EXIT_CODES = (2, 3)
 GHI_INFO_ASK_NO_LIST_MESSAGE_OPENINGS = (
     "Not a question about GitHub issues:",
     "ghi-info found a ruling of the user's that it cannot tell still applies:")
+GHI_INFO_ASK_RULING_QUESTION_EXIT_CODE = 3
+# Where the ruling question's sentence ends: the opening of the line that
+# follows {sentence} in ghi-info-ask.py's RULING_QUESTION_MESSAGE_TEMPLATE.
+# A sentence can run over several lines. Copied and checked like the above.
+GHI_INFO_ASK_RULING_QUESTION_SENTENCE_END = (
+    "Ask the user whether that ruling still applies")
+RULING_CONFLICT_LABEL = "conflicts-with-a-ruling"
+RULING_CONFLICT_LABEL_DESCRIPTION = (
+    "ghi-info thinks this issue conflicts with a ruling of the user's; "
+    "the user decides")
+RULING_CONFLICT_LABEL_COLOR = "d93f0b"
 
 RECONSIDER_LINE = (
     "If you believe this refusal is wrong, reconsider once against its stated "
     "reason. Still convinced, write your reasoning into "
     f"{RECONSIDERED_MARKER_NAME} at the repository root and resubmit — the "
     "marker passes exactly one write and is consumed by it.")
+
+
+class RulingConflict:
+    """ghi-info's ruling question about a draft: the issue holding the
+    ruling, or None when the question named none, and the sentence naming
+    the ruling and the doubt, without that number."""
+
+    def __init__(self, ruling_issue, sentence: str):
+        self.ruling_issue = ruling_issue
+        self.sentence = sentence
+
+
+def ruling_conflict_from_stderr(stderr: str):
+    """The RulingConflict in an exit-3 message, or None when the message's
+    opening is not there. The ask can write progress lines first, so the
+    opening is looked for on any line."""
+    lines = (stderr or "").splitlines()
+    opening = GHI_INFO_ASK_NO_LIST_MESSAGE_OPENINGS[1]
+    for index, line in enumerate(lines):
+        if not line.strip().startswith(opening):
+            continue
+        parts = [line.strip()[len(opening):].strip()]
+        for following in lines[index + 1:]:
+            if following.strip().startswith(
+                    GHI_INFO_ASK_RULING_QUESTION_SENTENCE_END):
+                break
+            parts.append(following.strip())
+        sentence = " ".join(part for part in parts if part)
+        numbered = re.match(r"#(\d+)\s*(.*)", sentence, re.DOTALL)
+        if numbered:
+            return RulingConflict(int(numbered.group(1)),
+                                  numbered.group(2).strip())
+        return RulingConflict(None, sentence)
+    return None
 
 
 class Refused(Exception):
@@ -863,18 +918,22 @@ def adjudicate(repo: str, title: str, text: str, repository_root: Path,
     """Step 2. Fail-open by design: ghi-info unreachable means the write
     proceeds, because an infrastructure failure must never look like a
     refusal. A too-similar verdict is a soft block — the caller reconsiders
-    once and passes by leaving its reasoning in the marker file."""
+    once and passes by leaving its reasoning in the marker file.
+
+    Returns the RulingConflict when ghi-info answered with a ruling
+    question, for step 6 to record once the issue is written; otherwise
+    None. A ruling question does not stop the write."""
     marker = repository_root / RECONSIDERED_MARKER_NAME
     if marker.is_file():
         marker.unlink()
         report("adjudication skipped: the reconsidered marker was present "
                "and is consumed by this write")
-        return
+        return None
     ask = repository_root / "scripts" / "ghi-info-ask.py"
     if not ask.is_file():
         report("adjudication skipped: ghi-info-ask.py is not in this "
                "checkout")
-        return
+        return None
     excluded = ""
     if exclude_issue is not None:
         excluded = (f"This draft is an edit of issue #{exclude_issue}: leave "
@@ -882,14 +941,24 @@ def adjudicate(repo: str, title: str, text: str, repository_root: Path,
     question = (
         "Does an open issue already cover this ground? Reply with exactly "
         "one line: `verdict: too-similar #n`, `verdict: related #n,#m`, or "
-        "`verdict: unrelated`.\n\n" + excluded +
+        "`verdict: unrelated`; or, when the draft conflicts with a ruling "
+        "the user made, `ask-user-about-ruling: #<issue> <one sentence "
+        "naming the ruling and the doubt>`, where #<issue> is the issue "
+        "that holds the ruling.\n\n" + excluded +
         f"Draft title: {title}\n\nDraft GHI-MD, verbatim:\n\n{text}")
     try:
         completed = runner([sys.executable, str(ask), question],
                            timeout=ADJUDICATION_TIMEOUT_SECONDS, check=False)
     except Exception as failure:                      # noqa: BLE001
         report(f"adjudication skipped: ghi-info did not answer ({failure})")
-        return
+        return None
+    if completed.returncode == GHI_INFO_ASK_RULING_QUESTION_EXIT_CODE:
+        conflict = ruling_conflict_from_stderr(completed.stderr)
+        if conflict is not None:
+            report("ghi-info raised a question about a ruling of the "
+                   "user's; the write goes ahead and records it on the "
+                   "issue")
+            return conflict
     if completed.returncode in GHI_INFO_ASK_REPLIED_WITHOUT_A_LIST_EXIT_CODES:
         # ghi-info answered, but with no verdict: the question was not about
         # issues, or it found a ruling it may not judge. Fail-open like any
@@ -902,17 +971,17 @@ def adjudicate(repo: str, title: str, text: str, repository_root: Path,
             GHI_INFO_ASK_NO_LIST_MESSAGE_OPENINGS)),
             stderr_lines[-1] if stderr_lines else "no detail")
         report(f"adjudication skipped: ghi-info gave no verdict: {said}")
-        return
+        return None
     if completed.returncode != 0:
         report("adjudication skipped: ghi-info did not answer")
-        return
+        return None
     verdict = ""
     for line in (completed.stdout or "").splitlines():
         if line.strip().lower().startswith("verdict:"):
             verdict = line.strip()
     if not verdict:
         report("adjudication skipped: ghi-info's reply had no verdict line")
-        return
+        return None
     if "too-similar" in verdict.lower():
         # The design's § Prompts gives this refusal verbatim, including the
         # paragraph that appears only for an edit; the slots are filled from
@@ -931,6 +1000,60 @@ def adjudicate(repo: str, title: str, text: str, repository_root: Path,
         paragraphs.append(RECONSIDER_LINE)
         raise Refused("\n\n".join(paragraphs), 65)
     report(f"ghi-info: {verdict}")
+    return None
+
+
+def ruling_conflict_comment_body(repo: str, conflict, ruling_title):
+    """The comment step 6 posts, for the user to read."""
+    if conflict.ruling_issue is None:
+        where = "ghi-info named no issue holding the ruling"
+    else:
+        where = ("the ruling is in GHI [" + ruling_title + "](https://github.com/"
+                 f"{repo}/issues/{conflict.ruling_issue})")
+    return (
+        "ghi-info thinks this issue conflicts with a ruling of the user's; "
+        f"{where}.\n\n"
+        f"ghi-info's question: {conflict.sentence}\n\n"
+        "The ruling stands until the user changes it. The label "
+        f"`{RULING_CONFLICT_LABEL}` stays on this issue until the user has "
+        "decided.")
+
+
+def record_ruling_conflict(repo: str, number: int, conflict, runner,
+                           report, operation_done: str):
+    """Step 6. The issue is already written, so a failure here leaves it
+    written and says which part of the record is missing."""
+    ruling_title = None
+    try:
+        if conflict.ruling_issue is not None:
+            ruling_title = runner(
+                ["gh", "issue", "view", str(conflict.ruling_issue), "--repo",
+                 repo, "--json", "title", "--jq", ".title"]).stdout.strip()
+        runner(["gh", "label", "create", RULING_CONFLICT_LABEL, "--repo",
+                repo, "--color", RULING_CONFLICT_LABEL_COLOR, "--description",
+                RULING_CONFLICT_LABEL_DESCRIPTION, "--force"])
+        runner(["gh", "issue", "edit", str(number), "--repo", repo,
+                "--add-label", RULING_CONFLICT_LABEL])
+        runner(["gh", "issue", "comment", str(number), "--repo", repo,
+                "--body", ruling_conflict_comment_body(repo, conflict,
+                                                       ruling_title)])
+    except Refused as failure:
+        raise Refused(
+            f"Issue {number} was {operation_done}, but recording ghi-info's "
+            f"ruling question on it failed: {failure}\n"
+            f"Tell the user that issue {number} may conflict with a ruling "
+            f"of his: {conflict.sentence}\n"
+            "Do not rerun this command to record it; a rerun does not ask "
+            "ghi-info again.", 1)
+    if conflict.ruling_issue is None:
+        ruling = "a ruling of the user's (ghi-info named no issue)"
+    else:
+        ruling = (f"the ruling in GHI [{ruling_title}](https://github.com/"
+                  f"{repo}/issues/{conflict.ruling_issue})")
+    report(f"{operation_done.capitalize()} issue {number}; ghi-info thinks "
+           f"it conflicts with {ruling}; recorded on the issue for the user; "
+           "the ruling stands until he changes it.\n"
+           "Follow that ruling until the user changes it.")
 
 
 def file_issue(repo: str, title: str, key: str, runner, report) -> int:
@@ -1347,6 +1470,7 @@ def create(path: Path, repo: str, repository_root: Path, runner, report):
 
     issues = open_issues_with_bodies(repo, runner)
     existing = find_existing_pairing(issues, key)
+    conflict = None
     if existing:
         number = existing["number"]
         report(f"resuming issue {number}: its body still carries this file's "
@@ -1362,13 +1486,17 @@ def create(path: Path, repo: str, repository_root: Path, runner, report):
         refuse_if_already_landed_on_main(repo, text, title, repository_root,
                                          runner)
         refuse_heading_with_date_or_file_path(title, repository_root, runner)
-        adjudicate(repo, title, text, repository_root, runner, report)
+        conflict = adjudicate(repo, title, text, repository_root, runner,
+                              report)
         number = file_issue(repo, title, key, runner, report)
 
     destination = land_file(repo, number, title, path, repository_root,
                             runner, report)
     finished = link_body(repo, number, repository_root, runner, report,
                          destination)
+    if conflict is not None:
+        record_ruling_conflict(repo, number, conflict, runner, report,
+                               "filed")
     return number, finished
 
 
@@ -2211,14 +2339,15 @@ def edit(path: Path, repo: str, repository_root: Path, runner, report):
                                     issue))
     state, branch = edit_landing_state(number, staged, on_main,
                                        repository_root, runner)
+    conflict = None
     if state == EDIT_LANDING_NEW_CONTENT:
         # Nothing new to land is nothing new to adjudicate, so a rerun that
         # only finishes steps 4 and 5 costs no model call — the same reason
         # create skips the question when it resumes onto its own issue. Two
         # states mean that, and testing main's copy alone saw one of them:
         # see `edit_landing_state`.
-        adjudicate(repo, title, text, repository_root, runner, report,
-                   exclude_issue=number)
+        conflict = adjudicate(repo, title, text, repository_root, runner,
+                              report, exclude_issue=number)
     pending = land_edit(repo, number, title, relative, staged, on_main,
                         moved_from, moved_from_on_main, state, branch,
                         repository_root, runner, report)
@@ -2227,6 +2356,9 @@ def edit(path: Path, repo: str, repository_root: Path, runner, report):
                                  title, paths, issue, runner, report)
     finished = relink_body_from_main(repo, number, relative, on_main, paths,
                                      issue, runner, report)
+    if conflict is not None:
+        record_ruling_conflict(repo, number, conflict, runner, report,
+                               "edited")
     if pending:
         report("the body follows main's copy of the files, so it changes "
                "when that pull request merges; rerun this command then")
