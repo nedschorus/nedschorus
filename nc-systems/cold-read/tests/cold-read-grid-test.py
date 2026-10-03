@@ -1225,7 +1225,7 @@ with tempfile.TemporaryDirectory() as scratch:
     # Every run in this suite overrides the poll, so no run shows the default.
     cell_poll_parameter = inspect.signature(grid_module.wait_for_cells).parameters.get(
         "cell_poll_interval_seconds")
-    check("grid: a run given no poll override polls its cells every 5 seconds",
+    check("grid: the cell poll interval's default, and wait_for_cells', is 5 seconds",
           grid_module.CELL_POLL_INTERVAL_DEFAULT_SECONDS == 5
           and cell_poll_parameter is not None and cell_poll_parameter.default == 5,
           f"default {grid_module.CELL_POLL_INTERVAL_DEFAULT_SECONDS!r}, "
