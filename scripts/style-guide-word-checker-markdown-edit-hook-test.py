@@ -167,7 +167,6 @@ message_forms = [hit.form for hit in checker.find_style_guide_word_hits_in_markd
 check("the pronoun entries apply to agent messages", message_forms == ["It", "this"],
       message_forms)
 
-entries_by_word = {entry.word: entry for entry in checker.STYLE_GUIDE_WORD_LIST}
 schema_problems = []
 for entry in checker.STYLE_GUIDE_WORD_LIST:
     if entry.word not in entry.inflected_forms:
@@ -176,33 +175,47 @@ for entry in checker.STYLE_GUIDE_WORD_LIST:
         schema_problems.append(f"{entry.word}: no names to choose from")
     if not entry.applies_to or not set(entry.applies_to) <= set(checker.APPLIES_TO_VALUES):
         schema_problems.append(f"{entry.word}: applies_to {entry.applies_to!r}")
-for word in ("land", "home", "draft", "walk", "seat", "head", "drain"):
-    if checker.APPLIES_TO_FILES not in entries_by_word.get(word, checker.StyleGuideWordListEntry(
-            word, (), (), "", ())).applies_to:
-        schema_problems.append(f"{word}: missing, or not applying to files")
-for word in ("it", "its", "they", "this", "that"):
-    applies_to = set(entries_by_word[word].applies_to) if word in entries_by_word else set()
-    if applies_to != {checker.APPLIES_TO_AGENT_MESSAGES, checker.APPLIES_TO_USER_MESSAGES}:
-        schema_problems.append(f"{word}: applies_to {sorted(applies_to)}")
 check("every entry carries its forms, names and where it applies", not schema_problems,
       schema_problems)
 
-NAMES_EACH_ENTRY_GIVES = {
-    "home": ("agent-home", "canonical location"),
-    "draft": ("-draft", "pending approval", "the `draft` label", "`docs/drafts/`"),
-    "walk": ("approval-walk", "walk-document", "approved-by-walk",
-             "put to the user in an approval-walk"),
-    "seat": ("agent-seat", "agent-session", "the agent-seat's name", "working directory",
-             "cold-read-cell"),
-    "head": ("head commit", "frozen-head", "`HEAD`"),
-    "drain": ("queue-drain", "is promoted to"),
-    "land": ('"merge"', '"merged"'),
+# The page is the list: a row edited on the page changes what the checker
+# reports with no code change, so this test checks only that the real page
+# parses into a non-empty, well-formed list.
+check("the style guide page's table loads at least one entry",
+      len(checker.STYLE_GUIDE_WORD_LIST) > 0, len(checker.STYLE_GUIDE_WORD_LIST))
+
+WELL_FORMED_PAGE = """# Style guide
+
+## Words to avoid
+
+| Word | Forms flagged | Forms not flagged | Write instead | Applies to |
+|---|---|---|---|---|
+| `land` | `land`, `landed` | | "merge" | files, messages to other agents |
+"""
+parsed = checker.parse_words_to_avoid_table(WELL_FORMED_PAGE)
+check("a well-formed table row parses into its entry",
+      parsed == (checker.StyleGuideWordListEntry(
+          "land", ("land", "landed"), (), '"merge"',
+          (checker.APPLIES_TO_FILES, checker.APPLIES_TO_AGENT_MESSAGES)),), parsed)
+
+MALFORMED_PAGES = {
+    "a row with four cells": WELL_FORMED_PAGE.replace(' | files, messages to other agents |', ' |'),
+    "a row whose word is not among its forms":
+        WELL_FORMED_PAGE.replace("| `land` | `land`", "| `land` | `lands`"),
+    "a row naming an unknown place to check":
+        WELL_FORMED_PAGE.replace("files, messages to other agents", "files, commit messages"),
+    "a forms cell with text outside code spans":
+        WELL_FORMED_PAGE.replace("`land`, `landed`", "land, landed"),
+    "a page without the heading": WELL_FORMED_PAGE.replace("## Words to avoid", "## Words"),
+    "a table with other columns": WELL_FORMED_PAGE.replace("| Applies to |", "| Where |"),
 }
-missing_names = [(word, name) for word, names in NAMES_EACH_ENTRY_GIVES.items()
-                 for name in names
-                 if name not in entries_by_word[word].names_to_choose_from]
-check("each entry hands the writer the names the design gives", not missing_names,
-      missing_names)
+for case_name, page in MALFORMED_PAGES.items():
+    try:
+        checker.parse_words_to_avoid_table(page)
+        raised = False
+    except checker.StyleGuidePageError:
+        raised = True
+    check(f"malformed table: {case_name} raises StyleGuidePageError", raised)
 
 report_text = "\n".join(hook.REPORT_OPENING_LINES) + "\n" + hook.MORE_HITS_LINE
 forms = file_hit_forms(report_text)
@@ -482,6 +495,17 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     new_page = checkout / "docs" / "new-page.md"
     result = run_hook(write_payload(checkout, new_page, "The seat.\n"), hook_path=lone_hook)
     check("a checker that fails to load exits 0 with no output", silent(result),
+          result.stdout + result.stderr)
+
+    # A checker whose style guide page is missing raises at import, so the hook
+    # loads no checker and stays silent rather than flagging against no list.
+    pageless_scripts_directory = tmp / "pageless-checkout" / "scripts"
+    pageless_scripts_directory.mkdir(parents=True)
+    pageless_hook = pageless_scripts_directory / HOOK_PATH.name
+    shutil.copy(str(HOOK_PATH), str(pageless_hook))
+    shutil.copy(str(CHECKER_PATH), str(pageless_scripts_directory / CHECKER_PATH.name))
+    result = run_hook(write_payload(checkout, new_page, "The seat.\n"), hook_path=pageless_hook)
+    check("a checker without its style guide page exits 0 with no output", silent(result),
           result.stdout + result.stderr)
 
     # The last-resort handler: git missing from PATH raises FileNotFoundError
