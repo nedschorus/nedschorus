@@ -497,6 +497,18 @@ def changed_agent_facing_text_entries(repository, old_revision, new_revision, ch
     return sorted(entries, key=lambda entry: (entry["path"], entry["line"], entry["label"]))
 
 
+def suites_split_from_a_program_test_at_revision(repository, revision, sibling_test_path, program_stem):
+    """The files at revision in sibling_test_path's directory named
+    <program_stem>-<anything>-test.py, sibling_test_path among them when it
+    exists: a program whose suite is split by topic keeps the program's name
+    in front of each part's."""
+    directory = os.path.dirname(sibling_test_path)
+    listed = required_git_output(repository, "ls-tree", "-z", "--name-only", revision, "--",
+                                 directory + "/" if directory else ".")
+    return {path for path in listed.split("\0")
+            if os.path.basename(path).startswith(program_stem + "-") and path.endswith("-test.py")}
+
+
 def test_files_to_run_for_changed_files(repository, head, changed_files):
     candidate_paths = set()
     for changed_file in changed_files:
@@ -511,6 +523,8 @@ def test_files_to_run_for_changed_files(repository, head, changed_files):
                 normalized = os.path.normpath(candidate.as_posix())
                 if not normalized.startswith("../"):
                     candidate_paths.add(normalized)
+                    candidate_paths.update(suites_split_from_a_program_test_at_revision(
+                        repository, head, normalized, path.stem))
     return sorted(path for path in candidate_paths
                   if run_git_in_repository(repository, "cat-file", "-e", f"{head}:{path}").returncode == 0)
 
