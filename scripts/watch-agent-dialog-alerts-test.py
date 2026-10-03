@@ -984,10 +984,172 @@ def run_subprocess_cases():
               not any("\x1b" in line for line in lines), "\n".join(lines))
 
 
+def child_watcher_pid(parent_pid, target):
+    """The pid of the parent's child watcher for one target, or None."""
+    result = subprocess.run(["pgrep", "-P", str(parent_pid), "-f",
+                             f"target {target}"],
+                            capture_output=True, text=True, check=False)
+    pids = result.stdout.split()
+    return int(pids[0]) if pids else None
+
+
+def run_several_target_cases():
+    with tempfile.TemporaryDirectory() as scratch_name:
+        scratch = Path(scratch_name)
+
+        def both_targets(case_directory, *flags):
+            fake_bin = case_directory / "fake-bin"
+            write_fake_ssh(fake_bin, case_directory,
+                           ["ssh: connect to host ned-box port 22: "
+                            "Connection refused"], 255)
+            stream = FakeDialogStream(case_directory, [
+                {"stdout": ["bridge CMD: git push --force main"],
+                 "hold_seconds": 120, "exit_code": 0}])
+            watcher = WatcherProcess(
+                "--target", "mac", "--target", "ned-box",
+                "--local-dialog-script-path", str(stream.path),
+                "--remote-ssh-destination", "watcher-test@fake-ned-box",
+                "--remote-dialog-script-path", "~/fake/watch-agent-dialogs.py",
+                "--hold-seconds", "60", "--retry-seconds", "30", *flags,
+                environment=remote_environment(case_directory, fake_bin))
+            return stream, watcher
+
+        # --------------------------------------------------------------
+        # Both machines from one process: each target's lines arrive
+        # labelled by that target, from that target's own child watcher.
+        # --------------------------------------------------------------
+        stream, watcher = both_targets(scratch / "both")
+        mac_started = watcher.wait_for("WATCH mac: started")
+        box_started = watcher.wait_for("WATCH ned-box: started")
+        mac_alert = watcher.wait_for(
+            "ALERT mac: bridge CMD: git push --force main")
+        box_refused = watcher.wait_for("ALERT ned-box: ssh: connect to host")
+        box_broken = watcher.wait_for("WATCH ned-box: NOT WATCHING")
+        lines_before_stop = list(watcher.lines)
+        lines = watcher.stop()
+        check("two --target flags start one watcher per target, each "
+              "announcing its own baseline",
+              mac_started and box_started
+              and watcher.count("WATCH mac: started") == 1
+              and watcher.count("WATCH ned-box: started") == 1,
+              "\n".join(lines))
+        check("a Mac dialog alert is relayed labelled mac",
+              mac_alert, "\n".join(lines))
+        check("a ned-box ssh failure is relayed labelled ned-box, and its "
+              "gap is announced under ned-box",
+              box_refused and box_broken
+              and not any(line.startswith("WATCH mac: NOT WATCHING")
+                          for line in lines_before_stop), "\n".join(lines))
+        check("the ned-box child watcher gets the ssh destination and path "
+              "options",
+              json.loads((scratch / "both" / "ssh-argv.json")
+                         .read_text(encoding="utf-8"))[-2:]
+              == ["watcher-test@fake-ned-box",
+                  "python3 -u ~/fake/watch-agent-dialogs.py"],
+              (scratch / "both" / "ssh-argv.json").read_text(encoding="utf-8"))
+
+        # --------------------------------------------------------------
+        # A SIGTERM to the one process announces the loss on both
+        # targets and takes every child with it.
+        # --------------------------------------------------------------
+        stream, watcher = both_targets(scratch / "both-terminate")
+        watcher.wait_for("WATCH mac: started")
+        watcher.wait_for("WATCH ned-box: NOT WATCHING")
+        stream.wait_for_attempts(1)
+        parent_pid = watcher.process.pid
+        returncode = watcher.terminate_and_wait()
+        check("a SIGTERM to the several-target watcher announces the loss "
+              "for each target",
+              all(any(line.startswith(f"WATCH {target}: NOT WATCHING")
+                      and "terminated (SIGTERM)" in line
+                      for line in watcher.lines)
+                  for target in ("mac", "ned-box")),
+              "\n".join(watcher.lines))
+        check("a child watcher stopped by the SIGTERM is not announced as "
+              "exiting on its own",
+              watcher.count("its watcher exited on its own") == 0,
+              "\n".join(watcher.lines))
+        check("a SIGTERM to the several-target watcher exits 143",
+              returncode == 143, f"rc={returncode}")
+        check("a SIGTERM to the several-target watcher takes the dialog "
+              "stream and both child watchers with it",
+              wait_until_gone(stream.marker)
+              and child_watcher_pid(parent_pid, "mac") is None
+              and child_watcher_pid(parent_pid, "ned-box") is None,
+              f"{stream.marker} or a child watcher still running")
+
+        stream, watcher = both_targets(scratch / "both-interrupt")
+        watcher.wait_for("WATCH mac: started")
+        watcher.wait_for("WATCH ned-box: NOT WATCHING")
+        stream.wait_for_attempts(1)
+        returncode = watcher.interrupt_and_wait()
+        check("an interrupt to the several-target watcher announces the "
+              "loss for each target and exits 130",
+              returncode == 130
+              and all(any(line.startswith(f"WATCH {target}: NOT WATCHING")
+                          and "interrupted" in line
+                          for line in watcher.lines)
+                      for target in ("mac", "ned-box")),
+              f"rc={returncode}\n" + "\n".join(watcher.lines))
+        wait_until_gone(stream.marker)
+
+        # --------------------------------------------------------------
+        # A child watcher that dies on its own is announced under its
+        # target, and the other target goes on being watched.
+        # --------------------------------------------------------------
+        stream, watcher = both_targets(scratch / "both-child-dies")
+        watcher.wait_for("WATCH mac: started")
+        watcher.wait_for("WATCH ned-box: NOT WATCHING")
+        box_pid = child_watcher_pid(watcher.process.pid, "ned-box")
+        if box_pid is not None:
+            os.kill(box_pid, signal.SIGKILL)
+        announced = watcher.wait_for("its watcher exited on its own")
+        still_running = watcher.process.poll() is None
+        lines = watcher.stop()
+        check("a child watcher killed outright is announced under its "
+              "target, with its status",
+              box_pid is not None and announced
+              and any(line.startswith("WATCH ned-box: NOT WATCHING")
+                      and "rc=-9" in line for line in lines),
+              f"pid={box_pid}\n" + "\n".join(lines))
+        check("and the other target's watcher keeps running",
+              still_running, "\n".join(lines))
+        wait_until_gone(stream.marker)
+
+        # --------------------------------------------------------------
+        # The same target twice is one watcher; --label with two targets
+        # is refused, because one label cannot name two watchers.
+        # --------------------------------------------------------------
+        stream = FakeDialogStream(scratch / "twice", [
+            {"hold_seconds": 120, "exit_code": 0}])
+        watcher = watcher_against(stream, "--target", "mac",
+                                  "--hold-seconds", "60",
+                                  "--retry-seconds", "30")
+        watcher.wait_for("WATCH mac: started")
+        stream.wait_for_attempts(1)
+        lines = watcher.stop()
+        check("the same target given twice starts one watcher",
+              watcher.count("WATCH mac: started") == 1
+              and stream.attempt_count() == 1,
+              f"attempts={stream.attempt_count()}\n" + "\n".join(lines))
+        wait_until_gone(stream.marker)
+
+        result = subprocess.run(
+            [sys.executable, str(WATCH_SCRIPT), "--target", "mac",
+             "--target", "ned-box", "--label", "both",
+             "--local-dialog-script-path", str(WATCH_SCRIPT)],
+            capture_output=True, text=True, check=False, timeout=30,
+            env=remote_environment(scratch / "label", scratch / "no-ssh-here"))
+        check("--label with two targets exits 2 and says why",
+              result.returncode == 2 and "--label" in result.stderr,
+              f"rc={result.returncode} stderr={result.stderr!r}")
+
+
 if __name__ == "__main__":
     run_unit_cases()
     run_escape_and_termination_unit_cases()
     run_subprocess_cases()
+    run_several_target_cases()
     print()
     if failures:
         print(f"{len(failures)} case(s) failed: {', '.join(failures)}")
