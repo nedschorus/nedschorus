@@ -542,11 +542,11 @@ def run_cases_on_ned_box(workspace: Path):
           result.stdout == "daily-full-test-run-of-main: record written to nedlern@ned-box:"
           f"{fixture.log_store}/daily-full-test-runs/ned-box/2026-09-30.txt\n", result.stdout)
     check("the runner is run once, by the Python running this program, as the worktree's "
-          "scripts/run-all-test-suites.py -j 4 --log-dir <logs>, with no selection option "
+          "scripts/run-all-test-suites.py --log-dir <logs>, with no selection option, no -j "
           "and no --recorded-inputs-directory",
           len(result.runner_calls) == 1
           and call.get("argv") == [str(fixture.worktree / "scripts" / "run-all-test-suites.py"),
-                                   "-j", "4", "--log-dir", str(fixture.logs)]
+                                   "--log-dir", str(fixture.logs)]
           and os.path.realpath(call.get("executable", "")) == os.path.realpath(sys.executable),
           repr(result))
     check("the fetch found main's newer commit, and the worktree was a detached worktree at "
@@ -680,7 +680,7 @@ def run_cases_on_ned_box(workspace: Path):
     check("--test-suite-runner-program is run in place of the worktree's runner, from the "
           "worktree, with the same arguments",
           result.code == 0 and result.runner_calls[0]["argv"]
-          == [str(stand_in_elsewhere), "-j", "4", "--log-dir", str(fixture.logs)]
+          == [str(stand_in_elsewhere), "--log-dir", str(fixture.logs)]
           and result.runner_calls[0]["checkout"] == str(fixture.worktree), repr(result))
 
     # --- What a killed run left -------------------------------------------------

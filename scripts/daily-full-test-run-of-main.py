@@ -50,12 +50,13 @@ WHAT ONE RUN DOES, in order.
      fetch can move. A worktree a killed run left at the same path is removed
      first.
   3. Runs `<the Python running this program>
-     <worktree>/scripts/run-all-test-suites.py -j 4 --log-dir <logs>` from the
-     worktree, with no selection option. While the runner exits 3, another
-     run holding the machine's lock, this program waits 2 seconds and runs it
-     again, for up to an hour; after that the record says the lock was never
-     released. The verdict is the runner's exit code and its `SUMMARY:` line,
-     read from the runner's own captured output and never from a pipeline.
+     <worktree>/scripts/run-all-test-suites.py --log-dir <logs>` from the
+     worktree, with no selection option and no -j, so the runner chooses how
+     many suites run at once. While the runner exits 3, another run holding
+     the machine's lock, this program waits 2 seconds and runs it again, for
+     up to an hour; after that the record says the lock was never released.
+     The verdict is the runner's exit code and its `SUMMARY:` line, read from
+     the runner's own captured output and never from a pipeline.
   4. Removes the worktree, whatever step 3 did. When `git worktree remove
      --force` leaves the directory, because the run left a directory in it
      that its owner may not write to, this program gives the owner read,
@@ -210,7 +211,6 @@ DAILY_FULL_TEST_RUN_RECORD_LOCAL_COPY_FILE_NAME_PREFIX = "daily-full-test-run-re
 DAILY_FULL_TEST_RUN_LOCK_FILE_NAME = "daily-full-test-run-of-main.lock"
 
 DAILY_FULL_TEST_RUN_RUNNER_PATH_IN_WORKTREE = Path("scripts") / "run-all-test-suites.py"
-DAILY_FULL_TEST_RUN_SUITES_AT_ONCE = "4"
 
 # Read wait bounds at runtime so tests can shorten them.
 DAILY_FULL_TEST_RUN_LOCK_WAIT_SECONDS = 2
@@ -423,7 +423,7 @@ def daily_full_test_run_under_lock(arguments, now, wait, monotonic, on_ned_box, 
                     sys.executable,
                     arguments.test_suite_runner_program
                     or str(worktree / DAILY_FULL_TEST_RUN_RUNNER_PATH_IN_WORKTREE),
-                    "-j", DAILY_FULL_TEST_RUN_SUITES_AT_ONCE, "--log-dir", str(logs)]
+                    "--log-dir", str(logs)]
                 if arguments.recorded_inputs_directory:
                     command += ["--recorded-inputs-directory",
                                 arguments.recorded_inputs_directory]

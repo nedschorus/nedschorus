@@ -565,13 +565,13 @@ def run_cases_on_ned_box(workspace: Path):
           result.stdout == PASSING_SUMMARY_LINE + "\n" + citation_line, result.stdout)
     check("the runner is run once, by the Python running this program, from the checkout, "
           "as <runner> --checkout <checkout> "
-          "--only-suites-whose-recorded-inputs-changed-since <since> -j 4 --log-dir <logs>, "
-          "with no --recorded-inputs-directory",
+          "--only-suites-whose-recorded-inputs-changed-since <since> --log-dir <logs>, "
+          "with no -j and no --recorded-inputs-directory",
           len(result.runner_calls) == 1
           and call.get("argv") == [
               str(fixture.runner), "--checkout", str(fixture.checkout),
               "--only-suites-whose-recorded-inputs-changed-since", fixture.merge_base,
-              "-j", "4", "--log-dir", str(fixture.logs())]
+              "--log-dir", str(fixture.logs())]
           and call.get("run_from") == str(fixture.checkout)
           and os.path.realpath(call.get("executable", "")) == os.path.realpath(sys.executable),
           repr(result))
