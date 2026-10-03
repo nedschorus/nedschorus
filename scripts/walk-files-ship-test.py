@@ -18,8 +18,10 @@ what the path form of the argument is for.
 Run: python3 scripts/walk-files-ship-test.py   (exit 0 = all passed)
 """
 
+import contextlib
 import hashlib
 import importlib.util
+import io
 import json
 import os
 import pathlib
@@ -33,11 +35,43 @@ DESTINATION_VARIABLE = "COLD_READ_RECORD_SHIP_DESTINATION"
 RULED_RECORDS_DESTINATION = "nedlern@ned-box:/home/nedlern/nedschorus-logs/cold-read-records"
 RULED_WALK_PATH = "/home/nedlern/nedschorus-logs/walk"
 
+# What a stub `ssh` answers to the two calls that put the copied files in
+# place, as a store no other shipment is writing to answers: every placed file
+# and every replaced file holds the staged file's bytes, read from the walk's
+# own directory (WALK_SHIP_TEST_WALK_DIRECTORY), a replaced one displacing the
+# stored file WALK_SHIP_TEST_STORED_DIGEST_LINE names, if it is that one.
+STUB_ANSWER_TO_PUTTING_IN_PLACE = """
+script = sys.argv[-1]
+def set_line_words():
+    import shlex
+    return shlex.split(next(line for line in script.splitlines()
+                            if line.startswith("set -- "))[len("set -- "):])
+if "# cold-read-record-ship: link staged files" in script:
+    import hashlib, shlex
+    loop = next(line for line in script.splitlines()
+                if line.startswith("for relative in "))
+    for relative in shlex.split(loop[len("for relative in "):-len("; do")]):
+        with open(os.path.join(os.environ["WALK_SHIP_TEST_WALK_DIRECTORY"], relative), "rb") as f:
+            print(hashlib.sha256(f.read()).hexdigest() + "  " + relative)
+    sys.exit(0)
+if "# cold-read-record-ship: replace with staged files" in script:
+    import hashlib
+    words = set_line_words()
+    digest, _, path = os.environ.get("WALK_SHIP_TEST_STORED_DIGEST_LINE", "").partition("  ")
+    stored = {os.path.basename(path): digest} if path else {}
+    for staged, target in zip(words[0::3], words[1::3]):
+        with open(os.path.join(os.environ["WALK_SHIP_TEST_WALK_DIRECTORY"], staged), "rb") as f:
+            local = hashlib.sha256(f.read()).hexdigest()
+        print("replaced " + stored.get(target, "-") + " " + target)
+        print("stored " + local + " " + target)
+    sys.exit(0)
+"""
+
 STUB_RECORDER = """#!/usr/bin/env python3
 import json, os, sys
 with open(os.environ["WALK_SHIP_TEST_ARGV_LOG"], "a") as log:
     log.write(json.dumps(sys.argv) + "\\n")
-"""
+""" + STUB_ANSWER_TO_PUTTING_IN_PLACE
 
 # An ssh stub for a store that already holds one file: when asked for digests
 # it answers, as sha256sum does, that the file is there with the digest the
@@ -76,6 +110,8 @@ def write_walk(directory: pathlib.Path, name: str, files: dict) -> pathlib.Path:
 def ship(destination, *args, extra_env=None):
     env = dict(os.environ)
     env[DESTINATION_VARIABLE] = destination
+    if args and args[0].endswith(".md"):
+        env["WALK_SHIP_TEST_WALK_DIRECTORY"] = str(pathlib.Path(args[0]).parent)
     env.update(extra_env or {})
     return subprocess.run([sys.executable, str(SHIP), *args],
                           capture_output=True, text=True, check=False, env=env)
@@ -174,6 +210,22 @@ with tempfile.TemporaryDirectory(prefix="walk-files-ship-test-") as scratch_name
           result.returncode == 0 and "1 file(s) added" in result.stdout
           and f"{WALK}-dispositions.md" in result.stdout
           and (store_walk / f"{WALK}-dispositions.md").is_file(), result.stdout)
+
+    # --- One run both replaces and links ------------------------------------
+    both_walk = "both-steps-walk-2026-10-02"
+    both_text = write_walk(walks, both_walk, FILES)
+    first = ship(local_destination, str(both_text))
+    (walks / f"{both_walk}-minutes.md").write_text("# minutes\n\nEdited.\n", encoding="utf-8")
+    (walks / f"{both_walk}-dispositions.md").write_text("# dispositions\n", encoding="utf-8")
+    result = ship(local_destination, str(both_text))
+    check("one run that replaces the minutes and links a new dispositions file "
+          "does both, exit 0",
+          first.returncode == 0 and result.returncode == 0
+          and "minutes replaced" in result.stdout and "1 file(s) added" in result.stdout
+          and (store_walk / f"{both_walk}-minutes.md").read_text(encoding="utf-8")
+          == "# minutes\n\nEdited.\n"
+          and (store_walk / f"{both_walk}-dispositions.md").is_file(),
+          f"{first.stdout} {result.stdout} {result.stderr}")
 
     # --- The dispositions are replaced like the minutes, and announced --------
     # (user-ruled 2026-09-18, walk skill-sentences-and-shipper-questions-2026-09-18
@@ -368,18 +420,41 @@ with tempfile.TemporaryDirectory(prefix="walk-files-ship-test-") as scratch_name
     check("the store is prepared over ssh: mkdir -p of walk/ and the README when absent",
           any("mkdir -p" in " ".join(c) and "README.md" in " ".join(c)
               and RULED_WALK_PATH in " ".join(c) for c in ssh_calls), str(ssh_calls))
+    placing_marker = "# cold-read-record-ship: link staged files"
+    replacing_marker = "# cold-read-record-ship: replace with staged files"
+    listing_calls = [c for c in ssh_calls if "sha256sum" in " ".join(c)
+                     and placing_marker not in c[-1] and replacing_marker not in c[-1]]
     check("the store's digests come from one ssh call naming each of the five paths",
-          sum(1 for c in ssh_calls if "sha256sum" in " ".join(c)) == 1
-          and all(f"{RULED_WALK_PATH}/{WALK}{s}.md" in " ".join(c)
-                  for c in ssh_calls if "sha256sum" in " ".join(c)
+          len(listing_calls) == 1
+          and all(f"{RULED_WALK_PATH}/{WALK}{s}.md" in " ".join(listing_calls[0])
                   for s in list(FILES) + ["-dispositions"]), str(ssh_calls))
-    check("exactly one rsync call, the five files flat into walk/, over batch-mode ssh",
+    staging_prefix = f"nedlern@ned-box:{RULED_WALK_PATH}/.ship-staging-{WALK}-"
+    check("exactly one rsync call, the five files flat into a staging directory "
+          "in walk/ named for the walk, over batch-mode ssh",
           len(rsync_calls) == 1 and "-a" in rsync_calls[0] and "--ignore-times" in rsync_calls[0]
           and "ssh -o BatchMode=yes -o ConnectTimeout=10" in rsync_calls[0]
-          and rsync_calls[0][-1] == f"nedlern@ned-box:{RULED_WALK_PATH}/"
+          and rsync_calls[0][-1].startswith(staging_prefix)
+          and rsync_calls[0][-1].endswith("/")
           and sorted(pathlib.Path(a).name for a in rsync_calls[0][-6:-1])
           == sorted(f"{WALK}{s}.md" for s in list(FILES) + ["-dispositions"]),
           str(rsync_calls))
+    placing_calls = [c for c in ssh_calls if placing_marker in c[-1]]
+    replacing_calls = [c for c in ssh_calls if replacing_marker in c[-1]]
+    check("then one ssh call links the add-only files into walk/, never over an "
+          "existing file, and removes the staging directory",
+          len(placing_calls) == 1 and "ln -- " in placing_calls[0][-1]
+          and "ln -f" not in placing_calls[0][-1]
+          and all(f"{WALK}{s}.md" in placing_calls[0][-1] for s in ("-draft", "-suggestions", ""))
+          and f"{WALK}-minutes.md" not in placing_calls[0][-1]
+          and f"rm -rf -- {RULED_WALK_PATH}/.ship-staging-{WALK}-" in placing_calls[0][-1],
+          str(placing_calls))
+    check("and one ssh call renames the minutes and the dispositions into walk/, "
+          "the two files a walk replaces",
+          len(replacing_calls) == 1 and "mv -f -- " in replacing_calls[0][-1]
+          and f"{WALK}-minutes.md" in replacing_calls[0][-1]
+          and f"{WALK}-dispositions.md" in replacing_calls[0][-1]
+          and f"{WALK}-draft.md" not in replacing_calls[0][-1],
+          str(replacing_calls))
     check("rsync is never asked to delete or to write in place",
           not any(flag in rsync_calls[0] for flag in ("--delete", "--inplace")),
           str(rsync_calls))
@@ -537,6 +612,173 @@ with tempfile.TemporaryDirectory(prefix="walk-files-ship-test-") as scratch_name
                       for ending in ("-draft.md", "-suggestions.md",
                                      "-minutes.md", "-dispositions.md")),
           module.shipper.STORE_README)
+
+# --- TWO SHIPMENTS OF ONE WALK AT ONCE --------------------------------------
+# Two checkouts ship the same walk in the same seconds. The other shipment's
+# file is made to land at a chosen moment of this one, in this process: after
+# this one has listed the store ("after-listing"), after its rsync has run
+# ("after-copy"), or the instant after its own rename put a replaced file in
+# place ("after-rename"). Whatever the store keeps, this shipment must say so:
+# never shipped: while the store holds another shipment's bytes under an
+# add-only name, and never a replacement nobody announced.
+with tempfile.TemporaryDirectory(prefix="walk-files-ship-race-test-") as race_scratch_name:
+    race_scratch = pathlib.Path(race_scratch_name)
+    racing_spec = importlib.util.spec_from_file_location("walk_files_ship_racing", SHIP)
+    racing = importlib.util.module_from_spec(racing_spec)
+    saved_destination = os.environ.pop(DESTINATION_VARIABLE, None)
+    try:
+        racing_spec.loader.exec_module(racing)
+    finally:
+        if saved_destination is not None:
+            os.environ[DESTINATION_VARIABLE] = saved_destination
+    saved_listing = racing.store_digests_and_sizes
+    saved_subprocess_run = subprocess.run
+    saved_os_replace = os.replace
+
+    def ship_while_the_other_lands(case_label, local_files, stored_files,
+                                   landing_suffix, landing_text, moment):
+        """Ship a walk whose files are `local_files` into a store holding
+        `stored_files`, while the other shipment's `landing_suffix` file,
+        `landing_text`, lands at `moment`. Returns the exit code, stdout,
+        stderr, the store's walk/ texts by suffix, and the names in walk/."""
+        walk_directory = race_scratch / f"walks-{case_label}"
+        write_walk(walk_directory, WALK, local_files)
+        walk_store = race_scratch / f"store-{case_label}" / "walk"
+        walk_store.mkdir(parents=True)
+        for suffix, text in stored_files.items():
+            (walk_store / f"{WALK}{suffix}.md").write_text(text, encoding="utf-8")
+        landed_path = walk_store / f"{WALK}{landing_suffix}.md"
+        landed = []
+
+        def land_the_other():
+            if not landed:
+                landed.append(moment)
+                landed_path.write_text(landing_text, encoding="utf-8")
+
+        def listing_then_land(copy_host, targets):
+            answer = saved_listing(copy_host, targets)
+            if moment == "after-listing":
+                land_the_other()
+            return answer
+
+        def run_then_land(command, *args, **kwargs):
+            completed = saved_subprocess_run(command, *args, **kwargs)
+            if moment == "after-copy" and command and command[0] == "rsync":
+                # Written over whatever this shipment's copy put there: the
+                # other shipment's copy, which listed the store before this
+                # one's landed, finishing after it.
+                land_the_other()
+            return completed
+
+        def replace_then_land(source, destination, *args, **kwargs):
+            saved_os_replace(source, destination, *args, **kwargs)
+            if moment == "after-rename" and pathlib.Path(destination) == landed_path:
+                land_the_other()
+
+        destination = racing.WalkStoreDestination(None, None,
+                                                  pathlib.PurePosixPath(walk_store))
+        out, err = io.StringIO(), io.StringIO()
+        racing.store_digests_and_sizes = listing_then_land
+        subprocess.run = run_then_land
+        os.replace = replace_then_land
+        try:
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                code = racing.ship_walk(destination, WALK, walk_directory)
+        finally:
+            racing.store_digests_and_sizes = saved_listing
+            subprocess.run = saved_subprocess_run
+            os.replace = saved_os_replace
+        kept = {suffix: (walk_store / f"{WALK}{suffix}.md").read_text(encoding="utf-8")
+                for suffix in ("-draft", "-suggestions", "", "-minutes", "-dispositions")
+                if (walk_store / f"{WALK}{suffix}.md").is_file()}
+        return (code, out.getvalue(), err.getvalue(), kept,
+                sorted(p.name for p in walk_store.iterdir()))
+
+    def digest_of(text):
+        return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+    other_draft = "# draft, the other checkout's\n"
+    code, out, err, kept, names = ship_while_the_other_lands(
+        "draft-taken", FILES, {}, "-draft", other_draft, "after-listing")
+    check("an add-only draft the other shipment lands between this one's listing "
+          "and its copy is REFUSED by name, never shipped:",
+          code == 2 and out.startswith("REFUSED:") and f"{WALK}-draft.md" in out
+          and one_line(out), f"exit {code}: {out}{err}")
+    check("that refusal leaves the other shipment's draft in the store, not "
+          "overwritten", kept.get("-draft") == other_draft, repr(kept.get("-draft")))
+    check("and the walk's other files still ship: the minutes and the walk text "
+          "are this checkout's", kept.get("-minutes") == FILES["-minutes"]
+          and kept.get("") == FILES[""], repr(kept))
+
+    code, out, err, kept, names = ship_while_the_other_lands(
+        "draft-taken-after-copy", FILES, {}, "-draft", other_draft, "after-copy")
+    check("an add-only draft the other shipment lands after this one's copy ran "
+          "never lets this one print shipped: while the store holds the other's",
+          (code == 2 and out.startswith("REFUSED:") and kept.get("-draft") == other_draft)
+          or (code == 0 and out.startswith("shipped:") and kept.get("-draft") == FILES["-draft"]),
+          f"exit {code}: {out}; store keeps {kept.get('-draft')!r}")
+
+    code, out, err, kept, names = ship_while_the_other_lands(
+        "draft-same-bytes", FILES, {}, "-draft", FILES["-draft"], "after-listing")
+    check("the other shipment landing the SAME draft bytes is no difference: "
+          "shipped:, exit 0",
+          code == 0 and out.startswith("shipped:") and kept.get("-draft") == FILES["-draft"],
+          f"exit {code}: {out}{err}")
+
+    stored_prefix = FILES[""]
+    grown_here = dict(FILES, **{"": FILES[""] + "\n## Item 2 of 2, this checkout's\n"})
+    grown_there = FILES[""] + "\n## Item 2 of 2, the other checkout's\n"
+    code, out, err, kept, names = ship_while_the_other_lands(
+        "walk-text-grown-there", grown_here, {"": stored_prefix}, "", grown_there,
+        "after-listing")
+    check("a walk text the other shipment replaced between this one's listing and "
+          "its copy is REFUSED by name, though this one only added to the copy it "
+          "listed", code == 2 and out.startswith("REFUSED:") and f"{WALK}.md" in out
+          and one_line(out), f"exit {code}: {out}{err}")
+    check("that refusal leaves the other shipment's walk text in the store",
+          kept.get("") == grown_there, repr(kept.get("")))
+
+    other_minutes = "# minutes, the other checkout's\n"
+    code, out, err, kept, names = ship_while_the_other_lands(
+        "minutes-landed", FILES, {}, "-minutes", other_minutes, "after-listing")
+    check("minutes the other shipment lands after this one listed none are "
+          "replaced, by the minutes' rule: shipped:, exit 0, this checkout's "
+          "minutes kept", code == 0 and out.startswith("shipped:")
+          and kept.get("-minutes") == FILES["-minutes"], f"exit {code}: {out}{err}")
+    check("and that replacement is announced on stderr with the displaced "
+          "minutes' digest, never silent",
+          any("REPLACED" in line and f"{WALK}-minutes.md" in line
+              and digest_of(other_minutes) in line for line in err.splitlines()),
+          err)
+
+    code, out, err, kept, names = ship_while_the_other_lands(
+        "minutes-after-copy", FILES, {}, "-minutes", other_minutes, "after-copy")
+    check("minutes the other shipment lands after this one's copy ran: either "
+          "this one's are kept and the displaced digest announced, or this one "
+          "is FAILED -- never shipped: over the other's minutes",
+          (code == 0 and out.startswith("shipped:")
+           and kept.get("-minutes") == FILES["-minutes"]
+           and digest_of(other_minutes) in err)
+          or (code == 1 and out.startswith("FAILED:")
+              and kept.get("-minutes") == other_minutes),
+          f"exit {code}: {out}{err}; store keeps {kept.get('-minutes')!r}")
+
+    code, out, err, kept, names = ship_while_the_other_lands(
+        "minutes-after-rename", FILES, {}, "-minutes", other_minutes, "after-rename")
+    check("minutes the other shipment renames in the instant after this one's: "
+          "FAILED, exit 1, naming the minutes, never shipped:",
+          code == 1 and out.startswith("FAILED:") and f"{WALK}-minutes.md" in out
+          and one_line(out) and kept.get("-minutes") == other_minutes,
+          f"exit {code}: {out}{err}")
+
+    check("no shipment leaves anything in the store's walk/ beside the walk's "
+          "own files", all(
+              all(not name.startswith(".") for name in
+                  (p.name for p in (race_scratch / f"store-{label}" / "walk").iterdir()))
+              for label in ("draft-taken", "draft-taken-after-copy", "draft-same-bytes",
+                            "walk-text-grown-there", "minutes-landed",
+                            "minutes-after-copy", "minutes-after-rename")),
+          str(names))
 
 print()
 if failures:

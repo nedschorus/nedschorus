@@ -983,6 +983,81 @@ with tempfile.TemporaryDirectory(prefix="cold-read-record-ship-test-") as scratc
           and not staging.exists(),
           f"{outcome} {held} {replayed.stderr}")
 
+    # The walk shipper's add-only linking script, scripts/walk-files-ship.py's:
+    # a name taken by other bytes is left as it was, and placing goes on past it.
+    staging = scratch / "placing-go-on" / ".ship-staging-w-0"
+    store = scratch / "placing-go-on" / "w"
+    go_on_contents = {"a.md": "a\n", "b.md": "b, this shipment's\n", "c.md": "c\n"}
+    for relative, text in go_on_contents.items():
+        (staging / relative).parent.mkdir(parents=True, exist_ok=True)
+        (staging / relative).write_text(text, encoding="utf-8")
+    store.mkdir(parents=True, exist_ok=True)
+    (store / "b.md").write_text("b, the other's\n", encoding="utf-8")
+    replayed = subprocess.run(
+        ["/bin/sh", "-c", racing.link_staged_files_never_over_existing_script(
+            pathlib.PurePosixPath(staging), pathlib.PurePosixPath(store),
+            sorted(go_on_contents))], capture_output=True, text=True, check=False)
+    check("replayed by a real sh, the walk shipper's linking script leaves a name "
+          "taken by other bytes as it was, places the files after it, and prints "
+          "the store's digest of each",
+          replayed.returncode == 0 and not staging.exists()
+          and {p.name: p.read_text(encoding="utf-8") for p in store.iterdir()}
+          == {"a.md": "a\n", "b.md": "b, the other's\n", "c.md": "c\n"}
+          and (hashlib.sha256("b, the other's\n".encode()).hexdigest() + "  b.md"
+               in replayed.stdout.splitlines()),
+          f"{replayed.stdout} {replayed.stderr}")
+
+    # The replacing script ned-box runs for the walk and seat shippers,
+    # replayed by a real /bin/sh on scratch paths.
+    staging = scratch / "replacing" / ".ship-staging-x-0"
+    store = scratch / "replacing" / "x"
+    staged_texts = {"m.md": "minutes, this shipment's\n",
+                    "w x.md": "walk text, this shipment's\n",
+                    "v.md": "walk text, this shipment's\n",
+                    "new.md": "new\n"}
+    for relative, text in staged_texts.items():
+        (staging / relative).parent.mkdir(parents=True, exist_ok=True)
+        (staging / relative).write_text(text, encoding="utf-8")
+    store.mkdir(parents=True, exist_ok=True)
+    stored_texts = {"m.md": "minutes, the other's\n", "w x.md": "walk text, tested\n",
+                    "v.md": "walk text, changed since\n"}
+    for relative, text in stored_texts.items():
+        (store / relative).write_text(text, encoding="utf-8")
+    sha = {text: hashlib.sha256(text.encode()).hexdigest()
+           for text in list(staged_texts.values()) + list(stored_texts.values())}
+    replacements = [("m.md", "m.md", None),
+                    ("w x.md", "w x.md", sha["walk text, tested\n"]),
+                    ("v.md", "v.md", sha["walk text, tested\n"]),
+                    ("new.md", "renamed.md", None)]
+    replayed = subprocess.run(["/bin/sh", "-c", racing.replace_with_staged_files_script(
+        pathlib.PurePosixPath(staging), pathlib.PurePosixPath(store), replacements)],
+        capture_output=True, text=True, check=False)
+    lines = replayed.stdout.splitlines()
+    check("replayed by a real sh, the replacing script renames over a file "
+          "when no digest is required, and prints the digest it displaced",
+          replayed.returncode == 0
+          and (store / "m.md").read_text(encoding="utf-8") == "minutes, this shipment's\n"
+          and f"replaced {sha['minutes, the other' + chr(39) + 's' + chr(10)]} m.md" in lines,
+          f"{replayed.stdout} {replayed.stderr}")
+    check("it renames over a file whose digest is the required one, a name "
+          "with a space in it included",
+          (store / "w x.md").read_text(encoding="utf-8") == "walk text, this shipment's\n"
+          and f"replaced {sha['walk text, tested' + chr(10)]} w x.md" in lines,
+          replayed.stdout)
+    check("it keeps a file whose digest is not the required one, and says so",
+          (store / "v.md").read_text(encoding="utf-8") == "walk text, changed since\n"
+          and f"kept {sha['walk text, changed since' + chr(10)]} v.md" in lines,
+          replayed.stdout)
+    check("it renames a staged file to another name in the store, nothing "
+          "displaced being a dash",
+          (store / "renamed.md").read_text(encoding="utf-8") == "new\n"
+          and "replaced - renamed.md" in lines, replayed.stdout)
+    check("and it prints the store's digest of every name afterwards, which is "
+          "what the module reads back",
+          all(f"stored {hashlib.sha256((store / name).read_bytes()).hexdigest()} {name}"
+              in lines for name in ("m.md", "w x.md", "v.md", "renamed.md")),
+          replayed.stdout)
+
     # Shipped in this process, with what it prints captured.
     def ship_in_process(store, record):
         printed, announced = io.StringIO(), io.StringIO()
@@ -1159,6 +1234,41 @@ with tempfile.TemporaryDirectory(prefix="cold-read-record-ship-test-") as scratc
                                        "while placing the copied files; a later run finishes it.")
           and "ssh" not in out,
           f"exit {code}: {out}")
+
+# --- The replace step renames nothing beside another shipment's staging ----
+_overlap_spec = importlib.util.spec_from_file_location("cold_read_record_ship_overlap", SHIP)
+overlap_shipper = importlib.util.module_from_spec(_overlap_spec)
+_overlap_spec.loader.exec_module(overlap_shipper)
+with tempfile.TemporaryDirectory(prefix="cold-read-record-ship-overlap-test-") as overlap_name:
+    overlap_store = pathlib.Path(overlap_name) / "store"
+    own = overlap_store / ".ship-staging-walk b-0123456789ab"
+    other = overlap_store / ".ship-staging-walk b-aaaaaaaaaaaa"
+    longer_name = overlap_store / ".ship-staging-walk b-c-bbbbbbbbbbbb"
+    for directory in (own, other, longer_name):
+        directory.mkdir(parents=True)
+    (own / "x").write_text("this shipment\n", encoding="utf-8")
+    (overlap_store / "x").write_text("the other shipment\n", encoding="utf-8")
+    script = overlap_shipper.replace_with_staged_files_script(
+        pathlib.PurePosixPath(own), pathlib.PurePosixPath(overlap_store), [("x", "x", None)])
+    ran = subprocess.run(["sh", "-c", script], capture_output=True, text=True, check=False)
+    check("the remote replace step, run by a real sh, names another staging directory "
+          "of the same name and renames nothing; one for a longer name is not counted",
+          ran.returncode == 0 and ran.stdout == f"other - {other}\n"
+          and (overlap_store / "x").read_text(encoding="utf-8") == "the other shipment\n",
+          repr(ran.stdout) + ran.stderr)
+    _, local_outcome = overlap_shipper.replace_with_staged_files(
+        None, own, overlap_store, [("x", "x", None)])
+    check("the local replace step returns OtherShipmentStaging naming it, and renames nothing",
+          isinstance(local_outcome, overlap_shipper.OtherShipmentStaging)
+          and local_outcome.paths == (str(other),)
+          and (overlap_store / "x").read_text(encoding="utf-8") == "the other shipment\n",
+          repr(local_outcome))
+    other.rmdir()
+    ran = subprocess.run(["sh", "-c", script], capture_output=True, text=True, check=False)
+    check("with no other staging directory, the remote replace step renames as before",
+          ran.returncode == 0 and ran.stdout.startswith("replaced ")
+          and (overlap_store / "x").read_text(encoding="utf-8") == "this shipment\n",
+          repr(ran.stdout) + ran.stderr)
 
 print()
 if failures:

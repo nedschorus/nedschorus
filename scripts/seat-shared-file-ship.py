@@ -70,6 +70,28 @@ REPLACED, and the replacement is announced.
     CADENCE IS NOT A PROMISE, above). stdout does not change: one line, the
     citation.
 
+TWO SHIPMENTS OF ONE FILE AT ONCE. Two sessions of one seat can ship a file
+of one name in the same seconds. The store's digest was read, and the file
+copied with rsync, which takes seconds over ssh; a file the other shipment
+landed in those seconds was replaced with no REPLACED line, the store having
+held nothing when it was read, and the other shipment's citation then
+pointed at bytes it did not ship (GHI "Two shipments of one cold-read-record
+name at the same moment can lose a report while both say it shipped",
+https://github.com/nedschorus/nedschorus/issues/910, measured for the record
+shipper). So the file is copied into a staging directory beside it
+(`.ship-staging-<name>-<random>`, removed afterwards) and renamed over the
+stored file by the record shipper's replace_with_staged_files, which reads
+the digest of the file it displaces in the same step, and the store is read
+again afterwards. A seat still replaces its own files, so either shipment may
+be the one kept: the replacement is announced with the digest actually
+displaced, and a shipment whose bytes are not what the store holds afterwards
+prints FAILED, not the citation. The replace step takes no lock: a seat's
+files are shipped by that seat, one shipment after another. A read-back
+cannot see a rename that runs after it, so instead the replace step renames
+nothing while another staging directory for the same file exists, and this
+program prints FAILED naming it (see NO LOCK; A CHECK INSTEAD in the record
+shipper's replace_with_staged_files).
+
 WHY IT PRINTS THE CITATION. The line this program prints on success is the
 exact text to paste into a document, in the scp form that works from either
 machine. That is deliberate and it is the point: an agent that needs a
@@ -115,6 +137,7 @@ import hashlib
 import importlib.util
 import os
 import pathlib
+import secrets
 import shlex
 import subprocess
 import sys
@@ -267,8 +290,10 @@ def stored_digest(copy_host, target):
 
 def rsync_one_file(copy_host, source: pathlib.Path,
                    target) -> subprocess.CompletedProcess:
-    """One file into the store. Never --inplace: rsync writes it whole or not
-    at all, so an interrupted copy leaves no half file behind.
+    """One file into the store: into `target`, the run's staging directory
+    when it ends in a slash, which rsync creates (see TWO SHIPMENTS OF ONE
+    FILE AT ONCE). Never --inplace: rsync writes it whole or not at all, so an
+    interrupted copy leaves no half file behind.
 
     --ignore-times because whether to copy was already decided here, by
     comparing sha256 on both sides. rsync's own quick check is size and
@@ -320,22 +345,50 @@ def ship_one_file(destination: SeatsStoreDestination, seat: str,
         return EXIT_FAILED
 
     local_digest = hashlib.sha256(source.read_bytes()).hexdigest()
-    replaced_digest = None
-    if existing_digest is not None:
-        if existing_digest == local_digest:
-            print(citation, flush=True)
-            print(f"{PROGRAM}: already in the store, byte-identical; nothing "
-                  f"copied", file=sys.stderr)
-            return EXIT_SHIPPED
-        replaced_digest = existing_digest
+    if existing_digest == local_digest:
+        print(citation, flush=True)
+        print(f"{PROGRAM}: already in the store, byte-identical; nothing "
+              f"copied", file=sys.stderr)
+        return EXIT_SHIPPED
 
-    copied = rsync_one_file(destination.copy_host, source, target)
+    # Copied into a staging directory beside the file, then renamed over it:
+    # see TWO SHIPMENTS OF ONE FILE AT ONCE in this module's docstring.
+    seat_directory = destination.seats_path / seat
+    staging_dir = seat_directory / (f"{shipper.STAGING_DIRECTORY_PREFIX}"
+                                    f"{stored_name}-{secrets.token_hex(6)}")
+    copied = rsync_one_file(destination.copy_host, source, f"{staging_dir}/")
     if copied.returncode != 0:
+        shipper.remove_staging_directory(destination.copy_host, staging_dir)
         print(f"FAILED: {seat}/{stored_name} — rsync exited "
               f"{copied.returncode}", flush=True)
         print(copied.stderr.strip(), file=sys.stderr)
         return EXIT_FAILED
+    renamed, outcomes = shipper.replace_with_staged_files(
+        destination.copy_host, staging_dir, seat_directory,
+        [(source.name, stored_name, None)])
+    shipper.remove_staging_directory(destination.copy_host, staging_dir)
+    if isinstance(outcomes, shipper.OtherShipmentStaging):
+        failed, instruction = shipper.other_shipment_failure_lines(
+            f"{seat}/{stored_name}", outcomes)
+        print(failed, flush=True)
+        print(instruction, file=sys.stderr)
+        return EXIT_FAILED
+    if outcomes is None or stored_name not in outcomes:
+        print(f"FAILED: {seat}/{stored_name} — the store could not be written; "
+              f"a later run finishes it", flush=True)
+        print(renamed.stderr.strip(), file=sys.stderr)
+        return EXIT_FAILED
+    outcome = outcomes[stored_name]
+    if outcome.stored_sha256 != local_digest:
+        print(f"FAILED: {seat}/{stored_name} — the store holds sha256 "
+              f"{outcome.stored_sha256}, not this file's {local_digest}: another "
+              f"shipment replaced it while this one ran. Ship this file again "
+              f"only if it is the copy the store should keep.", flush=True)
+        return EXIT_FAILED
     print(citation, flush=True)
+    replaced_digest = (outcome.displaced_sha256
+                       if outcome.displaced_sha256 not in (None, local_digest)
+                       else None)
     if replaced_digest is not None:
         # Never on stdout: that line is the citation and nothing else. See
         # "THE REPLACEMENT IS NOT SILENT" in this module's docstring for what
