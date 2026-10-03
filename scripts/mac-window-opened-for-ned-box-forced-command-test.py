@@ -182,6 +182,15 @@ check("an outcome line that cannot be written is reported, with the instruction 
       "the window opened, but its outcome could not be added to the request log" in result.stderr
       and "Do not ask for the window again" in result.stderr, result.stderr)
 
+result, opened, log = run_program(
+    "open-window tmux",
+    opener_body='chmod 0444 "$HOME/.claude/mac-window-opened-for-ned-box.log"; echo \'osascript failed\' >&2; exit 1\n')
+check("an opener failure that cannot be logged still exits 1, with the opener's own error",
+      result.returncode == 1 and "the window opener exited 1" in result.stderr and "osascript failed" in result.stderr,
+      (result.returncode, result.stderr))
+check("an opener failure that cannot be logged reports the failed log write",
+      "The opener's failure could not be added to the request log" in result.stderr, result.stderr)
+
 result, opened, log = run_program("open-window tmux attach -t merge-lane-2", use_real_opener=True)
 check("through the real opener's dry run, the AppleScript runs ssh back to ned-box",
       result.returncode == 0 and "open-iterm-window-running-command ssh -t -- nedlern@ned-box tmux attach -t merge-lane-2" in result.stdout,
