@@ -1106,9 +1106,12 @@ def runtime_cli_version(runtime: str) -> str:
                 if completed.returncode == 0 and lines and lines[0].strip()
                 else "unknown"
             )
-            CLI_VERSION_CACHE[runtime] = measured
         except (OSError, subprocess.TimeoutExpired):
-            CLI_VERSION_CACHE[runtime] = "unknown"
+            measured = "unknown"
+        # A probe the stop may have ended is not cached as the runtime's version.
+        if RUN_STOPPED.is_set():
+            return measured
+        CLI_VERSION_CACHE[runtime] = measured
     return CLI_VERSION_CACHE[runtime]
 
 
@@ -1735,8 +1738,10 @@ def stop_run_on_signal(signal_number: int, _frame) -> None:
     # Under the lock a cell's thread holds from reading RUN_STOPPED to
     # starting its agent-binary: see run_agent_binary_unless_run_stopped.
     global CELLS_FINISHED_AT_THE_STOP
+    # Copied before the wait for the lock: a cell that finishes during that
+    # wait was still running when the signal came.
+    CELLS_FINISHED_AT_THE_STOP = frozenset(CELLS_FINISHED)
     with AGENT_BINARY_LAUNCH_LOCK:
-        CELLS_FINISHED_AT_THE_STOP = frozenset(CELLS_FINISHED)
         RUN_STOPPED.set()
     stop_processes_this_run_started()
     raise RunStoppedBySignal(signal_number)
@@ -2184,17 +2189,10 @@ def main() -> int:
         stopped_by = stopped.signal_number
         saved = run_log.reports_saved_once_cells_ended
         if saved is not None:
-            # The signal ended no cell: it arrived after every agent-binary
-            # had exited and ended none of the cells' git calls or version
-            # probes, so the cells went on to save their reports, and the
-            # `finally` blocks on the way here have finished the run's closing
-            # steps. The run ends with what a finished
-            # run prints, never a STOPPED line, whose instruction to run the
-            # whole command again would launch every agent of a run whose
-            # reports are all saved (found in review of the pull request that
-            # introduced the review copy). The record is shipped again if the
-            # signal cut its shipping short; the shipper adds only what the
-            # store lacks.
+            # Every cell had finished before the signal came, so the run ends
+            # as a finished run: a STOPPED line would have the agent rerun
+            # cells whose reports are all saved. The record is shipped again
+            # in case the signal cut its shipping short.
             run_log.detach()
             if saved:
                 print_run_completion(run_log.record_directory)

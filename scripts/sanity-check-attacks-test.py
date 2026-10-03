@@ -2152,12 +2152,17 @@ def main():
 
     with_launcher(runner_relaunch, answering_in_turn([
         (1, "", "a-test-model", "", ("logged-out", "Not logged in"))]))
+    runner_relaunch.CELLS_FINISHED.clear()
     recording = WriteRecordingStream()
     with tempfile.TemporaryDirectory() as scratch:
         with contextlib.redirect_stdout(recording):
             runner_relaunch.run_cell("cut", "codex", "docs/x.md", [], None,
                                      pathlib.Path(scratch), {}, (), StubLedger([]))
     failed_writes = [text for text in recording.writes if "FAILED:" in text]
+    check("a cell that ends on its FAILED lines is counted as finished, so a stop "
+          "after it does not make the run a stopped run",
+          "cut-codex" in runner_relaunch.CELLS_FINISHED,
+          f"finished {runner_relaunch.CELLS_FINISHED!r}")
     check("a failed cell's FAILED line and its instructions are printed as one write",
           len(failed_writes) == 1 and failed_writes[0].count("\n") == 4
           and failed_writes[0].startswith("FAILED: cut-codex — logged-out — ")
@@ -3617,6 +3622,7 @@ sys.exit(module.main())
     # exiting 0 with what it had written so far must not have that saved as a
     # report. run_codex returns a failed launch with no review.
     for stopped_while_it_ran in (True, False):
+        codex_launches = []
         runner_exit_zero = load_runner()
         real_exit_zero_popen = runner_exit_zero.subprocess.Popen
 
@@ -3625,18 +3631,21 @@ sys.exit(module.main())
                 # A stand-in codex: writes its last message where the runner
                 # reads the review from, and exits 0. Any other command
                 # run_codex starts (on Linux, more than the codex launch goes
-                # through Popen) runs as given.
-                if "--output-last-message" in command:
+                # through Popen) runs as given, and only the codex stand-in's
+                # end stops the run, so the stop reaches the check after it.
+                self.is_codex_launch = "--output-last-message" in command
+                if self.is_codex_launch:
                     last_message = command[command.index("--output-last-message") + 1]
                     command = [sys.executable, "-c",
                                "import sys; open(sys.argv[1], 'w').write("
                                "'what it had written so far\\n')", last_message]
+                    codex_launches.append(last_message)
                 super().__init__(command, *arguments, **keywords)
 
             def communicate(self, *arguments, module=runner_exit_zero,
                             stop=stopped_while_it_ran, **keywords):
                 answered = super().communicate(*arguments, **keywords)
-                if stop:
+                if stop and self.is_codex_launch:
                     module.RUN_STOPPED.set()
                 return answered
 
@@ -3652,11 +3661,29 @@ sys.exit(module.main())
         if stopped_while_it_ran:
             check("an agent-binary that exits 0 while the run is stopped is a failed "
                   "launch with no review saved",
-                  code == 1 and review == "", f"exit {code!r}, review {review!r}")
+                  len(codex_launches) == 1 and code == 1 and review == "",
+                  f"codex launches {len(codex_launches)}, exit {code!r}, review {review!r}")
         else:
             check("and one that exits 0 in a run not stopped returns its review",
                   code == 0 and "what it had written so far" in (review or ""),
                   f"exit {code!r}, review {review!r}")
+
+    # A version probe that returns while the run is stopped, such as one the
+    # stop ended with exit 0 and no output, is not cached as the runtime's
+    # version.
+    runner_probe = load_runner()
+    real_probe_run = runner_probe.subprocess.run
+    try:
+        runner_probe.subprocess.run = lambda *a, **k: subprocess.CompletedProcess(
+            a[0], 0, stdout="", stderr=None)
+        runner_probe.RUN_STOPPED.set()
+        probed = runner_probe.runtime_cli_version("codex")
+    finally:
+        runner_probe.subprocess.run = real_probe_run
+        runner_probe.RUN_STOPPED.clear()
+    check("a version probe that returns while the run is stopped is not cached",
+          probed == "unknown" and "codex" not in runner_probe.CLI_VERSION_CACHE,
+          f"probed {probed!r}, cache {runner_probe.CLI_VERSION_CACHE!r}")
 
     # The containment set at import: no case asked the PATH's `claude` or
     # `codex` for more than its version.
