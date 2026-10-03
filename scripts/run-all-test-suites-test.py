@@ -371,6 +371,19 @@ with tempfile.TemporaryDirectory() as scratch:
     check("-j 1 runs one suite at a time", result.returncode == 1
           and lines(result.stdout)[-1].startswith("SUMMARY: 1 passed, 1 failed"),
           (result.returncode, result.stdout))
+    check("-j 1 overrides the default, and the first line names it",
+          "; -j 1; logs in " in lines(result.stdout)[0], lines(result.stdout)[:1])
+with tempfile.TemporaryDirectory() as scratch:
+    root = pathlib.Path(scratch)
+    make_repo(root, {"first-test.py": rendezvous("first.flag", "second.flag"),
+                     "second-test.py": rendezvous("second.flag", "first.flag")})
+    result = run(root)
+    expected_jobs = min(os.cpu_count() or 4, 2)
+    check("with no -j, the run uses one job per core, capped at the 2 suites it runs, and "
+          "the first line names the number used",
+          f"; -j {expected_jobs}; logs in " in lines(result.stdout)[0]
+          and result.returncode == (0 if expected_jobs == 2 else 1),
+          (result.returncode, result.stdout))
 
 # --- --python: the given interpreter runs each suite and names itself ---------
 with tempfile.TemporaryDirectory() as scratch:
@@ -1284,7 +1297,17 @@ check("--checkout defaults to the checkout this program is in",
       pathlib.Path(defaults.checkout) == SCRIPTS_DIR.parent, defaults.checkout)
 check("--python defaults to the interpreter running the program",
       defaults.python == sys.executable, defaults.python)
-check("-j defaults to 4", defaults.jobs == 4, defaults.jobs)
+check("-j defaults to not given, so the run chooses the job count", defaults.jobs is None,
+      defaults.jobs)
+for jobs_given, suites_to_run, cores, expected, case in (
+        (None, 100, 16, 16, "with no -j, one suite runs per core"),
+        (None, 3, 16, 3, "with no -j, no more suites run at once than the run has"),
+        (None, 0, 16, 1, "with no -j and no suite to run, the job count is 1, not 0"),
+        (None, 100, None, 4, "with no -j and the core count unknown, 4 suites run at once"),
+        (2, 100, 16, 2, "-j N overrides the core count"),
+        (5, 2, 16, 5, "-j N is used as given, even above the number of suites")):
+    answer = module.suites_run_at_once(jobs_given, suites_to_run, cores)
+    check(case, answer == expected, (jobs_given, suites_to_run, cores, answer))
 check("--lock-file defaults to one file per machine under ~/.claude",
       pathlib.Path(defaults.lock_file) == pathlib.Path.home() / ".claude"
       / ".run-all-test-suites.lock", defaults.lock_file)

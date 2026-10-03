@@ -11,7 +11,8 @@ Usage:
                 checkout this file is in
   --python      the interpreter that runs each suite file; default, the one
                 running this program
-  -j            how many suites run at once; default 4
+  -j            how many suites run at once; default, the machine's core
+                count, or the number of suites to run when that is fewer
   --log-dir     where each suite's output and the report are written;
                 default, a new directory under the system temp directory
   --lock-file   the lock that keeps two runs on one machine apart; default
@@ -152,13 +153,14 @@ second run on the same machine exits 3 without running anything. The lock
 file names its holder (process id, checkout, start time), and the refusal
 prints it.
 
-CONCURRENCY. -j N runs N suites at once. Measured on ned-box 2026-09-21
-over the 65 suites: serial 479 s, -j4 247 s, -j8 235 s. -j8 buys little
-because nc-systems/cold-read/tests/cold-read-grid-test.py alone takes 233 s. The default is 4,
-the measured choice: it halves a full run, and every run holds the
-machine's one lock for its whole length, so a serial run makes every other
-session's run wait twice as long behind it. The Mac at -j 4: 278 s. -j 1
-still runs one suite at a time when a run must.
+CONCURRENCY. -j N runs N suites at once. The default is the machine's core
+count (4 when Python cannot tell), or the number of suites to run when that
+is fewer. A run lasts at least as long as its longest suite, so more jobs
+pay off only once no single suite dominates. Measured on ned-box (16 cores)
+2026-10-03 over 92 suites: 311 s at -j 4 and 345 s at -j 16, because
+nc-systems/cold-read/tests/cold-read-grid-test.py took 288 s of the run at
+-j 4 and 325 s at -j 16, slowed by the other suites competing for the
+machine. -j 1 still runs one suite at a time when a run must.
 
 NO PER-SUITE TIMEOUT. No suite has been seen to hang, so none is imposed.
 A hung suite hangs the run.
@@ -405,6 +407,7 @@ GIT_REDIRECTING_ENVIRONMENT_VARIABLES = (
 
 DEFAULT_LOCK_FILE = Path.home() / ".claude" / ".run-all-test-suites.lock"
 REPORT_FILE_NAME = "report.txt"
+SUITES_RUN_AT_ONCE_WHEN_CORE_COUNT_UNKNOWN = 4
 
 DEFAULT_RECORDED_INPUTS_DIRECTORY = (
     Path.home() / ".cache" / "nedschorus-test-suite-recorded-inputs")
@@ -1346,7 +1349,7 @@ def parse_arguments(argv):
         prog=PROGRAM, description="Run every *-test.py and *-test.sh suite git lists in a checkout.")
     parser.add_argument("--checkout", default=str(Path(__file__).resolve().parent.parent))
     parser.add_argument("--python", default=sys.executable)
-    parser.add_argument("-j", dest="jobs", type=int, default=4)
+    parser.add_argument("-j", dest="jobs", type=int)
     parser.add_argument("--log-dir")
     parser.add_argument("--lock-file", default=str(DEFAULT_LOCK_FILE))
     parser.add_argument("--only-suites-whose-recorded-inputs-changed-since",
@@ -1354,9 +1357,17 @@ def parse_arguments(argv):
     parser.add_argument("--recorded-inputs-directory",
                         default=str(DEFAULT_RECORDED_INPUTS_DIRECTORY))
     arguments = parser.parse_args(argv)
-    if arguments.jobs < 1:
+    if arguments.jobs is not None and arguments.jobs < 1:
         parser.error("-j takes a whole number of at least 1")
     return arguments
+
+
+def suites_run_at_once(jobs_given, suites_to_run, cores):
+    """-j as given; otherwise one suite per core, never more than the suites to run."""
+    if jobs_given is not None:
+        return jobs_given
+    # At least 1: the thread pool refuses zero workers when nothing is selected.
+    return max(1, min(cores or SUITES_RUN_AT_ONCE_WHEN_CORE_COUNT_UNKNOWN, suites_to_run))
 
 
 def main(argv=None):
@@ -1399,6 +1410,7 @@ def main(argv=None):
             print(refusal, file=sys.stderr)
             return EXIT_COULD_NOT_RUN
         chosen = [suite for suite, selected, _ in selection if selected]
+        jobs = suites_run_at_once(arguments.jobs, len(chosen), os.cpu_count())
         strace = strace_usable()
         recording_dir = log_dir / "recorded-inputs"
         recording_dir.mkdir(parents=True, exist_ok=True)
@@ -1408,7 +1420,7 @@ def main(argv=None):
                          f"{changed_since[:12]}" if changed_since is not None else "")
         report.line(f"{PROGRAM}: {top} at {commit} ({state}); {len(suites)} suites "
                     f"listed by git{selected_note}; {version} ({interpreter}); "
-                    f"-j {arguments.jobs}; logs in {log_dir}")
+                    f"-j {jobs}; logs in {log_dir}")
         report.line(f"inputs recorded by {PYTHON_INPUT_RECORDER_METHOD}"
                     + (f" and {STRACE_INPUT_RECORDER_METHOD} ({strace})" if strace else "")
                     + f", kept in {recordings_dir}")
@@ -1445,7 +1457,7 @@ def main(argv=None):
             return result
 
         results = []
-        with concurrent.futures.ThreadPoolExecutor(max_workers=arguments.jobs) as pool:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=jobs) as pool:
             running = [pool.submit(run_and_record, suite) for suite in chosen]
             for finished in concurrent.futures.as_completed(running):
                 result = finished.result()
