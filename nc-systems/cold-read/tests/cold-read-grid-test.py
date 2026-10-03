@@ -728,8 +728,10 @@ with tempfile.TemporaryDirectory() as scratch:
     # The other side of the same check: readers slow enough to be polled more
     # than once, and a target nobody edits, finish as an ordinary run.
     repository = build_scratch_repository(scratch, "checkout-target-still-over-polls")
+    # Readers that take ten of this suite's polls to finish.
+    still_reading_seconds = 10 * float(CELL_POLL_INTERVAL_FOR_TESTS_SECONDS)
     result = run_grid(repository, scratch / "stub-bin-target-still-over-polls",
-                      {"COLD_READ_GRID_TEST_STUB_SLEEP_SECONDS": "12"})
+                      {"COLD_READ_GRID_TEST_STUB_SLEEP_SECONDS": str(still_reading_seconds)})
     check("a settled target over several polls stops nothing: six reviews, exit 0",
           result.returncode == 0
           and len([line for line in result.stdout.splitlines()
