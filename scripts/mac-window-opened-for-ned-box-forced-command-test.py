@@ -114,8 +114,10 @@ else:
     print("SKIP  ssh option-parsing cases: ssh is not on PATH")
 
 
-def run_program(request, opener_body=None, use_real_opener=False):
+def run_program(request, opener_body=None, use_real_opener=False, log_unwritable=False):
     scratch = Path(tempfile.mkdtemp(prefix="mac-window-test-"))
+    if log_unwritable:
+        (scratch / ".claude").write_text("a regular file where the log's directory belongs\n")
     environment = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": str(scratch), "SHELL": "/bin/zsh"}
     if request is not None:
         environment["SSH_ORIGINAL_COMMAND"] = request
@@ -130,7 +132,7 @@ def run_program(request, opener_body=None, use_real_opener=False):
     result = subprocess.run([sys.executable, str(PROGRAM_PATH)], capture_output=True, text=True, env=environment)
     opened = json.loads(record.read_text()) if record.exists() else None
     log_path = scratch / ".claude" / "mac-window-opened-for-ned-box.log"
-    log = log_path.read_text() if log_path.exists() else ""
+    log = log_path.read_text() if log_path.is_file() else ""
     shutil.rmtree(scratch)
     return result, opened, log
 
@@ -140,6 +142,8 @@ check("an accepted request exits 0", result.returncode == 0, result.stderr)
 check("an accepted request hands the opener ssh back to ned-box, word for word",
       opened == ["ssh", "-t", "--", "nedlern@ned-box", "tmux", "attach", "-t", "merge-lane-2"], opened)
 check("an accepted request is logged as opened", " opened 'open-window tmux attach -t merge-lane-2'" in log, log)
+check("an accepted request is logged before its window opens",
+      log.index(" accepted 'open-window tmux attach -t merge-lane-2'") < log.index(" opened "), log)
 check("an accepted request says what the window runs",
       "opened a window on the Mac running: ssh -t -- nedlern@ned-box tmux attach -t merge-lane-2" in result.stdout, result.stdout)
 
@@ -157,6 +161,26 @@ check("an opener failure exits 1", result.returncode == 1, result.returncode)
 check("an opener failure is reported with the opener's own error",
       "the window opener exited 1" in result.stderr and "osascript failed" in result.stderr, result.stderr)
 check("an opener failure is logged", "opener-failed-1" in log, log)
+
+result, opened, log = run_program("open-window tmux attach -t merge-lane-2", log_unwritable=True)
+check("a request that cannot be logged opens no window", opened is None, opened)
+check("a request that cannot be logged exits 3", result.returncode == 3, result.returncode)
+check("a request that cannot be logged says so, and why no window opened",
+      "no window was opened, because the request could not be added to the request log" in result.stderr
+      and "none opens unlogged" in result.stderr, result.stderr)
+
+result, opened, log = run_program("open-window tmux; rm -rf ~", log_unwritable=True)
+check("a refusal that cannot be logged still refuses, exits 2, and reports the log failure",
+      opened is None and result.returncode == 2 and "could not be added to the request log" in result.stderr, result.stderr)
+
+result, opened, log = run_program(
+    "open-window tmux",
+    opener_body='chmod 0444 "$HOME/.claude/mac-window-opened-for-ned-box.log"; echo opener-ran\n')
+check("an outcome line that cannot be written still exits 0, since the window opened",
+      result.returncode == 0 and "opener-ran" in result.stdout, (result.returncode, result.stdout, result.stderr))
+check("an outcome line that cannot be written is reported, with the instruction not to ask again",
+      "the window opened, but its outcome could not be added to the request log" in result.stderr
+      and "Do not ask for the window again" in result.stderr, result.stderr)
 
 result, opened, log = run_program("open-window tmux attach -t merge-lane-2", use_real_opener=True)
 check("through the real opener's dry run, the AppleScript runs ssh back to ned-box",

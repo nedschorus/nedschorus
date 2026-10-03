@@ -31,7 +31,7 @@ def check(case_name, condition, detail=""):
         failures.append(case_name)
 
 
-def run_caller(arguments, ssh_body=None, destination=None, play_sshd=False):
+def run_caller(arguments, ssh_body=None, destination=None, play_sshd=False, timeout_seconds=None):
     scratch = Path(tempfile.mkdtemp(prefix="open-mac-window-test-"))
     record = scratch / "ssh-arguments.json"
     opened_record = scratch / "opener-arguments.json"
@@ -49,6 +49,8 @@ def run_caller(arguments, ssh_body=None, destination=None, play_sshd=False):
     environment = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": str(scratch), "NEDSCHORUS_SSH_PROGRAM": str(stub)}
     if destination:
         environment["NEDSCHORUS_MAC_SSH_DESTINATION"] = destination
+    if timeout_seconds:
+        environment["NEDSCHORUS_MAC_SSH_TIMEOUT_SECONDS"] = str(timeout_seconds)
     result = subprocess.run([sys.executable, str(CALLER_PATH), *arguments], capture_output=True, text=True, env=environment)
     sent = json.loads(record.read_text()) if record.exists() else None
     opened = json.loads(opened_record.read_text()) if opened_record.exists() else None
@@ -89,6 +91,16 @@ check("an unreachable Mac says so, with ssh's own error",
 
 result, sent, _ = run_caller(["tmux"], ssh_body="echo 'refused for a reason' >&2; exit 2")
 check("a refusal from the Mac exits 2 and passes the Mac's reason on", result.returncode == 2 and "refused for a reason" in result.stderr, result)
+
+for code in (1, 3, 127):
+    result, sent, _ = run_caller(["tmux"], ssh_body=f"echo 'the Mac side failed' >&2; exit {code}")
+    check(f"a Mac-side exit {code} exits 1 and passes the Mac's error on",
+          result.returncode == 1 and "the Mac side failed" in result.stderr, (result.returncode, result.stderr))
+
+result, sent, _ = run_caller(["tmux"], ssh_body="sleep 5", timeout_seconds=0.5)
+check("an ssh that does not finish in time exits 1 and says the window may not have opened",
+      result.returncode == 1 and "did not finish within 0.5 seconds, so the window may not have opened" in result.stderr,
+      (result.returncode, result.stderr))
 
 for words in (["tmux", "attach", "-t", "merge-lane-2"],
               ["git", "-C", "/home/nedlern/Projects/nedschorus", "log", "--oneline", "-5"],

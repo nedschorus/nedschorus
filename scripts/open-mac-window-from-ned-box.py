@@ -15,7 +15,8 @@ that same function first, so a request the Mac would refuse is refused here,
 with the same reason, before any connection is made.
 
 NEDSCHORUS_MAC_SSH_DESTINATION overrides the Mac's address; NEDSCHORUS_SSH_PROGRAM
-overrides the ssh program, the seam the test suite uses.
+overrides the ssh program and NEDSCHORUS_MAC_SSH_TIMEOUT_SECONDS the time limit,
+the seams the test suite uses.
 """
 
 import importlib.util
@@ -28,6 +29,7 @@ PROGRAM = "open-mac-window-from-ned-box"
 DEFAULT_MAC_SSH_DESTINATION = "el@10.0.1.23"
 MAC_SIDE_ACTION_KEY = Path.home() / ".ssh" / "id_ed25519_mac_side_action"
 SSH_EXIT_CONNECTION_FAILED = 255
+SSH_TIMEOUT_SECONDS = 60
 FORCED_COMMAND_PATH = Path(__file__).with_name("mac-window-opened-for-ned-box-forced-command.py")
 
 EXIT_OPENED = 0
@@ -83,10 +85,12 @@ def main(arguments):
         return EXIT_USAGE_OR_REFUSED
     destination = os.environ.get("NEDSCHORUS_MAC_SSH_DESTINATION") or DEFAULT_MAC_SSH_DESTINATION
     ssh_program = os.environ.get("NEDSCHORUS_SSH_PROGRAM") or "ssh"
+    timeout_seconds = float(os.environ.get("NEDSCHORUS_MAC_SSH_TIMEOUT_SECONDS") or SSH_TIMEOUT_SECONDS)
     try:
-        result = subprocess.run(ssh_command(request, destination, ssh_program), capture_output=True, text=True, timeout=60)
+        result = subprocess.run(ssh_command(request, destination, ssh_program), capture_output=True, text=True,
+                                timeout=timeout_seconds)
     except subprocess.TimeoutExpired:
-        print(f"{PROGRAM}: ssh to the Mac at {destination} did not finish within 60 seconds, so the window may not have opened.", file=sys.stderr)
+        print(f"{PROGRAM}: ssh to the Mac at {destination} did not finish within {timeout_seconds:g} seconds, so the window may not have opened.", file=sys.stderr)
         print("Tell the user the command you wanted shown.", file=sys.stderr)
         return EXIT_NOT_OPENED
     if result.returncode == SSH_EXIT_CONNECTION_FAILED:

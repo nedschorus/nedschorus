@@ -41,7 +41,12 @@ globs), quoted words, words with spaces. A caller that needs those puts them in
 a script on ned-box and asks for a window running that script.
 
 Every request, accepted or refused, is appended to REQUEST_LOG_PATH, so the
-user can see what ned-box asked his Mac to do.
+user can see what ned-box asked his Mac to do. An accepted request is logged
+before its window opens, and a request that cannot be logged opens no window:
+otherwise a window could open on the user's screen that the log never records.
+The outcome line after the opener returns is reported if it cannot be written,
+but does not change the exit status, because the window has already opened and
+a caller told it failed would ask for a second one.
 
 NEDSCHORUS_MAC_WINDOW_OPENER overrides the opener's path: the seam the test
 suite uses, so no test opens a real window.
@@ -67,6 +72,7 @@ REQUEST_LOG_PATH = Path.home() / ".claude" / "mac-window-opened-for-ned-box.log"
 EXIT_OPENED = 0
 EXIT_REFUSED = 2
 EXIT_OPENER_FAILED = 1
+EXIT_LOG_UNWRITABLE = 3
 
 
 class RequestRefused(Exception):
@@ -109,13 +115,15 @@ def window_command(command_words):
 
 
 def append_to_request_log(outcome, request):
+    """Append one line; return the OSError's text when the line was not written, else None."""
     try:
         REQUEST_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
         with REQUEST_LOG_PATH.open("a") as log:
             stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
             log.write(f"{stamp} {outcome} {request!r}\n")
-    except OSError:
-        pass
+    except OSError as error:
+        return str(error)
+    return None
 
 
 def main():
@@ -123,23 +131,35 @@ def main():
     try:
         command_words = window_command_words(request)
     except RequestRefused as refusal:
-        append_to_request_log("refused", request)
+        log_error = append_to_request_log("refused", request)
         print(f"{PROGRAM}: no window was opened, because {refusal}.", file=sys.stderr)
         print(f"Send a request of the form: {REQUEST_VERB} <word> [<word> ...], each word made of letters, digits and _ . / : = @ % + , -", file=sys.stderr)
         print("If the command needs shell syntax or quoted words, put it in a script on ned-box and ask for a window running that script.", file=sys.stderr)
+        if log_error:
+            print(f"The refusal could not be added to the request log {REQUEST_LOG_PATH} either: {log_error}", file=sys.stderr)
         return EXIT_REFUSED
+    log_error = append_to_request_log("accepted", request)
+    if log_error:
+        print(f"{PROGRAM}: no window was opened, because the request could not be added to the request log {REQUEST_LOG_PATH}: {log_error}.", file=sys.stderr)
+        print("Every window ned-box opens on the Mac is logged first, so none opens unlogged. Tell the user this error.", file=sys.stderr)
+        return EXIT_LOG_UNWRITABLE
     opener = os.environ.get("NEDSCHORUS_MAC_WINDOW_OPENER") or str(DEFAULT_WINDOW_OPENER)
     result = subprocess.run(["/bin/sh", opener, *window_command(command_words)],
                             capture_output=True, text=True)
     if result.returncode != 0:
-        append_to_request_log(f"opener-failed-{result.returncode}", request)
+        log_error = append_to_request_log(f"opener-failed-{result.returncode}", request)
         print(f"{PROGRAM}: the window opener exited {result.returncode}, so no window may have opened: {result.stderr.strip()}", file=sys.stderr)
         print("Tell the user the command you wanted shown, and this error.", file=sys.stderr)
+        if log_error:
+            print(f"The opener's failure could not be added to the request log {REQUEST_LOG_PATH}: {log_error}", file=sys.stderr)
         return EXIT_OPENER_FAILED
-    append_to_request_log("opened", request)
+    log_error = append_to_request_log("opened", request)
     if result.stdout:
         sys.stdout.write(result.stdout)
     print(f"{PROGRAM}: opened a window on the Mac running: {' '.join(window_command(command_words))}")
+    if log_error:
+        print(f"{PROGRAM}: the window opened, but its outcome could not be added to the request log {REQUEST_LOG_PATH}: {log_error}", file=sys.stderr)
+        print("Do not ask for the window again. Tell the user this error.", file=sys.stderr)
     return EXIT_OPENED
 
 
