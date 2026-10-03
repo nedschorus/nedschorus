@@ -1938,12 +1938,45 @@ with tempfile.TemporaryDirectory() as tmp:
     age_line = ("the copy's newest transcript was last written on the Mac at %s UTC, 10 min before this search; "
                 "a Mac transcript written after the copy's last mirror pass is not in it"
                 % time.strftime("%Y-%m-%d %H:%M", time.gmtime(written)))
+    stamp = Path(store, "transcripts", "mac", "last-complete-mirror-pass-utc.txt")
+    no_stamp_line = ("the Mac's mirror has left no pass-time stamp at %s, so when the Mac's mirror last completed "
+                     "a pass is not known on ned-box" % stamp)
     check("on the box: a copy grepped in full and empty is NOT FOUND, with the copy's measured age",
           transcripts.status == NOT_FOUND
           and transcripts.lines == ["ned-box: searched %s, no transcript mentions it" % Path(box, ".claude", "projects"),
                                     "the Mac, from its log-store copy: searched %s, no transcript mentions it" % copy,
-                                    age_line],
+                                    age_line, no_stamp_line],
           "%s %s" % (transcripts.status, transcripts.lines))
+
+    passed = time.time() - 3 * 60
+    stamp.write_text(time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(passed)) + "\n")
+    reports = run_as_if_on(True, "nowhere/c.md", box, RunsBashAndGrepHere([], box), skip=ONLY_TRANSCRIPTS,
+                           log_store_root=str(store))
+    check("on the box: the mirror's pass-time stamp is read and its time and age printed after the copy's age, "
+          "the status unchanged",
+          reports[0].status == NOT_FOUND
+          and reports[0].lines[-2:] == [
+              age_line,
+              "the Mac's mirror last completed a pass at %s UTC, 3 min before this search, by its stamp at %s"
+              % (time.strftime("%Y-%m-%d %H:%M", time.gmtime(passed)), stamp)],
+          "%s %s" % (reports[0].status, reports[0].lines))
+
+    reports = run_as_if_on(True, "mac/only.md", box, RunsBashAndGrepHere([], box), skip=ONLY_TRANSCRIPTS,
+                           log_store_root=str(store))
+    check("on the box: ... and after a hit as well, FOUND unchanged",
+          reports[0].status == FOUND
+          and any(line.startswith("the Mac's mirror last completed a pass at ") for line in reports[0].lines),
+          "%s %s" % (reports[0].status, reports[0].lines))
+
+    stamp.write_text("half a ti")
+    reports = run_as_if_on(True, "nowhere/c.md", box, RunsBashAndGrepHere([], box), skip=ONLY_TRANSCRIPTS,
+                           log_store_root=str(store))
+    check("on the box: a stamp that holds no time says so, quoting it, and the pass time is not known",
+          reports[0].status == NOT_FOUND
+          and reports[0].lines[-1] == ("the Mac's mirror pass-time stamp at %s holds no time ('half a ti'), so when "
+                                       "the Mac's mirror last completed a pass is not known on ned-box" % stamp),
+          "%s %s" % (reports[0].status, reports[0].lines))
+    stamp.unlink()
     check("on the box: ... so transcripts leaves 'Could NOT search', and a run of that surface alone exits 1",
           finder.exit_status(reports) == finder.EXIT_NOT_FOUND_EVERYWHERE
           and "Could NOT search" not in finder.render_summary(reports),
@@ -2000,6 +2033,14 @@ check("the Mac's copy is where the mirror writes it: <log-store>/transcripts/<th
       and (copy_parts[2], Path(".claude", "projects")) in [(name, Path(path)) for name, path in mirror.SOURCES]
       and Path(finder.DEFAULT_TRANSCRIPTS_DIR) == Path("~", ".claude", "projects"),
       "%s %s %s" % (copy_parts, mirror_transcripts_root, mirror.SOURCES))
+
+check("the stamp the backup search reads is the one the mirror writes, beside the Mac copy's projects/, in the "
+      "format the mirror writes",
+      getattr(finder, "MAC_MIRROR_PASS_STAMP_FILE_NAME", None) == getattr(mirror, "MIRROR_PASS_STAMP_FILE_NAME", ())
+      and getattr(finder, "MAC_MIRROR_PASS_STAMP_FORMAT", None) == "%Y-%m-%dT%H:%M:%SZ"
+      and '"%Y-%m-%dT%H:%M:%SZ"' in MODULE_PATH.with_name("transcript-mirror-to-log-store.py").read_text(),
+      "%s %s" % (getattr(finder, "MAC_MIRROR_PASS_STAMP_FILE_NAME", None),
+                 getattr(mirror, "MIRROR_PASS_STAMP_FILE_NAME", None)))
 
 check("the machine test is the locator's: the host name before its first dot is ned-box",
       callable(real_running_on_ned_box)

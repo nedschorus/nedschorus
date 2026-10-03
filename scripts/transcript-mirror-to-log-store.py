@@ -63,6 +63,16 @@ hourly log held no exit-23 run and no line from openrsync in 461 runs
 (measured 2026-09-30), so there is no sample to tell the two apart by their
 text.
 
+WHEN IT LAST COMPLETED A PASS, SEEN FROM NED-BOX. A run in which every
+source mirrored ends by writing the UTC time of that pass, as one line like
+`2026-10-03T23:40:12Z`, to MIRROR_PASS_STAMP_FILE_NAME in the store beside
+that machine's projects/ and handoffs/, writing a `.partial` file and renaming
+it over the stamp. A run with any FAILED source leaves the stamp alone, so its
+time is the last pass that reached the store whole. A stamp that cannot be
+written is itself a FAILED line and exit 1. The backup search on ned-box reads
+the Mac's stamp to say how far behind its copy may be, which the lock file
+below cannot tell it, because that file is on the Mac.
+
 WHEN IT LAST RAN. The log cannot say: a healthy quiet run appends nothing.
 Every run rewrites the lock file, `~/.claude/.transcript-mirror.lock`
 (LOCK_FILE_NAME, opened for writing), as it starts, so its mtime is when
@@ -112,9 +122,11 @@ import fcntl
 import functools
 import os
 import pathlib
+import shlex
 import socket
 import subprocess
 import sys
+import time
 
 PROGRAM = "transcript-mirror-to-log-store"
 
@@ -139,6 +151,8 @@ RSYNC_IO_TIMEOUT_SECONDS = "300"
 RSYNC_EXIT_VANISHED_GNU = 24
 RSYNC_EXIT_VANISHED_OPENRSYNC = 23
 LOCK_FILE_NAME = ".transcript-mirror.lock"
+# The backup search on ned-box reads this file beside the Mac copy's projects/.
+MIRROR_PASS_STAMP_FILE_NAME = "last-complete-mirror-pass-utc.txt"
 
 EXIT_MIRRORED = 0
 EXIT_FAILED = 1
@@ -251,6 +265,29 @@ def mirror_one(host, machine_path: pathlib.PurePosixPath, name: str, source: pat
     return EXIT_MIRRORED
 
 
+def write_mirror_pass_stamp(host, machine_path: pathlib.PurePosixPath) -> int:
+    """Record in the store the UTC time of a pass in which every source mirrored."""
+    # Write then rename, so a reader never sees a half-written time.
+    stamp_text = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()) + "\n"
+    stamp = machine_path / MIRROR_PASS_STAMP_FILE_NAME
+    partial = machine_path / (MIRROR_PASS_STAMP_FILE_NAME + ".partial")
+    if host is None:
+        pathlib.Path(machine_path).mkdir(parents=True, exist_ok=True)
+        pathlib.Path(partial).write_text(stamp_text)
+        os.replace(partial, stamp)
+        return EXIT_MIRRORED
+    completed = subprocess.run(
+        SSH_COMMAND + [host, f"mkdir -p -- {shlex.quote(str(machine_path))} && "
+                             f"printf %s {shlex.quote(stamp_text)} > {shlex.quote(str(partial))} && "
+                             f"mv -f -- {shlex.quote(str(partial))} {shlex.quote(str(stamp))}"],
+        capture_output=True, text=True, check=False)
+    if completed.returncode != 0:
+        print(f"FAILED: pass-time stamp — could not write {host}:{stamp} (exit {completed.returncode})")
+        sys.stderr.write(completed.stderr)
+        return EXIT_FAILED
+    return EXIT_MIRRORED
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(
         description="Mirror this machine's Claude Code transcripts and handoffs into the log-store.")
@@ -270,6 +307,8 @@ def main(argv=None) -> int:
         host, machine_path = destination_for_this_machine()
         outcomes = [mirror_one(host, machine_path, name, home / relative, failures_only)
                     for name, relative in SOURCES]
+        if EXIT_FAILED not in outcomes:
+            outcomes.append(write_mirror_pass_stamp(host, machine_path))
     return EXIT_FAILED if EXIT_FAILED in outcomes else EXIT_MIRRORED
 
 
