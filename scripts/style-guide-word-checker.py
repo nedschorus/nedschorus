@@ -1,15 +1,19 @@
 #!/usr/bin/env python3
 """Find candidate style-guide violations in Markdown; the writer decides which uses need revision.
 
+The word list is the "Words to avoid" table of docs/nedschorus-wiki/nedschorus-style-guide.md,
+read at import, so the page agents read and the list this checker flags cannot differ.
+
 Inflections are explicit because generated forms also match unrelated words.
 Keep Python 3.9 compatibility for the Mac's /usr/bin/python3."""
 
 import re
+from pathlib import Path
 from typing import AbstractSet, Dict, List, NamedTuple, Optional, Pattern, Tuple
 
 APPLIES_TO_FILES = "files"
-APPLIES_TO_AGENT_MESSAGES = "agent messages"
-APPLIES_TO_USER_MESSAGES = "user messages"
+APPLIES_TO_AGENT_MESSAGES = "messages to other agents"
+APPLIES_TO_USER_MESSAGES = "messages to the user"
 APPLIES_TO_VALUES = (APPLIES_TO_FILES, APPLIES_TO_AGENT_MESSAGES, APPLIES_TO_USER_MESSAGES)
 
 APPLIES_TO_EVERY_PLACE = APPLIES_TO_VALUES
@@ -24,94 +28,72 @@ class StyleGuideWordListEntry(NamedTuple):
     applies_to: Tuple[str, ...]
 
 
-PRONOUN_NAMES_TO_CHOOSE_FROM = (
-    "write the noun the pronoun stands for, unless the noun is in the same sentence "
-    "and no other noun there could be meant")
+STYLE_GUIDE_PAGE_PATH = (Path(__file__).resolve().parent.parent
+                         / "docs" / "nedschorus-wiki" / "nedschorus-style-guide.md")
+WORDS_TO_AVOID_HEADING = "## Words to avoid"
+WORDS_TO_AVOID_COLUMNS = ("Word", "Forms flagged", "Forms not flagged", "Write instead",
+                          "Applies to")
+CODE_SPAN_CONTENT_PATTERN = re.compile(r"`([^`]+)`")
 
-STYLE_GUIDE_WORD_LIST = (
-    StyleGuideWordListEntry(
-        word="land",
-        inflected_forms=("land", "lands", "landed", "landing"),
-        exempt_forms=(),
-        names_to_choose_from=(
-            'write "merge", "merges", "merged" or "merging", matching the form written'),
-        applies_to=APPLIES_TO_EVERY_PLACE),
-    StyleGuideWordListEntry(
-        word="home",
-        inflected_forms=("home", "homes"),
-        exempt_forms=("agent-home", "/home/"),
-        names_to_choose_from=(
-            "agent-home for the directory an agent-seat works in; canonical location "
-            "for the one place a document or fact is kept"),
-        applies_to=APPLIES_TO_EVERY_PLACE),
-    StyleGuideWordListEntry(
-        word="draft",
-        inflected_forms=("draft", "drafts"),
-        exempt_forms=("-draft", "docs/drafts/"),
-        names_to_choose_from=(
-            '-draft for the filename suffix; "pending approval" for text that waits for '
-            "the user's approval; \"the `draft` label\" for the GitHub label; "
-            "`docs/drafts/` for the directory"),
-        applies_to=APPLIES_TO_EVERY_PLACE),
-    StyleGuideWordListEntry(
-        word="walk",
-        inflected_forms=("walk", "walks", "walked", "walking"),
-        exempt_forms=("approval-walk", "approved-by-walk", "walk-document", "walk-minutes",
-                      "/walk-me-through", "docs/walk/"),
-        names_to_choose_from=(
-            "approval-walk for the event; walk-document for the file "
-            "`docs/walk/<name>.md`; approved-by-walk for the result; \"put to the user "
-            'in an approval-walk" for the act'),
-        applies_to=APPLIES_TO_EVERY_PLACE),
-    StyleGuideWordListEntry(
-        word="seat",
-        inflected_forms=("seat", "seats", "seated"),
-        exempt_forms=("agent-seat", "seat-branch", "seat-brief", "reincarnate-seat",
-                      "retire-seat"),
-        names_to_choose_from=(
-            "agent-seat for the identity; agent-session for one running conversation; "
-            "\"the agent-seat's name\" for the name of an agent-seat; working directory "
-            "for where an agent-session works; cold-read-cell for one reviewer in a "
-            "cold-read-full-run"),
-        applies_to=APPLIES_TO_EVERY_PLACE),
-    StyleGuideWordListEntry(
-        word="head",
-        inflected_forms=("head", "heads"),
-        exempt_forms=("head commit", "frozen-head", "HEAD"),
-        names_to_choose_from=(
-            "head commit for a pull request's newest commit; frozen-head for a head "
-            "commit once pushed; `HEAD`, in capitals, for what a Git checkout has "
-            "checked out"),
-        applies_to=APPLIES_TO_EVERY_PLACE),
-    StyleGuideWordListEntry(
-        word="drain",
-        inflected_forms=("drain", "drains", "drained", "draining"),
-        exempt_forms=("queue-drain",),
-        names_to_choose_from=(
-            'queue-drain for the procedure that empties a queue; "is promoted to" for '
-            "an item that leaves a queue for its destination"),
-        applies_to=APPLIES_TO_EVERY_PLACE),
-    StyleGuideWordListEntry(
-        word="it", inflected_forms=("it",), exempt_forms=(),
-        names_to_choose_from=PRONOUN_NAMES_TO_CHOOSE_FROM,
-        applies_to=APPLIES_TO_MESSAGES_ONLY),
-    StyleGuideWordListEntry(
-        word="its", inflected_forms=("its",), exempt_forms=(),
-        names_to_choose_from=PRONOUN_NAMES_TO_CHOOSE_FROM,
-        applies_to=APPLIES_TO_MESSAGES_ONLY),
-    StyleGuideWordListEntry(
-        word="they", inflected_forms=("they",), exempt_forms=(),
-        names_to_choose_from=PRONOUN_NAMES_TO_CHOOSE_FROM,
-        applies_to=APPLIES_TO_MESSAGES_ONLY),
-    StyleGuideWordListEntry(
-        word="this", inflected_forms=("this",), exempt_forms=(),
-        names_to_choose_from=PRONOUN_NAMES_TO_CHOOSE_FROM,
-        applies_to=APPLIES_TO_MESSAGES_ONLY),
-    StyleGuideWordListEntry(
-        word="that", inflected_forms=("that",), exempt_forms=(),
-        names_to_choose_from='where "that" is used as a pronoun, ' + PRONOUN_NAMES_TO_CHOOSE_FROM,
-        applies_to=APPLIES_TO_MESSAGES_ONLY),
-)
+
+class StyleGuidePageError(ValueError):
+    """The style guide page is missing its word table, or a row of it is malformed."""
+
+
+def _table_cells(line: str) -> List[str]:
+    return [cell.strip() for cell in line.strip().strip("|").split("|")]
+
+
+def _code_span_forms(cell: str, row: str) -> Tuple[str, ...]:
+    forms = tuple(CODE_SPAN_CONTENT_PATTERN.findall(cell))
+    if CODE_SPAN_CONTENT_PATTERN.sub("", cell).replace(",", "").strip():
+        raise StyleGuidePageError("a forms cell holds text outside code spans: " + row)
+    return forms
+
+
+def parse_words_to_avoid_table(page_text: str) -> Tuple[StyleGuideWordListEntry, ...]:
+    """Return the entries of the page's "Words to avoid" table, or raise StyleGuidePageError."""
+    lines = page_text.split("\n")
+    try:
+        heading_index = [line.rstrip() for line in lines].index(WORDS_TO_AVOID_HEADING)
+    except ValueError:
+        raise StyleGuidePageError("no line reads " + WORDS_TO_AVOID_HEADING)
+    table_lines = []
+    for line in lines[heading_index + 1:]:
+        if line.startswith("#"):
+            break
+        if line.lstrip().startswith("|"):
+            table_lines.append(line)
+        elif table_lines:
+            break
+    if len(table_lines) < 3 or tuple(_table_cells(table_lines[0])) != WORDS_TO_AVOID_COLUMNS:
+        raise StyleGuidePageError("the table under %s must have the columns %s"
+                                  % (WORDS_TO_AVOID_HEADING, ", ".join(WORDS_TO_AVOID_COLUMNS)))
+    entries = []
+    for row in table_lines[2:]:
+        cells = _table_cells(row)
+        if len(cells) != len(WORDS_TO_AVOID_COLUMNS):
+            raise StyleGuidePageError("a row does not have five cells: " + row)
+        word_cell, flagged, not_flagged, names, applies_to_cell = cells
+        word = word_cell.strip("`")
+        applies_to = tuple(place.strip() for place in applies_to_cell.split(","))
+        if not word or not names or not set(applies_to) <= set(APPLIES_TO_VALUES):
+            raise StyleGuidePageError("a row is missing its word or names, or names an "
+                                      "unknown place to check: " + row)
+        inflected_forms = _code_span_forms(flagged, row)
+        if word not in inflected_forms:
+            raise StyleGuidePageError("a row's word is not among its forms flagged: " + row)
+        entries.append(StyleGuideWordListEntry(
+            word=word, inflected_forms=inflected_forms,
+            exempt_forms=_code_span_forms(not_flagged, row),
+            names_to_choose_from=names, applies_to=applies_to))
+    return tuple(entries)
+
+
+# Raises on a missing page or a malformed table, so the hook, which loads this module
+# inside a try, prints nothing rather than checking against a partial list.
+STYLE_GUIDE_WORD_LIST = parse_words_to_avoid_table(
+    STYLE_GUIDE_PAGE_PATH.read_text(encoding="utf-8"))
 
 
 class StyleGuideWordHit(NamedTuple):
