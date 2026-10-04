@@ -559,6 +559,30 @@ with tempfile.TemporaryDirectory() as temporary:
           [backup.name for backup in saved])
     fresh_backup_directory()
 
+    # A directory under a backup's name makes unlink() raise on Linux and macOS alike.
+    for index in range(10):
+        (box_backups / f"crontab-before-write-20200101T0000{index:02d}.000000Z.txt").write_bytes(b"old\n")
+    undeletable = box_backups / "crontab-before-write-20190101T000000.000000Z.txt"
+    undeletable.mkdir()
+    stub = MachineStub(crontab=original)
+    exit_code, printed, errors = run_main(["--install"] + TWO_JOBS, NED_BOX, stub)
+    saved = backups_in(box_backups)
+    check("an old backup that cannot be deleted is warned about by name, and the write goes ahead",
+          exit_code == 0 and len(stub.crontab_writes) == 1
+          and saved[-1].read_bytes() == original
+          and f"WARNING: the old crontab backup {undeletable} could not be deleted: " in errors
+          and "Nothing needs doing now. Each later crontab write tries the delete again" in errors
+          and "FAILED" not in errors and "installed:" in printed
+          and f"crontab backup: {saved[-1]} holds the crontab" in printed,
+          (exit_code, printed, errors))
+    check("the other old backups past the newest ten are still deleted when one cannot be",
+          len([backup for backup in saved if backup != undeletable]) == 10
+          and "crontab-before-write-20200101T000000.000000Z.txt"
+              not in [backup.name for backup in saved],
+          [backup.name for backup in saved])
+    undeletable.rmdir()
+    fresh_backup_directory()
+
     if box_backups.is_dir():
         shutil.rmtree(box_backups)
     box_backups.parent.mkdir(parents=True, exist_ok=True)
