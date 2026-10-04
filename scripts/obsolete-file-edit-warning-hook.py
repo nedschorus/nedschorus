@@ -307,8 +307,11 @@ def git_operation_in_progress(freshness, git_directory: Path):
 
 
 def overlap_line(freshness, checkout: Path, repository_path: str):
-    """Whether main's changes to the file overlap this checkout's copy, or "" when
-    git cannot say.
+    """Whether main's changes to the file overlap this checkout's copy.
+
+    Returns MAIN_HAS_NO_FILE_LINE when main's tree was read and lists no file at the
+    path, MAIN_COPY_UNREADABLE_LINE with git's text when main's copy or tree cannot
+    be read, and "" when another git step (merge base, base copy, merge-file) fails.
 
     A two-way diff against main cannot answer this, because the agent's own edit is
     part of it; a three-way merge of the file, with the merge base as the common

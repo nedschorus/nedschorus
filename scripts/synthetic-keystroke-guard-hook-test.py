@@ -1051,6 +1051,18 @@ check("a nested-ssh target is denied without a check command that cannot check i
       and "Check the target with" not in reason and guard.NESTED_SSH_HOST not in reason
       and "CLAUDE_VERIFIED_DETACHED" not in reason, reason)
 
+reason = decide("ssh 10.0.0.5 'tmux send-keys -t s x'",
+                StubRunner(stderr="ssh: connect to host 10.0.0.5: Operation timed out",
+                           returncode=255))
+check("a one-hop target whose probe fails gets the check command, not the nested-ssh refusal",
+      reason is not None and "Check the target with" in reason
+      and "more than one ssh hop" not in reason, reason)
+one_hop_runner = StubRunner(stdout="0\n")
+reason = decide("ssh 10.0.0.5 'tmux send-keys -t s x'", one_hop_runner)
+check("a one-hop target is probed through ssh, and a detached session is allowed",
+      reason is None and one_hop_runner.calls and one_hop_runner.calls[0][0] == "ssh",
+      (reason, one_hop_runner.calls))
+
 completed = subprocess.run([sys.executable, str(HOOK_SCRIPT), "--is-target-detached"],
                            capture_output=True, text=True, check=False,
                            stdin=subprocess.DEVNULL, timeout=60)

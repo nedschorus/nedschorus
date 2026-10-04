@@ -629,6 +629,24 @@ with tempfile.TemporaryDirectory() as temporary_directory:
                                      "changes overlap your edit: stop and tell the user "
                                      "before you make the branch or commit.")
               and "no longer has" not in warning, warning)
+        check("detached: the unreadable-copy line carries git's own error text",
+              "(fatal: " in last_line and "git show exited" not in last_line, warning)
+
+    main_lib_tree = git(["rev-parse", "origin/main:lib"], detached).stdout.strip()
+    main_lib_tree_file = detached_git_dir / "objects" / main_lib_tree[:2] / main_lib_tree[2:]
+    check("fixture: main's lib tree is a loose object that can be hidden",
+          main_lib_tree_file.is_file(), str(main_lib_tree_file))
+    if main_lib_tree_file.is_file():
+        hidden_tree_file = main_lib_tree_file.with_name(main_lib_tree_file.name + ".hidden")
+        main_lib_tree_file.rename(hidden_tree_file)
+        try:
+            warning = detached_warning(shared_file)
+        finally:
+            hidden_tree_file.rename(main_lib_tree_file)
+        check("detached: main's tree that git cannot read is reported as unreadable, "
+              "not as a deleted file",
+              "git could not read lib/shared.py on origin/main (" in warning
+              and "no longer has" not in warning, warning)
 
     branch_state_failing_git_directory = tmp / "branch-state-failing-git"
     branch_state_failing_git_directory.mkdir()
