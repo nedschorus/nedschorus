@@ -1924,8 +1924,9 @@ with tempfile.TemporaryDirectory() as tmp:
           and ("    " + str(mac_session)) in transcripts.lines,
           "%s %s" % (transcripts.status, transcripts.lines))
     check("on the box: ... its recovery command reads the copy in place",
-          transcripts.recovery == ["grep -o '.\\{0,400\\}mac/only.md.\\{0,2000\\}' %s | head"
-                                   % shlex.quote(str(mac_session))],
+          transcripts.recovery == ["N=mac/only.md perl -ne %s %s | head"
+                                   % (shlex.quote(finder.TRANSCRIPT_CONTEXT_PERL_PROGRAM),
+                                      shlex.quote(str(mac_session)))],
           str(transcripts.recovery))
     check("on the box: ... the copy is grepped in place, and nothing goes over ssh",
           any(c.startswith("grep -rl") and c.endswith(str(copy)) for c in on_box.calls)
@@ -3099,6 +3100,104 @@ with tempfile.TemporaryDirectory() as tmp:
                           " listed; list every name with: %s)" % command]
           and listed_by_command.returncode == 0 and len(listed_by_command.stdout.splitlines()) == 3,
           "%s -> exit %s\n%s" % (older_lines, listed_by_command.returncode, listed_by_command.stdout))
+
+# --------------------------------------------------------------------------
+# A searched name that starts with "-", or holds a quote or regex characters,
+# reaches every transcripts grep as text, and the printed recovery command
+# runs and matches it literally.
+# --------------------------------------------------------------------------
+
+DASH_NAME = "-notes.md"
+QUOTE_AND_REGEX_NAME = "ned's.v2[1].md"
+
+
+def run_recovery_command(command, path_entry=None):
+    environment = dict(os.environ)
+    if path_entry:
+        environment["PATH"] = "%s%s%s" % (path_entry, os.pathsep, environment["PATH"])
+    return subprocess.run(["sh", "-c", command], capture_output=True, text=True, env=environment, timeout=30)
+
+
+with tempfile.TemporaryDirectory() as tmp:
+    mac_dir = Path(tmp, "mac-transcripts", "p")
+    mac_dir.mkdir(parents=True)
+    session = Path(mac_dir, "session.jsonl")
+    # Each decoy is matched by the name read as a regex but not by the name read literally:
+    # "." matches any character and "[1]" matches "1".
+    session.write_text('{"text": "decoy ned\'sXv21Xmd and -notesXmd"}\n'
+                       '{"text": "wrote -notes.md here"}\n'
+                       '{"text": "and ned\'s.v2[1].md there"}\n')
+
+    for name in (DASH_NAME, QUOTE_AND_REGEX_NAME):
+        report = finder.search_transcripts(name, str(mac_dir.parent), "", finder.run_command)
+        check("transcripts: the name %r is searched as text on this machine, and FOUND" % name,
+              report.status == FOUND and ("    " + str(session)) in report.lines,
+              "%s %s" % (report.status, report.lines))
+        command = report.recovery[0] if report.recovery else ""
+        printed = run_recovery_command(command)
+        matched = printed.stdout.splitlines()
+        check("transcripts: the printed recovery command for %r runs and prints only the lines that hold the "
+              "name literally" % name,
+              printed.returncode == 0 and printed.stderr == "" and matched
+              and all(name in line for line in matched) and not any("decoy" in line for line in matched),
+              "%r -> exit %s\n%s%s" % (command, printed.returncode, printed.stdout, printed.stderr))
+
+    long_line_session = Path(mac_dir, "long-line-session.jsonl")
+    long_line_session.write_text('{"text": "%s -notes.md %s"}\n' % ("x" * 3000000, "y" * 3000000))
+    command = finder._transcript_context_print_command(DASH_NAME, str(long_line_session)) + " | head"
+    started = time.monotonic()
+    try:
+        printed = run_recovery_command(command)
+        timed_out = False
+    except subprocess.TimeoutExpired:
+        timed_out = True
+    elapsed = time.monotonic() - started
+    check("transcripts: the printed recovery command finishes on a transcript line 6 MB long and prints the "
+          "context window around the name",
+          not timed_out and elapsed < 20 and printed.returncode == 0
+          and [len(line) for line in printed.stdout.splitlines()] == [400 + len(DASH_NAME) + 2000],
+          "timed_out=%s elapsed=%.1fs" % (timed_out, elapsed))
+    long_line_session.unlink()
+
+    fake_bin = Path(tmp, "fake-bin")
+    fake_bin.mkdir()
+    fake_ssh = Path(fake_bin, "ssh")
+    # Runs the remote command here, the way the remote shell would.
+    fake_ssh.write_text('#!/bin/sh\nfor argument; do last=$argument; done\nexec sh -c "$last"\n')
+    fake_ssh.chmod(0o755)
+    for name in (DASH_NAME, QUOTE_AND_REGEX_NAME):
+        box_hit_table = FakeRunner([("ssh", (0, "%s\n" % session, ""))])
+        report = finder.search_transcripts(name, "/nonexistent-dir", "nedlern@ned-box", box_hit_table)
+        command = report.recovery[0] if report.recovery else ""
+        printed = run_recovery_command(command, path_entry=fake_bin)
+        matched = printed.stdout.splitlines()
+        check("transcripts: the printed ssh recovery command for %r survives both quoting layers and prints only "
+              "the lines that hold the name literally" % name,
+              command.startswith("ssh nedlern@ned-box ") and printed.returncode == 0 and printed.stderr == ""
+              and matched
+              and all(name in line for line in matched) and not any("decoy" in line for line in matched),
+              "%r -> exit %s\n%s%s" % (command, printed.returncode, printed.stdout, printed.stderr))
+
+    box_home = Path(tmp, "box-home")
+    box_projects = Path(box_home, ".claude", "projects", "p")
+    box_projects.mkdir(parents=True)
+    Path(box_projects, "box-session.jsonl").write_text('{"text": "the box wrote -notes.md"}\n')
+    box_runner = LocalShellRunner([], box_home)
+    report = finder.search_transcripts(DASH_NAME, "/nonexistent-dir", "nedlern@ned-box", box_runner)
+    check("transcripts: the box's grep script searches %r as text, and FINDS it" % DASH_NAME,
+          any(l.startswith("the box") and "1 session transcript(s) mention it" in l for l in report.lines),
+          str(report.lines))
+
+    store = Path(tmp, "store")
+    copy_session = Path(store, "transcripts", "mac", "projects", "-Users-el-x", "copy-session.jsonl")
+    copy_session.parent.mkdir(parents=True)
+    copy_session.write_text('{"text": "the Mac wrote -notes.md"}\n')
+    on_box = RunsBashAndGrepHere([], box_home)
+    reports = run_as_if_on(True, DASH_NAME, box_home, on_box, skip=ONLY_TRANSCRIPTS, log_store_root=str(store))
+    check("transcripts: on the box, the log-store copy of the Mac's transcripts is searched for %r as text, and "
+          "FOUND" % DASH_NAME,
+          "the Mac, from its log-store copy: 1 session transcript(s) mention it" in reports[0].lines,
+          str(reports[0].lines))
 
 print()
 if failures:

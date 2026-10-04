@@ -1060,7 +1060,7 @@ def search_transcripts(wanted, transcripts_dir, box_ssh_host, runner=run_command
         statuses.append(UNAVAILABLE)
     else:
         code, out, _ = runner(
-            ["grep", "-rl", "--include=*.jsonl", "-F", wanted, str(local_dir)],
+            ["grep", "-rl", "--include=*.jsonl", "-F", "-e", wanted, str(local_dir)],
             timeout=LONG_TIMEOUT_SECONDS,
         )
         hits = [h for h in out.splitlines() if h.strip()]
@@ -1070,7 +1070,7 @@ def search_transcripts(wanted, transcripts_dir, box_ssh_host, runner=run_command
                 lines.append("    " + hit)
             if len(hits) > 5:
                 lines.append("    ... and %d more" % (len(hits) - 5))
-            recovery.append("grep -o '.\\{0,400\\}%s.\\{0,2000\\}' %s | head" % (wanted, shlex.quote(hits[0])))
+            recovery.append(_transcript_context_print_command(wanted, hits[0]) + " | head")
             statuses.append(FOUND)
         elif code in (0, 1):
             lines.append("%s: searched %s, no transcript mentions it" % (here, local_dir))
@@ -1100,7 +1100,7 @@ def search_transcripts(wanted, transcripts_dir, box_ssh_host, runner=run_command
                 lines.append("    " + hit)
             if len(hits) > 5:
                 lines.append("    ... and %d more" % (len(hits) - 5))
-            recovery.append("ssh %s \"grep -o '.\\{0,400\\}%s.\\{0,2000\\}' %s\" | head" % (box_ssh_host, wanted, shlex.quote(hits[0])))
+            recovery.append("ssh %s %s | head" % (box_ssh_host, shlex.quote(_transcript_context_print_command(wanted, hits[0]))))
             statuses.append(FOUND)
         elif code == 1:
             lines.append("the box (%s): searched ~/.claude/projects, no transcript mentions it" % box_ssh_host)
@@ -1139,7 +1139,7 @@ def _search_mac_transcripts_copy(wanted, copy_dir, runner, lines, recovery):
 
     here = "the Mac, from its log-store copy"
     code, out, stderr = runner(
-        ["grep", "-rl", "--include=*.jsonl", "-F", wanted, str(copy_dir)],
+        ["grep", "-rl", "--include=*.jsonl", "-F", "-e", wanted, str(copy_dir)],
         timeout=LONG_TIMEOUT_SECONDS,
     )
     hits = [h for h in out.splitlines() if h.strip()]
@@ -1149,7 +1149,7 @@ def _search_mac_transcripts_copy(wanted, copy_dir, runner, lines, recovery):
             lines.append("    " + hit)
         if len(hits) > 5:
             lines.append("    ... and %d more" % (len(hits) - 5))
-        recovery.append("grep -o '.\\{0,400\\}%s.\\{0,2000\\}' %s | head" % (wanted, shlex.quote(hits[0])))
+        recovery.append(_transcript_context_print_command(wanted, hits[0]) + " | head")
         status = FOUND
     elif code in (0, 1):
         lines.append("%s: searched %s, no transcript mentions it" % (here, copy_dir))
@@ -1210,13 +1210,25 @@ def _age_in_words(seconds):
     return "%d days" % (seconds // 86400)
 
 
+# perl matches the name as text inside \Q...\E and looks for that text before trying the context, so a transcript
+# line megabytes long prints at once. macOS grep refuses a repetition count above 255, and grep -E with the context
+# split into smaller repeats runs for minutes on such a line.
+TRANSCRIPT_CONTEXT_PERL_PROGRAM = r'print "$1\n" while /(.{0,400}\Q$ENV{N}\E.{0,2000})/g'
+
+
+def _transcript_context_print_command(wanted, transcript_path):
+    """Return the command that prints the text around each occurrence of the searched name in one transcript."""
+    return "N=%s perl -ne %s %s" % (shlex.quote(wanted), shlex.quote(TRANSCRIPT_CONTEXT_PERL_PROGRAM),
+                                   shlex.quote(transcript_path))
+
+
 def _box_transcript_grep_script(wanted):
     """Return the box search script, preserving grep's exit status."""
     # Piping through head would replace grep failures with head's success.
     return "\n".join([
         'd="$HOME/.claude/projects"',
         'if [ ! -d "$d" ]; then echo "$d does not exist" >&2; exit %d; fi' % BOX_TRANSCRIPTS_DIR_MISSING,
-        "exec grep -rl --include='*.jsonl' -F %s \"$d\"" % shlex.quote(wanted),
+        "exec grep -rl --include='*.jsonl' -F -e %s \"$d\"" % shlex.quote(wanted),
     ])
 
 
