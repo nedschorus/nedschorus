@@ -977,11 +977,14 @@ EXPECTED_OVERVIEW_REFRESH_REMINDER_MARKS_UNREAD_TEMPLATE = (
     "user that the handoff-supervisor could not read the day's overview-refresh "
     "reminder marks, giving the location {marks_location} and the error above, "
     "and that an overview-refresh line in this prompt may therefore repeat a "
-    "refresh the user was already shown today. "
-    "When the error names `ssh nedlern@ned-box`, ned-box did not answer this "
-    "machine: also tell the user that `ssh nedlern@ned-box true`, run on the "
-    "Mac, shows whether ned-box answers again, and that the next "
-    "agent-session's start reads the marks again."
+    "refresh the user was already shown today."
+)
+
+# Appended to that line only when ned-box gave no answer, word for word.
+EXPECTED_OVERVIEW_REFRESH_REMINDER_MARKS_NED_BOX_DID_NOT_ANSWER_SENTENCE = (
+    " Because ned-box did not answer this machine, also tell the user that "
+    "`ssh nedlern@ned-box true`, run on the Mac, shows whether ned-box answers "
+    "again, and that the next agent-session's start reads the marks again."
 )
 
 REMINDER_MARKS_UNREAD_LINE_OPENING = "overview check could not read the day's reminder marks in "
@@ -1633,7 +1636,8 @@ def run_overview_refresh_once_a_day_cases(workspace: Path):
     unreachable_line = EXPECTED_OVERVIEW_REFRESH_REMINDER_MARKS_UNREAD_TEMPLATE.format(
         marks_location=mark_citation(""),
         error="DailyMemoryReviewReadOrWriteFailed: ssh nedlern@ned-box exited 255: ssh: "
-              "connect to host ned-box port 22: No route to host")
+              "connect to host ned-box port 22: No route to host"
+    ) + EXPECTED_OVERVIEW_REFRESH_REMINDER_MARKS_NED_BOX_DID_NOT_ANSWER_SENTENCE
     check("when ned-box cannot be reached, every due line is given, the marked system's "
           "too, and after them one line saying what could not be read, with ssh's first "
           "line, for the successor to tell the user",
@@ -1650,7 +1654,10 @@ def run_overview_refresh_once_a_day_cases(workspace: Path):
           "line saying so, with the timeout",
           due[:2] == (gadget_line, widget_line) and len(due) == 3
           and due[2].startswith(REMINDER_MARKS_UNREAD_LINE_OPENING)
-          and "ssh nedlern@ned-box timed out after 1 s" in due[2], f"{due!r}\n{console}")
+          and "ssh nedlern@ned-box timed out after 1 s" in due[2]
+          and due[2].endswith(
+              EXPECTED_OVERVIEW_REFRESH_REMINDER_MARKS_NED_BOX_DID_NOT_ANSWER_SENTENCE),
+          f"{due!r}\n{console}")
 
     due, console, calls = due_at(an_hour_later, ssh_body="echo 'this is not json'")
     check("when the read's output does not parse, every due line is given and then the "
@@ -1658,6 +1665,41 @@ def run_overview_refresh_once_a_day_cases(workspace: Path):
           due[:2] == (gadget_line, widget_line) and len(due) == 3
           and due[2].startswith(REMINDER_MARKS_UNREAD_LINE_OPENING)
           and "does not parse" in due[2], f"{due!r}\n{console}")
+    # ned-box answered, so the line must not say it did not.
+    unparsable_line = EXPECTED_OVERVIEW_REFRESH_REMINDER_MARKS_UNREAD_TEMPLATE.format(
+        marks_location=mark_citation(""),
+        error="DailyMemoryReviewReadOrWriteFailed: ssh nedlern@ned-box answered with "
+              "output that does not parse: JSONDecodeError: Expecting value: line 1 "
+              "column 1 (char 0)")
+    check("when ned-box answers with output that does not parse, the line does not say "
+          "ned-box did not answer, nor give the check for whether ned-box answers",
+          due[2:] == (unparsable_line,), f"{due[2:]!r}\nexpected: {(unparsable_line,)!r}")
+
+    due, console, calls = due_at(
+        an_hour_later, ssh_body="echo 'python3: command not found' >&2\nexit 127")
+    check("when ssh reaches ned-box but the read there exits other than 255, the line "
+          "does not say ned-box did not answer",
+          len(due) == 3 and due[2].startswith(REMINDER_MARKS_UNREAD_LINE_OPENING)
+          and "exited 127" in due[2]
+          and "did not answer" not in due[2], f"{due!r}\n{console}")
+
+    # Any other exception carries no word on whether ned-box answered.
+    def read_that_raises_without_the_attribute(*_arguments, **_options):
+        raise RuntimeError("the marks read broke in this fixture")
+
+    if reminder_mark is not None:
+        unpatched_read = reminder_mark.read_daily_overview_refresh_reminder_marks
+        reminder_mark.read_daily_overview_refresh_reminder_marks = (
+            read_that_raises_without_the_attribute)
+        try:
+            due, console, calls = due_at(an_hour_later)
+        finally:
+            reminder_mark.read_daily_overview_refresh_reminder_marks = unpatched_read
+    check("when the marks read raises an exception that says nothing of ned-box "
+          "answering, the line does not say ned-box did not answer",
+          len(due) == 3 and due[2].startswith(REMINDER_MARKS_UNREAD_LINE_OPENING)
+          and "RuntimeError: the marks read broke in this fixture" in due[2]
+          and "did not answer" not in due[2], f"{due!r}\n{console}")
 
     # A mark for today that does not hold the time it was written is not a
     # mark: a file cut short as it was written, or one written by hand.
@@ -1970,6 +2012,13 @@ def run_overview_refresh_due_prompt_cases(workspace: Path):
           getattr(supervisor, "OVERVIEW_REFRESH_REMINDER_MARKS_UNREAD_TEMPLATE", None)
           == EXPECTED_OVERVIEW_REFRESH_REMINDER_MARKS_UNREAD_TEMPLATE,
           repr(getattr(supervisor, "OVERVIEW_REFRESH_REMINDER_MARKS_UNREAD_TEMPLATE", None)))
+    check("the sentence for ned-box giving no answer is word for word what was built",
+          getattr(supervisor,
+                  "OVERVIEW_REFRESH_REMINDER_MARKS_NED_BOX_DID_NOT_ANSWER_SENTENCE", None)
+          == EXPECTED_OVERVIEW_REFRESH_REMINDER_MARKS_NED_BOX_DID_NOT_ANSWER_SENTENCE,
+          repr(getattr(supervisor,
+                       "OVERVIEW_REFRESH_REMINDER_MARKS_NED_BOX_DID_NOT_ANSWER_SENTENCE",
+                       None)))
 
 
 # The memory-review-due instruction, word for word. A template: the mark

@@ -69,6 +69,12 @@ print(json.dumps({"store": store, "marks": marks}))
 class DailyMemoryReviewReadOrWriteFailed(Exception):
     """A store or mark operation failed; the message identifies the command and failure."""
 
+    def __init__(self, message: str, ned_box_did_not_answer: bool = False):
+        super().__init__(message)
+        # ssh exits 255 for its own failures, such as no connection; any other
+        # exit, or output that does not parse, came from ned-box, so ned-box answered.
+        self.ned_box_did_not_answer = ned_box_did_not_answer
+
 
 def this_machine_is_ned_box() -> bool:
     return socket.gethostname().split(".")[0] == NED_BOX_HOSTNAME
@@ -97,14 +103,16 @@ def run_on_ned_box_or_here(command: str, ssh_target, timeout: float, stdin_text=
         completed = subprocess.run(argv, capture_output=True, text=True, check=False,
                                    timeout=timeout, input=stdin_text)
     except subprocess.TimeoutExpired:
-        raise DailyMemoryReviewReadOrWriteFailed(f"{runner} timed out after {timeout} s")
+        raise DailyMemoryReviewReadOrWriteFailed(f"{runner} timed out after {timeout} s",
+                                                 ned_box_did_not_answer=bool(ssh_target))
     except OSError as error:
         raise DailyMemoryReviewReadOrWriteFailed(
             f"{runner} could not be started: {type(error).__name__}: {error}")
     if completed.returncode != 0:
         first_line = (completed.stderr.strip().splitlines() or ["no detail"])[0]
         raise DailyMemoryReviewReadOrWriteFailed(
-            f"{runner} exited {completed.returncode}: {first_line}")
+            f"{runner} exited {completed.returncode}: {first_line}",
+            ned_box_did_not_answer=bool(ssh_target) and completed.returncode == 255)
     return completed.stdout
 
 
