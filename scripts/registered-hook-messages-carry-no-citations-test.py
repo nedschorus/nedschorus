@@ -130,7 +130,8 @@ for relative_path in hook_paths:
         if (relative_path, name) in EXEMPTIONS:
             continue
         found = citations_in(text)
-        check(f"{relative_path} {name} cites nothing", found == [], found)
+        check(f"{relative_path} {name} carries no citation", found == [],
+              f"citations found: {found}")
 
 for relative_path, name in sorted(EXEMPTIONS):
     check(f"exemption {relative_path} {name} names a registered hook",

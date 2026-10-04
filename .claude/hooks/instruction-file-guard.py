@@ -178,10 +178,14 @@ def is_in_session_scratchpad(file_path: str, session_id) -> bool:
     directory the harness makes under its temporary root, named <session id>/scratchpad.
 
     A scratchpad is private to one session and loaded by nothing, so a draft there
-    instructs no agent. Every other path outside a checkout stays protected: the
-    user's own ~/.claude/CLAUDE.md and settings sit outside every checkout.
+    instructs no agent. A checkout made inside the scratchpad is not exempt: its files
+    reach main through an ordinary commit and push. Every other path outside a
+    checkout stays protected: the user's own ~/.claude/CLAUDE.md and settings sit
+    outside every checkout.
     """
     if not isinstance(session_id, str) or not session_id:
+        return False
+    if enclosing_repository_root(Path(file_path).parent) is not None:
         return False
     for candidate in (Path(file_path), Path(file_path).resolve()):
         parts = candidate.parts

@@ -96,6 +96,19 @@ UNVERIFIED_REASON = (
     "Otherwise, tell the user what you were trying to do."
 )
 
+NESTED_SSH_REASON = (
+    "Blocked: tmux target '{target}' is reached through more than one ssh hop, "
+    "and this guard cannot check through more than one hop that the session "
+    "has no attached client. Keystrokes sent into a session someone is typing "
+    "in interleave with that typing.\n"
+    "If the keystrokes carry a message for another agent-seat, send the message "
+    "with the SendMessage tool instead.\n"
+    "If one ssh hop from here reaches the machine that runs the session, send "
+    "the keystrokes through that one hop, so this guard can check the target.\n"
+    "{show_line}\n"
+    "Otherwise, tell the user what you were trying to do."
+)
+
 UNRESOLVED_TARGET_REASON = (
     "Blocked: tmux target '{target}' holds an unexpanded variable (a shell "
     "variable or command substitution) or an xargs or parallel replacement "
@@ -829,6 +842,8 @@ def analyze_simple_command(words, ssh_context, verified, guard):
             return UNRESOLVED_TARGET_REASON.format(target=target)
         attached, error = query_session_attached(target, server_flags,
                                                  ssh_context, guard)
+        if attached is None and ssh_context is not None and ssh_context[0] == NESTED_SSH_HOST:
+            return NESTED_SSH_REASON.format(target=target, show_line=show_the_user_line())
         if attached is None:
             return UNVERIFIED_REASON.format(
                 target=target, error=error,
@@ -919,6 +934,11 @@ def run_check_mode(arguments, runner=subprocess.run, clock=time.monotonic, out=s
     if attached > 0:
         print("attached", file=out)
         return CHECK_MODE_EXIT_ATTACHED
+    if error:
+        # query_session_attached reads a session no server knows as 0; only a counted 0 is detached.
+        print("could not verify: no tmux server reported the session's attached "
+              "clients, so the session may not exist (%s)" % error, file=out)
+        return CHECK_MODE_EXIT_COULD_NOT_VERIFY
     print("detached", file=out)
     return CHECK_MODE_EXIT_DETACHED
 

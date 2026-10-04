@@ -146,7 +146,8 @@ REBASE_ADVICE = (
     "note comes back at each turn's end until the branch is up to date.\n"
     "A push that conflicts with origin/main is refused by the pre-push check, which "
     "names the conflicting commit; if you cannot resolve that conflict, stop and tell "
-    "the user which files conflict."
+    "the user which files conflict: a conflict you cannot resolve changes the work "
+    "you are doing with him, so the last line of this note does not forbid telling him."
 )
 LEAVE_IT_ADVICE = (
     "This branch is pushed, so its review may be running. Do not rebase or "

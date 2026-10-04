@@ -1009,7 +1009,12 @@ check("check mode: a failed probe prints could not verify with the error and exi
       and "Operation timed out" in printed, (status, printed))
 status, printed = run_check(["seat-a"], StubRunner(stdout="\n"))
 check("check mode: an empty answer is not read as 0 attached clients",
-      status != 0 or printed == "detached", (status, printed))
+      status == 2 and printed.startswith("could not verify: "), (status, printed))
+status, printed = run_check(["seat-a"], ScriptedProbeRunner([
+    ("", "no server running on /tmp/tmux-501/default", 1),
+    ("", "error connecting to /tmp/tmux-501/seat-a", 1)]))
+check("check mode: no server knowing the session prints could not verify, not detached",
+      status == 2 and printed.startswith("could not verify: "), (status, printed))
 
 runner = ScriptedProbeRunner([("", "no server running on /tmp/tmux-501/default", 1),
                               ("1\n", "", 0)])
@@ -1040,8 +1045,15 @@ check("the check command the denial prints parses back to the same probe",
       (target, server_flags, ssh_context) == ("gatekeeper", ["-L", "gatekeeper"], ("ned", ("-p", "2222"))),
       (command, target, server_flags, ssh_context))
 
+reason = decide("ssh a \"ssh b 'tmux send-keys -t s x'\"", StubRunner(stdout="0\n"))
+check("a nested-ssh target is denied without a check command that cannot check it",
+      reason is not None and "more than one ssh hop" in reason
+      and "Check the target with" not in reason and guard.NESTED_SSH_HOST not in reason
+      and "CLAUDE_VERIFIED_DETACHED" not in reason, reason)
+
 completed = subprocess.run([sys.executable, str(HOOK_SCRIPT), "--is-target-detached"],
-                           capture_output=True, text=True, check=False)
+                           capture_output=True, text=True, check=False,
+                           stdin=subprocess.DEVNULL, timeout=60)
 check("check mode end to end: no target prints could not verify and exits 2",
       completed.returncode == 2 and completed.stdout.startswith("could not verify: "),
       (completed.returncode, completed.stdout, completed.stderr))

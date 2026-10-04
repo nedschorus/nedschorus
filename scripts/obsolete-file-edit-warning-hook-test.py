@@ -602,6 +602,34 @@ with tempfile.TemporaryDirectory() as temporary_directory:
           "A git operation is in progress (rebase-merge): finish it before anything else.",
           warning)
 
+    (detached_git_dir / "BISECT_LOG").write_text("git bisect start\n", encoding="utf-8")
+    try:
+        warning = detached_warning(shared_file)
+    finally:
+        (detached_git_dir / "BISECT_LOG").unlink()
+    check("detached mid-bisect: the ordinary detached facts, not finish-the-operation",
+          "in progress" not in warning and len(warning.split("\n")) > 2, warning)
+
+    main_blob = git(["rev-parse", "origin/main:lib/shared.py"], detached).stdout.strip()
+    main_blob_file = detached_git_dir / "objects" / main_blob[:2] / main_blob[2:]
+    check("fixture: main's copy of lib/shared.py is a loose object that can be hidden",
+          main_blob_file.is_file(), str(main_blob_file))
+    if main_blob_file.is_file():
+        hidden_blob_file = main_blob_file.with_name(main_blob_file.name + ".hidden")
+        main_blob_file.rename(hidden_blob_file)
+        try:
+            warning = detached_warning(shared_file)
+        finally:
+            hidden_blob_file.rename(main_blob_file)
+        last_line = warning.split("\n")[-1]
+        check("detached: main's copy that git cannot read is reported with git's text, "
+              "not as a deleted file",
+              last_line.startswith("git could not read lib/shared.py on origin/main (")
+              and last_line.endswith("), so this warning cannot say whether main's "
+                                     "changes overlap your edit: stop and tell the user "
+                                     "before you make the branch or commit.")
+              and "no longer has" not in warning, warning)
+
     branch_state_failing_git_directory = tmp / "branch-state-failing-git"
     branch_state_failing_git_directory.mkdir()
     (branch_state_failing_git_directory / "git").write_text(

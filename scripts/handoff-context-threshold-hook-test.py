@@ -676,6 +676,11 @@ with tempfile.TemporaryDirectory() as workspace:
         check("hook gives the context share that reached the threshold",
               result.stderr.strip().startswith("This session has used ")
               and "% of its context window" in result.stderr, result.stderr[:160])
+        loud_share = hook.context_used_percentage_from_transcript(str(loud))
+        check("the share it gives is the share the transcript reached",
+              loud_share is not None and result.stderr.strip().startswith(
+                  f"This session has used {loud_share:.0f}% of its context window"),
+              (loud_share, result.stderr[:160]))
 
         result = run_hook({"session_id": PROBE_SESSION_ID, "transcript_path": str(loud)})
         check("hook fires only once per session", result.returncode == 0, f"code {result.returncode}")

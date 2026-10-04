@@ -157,6 +157,11 @@ MAIN_HAS_NO_FILE_LINE = (
     "main no longer has a file at {path}: find out whether main moved or deleted it "
     "(git log origin/main -- {path}) before you commit."
 )
+MAIN_COPY_UNREADABLE_LINE = (
+    "git could not read {path} on origin/main ({text}), so this warning cannot say "
+    "whether main's changes overlap your edit: stop and tell the user before you "
+    "make the branch or commit."
+)
 BRANCH_STATE_UNKNOWN_LINE = (
     "git could not report this checkout's branch state ({text}): stop and tell the "
     "user before you commit."
@@ -290,9 +295,13 @@ def commits_on_main_touching(freshness, checkout: Path, repository_path: str):
 
 
 def git_operation_in_progress(freshness, git_directory: Path):
-    """The marker of a rebase, merge, cherry-pick or revert under way, or None."""
+    """The marker of a rebase, merge, cherry-pick or revert under way, or None.
+
+    A bisect is not one of them: the agent is meant to test and edit at the commit
+    under test, so the ordinary detached-HEAD facts apply.
+    """
     for marker in freshness.GIT_IN_PROGRESS_MARKERS:
-        if (git_directory / marker).exists():
+        if marker != "BISECT_LOG" and (git_directory / marker).exists():
             return marker
     return None
 
@@ -313,12 +322,16 @@ def overlap_line(freshness, checkout: Path, repository_path: str):
     main_copy = freshness.run_git(["show", f"origin/main:{repository_path}"], checkout,
                                   timeout=REV_PARSE_TIMEOUT_SECONDS)
     if main_copy.returncode != 0:
-        exists_on_main = freshness.run_git(
-            ["cat-file", "-e", f"origin/main:{repository_path}"], checkout,
+        # git show exits 128 both for a path main lacks and for an object it cannot
+        # read; only a tree that was read and lists nothing proves the file is gone.
+        main_listing = freshness.run_git(
+            ["ls-tree", "origin/main", "--", repository_path], checkout,
             timeout=REV_PARSE_TIMEOUT_SECONDS)
-        if exists_on_main.returncode == 1 or exists_on_main.returncode == 128:
+        if main_listing.returncode == 0 and not main_listing.stdout.strip():
             return MAIN_HAS_NO_FILE_LINE.format(path=repository_path)
-        return ""
+        text = ((main_copy.stderr or "").strip()
+                or "git show exited %d" % main_copy.returncode)
+        return MAIN_COPY_UNREADABLE_LINE.format(path=repository_path, text=text)
     base_copy = freshness.run_git(
         ["show", f"{merge_base.stdout.strip()}:{repository_path}"], checkout,
         timeout=REV_PARSE_TIMEOUT_SECONDS)

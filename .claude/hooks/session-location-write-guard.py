@@ -166,7 +166,9 @@ def git_operation_in_progress(checkout: Path) -> bool:
 
     Each leaves HEAD detached until it finishes, and the write is the one that
     resolves it, so refusing it would leave the operation stuck. The markers are
-    the freshness hook's list, so the two hooks cannot disagree about them.
+    the freshness hook's list, so the two hooks cannot disagree about them, less
+    BISECT_LOG: a bisect also detaches HEAD, but no write resolves it, and a commit
+    made at the commit under test is on no branch.
     """
     git_directory = run_git(["rev-parse", "--absolute-git-dir"], checkout)
     if git_directory.returncode != 0 or not git_directory.stdout.strip():
@@ -179,7 +181,8 @@ def git_operation_in_progress(checkout: Path) -> bool:
             "checkout_freshness_catch_up", freshness_path)
         freshness = importlib.util.module_from_spec(specification)
         specification.loader.exec_module(freshness)
-        markers = freshness.GIT_IN_PROGRESS_MARKERS
+        markers = [marker for marker in freshness.GIT_IN_PROGRESS_MARKERS
+                   if marker != "BISECT_LOG"]
     except Exception:
         return False
     return any((Path(git_directory.stdout.strip()) / marker).exists() for marker in markers)

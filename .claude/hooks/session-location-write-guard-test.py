@@ -326,6 +326,12 @@ with tempfile.TemporaryDirectory() as temporary_directory:
             marker_path.rmdir()
         else:
             marker_path.unlink()
+    # A bisect also detaches HEAD, but no write resolves it.
+    (detached_git_dir / "BISECT_LOG").write_text("git bisect start\n", encoding="utf-8")
+    result = run_hook(detached, str(detached / "fix.py"), decoy)
+    (detached_git_dir / "BISECT_LOG").unlink()
+    check("a detached checkout mid-bisect is still refused",
+          result.returncode == 2, str(result.returncode))
     result = run_hook(detached, str(detached / "conflicted.txt"), decoy)
     check("once the operation is finished, the detached refusal is back",
           result.returncode == 2, str(result.returncode))

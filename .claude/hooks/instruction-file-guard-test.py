@@ -11,12 +11,24 @@ marker: any case that passes proves it passed without that variable, and the
 decoy marker surviving every run is the forked-session regression assertion.
 """
 
+import importlib.util
 import json
 import os
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
+
+# Before anything runs git: a run started with GIT_DIR set, or with another
+# variable that redirects git, must still build this suite's scratch
+# repositories where the suite says, not in the repository the variable names.
+_git_environment_fixture_spec = importlib.util.spec_from_file_location(
+    "git_redirecting_environment_removal_test_fixture",
+    Path(__file__).resolve().parents[2] / "scripts"
+    / "git-redirecting-environment-removal-test-fixture.py")
+_git_environment_fixture = importlib.util.module_from_spec(_git_environment_fixture_spec)
+_git_environment_fixture_spec.loader.exec_module(_git_environment_fixture)
+_git_environment_fixture.remove_git_redirecting_environment_variables_from_this_process()
 
 SCRIPT_PATH = Path(__file__).with_name("instruction-file-guard.py")
 
@@ -426,6 +438,18 @@ with tempfile.TemporaryDirectory() as temporary_directory:
                                   session_id)
     check("a probe .claude/settings.json in the session's own scratchpad passes",
           result.returncode == 0, result.stderr)
+    checkout_in_scratchpad = scratchpad / "wt" / "a-checkout"
+    checkout_in_scratchpad.mkdir(parents=True)
+    subprocess.run(["git", "init", "-q", str(checkout_in_scratchpad)], check=True)
+    for relative in (".claude/hooks/a-guard.py", "CLAUDE.md",
+                     "docs/agents/a-seat-instructions.md"):
+        payload = json.dumps({"cwd": str(checkout_in_scratchpad), "session_id": session_id,
+                              "tool_input": {"file_path": str(checkout_in_scratchpad / relative)}})
+        result = subprocess.run(
+            [sys.executable, str(SCRIPT_PATH)], input=payload, capture_output=True,
+            text=True, check=False, env=dict(os.environ, CLAUDE_PROJECT_DIR=str(decoy)))
+        check(f"{relative} in a checkout inside the session's scratchpad is still refused",
+              result.returncode == 2, str(result.returncode))
     result = run_hook_for_session(str(scratchpad / "CLAUDE.local.md"), "another-session")
     check("another session's scratchpad is not this session's: still refused",
           result.returncode == 2, str(result.returncode))
