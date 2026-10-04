@@ -4,15 +4,15 @@ inherits.
 
 The handoff file and the supervisor's state file as the supervisor reads
 them; the initial agent instructions it composes, with the branch-sync,
-overview-refresh and memory-review lines they carry; the dialog retention and
-task pre-seed a reincarnation carries over; and the prompts of a boot
+overview-refresh and memory-review lines they carry; the dialog retention across
+reincarnations; and the prompts of a boot
 ignition and of a first launch. The supervisor's other cases are in
 handoff-supervisor-session-launch-and-seat-lock-test.py and
 handoff-supervisor-session-end-and-resume-test.py, beside this file.
 
 Run: python3 nc-systems/handoff/tests/handoff-supervisor-successor-prompt-test.py
-Add --canary to also run the two live task-preseed canaries, which launch
-real headless sessions. Pre-seed rides undocumented harness state; an
+Add --canary to also run the two live pinned-task-list canaries, which launch
+real headless sessions. Task-list pinning rides undocumented harness state; an
 upgrade breaking it shows up as a successor finding its predecessor's tasks
 missing (the queues are the backstop), and these two cases are the
 diagnosis to run when that fires.
@@ -769,80 +769,6 @@ def run_launch_and_retention_cases(workspace: Path, recent: str):
     check("queue status names the oldest item", "2026-07-28-older-note.md" in line, line)
     check("queue status reports an empty queue", "docs/nedschorus-wiki/queue: empty" in line, line)
 
-    # --- Task pre-seed (file mechanics, no session) -----------------------
-    # CLAUDE_CODE_TASK_LIST_ID is removed for the un-pinned cases and set
-    # explicitly for the pinned ones, never inherited: after nedschorus#141
-    # every wrapper-launched seat has it set, so a suite that read the
-    # ambient value would take a different path depending on who ran it.
-    original_tasks_root = supervisor.TASKS_ROOT
-    original_pin = os.environ.get("CLAUDE_CODE_TASK_LIST_ID")
-
-    def task_record_count(list_id: str) -> int:
-        directory = supervisor.TASKS_ROOT / list_id
-        return len(list(directory.glob("*.json"))) if directory.is_dir() else 0
-
-    try:
-        os.environ.pop("CLAUDE_CODE_TASK_LIST_ID", None)
-        supervisor.TASKS_ROOT = workspace / "tasks"
-        retiring, successor = "old-session", "new-session"
-        (supervisor.TASKS_ROOT / retiring).mkdir(parents=True)
-        for task_id in (1, 2):
-            (supervisor.TASKS_ROOT / retiring / f"{task_id}.json").write_text(
-                json.dumps({"id": task_id, "status": "pending"}), encoding="utf-8"
-            )
-        check("unpinned: no pinned list id is reported",
-              supervisor.pinned_task_list_id() == "",
-              supervisor.pinned_task_list_id())
-        copied = supervisor.preseed_tasks(retiring, successor)
-        check("pre-seed copies every task record", copied == 2, f"copied {copied}")
-        check("pre-seed puts the records where the successor will read them",
-              task_record_count(successor) == 2, task_record_count(successor))
-        check("pre-seed leaves the source intact", task_record_count(retiring) == 2)
-        check("pre-seed of a taskless session copies nothing", supervisor.preseed_tasks("never-existed", "x") == 0)
-
-        # --- Reincarnation under a PINNED list (nedschorus#141) -----------
-        # The seat's generations share one launcher-pinned store, so a
-        # reincarnation copies nothing and the seat's records survive untouched.
-        # (The ignition count-check this block once guarded — "Confirm 0
-        # task(s) are visible to you" over a list holding N — was cut with
-        # the task-count line, user-ruled 2026-08-30.) Shaped like a real
-        # reincarnation: tasks already in the seat's store, a fresh successor id,
-        # nothing copied.
-        pinned_id = "handoff-supervisor-test-pin-tasks"
-        os.environ["CLAUDE_CODE_TASK_LIST_ID"] = pinned_id
-        pinned_store = supervisor.TASKS_ROOT / pinned_id
-        pinned_store.mkdir(parents=True)
-        for task_id in (1, 2, 3):
-            (pinned_store / f"{task_id}.json").write_text(
-                json.dumps({"id": str(task_id), "subject": f"pinned task {task_id}",
-                            "status": "pending", "blocks": [], "blockedBy": []}),
-                encoding="utf-8")
-        pinned_successor = "successor-session-that-names-no-store"
-        check("pinned: the list id is read from the environment",
-              supervisor.pinned_task_list_id() == pinned_id,
-              supervisor.pinned_task_list_id())
-        check("pinned: nothing is pre-seeded — one store, both generations",
-              supervisor.preseed_tasks(retiring, pinned_successor) == 0)
-        check("pinned: no directory is created for the successor's session id",
-              not (supervisor.TASKS_ROOT / pinned_successor).exists(),
-              str(supervisor.TASKS_ROOT / pinned_successor))
-        check("pinned: the seat's own records are left untouched",
-              sorted(p.name for p in pinned_store.glob("*.json"))
-              == ["1.json", "2.json", "3.json"],
-              sorted(p.name for p in pinned_store.glob("*.json")))
-        # The un-pinned store this block started with must not have been
-        # disturbed by any of the above.
-        os.environ.pop("CLAUDE_CODE_TASK_LIST_ID", None)
-        check("pinned cases left the un-pinned fixture alone",
-              task_record_count(retiring) == 2,
-              task_record_count(retiring))
-    finally:
-        supervisor.TASKS_ROOT = original_tasks_root
-        if original_pin is None:
-            os.environ.pop("CLAUDE_CODE_TASK_LIST_ID", None)
-        else:
-            os.environ["CLAUDE_CODE_TASK_LIST_ID"] = original_pin
-
 
 def run_preseed_canaries() -> None:
     """Live canaries: does a fresh session read the seat's pinned task list?
@@ -864,7 +790,7 @@ def run_preseed_canaries() -> None:
     """
     session_id = str(uuid.uuid4())
     pinned_list_id = f"handoff-supervisor-canary-{uuid.uuid4().hex[:8]}-tasks"
-    task_directory = supervisor.TASKS_ROOT / pinned_list_id
+    task_directory = Path.home() / ".claude" / "tasks" / pinned_list_id
     task_directory.mkdir(parents=True, exist_ok=True)
     # The record shape is the harness's own, read from live task stores: the
     # id is a STRING, and blocks/blockedBy are present. A record with an
@@ -2333,7 +2259,7 @@ def run_memory_review_due_prompt_cases(workspace: Path):
             launch_agent_session=launch_recording,
             sync_working_branch_with_main=lambda working_directory: branch_sync_report,
             overview_refresh_due_lines=lambda working_directory: (overview_line,),
-            memory_review_due_lines=at_noon, TASKS_ROOT=root / "tasks",
+            memory_review_due_lines=at_noon,
             stdin_isatty=False), contextlib.redirect_stdout(console):
         supervisor.supervise_sessions(settings)
     check("MEMORY REVIEW: an ignited successor's prompt carries the line after the "
@@ -2570,25 +2496,16 @@ def run_recycle_prompt_composition_cases(workspace: Path, recent: str):
     handoff_fields = supervisor.parse_handoff_file(settings.handoff_path)
 
     original_extract_dialog = supervisor.extract_dialog
-    original_tasks_root = supervisor.TASKS_ROOT
-    original_pin = os.environ.get("CLAUDE_CODE_TASK_LIST_ID")
     console = io.StringIO()
     try:
         supervisor.extract_dialog = (
             lambda session_id, working_directory, output_path:
             output_path.write_text("the extracted dialog\n", encoding="utf-8") > 0)
-        supervisor.TASKS_ROOT = home / "tasks"
-        os.environ.pop("CLAUDE_CODE_TASK_LIST_ID", None)
         with contextlib.redirect_stdout(console):
             successor_id, plan = supervisor.carry_over_to_successor(
                 settings, "0000-retiring-session", handoff_fields, generation=3)
     finally:
         supervisor.extract_dialog = original_extract_dialog
-        supervisor.TASKS_ROOT = original_tasks_root
-        if original_pin is None:
-            os.environ.pop("CLAUDE_CODE_TASK_LIST_ID", None)
-        else:
-            os.environ["CLAUDE_CODE_TASK_LIST_ID"] = original_pin
 
     printed = console.getvalue()
     check("a reincarnation still prints the queue status to its own console",
@@ -2635,38 +2552,22 @@ def run_retiring_session_id_from_the_handoff_cases(workspace: Path, recent: str)
     Both callers pass the id from the supervisor's state file, which names the
     session this supervisor launched; the handoff's own written-by-session
     names the session that wrote it. The divergent case below FAILS against
-    code that trusts the state file: it extracts, pre-seeds and cites the
+    code that trusts the state file: it extracts and cites the
     launched session instead of the writer. The two fallback cases — field
     absent (an older handoff) and field "unknown" (a session with no
     CLAUDE_CODE_SESSION_ID) — pass either way; they are here so the
     preference cannot be turned into a requirement.
-
-    The task store is keyed by session id only when the launchers' pin is
-    absent, so the pin is popped for the duration: with it set, preseed_tasks
-    returns 0 without reading any store and the task assertions would prove
-    nothing.
     """
     home = workspace / "retiring-session-id-from-the-handoff"
-    tasks_root = home / "tasks"
 
     def carry_over(case_name: str, written_by_session_line: str,
-                   tracked_session_id: str, handoff_session_id: str):
-        """One carry_over_to_successor run, with the extractor recording its id.
-
-        Seeds a task record under BOTH candidate session ids, with the id in
-        the record, so the copy that reaches the successor names the store it
-        came from rather than merely existing.
-        """
+                   tracked_session_id: str):
+        """One carry_over_to_successor run, with the extractor recording its id."""
         case_home = home / case_name
         handoff_directory = case_home / "handoffs"
         handoff_directory.mkdir(parents=True)
         working_directory = case_home / "seat"
         working_directory.mkdir(parents=True)
-        for store_session_id in (tracked_session_id, handoff_session_id):
-            store = tasks_root / store_session_id
-            store.mkdir(parents=True, exist_ok=True)
-            (store / "1.json").write_text(
-                json.dumps({"task": f"a task of {store_session_id}"}), encoding="utf-8")
         settings = supervisor.SupervisorSettings(
             agent="carrier", working_directory=working_directory,
             handoff_directory=handoff_directory, agent_command="true", first_prompt="")
@@ -2686,32 +2587,20 @@ def run_retiring_session_id_from_the_handoff_cases(workspace: Path, recent: str)
             return True
 
         original_extract_dialog = supervisor.extract_dialog
-        original_tasks_root = supervisor.TASKS_ROOT
-        original_pin = os.environ.get("CLAUDE_CODE_TASK_LIST_ID")
         console = io.StringIO()
         try:
             supervisor.extract_dialog = recording_extract_dialog
-            supervisor.TASKS_ROOT = tasks_root
-            os.environ.pop("CLAUDE_CODE_TASK_LIST_ID", None)
             with contextlib.redirect_stdout(console):
                 successor_id, plan = supervisor.carry_over_to_successor(
                     settings, tracked_session_id, handoff_fields, generation=5)
         finally:
             supervisor.extract_dialog = original_extract_dialog
-            supervisor.TASKS_ROOT = original_tasks_root
-            if original_pin is None:
-                os.environ.pop("CLAUDE_CODE_TASK_LIST_ID", None)
-            else:
-                os.environ["CLAUDE_CODE_TASK_LIST_ID"] = original_pin
 
-        carried_task = tasks_root / successor_id / "1.json"
         return SimpleNamespace(
             extracted_from=extracted_from,
             successor_id=successor_id,
             plan=plan,
             printed=console.getvalue(),
-            carried_task=(carried_task.read_text(encoding="utf-8")
-                          if carried_task.is_file() else ""),
             predecessor_session_directory_for=lambda session_id: (
                 supervisor.project_directory_for_working_directory(working_directory)
                 / session_id),
@@ -2720,7 +2609,7 @@ def run_retiring_session_id_from_the_handoff_cases(workspace: Path, recent: str)
     # --- The handoff's writer is not the session the supervisor launched ---
     launched = "ac2b8ebe-the-session-the-supervisor-launched"
     writer = "145a31fd-the-session-that-wrote-the-handoff"
-    diverged = carry_over("diverged", f"written-by-session: {writer}\n", launched, writer)
+    diverged = carry_over("diverged", f"written-by-session: {writer}\n", launched)
     check("the dialog is extracted from the session that wrote the handoff",
           diverged.extracted_from == [writer], str(diverged.extracted_from))
     check("the plan names the writing session's directory, not the launched one's",
@@ -2728,13 +2617,11 @@ def run_retiring_session_id_from_the_handoff_cases(workspace: Path, recent: str)
           and diverged.plan.predecessor_session_directory
           == diverged.predecessor_session_directory_for(writer),
           str(diverged.plan and diverged.plan.predecessor_session_directory))
-    check("the successor is pre-seeded from the writing session's task store",
-          writer in diverged.carried_task, diverged.carried_task)
     check("the console names both ids when the handoff's writer is not the tracked session",
           writer in diverged.printed and launched in diverged.printed, diverged.printed)
 
     # --- Fallbacks: nothing to prefer, so the tracked id stands -----------
-    absent = carry_over("absent", "", "0000-tracked-with-no-field", "0000-unused-by-this-case")
+    absent = carry_over("absent", "", "0000-tracked-with-no-field")
     check("a handoff without the field falls back to the tracked session",
           absent.extracted_from == ["0000-tracked-with-no-field"], str(absent.extracted_from))
     check("the fallback plan names the tracked session's directory",
@@ -2742,11 +2629,9 @@ def run_retiring_session_id_from_the_handoff_cases(workspace: Path, recent: str)
           and absent.plan.predecessor_session_directory
           == absent.predecessor_session_directory_for("0000-tracked-with-no-field"),
           str(absent.plan and absent.plan.predecessor_session_directory))
-    check("the fallback pre-seeds from the tracked session's task store",
-          "0000-tracked-with-no-field" in absent.carried_task, absent.carried_task)
 
     unknown = carry_over("unknown", "written-by-session: unknown\n",
-                         "0000-tracked-under-unknown", "0000-also-unused")
+                         "0000-tracked-under-unknown")
     check("a handoff whose writer is `unknown` falls back to the tracked session",
           unknown.extracted_from == ["0000-tracked-under-unknown"], str(unknown.extracted_from))
     check("the `unknown` fallback plan names the tracked session's directory",
@@ -2754,8 +2639,6 @@ def run_retiring_session_id_from_the_handoff_cases(workspace: Path, recent: str)
           and unknown.plan.predecessor_session_directory
           == unknown.predecessor_session_directory_for("0000-tracked-under-unknown"),
           str(unknown.plan and unknown.plan.predecessor_session_directory))
-    check("the `unknown` fallback pre-seeds from the tracked session's task store",
-          "0000-tracked-under-unknown" in unknown.carried_task, unknown.carried_task)
 
 
 with fixture.handoff_supervisor_suite_workspace() as workspace:
@@ -2805,9 +2688,9 @@ check("the appended-system-prompt default resolves under docs/agents",
 
 
 if "--canary" in sys.argv:
-    print("\n-- live pre-seed canaries (launching real sessions) --")
+    print("\n-- live pinned-task-list canaries (launching real sessions) --")
     run_preseed_canaries()
 else:
-    print("\n(skipped the live pre-seed canaries; pass --canary to run them)")
+    print("\n(skipped the live pinned-task-list canaries; pass --canary to run them)")
 
 fixture.print_summary_and_exit_nonzero_if_any_case_failed()

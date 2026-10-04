@@ -394,6 +394,9 @@ def supervisor_first_turn_for_a_by_hand_command(command, workspace):
     sup = recovery.supervisor
     original_launch = sup.launch_agent_session
     original_sync = sup.sync_working_branch_with_main
+    # Both launchers pin the seat's task list before the supervisor starts.
+    original_task_list = os.environ.get("CLAUDE_CODE_TASK_LIST_ID")
+    os.environ["CLAUDE_CODE_TASK_LIST_ID"] = f"nedschorus-{workspace.name}-tasks"
     try:
         sup.launch_agent_session = launch_probe
         sup.sync_working_branch_with_main = lambda directory: "sync skipped (probe)"
@@ -405,6 +408,10 @@ def supervisor_first_turn_for_a_by_hand_command(command, workspace):
     finally:
         sup.launch_agent_session = original_launch
         sup.sync_working_branch_with_main = original_sync
+        if original_task_list is None:
+            os.environ.pop("CLAUDE_CODE_TASK_LIST_ID", None)
+        else:
+            os.environ["CLAUDE_CODE_TASK_LIST_ID"] = original_task_list
     return launched[0] if launched else ("", None)
 
 
@@ -2461,7 +2468,8 @@ with tempfile.TemporaryDirectory() as temporary:
         [sys.executable, str(SUPERVISOR_SCRIPT),
          "--agent", "x", "--resume-session-id", "a", "--adopt-session-id", "b",
          "--adopt-process-id", "1"],
-        capture_output=True, text=True)
+        capture_output=True, text=True, timeout=60, stdin=real_subprocess.DEVNULL,
+        env={**os.environ, "CLAUDE_CODE_TASK_LIST_ID": "nedschorus-x-tasks"})
     check("supervisor refuses --resume-session-id together with adoption",
           completed.returncode != 0 and "different recoveries" in completed.stderr,
           completed.stderr)

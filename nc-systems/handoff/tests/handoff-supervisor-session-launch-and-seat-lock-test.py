@@ -56,6 +56,45 @@ sandboxed_update_lock_path = fixture.sandboxed_update_lock_path
 def run_adoption_cases(workspace: Path):
     """Adopting a running session is what lets a hand-started agent reincarnate:
     a supervisor normally owns only the process it launched itself."""
+    # A process that has already exited: if the startup check stopped firing,
+    # adopting it ends the supervisor at once instead of watching a live process.
+    exited = subprocess.Popen(["true"])  # pylint: disable=consider-using-with
+    exited.wait(timeout=10)
+    for value in (None, "", "   "):
+        environment = dict(os.environ)
+        environment.pop("CLAUDE_CODE_TASK_LIST_ID", None)
+        if value is not None:
+            environment["CLAUDE_CODE_TASK_LIST_ID"] = value
+        for arguments in ([], ["--resume-session-id", "retiring-session"],
+                          ["--adopt-session-id", "live-session",
+                           "--adopt-process-id", str(exited.pid)]):
+            result = subprocess.run(
+                [sys.executable, str(SCRIPT_PATH), "--agent", "unpinned",
+                 "--cd", str(workspace), "--handoff-dir", str(workspace / "unpinned"),
+                 "--agent-command", "true", "--agent-update-timeout-seconds", "0",
+                 *arguments],
+                env=environment, capture_output=True, text=True, check=False,
+                stdin=subprocess.DEVNULL, timeout=60,
+            )
+            check(f"unpinned startup is refused before watching: {value!r}, {arguments}",
+                  result.returncode == 2
+                  and "startup stopped" in result.stderr
+                  and "not started by a launcher that pins its task list" in result.stderr
+                  and "CLAUDE_CODE_TASK_LIST_ID is unset or empty" in result.stderr
+                  and "scripts/launch-claude-mac" in result.stderr
+                  and "scripts/launch-claude-ubuntu" in result.stderr
+                  and "start it on the Mac" in result.stderr
+                  and not (workspace / "unpinned").exists(), result.stderr)
+        result = subprocess.run(
+            [sys.executable, str(SCRIPT_PATH), "--check", "--agent", "unpinned",
+             "--handoff-dir", str(workspace / "unpinned")],
+            env=environment, capture_output=True, text=True, check=False,
+            stdin=subprocess.DEVNULL, timeout=60,
+        )
+        check(f"read-only check needs no task-list pin: {value!r}",
+              result.returncode == 1 and "startup stopped" not in result.stderr,
+              result.stderr)
+
     # Not a context manager: the point is a process this test does NOT own a
     # handle to in the supervisor, which is what adoption exists for.
     sleeper = subprocess.Popen(  # pylint: disable=consider-using-with
