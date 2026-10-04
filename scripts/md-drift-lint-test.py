@@ -199,6 +199,12 @@ with tempfile.TemporaryDirectory() as workspace:
     check("an angle-bracket link target with an extension and no directory is reported",
           findings == ["link target does not exist: absent-angle-sibling.png"],
           str(findings))
+    # The extension is read before the "#anchor": an anchor ending in "." gives
+    # the whole text no suffix under Python 3.13.
+    findings = problems_for("[doc](<absent-angle-sibling.md#section.>)", root)
+    check("an angle-bracket link target's extension is read before its anchor",
+          findings == ["link target does not exist: absent-angle-sibling.md"],
+          str(findings))
     findings = problems_for("[dir](<docs/absent-angle-directory>)", root)
     check("an angle-bracket link target with a directory and no extension is reported",
           findings == ["link target does not exist: docs/absent-angle-directory"],
