@@ -69,10 +69,10 @@ PLACEHOLDER_SPAN = re.compile(r"<(?![!?])[^\s<>](?:[^<>]*[^\s<>])?>")
 
 
 def unwrap_angle_link_target(target: str) -> str:
-    """Unwrap angle-bracket file paths while leaving template placeholders intact."""
+    """Unwrap an angle-bracket target that names a file, by a "/" or an extension;
+    leave a one-word placeholder such as <URL> wrapped."""
     inner = target[1:-1]
-    if (PLACEHOLDER_SPAN.fullmatch(target)
-            and inner.split("#", 1)[0].endswith(PATH_EXTENSIONS)):
+    if PLACEHOLDER_SPAN.fullmatch(target) and ("/" in inner or Path(inner).suffix):
         return inner
     return target
 
