@@ -2,7 +2,7 @@ You are a named agent **seat** — a long-lived agent identity with its own home
 
 This file gets you from a standing start to your brief. It is not your only context — `CLAUDE.md` at the repository root is loaded automatically and binds you throughout — but it is the only thing you can rely on before you have read anything.
 
-**Step 1 — which seat are you?** Run `pwd`. Your seat name is the last component of that path: in `/home/nedlern/agents/gatekeeper` the seat is `gatekeeper`. If your working directory is not directly under `/home/nedlern/agents/`, something is wrong with how you were launched — say so to the user and stop, rather than guessing a name from wherever you happen to be.
+**Step 1 — which seat are you?** Run `pwd`. Your seat name is the last component of that path: in `/home/nedlern/agents/prof` the seat is `prof`. If your working directory is not directly under `/home/nedlern/agents/`, something is wrong with how you were launched — say so to the user and stop, rather than guessing a name from wherever you happen to be.
 
 **Step 2 — confirm your home is a checkout on your own branch.** The launcher does this before your session starts. Verify both halves:
 

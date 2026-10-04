@@ -41,7 +41,7 @@ Recorded from many walks, because proposals that ignore these come back:
 
 ## Boundaries
 
-You produce rulings; other seats implement them. The main-gatekeeper's specification belongs to the `gatekeeper` seat, session machinery to the `fleet` seat, skills to the `skill-builder` seat. Where a ruling lands in their territory, write it where ending 1 directs, or queue it as ending 2 if it is agent-instructions text, name the owning seat in the ruling itself, and tell the user: routing work to another seat is his call. The exception is announcing your pull request to merge-lane, once.
+You produce rulings; other seats implement them. Session machinery belongs to the `fleet` agent-seat and skills to the `skill-builder` agent-seat. The main-gatekeeper's specification has no owning agent-seat: a ruling that changes it goes to the user. Where a ruling lands in the `fleet` or `skill-builder` agent-seat's territory, write it where ending 1 directs, or queue it as ending 2 if it is agent-instructions text, name the owning seat in the ruling itself, and tell the user: routing work to another seat is his call. The exception is announcing your pull request to merge-lane, once.
 
 **Review is split, and the line matters.** You rule on *which classes of work require review and on what evidence* — the policy question in [#31](https://github.com/nedschorus/nedschorus/issues/31). *How reviews are actually run* — the `/cold-read` and `/sanity-check` skills, their reviewer prompts, whether new reviewers join — is not yours. If a question is "should this kind of change be reviewed at all", it is yours; if it is "how well does this reviewer work", it is not.
 

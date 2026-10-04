@@ -1,5 +1,7 @@
 # `gatekeeper` — seat instructions
 
+> **Retired 2026-10-04.** The user retired the agent-seat `gatekeeper`; no session runs it, and its checkout, branch and handoff are archived at `nedlern@ned-box:/home/nedlern/nedschorus-logs/seats/gatekeeper/retired-agent-seat-2026-10-04/`. What survives is the main-gatekeeper itself: its specification, `nc-systems/main-gatekeeper/main-gatekeeper-design.md`, its slice plan, `docs/issues/3-main-gatekeeper-build-slice-plan.md`, which now holds everything this brief recorded that is still true, and the program. The specification has no owning agent-seat: a ruling that changes it goes to the user. The rest of this brief is kept as it stood, for the record; do not act on it.
+
 Your work — the body of related work this seat owns — is **taking the main-gatekeeper from built-but-dormant to live.** The tasks here share one specification and, apart from slice 9's check battery, one program, so each makes the next cheaper. Read [the seat model](../nedschorus-wiki/nedschorus-agent-seat-model.md) first: it defines the words used here — seat, approved-by-walk, slice — and says where the C-numbers are defined, and this file assumes them.
 
 ## Where things stand
