@@ -65,9 +65,6 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-# This file sits at nc-systems/handoff/, so the repository root is two
-# directories up; parents[2] names that depth once. handoff-supervisor.py is a
-# sibling inside this system and stays a with_name() lookup.
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 
 _supervisor_spec = importlib.util.spec_from_file_location(
@@ -81,14 +78,9 @@ NEXT_STEP_VERBATIM_FIELD = "next-step-verbatim"
 NEXT_STEP_BLOCK_OPENING_MARKER = "<<END-OF-NEXT-STEP"
 NEXT_STEP_BLOCK_TERMINATOR = "END-OF-NEXT-STEP"
 
-# One copy of the projects-directory rule, in the base module: the supervisor
-# composes the predecessor's subagent-transcript directory from it too.
 PROJECTS_ROOT = supervisor.PROJECTS_ROOT
 project_directory_for_working_directory = supervisor.project_directory_for_working_directory
 
-# The seat's name and directory as the handoff-supervisor that launched this
-# session passes them. One copy of each variable's name, in the base module
-# that sets them.
 HANDOFF_SUPERVISOR_AGENT_NAME_ENVIRONMENT_VARIABLE = (
     supervisor.HANDOFF_SUPERVISOR_AGENT_NAME_ENVIRONMENT_VARIABLE
 )
@@ -99,51 +91,28 @@ HANDOFF_SUPERVISOR_SESSION_ID_ENVIRONMENT_VARIABLE = (
     supervisor.HANDOFF_SUPERVISOR_SESSION_ID_ENVIRONMENT_VARIABLE
 )
 
-# The --agent default, stated the same way everywhere this script states it:
-# the option's help and every refusal that advises omitting --agent.
 DEFAULT_AGENT_NAME_RULE_TEXT = (
     f"the name the handoff-supervisor that launched this session watches "
     f"({HANDOFF_SUPERVISOR_AGENT_NAME_ENVIRONMENT_VARIABLE}), else the working directory's name"
 )
 
-# One numbered field per subagent: `spawned-subagent-1`, `spawned-subagent-2`.
-# A repeated key would not work — the reader takes the first occurrence of a
-# key, so every subagent but the first would be dropped.
+# Number each subagent field: the reader takes only the first occurrence of a key.
 SPAWNED_SUBAGENT_FIELD_PREFIX = "spawned-subagent-"
 
-# The last events that mean a subagent was still working when the handoff was
-# written: its spawn or a resume, with no terminal notification after them.
-# The polarity is deliberate — a whitelist, so any status a notification
-# carries that this code has never seen (`completed`, `failed`, `killed`,
-# `stopped` are the measured ones, and the harness may add more) reads as
-# ended and is CUT from the handoff rather than carried as junk. That is the
-# direction of the 2026-08-29 ruling: completed entries are junk, failed ones
-# had their chance ("presumably the prior agent had a chance to restart"),
-# and a successor that needs more can look the transcript up.
+# Only spawn and resume imply ongoing work; unrecognized notification statuses count as ended.
 STILL_WORKING_SUBAGENT_LAST_EVENTS = ("spawned", "resumed")
 
-# No transcript record can describe a subagent event without carrying one of
-# these strings, so a line carrying none of them is never parsed. A session
-# transcript runs to megabytes of tool output; this substring pre-filter is
-# what keeps deriving the roster from parsing all of it.
+# Prefilter megabytes of tool output before parsing possible subagent events.
 SUBAGENT_EVENT_RECORD_MARKERS = ("async_launched", "resumedAgentId", "<task-notification>")
 
 
 def collapse_to_one_line(text: str) -> str:
-    """Collapse every run of whitespace into a single space."""
     return re.sub(r"\s+", " ", text).strip()
 
 
 def verbatim_block_lines(text: str):
-    """The lines of a multi-line next step, or [] when it does not need a block.
-
-    Blank lines between the first and last non-blank lines are kept — they are
-    part of what the agent wrote. Blank lines before the first and after the
-    last are not written at all.
-    """
+    """Return multiline content without outer blank lines, or [] for a single line."""
     if "\n" not in text.strip("\n"):
-        # One line of content, however much surrounding whitespace: the
-        # collapsed `next-step:` field already carries it exactly.
         return []
     lines = text.splitlines()
     while lines and not lines[0].strip():
@@ -154,7 +123,6 @@ def verbatim_block_lines(text: str):
 
 
 def consumed_counter_from_state(state_path: Path):
-    """Return the counter the supervisor has already acted on, if any."""
     if not state_path.is_file():
         return None
     try:
@@ -165,14 +133,7 @@ def consumed_counter_from_state(state_path: Path):
 
 
 def next_restart_counter(handoff_path: Path, state_path: Path) -> int:
-    """Return a counter the supervisor is guaranteed to read as new.
-
-    The previous handoff file is the ordinary source, but it can be missing,
-    malformed, or older than what the supervisor has already consumed. Taking
-    the higher of the two is what keeps this from writing a counter the
-    supervisor will ignore — a silent failure to reincarnate, with a handoff on
-    disk and nothing acting on it.
-    """
+    """Return a counter newer than both the handoff and the supervisor's consumed state."""
     from_file = supervisor.counter_from(supervisor.parse_handoff_file(handoff_path)) \
         if handoff_path.is_file() else None
     from_state = consumed_counter_from_state(state_path)
@@ -181,82 +142,31 @@ def next_restart_counter(handoff_path: Path, state_path: Path) -> int:
 
 
 def handoff_supervisor_launched_this_session() -> bool:
-    """Whether the handoff-supervisor's name and directory variables are this
-    session's own, rather than inherited from the session that started it.
-
-    True only when CLAUDE_CODE_SESSION_ID is set and equals the session id the
-    supervisor launched. Every process a supervised session starts inherits
-    the variables, a child `claude -p` included: scripts/ghi-info-ask.py
-    starts one in the ghi-info seat with no env=, as prof did 2026-08-28. When
-    that child hands off, the parent's name and directory would pass the
-    foreign-claim check and raise the parent's counter, and the parent's
-    supervisor would stop the parent mid-work and relaunch it with the child's
-    next step -- reproduced in a sandbox in the PR #414 review, 2026-09-16. A
-    child `claude` gets its own CLAUDE_CODE_SESSION_ID (measured 2026-09-16), so
-    it fails this match and falls back to its working directory: a stray
-    handoff nothing polls, never a wrong reincarnation.
-    """
+    """Return whether supervisor variables identify this session."""
+    # Child sessions inherit supervisor variables but have their own CLAUDE_CODE_SESSION_ID.
     session_id = os.environ.get("CLAUDE_CODE_SESSION_ID", "")
     return bool(session_id) and session_id == os.environ.get(
         HANDOFF_SUPERVISOR_SESSION_ID_ENVIRONMENT_VARIABLE, "")
 
 
 def default_agent_name() -> str:
-    """The name the handoff-supervisor that launched this session watches, else
-    the working directory's name, which is already unique per seat.
-
-    The supervisor's name comes first because the working directory is the
-    seat's only while the agent's shell stands at the seat root. Run after a
-    `cd scripts`, or from a worktree under .claude/worktrees/, the directory's
-    name is that directory's, and a handoff under it lands in a file no
-    supervisor polls: the session never reincarnates and runs on to context
-    exhaustion, the outcome measured 2026-09-15 at merge-lane (see
-    supervised_name_for_this_directory). The supervisor sets the variable for
-    every session it launches (user-ruled 2026-09-16); a session no supervisor
-    launched keeps the directory's name, including a child session that
-    inherited the variable (see handoff_supervisor_launched_this_session).
-
-    An agent name selects the handoff file, the supervisor state and the lock,
-    so two sessions sharing a name share all three. Nothing enforced
-    uniqueness and the name was a free-text argument, so every hand-started
-    session on this Mac was called `new-vp` and they overwrote each other's
-    handoffs: on 2026-08-16 one session wrote counter 10 and another wrote
-    counter 11 seconds later, and the first was gone — never archived, because
-    retention keeps the last two GENERATIONS of one file, not one file per
-    session.
-
-    A worktree directory name is unique by construction — Claude Code appends
-    a random suffix for exactly that reason — so falling back to it removes the
-    collision without anyone having to invent a name. An explicit --agent
-    still wins, which is how the launchers name their seats.
-    """
+    """Return the supervising seat's name, falling back to the working directory name."""
+    # The shell may have changed directories; use supervisor identity only for its launched session.
     launched_as = (os.environ.get(HANDOFF_SUPERVISOR_AGENT_NAME_ENVIRONMENT_VARIABLE, "")
                    if handoff_supervisor_launched_this_session() else "")
     return launched_as or Path.cwd().name
 
 
 def agent_seat_working_directory() -> Path:
-    """The directory the handoff-supervisor launched this session in, else the
-    working directory.
-
-    Everything this script means by "this directory" is the agent-seat's: the
-    written-in field, the foreign-claim comparison, the search for a supervised
-    name, and the transcript lookup, which the harness keys on the directory a
-    session was LAUNCHED in. The working directory is that directory only
-    until the agent runs this script after a `cd` or from a worktree; the
-    supervisor's variable is it wherever the shell stands (user-ruled
-    2026-09-16). A session no supervisor launched, including a child session
-    that inherited the variable, has only its working directory to go on. The
-    same session match gates this and default_agent_name, so the name and the
-    directory come from the supervisor together or not at all.
-    """
+    """Return the supervisor's launch directory, falling back to cwd."""
+    # Transcript lookup is keyed by launch directory, not the shell's current directory.
     launched_in = (os.environ.get(HANDOFF_SUPERVISOR_WORKING_DIRECTORY_ENVIRONMENT_VARIABLE, "")
                    if handoff_supervisor_launched_this_session() else "")
     return Path(launched_in) if launched_in else Path.cwd()
 
 
 def claiming_directory(handoff_path: Path) -> str:
-    """Which directory last wrote this handoff, or '' if it does not say."""
+    """Return the directory that last wrote the handoff, or an empty string."""
     if not handoff_path.is_file():
         return ""
     return supervisor.parse_handoff_file(handoff_path).get("written-in", "")
@@ -264,33 +174,8 @@ def claiming_directory(handoff_path: Path) -> str:
 
 def supervised_name_for_this_directory(handoff_directory: Path, agent: str,
                                        seat_directory: Path) -> str:
-    """The name a supervised seat in THIS directory already hands off under.
-
-    THIS directory is seat_directory, as agent_seat_working_directory gives it.
-    Returns "" when there is none, which is the ordinary case: one seat, one
-    name, nothing to correct.
-
-    What this catches, measured 2026-09-15 at the merge-lane seat. A session
-    ran this script with --agent merge-lane-51 -- its own SESSION name -- where
-    the SEAT name merge-lane was wanted. Every path here is that string pasted
-    into a filename, so the handoff went to merge-lane-51-handoff.md, which no
-    supervisor polls, and the liveness check looked for
-    merge-lane-51-supervisor-state.json, which had never existed. The script
-    therefore reported "none has ever run for this agent", the handoff skill's
-    own rule for that answer is "keep working", and the session worked on for
-    five more hours while the supervisor watching it sat on
-    merge-lane-handoff.md at counter 41. The session never reincarnated: it ran
-    out of context instead. The threshold hook had already written its
-    ask-once marker, so nothing asked again.
-
-    A SUPERVISOR STATE beside the other handoff is what makes the other name
-    the real one, and requiring it is not fussiness. That incident left a
-    stray merge-lane-51-handoff.md in the directory, stamped with the same
-    written-in. A guard keyed on "another handoff file was written from here"
-    would read that stray and refuse --agent merge-lane -- the correct name --
-    at this seat's every later handoff, locking it out of exactly the name it
-    must use. The stray has no supervisor state; the real seat does.
-    """
+    """Return this directory's supervised seat name, or an empty string."""
+    # Require supervisor state: stray handoffs alone do not prove a name is watched.
     here = str(seat_directory.resolve())
     for other_handoff in supervisor.handoff_file_paths(handoff_directory):
         other = other_handoff.name[: -len(supervisor.HANDOFF_FILE_SUFFIX)]
@@ -305,12 +190,7 @@ def supervised_name_for_this_directory(handoff_directory: Path, agent: str,
 
 
 def find_session_transcript(session_id: str, working_directory: Path):
-    """Locate a session's JSONL by id: keyed lookup first, then a search.
-
-    Returns None rather than raising. The roster is one extra field on a
-    handoff; a handoff must still be written when the transcript cannot be
-    found, and an ambiguous search hit is no better than none.
-    """
+    """Return the session transcript path, or None if absent or ambiguous."""
     if not session_id or session_id == "unknown":
         return None
     keyed_path = project_directory_for_working_directory(working_directory) / f"{session_id}.jsonl"
@@ -321,41 +201,13 @@ def find_session_transcript(session_id: str, working_directory: Path):
 
 
 def timestamp_to_whole_seconds(stamp: str) -> str:
-    """`2026-08-23T19:55:24.756Z` -> `2026-08-23T19:55:24Z`, as `written-at` reads."""
     match = re.match(r"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})", stamp or "")
     return f"{match.group(1)}Z" if match else "an unrecorded time"
 
 
 def task_notification_text(record: dict):
-    """The `<task-notification>` body a transcript record carries, or None.
-
-    One notification reaches the transcript ONE TO THREE TIMES — never four —
-    in one of four observed combinations of record type. Measured by grouping
-    records on an identical notification body across three merge-lane session
-    transcripts spanning 2026-08-21 to 2026-08-24; the counts below are that
-    measurement, one per session, not an estimate:
-
-        enqueue only                          3 / 4 / 3
-        enqueue + remove                      1 / 33 / 0
-        enqueue + delivered user turn        17 / 158 / 17
-        enqueue + remove + attachment copy   13 / 69 / 23
-
-    Enqueue and remove are `queue-operation` records, the delivered turn is a
-    `user` record, and the copy is an `attachment` record.
-
-    Every combination is read rather than only the delivered one, because the
-    first of them is a notification nothing ever delivered — and an
-    undelivered notification is invisible to a reader that only takes the
-    delivered turn.
-
-    What that combination actually held, stated as measured rather than as
-    imagined: all ten enqueue-only specimens across the three sessions carry
-    `killed` at the session's death — eight naming background tasks, and two
-    naming subagents, both in 3f4965a7. A subagent whose COMPLETION was
-    enqueued and never delivered has no specimen in any of the three. That
-    variant is handled because reading every combination is what makes any
-    undelivered notification visible, not because it was observed.
-    """
+    """Return a task-notification body from queue, user or attachment records, or None."""
+    # An enqueued notification may never reach a user turn.
     if record.get("type") == "user":
         message = record.get("message")
         content = message.get("content") if isinstance(message, dict) else None
@@ -372,54 +224,9 @@ def task_notification_text(record: dict):
 
 
 def spawned_subagent_roster(transcript_path: Path) -> list:
-    """Every subagent this session SPAWNED, in spawn order, with its last event.
-
-    Each entry is a dict: agent_id, description, spawned_at, last_event,
-    last_event_at. Ordinary reading of one session's own transcript.
-
-    **The derivation records every spawn; the handoff carries only the
-    still-working ones.** This function tracks each subagent's last event
-    because that is how the writer knows which subagents were still working
-    at write time — the only ones the handoff records since the user's
-    2026-08-29 ruling ("Completed is junk... Neither I or the next agent
-    cares what is completed"; failed entries cut too: "presumably the prior
-    agent had a chance to restart, and if that worked it would have
-    restarted"). That narrows his 2026-08-23 record-everything ruling by his
-    own word: the risk it hedged — a subagent that stopped without finishing
-    and without a task, the #150 shape — is now covered by seat-pinned task
-    lists (#141) and the questions-become-tasks rule, and a successor that
-    needs a dead subagent's state reads its transcript at
-    <session-dir>/subagents/agent-<id>.jsonl. The filter is
-    `still_working_subagent_entries` below; the split keeps this function a
-    plain reading of what happened.
-
-    **Liveness is not inferred from unmatched tool_use/tool_result pairs**,
-    and that is worth stating because it is the obvious wrong answer: the
-    `Agent` tool returns its result at SPAWN time ("Async agent launched
-    successfully... you will be notified when it completes"), so every spawn
-    is a matched pair whatever becomes of the subagent. Completion arrives
-    later, as separate `<task-notification>` records.
-
-    **Background monitors are excluded structurally, not by their ids.** A
-    monitor's tool result carries `taskId`/`persistent` and no `agentId`, so
-    keying spawns on `status == "async_launched"` with an `agentId` selects
-    subagents only. Measured on session `40a16b9c` of 2026-08-23, where nine
-    subagents and eight monitors ran. Eight by either of two independent
-    countings — `Monitor` tool-use blocks, and tool results carrying
-    `persistent: true`. Counting every distinct `taskId` without an `agentId`
-    instead gives fifteen, because backgrounded `Bash` tasks carry a `taskId`
-    too; `persistent` is what separates a monitor from one of those.
-
-    **One generation of memory, deliberately.** The roster a session writes
-    holds the subagents THAT session spawned. Nothing a predecessor recorded
-    is carried into it, so an entry a successor reads, judges can wait, and
-    defers is absent from the roster its own reincarnation writes — and the orphan
-    drops back to prose, which is the failure this field exists to remove.
-    Carrying unresolved entries across reincarnations is a larger change and is not
-    attempted here; the scope is stated so that a reader does not assume a
-    persistence the code does not provide. A deferred subagent that still
-    matters belongs in `next-step`, which does survive the next reincarnation.
-    """
+    """Return this session's spawned subagents in spawn order with their last events."""
+    # Agent results acknowledge spawn, not completion; terminal events arrive in notifications.
+    # Predecessor rosters are not inherited; deferred work must remain in next-step.
     roster = []
     by_agent_id = {}
     with transcript_path.open("r", encoding="utf-8", errors="replace") as handle:
@@ -429,7 +236,7 @@ def spawned_subagent_roster(transcript_path: Path) -> list:
             try:
                 record = json.loads(line)
             except (json.JSONDecodeError, ValueError):
-                continue  # the transcript is read while its writer is still running
+                continue  # The transcript writer may still be appending this record.
             if not isinstance(record, dict):
                 continue
             stamp = timestamp_to_whole_seconds(record.get("timestamp", ""))
@@ -441,9 +248,7 @@ def spawned_subagent_roster(transcript_path: Path) -> list:
                     if agent_id not in by_agent_id:
                         entry = {
                             "agent_id": agent_id,
-                            # Collapsed: a description is free text from the
-                            # spawning call, and a newline inside one would
-                            # split the roster's line in the handoff file.
+                            # Descriptions are free text; newlines would split a handoff field.
                             "description": collapse_to_one_line(str(result.get("description") or "")),
                             "spawned_at": stamp,
                             "last_event": "spawned",
@@ -464,29 +269,13 @@ def spawned_subagent_roster(transcript_path: Path) -> list:
             status = re.search(r"<status>(.*?)</status>", notification)
             if status is None:
                 continue
-            # EVERY task-id in the notification, not just the first. One
-            # notification can name several agents under a single <status>:
-            # that is the shape the harness uses to report agents from a
-            # previous session with no completion record, which is the
-            # highest-value event this roster carries. Reading only the first
-            # left every later agent holding whatever it had before.
-            # Specimen, in this seat's own history: session 3f4965a7 at
-            # 2026-08-21T19:31:05Z names a3fe2b9aecae01f3b and
-            # a677554663305e800 — both subagents that session spawned — under
-            # <status>stopped</status>. Truncate that transcript at the
-            # notification and the single-id derivation reports the second
-            # agent as "killed at 18:38:09Z", 53 minutes early and under the
-            # wrong event name. Ids that name background tasks rather than
-            # subagents are not in by_agent_id and are skipped.
+            # One notification can assign a single status to several task IDs.
             for task_id in re.findall(r"<task-id>(.*?)</task-id>",
                                       notification):
                 entry = by_agent_id.get(task_id)
                 if entry is None:
                     continue
-                # Only a CHANGE of status is a new event. The same completion
-                # is announced up to three times, so taking every announcement
-                # would date the event at its last echo rather than at its
-                # arrival.
+                # Repeated notifications are echoes, not new events; preserve the first arrival time.
                 if status.group(1) != entry["last_event"]:
                     entry["last_event"] = status.group(1)
                     entry["last_event_at"] = stamp
@@ -494,26 +283,12 @@ def spawned_subagent_roster(transcript_path: Path) -> list:
 
 
 def still_working_subagent_entries(roster) -> list:
-    """The roster entries whose subagent was still working at write time.
-
-    Still working means the last event is a spawn or a resume — no terminal
-    notification arrived after it. These are the subagents the reincarnation
-    itself kills, the only ones the handoff records (user-ruled 2026-08-29);
-    see STILL_WORKING_SUBAGENT_LAST_EVENTS for the whitelist's polarity.
-    """
     return [entry for entry in roster
             if entry["last_event"] in STILL_WORKING_SUBAGENT_LAST_EVENTS]
 
 
 def spawned_subagent_field_lines(roster) -> list:
-    """Render roster entries as the handoff file's numbered `key: value` lines.
-
-    Each line carries the agent id and the job description, nothing else:
-    every recorded entry is still working by construction, so a last-event
-    field would say nothing, and spawn time is a transcript look-up (the
-    initial agent instructions are tuned like a CLAUDE.md file — only what the successor
-    needs at its start, user-ruled 2026-08-29).
-    """
+    """Render working subagents as numbered handoff fields."""
     lines = []
     for ordinal, entry in enumerate(roster, start=1):
         described = f' "{entry["description"]}"' if entry["description"] else ""
@@ -524,15 +299,7 @@ def spawned_subagent_field_lines(roster) -> list:
 
 
 def spawned_subagent_roster_for_this_session(working_directory: Path):
-    """Return (field lines, one line for the console) for the running session.
-
-    Never raises, on the same principle as the branch-protection audit below:
-    a broken derivation must not break a handoff. When it cannot produce a
-    roster it says so on the console, so the retiring agent knows to name its
-    subagents in the next step by hand rather than assuming they were
-    recorded — silence about subagents is the failure this field exists to
-    remove, and a silent failure to derive them would reinstate it.
-    """
+    """Return (roster field lines, console status), reporting failures without blocking handoff."""
     session_id = os.environ.get("CLAUDE_CODE_SESSION_ID", "")
     if not session_id:
         return [], ("spawned-subagent roster: not derived — CLAUDE_CODE_SESSION_ID is unset, so this "
@@ -550,9 +317,6 @@ def spawned_subagent_roster_for_this_session(working_directory: Path):
         return [], "spawned-subagent roster: this session spawned no subagents"
     still_working = still_working_subagent_entries(roster)
     if not still_working:
-        # Truthful silence, not a failure to derive: everything this session
-        # spawned had already ended, and ended subagents are not recorded
-        # (user-ruled 2026-08-29).
         return [], (f"spawned-subagent roster: all {len(roster)} spawned subagent(s) had "
                     "ended by this handoff; none recorded (ended subagents are not "
                     "carried, ruled 2026-08-29)")
@@ -563,28 +327,21 @@ def spawned_subagent_roster_for_this_session(working_directory: Path):
 
 def write_handoff_file(handoff_path: Path, next_step: str, counter: int, dont_restart: bool,
                        seat_directory: Path, spawned_subagent_lines=(), verbatim_lines=()) -> None:
-    """Write the handoff file in one step, so no reader sees it half-written."""
+    """Write the handoff atomically so readers cannot see a partial file."""
     lines = [
         f"written-at: {datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')}",
         f"next-step: {next_step}",
         f"restart-counter: {counter}",
-        # Who wrote this, so a collision is detectable rather than silent.
-        # written-in is the discriminator, not the session id: successive
-        # generations of one seat are different sessions in the SAME
-        # directory, while two seats sharing a name are different directories.
+        # Compare directories, not session IDs: reincarnations share a directory but have distinct sessions.
         f"written-in: {seat_directory}",
         f"written-by-session: {os.environ.get('CLAUDE_CODE_SESSION_ID', 'unknown')}",
     ]
     if dont_restart:
         lines.append("dont-restart: the user asked to be consulted before a relaunch")
 
-    # The subagents this session spawned die with it, and until this field
-    # existed nothing told the successor they had ever run (2026-08-23; see
-    # spawned_subagent_roster). Written as ordinary fields, before the block.
     lines.extend(spawned_subagent_lines)
 
-    # LAST, always: a block's content lines can look like fields, and only the
-    # position guarantees they cannot shadow one.
+    # Write the block last so field-like content cannot shadow actual fields.
     if verbatim_lines:
         lines.append(f"{NEXT_STEP_VERBATIM_FIELD}: {NEXT_STEP_BLOCK_OPENING_MARKER}")
         lines.extend(verbatim_lines)
@@ -596,28 +353,12 @@ def write_handoff_file(handoff_path: Path, next_step: str, counter: int, dont_re
     os.replace(temporary_path, handoff_path)
 
 
-# The adopt-and-reincarnate path once lived here: with no supervisor watching, this
-# script started a detached one that adopted the running session, killed it, and
-# relaunched. Removed 2026-08-14 after its second observed failure: a successor
-# inherits the supervisor's stdio, and a detached supervisor's console is a log
-# file, so every successor it launched died at its first need for input — the
-# desktop-app case observed 2026-08-11, the terminal-console case 2026-08-14.
-# Only a seat-owning supervisor (a tmux pane via the launchers) can reincarnate;
-# a seat with nothing watching it is restarted with scripts/resupervise-seat.py,
-# which relaunches it through the launcher so the new supervisor starts the
-# successor from the waiting handoff (see the end of main() below).
 
 
 def run_branch_protection_audit() -> str:
-    """Slice 5's ruled anchor (2026-08-12): the branch-protection audit rides
-    each session reincarnation. One line, never blocking — an unreadable wall is a
-    named finding, and a broken audit must never break a handoff."""
+    """Return an audit status line without letting audit failures block handoff."""
     if os.environ.get("HANDOFF_SKIP_PROTECTION_AUDIT"):
         return "branch-protection audit: skipped (HANDOFF_SKIP_PROTECTION_AUDIT set)"
-    # The gate lives in its own system's directory, nc-systems/main-gatekeeper/
-    # (GitHub issue #224's layout rule; moved 2026-09-19). It is now a sibling
-    # system of this one, so the path is derived from the repository root
-    # rather than from this file's depth.
     gatekeeper_path = (REPOSITORY_ROOT
                        / "nc-systems" / "main-gatekeeper" / "main-gatekeeper.py")
     if not gatekeeper_path.is_file():
@@ -676,13 +417,8 @@ def main(argv=None) -> int:
         )
         return 2
 
-    # The empty refusal above is applied to the COLLAPSED value, before any
-    # block is considered, so a next step that is only whitespace is refused
-    # rather than written as an empty block.
     verbatim_lines = verbatim_block_lines(next_step_text)
-    # EXACT match, the same comparison the reader ends a block on. A stripped
-    # match here would refuse indented lookalikes the reader would have kept as
-    # content, and the two ends must agree on exactly one rule.
+    # Match the reader's exact terminator rule; indented lookalikes are content.
     offending = [line for line in verbatim_lines if line == NEXT_STEP_BLOCK_TERMINATOR]
     if offending:
         print(
@@ -699,22 +435,8 @@ def main(argv=None) -> int:
     handoff_path = supervisor.handoff_file_path(handoff_directory, agent)
     state_path = supervisor.supervisor_state_path(handoff_directory, agent)
 
-    # Refuse a foreign claim rather than overwrite it. Successive generations
-    # of one seat run in the same directory, so a DIFFERENT directory holding
-    # this name means two seats share it and one handoff is about to be lost
-    # unread -- observed 2026-08-16, counter 10 overwritten by counter 11
-    # seconds later, with no archived copy because retention keeps the last
-    # two generations of the file rather than one file per session.
-    # Compare RESOLVED paths: on macOS /var is a symlink to /private/var, so
-    # the same seat can describe itself two ways and would otherwise look
-    # foreign to itself and refuse its own handoff.
-    # Computed before the first refusal, because that refusal's advice depends
-    # on it: --claim waives BOTH refusals, so advising it here without checking
-    # for a supervised name would walk the reader from this refusal straight
-    # past the next one into a handoff nothing polls (the PR #394 reviewer's
-    # question). When this directory has a supervised name, that name is the
-    # advice and --claim is warned against; --claim is advised bare only when
-    # there is no supervised name for it to override.
+    # Resolve symlinks before comparing seat directories.
+    # Compute the supervised name before advising --claim, which waives both refusals.
     supervised_name = supervised_name_for_this_directory(handoff_directory, agent, seat_directory)
     held_by = claiming_directory(handoff_path)
     held_by_resolved = str(Path(held_by).resolve()) if held_by else ""
@@ -743,15 +465,7 @@ def main(argv=None) -> int:
         )
         return 2
 
-    # Refuse a name nothing watches when a supervisor answers for this very
-    # directory under another one. The liveness report below is the whole
-    # reason this script exists, and under an unwatched name it cannot fail
-    # LOUDLY: it says "nothing is watching", which is both true of the name
-    # and false of the seat, and the caller's rule for that answer is to keep
-    # working. See supervised_name_for_this_directory for the measurement.
-    # An explicit --claim still wins, so a seat genuinely being re-founded
-    # under a new name says so and proceeds. supervised_name was computed
-    # above, before the foreign-claim refusal, which needs it for its advice.
+    # An unwatched name would strand the handoff even when this directory has a live supervisor.
     if supervised_name and not state_path.is_file() and not arguments.claim:
         print(
             f"handoff-write-and-check-supervisor: no supervisor has ever run under the name "
@@ -781,33 +495,15 @@ def main(argv=None) -> int:
 
     alive, explanation = supervisor.supervisor_liveness(state_path)
     if alive:
-        # "if it is watching", not "it takes over", because alive can be
-        # yes-by-assumption: with ps unavailable and some process holding the
-        # lock, a supervisor is assumed rather than identified. Stopping is
-        # still right — the handoff is on disk and recoverable — but promising
-        # a takeover would strand this agent on a sentence instead of a fact
-        # (#328 follow-up round, nedschorus#242).
+        # With ps unavailable, a held lock only implies a supervisor; do not promise takeover.
         print(
             f"handoff-write-and-check-supervisor: {explanation}. Stop working now and wait — "
             "if it is watching, it takes over within seconds."
         )
         return 0
 
-    # What to tell the user changed on 2026-08-14, when the supervisor learned to
-    # ignite from an unconsumed handoff at boot: the old advice here — relaunch
-    # claude by hand and point it at the file — rebuilds the very state this
-    # branch is reporting, a seat running with nothing watching it. The launcher
-    # is the supervised path, and scripts/resupervise-seat.py performs the whole
-    # procedure (it refuses unless this handoff is genuinely waiting).
-    # --machine is printed explicitly, never left to the default, which is mac. A
-    # box seat's handoff and tmux session are on the box, so the bare command
-    # would have the operator look for them on the Mac and be refused for a
-    # handoff that is not there. Names are unique across the fleet (see
-    # launch_agent_session in handoff-supervisor.py), but nothing enforces that
-    # across machines, and a same-named Mac seat with a waiting handoff of its
-    # own would be recovered instead. Linux here means the box, since that is
-    # the fleet's only non-Mac machine; the flag is stated on both so the
-    # printed line is copy-paste-correct wherever it is read.
+    # Use the supervised launcher to consume the waiting handoff.
+    # Print --machine explicitly: the default is Mac, but a box seat must be recovered on the box.
     machine = "ubuntu" if sys.platform.startswith("linux") else "mac"
     print(
         f"handoff-write-and-check-supervisor: {explanation} — and this seat has no supervisor to "

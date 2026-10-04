@@ -1,56 +1,13 @@
 #!/usr/bin/env python3
-"""Play a scenario through the design-to-main machine and print the trace.
-
-User-ruled 2026-09-16, the eleventh walk
-(design-state-tables-source-of-truth-and-checker), item 6 — the user's own
-idea: run "simulated design-to-main flows so we can both see if the state
-machine does what we want it to do. Like a little game almost."
-
-The machine is the real one (design-to-main-state-machine.py) over a
-throwaway repository, built and driven by the test fixture
-(tests/design-to-main-test-fixture.py); nothing here routes.
-
-A scenario is a file the user writes — a name and the steps he wants to
-play, each `state: verdict`:
-
-    scenario: implementation rejected twice, then the suite fails
-    steps:
-      - implementation-acceptance-by-agent: reject implementation
-      - implementation-acceptance-by-agent: reject implementation
-      - test-suite-executing: fail
-      - test-suite-arbitrating: flaky-test
-
-A step may instead be a mapping with `state`, `verdict` and `fields` (the
-state-exit's optional fields of section 2, `coverage_types: [script]` and
-the like) for the rare case that needs them. Every state the machine
-launches that the scenario's next step does not name gets the canonical
-happy path's verdict for it (the fixture's whole_run_to_passed), before the
-first named step and between named steps alike; a step at a state the
-happy path never launches must therefore follow a step that leads there.
-Once the steps are spent the runner supplies nothing more: it says where
-the run stands.
-
-The trace is one line per state-exit the machine routed: the step
-number; the state that emitted it and the state the run moved to, with
-the qualifier the transition row carries; the verdict; the row of
-section 3.2 the machine took; every counter whose value changed, as
-`name N of ceiling`. A pause names the state and the reason in the run-
-state's words; the end names the outcome. A state-exit the machine refuses
-before row 1 has cut the topic branch (RefusedBeforeTopicBranchCut: from
-initiate-design-to-main, fields such as a `destination` other than
-design-writing or a named file that is not there) is not routed, so it
-leaves no step line: the trace ends `REFUSED at <state> before the topic
-branch was cut:` and the machine's refusal, verbatim.
+"""Play a scenario through the real design-to-main machine in a throwaway repository.
 
 Run: python3 scripts/design-to-main/design-to-main-scenario-runner.py <scenario.yaml>
-Exit 0 whether the run passed, paused, stands mid-way or was refused before
-the topic branch was cut — the trace is the product; exit 2 for a malformed
-scenario (an unknown state, a verdict the state does not have, a step the
-run never reaches), naming the line. A refusal is exit 0, not 2: the
-refused step names a state the machine launches and a verdict that state
-has, and the run reached it; the machine played it and judged it, as it
-judges a verdict no row allows in context and pauses (exit 0 too). A step
-after the refusal is a step the run never reaches: exit 2.
+A scenario supplies a name and steps, each `state: verdict`, or a mapping of
+`state`, `verdict` and optional `fields`. Unnamed states use the fixture's
+happy path until the supplied steps are spent.
+
+Exit 0 means a trace was produced, including a pause or machine refusal;
+exit 2 means the scenario is malformed or a supplied step was never reached.
 """
 
 import dataclasses
@@ -92,18 +49,13 @@ class Scenario:
     steps: list
 
 
-# --- Reading the scenario file ---------------------------------------------
-#
-# The shape above is a small subset of YAML, read here without a YAML
-# library, so the runner needs nothing beyond the standard library, and
-# with line numbers kept, which the refusals need and a library would not
-# give.
+# Parse the YAML subset without dependencies while retaining refusal line numbers.
 
 STEP_KEYS = ("state", "verdict", "fields")
 STATE_EXIT_FIELD_NAMES = tuple(
     f.name for f in dataclasses.fields(machine_module.StateExitRecord)
     if f.name not in ("state", "verdict", "package_commit"))
-# The design's hyphenated field names are accepted too (section 2).
+# Accept the design's hyphenated field names too.
 STATE_EXIT_FIELD_BY_DESIGN_NAME = {
     design_name: field_name
     for design_name, field_name in tables.STATE_EXIT_JSON_FIELDS.items()
@@ -127,7 +79,7 @@ def _unquote(value):
 
 
 def _field_value(value):
-    """A scalar, or a flow list `[a, b]` as a tuple."""
+    """Return a scalar, or a flow list as a tuple."""
     if value.startswith("[") and value.endswith("]"):
         inner = value[1:-1].strip()
         return tuple(_unquote(item.strip()) for item in inner.split(",")) if inner else ()
@@ -144,9 +96,9 @@ def parse_scenario_text(text):
     name = None
     steps = []
     in_steps = False
-    current = None          # the step mapping being read
-    current_indent = None   # the column of its `- `
-    fields_indent = None    # the column of its field lines, once seen
+    current = None
+    current_indent = None   # Column of the step's - marker.
+    fields_indent = None    # Column of the step's field lines.
     for line, raw in enumerate(text.splitlines(), start=1):
         content = _without_comment(raw).rstrip()
         if not content.strip():
@@ -203,8 +155,7 @@ def parse_scenario_text(text):
                     key, ", ".join(STATE_EXIT_FIELD_NAMES)))
             parsed = _field_value(value)
             if field == "coverage_types" and not isinstance(parsed, tuple):
-                # Section 2's comma form, `script, prompt`: split as the
-                # machine splits state-exit.json.
+                # Match the machine's comma-separated state-exit field syntax.
                 parsed = machine_module.coverage_types_from_json_field(parsed)
             elif field in TUPLE_VALUED_FIELDS and not isinstance(parsed, tuple):
                 parsed = (parsed,)
@@ -225,12 +176,9 @@ def _step_from_mapping(mapping):
     return ScenarioStep(mapping["state"], mapping["verdict"], mapping["fields"], mapping["line"])
 
 
-# --- Checking the steps against the tables ----------------------------------
 
 def states_the_machine_launches():
-    """Every state or sub-state a state-package is built for: the plain
-    states of section 3.1 and the acceptance-checks of the composite
-    ones; never a composite state itself, nor `ended`."""
+    """Return plain states and acceptance sub-states, excluding composites and ended."""
     launched = []
     for row in tables.STATE_TABLE:
         if row.work == "composite":
@@ -241,9 +189,7 @@ def states_the_machine_launches():
 
 
 def verdicts_a_state_may_emit(state):
-    """Section 3.1's verdicts for the state (a sub-state's are its
-    composite's), plus `escalate-to-user` where the paragraph after the
-    table adds it."""
+    """Return table verdicts plus escalate-to-user where the design permits it."""
     composite = tables.COMPOSITE_STATE_OF_SUB_STATE.get(state, state)
     verdicts = list(tables.STATE_TABLE_BY_NAME[composite].verdicts)
     if ((state in tables.ACCEPTANCE_CHECKS_BY_AGENT or state in tables.STATES_WITH_ESCALATE_TO_USER)
@@ -268,7 +214,6 @@ def check_steps_against_the_tables(steps):
                 step.state, step.verdict, ", ".join(verdicts)))
 
 
-# --- Playing ----------------------------------------------------------------
 
 class ScenarioStepNeverReached(Exception):
     """The run went past, or stands short of, the state a step names."""
@@ -280,13 +225,8 @@ class ScenarioStepNeverReached(Exception):
 
 
 class ScenarioStateExitLauncher(fixture.ScriptedStateExitLauncherWritingFiles):
-    """The fixture's stub launcher, choosing each state-exit as the state
-    is launched: the scenario's next step when it names the launched
-    state, else the happy path's verdict for that state, else — the steps
-    spent — nothing, so the run stands where it is. A step whose verdict
-    is the happy path's for its state inherits that step's fields (a
-    write's coverage-type, the test-design's file), so that a bare
-    `test-writing: emitted` is the write the fixture would script."""
+    """Choose supplied scenario exits, then happy-path exits until steps are spent."""
+    # A happy-path verdict inherits fixture fields so bare emitted steps remain valid writes.
 
     def __init__(self, steps, checkout):
         super().__init__([], checkout)
@@ -311,7 +251,7 @@ class ScenarioStateExitLauncher(fixture.ScriptedStateExitLauncherWritingFiles):
                     "give %s its verdict first" % (state, state))
             verdict, fields = self.happy_path[state]
         else:
-            self.launched.append(state_package)   # asked for, as the base class records it
+            self.launched.append(state_package)
             raise machine_module.ScriptedStateExitLauncherExhausted(
                 "the scenario's steps are spent at %s" % state)
         self.script = [(state, verdict, dict(fields))]
@@ -327,11 +267,9 @@ class TraceLine:
     verdict: str
     row: str
     counters_changed: list   # (name, value, ceiling)
-    pause: str = None        # the pause's reason, when the run is now paused
+    pause: str = None
 
 
-# The transition table's destination markers, as the trace qualifies the
-# state the machine resolved them to.
 QUALIFIER_OF_DESTINATION_MARKER = {
     tables.TO_HOLD_READY_FOR_TEST_SUITE: "hold at ready-for-test-suite",
     tables.TO_BOTH_WORK_STREAMS_RE_ENTER: "both work-streams re-enter",
@@ -345,10 +283,7 @@ QUALIFIER_OF_DESTINATION_MARKER = {
 
 
 def observe_every_routed_state_exit(machine, trace):
-    """Wrap the machine's routing so that every state-exit it routes — a
-    reviewing state routes several in one step — leaves one trace line:
-    the row from `machine.routed`, the destination from the run, the
-    counters by their change across the call."""
+    """Trace each routed state-exit, including multiple exits from one reviewing step."""
     route = machine.route_state_exit
 
     def route_and_trace(run, state_exit):
@@ -414,10 +349,7 @@ def play_scenario(scenario, max_steps=200):
                 never_reached = error
                 break
             except machine_module.RefusedBeforeTopicBranchCut as error:
-                # Before row 1 has cut the topic branch the machine does
-                # not route an illegal state-exit as a machine error: it
-                # refuses it, and the refusal is its report to whoever
-                # invoked it, here the runner. The run does not start.
+                # Before the topic branch exists, an illegal state-exit is refused without routing a step.
                 refused_before_topic_branch_cut = error
                 break
             steps += 1
@@ -443,8 +375,7 @@ def play_scenario(scenario, max_steps=200):
             ending = ("STOPPED at investigate-workflow: the scenario's steps are spent; the run "
                       "stands paused, waiting for the user's stop, submit-to-PR-gate or resume")
         else:
-            # The state the launcher was asked for: a reviewing state's
-            # acceptance-check, which is what the scenario's next step names.
+            # For reviewing states the requested acceptance-check is what scenario steps name.
             ending = "STOPPED at %s: the scenario's steps are spent; the run stands there" % (
                 machine.launcher.launched[-1]["state"])
         return ScenarioPlayed(scenario, trace, ending, run, never_reached)
@@ -452,7 +383,6 @@ def play_scenario(scenario, max_steps=200):
         repository.remove()
 
 
-# --- The trace as text ---------------------------------------------------------
 
 def format_trace(played):
     lines = ["scenario: %s" % played.scenario.name]

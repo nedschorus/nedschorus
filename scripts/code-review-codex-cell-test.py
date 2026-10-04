@@ -66,12 +66,24 @@ What is pinned here:
 Run: python3 scripts/code-review-codex-cell-test.py
 """
 
+import importlib.util
 import json
 import os
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
+
+# Before anything runs git: a run started with GIT_DIR set, or with another
+# variable that redirects git, must still build this suite's scratch
+# repositories where the suite says, not in the repository the variable names.
+_git_environment_fixture_spec = importlib.util.spec_from_file_location(
+    "git_redirecting_environment_removal_test_fixture",
+    Path(__file__).resolve().with_name(
+        "git-redirecting-environment-removal-test-fixture.py"))
+_git_environment_fixture = importlib.util.module_from_spec(_git_environment_fixture_spec)
+_git_environment_fixture_spec.loader.exec_module(_git_environment_fixture)
+_git_environment_fixture.remove_git_redirecting_environment_variables_from_this_process()
 
 CELL_SCRIPT = Path(__file__).with_name("code-review-codex-cell.py")
 
@@ -432,6 +444,102 @@ with tempfile.TemporaryDirectory() as scratch:
           f'"{scratch_home}/.config/nedschorus"="deny"' in denied_table
           and f'"{scratch_home}/.config/gh"="deny"' in denied_table
           and f'"{login_canary}"="deny"' in denied_table, denied_table)
+
+    # --- The pull request's description -----------------------------------
+    # The description reaches Codex's review as `-c developer_instructions=`
+    # placed AFTER `review`, the one placement measured to reach the
+    # review's child thread on codex-cli 0.160.0 (the cell's docstring, under
+    # THE PULL REQUEST'S DESCRIPTION). Without the option, the command must
+    # carry no such override, so callers that pass nothing review exactly as
+    # before.
+    def developer_instruction_overrides(arguments):
+        return [value for value in config_overrides(arguments)
+                if value.startswith("developer_instructions=")]
+    check("without --pull-request-description-file, no developer_instructions reach codex",
+          not developer_instruction_overrides(launched_command), repr(launched_command))
+
+    # The robot emoji is outside the Basic Multilingual Plane, as in every
+    # pull request's attribution line: json.dumps's default writes it as
+    # surrogate escapes TOML refuses. DEL is the control character json.dumps
+    # leaves raw and TOML requires escaped.
+    awkward_description = ('Please review the commands in "NOTES.md".\n'
+                           "A backslash \\ and a tab\t and a non-ASCII word: café.\n"
+                           "A DEL \x7f and an emoji: \U0001F916 Generated with Claude Code\n")
+    description_file = scratch / "description.md"
+    description_file.write_text(awkward_description, encoding="utf-8")
+    described_report = scratch / "described-report.md"
+    result = run_cell(stubs, STUB_CODEX_RECORDS_ARGV,
+                      "--commit", head_sha, "--repo", str(checkout),
+                      "--output", str(described_report),
+                      "--pull-request-description-file", str(description_file))
+    check("a run given a description succeeds",
+          result.returncode == 0, f"exit {result.returncode}; stderr={result.stderr!r}")
+    described_command = json.loads(
+        Path(f"{described_report}.argv.json").read_text(encoding="utf-8"))
+    described_review_index = described_command.index("review")
+    after_review = developer_instruction_overrides(described_command[described_review_index + 1:])
+    before_review = developer_instruction_overrides(described_command[:described_review_index])
+    check("the description reaches codex as one developer_instructions override after `review`",
+          len(after_review) == 1 and not before_review, repr(described_command))
+    try:
+        import tomllib
+    except ImportError:  # Apple's Python 3.9 has no tomllib
+        tomllib = None
+    if tomllib is None:
+        print("SKIP  the override parses as TOML back to the description: no tomllib before Python 3.11")
+    elif after_review:
+        try:
+            parsed = tomllib.loads(after_review[0])["developer_instructions"]
+        except tomllib.TOMLDecodeError as error:
+            parsed = f"TOML refused the override: {error}"
+        check("the override parses as TOML back to the framing and the description",
+              parsed.endswith(awkward_description.strip())
+              and parsed.startswith("The text below is this pull request's description"),
+              repr(parsed))
+    described_text = described_report.read_text(encoding="utf-8")
+    check("the provenance header says a description was given",
+          "pull-request-description=given" in described_text.splitlines()[0],
+          repr(described_text[:200]))
+
+    # A description too long for one command-line argument: Linux refuses an
+    # argument of 128 KiB or more with E2BIG, so the cell cuts it and says so.
+    long_description = scratch / "long-description.md"
+    long_description.write_text("x" * (200 * 1024), encoding="utf-8")
+    long_report = scratch / "long-report.md"
+    result = run_cell(stubs, STUB_CODEX_RECORDS_ARGV,
+                      "--commit", head_sha, "--repo", str(checkout),
+                      "--output", str(long_report),
+                      "--pull-request-description-file", str(long_description))
+    long_command = (json.loads(Path(f"{long_report}.argv.json").read_text(encoding="utf-8"))
+                    if Path(f"{long_report}.argv.json").is_file() else [])
+    long_overrides = developer_instruction_overrides(long_command)
+    check("a 200 KiB description is cut below one argument's limit and the review runs",
+          result.returncode == 0 and len(long_overrides) == 1
+          and len(long_overrides[0].encode("utf-8")) < 100 * 1024
+          and "The description was cut here" in long_overrides[0],
+          f"exit {result.returncode}; override bytes "
+          f"{[len(o.encode('utf-8')) for o in long_overrides]}")
+
+    blank_description = scratch / "blank-description.md"
+    blank_description.write_text("  \n\n", encoding="utf-8")
+    blank_report = scratch / "blank-report.md"
+    result = run_cell(stubs, STUB_CODEX_RECORDS_ARGV,
+                      "--commit", head_sha, "--repo", str(checkout),
+                      "--output", str(blank_report),
+                      "--pull-request-description-file", str(blank_description))
+    blank_command = json.loads(Path(f"{blank_report}.argv.json").read_text(encoding="utf-8"))
+    check("a blank description passes no developer_instructions",
+          result.returncode == 0 and not developer_instruction_overrides(blank_command),
+          f"exit {result.returncode}; command {blank_command}")
+
+    result = run_cell(stubs, STUB_CODEX_RECORDS_ARGV,
+                      "--commit", head_sha, "--repo", str(checkout),
+                      "--output", str(scratch / "missing-description-report.md"),
+                      "--pull-request-description-file", str(scratch / "no-such-description.md"))
+    check("an unreadable description file exits 64, reported and not thrown",
+          result.returncode == 64 and "cannot read --pull-request-description-file" in result.stderr
+          and "Traceback" not in result.stderr,
+          f"exit {result.returncode}; stderr={result.stderr!r}")
 
 print()
 if failures:

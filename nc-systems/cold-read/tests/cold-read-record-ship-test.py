@@ -24,8 +24,10 @@ import importlib.util
 import io
 import json
 import os
+import re
 import socket
 import pathlib
+import shlex
 import shutil
 import subprocess
 import sys
@@ -39,14 +41,36 @@ SHIP = SYSTEM_DIRECTORY / "cold-read-record-ship.py"
 DESTINATION_VARIABLE = "COLD_READ_RECORD_SHIP_DESTINATION"
 RULED_DESTINATION = "nedlern@ned-box:/home/nedlern/nedschorus-logs/cold-read-records"
 
+# What a stub `ssh` answers to the call that runs the placing step: the outcome of a store no other shipment is writing to, in which every
+# file the request names is new and lands with the bytes the shipment asked
+# for -- except triage.md when the environment says the store already holds
+# one, which the step replaces, announcing the digest it held. The request
+# arrives as JSON on stdin; it is appended to the log beside the argv log.
+STUB_ANSWER_TO_PLACING = """
+script = sys.argv[-1]
+if "# cold-read-record-ship: place staged files" in script:
+    request = json.load(sys.stdin)
+    with open(os.environ["RECORD_SHIP_TEST_ARGV_LOG"] + ".requests", "a") as log:
+        log.write(json.dumps(request) + "\\n")
+    local = request["local_digests"]
+    held_triage = os.environ.get("RECORD_SHIP_TEST_STORED_TRIAGE_DIGEST")
+    replaceable = request["replaceable"]
+    displaced = held_triage if held_triage and replaceable in local else None
+    added = sorted(relative for relative in local
+                   if not (displaced and relative == replaceable))
+    print(json.dumps({"differing": [], "added": added,
+                      "displaced": displaced, "stored": dict(local)}))
+    sys.exit(0)
+"""
+
 # The stub for both `ssh` and `rsync`: append argv to the log named in the
 # environment and exit 0 printing nothing, which for the inventory call
-# means "no such directory in the store yet".
+# means "no such directory in the store yet", and answer the placing call.
 STUB_RECORDER = """#!/usr/bin/env python3
 import json, os, sys
 with open(os.environ["RECORD_SHIP_TEST_ARGV_LOG"], "a") as log:
     log.write(json.dumps(sys.argv) + "\\n")
-"""
+""" + STUB_ANSWER_TO_PLACING
 
 # A stub `ssh` that records what it was asked as the recorder above does and
 # ANSWERS the inventory call: the script that runs sha256sum gets one line
@@ -58,6 +82,7 @@ STUB_INVENTORY_ANSWERING_SSH = """#!/usr/bin/env python3
 import json, os, sys
 with open(os.environ["RECORD_SHIP_TEST_ARGV_LOG"], "a") as log:
     log.write(json.dumps(sys.argv) + "\\n")
+""" + STUB_ANSWER_TO_PLACING + """
 if "sha256sum" in sys.argv[-1]:
     print(os.environ["RECORD_SHIP_TEST_STORED_TRIAGE_DIGEST"] + "  ./triage.md")
 """
@@ -123,11 +148,12 @@ with tempfile.TemporaryDirectory(prefix="cold-read-record-ship-test-") as scratc
     # 2026-09-27, walk file-naming-page-revision-2026-09-23, item 9): every
     # owner it names by path must exist, and no naming rule may come back.
     readme_text = (store_root / "README.md").read_text(encoding="utf-8")
-    check("the README lists all eight kinds",
+    check("the README lists all nine kinds",
           all(f"- `{kind}/` -- " in readme_text
               for kind in ("cold-read-records", "sanity-check-records", "walk",
                            "transcripts", "seats", "analysis",
-                           "daily-full-test-runs", "pull-request-head-test-runs")),
+                           "daily-full-test-runs", "pull-request-head-test-runs",
+                           "daily-memory-review-marks")),
           readme_text)
     readme_owner_paths = [token for token in readme_text.split("`")
                           if token.endswith(".py") and "/" in token]
@@ -670,13 +696,49 @@ with tempfile.TemporaryDirectory(prefix="cold-read-record-ship-test-") as scratc
     check("the store's inventory is one ssh call running sha256sum under the record's directory",
           any("sha256sum" in " ".join(c) and f"cold-read-records/{demo.name}" in " ".join(c)
               for c in ssh_calls), str(ssh_calls))
-    check("exactly one rsync call, add-only, over batch-mode ssh, into the record's own directory",
+    staging_prefix = f"{RULED_DESTINATION}/.ship-staging-{demo.name}-"
+    check("exactly one rsync call, over batch-mode ssh, into a staging "
+          "directory beside the record's own, named for the record",
           len(rsync_calls) == 1 and "-a" in rsync_calls[0]
-          and "--ignore-existing" in rsync_calls[0]
           and "ssh -o BatchMode=yes -o ConnectTimeout=10" in rsync_calls[0]
           and rsync_calls[0][-2] == f"{demo.resolve()}/"
-          and rsync_calls[0][-1] == f"{RULED_DESTINATION}/{demo.name}/",
+          and re.fullmatch(re.escape(staging_prefix) + "[0-9a-f]{12}/", rsync_calls[0][-1]),
           str(rsync_calls))
+    placing_calls = [c for c in ssh_calls
+                     if "# cold-read-record-ship: place staged files" in c[-1]]
+    inventory_calls = [i for i, c in enumerate(calls) if c[0].endswith("ssh")
+                       and "sha256sum" in c[-1] and "place staged files" not in c[-1]]
+    copy_indexes = [i for i, c in enumerate(calls) if c[0].endswith("rsync")]
+    placing_indexes = [i for i, c in enumerate(calls) if c[0].endswith("ssh")
+                       and "place staged files" in c[-1]]
+    check("remotely the inventory, the copy into staging and the one placing "
+          "step run in that order, and no other ssh call makes or removes a "
+          "directory in the store",
+          len(inventory_calls) == 1 and len(copy_indexes) == 1
+          and len(placing_indexes) == 1
+          and inventory_calls[0] < copy_indexes[0] < placing_indexes[0]
+          and not any("mkdir --" in c[-1] or "rmdir" in c[-1] for c in ssh_calls),
+          f"inventory {inventory_calls} copy {copy_indexes} placing {placing_indexes}")
+    staging_used = rsync_calls[0][-1][len(f"{RULED_DESTINATION}/"):].rstrip("/") \
+        if rsync_calls else ""
+    requests_log = pathlib.Path(f"{argv_log}.requests")
+    placing_requests = [json.loads(line) for line in
+                        requests_log.read_text().splitlines()] \
+        if requests_log.exists() else []
+    check("then one ssh call runs the step as a python3 program, its request "
+          "-- the record's directory in the store, the staging directory the "
+          "copy filled, and every local file's digest -- on stdin, not in the "
+          "command line a shell parses",
+          len(placing_calls) == 1 and placing_calls[0][-1].startswith("python3 -c ")
+          and staging_used not in placing_calls[0][-1]
+          and len(placing_requests) == 1
+          and placing_requests[0]["store_dir"]
+          == f"/home/nedlern/nedschorus-logs/cold-read-records/{demo.name}"
+          and placing_requests[0]["staging_dir"]
+          == f"/home/nedlern/nedschorus-logs/cold-read-records/{staging_used}"
+          and sorted(placing_requests[0]["local_digests"])
+          == sorted(p.relative_to(demo).as_posix() for p in demo.rglob("*") if p.is_file()),
+          f"{placing_calls} {placing_requests}")
     check("rsync is never asked to delete or to write in place",
           not any(flag in rsync_calls[0] for flag in ("--delete", "--inplace")),
           str(rsync_calls))
@@ -707,28 +769,16 @@ with tempfile.TemporaryDirectory(prefix="cold-read-record-ship-test-") as scratc
         "RECORD_SHIP_TEST_STORED_TRIAGE_DIGEST": stored_triage_digest})
     replace_calls = [json.loads(line) for line in replace_log.read_text().splitlines()]
     replace_rsync_calls = [c for c in replace_calls if c[0].endswith("rsync")]
-    single_file_calls = [c for c in replace_rsync_calls
-                         if c[-1].endswith(f"{remote_record.name}/triage.md")]
     check("remotely a triage.md the store already holds with other bytes is "
           "shipped, not refused",
           result.returncode == 0 and result.stdout.startswith("shipped:")
           and "triage.md replaced" in result.stdout,
           f"exit {result.returncode}: {result.stdout}{result.stderr}")
-    check("the replacement is a second rsync of that one file, over batch-mode "
-          "ssh, into the record's own directory in the store",
-          len(replace_rsync_calls) == 2 and len(single_file_calls) == 1
-          and single_file_calls[0][-2] == f"{remote_record.resolve()}/triage.md"
-          and single_file_calls[0][-1]
-          == f"{RULED_DESTINATION}/{remote_record.name}/triage.md"
-          and "ssh -o BatchMode=yes -o ConnectTimeout=10" in single_file_calls[0],
+    check("the replacement takes no rsync of its own: the one copy is into "
+          "staging, and the placing step renames triage.md from there",
+          len(replace_rsync_calls) == 1
+          and ".ship-staging-" in replace_rsync_calls[0][-1],
           str(replace_rsync_calls))
-    check("the replacing rsync passes --ignore-times, rsync's size-and-time "
-          "check being what would skip a same-length revision, and is never "
-          "asked to delete or to write in place",
-          single_file_calls and "--ignore-times" in single_file_calls[0]
-          and not any(flag in single_file_calls[0]
-                      for flag in ("--delete", "--inplace", "--ignore-existing")),
-          str(single_file_calls))
     check("the digest the store reported for the displaced triage is announced "
           "on stderr",
           "REPLACED" in result.stderr and stored_triage_digest in result.stderr,
@@ -764,6 +814,461 @@ with tempfile.TemporaryDirectory(prefix="cold-read-record-ship-test-") as scratc
           and f"nedlern@ned-box:{box_store}/{box_record.name}" in printed.getvalue()
           and (box_store / box_record.name / "a.md").read_text(encoding="utf-8") == REPORT_A,
           printed.getvalue())
+
+    # --- TWO SHIPMENTS OF ONE RECORD NAME AT ONCE ----------------------------
+    # Two checkouts ship a record of one name in the same second. The other
+    # shipment's file is made to land at a chosen moment of this one -- after
+    # this one has taken the store's inventory, or after its copy has run -- by
+    # wrapping the call that marks that moment, in this process. Whichever
+    # shipment's file is not the one the store keeps must not print shipped:.
+    racing_spec = importlib.util.spec_from_file_location(
+        "cold_read_record_ship_two_shipments", SHIP)
+    racing = importlib.util.module_from_spec(racing_spec)
+    racing_spec.loader.exec_module(racing)
+    saved_destination = os.environ.pop(DESTINATION_VARIABLE, None)
+    saved_store_inventory = racing.store_inventory
+    saved_subprocess_run = subprocess.run
+
+    def ship_while_the_other_lands(case_label, other_report, moment):
+        """Ship a record whose fast-read.md is REPORT_A while the other
+        shipment's fast-read.md, `other_report`, lands in the store at
+        `moment`: "after-inventory" or "after-copy". Returns the exit code,
+        the stdout, the bytes the store keeps, and what the shipment left
+        in the store's records directory beside the record."""
+        race_store = scratch / f"race-store-{case_label}" / "cold-read-records"
+        race_record = make_record(scratch / f"race-records-{case_label}",
+                                  "explain-reply-draft-seat-a-151738-2026-10-01",
+                                  {"fast-read.md": REPORT_A,
+                                   "target/docs/reply.md": "# the reply\n"})
+        landed_path = race_store / race_record.name / "fast-read.md"
+
+        def land_the_other():
+            landed_path.parent.mkdir(parents=True, exist_ok=True)
+            landed_path.write_text(other_report, encoding="utf-8")
+
+        def inventory_then_land(host, store_dir):
+            answer = saved_store_inventory(host, store_dir)
+            if moment == "after-inventory" and not landed_path.exists():
+                land_the_other()
+            return answer
+
+        copies_run = []
+
+        def run_then_land(command, *args, **kwargs):
+            completed = saved_subprocess_run(command, *args, **kwargs)
+            if moment == "after-copy" and command and command[0] == "rsync" \
+                    and not copies_run:
+                copies_run.append(command)
+                # Written over whatever this shipment's copy put there: the
+                # other shipment's rsync, which found no file when it looked,
+                # renaming its temporary into place after this one's did.
+                land_the_other()
+            return completed
+
+        printed = io.StringIO()
+        racing.store_inventory = inventory_then_land
+        subprocess.run = run_then_land
+        try:
+            with contextlib.redirect_stdout(printed), \
+                    contextlib.redirect_stderr(io.StringIO()):
+                code = racing.ship_one(None, pathlib.PurePosixPath(race_store),
+                                       race_record)
+        finally:
+            racing.store_inventory = saved_store_inventory
+            subprocess.run = saved_subprocess_run
+        kept = landed_path.read_text(encoding="utf-8") if landed_path.exists() else None
+        beside = sorted(p.name for p in race_store.iterdir() if p.name != race_record.name)
+        return code, printed.getvalue(), kept, beside
+
+    try:
+        code, out, kept, beside = ship_while_the_other_lands(
+            "between-inventory-and-copy", REPORT_B, "after-inventory")
+        check("the other shipment's differing report landing between this "
+              "shipment's inventory and its copy makes this one REFUSED, never "
+              "shipped:, its own report not being what the store keeps",
+              code == 2 and out.startswith("REFUSED:") and "fast-read.md" in out
+              and out.count("\n") == 1,
+              f"exit {code}: {out}")
+        check("that refusal leaves the other shipment's report in the store, "
+              "not overwritten", kept == REPORT_B, repr(kept))
+        check("and the refused shipment placed nothing after the taken file: "
+              "its target/ copy, which sorts after fast-read.md, is not in the "
+              "store beside the other shipment's report",
+              not (scratch / "race-store-between-inventory-and-copy"
+                   / "cold-read-records"
+                   / "explain-reply-draft-seat-a-151738-2026-10-01"
+                   / "target").exists())
+
+        code, out, kept, beside = ship_while_the_other_lands(
+            "after-the-copy-ran", REPORT_B, "after-copy")
+        check("the other shipment's differing report landing after this "
+              "shipment's copy ran still never lets both print shipped: -- "
+              "this one refuses, or its report is the one the store keeps",
+              (code == 2 and out.startswith("REFUSED:") and kept == REPORT_B)
+              or (code == 0 and out.startswith("shipped:") and kept == REPORT_A),
+              f"exit {code}: {out}; store keeps {kept!r}")
+
+        code, out, kept, beside = ship_while_the_other_lands(
+            "same-bytes", REPORT_A, "after-inventory")
+        check("the other shipment landing the SAME bytes between inventory and "
+              "copy is no difference: this one is shipped:, exit 0",
+              code == 0 and out.startswith("shipped:") and kept == REPORT_A,
+              f"exit {code}: {out}")
+        check("a shipment leaves nothing in the store beside the record "
+              "directory, whether it shipped or refused",
+              beside == [] and not any(
+                  p.name != "explain-reply-draft-seat-a-151738-2026-10-01"
+                  for case_label in ("between-inventory-and-copy",
+                                     "after-the-copy-ran", "same-bytes")
+                  for p in (scratch / f"race-store-{case_label}"
+                            / "cold-read-records").iterdir()),
+              str(beside))
+    finally:
+        if saved_destination is not None:
+            os.environ[DESTINATION_VARIABLE] = saved_destination
+
+    # The step ned-box runs, as the python3 program the ssh call sends, run by
+    # a real sh and python3 on scratch paths with its request on stdin. The
+    # stubs above answer it without running it, so this is where the program
+    # as sent -- the function's own source and the line that drives it -- is
+    # parsed and executed.
+    def step_through_real_python3(case_label, stored):
+        staging = scratch / f"placing-{case_label}" / ".ship-staging-r-0"
+        store = scratch / f"placing-{case_label}" / "r"
+        contents = {"a.md": "a\n", "b.md": "b, this shipment's\n",
+                    "sub dir/c.md": "c\n", "triage.md": "triage, this shipment's\n"}
+        for relative, text in contents.items():
+            (staging / relative).parent.mkdir(parents=True, exist_ok=True)
+            (staging / relative).write_text(text, encoding="utf-8")
+        store.mkdir(parents=True, exist_ok=True)
+        for relative, text in stored.items():
+            (store / relative).write_text(text, encoding="utf-8")
+        digests = {relative: hashlib.sha256(text.encode()).hexdigest()
+                   for relative, text in contents.items()}
+        request = {"store_dir": str(store), "staging_dir": str(staging),
+                   "local_digests": digests, "replaceable": "triage.md"}
+        replayed = subprocess.run(
+            ["/bin/sh", "-c",
+             f"python3 -c {shlex.quote(racing.place_staged_files_program())}"],
+            input=json.dumps(request), capture_output=True, text=True, check=False)
+        held = {p.relative_to(store).as_posix(): p.read_text(encoding="utf-8")
+                for p in store.rglob("*") if p.is_file()}
+        try:
+            outcome = json.loads(replayed.stdout)
+        except ValueError:
+            outcome = None
+        return replayed, outcome, held, staging, store, digests
+
+    replayed, outcome, held, staging, _, digests = step_through_real_python3(
+        "fresh", {"triage.md": "triage, the store's\n"})
+    check("run by a real python3, the step places every new file by link, a "
+          "path with a space in it included, replaces the store's triage.md "
+          "and announces the digest it held, and removes the staging directory",
+          replayed.returncode == 0 and outcome is not None
+          and outcome["added"] == ["a.md", "b.md", "sub dir/c.md"]
+          and outcome["displaced"]
+          == hashlib.sha256(b"triage, the store's\n").hexdigest()
+          and outcome["stored"] == digests
+          and held == {"a.md": "a\n", "b.md": "b, this shipment's\n",
+                       "sub dir/c.md": "c\n", "triage.md": "triage, this shipment's\n"}
+          and not staging.exists(),
+          f"{outcome} {held} {replayed.stderr}")
+    replayed, outcome, held, staging, _, _ = step_through_real_python3(
+        "taken", {"b.md": "b, the other's\n", "triage.md": "triage, the store's\n"})
+    check("an add-only file the store holds with other bytes is named as "
+          "differing, and nothing is placed or replaced, triage.md included",
+          replayed.returncode == 0 and outcome is not None
+          and outcome["differing"] == ["b.md"]
+          and held == {"b.md": "b, the other's\n", "triage.md": "triage, the store's\n"}
+          and not staging.exists(),
+          f"{outcome} {held} {replayed.stderr}")
+
+    # The walk shipper's add-only linking script, scripts/walk-files-ship.py's:
+    # a name taken by other bytes is left as it was, and placing goes on past it.
+    staging = scratch / "placing-go-on" / ".ship-staging-w-0"
+    store = scratch / "placing-go-on" / "w"
+    go_on_contents = {"a.md": "a\n", "b.md": "b, this shipment's\n", "c.md": "c\n"}
+    for relative, text in go_on_contents.items():
+        (staging / relative).parent.mkdir(parents=True, exist_ok=True)
+        (staging / relative).write_text(text, encoding="utf-8")
+    store.mkdir(parents=True, exist_ok=True)
+    (store / "b.md").write_text("b, the other's\n", encoding="utf-8")
+    replayed = subprocess.run(
+        ["/bin/sh", "-c", racing.link_staged_files_never_over_existing_script(
+            pathlib.PurePosixPath(staging), pathlib.PurePosixPath(store),
+            sorted(go_on_contents))], capture_output=True, text=True, check=False)
+    check("replayed by a real sh, the walk shipper's linking script leaves a name "
+          "taken by other bytes as it was, places the files after it, and prints "
+          "the store's digest of each",
+          replayed.returncode == 0 and not staging.exists()
+          and {p.name: p.read_text(encoding="utf-8") for p in store.iterdir()}
+          == {"a.md": "a\n", "b.md": "b, the other's\n", "c.md": "c\n"}
+          and (hashlib.sha256("b, the other's\n".encode()).hexdigest() + "  b.md"
+               in replayed.stdout.splitlines()),
+          f"{replayed.stdout} {replayed.stderr}")
+
+    # The replacing script ned-box runs for the walk and seat shippers,
+    # replayed by a real /bin/sh on scratch paths.
+    staging = scratch / "replacing" / ".ship-staging-x-0"
+    store = scratch / "replacing" / "x"
+    staged_texts = {"m.md": "minutes, this shipment's\n",
+                    "w x.md": "walk text, this shipment's\n",
+                    "v.md": "walk text, this shipment's\n",
+                    "new.md": "new\n"}
+    for relative, text in staged_texts.items():
+        (staging / relative).parent.mkdir(parents=True, exist_ok=True)
+        (staging / relative).write_text(text, encoding="utf-8")
+    store.mkdir(parents=True, exist_ok=True)
+    stored_texts = {"m.md": "minutes, the other's\n", "w x.md": "walk text, tested\n",
+                    "v.md": "walk text, changed since\n"}
+    for relative, text in stored_texts.items():
+        (store / relative).write_text(text, encoding="utf-8")
+    sha = {text: hashlib.sha256(text.encode()).hexdigest()
+           for text in list(staged_texts.values()) + list(stored_texts.values())}
+    replacements = [("m.md", "m.md", None),
+                    ("w x.md", "w x.md", sha["walk text, tested\n"]),
+                    ("v.md", "v.md", sha["walk text, tested\n"]),
+                    ("new.md", "renamed.md", None)]
+    replayed = subprocess.run(["/bin/sh", "-c", racing.replace_with_staged_files_script(
+        pathlib.PurePosixPath(staging), pathlib.PurePosixPath(store), replacements)],
+        capture_output=True, text=True, check=False)
+    lines = replayed.stdout.splitlines()
+    check("replayed by a real sh, the replacing script renames over a file "
+          "when no digest is required, and prints the digest it displaced",
+          replayed.returncode == 0
+          and (store / "m.md").read_text(encoding="utf-8") == "minutes, this shipment's\n"
+          and f"replaced {sha['minutes, the other' + chr(39) + 's' + chr(10)]} m.md" in lines,
+          f"{replayed.stdout} {replayed.stderr}")
+    check("it renames over a file whose digest is the required one, a name "
+          "with a space in it included",
+          (store / "w x.md").read_text(encoding="utf-8") == "walk text, this shipment's\n"
+          and f"replaced {sha['walk text, tested' + chr(10)]} w x.md" in lines,
+          replayed.stdout)
+    check("it keeps a file whose digest is not the required one, and says so",
+          (store / "v.md").read_text(encoding="utf-8") == "walk text, changed since\n"
+          and f"kept {sha['walk text, changed since' + chr(10)]} v.md" in lines,
+          replayed.stdout)
+    check("it renames a staged file to another name in the store, nothing "
+          "displaced being a dash",
+          (store / "renamed.md").read_text(encoding="utf-8") == "new\n"
+          and "replaced - renamed.md" in lines, replayed.stdout)
+    check("and it prints the store's digest of every name afterwards, which is "
+          "what the module reads back",
+          all(f"stored {hashlib.sha256((store / name).read_bytes()).hexdigest()} {name}"
+              in lines for name in ("m.md", "w x.md", "v.md", "renamed.md")),
+          replayed.stdout)
+
+    # Shipped in this process, with what it prints captured.
+    def ship_in_process(store, record):
+        printed, announced = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(printed), contextlib.redirect_stderr(announced):
+            code = racing.ship_one(None, pathlib.PurePosixPath(store), record)
+        return code, printed.getvalue(), announced.getvalue()
+
+    # Another shipment of the name landing a file between the placing step's
+    # inventory and the link: the link is never made over it, placing stops
+    # there, and the read-back refuses.
+    unlocked_store = scratch / "unlocked-store" / "cold-read-records"
+    unlocked_record = make_record(scratch / "unlocked-records", "unlocked-2026-10-01",
+                                  {"a.md": REPORT_A, "b.md": REPORT_A, "c.md": REPORT_A})
+    saved_link = os.link
+
+    def link_after_the_other_lands_b(source, target, *args, **kwargs):
+        if pathlib.Path(target).name == "b.md":
+            pathlib.Path(target).write_text(REPORT_B, encoding="utf-8")
+        return saved_link(source, target, *args, **kwargs)
+
+    os.link = link_after_the_other_lands_b
+    try:
+        code, out, err = ship_in_process(unlocked_store, unlocked_record)
+    finally:
+        os.link = saved_link
+    unlocked_held = {p.name: p.read_text(encoding="utf-8")
+                     for p in (unlocked_store / unlocked_record.name).iterdir()}
+    check("a file another shipment lands just before the link is never "
+          "overwritten: placing stops there and the shipment is REFUSED",
+          code == 2 and out.startswith("REFUSED:") and "b.md" in out
+          and unlocked_held == {"a.md": REPORT_A, "b.md": REPORT_B},
+          f"exit {code}: {out}{err} {unlocked_held}")
+
+    # The same landing, with a triage.md the store holds with other bytes:
+    # placing stopped, so the shipment is REFUSED and the store's triage.md is
+    # left as it was, never replaced by a shipment that does not ship.
+    stopped_store = scratch / "stopped-store" / "cold-read-records"
+    stopped_record = make_record(scratch / "stopped-records", "stopped-2026-10-02",
+                                 {"a.md": REPORT_A, "b.md": REPORT_A,
+                                  "triage.md": "# triage, ours\n"})
+    stopped_triage = stopped_store / stopped_record.name / "triage.md"
+    stopped_triage.parent.mkdir(parents=True)
+    stopped_triage.write_text("# triage, the store's\n", encoding="utf-8")
+    os.link = link_after_the_other_lands_b
+    try:
+        code, out, err = ship_in_process(stopped_store, stopped_record)
+    finally:
+        os.link = saved_link
+    check("when placing stops at a file another shipment landed, the shipment "
+          "is REFUSED and the store's triage.md is not replaced, nor announced "
+          "as replaced",
+          code == 2 and out.startswith("REFUSED:") and "b.md" in out
+          and stopped_triage.read_text(encoding="utf-8") == "# triage, the store's\n"
+          and "REPLACED" not in err,
+          f"exit {code}: {out}{err}")
+
+    # --- A triage.md another shipment placed first is replaced, rule 4 -------
+    triage_store = scratch / "triage-race-store" / "cold-read-records"
+    triage_record = make_record(scratch / "triage-race-records", "triage-race-2026-10-01",
+                                {"a.md": "# shared\n", "triage.md": "# triage, ours\n"})
+    landed_triage = triage_store / triage_record.name / "triage.md"
+    theirs = "# triage, the other shipment's\n"
+
+    def inventory_then_land_triage(host, store_dir):
+        answer = saved_store_inventory(host, store_dir)
+        if not landed_triage.exists():
+            landed_triage.parent.mkdir(parents=True, exist_ok=True)
+            landed_triage.write_text(theirs, encoding="utf-8")
+        return answer
+
+    racing.store_inventory = inventory_then_land_triage
+    try:
+        code, out, err = ship_in_process(triage_store, triage_record)
+    finally:
+        racing.store_inventory = saved_store_inventory
+    check("a differing triage.md another shipment placed after this one's "
+          "inventory is replaced under rule 4 and shipped:, never REFUSED with "
+          "the -2 rename",
+          code == 0 and out.startswith("shipped:") and "triage.md replaced" in out
+          and landed_triage.read_text(encoding="utf-8") == "# triage, ours\n",
+          f"exit {code}: {out}{err}")
+    check("the replacement announces the other shipment's digest as the "
+          "displaced one, on stderr",
+          "REPLACED triage.md" in err
+          and hashlib.sha256(theirs.encode()).hexdigest() in err, err)
+
+    # --- An overlapping replacement of triage.md lands after this one's -----
+    # Both shipments replace triage.md; the other's rename lands second, so
+    # this shipment's read-back holds the other's triage: never shipped:.
+    overtaken_store = scratch / "overtaken-store" / "cold-read-records"
+    overtaken_record = make_record(scratch / "overtaken-records", "overtaken-2026-10-02",
+                                   {"a.md": "# shared\n", "triage.md": "# triage, ours\n"})
+    overtaken_triage = overtaken_store / overtaken_record.name / "triage.md"
+    overtaken_triage.parent.mkdir(parents=True)
+    overtaken_triage.write_text("# triage, the store's\n", encoding="utf-8")
+    saved_replace = os.replace
+
+    def replace_then_the_other_replaces(source, target, *args, **kwargs):
+        saved_replace(source, target, *args, **kwargs)
+        if pathlib.Path(target).name == "triage.md":
+            pathlib.Path(target).write_text(theirs, encoding="utf-8")
+
+    os.replace = replace_then_the_other_replaces
+    try:
+        code, out, err = ship_in_process(overtaken_store, overtaken_record)
+    finally:
+        os.replace = saved_replace
+    check("a triage.md another shipment replaces after this one's replacement "
+          "is REFUSED naming triage.md, and never shipped:",
+          code == 2 and out.startswith("REFUSED:") and "triage.md" in out
+          and "shipped:" not in out,
+          f"exit {code}: {out}{err}")
+
+    # --- A new file the placing leaves out is FAILED, never shipped: ---------
+    unplaced_store = scratch / "unplaced-store" / "cold-read-records"
+    unplaced_record = make_record(scratch / "unplaced-records", "unplaced-2026-10-01",
+                                  {"a.md": REPORT_A, "b.md": REPORT_B})
+    saved_link = os.link
+
+    def link_refusing_b(source, target, *args, **kwargs):
+        if pathlib.Path(target).name == "b.md":
+            raise PermissionError(13, "Permission denied", str(target))
+        return saved_link(source, target, *args, **kwargs)
+
+    os.link = link_refusing_b
+    try:
+        code, out, err = ship_in_process(unplaced_store, unplaced_record)
+    finally:
+        os.link = saved_link
+    check("a new file the placing could not link is FAILED, exit 1, naming it, "
+          "and never shipped:",
+          code == 1 and out.startswith("FAILED:")
+          and "not in the store after the copy: b.md" in out, f"exit {code}: {out}{err}")
+
+    # --- A copy into staging that fails leaves no staging directory ----------
+    failing_store = scratch / "failing-copy-store" / "cold-read-records"
+    failing_record = make_record(scratch / "failing-copy-records", "failing-copy-2026-10-01",
+                                 {"a.md": REPORT_A})
+
+    def rsync_then_exit_23(command, *args, **kwargs):
+        completed = saved_subprocess_run(command, *args, **kwargs)
+        if command and command[0] == "rsync" and ".ship-staging-" in command[-1]:
+            return subprocess.CompletedProcess(command, 23, completed.stdout, "partial transfer\n")
+        return completed
+
+    subprocess.run = rsync_then_exit_23
+    try:
+        code, out, err = ship_in_process(failing_store, failing_record)
+    finally:
+        subprocess.run = saved_subprocess_run
+    check("a copy into staging that exits 23 is FAILED, and the staging directory "
+          "it filled is removed",
+          code == 1 and out.startswith("FAILED:") and "rsync exit 23" in out
+          and sorted(p.name for p in failing_store.iterdir()) == [],
+          f"exit {code}: {out}; left: {sorted(p.name for p in failing_store.iterdir())}")
+
+    # --- A local placing step that hits an OS error names that error ---------
+    denied_store = scratch / "denied-store" / "cold-read-records"
+    denied_record = make_record(scratch / "denied-records", "denied-2026-10-01",
+                                {"a.md": REPORT_A})
+    saved_place = racing.place_staged_files_and_read_them_back
+
+    def place_denied(request):
+        raise PermissionError(13, "Permission denied", request["store_dir"])
+
+    racing.place_staged_files_and_read_them_back = place_denied
+    try:
+        code, out, err = ship_in_process(denied_store, denied_record)
+    finally:
+        racing.place_staged_files_and_read_them_back = saved_place
+    check("a local placing step that hits an OS error prints that error as the "
+          "reason, not an ssh exit",
+          code == 1 and out.startswith("FAILED: denied-2026-10-01 — Permission denied "
+                                       "while placing the copied files; a later run finishes it.")
+          and "ssh" not in out,
+          f"exit {code}: {out}")
+
+# --- The replace step renames nothing beside another shipment's staging ----
+_overlap_spec = importlib.util.spec_from_file_location("cold_read_record_ship_overlap", SHIP)
+overlap_shipper = importlib.util.module_from_spec(_overlap_spec)
+_overlap_spec.loader.exec_module(overlap_shipper)
+with tempfile.TemporaryDirectory(prefix="cold-read-record-ship-overlap-test-") as overlap_name:
+    overlap_store = pathlib.Path(overlap_name) / "store"
+    own = overlap_store / ".ship-staging-walk b-0123456789ab"
+    other = overlap_store / ".ship-staging-walk b-aaaaaaaaaaaa"
+    longer_name = overlap_store / ".ship-staging-walk b-c-bbbbbbbbbbbb"
+    for directory in (own, other, longer_name):
+        directory.mkdir(parents=True)
+    (own / "x").write_text("this shipment\n", encoding="utf-8")
+    (overlap_store / "x").write_text("the other shipment\n", encoding="utf-8")
+    script = overlap_shipper.replace_with_staged_files_script(
+        pathlib.PurePosixPath(own), pathlib.PurePosixPath(overlap_store), [("x", "x", None)])
+    ran = subprocess.run(["sh", "-c", script], capture_output=True, text=True, check=False)
+    check("the remote replace step, run by a real sh, names another staging directory "
+          "of the same name and renames nothing; one for a longer name is not counted",
+          ran.returncode == 0 and ran.stdout == f"other - {other}\n"
+          and (overlap_store / "x").read_text(encoding="utf-8") == "the other shipment\n",
+          repr(ran.stdout) + ran.stderr)
+    _, local_outcome = overlap_shipper.replace_with_staged_files(
+        None, own, overlap_store, [("x", "x", None)])
+    check("the local replace step returns OtherShipmentStaging naming it, and renames nothing",
+          isinstance(local_outcome, overlap_shipper.OtherShipmentStaging)
+          and local_outcome.paths == (str(other),)
+          and (overlap_store / "x").read_text(encoding="utf-8") == "the other shipment\n",
+          repr(local_outcome))
+    other.rmdir()
+    ran = subprocess.run(["sh", "-c", script], capture_output=True, text=True, check=False)
+    check("with no other staging directory, the remote replace step renames as before",
+          ran.returncode == 0 and ran.stdout.startswith("replaced ")
+          and (overlap_store / "x").read_text(encoding="utf-8") == "this shipment\n",
+          repr(ran.stdout) + ran.stderr)
 
 print()
 if failures:

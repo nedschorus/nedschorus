@@ -23,7 +23,7 @@ one. Found by the merge-lane seat reviewing that pull request; its two cases
 are the mutation cases below, which fail if the comparison ever weakens
 again.
 
-The three bullets must match one for one, in order. The intro cannot: in the
+The bullets must match one for one, in order. The intro cannot: in the
 file it is a paragraph under a heading, and in CLAUDE.md it is the middle of
 one bullet, between the heading restated inline and the sentence naming the
 file and this test. So the intro is pinned on both sides instead — what
@@ -43,13 +43,15 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 INSTRUCTIONS_FILE = REPO_ROOT / "docs" / "agents" / "pr-reviewer-instructions.md"
 CLAUDE_MD = REPO_ROOT / "CLAUDE.md"
-SECTION_HEADING = "## Review scope: code blocks, prose does not"
+SECTION_HEADING = ("## Review scope: code findings block the merge; prose gets "
+                   "none, apart from the exceptions below")
 
 # CLAUDE.md's bullet restates the heading inline before the copied intro, and
 # names the file and this test after it. Both are CLAUDE.md's own framing, not
 # part of the copy, so they bound the intro rather than being compared to it.
-CLAUDE_MD_PREFIX = ("Reviewing a pull request — **review scope: code blocks, "
-                    "prose does not.** ")
+CLAUDE_MD_PREFIX = ("Reviewing a pull request — **review scope: code findings "
+                    "block the merge; prose gets none, apart from the exceptions "
+                    "below.** ")
 CLAUDE_MD_SUFFIX_OPENING = "This bullet is the"
 
 failures = []
@@ -121,9 +123,9 @@ def differences(instructions: str, claude_md: str) -> list:
         return [f"the instructions file has no {SECTION_HEADING!r} section"]
 
     paragraphs = section_paragraphs(review_scope_section(instructions))
-    if len(paragraphs) != 4:
+    if len(paragraphs) != 3:
         return [f"the section holds {len(paragraphs)} paragraph(s), expected an "
-                f"intro and three bullets: {paragraphs}"]
+                f"intro and two bullets: {paragraphs}"]
     file_intro, file_bullets = paragraphs[0], paragraphs[1:]
 
     claude_intro, claude_bullets = claude_md_copy(claude_md)
@@ -182,13 +184,12 @@ check("CLAUDE.md names the file and this test beside its copy",
 
 FIXTURE_INSTRUCTIONS = """# Reviewer instructions
 
-## Review scope: code blocks, prose does not
+## Review scope: code findings block the merge; prose gets none, apart from the exceptions below
 
 Intro sentence one. Intro sentence two.
 
 - **A.** Alpha one. Alpha two.
 - **B.** Beta one.
-- **C.** Gamma one.
 
 ## Some later section
 
@@ -197,12 +198,12 @@ Not part of the copy.
 
 FIXTURE_CLAUDE_MD = """# Project
 
-- Reviewing a pull request — **review scope: code blocks, prose does not.** \
+- Reviewing a pull request — **review scope: code findings block the merge; \
+prose gets none, apart from the exceptions below.** \
 Intro sentence one. Intro sentence two. This bullet is the section, kept \
 identical by a test.
   - **A.** Alpha one. Alpha two.
   - **B.** Beta one.
-  - **C.** Gamma one.
 - An unrelated rule.
 """
 # The bullet is one line; the backslashes above are Python's, not the file's.
@@ -220,7 +221,7 @@ check("a sentence deleted from the file's bullet alone is caught",
       "has gone back to containment")
 
 lengthened_claude_md = FIXTURE_CLAUDE_MD.replace(
-    "  - **C.** Gamma one.", "  - **C.** Gamma one. Gamma two.", 1)
+    "  - **B.** Beta one.", "  - **B.** Beta one. Beta two.", 1)
 check("a sentence appended to CLAUDE.md's bullet alone is caught",
       differences(FIXTURE_INSTRUCTIONS, lengthened_claude_md) != [],
       "the file's bullet is still contained in the longer one; the comparison "
@@ -229,8 +230,8 @@ check("a sentence appended to CLAUDE.md's bullet alone is caught",
 check("an edit to the framing around the copied intro is caught",
       differences(FIXTURE_INSTRUCTIONS,
                   FIXTURE_CLAUDE_MD.replace(
-                      "**review scope: code blocks, prose does not.** ",
-                      "**review scope: code blocks, prose does not.** Also: ",
+                      "apart from the exceptions below.** ",
+                      "apart from the exceptions below.** Also: ",
                       1)) != [],
       "text inserted between the restated heading and the copied intro passed")
 

@@ -1,78 +1,13 @@
 #!/usr/bin/env python3
-"""Move every open issue's prose body into a filed GHI-MD, then make the
-body the links to that issue's files. The migration build-slice that
-docs/issues/46-ghi-info-agent-design.md § The GHI write path names and
-leaves unbuilt: "The existing corpus is migrated in its own build-slice,
-after this tool exists".
+"""Move issue prose into GHI-MD files before replacing bodies with links.
 
-WHY NOW. The user ruled on 2026-09-15 that a GHI's body is the links to its
-GHI-MD and nothing else. On 2026-09-24 the redirect hook
-(.claude/hooks/ghi-issue-write-redirect.py) began refusing hand-typed
-comments and body edits and telling an agent whose issue has no GHI-MD to
-stop and tell the user. Measured that day on nedschorus/nedschorus: of 75
-open issues, 1 had a link-only body, 16 a prose body beside a filed GHI-MD,
-and 58 a prose body and no GHI-MD at all — so for 58 issues an agent had no
-way left to record anything. The user, shown those numbers during the walk
-decisions-this-seat-owes-the-user-2026-09-22 (item 5): "Move them all now."
+Links target blob/main, so write-files must merge before relink-moved-bodies.
+Relinking requires an exact normalized copy on main to avoid losing prose.
 
-TWO VERBS, ONE PULL REQUEST BETWEEN THEM. A body of links points at
-`blob/main`, and main takes no direct push, so the move cannot be one step.
-
-  write-files
-      Read every open issue. For each whose body is prose, write that body
-      verbatim, under a first heading that is the issue's exact title, to a
-      file in docs/issues/ in this checkout. The author commits the files
-      and lands them through one pull request, merged by merge-lane like
-      any other.
-  relink-moved-bodies
-      Run after that pull request merges. For each open issue whose body is
-      prose, find the file on main that holds exactly that body; where one
-      does, rewrite the body as one link per filed GHI-MD of the issue —
-      `ghi-issue-write.py`'s own link list.
-
-THE EQUALITY GATE IS THE WHOLE OF relink-moved-bodies' SAFETY. A body is
-rewritten only when a file on main holds it word for word (after the one
-normalization the write tool compares bodies with), and it is read again
-just before the write. A body somebody edited after write-files ran matches
-no file and is left alone and reported: rerun write-files, which writes
-nothing for an issue whose body is already on main and a file for one whose
-body is not, land that, and run relink-moved-bodies again. Nothing is ever
-overwritten on a guess.
-
-NAMES. An issue with no filed GHI-MD gets `docs/issues/<number>-<slug>.md`,
-the name `create` gives a filed file. An issue that already has one gets a
-second file, `<number>-<slug>-former-issue-body.md`: its existing GHI-MD is
-never edited, so nothing has to judge whether that file already says what
-the body said. A second file also cannot rename the issue: the edit verb
-changes a title only for an issue with one filed GHI-MD
-(`sync_title_on_heading_change`). A name any tracked file already has, at
-any depth, is refused for that issue and the rest proceed.
-
-THE HEADING. The write tool reads a file's title as its first line starting
-with `#` at any level, after frontmatter (`first_heading`). 34 of the 75
-bodies opened with their own `##` heading on 2026-09-24, so the title is
-written as the file's first heading above the body, and every file is
-checked with `first_heading` itself before it is written. The `issue:`
-frontmatter line is `with_issue_frontmatter`'s, as a filed file carries.
-
-EMPTY BODIES. `is_derived_body` calls an empty body derived, which is right
-for relinking and wrong here: an empty-bodied issue with no GHI-MD is as
-stuck as a prose one. So an empty body with no filed GHI-MD gets a file
-holding its heading alone. None existed on 2026-09-24.
-
-WHAT THIS IMPORTS rather than restates: the write tool's `slug`,
-`links_body`, `is_derived_body`, `normalized`, `first_heading`,
-`with_issue_frontmatter`, `ghi_md_paths_for_issue`, `blob_at`, `read_issue`
-and `run`. The body this writes and the body `edit` would write are one
-function's output, so the two cannot disagree.
-
-Exit codes:
-  0   every open issue was moved, relinked, or needed nothing
-  1   an operating failure — gh, git or the network
-  3   the run finished, and at least one issue was refused or skipped by the
-      equality gate; the lines above say which and what to do
-  64  the command line is wrong
-"""
+Use a separate file for an issue that already has a GHI-MD: existing text
+cannot be assumed equivalent, and additional files do not synchronize titles.
+Prepend the issue title because first_heading accepts headings at any level.
+Empty bodies still need a filed GHI-MD so the issue can be edited."""
 
 import argparse
 import importlib.util
@@ -88,15 +23,14 @@ _TOOL_SPEC = importlib.util.spec_from_file_location("ghi_issue_write",
 tool = importlib.util.module_from_spec(_TOOL_SPEC)
 _TOOL_SPEC.loader.exec_module(tool)
 
-# gh returns at most this many; a listing this long may be cut short, and a
-# migration that silently missed the rest would report success over them.
+# A listing at gh’s limit may be truncated; treating it as complete would falsely report success.
 OPEN_ISSUE_LISTING_LIMIT = 1000
 FORMER_BODY_FILE_SUFFIX = "-former-issue-body"
 EXIT_SOME_ISSUES_LEFT = 3
 
 
 def open_issues(repo: str, runner):
-    """Every open issue's number, title and body, read from the API."""
+    """Return every open issue’s number, title, and body."""
     completed = runner(
         ["gh", "issue", "list", "--repo", repo, "--state", "open",
          "--limit", str(OPEN_ISSUE_LISTING_LIMIT),
@@ -112,18 +46,13 @@ def open_issues(repo: str, runner):
 
 
 def moved_file_text(repo: str, number: int, title: str, body: str) -> str:
-    """The file write-files writes for one issue: frontmatter, the title as
-    the first heading, a blank line, then the body verbatim."""
+    """Return frontmatter, the issue title, a blank line, and the verbatim body."""
     text = f"# {title}\n" + (f"\n{body}\n" if body else "")
     return tool.with_issue_frontmatter(text, repo, number, title)
 
 
 def body_held_by(file_text):
-    """The body a file holds when it has moved_file_text's shape, or None.
-    The exact inverse of moved_file_text: frontmatter skipped, the first
-    heading and the one blank line after it dropped, the rest normalized.
-    A file of any other shape — an author's GHI-MD opening with a `##`
-    heading, say — holds no body, and so never passes the gate."""
+    """Return the normalized body of moved_file_text’s exact shape, or None."""
     if file_text is None:
         return None
     lines = tool.normalized(file_text).split("\n")
@@ -160,7 +89,7 @@ def tracked_file_names(repository_root: Path, runner):
 
 def write_files(repo: str, repository_root: Path, runner, report,
                 dry_run=False, save_fetched_bodies_to=None) -> int:
-    """Phase A. Returns the exit code."""
+    """Write migration files and return an exit code."""
     runner(["git", "fetch", "origin", "main"], cwd=str(repository_root))
     issues = open_issues(repo, runner)
     if save_fetched_bodies_to:
@@ -226,9 +155,7 @@ def write_files(repo: str, repository_root: Path, runner, report,
 
 
 def runner_reading_revision_as_main(revision: str, runner):
-    """A runner that answers every git read of origin/main from `revision`
-    instead, so a dry run can show what relink-moved-bodies would do once a
-    branch has merged. Refused for a real run by the caller."""
+    """Return a runner substituting revision for origin/main reads in a dry run."""
     def substituted(arguments, **keywords):
         if arguments and arguments[0] == "git":
             arguments = [argument.replace("origin/main", revision, 1)
@@ -242,7 +169,7 @@ def runner_reading_revision_as_main(revision: str, runner):
 
 def relink_moved_bodies(repo: str, repository_root: Path, runner, report,
                         dry_run=False, table_to=None) -> int:
-    """Phase B. Returns the exit code."""
+    """Replace migrated bodies with links and return an exit code."""
     runner(["git", "fetch", "origin", "main"], cwd=str(repository_root))
     issues = open_issues(repo, runner)
     counts = {"link-only": 0, "filing in flight": 0, "relinked": 0,
@@ -266,8 +193,7 @@ def relink_moved_bodies(repo: str, repository_root: Path, runner, report,
             continue
         holders = files_on_main_holding(body, paths, repository_root, runner)
         if holders:
-            # Read again just before the write: the listing above may be
-            # minutes old by now, and a body edited since matches no file.
+            # Re-read before writing because the body may have changed since the listing.
             current = tool.read_issue(repo, number, holders[0], runner)
         if not holders or tool.normalized(current.get("body")) != body:
             counts["body differs"] += 1

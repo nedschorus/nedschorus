@@ -4,11 +4,23 @@
 Run: python3 scripts/md-drift-lint-test.py
 """
 
+import importlib.util
 import subprocess
 import sys
 import tempfile
 import types
 from pathlib import Path
+
+# Before anything runs git: a run started with GIT_DIR set, or with another
+# variable that redirects git, must still build this suite's scratch
+# repositories where the suite says, not in the repository the variable names.
+_git_environment_fixture_spec = importlib.util.spec_from_file_location(
+    "git_redirecting_environment_removal_test_fixture",
+    Path(__file__).resolve().with_name(
+        "git-redirecting-environment-removal-test-fixture.py"))
+_git_environment_fixture = importlib.util.module_from_spec(_git_environment_fixture_spec)
+_git_environment_fixture_spec.loader.exec_module(_git_environment_fixture)
+_git_environment_fixture.remove_git_redirecting_environment_variables_from_this_process()
 
 LINT_SCRIPT = Path(__file__).with_name("md-drift-lint.py")
 
@@ -136,6 +148,37 @@ with tempfile.TemporaryDirectory() as workspace:
     findings = problems_for("`PR [<title>](<URL>)` and [doc](docs/ghost-doc.md)", root)
     check("a missing link target beside a placeholder target is still reported",
           findings == ["link target does not exist: docs/ghost-doc.md"], str(findings))
+    # Two shapes the cases above leave open, each named in review of the pull
+    # request that added the skip. A placeholder that OPENS a longer target:
+    # this case fails if fullmatch is loosened to match, which anchors only at
+    # the start. A placeholder other than <URL>: this case fails if the skip
+    # is narrowed to the one placeholder the identifier file happens to use.
+    findings = problems_for("[doc](<name>-ghost.md)", root)
+    check("a placeholder opening a longer link target is still reported",
+          findings == ["link target does not exist: <name>-ghost.md"], str(findings))
+    findings = problems_for("`see [the page](<address>)`", root)
+    check("a link target that is any other placeholder is not checked",
+          findings == [], str(findings))
+
+    # --- A link target written in angle brackets (added 2026-10-02) --------
+    # Markdown lets a target be written `[x](<docs/file.md>)`, and that target
+    # is the path inside the brackets. Before the unwrap, every angle-bracket
+    # target matched the placeholder skip above and a missing file behind one
+    # was never reported. A path ends in a known extension; a placeholder such
+    # as <URL> does not, and the placeholder cases above still pass.
+    findings = problems_for("[doc](<docs/absent-angle-doc.md>)", root)
+    check("a missing path in an angle-bracket link target is reported",
+          findings == ["link target does not exist: docs/absent-angle-doc.md"],
+          str(findings))
+    findings = problems_for("[doc](<docs/real-doc.md>)", root)
+    check("an existing path in an angle-bracket link target passes",
+          findings == [], str(findings))
+    # The extension test reads the path before its "#anchor": this case fails
+    # if the anchor is left on when the extension is tested.
+    findings = problems_for("[doc](<docs/absent-angle-doc.md#part>)", root)
+    check("an angle-bracket link target with an anchor is checked without the anchor",
+          findings == ["link target does not exist: docs/absent-angle-doc.md"],
+          str(findings))
 
     # --- Dates ------------------------------------------------------------
     check("a real date passes", problems_for("ruled 2026-08-12 by", root) == [])

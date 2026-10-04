@@ -1,11 +1,5 @@
 #!/usr/bin/env python3
-"""The run-state of one design-to-main run: the counters of section 7 and
-the file of section 9, `run-state.json`.
-
-Loaded by design-to-main-state-machine.py through importlib (this file's
-name has hyphens, as scripts/ names its files). It reads the tables from
-design-to-main-state-tables.py and holds no routing.
-"""
+"""Persist design-to-main run positions, counters, and recovery state."""
 
 import importlib.util
 import json
@@ -19,12 +13,11 @@ _tables_spec.loader.exec_module(tables)
 
 
 class CounterCeilingExceeded(Exception):
-    """An increment would take a counter past its ceiling. The design never
-    routes such an increment; reaching here is a machine error."""
+    """An increment would exceed its permitted counter ceiling."""
 
 
 class RunCounters:
-    """The seven counters of section 7, with their ceilings."""
+    """Run counters and their ceilings."""
 
     def __init__(self, values=None):
         self.values = {name: 0 for name in tables.COUNTER_NAMES}
@@ -41,20 +34,13 @@ class RunCounters:
         return tables.COUNTER_TABLE_BY_NAME[name]
 
     def at_ceiling(self, name):
-        """Section 3.2's guard "the <name> counter at its ceiling" — and,
-        for the two write counters a discuss may take past it, "at or
-        above its ceiling": one predicate, read as >=."""
         return self.values[name] >= self.rule(name).at_ceiling_from_value
 
     def below_ceiling(self, name):
         return not self.at_ceiling(name)
 
     def increment(self, name, forced_by_the_users_discuss=False):
-        """One more; past the ceiling only for a write counter and only
-        when the write was forced by the user's discuss (section 7 after
-        the eighth walk, item 6: counted like any other, and the guards
-        read at or above). Any other increment past a ceiling is a
-        machine error."""
+        # User-forced discuss writes may exceed write ceilings; subsequent guards must therefore use >=.
         rule = self.rule(name)
         past_the_ceiling_allowed = (
             forced_by_the_users_discuss and rule.may_be_taken_past_its_ceiling_by_the_users_discuss)
@@ -66,19 +52,11 @@ class RunCounters:
         return self.values[name]
 
     def zero_the_six_per_version_counters(self):
-        """The six per-version counters start from zero; the redesigns
-        counter does not. A redesign does this (section 3.2, "A redesign
-        resets the version"), and so does every resume from an
-        investigation (section 7, row 72; user-ruled 2026-09-09, the
-        eighth walk: "if I intervene all the agents get their chance
-        again")."""
         for rule in tables.COUNTER_TABLE:
             if rule.per_design_version:
                 self.values[rule.name] = 0
 
     def reset_by_the_user(self):
-        """The user's `reset` (section 7): zeroes every counter, the
-        redesigns counter included."""
         for name in self.values:
             self.values[name] = 0
 
@@ -87,13 +65,7 @@ class RunCounters:
 
 
 def write_counter_charged(writing_state, entry_reason):
-    """The three buckets of section 7, applied to an emitted write.
-
-    Returns the counter an `emitted` from `writing_state` spends, or None
-    when the write it replaces was thrown out for a reason another counter
-    already paid for (the arbitrator's entry, or the re-write of the
-    upstream document that changed).
-    """
+    """Return the counter charged for an emitted write, or None when another counter already paid."""
     writers_counter = tables.COUNTED_WRITING_STATES.get(writing_state)
     if writers_counter is None:
         return None
@@ -104,28 +76,8 @@ def write_counter_charged(writing_state, entry_reason):
 
 
 class RunStateRecord:
-    """`run-state.json` (section 9): the design version; each work-stream's
-    position, or ready-for-test-suite; the counters of section 7;
-    tests-begun; whether the design and the test-design are approved; the
-    consecutive could-not-run, program-check-failure and submit-retry
-    counts; why each state was entered (the writing states' entry reasons,
-    for the three buckets; what entered test-suite-arbitrating, for row
-    60); the implementation's coverage-type and the coverage-types of the
-    set of tests; the paused
-    state and the commit at which an investigation opened; whether row 1
-    has cut the topic branch; the outcome once ended.
-
-    Fields beyond that list: the current and previous state; the writes
-    emitted per version (for the first-write rule); the investigation's
-    focus, what opened it and by which row, the destination it holds for
-    its resume; and the last machine error. `topic-branch-cut` is the
-    flag the git record's guard reads off the run before every discard
-    and commit (section 6.6) — not the name of the branch the checkout
-    stands on, because a finished run leaves the checkout on its topic
-    branch and the name cannot tell a fresh invocation from that.
-    Persisted so that a successor process recovering a run reads it from
-    the branch.
-    """
+    """Persisted workflow positions, counters, entry reasons, approvals, and investigation state."""
+    # The run's branch-cut flag establishes ownership; a branch name may belong to an earlier finished run.
 
     FIELDS = (
         "component", "current-state", "design-version", "outcome",
@@ -160,36 +112,21 @@ class RunStateRecord:
         self.submit_retry_count = 0
         self.consecutive_program_check_failure_count = 0
         self.implementation_coverage_type = None
-        # Every coverage-type present in the set of tests, as the test
-        # writer's emitted carried it (sections 3.1 and 6.4): a tuple.
         self.tests_coverage_types = ()
         self.writing_state_entry_reason = {}
         self.writes_emitted_per_version = {}
-        # Why test-suite-arbitrating was entered, as the state or sub-state
-        # whose state-exit entered it: test-suite-executing on a failed
-        # suite or a could-not-run, a reviewing sub-state on a reviewer's
-        # reject at the writer's ceiling. Row 60 routes the arbitrator's
-        # `advance` on it (section 6.5); from a failed suite that advance
-        # has no row (the tenth walk, item 16).
+        # Arbitrator advance substitutes for a reviewer's advance; a failed suite has no such transition.
         self.test_suite_arbitrating_entered_from = None
         self.paused_state = None
         self.investigation_focus = None
         self.investigation_opened_at_commit = None
         self.investigation_opened_by = None
-        # The row of section 3.2 that opened the investigation, or None for
-        # a machine error; row 65 (the arbitrator's third entry) is the one
-        # whose resume may instead apply the ruling the arbitrator held.
-        # A plain resume from it returns to the arbitrator, whose counter
-        # the resume has zeroed, so the return is the first entry of a
-        # fresh budget rather than a fourth (section 6.6; user-ruled
-        # 2026-09-11, the ninth walk, item 4).
+        # A resume from the arbitrator's third entry may apply its held ruling.
+        # A plain resume resets the budget before re-entry, so the return is a first entry.
         self.investigation_opened_by_row = None
-        # The destination the investigation's opening held for its resume
-        # (row 11: design-writing), applied when the user names none.
         self.investigation_held_resume_destination = None
         self.machine_error = None
 
-    # -- section 3.2, "A redesign resets the version" --------------------
 
     def start_new_design_version(self):
         self.design_version += 1
@@ -204,7 +141,6 @@ class RunStateRecord:
         self.test_suite_arbitrating_entered_from = None
         self.consecutive_program_check_failure_count = 0
 
-    # -- work-streams ------------------------------------------------------
 
     def work_stream_position(self, work_stream):
         if work_stream == tables.IMPLEMENTATION_WORK_STREAM:
@@ -228,11 +164,9 @@ class RunStateRecord:
         return coverage_type in tables.COVERAGE_TYPES_THAT_ARE_AGENT_INSTRUCTIONS
 
     def tests_are_agent_instructions(self):
-        """Section 6.4: whether prompt or script-and-prompt is among the
-        coverage-types of the set — then the tests go to the user."""
+        """Return whether any test coverage-type requires user acceptance as agent instructions."""
         return any(self.is_agent_instructions(t) for t in self.tests_coverage_types)
 
-    # -- the file -----------------------------------------------------------
 
     def as_dict(self):
         return {
@@ -273,9 +207,7 @@ class RunStateRecord:
         run.previous_state = data.get("previous-state")
         run.design_version = data["design-version"]
         run.outcome = data.get("outcome")
-        # Absent means not cut: a file without the flag recovers into a
-        # run the record refuses to discard for or commit, never one it
-        # takes as cut.
+        # An absent branch-cut flag must not authorize discards or commits in the invoker's checkout.
         run.topic_branch_cut = bool(data.get("topic-branch-cut", False))
         run.counters = RunCounters(data["counters"])
         run.tests_begun = data["tests-begun"]

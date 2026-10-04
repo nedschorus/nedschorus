@@ -19,7 +19,8 @@ The cycle, per reincarnation:
      reminder there are files in the queues. Thats what queues are for.").
   6. Launch the successor with the initial agent instructions. Beside the
      branch sync's line they carry one line per system whose code moved on
-     main past its overview's pinned commit (overview_refresh_due_lines),
+     main past its overview's pinned commit, until the user has been shown
+     that overview's refresh that day (overview_refresh_due_lines),
      and, on the Mac from noon Pacific, one line when the day's memory review
      is due (memory_review_due_lines).
   7. Keep the current and previous handoff and extract; delete older ones.
@@ -87,17 +88,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-# Which of a seat's transcripts is worth resuming — the same judgement
-# recover-crashed-seats.py makes, from the one module that defines it, so the
-# two programs cannot call one seat's transcripts two different things (issue
-# 242's change 5). The convention — importlib for a module whose filename has
-# hyphens — is nc-systems/cold-read/cold-read-cell-common.py's.
-# This file sits at nc-systems/handoff/, so the repository root is two
-# directories up; parents[2] names that depth once instead of chaining .parent
-# three times. Every path below that leaves this system is derived from it,
-# because a sibling lookup is what breaks when a system moves: before the move
-# to nc-systems/handoff/ the three paths below were with_name() calls that
-# happened to be right only while this file lived in scripts/.
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 SCRIPTS_DIRECTORY = REPOSITORY_ROOT / "scripts"
 
@@ -107,8 +97,6 @@ _worth_resuming_spec = importlib.util.spec_from_file_location(
 worth_resuming = importlib.util.module_from_spec(_worth_resuming_spec)
 _worth_resuming_spec.loader.exec_module(worth_resuming)
 
-# The machine-wide lock every `claude update` in the fleet runs under, so the
-# launchers and this supervisor update one at a time (update_agent_binary).
 _agent_binary_update_under_lock_spec = importlib.util.spec_from_file_location(
     "agent_binary_update_under_lock",
     SCRIPTS_DIRECTORY / "agent-binary-update-under-lock.py")
@@ -116,12 +104,6 @@ agent_binary_update_under_lock = importlib.util.module_from_spec(
     _agent_binary_update_under_lock_spec)
 _agent_binary_update_under_lock_spec.loader.exec_module(agent_binary_update_under_lock)
 
-# The reader of the pinned line a landing appends to a design or an overview,
-# "**Pinned to what landed:** commit [<sha>](...)": which lines count and which
-# sha each names, including the rule that a sha naming no commit the repository
-# holds does not count. Read through it, never re-parsed here, so a pinned line
-# means one thing to the stale-citation check and to overview_refresh_due_lines.
-# Loading it runs no git: its own drift-lint import happens only in its main().
 _stale_code_citation_check_spec = importlib.util.spec_from_file_location(
     "stale_code_citation_check",
     SCRIPTS_DIRECTORY / "stale-code-citation-check.py")
@@ -129,127 +111,62 @@ stale_code_citation_check = importlib.util.module_from_spec(
     _stale_code_citation_check_spec)
 _stale_code_citation_check_spec.loader.exec_module(stale_code_citation_check)
 
-# What the daily memory review's line shares with the program that writes its
-# marks: where the two memory stores and the marks are, how a store is read,
-# the Pacific date, and the digest of both stores. Read through it, so the line
-# and the marks cannot disagree about any of them; see memory_review_due_lines.
-# It sits beside this file, and its path is also the command the line names.
-# Loading it runs nothing.
 DAILY_MEMORY_REVIEW_MARK_PATH = Path(__file__).resolve().with_name("daily-memory-review-mark.py")
 _daily_memory_review_mark_spec = importlib.util.spec_from_file_location(
     "daily_memory_review_mark", DAILY_MEMORY_REVIEW_MARK_PATH)
 daily_memory_review_mark = importlib.util.module_from_spec(_daily_memory_review_mark_spec)
 _daily_memory_review_mark_spec.loader.exec_module(daily_memory_review_mark)
 
-# The first turn a resumed session gets when no first prompt was given. One
-# definition, because two paths reach it: --resume-session-id, which only
-# recover-crashed-seats.py passes, and the by-hand resume below. Its opening is
-# an EMPTY_SUCCESSOR_MARKERS entry in that tool, so a session resumed under it
-# that then does nothing is still recognised as workless — reword this and that
-# recognition breaks (pinned in recover-crashed-seats-test.py's F8 group).
+DAILY_OVERVIEW_REFRESH_REMINDER_MARK_PATH = Path(__file__).resolve().with_name(
+    "daily-overview-refresh-reminder-mark.py")
+_daily_overview_refresh_reminder_mark_spec = importlib.util.spec_from_file_location(
+    "daily_overview_refresh_reminder_mark", DAILY_OVERVIEW_REFRESH_REMINDER_MARK_PATH)
+daily_overview_refresh_reminder_mark = importlib.util.module_from_spec(
+    _daily_overview_refresh_reminder_mark_spec)
+_daily_overview_refresh_reminder_mark_spec.loader.exec_module(
+    daily_overview_refresh_reminder_mark)
+
+# The opening is an EMPTY_SUCCESSOR_MARKERS entry used to recognize a workless resume.
 RESUME_PROMPT_WHEN_A_SESSION_ENDED_WITHOUT_A_HANDOFF = (
     "This session was resumed by crash recovery (nedschorus#120): the "
     "previous session ended without writing a handoff. Re-verify in-flight "
     "state before trusting it, then continue the work underway."
 )
 
-# Both spellings of one death, because two programs report a signal two ways:
-# subprocess sets a NEGATIVE returncode (-15), while a shell reports 128 plus
-# the signal (143). The supervisor reads its own child's code through
-# subprocess, so the negative form is the one it normally sees; the shell form
-# is accepted too because a code can reach this state file and these functions
-# from a wrapper that ran the session under a shell, and a rule that recognised
-# only one spelling would silently stop the seat on the other. Both are listed
-# in the ruling's table for the same reason (the 2026-09-21 ruling, cited in
-# full in this module's docstring).
+# subprocess reports signals as negative return codes; shell wrappers report 128 + signal.
 SIGTERM_SESSION_EXIT_CODES = (143, -15)
 SIGKILL_SESSION_EXIT_CODES = (137, -9)
 
-# How many consecutive resumes may produce no new work before the supervisor
-# stops resuming (user-ruled 2026-09-21; gate 1 of the ruling this module's
-# docstring cites in full). One, user-ruled 2026-09-22 where the issue read
-# both ways ("2 consecutive resumes", "no third launch"): what makes a resume
-# fail — no credits, a logged-out claude, a broken transcript — fails the
-# same way on the next try, and a one-off kill is what the first resume heals. This is the gate that matters: an unattended
-# resume loop spends money on every launch. The reset signal is the resumed
-# session's transcript growing — launch_agent_session's docstring records that
-# --resume reuses the session id in place (confirmed live 2026-08-21), so a
-# resumed session's work lands in the same transcript, and growth there is the
-# one available proof that the resume produced anything. A session that dies again having added nothing is
-# looping, and the launch after that is refused.
+# Repeated workless resumes can loop indefinitely and spend money on each launch.
 CONSECUTIVE_RESUMES_WITHOUT_NEW_WORK_BUDGET = 1
 
 TASKS_ROOT = Path.home() / ".claude" / "tasks"
 PROJECTS_ROOT = Path.home() / ".claude" / "projects"
-# The extractor stays in scripts/ until every live supervisor runs from this
-# directory: a supervisor resolves this path at import, so a running one
-# would lose it the moment the file moved. It joins this system in step 2.
+# Live supervisors resolve this path at import; moving the extractor would break those processes.
 EXTRACTOR_PATH = SCRIPTS_DIRECTORY / "handoff-extract-conversation.py"
-# The cleaner each handoff runs with --remove, between the retiring session's
-# stop and the successor's launch (user-ruled 2026-09-23, merge-lane superwalk
-# item 6: "itme 6 - approve"). It removes only what passes all four of its
-# checks (clean, landed, vacant, and for an Agent-tool subagent's worktree,
-# quiet for an hour) and deletes only branches already on main. The bound is on
-# the whole run, which calls lsof once per candidate worktree, each call allowed
-# VACANCY_CHECK_TIMEOUT_SECONDS (120 s); a run stopped at the bound has removed
-# what it reported before the stop, and the handoff goes on without the rest.
-# The stop at the bound reaches the cleaner's whole process group, SIGTERM
-# first and SIGKILL after the grace below.
 CLEAN_WORKTREES_PATH = SCRIPTS_DIRECTORY / "clean-worktrees.py"
 FINISHED_WORKTREE_REMOVAL_TIMEOUT_SECONDS = 180
 WORKTREE_CLEANER_STOP_GRACE_SECONDS = 5
 HANDOFF_POLL_SECONDS = 2.0
 GENERATIONS_KEPT = 2
 
-# The file whose agent part is appended to every launched session's system
-# prompt: the text below its first `---` line, above which are notes to whoever
-# edits the file. The supervisor writes that part to a file of its own at each
-# launch and passes that file through `claude --append-system-prompt-file`; see
-# appended_system_prompt_file_for_launch. The default is a COMMITTED file, and the
-# supervisor rather than the launchers owns the flag on purpose: a supervisor is
-# started by launch-claude-mac, by launch-claude-ubuntu, and by
-# resupervise-seat.py, so putting it in the launchers would leave a recovered
-# seat silently running without it. One place, every path.
+# The supervisor owns the prompt flag so recovery launches receive the same instructions as launcher boots.
 DEFAULT_APPENDED_SYSTEM_PROMPT_PATH = (
     REPOSITORY_ROOT / "docs" / "agents"
     / "seat-session-appended-system-prompt.md"
 )
 
-# Set in the environment of every agent session this supervisor launches, and
-# read by handoff-write-and-check-supervisor.py as the seat's name and
-# directory (user-ruled 2026-09-16). Without them the writer took both from its
-# own working directory, which is the seat's only until the agent runs it after
-# a `cd` or from a worktree -- and a handoff under the wrong name lands in a
-# file this supervisor never polls, so the session runs on to context
-# exhaustion instead of reincarnating.
-#
-# The session id rides with them because every process the session starts
-# inherits them, a child `claude -p` included (scripts/ghi-info-ask.py), and a
-# child that hands off under them reincarnates the PARENT seat with the
-# child's next step (PR #414 review, 2026-09-16). The writer trusts the name
-# and directory only where CLAUDE_CODE_SESSION_ID equals this id, and a child
-# `claude` has its own.
+# The writer needs the launch directory after a cd; the session ID prevents a child session from handing off its parent.
 HANDOFF_SUPERVISOR_AGENT_NAME_ENVIRONMENT_VARIABLE = "NEDSCHORUS_HANDOFF_SUPERVISOR_AGENT_NAME"
 HANDOFF_SUPERVISOR_WORKING_DIRECTORY_ENVIRONMENT_VARIABLE = (
     "NEDSCHORUS_HANDOFF_SUPERVISOR_WORKING_DIRECTORY"
 )
 HANDOFF_SUPERVISOR_SESSION_ID_ENVIRONMENT_VARIABLE = "NEDSCHORUS_HANDOFF_SUPERVISOR_SESSION_ID"
 
-# The supervisor stamps its state file while polling. The stamp once decided
-# whether a supervisor was still watching: a stamp under sixty seconds old read
-# as alive, until nedschorus#242 change 1 (2026-09-12) replaced that rule with
-# a check of the supervisor's process (process_is_supervisor_for_agent). Two
-# readers remain: restart-live-seats-at-login.py, which picks the seats that
-# were running when the machine stopped, and heartbeat_age_sentence, which only
-# reports the age beside a verdict the process check has already settled.
-# Stamped on an interval rather than every poll to keep the write rate low.
+# Heartbeat age serves login recovery and diagnostics; live ownership requires a process check.
 HEARTBEAT_INTERVAL_SECONDS = 10.0
 
-# How long `ps` gets to answer before read_process_command_line gives up and
-# reports that it could not be asked. Read from the module INSIDE that function
-# rather than bound as a default argument, so a case can lower it and exercise
-# the timeout against a real `ps` that really hangs — see the NOTE in
-# process_is_supervisor_for_agent for what default-argument binding costs a test.
+# Read the timeout at call time so tests can override it after import.
 PROCESS_COMMAND_LINE_READ_TIMEOUT_SECONDS = 15
 
 
@@ -259,32 +176,8 @@ NEXT_STEP_BLOCK_TERMINATOR = "END-OF-NEXT-STEP"
 NEXT_STEP_BLOCK_UNTERMINATED_FIELD = "next-step-verbatim-unterminated"
 SPAWNED_SUBAGENT_FIELD_PREFIX = "spawned-subagent-"
 WRITTEN_BY_SESSION_FIELD = "written-by-session"
-# What the writer stamps when the retiring session has no
-# CLAUDE_CODE_SESSION_ID to name (handoff-write-and-check-supervisor.py,
-# write_handoff_file): a placeholder, never a session id.
 WRITTEN_BY_SESSION_UNKNOWN_VALUE = "unknown"
 
-# Appended to sync_working_branch_with_main's one-line result in the ignition
-# prompt. The wording is the user's; only the sync line it follows is computed.
-# The open-pull-requests sentence is the 2026-08-30 ruling on a rendered mock
-# of the prompt; its reviewer and fix-round clauses were replaced on
-# 2026-09-23 ("y", item 2.2 of the merge-lane walk
-# merge-lane-mac-helper-open-items-and-questions-2026-09-23), because
-# merge-lane-2 has been the only merger since 2026-09-22 and CLAUDE.md's
-# "How a change reaches main" bullet (ruled 2026-09-22) has the author
-# dispatch a forked subagent for a review's findings, not a fresh agent.
-# The branch-state sentence was replaced by the user on
-# 2026-09-16 ("y", item 1 of nedschorus#418) to match nedschorus#324, the
-# 2026-09-14 ruling that working branches never get merges from main — the
-# rule scripts/checkout-freshness-catch-up.py enforces: a never-pushed branch
-# is rebased onto origin/main, a pushed one is left as it is. The sentence it
-# replaced (2026-08-31) said to catch up with origin/main and resolve
-# conflicts, and on 2026-09-15, thirty seconds after reading it, a seat merged
-# main into a branch whose pull request (#387) was under review.
-# Its last sentence, sending an open pull request that conflicts with main to
-# a hand-merge, was added 2026-09-30 (walk open-items-this-seat-holds-2026-09-24,
-# items 22 to 24, "y"): the user ruled on 2026-09-21 that a conflict, which no
-# commit on top can clear, is cleared by a hand-merge, and CLAUDE.md now says so.
 BRANCH_STATE_INSTRUCTION = (
     " — If this branch has never been pushed, rebase it onto origin/main "
     "before your first substantive action and rerun the tests for what you "
@@ -297,91 +190,54 @@ BRANCH_STATE_INSTRUCTION = (
     "scripts/branch-conflict-check.py describes."
 )
 
-# Where the overview of the system in nc-systems/<system>/ lives. No map from
-# a system to its overview existed when this was written, so the one overview
-# on main, docs/nedschorus-wiki/nedschorus-handoff-system-overview.md, is the
-# pattern; see overview_refresh_due_lines.
 SYSTEM_OVERVIEW_PATH_TEMPLATE = "docs/nedschorus-wiki/nedschorus-{system}-system-overview.md"
 
-# How long each git call of overview_refresh_due_lines that reads a ref, a tree
-# or an overview gets before it is given up on. Read from the module inside
-# that function rather than bound as a default argument, so a case can lower
-# it, as PROCESS_COMMAND_LINE_READ_TIMEOUT_SECONDS is.
+# The draft suffix avoids a tracked-name collision; the queue permits drafting before overview approval.
+SYSTEM_OVERVIEW_DRAFT_PATH_TEMPLATE = (
+    "docs/nedschorus-wiki/queue/nedschorus-{system}-system-overview-draft.md")
+
 OVERVIEW_REFRESH_CHECK_GIT_TIMEOUT_SECONDS = 15
 
-# How long overview_refresh_due_lines's one `gh pr list`, which asks for the
-# open pull requests and the files each changes, gets before it is given up on.
-# Read from the module inside that function, as the git timeout above is.
 OVERVIEW_REFRESH_CHECK_GH_TIMEOUT_SECONDS = 30
 
-# Appended to each overview-refresh-due report in the successor's first
-# prompt, the way BRANCH_STATE_INSTRUCTION is appended to the branch sync's.
-# A template, like ORPHANED_SUBAGENT_ROSTER_SENTENCE_TEMPLATE, because the
-# overview, the command listing the commits and the commit to pin are computed
-# per system. The pinned line it asks for is the one
-# scripts/stale-code-citation-check.py reads, prefix included, so a refresh
-# that follows it empties the range this check reports. Why each part is
-# there is in overview_refresh_due_lines's docstring.
+OVERVIEW_REFRESH_REMINDER_MARKS_READ_TIMEOUT_SECONDS = 30
+
 OVERVIEW_REFRESH_DUE_INSTRUCTION_TEMPLATE = (
-    " — Dispatch a subagent to refresh {overview_path} against the commits "
+    " — Dispatch a subagent to write {overview_draft_path}: a copy of "
+    "{overview_path} refreshed against the commits "
     "`{commit_listing_command}` lists, as "
     "docs/issues/670-refresh-design-when-a-system-s-code-lands.md defines a "
-    "refresh, and to append to it the pinned line "
+    "refresh, with the pinned line "
     "`{landing_pin_prefix}{main_commit}](<commit url>) on <YYYY-MM-DD> — "
-    "<what landed>`."
+    "<what landed>` appended. When the subagent reports, show the user the "
+    "diff between {overview_path} and {overview_draft_path}. Once the user "
+    "has been shown the diff, run `python3 {reminder_mark_script} {system}`. "
+    "When the user approves the diff, write {overview_path} from "
+    "{overview_draft_path} and delete {overview_draft_path}."
 )
 
-# The hour, in America/Los_Angeles, from which memory_review_due_lines looks
-# for a due review: the user's "starting at noon each day" (2026-09-30).
 MEMORY_REVIEW_DUE_FROM_PACIFIC_HOUR = 12
 
-# How long each read memory_review_due_lines makes gets before it is given up
-# on: ned-box's store and the marks over ssh, then the Mac's store. Read from
-# the module inside that function, as the overview check's timeouts are.
 MEMORY_REVIEW_CHECK_READ_TIMEOUT_SECONDS = 30
 
-# Appended to the memory-review-due report in the successor's first prompt,
-# as OVERVIEW_REFRESH_DUE_INSTRUCTION_TEMPLATE is to each overview report. A
-# template because the mark command's path and the two stores are filled in
-# from where they are defined. Why each part is there is in
-# memory_review_due_lines's docstring.
 MEMORY_REVIEW_DUE_INSTRUCTION_TEMPLATE = (
     " — Run `python3 {mark_script} started` first. Then walk the user through "
     "every entry of both memory stores, {mac_memory_store} on the Mac and "
-    "{ned_box_memory_store}, one entry at a time with the /walk-me-through "
-    "skill, asking him for each whether to keep it, move it into CLAUDE.md or "
-    "a skill, or delete it; write or delete nothing in either store without "
-    "his approval. When the walk closes, run `python3 {mark_script} done`."
+    "ned-box's at {ned_box_memory_store_mac_mount} (when that path does not "
+    "open, {ned_box_memory_store} over ssh), one entry at a time with the "
+    "/walk-me-through skill, asking him for each whether to keep it, move it "
+    "into CLAUDE.md or a skill, or delete it; write or delete nothing in "
+    "either store without his approval. When the walk closes, run "
+    "`python3 {mark_script} done`."
 )
 
-# The pointer at the script that composed the prompt, carried by every set of
-# initial agent instructions build_ignition_prompt writes. The wording is the
-# user's, ruled 2026-08-30 on a rendered mock of the prompt, in his second
-# round. It lived inline in build_ignition_prompt's `lines` list until it was
-# hoisted here: an equality pin can only hold a constant, and text composed at
-# a call site lands outside every pin the test file has.
 SUPERVISOR_POINTER_SENTENCE = (
     "This session was launched by nc-systems/handoff/handoff-supervisor.py, which "
     "watches this seat and composed this prompt — read it if you need to "
     "investigate the handoff mechanism."
 )
 
-# The orphaned-subagent duty, narrowed 2026-08-29, softened to "may need" in
-# the user's second round (ruled 2026-08-30 on the same rendered mock): the
-# writer records only subagents still working at the reincarnation, so every
-# entry here is one the reincarnation killed mid-job. Re-commission rather than
-# resume, because a dead subagent cannot be resumed by id across a
-# reincarnation: probed 2026-08-29, SendMessage to a predecessor's subagent id
-# returns "No transcript found" (the resolver is session-scoped) even though
-# the transcript survives on disk at
-# <predecessor-session-dir>/subagents/agent-<id>.jsonl.
-# `agent-<id>.jsonl` stays a literal pattern: each entry names its own id, so
-# the successor substitutes per entry.
-#
-# A template rather than a plain string, because the sentence takes three
-# insertions the caller computes — the count, the joined roster, and the
-# directory the transcripts survive in. Hoisted here for the same reason as
-# SUPERVISOR_POINTER_SENTENCE: only a constant can be pinned by equality.
+# Subagent IDs resolve only within their session, so a successor must re-commission unfinished work.
 ORPHANED_SUBAGENT_ROSTER_SENTENCE_TEMPLATE = (
     "The session you are replacing had {subagent_count} subagent(s) still working when it ended: "
     "{joined_roster}. You may need to re-commission similar agents. If you need more "
@@ -390,16 +246,7 @@ ORPHANED_SUBAGENT_ROSTER_SENTENCE_TEMPLATE = (
 )
 
 
-# The two tail sentences of build_ignition_prompt, hoisted for the same reason
-# as the two above: only a constant can be pinned by equality. Until 2026-09-21
-# each was reached by a containment check alone -- `"unterminated" in prompt`
-# and `"continue from where that dialog ends" in prompt` -- so a sentence
-# appended to either was invisible. Same class as the two branch-state call
-# sites closed in pull request [the ignition prompt's sentences are constants,
-# and both branch-state call sites are pinned whole]
-# (https://github.com/nedschorus/nedschorus/pull/590). Each carries its own
-# leading space, because each is concatenated onto a preamble that does not
-# end in one.
+# Leading spaces separate these suffixes from the preambles they are appended to.
 UNTERMINATED_NEXT_STEP_BLOCK_NOTE = (
     " NOTE: this handoff's verbatim next-step block was unterminated, so what "
     "follows is the collapsed one-line form and may have lost structure."
@@ -408,21 +255,7 @@ NO_NEXT_STEP_TAIL_SENTENCE = " Then continue from where that dialog ends."
 
 
 def parse_handoff_file(handoff_path: Path) -> dict:
-    """Read the agent-written handoff into a dict of its `key: value` lines.
-
-    One field may span lines: `next-step-verbatim`, whose value is the opening
-    marker followed by the successor's instruction verbatim, ended by a line
-    that is exactly the terminator (R20; format in
-    nc-systems/handoff/handoff-design.md). The writer appends that block
-    last, after every computed field, so the lines inside it cannot shadow a
-    real field — first occurrence still wins, and the real fields came first.
-
-    An unterminated block is a damaged handoff. It is NOT returned as a value:
-    the field is left absent so every caller's "prefer verbatim when present"
-    is literally true, and a separate flag records that the block was seen
-    unterminated, so the successor can be told rather than silently handed the
-    collapsed form.
-    """
+    """Return handoff fields, flagging an unterminated verbatim block separately."""
     fields = {}
     lines = handoff_path.read_text(encoding="utf-8").splitlines()
     index = 0
@@ -440,10 +273,7 @@ def parse_handoff_file(handoff_path: Path) -> dict:
             while index < len(lines):
                 candidate = lines[index]
                 index += 1
-                # EXACT line, not a stripped match. An indented lookalike —
-                # a terminator inside a fenced code block, say — is content,
-                # and the writer refuses on the same exact comparison, so the
-                # two ends cannot disagree about where a block ends.
+                # Match the terminator exactly: an indented lookalike inside a code fence is content.
                 if candidate == NEXT_STEP_BLOCK_TERMINATOR:
                     terminated = True
                     break
@@ -455,32 +285,14 @@ def parse_handoff_file(handoff_path: Path) -> dict:
                 fields[NEXT_STEP_BLOCK_UNTERMINATED_FIELD] = "yes"
             continue
 
-        if key not in fields:  # first occurrence wins; later prose cannot overwrite a field
+        if key not in fields:  # First occurrence wins so later prose cannot overwrite a field.
             fields[key] = value
     return fields
 
 
-# The session this supervisor launched or adopted, which is not the same thing
-# as the session running now. It is written when a session is launched or
-# adopted, so a session that takes over the worktree mid-life leaves it naming a
-# session that has ended, until the next launch overwrites it.
-#
-# It was called "session_id" until 2026-09-21, and that name is what went
-# wrong. This seat read it as "the session", twice told the user consequences
-# that followed from that reading, and both were false: crash recovery does not
-# consult it (seat-transcript-worth-resuming.py picks the newest transcript by
-# mtime), and ghi-info-ask.py is not a second consumer of it -- that program
-# keeps its OWN unrelated session under an identical key in its own
-# .ghi-info-state.json, and the collision of the two bare names is what produced
-# the false claim. Renamed on the user's ruling at item 12 of walk
-# md-skills-seat-open-decisions-2026-09-20: the field is marked provisional by
-# being named for what it holds, because a key name travels with the data into
-# every file and reader while a comment stays at one site.
+# This names the launched or adopted session; a later worktree takeover does not update it.
 LAUNCHED_SESSION_ID_STATE_KEY = "launched_session_id"
-# Read-only, for state files written before the rename. read_supervisor_state
-# migrates it in, every write after that uses the new key alone, so a state file
-# converts on the first read a renamed supervisor gives it. Removable once no
-# live seat carries a state file older than 2026-09-21.
+# Read compatibility for existing state files; subsequent writes use only the new key.
 LEGACY_SESSION_ID_STATE_KEY = "session_id"
 
 
@@ -508,26 +320,17 @@ def write_supervisor_state(state_path: Path, state: dict) -> None:
 
 
 def stamp_heartbeat(state_path: Path, state: dict) -> None:
-    """Record that a supervisor is alive and watching, right now."""
     state["last_poll_at"] = datetime.now(timezone.utc).isoformat()
     write_supervisor_state(state_path, state)
 
 
-# The exit record (nedschorus#242 change 2, ruled 2026-09-02; the #120 overview,
-# § Ruled 2026-09-02: record how the agent exited). A supervisor that outlived its
-# agent saw the ending, and one killed with the machine or the tmux server never
-# gets to write this — so recover-crashed-seats.py offers a seat carrying a
-# record instead of resuming it, and resumes one without. Presence is the
-# signal, not the code: the code is null where this supervisor had no child
-# process to read it from.
+# Record presence distinguishes a supervised exit from a crash, even when the exit code is unknown.
 AGENT_EXIT_CODE_STATE_KEY = "agent_exit_code"
 AGENT_EXIT_RECORDED_AT_STATE_KEY = "agent_exit_recorded_at"
 
 
 def record_agent_exit_in_supervisor_state(state_path: Path, state: dict, exit_code) -> None:
-    """Write the exit record, as the last thing before a supervisor stops without
-    launching a successor. exit_code is the session's own, a negative one for a
-    signal, or None when it is unknown."""
+    # A signal exit code is negative; an adopted session's unknown code is None.
     state[AGENT_EXIT_CODE_STATE_KEY] = exit_code
     state[AGENT_EXIT_RECORDED_AT_STATE_KEY] = datetime.now(timezone.utc).isoformat(
         timespec="seconds")
@@ -535,15 +338,13 @@ def record_agent_exit_in_supervisor_state(state_path: Path, state: dict, exit_co
 
 
 def clear_agent_exit_record_from_supervisor_state(state: dict) -> None:
-    """Drop the exit record before a session is launched or adopted, so the record
-    always describes the most recent session: a seat that once exited cleanly
-    and later crashed must read as crashed."""
+    # Clear before launch or adoption so an old clean exit cannot mask a later crash.
     state.pop(AGENT_EXIT_CODE_STATE_KEY, None)
     state.pop(AGENT_EXIT_RECORDED_AT_STATE_KEY, None)
 
 
 def agent_exit_record_from_supervisor_state(state: dict):
-    """(exit_code, recorded_at) when the state carries an exit record, else None."""
+    """Return (exit_code, recorded_at), or None without an exit record."""
     if AGENT_EXIT_RECORDED_AT_STATE_KEY not in state:
         return None
     return state.get(AGENT_EXIT_CODE_STATE_KEY), state[AGENT_EXIT_RECORDED_AT_STATE_KEY]
@@ -551,34 +352,15 @@ def agent_exit_record_from_supervisor_state(state: dict):
 
 @dataclass(frozen=True)
 class DeathWithoutAHandoffDecision:
-    """What to do about a session that ended without writing a handoff, and why.
-
-    `reason` is a console line for whoever reads the pane or the log, not an
-    instruction to an agent: the resumed session is told what it needs through
-    RESUME_PROMPT_WHEN_A_SESSION_ENDED_WITHOUT_A_HANDOFF.
-    """
+    """A restart decision with a reason for the console."""
 
     resume: bool
     reason: str
 
 
 def resume_or_stop_after_a_death_without_a_handoff(exit_code) -> DeathWithoutAHandoffDecision:
-    """The ruling's table (user-ruled 2026-09-21; the ruling is cited in full in
-    this module's docstring), as a pure function.
-
-    It takes the exit code and nothing else, because the exit code is the only
-    thing the supervisor holds at that moment: POSIX does not tell a parent who
-    sent a signal, and the session's own error output went to the terminal it
-    inherited (subprocess.Popen in launch_agent_session passes no stdout= or
-    stderr=, and cannot — the session is interactive and needs that terminal).
-    So the manner of a death is knowable and its agent never is, and this
-    discriminates on manner alone rather than guessing.
-
-    A clean exit stops because it is a decision — /exit, or a headless turn
-    ending. A code this supervisor never owned (None, an adopted session whose
-    poll() reports only "gone") stops for the opposite reason: nothing was
-    learned about the death at all. Everything else resumes.
-    """
+    # POSIX does not identify the signal sender, and interactive stderr belongs to the terminal.
+    # A clean exit is deliberate; an adopted process with no exit code gives no basis for resuming.
     if exit_code is None:
         return DeathWithoutAHandoffDecision(
             False,
@@ -602,25 +384,12 @@ def resume_or_stop_after_a_death_without_a_handoff(exit_code) -> DeathWithoutAHa
 
 SUPERVISOR_STATE_FILE_SUFFIX = "-supervisor-state.json"
 SUPERVISOR_LOCK_FILE_SUFFIX = "-supervisor.lock"
-# The session-handoff a seat writes and its supervisor waits on, named after the
-# agent like the two above. Composed only by handoff_file_path() and
-# handoff_file_paths() below. agent_name_from_supervisor_file does NOT take this
-# suffix apart: a handoff file is not a supervisor file, and the seat name it
-# would return is already in hand wherever a handoff path is built.
 HANDOFF_FILE_SUFFIX = "-handoff.md"
-# This script's own name, as it appears in a running supervisor's command line.
 SUPERVISOR_SCRIPT_FILE_NAME = "handoff-supervisor.py"
 
 
 def agent_name_from_supervisor_file(path: Path) -> str:
-    """The agent a supervisor state file or lock file belongs to.
-
-    Both are named after the agent — <agent>-supervisor-state.json and
-    <agent>-supervisor.lock — so the name is the one place the agent is
-    recorded for a file handed to us on its own. A path that follows neither
-    convention yields its whole stem, which matches no running supervisor and
-    so reads as dead rather than wedging the seat.
-    """
+    """Return the agent name, falling back to the stem for an unrecognized suffix."""
     for suffix in (SUPERVISOR_STATE_FILE_SUFFIX, SUPERVISOR_LOCK_FILE_SUFFIX):
         if path.name.endswith(suffix):
             return path.name[:-len(suffix)]
@@ -628,36 +397,15 @@ def agent_name_from_supervisor_file(path: Path) -> str:
 
 
 def supervisor_state_path(handoff_directory: Path, agent: str) -> Path:
-    """Where `agent`'s supervisor state file lives under `handoff_directory`.
-
-    The inverse of agent_name_from_supervisor_file above, and with it the one
-    place the state file's name is composed. Five programs need this path --
-    this one, the recovery tool, resupervise-seat.py, the login restart and
-    the handoff writer -- and each used to build it from its own f-string, so
-    a rename had eleven sites to find and no test that found them (walk
-    file-naming-and-location-standards-cold-read-findings, item 4, user-ruled
-    2026-09-19: reduce each repeated name to one definition).
-    """
     return Path(handoff_directory) / f"{agent}{SUPERVISOR_STATE_FILE_SUFFIX}"
 
 
 def supervisor_lock_path(handoff_directory: Path, agent: str) -> Path:
-    """Where `agent`'s supervisor lock file lives under `handoff_directory`.
-
-    The lock beside the state file, composed here for the same reason.
-    """
     return Path(handoff_directory) / f"{agent}{SUPERVISOR_LOCK_FILE_SUFFIX}"
 
 
 def supervisor_state_paths(handoff_directory: Path) -> list:
-    """Every seat's supervisor state file under `handoff_directory`, sorted.
-
-    The login restart reads them all to decide which seats were live at the
-    stop, and it used to glob f"*{SUPERVISOR_STATE_FILE_SUFFIX}" itself. A
-    search pattern spells the name out as surely as a path does, so it
-    belongs here with the rest. Pair it with agent_name_from_supervisor_file
-    above to get each seat's name back.
-    """
+    """Return every seat's supervisor state file, sorted."""
     directory = Path(handoff_directory)
     if not directory.is_dir():
         return []
@@ -665,53 +413,11 @@ def supervisor_state_paths(handoff_directory: Path) -> list:
 
 
 def handoff_file_path(handoff_directory: Path, agent: str) -> Path:
-    """Where `agent`'s session-handoff lives under `handoff_directory`.
-
-    The one place the handoff file's name is composed. Four programs need this
-    path -- this supervisor, which waits on it; the handoff writer, which writes
-    it; the recovery tool and resupervise-seat.py, which read it -- and until
-    2026-09-20 each built it from its own f-string: eight sites across the four,
-    one of them a local `suffix` variable in the writer. A rename that missed one
-    left that program composing the old name, and the failure is silent in the
-    worst direction: the supervisor writes <seat>-handoff.md, the recovery tool
-    looks for something else, finds nothing, and reports a seat that handed off
-    cleanly as one that died leaving no handoff.
-
-    User-ruled 2026-09-20, item 2 of the walk
-    md-skills-seat-open-decisions-2026-09-20. The eight sites were measured on
-    main at 986bc31 on 2026-09-19 and re-measured unchanged on 2026-09-20,
-    excluding test files -- whose literals are the assertion -- and three prose
-    mentions in handoff-write-and-check-supervisor.py's docstrings. PR "The
-    supervisor's state and lock file names are defined once"
-    (nedschorus/nedschorus#545), which gave the state and lock files their
-    constants and the guard beside them, left this name out because the ruling
-    it carried out (item 4 of the walk
-    file-naming-and-location-standards-cold-read-findings, 2026-09-19) named the
-    supervisor state file, the cold-read-record names and the walk-file endings.
-    The handoff name was measured while that work was carried out and recorded
-    on docs/nedschorus-wiki/nedschorus-file-naming-and-location-standards.md as
-    its own unruled topic.
-
-    Named handoff_file_path, not the walk's handoff_path, because handoff_path is
-    already the SupervisorSettings property below, a parameter of
-    parse_handoff_file and wait_for_handoff, and a local in three other scripts.
-    A module-level function of that name is also a second FunctionDef named
-    handoff_path in this file, and the guard collects its composing helpers by
-    that name: it would find two, fail its own helper case, and exempt the
-    property's body from the check that watches it.
-    """
     return Path(handoff_directory) / f"{agent}{HANDOFF_FILE_SUFFIX}"
 
 
 def handoff_file_paths(handoff_directory: Path) -> list:
-    """Every seat's session-handoff under `handoff_directory`, sorted.
-
-    The handoff writer reads them all to find the name a seat working in this
-    very directory already hands off under, and it used to glob the suffix from a
-    local copy of it. A search pattern spells the name out as surely as a path
-    does, as supervisor_state_paths above says, so it belongs here with the rest.
-    Pair it with HANDOFF_FILE_SUFFIX to get each seat's name back.
-    """
+    """Return every seat's session-handoff, sorted."""
     directory = Path(handoff_directory)
     if not directory.is_dir():
         return []
@@ -719,51 +425,20 @@ def handoff_file_paths(handoff_directory: Path) -> list:
 
 
 def read_process_command_line(process_id: int):
-    """(command_line, ps_answered) for a process id.
-
-    THREE outcomes, not two, and keeping them apart is the point:
-
-      (line, True)   ps ran and the process is there.
-      (None, True)   ps ran and said there is no such process.
-      (None, False)  ps could not be asked at all — it failed to start, or it
-                     timed out. We do not know anything about the process.
-
-    The `os.kill(pid, 0)` this replaced had only the first two: it answered, or
-    it raised something that told us which answer it was. `ps` is a program,
-    and a program can fail to run — a fork or exec failure under load, say,
-    which this machine reaches when several test sweeps run at once. Folding
-    "could not ask" into "not running" makes a confident false statement about
-    a live process, and the callers act on it (found in review of a82b49e).
-
-    `ps -ww -p` works on both machines (measured 2026-09-11 on the Mac and on
-    ned-box). The -ww matters: without it macOS truncates the output to the
-    terminal width even through a pipe, which would cut the --agent argument
-    off exactly the long paths the fleet uses.
-    """
+    """Return (command_line, ps_answered), distinguishing absence from an unanswered query."""
+    # macOS truncates ps output to terminal width even through a pipe unless -ww is given.
     try:
         finished = subprocess.run(["ps", "-ww", "-p", str(process_id), "-o", "args="],
                                   capture_output=True, text=True, check=False,
                                   timeout=PROCESS_COMMAND_LINE_READ_TIMEOUT_SECONDS)
     except (OSError, subprocess.SubprocessError):
         return None, False
-    # A non-zero exit is ps's answer for "no such process", not a failure to
-    # answer, and ps has no distinct exit code for its own troubles — so a
-    # non-zero exit with nothing on stdout is taken at its word. Only never
-    # having run at all counts as not knowing.
+    # ps uses nonzero for absence without distinguishing its own errors; only failure to run is treated as unanswered.
     command_line = finished.stdout.strip()
     return (command_line or None), True
 
 
 def process_exists_by_signal(process_id: int) -> bool:
-    """Is there a process with this id? Answered by `os.kill(pid, 0)`.
-
-    This is the one question that cannot go unanswered: the call either returns,
-    or raises something that says which answer it is. ProcessLookupError means
-    gone; success means it is there; PermissionError means it is there and
-    belongs to someone else. It is used only where `ps` could not be asked —
-    `os.kill` cannot say WHAT a process is, which is the whole reason `ps`
-    replaced it for identity.
-    """
     try:
         os.kill(process_id, 0)
         return True
@@ -775,59 +450,10 @@ def process_exists_by_signal(process_id: int) -> bool:
 
 def process_is_supervisor_for_agent(process_id, agent_name: str,
                                     read_command_line=read_process_command_line):
-    """(is_it, explanation): is this process a live supervisor for this agent?
-
-    Ruled in nedschorus#242 change 1, and it replaces two weaker tests.
-
-    Heartbeat age cannot answer the question. The rule this replaced read the
-    stamp as fresh for sixty seconds after the last poll, so for a minute after
-    a supervisor died its state file still said a supervisor was watching.
-    Measured on ned-box (docs/issues/120-recover-crashed-seats-design.md § Two
-    defects): after a seat's tmux server was killed, recover-crashed-seats.py
-    refused the seat at 8, 24, 39 and 54 seconds and accepted it at 60. The
-    login restart of nedschorus#116, which runs that recovery soon after boot,
-    was predicted to be refused the same way, depending on how fast the
-    machine boots.
-
-    A bare process-id check cannot answer it either. The lock file recording
-    the id outlives a reboot, and ids are reused across the very reboot this
-    serves, so the id alone can name something else entirely. Hence the
-    command line: the process must be running THIS script, with THIS agent.
-    The agent argument is compared whole rather than by substring, because
-    `--agent prof` would otherwise match the supervisor of `prof-2`.
-
-    **When `ps` cannot be asked, existence is still answerable.** `os.kill`
-    cannot say what a process is, but it cannot fail to say whether one is
-    there — so a lock left by a crashed supervisor, holding an id that no longer
-    exists, is still recognised as stale without `ps`. Only when a process with
-    that id really does exist, and `ps` cannot say what it is, is the answer
-    yes-by-assumption: failing closed leaves a seat down until someone looks,
-    which is visible and recoverable, while failing open starts a second
-    supervisor on an agent that already has one — and those two would each kill
-    the session and each launch a successor, which is the thing the lock exists
-    to prevent and is neither visible nor self-correcting. The detail says so
-    rather than pretending to a certainty we do not have, and that case also
-    says it on stderr, because a seat that will not start is the moment an
-    operator most needs a true sentence about why.
-
-    **That is a trade, and it was first written down as though it were free.**
-    A caller acting on `True` here is acting on an assumption, and two of
-    supervisor_liveness's callers act on it by telling someone to wait:
-    handoff-write-and-check-supervisor stops an agent that has just written a
-    handoff, and resupervise-seat refuses to repair the seat. If no supervisor
-    is in fact there, that agent waits on nobody. The direction is still right —
-    a stranded agent whose handoff is written on disk is recoverable by hand,
-    two supervisors each killing a session and writing a successor are not — but
-    the cost is real, so the sentences those two print say "if it is watching"
-    rather than promising that it is (#328 follow-up round, nedschorus#242).
-
-    NOTE for anyone reproducing this: `read_command_line` is a default argument,
-    bound when this function was defined. Replacing the module's
-    `read_process_command_line` afterwards does NOT reach it, and the real `ps`
-    runs instead — so a harness that patches the module attribute sees the
-    behaviour it was trying to replace and reports no defect. Substitute this
-    whole function, or pass `read_command_line=` explicitly.
-    """
+    """Return (is_supervisor, explanation), assuming ownership when a live PID cannot be identified."""
+    # PIDs survive in locks and can be reused; heartbeat freshness does not prove ownership.
+    # An unidentified live PID must block another supervisor, which could kill and relaunch the same session.
+    # Tests must pass read_command_line explicitly; replacing the module attribute cannot change the bound default.
     try:
         process_id = int(process_id)
     except (TypeError, ValueError):
@@ -840,10 +466,6 @@ def process_is_supervisor_for_agent(process_id, agent_name: str,
         if not process_exists_by_signal(process_id):
             return False, (f"process {process_id} is not running — ps could not be run, "
                            "but os.kill reports no such process")
-        # The consequence clause is deliberately caller-agnostic. It used to say
-        # "this seat will not start", which is claim_supervisor_lock's outcome
-        # and only its outcome — the other callers refuse a repair, stop an
-        # agent, or set an exit code. The remedy is the same for all of them.
         print(f"handoff-supervisor: could not identify process {process_id} — ps could "
               f"not be run. A process with that id exists, so it is treated as a live "
               f"supervisor of {agent_name}; if none is in fact running, whatever asked "
@@ -869,27 +491,14 @@ def process_is_supervisor_for_agent(process_id, agent_name: str,
 
 
 def supervisor_liveness(state_path: Path):
-    """Return (is_alive, explanation) for the supervisor owning this state file.
-
-    The verdict is the supervisor's PROCESS, found through the lock file beside
-    this one, confirmed by its command line (nedschorus#242 change 1). The
-    heartbeat is reported because its age is worth knowing, but it no longer
-    decides: see process_is_supervisor_for_agent for why it cannot.
-
-    The process id is taken from the lock rather than the state file because
-    the lock is written once when a supervisor claims an agent, while the state
-    file is truncated and rewritten every HEARTBEAT_INTERVAL_SECONDS — a read
-    landing mid-write sees it empty, which would read as a dead supervisor on a
-    live one.
-    """
+    """Return (is_alive, explanation) for the supervisor owning this state file."""
+    # Read the PID from the lock: heartbeat writes truncate the state file, so a concurrent read can see it empty.
     if not state_path.is_file():
         return False, f"no supervisor state at {state_path} — none has ever run for this agent"
 
     agent_name = agent_name_from_supervisor_file(state_path)
     lock_path = supervisor_lock_path(state_path.parent, agent_name)
-    # Every dead verdict opens with the same words, so a caller can report the
-    # verdict and the reason without knowing which reason it got; resupervise-seat
-    # prints this sentence as its own reason for proceeding.
+    # Callers reuse this common opening when reporting why recovery may proceed.
     if not lock_path.is_file():
         return False, (f"no supervisor is watching — no supervisor lock at {lock_path}, "
                        "and a supervisor removes it when it stops cleanly")
@@ -906,10 +515,7 @@ def supervisor_liveness(state_path: Path):
 
 
 def heartbeat_age_sentence(state_path: Path) -> str:
-    """", last heartbeat 3s ago" when the state file carries a readable stamp,
-    else "". Reported alongside a verdict the process has already settled: a
-    supervisor busy enough to have missed its stamps is still a supervisor,
-    but how far behind it is remains worth saying."""
+    """Return a heartbeat-age suffix, or an empty string without a readable stamp."""
     stamped = read_supervisor_state(state_path).get("last_poll_at")
     if not stamped:
         return ", no heartbeat recorded yet"
@@ -918,7 +524,7 @@ def heartbeat_age_sentence(state_path: Path) -> str:
     except ValueError:
         return f", unreadable heartbeat {stamped!r}"
     if last_poll.tzinfo is None:
-        last_poll = last_poll.replace(tzinfo=timezone.utc)  # the only writer stamps UTC
+        last_poll = last_poll.replace(tzinfo=timezone.utc)
     age_seconds = (datetime.now(timezone.utc) - last_poll).total_seconds()
     if age_seconds >= 60:
         return f", last heartbeat {age_seconds / 60:.0f}m ago"
@@ -936,25 +542,14 @@ def counter_from(fields: dict):
 
 
 def written_at_wariness_sentence(written_at: str) -> str:
-    """The dialog line's tail: the handoff's written-at stamp plus the
-    wariness rule, for the initial agent instructions.
-
-    The successor computes the elapsed time itself from `date` and applies
-    age-proportional wariness (user-approved 2026-08-30). This replaces a
-    composition-time elapsed phrase, which read "0 minutes ago" even on
-    ignitions consumed much later. The stamp is the handoff's own written-at
-    field rendered as UTC ISO-8601 with a Z suffix — never invented: an
-    unreadable field falls back to the standing warning, not a made-up time.
-    The sentence ends at the gap itself since the user's second round
-    (ruled 2026-08-30 on a rendered mock): the "the older it is, the more
-    you must re-verify" tail was cut as saying nothing the gap does not.
-    """
+    """Return the handoff timestamp and wariness instruction for the successor."""
+    # Carry the timestamp, not elapsed time computed here: the prompt may be consumed much later.
     try:
         written = datetime.fromisoformat(written_at.replace("Z", "+00:00"))
     except (ValueError, AttributeError):
         return "written at an unrecorded time — treat every pointer in it as possibly stale."
     if written.tzinfo is None:
-        written = written.replace(tzinfo=timezone.utc)  # the field is documented as UTC
+        written = written.replace(tzinfo=timezone.utc)
     stamp = written.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     return (f"written at {stamp}. Calculate from `date` how long ago that was, "
             "and be wary of obsolescence and drift in everything in this handoff "
@@ -962,40 +557,13 @@ def written_at_wariness_sentence(written_at: str) -> str:
 
 
 def pinned_task_list_id() -> str:
-    """The seat-keyed task list id the launchers pin, or "" when unpinned.
-
-    scripts/launch-claude-mac and scripts/launch-claude-ubuntu export
-    CLAUDE_CODE_TASK_LIST_ID="nedschorus-<seat name>-tasks" into the seat's
-    environment.
-    This supervisor is started inside that environment and passes it on by
-    inheritance to every session it launches, so when the variable is set,
-    ALL of a seat's generations read and write one store,
-    ~/.claude/tasks/nedschorus-<seat name>-tasks/, and the session id names no store at
-    all. Read from the environment rather than recomposed from --agent: the
-    launcher is the one place the id is composed, and a second composition
-    here would be a second thing to keep in step.
-    """
+    """Return the launcher-pinned task list ID, or an empty string when unpinned."""
     return os.environ.get("CLAUDE_CODE_TASK_LIST_ID", "").strip()
 
 
 def preseed_tasks(retiring_session_id: str, successor_session_id: str) -> int:
-    """Copy task records into the successor's directory before it boots.
-
-    Rides undocumented harness state: tasks are <N>.json files under
-    ~/.claude/tasks/<session-id>/, and a session started with an explicit id
-    reads whatever is already there. An upgrade breaking this is detected by
-    the successor finding its predecessor's tasks missing, with the queues as
-    the backstop (the ignition count-check that used to announce the count
-    was cut with the task-count line, user-ruled 2026-08-30; per-upgrade
-    canary re-runs were dropped as a remembered duty, user-ruled 2026-08-12);
-    the canaries in handoff-supervisor-test.py (--canary) diagnose it when
-    that fires.
-
-    None of that applies under a pinned list, which is why this returns 0
-    without copying there: the retiring and successor sessions already share
-    one store, so there is no source and no destination to speak of, and the
-    detection story above describes the un-pinned path only.
-    """
+    """Copy tasks before the successor boots; return the count, or zero for a shared pinned list."""
+    # The harness loads preexisting <N>.json files from ~/.claude/tasks/<session-id>/ at startup.
     if pinned_task_list_id():
         return 0
     source = TASKS_ROOT / retiring_session_id
@@ -1011,18 +579,7 @@ def preseed_tasks(retiring_session_id: str, successor_session_id: str) -> int:
 
 
 def project_directory_for_working_directory(working_directory: Path) -> Path:
-    """Return the ~/.claude/projects directory holding a worktree's sessions.
-
-    The harness mangles the absolute path by replacing every character that is
-    not alphanumeric, a dash, or an underscore with a dash.
-
-    Lives here rather than in the writer (where it was born) because the
-    supervisor is the base module: the writer imports the supervisor, and both
-    need the mangling — the writer to find the retiring session's transcript,
-    the supervisor to name the predecessor's subagent-transcript directory in
-    the initial agent instructions. The writer aliases this function, so there is one
-    copy of the rule.
-    """
+    """Return the harness project directory holding the worktree's sessions."""
     mangled = "".join(
         character if (character.isalnum() or character in "-_") else "-"
         for character in str(working_directory)
@@ -1031,43 +588,15 @@ def project_directory_for_working_directory(working_directory: Path) -> Path:
 
 
 def substantive_turn_count_of_session_transcript(session_id: str, working_directory: Path) -> int:
-    """How much work a session's transcript holds, for the resume budget.
-
-    The budget's reset signal is the transcript growing (the ruling's gate 1), and
-    this is what "growing" is measured in: assistant turns carrying text or a
-    tool call, by seat-transcript-worth-resuming.py's substantive_turn_count —
-    the project's one definition of "this session did something", already used
-    by recover-crashed-seats.py and by the by-hand resume below.
-
-    Bytes and line counts are NOT that measure, and one of them would hand the
-    budget back for a launch's own bookkeeping rather than for work. Every
-    launch carries its prompt into the session as a turn, which is how the
-    prompt reaches the transcript at all (first_user_turn_text in
-    seat-transcript-worth-resuming.py reads exactly that record), and a launch
-    that then fails still collects the harness's own synthetic assistant turns
-    — the "Not logged in", session-limit and 529 Overloaded notices recorded at
-    SYNTHETIC_ASSISTANT_MODEL, measured across forty days of this Mac's
-    transcripts on 2026-09-11. A looping seat produces exactly that noise, and
-    substantive_turn_count counts none of it, so the budget cannot be reset by
-    the loop it is meant to stop.
-
-    A missing or unreadable transcript counts as 0, which is what it is: no
-    work seen. Under a resume the id is reused in place (launch_agent_session's
-    docstring, confirmed live 2026-08-21), so one path names every generation
-    of a resumed session's transcript.
-    """
+    """Return the session's substantive turn count, or zero if unreadable."""
+    # Launch prompts and synthetic error records grow the transcript without work and must not reset the budget.
     transcript_path = (project_directory_for_working_directory(working_directory)
                        / f"{session_id}.jsonl")
     return worth_resuming.substantive_turn_count(transcript_path)
 
 
 def queue_status_line(working_directory: Path) -> str:
-    """Report each queue's depth and oldest item, so rot stays visible.
-
-    Console-only since 2026-08-29: the user expired his 2026-08-12 #32 ruling
-    that this line rides the initial agent instructions ("Also useless is the reminder
-    there are files in the queues. Thats what queues are for."). The
-    supervisor still prints it for a watched pane or the log."""
+    """Return each queue's depth and oldest item for the console."""
     reports = []
     for queue_directory in ("nc-queue", "docs/issues/queue", "docs/nedschorus-wiki/queue", "legacy-feature-queue"):
         directory = working_directory / queue_directory
@@ -1085,11 +614,7 @@ def queue_status_line(working_directory: Path) -> str:
 
 
 def extract_dialog(session_id: str, working_directory: Path, output_path: Path) -> bool:
-    """Write the retiring session's dialog to disk. Returns True on success.
-
-    No boundary is passed: the extractor carries the tail that clears its word
-    floor, so nothing here depends on a judgment the retiring agent made.
-    """
+    """Write the retiring session's dialog; return whether extraction succeeded."""
     result = subprocess.run(
         [
             sys.executable, str(EXTRACTOR_PATH),
@@ -1103,18 +628,8 @@ def extract_dialog(session_id: str, working_directory: Path, output_path: Path) 
 
 
 def next_step_from(handoff_fields: dict) -> str:
-    """The successor's instruction: the verbatim block when it is present and
-    terminated, otherwise the collapsed single line.
-
-    The collapsed line is always written, so the fallback is a correct
-    instruction rather than a partial one.
-
-    The block is returned EXACTLY as parsed. Stripping it here would be the
-    quiet kind of wrong: a trailing double space is a markdown hard break, so
-    a bare .rstrip() deletes formatting the agent chose, in the one function
-    whose whole purpose is carrying the text unaltered. Emptiness is tested
-    on a stripped copy; the value returned is never the stripped one.
-    """
+    """Return the intact verbatim instruction, falling back to the collapsed line."""
+    # Do not strip the returned block: trailing double spaces are Markdown hard breaks.
     verbatim = handoff_fields.get(NEXT_STEP_VERBATIM_FIELD, "")
     if verbatim.strip():
         return verbatim
@@ -1122,19 +637,7 @@ def next_step_from(handoff_fields: dict) -> str:
 
 
 def spawned_subagent_roster_from(handoff_fields: dict) -> list:
-    """The retiring session's subagent roster, in the order the writer wrote it.
-
-    One numbered field per subagent (`spawned-subagent-1`, `-2`, ...), because
-    a repeated key would lose every subagent but the first: the parser takes
-    the first occurrence of a key. Fields the writer never wrote simply are
-    not there — an older handoff yields an empty roster and the ignition
-    prompt says nothing about subagents.
-
-    Since 2026-08-29 the writer records only subagents still working when the
-    handoff is written, so every entry here is one the reincarnation killed mid-job
-    and the successor should re-commission. Subagents that completed, failed,
-    or were stopped are not in the handoff at all (user-ruled 2026-08-29).
-    """
+    """Return the unfinished subagent roster in writer order."""
     numbered = []
     for key, value in handoff_fields.items():
         if not key.startswith(SPAWNED_SUBAGENT_FIELD_PREFIX):
@@ -1150,52 +653,6 @@ def build_ignition_prompt(extract_path: Path, handoff_fields: dict,
                           branch_sync_report: str = "",
                           overview_refresh_due: tuple = (),
                           memory_review_due: tuple = ()) -> str:
-    """Compose the successor's first prompt.
-
-    The prompt is tuned like a CLAUDE.md file (user-ruled 2026-08-29: "we
-    should only put in the stuff that they need to know at their start. The
-    rest they can look up if they need to"). It carries the dialog line —
-    the extract path with the handoff's written-at stamp and the wariness
-    rule (see written_at_wariness_sentence) — the open-walks duty, the
-    pointer at this script, the branch-state line, the malformed-block note
-    when the verbatim block was damaged, and the next step — plus, only when
-    the handoff recorded subagents still working at the reincarnation, the
-    roster sentence (ORPHANED_SUBAGENT_ROSTER_SENTENCE_TEMPLATE). Every
-    boilerplate sentence is the user's, ruled
-    2026-08-30 on a rendered mock of the prompt. Queue status does not
-    ride it (the user expired that 2026-08-12 ruling on 2026-08-29); the
-    supervisor prints it to its own console instead. The task-count check
-    was cut too (user-ruled 2026-08-30: the task list is a standing tool;
-    the count line is junk). The launch-clock sentence — the user's own
-    nedschorus#175 wording — was cut by the user himself on the same mock
-    (2026-08-30); the `date` discipline now rides only the dialog line's
-    "Calculate from `date`".
-
-    predecessor_session_directory is the retiring session's directory under
-    ~/.claude/projects — the place its subagents' transcripts survive
-    (`<dir>/subagents/agent-<id>.jsonl`). The supervisor composes it from the
-    retiring session id and the working directory; a caller without one gets
-    the literal `<predecessor-session-dir>` placeholder in the sentence.
-
-    branch_sync_report is sync_working_branch_with_main's one-line result —
-    fast-forwarded, ahead, behind counts, or the refusal's reason. The
-    supervisor runs the sync immediately before launch_agent_session and
-    passes the line in — see DialogIgnitionPlan, which holds everything else
-    until that moment, so the prompt reports the sync that actually ran for
-    this launch and not an earlier state. A caller that supplies nothing
-    gets no branch-state segment at all rather than an invented one: every
-    sentence here is ruled wording, and a placeholder would be wording the
-    user never saw.
-
-    overview_refresh_due is overview_refresh_due_lines's result, computed at
-    the same launch site after the sync: one whole line per system whose code
-    moved past its overview's pinned commit. Each goes right after the
-    branch-state line, and none goes anywhere when there are none.
-
-    memory_review_due is memory_review_due_lines's result, computed at the
-    same launch site: the one line asking for the day's memory review, or
-    nothing. It goes right after the overview lines.
-    """
     next_step = next_step_from(handoff_fields)
     lines = [
         f"Read {extract_path} — the dialog from the session you are continuing, "
@@ -1210,9 +667,6 @@ def build_ignition_prompt(extract_path: Path, handoff_fields: dict,
     lines.extend(memory_review_due)
     roster = spawned_subagent_roster_from(handoff_fields)
     if roster:
-        # The sentence and the reasoning behind its wording live with
-        # ORPHANED_SUBAGENT_ROSTER_SENTENCE_TEMPLATE; only the three
-        # insertions are computed here.
         transcript_directory = (predecessor_session_directory
                                 if predecessor_session_directory
                                 else "<predecessor-session-dir>")
@@ -1226,30 +680,15 @@ def build_ignition_prompt(extract_path: Path, handoff_fields: dict,
         preamble += UNTERMINATED_NEXT_STEP_BLOCK_NOTE
     if not next_step:
         return preamble + NO_NEXT_STEP_TAIL_SENTENCE
-    # The next step keeps its own line breaks: it is handed to the successor as
-    # one argv element, so newlines survive delivery. Joining it into the
-    # preamble would flatten exactly what the block form exists to preserve.
+    # Keep line breaks: the next step is one argv element and may contain Markdown formatting.
     return f"{preamble}\n\nThen take the next step:\n{next_step}"
 
 
 @dataclass
 class DialogIgnitionPlan:
-    """The successor's first prompt, composed all but the branch-state line.
-
-    Everything here is known when the retiring session's dialog is extracted.
-    The branch-state line is not, because the branch sync runs between that
-    work and the launch, and the prompt hands the successor the sync's own
-    one-line result — a report an earlier composition could not contain.
-    Holding the parts and composing at the launch site keeps the line true;
-    compose() is called there with the report just produced. (The launch
-    clock traveled this same way until the user cut its sentence on the
-    rendered mock, 2026-08-30.)
-    """
+    """Prompt inputs held until the launch-time branch sync can supply its report."""
     extract_path: Path
     handoff_fields: dict
-    # The retiring session's directory under ~/.claude/projects, where its
-    # subagents' transcripts survive the reincarnation. Optional so a direct caller
-    # without one still composes; the supervisor always passes it.
     predecessor_session_directory: Optional[Path] = None
 
     def compose(self, branch_sync_report: str,
@@ -1264,16 +703,7 @@ class DialogIgnitionPlan:
 
 @dataclass
 class BootRecoveryIgnitionPlan:
-    """The prompt for a boot with a handoff but no dialog to hand over.
-
-    The retiring session's transcript could not be extracted — a new machine,
-    or the transcript is gone — so the next-step and the repository are the
-    successor's whole context. That is the thinnest context this supervisor
-    ever launches on, and the reason this plan exists rather than an f-string:
-    it composes at the launch site, so the successor that can least afford a
-    stale picture of its branch is not the one launched without the
-    branch-state line the dialog path carries.
-    """
+    """A launch-time prompt for a handoff whose transcript cannot be extracted."""
     next_step: str
 
     def compose(self, branch_sync_report: str,
@@ -1294,20 +724,7 @@ class BootRecoveryIgnitionPlan:
 
 
 def prune_old_generations(directory: Path, stem: str) -> None:
-    """Keep every file of the newest GENERATIONS_KEPT generations of one family.
-
-    A generation is the number after the stem: `<stem>-0041.md`, and for a
-    dialog also `<stem>-0041-complete.md`, the companion the extractor writes
-    beside the tail when the dialog runs longer than the tail carries.
-
-    This used to keep the newest GENERATIONS_KEPT FILES, so that companion took
-    one of the two places and every long dialog deleted the previous
-    generation's tail on arrival. Measured 2026-09-16 on the Mac: five seats
-    held handoff archives for two generations and dialog tails for one. Counting
-    by number keeps what the module docstring promises, the current and the
-    previous. A file under the stem whose name carries
-    no generation number is not counted and not deleted.
-    """
+    # A tail and its -complete companion share one generation; counting files would evict the previous tail.
     numbered_file_name = re.compile(rf"{re.escape(stem)}-(\d+)(?:-complete)?\.md")
     files_by_generation = {}
     for item in directory.glob(f"{stem}-*.md"):
@@ -1320,7 +737,7 @@ def prune_old_generations(directory: Path, stem: str) -> None:
 
 
 def run_git_here(arguments: list, working_directory: Path, timeout: int = 60):
-    """Run git in the agent's directory; never raise, whatever goes wrong."""
+    """Run git in the agent's directory, returning failures without raising."""
     try:
         return subprocess.run(
             ["git", *arguments], cwd=str(working_directory),
@@ -1331,48 +748,9 @@ def run_git_here(arguments: list, working_directory: Path, timeout: int = 60):
 
 
 def sync_working_branch_with_main(working_directory: Path) -> str:
-    """Bring the agent's branch to main before a session starts, and return
-    one line of report describing what was or was not done.
-
-    Ruled 2026-08-13. An agent's home sits on its own branch only because git
-    refuses one branch in two worktrees — nobody chose a long-lived personal
-    branch, and left alone it drifts from main until someone merges by hand.
-    Syncing here, between sessions, is the one safe moment: the previous
-    session has exited and the next has not started, so no agent is holding a
-    mental model of the tree.
-
-    Deliberately conservative — it only ever fast-forwards:
-
-    * uncommitted work, a failed fetch, no origin/main, or a branch carrying
-      commits main does not have: report and change nothing;
-    * strictly behind main with a clean tree: fast-forward.
-
-    Never a merge, because a conflicted merge left in the tree before the agent
-    wakes is worse than being behind: the branch counts go in the report and
-    the agent, which can judge, decides. The agent never merges either:
-    BRANCH_STATE_INSTRUCTION, appended to the report, tells it to rebase a
-    branch that has never been pushed and rerun the tests for what it touched,
-    and to leave a pushed branch as it is (nedschorus#324) — a rebase that can
-    conflict needs an actor with judgment, which is the agent and never this
-    script.
-
-    Never call this while a session is running in that directory. Doing so
-    would rewrite the files under a working agent, which believes it knows
-    what its tree contains. There are exactly two ways supervise_sessions
-    reaches a directory, and only the first is safe:
-
-    * LAUNCH — the supervisor is about to start a session. Nothing is running
-      there, so the sync happens here.
-    * ADOPTION — a session is already running there, started by hand or by a
-      previous supervisor. It is never synced; it stays as it is until it
-      exits and the next launch syncs it.
-
-    The cost of that rule is that a long-lived session drifts arbitrarily far
-    from main with nothing announcing it, since sync is the only mechanism and
-    it fires once, before the session begins. The design's answer is that
-    sessions reincarnate often; a session that does not reincarnate should re-check
-    main itself rather than trust what it read at start.
-    """
+    """Fast-forward a clean, strictly behind branch and return a report without raising."""
+    # Only call between sessions: syncing under a live agent invalidates its view of the tree.
+    # Fast-forward only; resolving a conflict requires the agent's judgment.
     toplevel = run_git_here(["rev-parse", "--show-toplevel"], working_directory, timeout=15)
     if toplevel.returncode != 0:
         return "branch sync: not a git checkout, nothing to sync"
@@ -1418,137 +796,14 @@ def sync_working_branch_with_main(working_directory: Path) -> str:
     return f"branch sync: {branch} is {ahead} ahead of main and {behind} behind{fetch_note}"
 
 
-def overview_refresh_due_lines(working_directory: Path) -> tuple:
-    """One line for the successor's first prompt per system whose code moved
-    on main after the commit its overview is pinned to, unless an open pull
-    request already changes that overview. Never raises.
-
-    Each line is a report, `overview refresh due: <system> — <n> commit(s)
-    under nc-systems/<system>/ since its overview's pinned commit, in
-    <pinned>..<main>`, followed by OVERVIEW_REFRESH_DUE_INSTRUCTION_TEMPLATE
-    filled in for that system: composed the way the branch-state line is, and
-    placed right after it.
-
-    RULED. The user, 2026-09-23, item 14 of the walk
-    what-a-design-becomes-when-its-code-lands-2026-09-22, whose minutes are
-      nedlern@ned-box:/home/nedlern/nedschorus-logs/walk/what-a-design-becomes-when-its-code-lands-2026-09-22-minutes.md
-    "Yes - this goes into the handoff supervisor and ultimately into the
-    (next) reincarnated agent." It
-    compares each system's last commit under nc-systems/<system>/ with the
-    commit pinned in that system's overview, and a stale system gets a line
-    beside the branch-sync line. Approved for building with "Y" on
-    2026-09-28, item 8 of the fleet-restart-at-login seat's walk
-    open-items-this-seat-holds-2026-09-24. What a refresh is, and the pinned
-    line it appends, are GHI [refresh-design: when a system's code lands,
-    bring its design, build-slice plan and overview into line — removing,
-    never revising](https://github.com/nedschorus/nedschorus/issues/670), whose
-    GHI-MD the instruction names because the refresh is not yet built as a
-    skill.
-
-    WHY HERE AND NOT IN A HOOK. It runs once per reincarnation, only where an
-    ignition plan is composed, so it needs no record of what it has already
-    said. The walk first placed it in scripts/checkout-freshness-catch-up.py,
-    which is a Stop hook and would repeat the line at every turn boundary
-    until the refresh landed.
-
-    THE PINNED COMMIT is read with scripts/stale-code-citation-check.py's
-    landing_pin_commits, the one reader of the line "**Pinned to what
-    landed:** commit [<sha>](...)". A pinned line whose sha names no commit
-    this repository holds does not count, which is that reader's rule (PR [A
-    pinned line counts as a landing only when it names a commit the
-    repository holds](https://github.com/nedschorus/nedschorus/pull/717)); an
-    overview with no pinned line that counts is skipped, with no line and no
-    error. Of several that count, the last is taken: each refresh appends one.
-
-    THE OVERVIEW OF A SYSTEM is found by SYSTEM_OVERVIEW_PATH_TEMPLATE, from
-    the directory's name. No map existed: the only statements of which
-    overview belongs to which system were prose, the glossary's
-    handoff-system entry and handoff-design.md's pointer, and on main at
-    f8d899a the handoff overview was the only file whose name ends in
-    -overview.md. GHI [overview-write skill: how an overview of a system is
-    written and checked before it lands](https://github.com/nedschorus/nedschorus/issues/168)
-    asks that an overview's name say what it overviews and end in -overview;
-    the wiki's pages are named nedschorus-<subject>.md. An overview filed
-    under another name is not found, and reads as a system with no overview.
-
-    MAIN, NOT THE SEAT'S HEAD. The systems, the overview and the commits are
-    all read at origin/main, which sync_working_branch_with_main fetched just
-    before this runs: a refresh brings the overview into line with what
-    LANDED, and a seat whose branch carries its own unmerged commits under
-    nc-systems/ would otherwise report them. Without an origin/main there is
-    nothing to report, and the branch-sync line already says so.
-
-    A RANGE, NOT AN IDENTITY. As the refresh-design GHI records the ruling, the
-    check compares a system's last commit under nc-systems/<system>/ with the
-    commit pinned in its overview, but the two are rarely the same object: a pin
-    names what a landing merged, and on main at f8d899a the handoff design's
-    pin, 40afb38, is a merge commit, while `git log -1 -- nc-systems/handoff/`
-    answers with the commit the merge brought in. So the test is whether
-    `git log --no-merges <pinned>..origin/main` lists any commit under the
-    system, which is also the range the refresh-design GHI above gives a
-    refresh, and a refresh "over an empty commit range does nothing".
-
-    MARKDOWN UNDER THE SYSTEM DOES NOT COUNT. Every refresh appends a pinned
-    line to the system's design, and the design lives in nc-systems/<system>/,
-    so counting it would make each refresh's own commit fall inside the next
-    range and the line would never go away. Measured on main at f8d899a over
-    40afb38..origin/main under nc-systems/handoff/: six commits, two of which
-    touch only handoff-design.md -- one of them the commit of PR [Four landed
-    designs are pinned to what landed, and shed their build
-    status](https://github.com/nedschorus/nedschorus/pull/675) that wrote its
-    pinned line; four once *.md is excluded. This departs from the ruling's
-    words and is stated in the pull request that built it.
-
-    WHAT IT DOES NOT COVER. The refresh-design GHI's first refresh by hand
-    found that a
-    half-migrated system keeps parts outside nc-systems/<system>/: the
-    handoff system's extractor, hook and recovery programs are still in
-    scripts/. The ruling names nc-systems/<system>/ and this reads only that;
-    commits to those parts do not make the overview due.
-
-    Every failure passes over the system it happened on and is printed to
-    the console, and nothing in it stops a launch: the line is advice to the
-    successor, and a supervisor that raised here would leave the seat dark.
-    A failure before any system is read -- origin/main's commit or its list
-    of systems -- gives no line at all. Both halves were asked by the round-1
-    reviews, 2026-09-28, of PR [A reincarnated seat is told when a system's
-    overview has fallen behind its
-    code](https://github.com/nedschorus/nedschorus/pull/764), which built
-    this: origin/main's short name was once read by a
-    second call after the one that verified it, and when that second call
-    failed the empty name turned the range into `<pinned>..`, which git reads
-    as `<pinned>..HEAD`, the seat's own branch; and the `git show` of one
-    overview was guarded only by the handler around the whole loop, so its
-    timeout ended the loop and a later system that was due got no line.
-
-    NOT WHILE AN OPEN PULL REQUEST ALREADY CHANGES THE OVERVIEW. RULED. The
-    user, 2026-09-29, item 11 of the walk
-    open-items-this-seat-holds-2026-09-24, his word "y", on: "I recommend the
-    refresh gets smart in the same way: it does nothing while an open pull
-    request already refreshes that overview. No owner is needed. It would be
-    its own small pull request after PR 764." The "same way" is his ruling of
-    2026-09-22, "the refresh skill should be smart enough to do nothing if
-    nothing needs to be done", and the same day he ruled "no owner, because it
-    is idempotent", so every seat makes this check and none is singled out.
-    Why: every seat gets the line, and the first refresh pull request can take
-    hours to merge. Until it does, main still carries the old pin, so every
-    seat replaced in those hours would get the line too and send its own
-    refresh: several pull requests changing one file, conflicting with each
-    other. So once at least one system is due, and never otherwise, one
-    `gh pr list` asks GitHub for the open pull requests and the files each
-    changes; a due system whose overview an open pull request changes gets no
-    line, and the console names that pull request. Any open pull request that
-    changes the overview counts, not only a refresh: nothing marks a pull
-    request as a refresh, and any change to the overview conflicts with one.
-    When GitHub cannot be asked -- `gh` missing, a nonzero exit, a timeout, or
-    output that does not parse -- every due line is given and the console
-    says why: a refresh never asked for is worse than a duplicate. The same
-    holds for an open pull request beyond the first 200 `gh` lists.
-    """
+def overview_refresh_due_lines(working_directory: Path,
+                               now: Optional[datetime] = None) -> tuple:
+    """Return unsuppressed overview-refresh reminders; report failures without blocking launch."""
+    # Read origin/main so unmerged seat work cannot trigger a refresh; Markdown-only refreshes must not trigger another.
+    # Pins may name merges, so compare the commit range rather than last-commit identity.
     timeout = OVERVIEW_REFRESH_CHECK_GIT_TIMEOUT_SECONDS
     try:
-        # One call both verifies origin/main and names it, so the name can
-        # never be missing while the check goes on.
+        # Resolve and verify together: an empty ref in the range would silently select HEAD.
         resolved = run_git_here(
             ["rev-parse", "--verify", "--quiet", "--short", "origin/main^{commit}"],
             working_directory, timeout=timeout)
@@ -1557,11 +812,11 @@ def overview_refresh_due_lines(working_directory: Path) -> tuple:
             return ()
         listed = run_git_here(["ls-tree", "-d", "--name-only", "origin/main", "nc-systems/"],
                               working_directory, timeout=timeout)
-    except Exception as error:  # the launch goes on; see the docstring
+    except Exception as error:
         print(f"handoff-supervisor: overview check stopped: "
               f"{type(error).__name__}: {error}")
         return ()
-    due = []  # (system, overview_path, line) for each system that is due
+    due = []
     for system_directory in listed.stdout.splitlines():
         system = system_directory.rsplit("/", 1)[-1]
         try:
@@ -1571,11 +826,11 @@ def overview_refresh_due_lines(working_directory: Path) -> tuple:
                 cwd=str(working_directory), capture_output=True, check=False,
                 timeout=timeout)
             if shown.returncode != 0:
-                continue  # this system has no overview
+                continue
             pinned_commits = stale_code_citation_check.landing_pin_commits(
                 shown.stdout.decode("utf-8", errors="replace"), working_directory)
             if not pinned_commits:
-                continue  # its overview names no commit this repository holds
+                continue
             pinned_commit = pinned_commits[-1]
             commit_range = f"{pinned_commit}..{main_commit}"
             pathspecs = [f"nc-systems/{system}/", f":(exclude)nc-systems/{system}/*.md"]
@@ -1593,16 +848,20 @@ def overview_refresh_due_lines(working_directory: Path) -> tuple:
                 f"git log --no-merges {commit_range} -- "
                 + " ".join(f"'{pathspec}'" if ":(" in pathspec else pathspec
                            for pathspec in pathspecs))
+            overview_draft_path = SYSTEM_OVERVIEW_DRAFT_PATH_TEMPLATE.format(system=system)
             due.append((system, overview_path,
                 f"overview refresh due: {system} — {count} commit(s) under "
                 f"nc-systems/{system}/ since its overview's pinned commit, in "
                 f"{commit_range}"
                 + OVERVIEW_REFRESH_DUE_INSTRUCTION_TEMPLATE.format(
                     overview_path=overview_path,
+                    overview_draft_path=overview_draft_path,
                     commit_listing_command=commit_listing_command,
                     landing_pin_prefix=stale_code_citation_check.LANDING_PIN_PREFIX,
-                    main_commit=main_commit)))
-        except Exception as error:  # this system only; see the docstring
+                    main_commit=main_commit,
+                    reminder_mark_script=DAILY_OVERVIEW_REFRESH_REMINDER_MARK_PATH,
+                    system=system)))
+        except Exception as error:
             print(f"handoff-supervisor: overview check for {system} passed over: "
                   f"{type(error).__name__}: {error}")
     if not due:
@@ -1624,85 +883,64 @@ def overview_refresh_due_lines(working_directory: Path) -> tuple:
                 for changed_file in pull_request["files"]:
                     changing_pull_request_by_path.setdefault(
                         changed_file["path"], title_and_url)
-    except Exception as error:  # every due line is given; see the docstring
+    except Exception as error:
         unanswered = f"{type(error).__name__}: {error}"
+    # An unavailable PR list must not suppress a needed reminder; a duplicate is preferable to silence.
     if unanswered is not None:
         print(f"handoff-supervisor: overview check could not ask GitHub which open "
-              f"pull requests change an overview, so every due line is given: "
-              f"{unanswered}")
-        return tuple(line for _, _, line in due)
+              f"pull requests change an overview, so no line is withheld for a "
+              f"pull request: {unanswered}")
+        still_to_give = [(system, line) for system, _, line in due]
+    else:
+        still_to_give = []
+        # Any open change to the overview could conflict with another refresh.
+        for system, overview_path, line in due:
+            if overview_path not in changing_pull_request_by_path:
+                still_to_give.append((system, line))
+                continue
+            title, url = changing_pull_request_by_path[overview_path]
+            print(f"handoff-supervisor: overview check for {system} withheld its line: "
+                  f"the open pull request \"{title}\" ({url}) already changes "
+                  f"{overview_path}")
+    if not still_to_give:
+        return ()
+    # The seat marks only after showing the diff, so a seat that dies first cannot consume the daily reminder.
+    reminder_mark = daily_overview_refresh_reminder_mark
+    try:
+        today = reminder_mark.pacific_date_of(now or datetime.now(timezone.utc))
+        reminder_marks = reminder_mark.read_daily_overview_refresh_reminder_marks(
+            today, OVERVIEW_REFRESH_REMINDER_MARKS_READ_TIMEOUT_SECONDS)
+    except Exception as error:
+        print(f"handoff-supervisor: overview check could not read the day's reminder "
+              f"marks in {reminder_mark.daily_overview_refresh_reminder_mark_citation('')}, "
+              f"so no line is withheld for a reminder already given: "
+              f"{type(error).__name__}: {error}")
+        # Unknown reminder state must not violate the daily reminder floor.
+        return tuple(line for _, line in still_to_give)
     lines = []
-    for system, overview_path, line in due:
-        if overview_path not in changing_pull_request_by_path:
+    for system, line in still_to_give:
+        file_name = reminder_mark.daily_overview_refresh_reminder_mark_file_name(today, system)
+        if file_name not in reminder_marks:
             lines.append(line)
             continue
-        title, url = changing_pull_request_by_path[overview_path]
-        print(f"handoff-supervisor: overview check for {system} withheld its line: "
-              f"the open pull request \"{title}\" ({url}) already changes "
-              f"{overview_path}")
+        citation = reminder_mark.daily_overview_refresh_reminder_mark_citation(file_name)
+        written_at = reminder_marks[file_name].strip()
+        if not reminder_mark.reminder_mark_text_is_a_time(written_at):
+            print(f"handoff-supervisor: overview check for {system} gives its line: the "
+                  f"day's reminder mark {citation} does not hold the time it was "
+                  f"written, but {written_at!r}")
+            lines.append(line)
+            continue
+        print(f"handoff-supervisor: overview check for {system} withheld its line: the "
+              f"user was shown this overview's refresh today, at {written_at}, as "
+              f"{citation} records")
     return tuple(lines)
 
 
 def memory_review_due_lines(now: Optional[datetime] = None) -> tuple:
-    """The one line for the successor's first prompt that asks for the day's
-    memory review, when it is due, or nothing. Never raises.
-
-    The line is a report, `memory review due: the Mac's memory store holds
-    <n> entries and ned-box's holds <m>, <since>`, followed by
-    MEMORY_REVIEW_DUE_INSTRUCTION_TEMPLATE: composed the way the overview
-    lines are, and placed right after them. now is the moment to judge, the
-    present when not given.
-
-    RULED. The user, 2026-09-30, item 3 of the walk
-    eight-deferrals-with-no-trigger-2026-09-29, in his own words: "Memory can
-    be useful in the short term, but unless it's drained regularly it becomes
-    counter productive. I think reviewing memory daily is the right approach,
-    assuming all agents share the same memory file." Then: "If I need to
-    review daily, the question is how to surface that. COuld we put something
-    in the reincarnation process, that surfaces a review of both computer's
-    memory file starting at noon each day. Once it's reviewed, it sleeps until
-    the next noon?" And to the design below: "y - use a subagent to build".
-    The issue is GHI [Memory: agents write freely, and each reincarnation
-    drains the new entries in a walk with the
-    user](https://github.com/nedschorus/nedschorus/issues/39).
-
-    DUE means all of these: this is the Mac; it is 12:00 or later in
-    America/Los_Angeles; neither a started nor a done mark exists for today's
-    Pacific date; and either store changed since the last done mark, that is,
-    daily_memory_review_mark's digest of both stores differs from the one the
-    last done recorded. Before any done exists, a store with at least one
-    entry counts as changed. The marks, the stores and the digest are defined
-    in nc-systems/handoff/daily-memory-review-mark.py, which writes the marks.
-
-    WHY HERE. Like overview_refresh_due_lines, it runs once per reincarnation,
-    only where an ignition plan is composed, and the marks are what let a
-    reviewed day sleep until the next noon.
-
-    NOON IN A NAMED ZONE. The user reads in Pacific time, so the hour and the
-    date are read in America/Los_Angeles, never in the machine's own zone.
-
-    ONLY ON THE MAC. The user reads on the Mac, and the Mac reaches ned-box's
-    store over ssh, while nothing gives ned-box a way back to the Mac's. So
-    only a Mac supervisor can see both stores, and on ned-box this gives
-    nothing.
-
-    THE INSTRUCTION. The started mark comes first, so a second seat
-    reincarnating mid-walk is not asked for the same review. Every entry of
-    both stores is walked one at a time with /walk-me-through, and for each
-    the user decides: keep it, move it into CLAUDE.md or a skill, or delete
-    it. The instruction repeats that nothing is written or deleted without his
-    approval, because CLAUDE.md requires his approval for every memory write.
-    The done mark records the digest the next noon compares against.
-
-    A SEAT THAT DIES MID-WALK leaves its started mark, which keeps every other
-    seat quiet until the next noon. That is deliberate, from the approved
-    design: the next noon asks again, since no done was recorded.
-
-    FAIL SAFE TO NO LINE. If ned-box cannot be reached, a read times out, or
-    anything else fails, there is no line and the console says why. A day
-    missed comes back at the next noon. ned-box's store and the marks are
-    read first, in one ssh call, and the Mac's store after it.
-    """
+    """Return the daily memory-review reminder, or no lines when unavailable or not due."""
+    # Only the Mac can reach both stores; SSH reads have a timeout that a hung Samba mount lacks.
+    # A started mark survives a mid-review death to suppress duplicates until the next Pacific noon.
     mark_module = daily_memory_review_mark
     try:
         if mark_module.this_machine_is_ned_box():
@@ -1717,7 +955,7 @@ def memory_review_due_lines(now: Optional[datetime] = None) -> tuple:
             mark_module.DAILY_MEMORY_REVIEW_MARKS_DIRECTORY, timeout)
         mac_store, _ = mark_module.read_memory_store_and_review_marks(
             None, mark_module.MAC_MEMORY_STORE_DIRECTORY, "", timeout)
-    except Exception as error:  # no line, and the launch goes on; see the docstring
+    except Exception as error:
         print(f"handoff-supervisor: memory review check gave no line: "
               f"{type(error).__name__}: {error}")
         return ()
@@ -1745,46 +983,17 @@ def memory_review_due_lines(now: Optional[datetime] = None) -> tuple:
             + MEMORY_REVIEW_DUE_INSTRUCTION_TEMPLATE.format(
                 mark_script=DAILY_MEMORY_REVIEW_MARK_PATH,
                 mac_memory_store=mark_module.MAC_MEMORY_STORE_DIRECTORY + "/",
+                ned_box_memory_store_mac_mount=(
+                    mark_module.NED_BOX_MEMORY_STORE_MAC_MOUNT_DIRECTORY + "/"),
                 ned_box_memory_store=mark_module.ned_box_memory_store_citation()),)
 
 
 def remove_finished_worktrees_at_handoff(
         working_directory: Path,
         timeout_seconds: int = FINISHED_WORKTREE_REMOVAL_TIMEOUT_SECONDS) -> str:
-    """Run scripts/clean-worktrees.py --remove against the seat's repository,
-    and return one line of report. Never raises, and never stops the handoff.
-
-    Why at a handoff: the launchers already run the cleaner at boot, but only
-    to report (--only-done), and nothing removed what it named. On 2026-09-23
-    the repository held 73 worktrees and over 300 local branches, 19 of them
-    worktree-agent-* refs; one --remove took it to 55 and 112 and lost
-    nothing. A handoff is the one moment every seat passes through
-    regularly, so running it there keeps the pile from growing back.
-
-    It runs after the retiring session is stopped and before the successor
-    launches, and it sweeps the whole machine's .claude/worktrees/, other
-    seats' included. Seat homes (outside .claude/worktrees/) are never
-    touched. A worktree a live process is inside is kept by the vacancy
-    check, and an Agent-tool subagent's worktree is kept by the quiet check,
-    because such a subagent runs inside its parent claude process and so is
-    invisible to the vacancy check between its Bash calls (measured on ned-box
-    2026-09-23 by the reviewer of PR "Each handoff removes the finished
-    worktrees and merged branches").
-
-    Every failure is reported and passed over: a cleaner that is missing,
-    cannot run, times out or exits nonzero changes nothing about the launch.
-    The cleaner runs with GIT_DIR and GIT_WORK_TREE removed from its
-    environment, because either one would point its `git -C` calls, removals
-    included, at another repository (GHI 639's hazard).
-
-    The cleaner runs unbuffered (`python3 -u`) and in a session of its own,
-    for the run the bound stops (both found by the round-2 reviews of PR "Each
-    handoff removes the finished worktrees and merged branches"). Unbuffered,
-    because the cleaner prints into a pipe with a plain print(), and a stop
-    found its lines still in its buffer, so the report read 0 removed after
-    real removals. Its own session, because the stop killed only the cleaner
-    and left the lsof or git it had started running.
-    """
+    """Run worktree cleanup and return a report without blocking the handoff on failure."""
+    # Remove git environment overrides so deletions cannot target another repository.
+    # Unbuffered output preserves partial counts; a separate process group lets timeout stop git and lsof too.
     environment = {name: value for name, value in os.environ.items()
                    if name not in ("GIT_DIR", "GIT_WORK_TREE")}
     try:
@@ -1811,14 +1020,8 @@ def remove_finished_worktrees_at_handoff(
 
 
 def stop_worktree_cleaner_process_group(cleaner) -> str:
-    """Stop the cleaner and every process it started, and return what it
-    printed before the stop.
-
-    The cleaner leads a process group of its own, so the signal reaches its
-    lsof and git calls too. SIGTERM goes first, because git removes its lock
-    files on SIGTERM and not on SIGKILL; SIGKILL follows when the group has not
-    ended within WORKTREE_CLEANER_STOP_GRACE_SECONDS.
-    """
+    """Stop the cleaner and its children; return the output collected before stopping."""
+    # SIGTERM lets git remove its lock files; SIGKILL does not.
     partial = ""
     for signal_number in (signal.SIGTERM, signal.SIGKILL):
         try:
@@ -1835,14 +1038,7 @@ def stop_worktree_cleaner_process_group(cleaner) -> str:
 
 
 def summarize_worktree_cleanup_output(lines) -> str:
-    """One report line from the lines clean-worktrees.py --remove printed.
-
-    Counts every branch deleted, the ones deleted with their worktree
-    (`<name>: removed, branch <b> deleted`) as well as the orphaned refs
-    (`branch <b>: deleted ...`), and names what went wrong: failures, branches
-    git refused to delete, and worktrees kept because the vacancy check could
-    not be run.
-    """
+    """Return one report line from the cleaner's output."""
     removed = sum(1 for line in lines if ": removed" in line)
     deleted = sum(1 for line in lines
                   if (line.startswith("branch ") and ": deleted" in line)
@@ -1864,25 +1060,12 @@ def summarize_worktree_cleanup_output(lines) -> str:
     return report
 
 
-# The line that ends the editor notes in an appended-system-prompt file.
 APPENDED_SYSTEM_PROMPT_EDITOR_NOTES_SEPARATOR_LINE = "---"
 
 
 def agent_part_of_appended_system_prompt(file_text: str):
-    """(agent_text, separator_found) for the text of an appended-system-prompt file.
-
-    The file has two parts, split by its first line that is exactly `---` once
-    surrounding whitespace is set aside. Above it are notes to whoever edits the
-    file; below it is the text the agents receive. The agent text is everything
-    after that line with its leading blank lines dropped, and is otherwise
-    returned untouched. A file with no such line comes back whole, with
-    separator_found False, so the caller can warn.
-
-    Passing the whole file put the notes in every seat's system prompt, where an
-    agent can read "Keep it SHORT" as an instruction to itself. That was
-    observed 2026-09-16 in the cold-read-research seat's own system prompt, and
-    the user ruled "fix 2": send only the part below the line.
-    """
+    """Return (agent_text, separator_found), leaving separator-free text whole."""
+    # The text above the separator is editor guidance and must not become agent instructions.
     lines = file_text.splitlines(keepends=True)
     for position, line in enumerate(lines):
         if line.strip() == APPENDED_SYSTEM_PROMPT_EDITOR_NOTES_SEPARATOR_LINE:
@@ -1894,29 +1077,8 @@ def agent_part_of_appended_system_prompt(file_text: str):
 
 
 def appended_system_prompt_file_for_launch(source_path: str, agent_part_path: Path) -> str:
-    """The path to pass to `claude --append-system-prompt-file` for one launch.
-
-    Writes the agent part of the file at source_path (see
-    agent_part_of_appended_system_prompt) to agent_part_path and returns
-    agent_part_path. That file belongs to this supervisor. It sits beside the
-    seat's handoff and state files and is rewritten at the seat's every launch.
-    The CLI reads it once, at startup, and refuses to start if it is missing, so
-    it is written just before the launch and never deleted.
-
-    The source is read here, at every launch, not once when the supervisor
-    starts. When the CLI read the source itself, an edit reached each seat at
-    its next launch, and reading it here keeps that true.
-
-    A launch never fails because of this. The fallbacks, each with one warning
-    line:
-      * the source has no `---` line: return source_path, so the CLI gets the
-        whole file, as it did before the split;
-      * the agent part cannot be written: return source_path as well;
-      * the source cannot be read (an older checkout, or one mid-rebase):
-        return "", so the session launches without the flag, as main() does
-        when the file is missing at supervisor start.
-    An empty source_path means launch without the flag, and returns "".
-    """
+    """Return the prepared prompt path, the source on write failure, or an empty string if unreadable."""
+    # The CLI reads the file at startup and refuses a missing file; write before launch and retain it.
     if not source_path:
         return ""
     try:
@@ -1939,8 +1101,7 @@ def appended_system_prompt_file_for_launch(source_path: str, agent_part_path: Pa
               f"{agent_part_path} ({error}) — appending the whole file",
               file=sys.stderr)
         return source_path
-    # Absolute, because the session resolves it from its own working directory,
-    # which need not be this supervisor's.
+    # The session may resolve relative paths from a different working directory.
     return os.path.abspath(agent_part_path)
 
 
@@ -1948,60 +1109,8 @@ AGENT_BINARY_UPDATE_TIMEOUT_SECONDS = 120
 
 
 def update_agent_binary(agent_command: str, timeout_seconds: int) -> None:
-    """Bring the agent binary up to date, just before a session is launched.
-
-    WHY THIS IS HERE AT ALL (user-ruled 2026-09-22, this Mac). The two
-    launchers update at launch (scripts/launch-claude-mac, scripts/launch-
-    claude-ubuntu), and background auto-update is off fleet-wide by the
-    2026-08-22 ruling recorded as R16 in docs/nedschorus-wiki/nedschorus-
-    fleet-git-worktree-working-model.md: DISABLE_AUTOUPDATER=1 in the
-    checked-in .claude/settings.json, because with launch-time updates the
-    mid-session "update available" banner is clutter. That left a seam. A
-    seat is restarted far more often by a handoff than by a launcher, and a
-    handoff restart passed no update moment at all, so a long-lived seat
-    drifted and nothing said so. Measured when the user asked why: both
-    machines sat on Claude Code 2.1.278 with 2.1.280 published, the Mac's
-    symlink dated two days earlier at its last launcher launch.
-
-    WHY IT IS CALLED FROM launch_agent_session RATHER THAN THE SUPERVISE
-    LOOP. Every restart path in the fleet reaches a session through this one
-    function, and only through it: the supervisor's own relaunch after a
-    handoff, scripts/recover-crashed-seats.py (which launches this
-    supervisor, not a bare agent), and the login restart, which reaches the
-    seat through recovery. Placing the update here covers all three from one
-    site. It also makes "never on the adopted path" structural rather than a
-    convention about where the call sits: an adopted session was launched by
-    somebody else and never passes through here, and changing the binary
-    under a working agent is the one thing this must not do.
-
-    WHY IT IS SAFE TO SWAP THE BINARY AT THIS MOMENT. A running session pins
-    its own version directory in CLAUDE_CODE_EXECPATH and installed versions
-    are retained on disk, so updating changes nothing for any session already
-    running on this machine, this supervisor's previous agent included. The
-    handoff moment is in fact the safest one available: the retiring session
-    has ended and the successor has not started.
-
-    WHY A NON-ZERO STATUS IS SILENT. `claude update` prints its own diagnosis
-    whenever it runs to completion, so a paraphrase here would add nothing and
-    could mislead -- the failure that actually happened in this fleet was a
-    refusal to overwrite a Homebrew-managed copy, which printed its reason and
-    exited 0, so an exit-code branch would not have caught it either
-    (scripts/launch-claude-mac, 2026-08-31). What this function reports is only
-    what it causes: a timeout, where the command is killed mid-flight and
-    says nothing itself, and an update skipped or delayed by the lock below.
-
-    An update never blocks a launch. A seat that cannot update must still come
-    back, so every failure here falls through to launching on what is
-    installed.
-
-    WHY IT RUNS UNDER A LOCK (user-approved 2026-09-22). The update runs under
-    the machine-wide lock in scripts/agent-binary-update-under-lock.py, which
-    both launchers take too, so no two updates on one machine overlap -- a
-    login restart otherwise starts one supervisor's update about 6 s after
-    the last. timeout_seconds bounds the wait and the run together, and that
-    file carries the reasoning, the lock's path and every line it prints.
-    A zero timeout returns before the lock is touched.
-    """
+    # Background auto-update is disabled; updating here covers every relaunch.
+    # Running sessions pin retained version directories, so swapping the installed binary leaves them intact.
     if not timeout_seconds:
         return
     print(f"handoff-supervisor: checking for a {agent_command} update")
@@ -2015,48 +1124,8 @@ def launch_agent_session(agent_command: str, session_id: str, working_directory:
                          appended_system_prompt_file: str = "",
                          handoff_supervisor_agent_name: str = "",
                          update_timeout_seconds: int = 0):
-    """Start one interactive session, inheriting this console's terminal.
-
-    resume=True launches `--resume <id>` instead of `--session-id <id>`: the
-    crash-recovery path (nedschorus#120), where the session to run already
-    has a transcript and must continue it. The CLI reuses the resumed id in
-    place (--fork-session is the opt-out), so the state file's session_id
-    stays correct for extraction at the next reincarnation — confirmed live
-    2026-08-21, when the crash-recovered seats' transcripts grew under
-    their original ids.
-
-    remote_control_name launches with `--remote-control <name>`, which turns
-    Remote Control on for the session and fixes the name it answers to. Both
-    halves matter for cross-machine agent messaging: a session on another
-    machine is reachable only while it is connected to Remote Control, and it
-    is addressed by its Remote Control title, never by its local session name.
-    Left to itself the CLI derives that title from the conversation and
-    rewrites it as the conversation moves on, so a seat's address drifts under
-    anyone trying to use it — observed 2026-08-27, when the Mac's mac-prof
-    seat answered from three different titles inside twenty minutes. Passing
-    the seat's own name pins it: this seat is `prof` on every machine, for the
-    life of the session. An empty value launches without the flag, leaving the
-    CLI's own defaults in charge.
-
-    This widens what a seat's name means. It named local files; now it is also
-    the address agents on other machines use, so two seats sharing a name are
-    no longer merely confusing — they are ambiguous to a sender. The derived
-    titles this replaces could not collide, because the CLI qualified them with
-    the hostname. The fleet already keeps its names distinct by habit (the Mac
-    runs `mac-prof` where this box runs `prof`); this makes the habit load-
-    bearing, which is why --agent's own help text now says so.
-
-    handoff_supervisor_agent_name and working_directory also reach the session
-    as environment variables (HANDOFF_SUPERVISOR_AGENT_NAME_ENVIRONMENT_VARIABLE
-    and HANDOFF_SUPERVISOR_WORKING_DIRECTORY_ENVIRONMENT_VARIABLE), so the
-    handoff writer the agent runs names its handoff after the name this
-    supervisor watches and records the directory the session was launched in,
-    wherever the agent's shell happens to be standing when it runs it.
-    session_id reaches it too (HANDOFF_SUPERVISOR_SESSION_ID_ENVIRONMENT_VARIABLE),
-    on both the --session-id and --resume paths, because the writer honours the
-    other two only in the session whose CLAUDE_CODE_SESSION_ID matches it: a
-    child `claude` the session starts inherits all three but has its own id
-    (PR #414 review, 2026-09-16)."""
+    """Start an interactive session inheriting this console's terminal."""
+    # --resume retains the transcript ID; --remote-control pins the address that otherwise drifts with conversation.
     update_agent_binary(agent_command, update_timeout_seconds)
     flag = "--resume" if resume else "--session-id"
     command = [agent_command, flag, session_id]
@@ -2064,9 +1133,7 @@ def launch_agent_session(agent_command: str, session_id: str, working_directory:
         command += ["--remote-control", remote_control_name]
     if appended_system_prompt_file:
         command += ["--append-system-prompt-file", appended_system_prompt_file]
-    # The prompt stays LAST, after every flag — the stub agent in the test suite
-    # reads it by taking the final argument, and a flag appended after it would
-    # be read as the prompt.
+    # The test stub reads the final argument as the prompt, so no flag may follow it.
     command.append(prompt)
     session_environment = dict(os.environ)
     session_environment[HANDOFF_SUPERVISOR_AGENT_NAME_ENVIRONMENT_VARIABLE] = handoff_supervisor_agent_name
@@ -2076,20 +1143,9 @@ def launch_agent_session(agent_command: str, session_id: str, working_directory:
 
 
 class AdoptedSession:
-    """A session this supervisor did not launch, identified by process id.
+    """A session this supervisor did not launch, identified by process ID."""
 
-    A supervisor normally owns the process it started and can terminate it
-    through that handle. A session started by hand — the founding boot, or any
-    agent a person launched in a console — has no such owner, so it can never
-    reincarnate. Adoption closes that: handoff-supervisor.py run by hand with
-    --adopt-session-id and --adopt-process-id watches the named process, and
-    everything after the kill is identical to the ordinary cycle. No launcher
-    or recovery script passes those flags (deferred 2026-08-19); the writer
-    script started an adopting supervisor itself until 2026-08-14.
-    """
-
-    # Not this supervisor's child, so its exit status cannot be read: poll()'s 0
-    # means only "gone". The exit record stores the code as unknown.
+    # An adopted process is not our child: poll() can report disappearance, not an exit status.
     returncode = None
 
     def __init__(self, session_id: str, process_id: int):
@@ -2103,7 +1159,7 @@ class AdoptedSession:
         except ProcessLookupError:
             return 0
         except PermissionError:
-            return None  # alive, owned by someone else
+            return None
         return None
 
     def terminate(self):
@@ -2119,7 +1175,7 @@ class AdoptedSession:
             pass
 
     def wait(self, timeout=None):
-        """Block until the process is gone, or raise once the timeout passes."""
+        """Block until the process is gone, or raise on timeout."""
         deadline = time.monotonic() + (timeout if timeout is not None else 0)
         while self.poll() is None:
             if timeout is not None and time.monotonic() > deadline:
@@ -2129,20 +1185,7 @@ class AdoptedSession:
 
 
 def claim_supervisor_lock(lock_path: Path) -> bool:
-    """Take the one-supervisor-per-agent lock, or report it already held.
-
-    Two supervisors on one agent would each kill the session and each launch a
-    successor, so the second must not start. A lock left by a supervisor that
-    died is reclaimed: the recorded process id is checked before the lock is
-    believed.
-
-    What is checked is that the id names a live supervisor OF THIS AGENT, not
-    merely a live process (nedschorus#242 change 1). This file survives a
-    reboot and ids are reused across it, so a stale lock whose id now belongs
-    to something unrelated would otherwise refuse the very supervisor the login
-    restart just asked for — and refuse it for as long as the lock sat there.
-    The agent is taken from this file's own name.
-    """
+    """Claim the agent's lock, reclaiming a stale lock or reporting a live owner."""
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     try:
         descriptor = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
@@ -2155,8 +1198,8 @@ def claim_supervisor_lock(lock_path: Path) -> bool:
             held, _ = process_is_supervisor_for_agent(
                 holder, agent_name_from_supervisor_file(lock_path))
             if held:
-                return False  # a live supervisor already holds this agent
-        lock_path.unlink(missing_ok=True)  # the holder is gone; reclaim it
+                return False
+        lock_path.unlink(missing_ok=True)
         return claim_supervisor_lock(lock_path)
     os.write(descriptor, f"{os.getpid()}\n".encode("utf-8"))
     os.close(descriptor)
@@ -2164,18 +1207,8 @@ def claim_supervisor_lock(lock_path: Path) -> bool:
 
 
 def wait_for_handoff(process, handoff_path: Path, consumed_counter, state_path: Path, state: dict):
-    """Block until the agent writes a new handoff, or the session exits.
-
-    Returns the handoff fields when a counter above `consumed_counter`
-    appears, or None if the session ended on its own without writing one.
-    Stamps the heartbeat while it waits. The stamp no longer decides liveness
-    (nedschorus#242 change 1); see HEARTBEAT_INTERVAL_SECONDS for its readers.
-
-    The exit check must not preempt the file check: a headless session exits
-    when its turn ends, so its handoff arrives AS a process exit — the file
-    was written during the turn, before the exit was observable. Exit with a
-    new counter on disk is a handoff; exit without one is abandonment.
-    """
+    """Return a new handoff's fields, or None when the session exits without one."""
+    # Check the file before exit: a headless session can write its handoff and exit in the same turn.
     last_stamp = 0.0
     while True:
         exited = process.poll() is not None
@@ -2208,34 +1241,22 @@ def stop_session(process) -> None:
 
 @dataclass
 class SupervisorSettings:
-    """Everything one supervisor needs, resolved from the command line."""
+    """Resolved settings for one supervisor."""
 
     agent: str
     working_directory: Path
     handoff_directory: Path
     agent_command: str
     first_prompt: str
-    # Crash recovery (nedschorus#120): a session id whose transcript the FIRST
-    # launch resumes (`claude --resume`) instead of starting fresh. Later
-    # reincarnations mint fresh ids as always. The caller is responsible for having
-    # checked that no unconsumed handoff waits — boot-ignition is skipped.
+    # The caller must check for an unconsumed handoff before resuming, because resume skips boot-ignition.
     resume_session_id: str = ""
-    # The file whose part below its first `---` line is appended to each launched
-    # session's system prompt; "" launches without it.
     appended_system_prompt_file: str = ""
-    # Seconds allowed for the `<agent_command> update` that runs immediately
-    # before each launch; 0 switches the update off, which is what the tests
-    # pass so a stub agent is never invoked as an updater. See
-    # update_agent_binary for why the update is here at all.
     agent_update_timeout_seconds: int = AGENT_BINARY_UPDATE_TIMEOUT_SECONDS
-    # A real annotation, not a string: this module is loaded by importlib in the
-    # threshold hook and the tests, where a forward reference cannot resolve.
+    # Keep a real annotation: importlib callers cannot resolve this as a forward reference.
     adopted_session: Optional[AdoptedSession] = None
 
     @property
     def handoff_path(self) -> Path:
-        # The module function, not this property: a method body never resolves a
-        # bare name in its own class namespace.
         return handoff_file_path(self.handoff_directory, self.agent)
 
     @property
@@ -2253,45 +1274,8 @@ class SupervisorSettings:
 
 def carry_over_to_successor(settings: SupervisorSettings, retiring_session_id: str,
                             handoff_fields: dict, generation: int):
-    """Extract, archive, prune, and build the successor's launch.
-
-    Returns (successor_session_id, DialogIgnitionPlan), or (None, None) when
-    extraction failed and relaunching would lose the dialog. The plan is not
-    yet a prompt: the caller composes it at the launch, with the branch sync
-    run there, so the branch-state line the successor reads names its own
-    launch.
-
-    The retiring session is the one that WROTE the handoff, not the one this
-    supervisor launched, whenever the handoff says which it was. Both callers
-    pass the id from the supervisor's state file, which records the session
-    the supervisor started; the writer stamps written-by-session from
-    CLAUDE_CODE_SESSION_ID inside the session actually retiring
-    (handoff-write-and-check-supervisor.py, write_handoff_file). The two
-    diverge when a session the supervisor did not launch takes over the
-    worktree mid-life: the adoption path (AdoptedSession,
-    --adopt-session-id) runs at supervisor startup only, so nothing updates
-    the state file afterwards.
-
-    That happened at the MD-skills seat on 2026-09-20/21. The state file held
-    session ac2b8ebe-b95f-4599-a30e-aed1d554cef3, which ENDED at 22:00Z; a
-    session the supervisor had not launched started in the same worktree two
-    minutes later and ran as the seat from 22:02Z to 00:56Z, writing
-    generation 27's handoff with written-by-session:
-    145a31fd-d1eb-4ea6-9463-70b5c9f9c9d9. The extract handed to the successor,
-    MD-skills-dialog-0027.md, therefore carried ac2b8ebe's final turns and
-    none of the work 145a31fd had done, and nothing in the handoff or the
-    console said so.
-
-    The fallback is the tracked id, which is all there ever was: handoffs
-    older than the field do not carry it, and a session with no
-    CLAUDE_CODE_SESSION_ID writes the literal WRITTEN_BY_SESSION_UNKNOWN_VALUE
-    rather than an id. Preferring the handoff's id once, here, also corrects
-    preseed_tasks and the predecessor session directory below, which read the
-    same id. No tasks were lost on 2026-09-20: the launchers pin a per-seat
-    store (~/.claude/tasks/nedschorus-<seat>-tasks/), so preseed_tasks copied
-    nothing and had nothing to get wrong. The un-pinned path is keyed by
-    session id and would have pre-seeded the wrong session's tasks.
-    """
+    """Return (successor_session_id, ignition_plan), or (None, None) if extraction fails."""
+    # Prefer written-by-session: another session may have taken over the worktree since the supervisor launched.
     handoff_written_by_session = handoff_fields.get(WRITTEN_BY_SESSION_FIELD, "")
     if (handoff_written_by_session
             and handoff_written_by_session != WRITTEN_BY_SESSION_UNKNOWN_VALUE
@@ -2318,14 +1302,10 @@ def carry_over_to_successor(settings: SupervisorSettings, retiring_session_id: s
     prune_old_generations(settings.handoff_directory, f"{settings.agent}-dialog")
     prune_old_generations(settings.handoff_directory, f"{settings.agent}-handoff")
 
-    # Console only: the queue-status line does not ride the initial agent instructions
-    # (user-ruled 2026-08-29, expiring the 2026-08-12 #32 ruling).
     print(f"handoff-supervisor: {queue_status_line(settings.working_directory)}")
 
     successor_session_id = str(uuid.uuid4())
-    # Two stories, and the console must not tell the wrong one: under a
-    # pinned list nothing is carried because nothing needs to be, and
-    # printing "carried 0 task record(s)" there reads as a failure to carry.
+    # A pinned list needs no copying; reporting zero carried tasks would suggest failed migration.
     pinned_list = pinned_task_list_id()
     if pinned_list:
         print(f"handoff-supervisor: tasks live in the seat-pinned list {pinned_list}; "
@@ -2342,59 +1322,22 @@ def carry_over_to_successor(settings: SupervisorSettings, retiring_session_id: s
 
 
 def supervise_sessions(settings: SupervisorSettings) -> int:
-    """Launch, watch, and reincarnate sessions until one ends without a handoff
-    and the ruling says to stop rather than resume it.
-
-    Every stop that follows a session's end without launching a successor writes
-    the exit record first (record_agent_exit_in_supervisor_state); the stop that
-    leaves a live session up for a seated supervisor does not. A resume is not a
-    stop: the record stays cleared while the loop runs, which is what a live
-    supervisor means by it.
-
-    A death without a handoff is resumed or stopped by the ruling of 2026-09-21
-    (user-ruled 2026-09-21; the table is in this module's docstring and in
-    resume_or_stop_after_a_death_without_a_handoff). A resume keeps the session
-    id and the generation — it is one conversation continuing, not a
-    reincarnation — and is bounded by
-    CONSECUTIVE_RESUMES_WITHOUT_NEW_WORK_BUDGET and by the no-terminal
-    refusal."""
     state = read_supervisor_state(settings.state_path)
     generation = state.get("generation", 0)
     if settings.first_prompt:
         prompt = settings.first_prompt
     elif settings.resume_session_id:
-        # A resumed session holds its full pre-crash context; the no-handoff
-        # default would tell it to ask for work it already has (PR #131
-        # review round 3, P3-4 — the recovery script writes a richer prompt
-        # file, and this default makes the by-hand flag equally truthful).
+        # A resumed session retains its context and must not be told to ask for work it already has.
         prompt = RESUME_PROMPT_WHEN_A_SESSION_ENDED_WITHOUT_A_HANDOFF
     else:
         prompt = f"You are {settings.agent}. No handoff exists yet; ask what to work on."
 
     adopted = settings.adopted_session
-    # Set when the next launch is an ignition: the prompt is composed from it
-    # at the launch site, so the branch-state line it carries reports the
-    # sync that runs there.
+    # Compose at launch so the branch-state line reports the sync performed for that launch.
     ignition_plan = None
-    # A fresh start always mints a new session id. Reusing the one in the state
-    # file would launch `claude --session-id` against a transcript that already
-    # exists — and if the supervisor died while its agent kept running, would put
-    # two processes on one session id. Adoption is how a running session is
-    # picked back up; resume (nedschorus#120) is how a CRASHED session's
-    # transcript is continued. Two things set this flag: the startup paths
-    # below, which resume a session that died before this supervisor started,
-    # and the death path in the loop, which resumes one that died while it
-    # was watching (the 2026-09-21 ruling). It was called resume_first_launch
-    # while only the first launch could be a resume.
+    # Reusing a state-file ID for a fresh launch can collide with an existing transcript or live session.
     next_launch_resumes_the_session = bool(settings.resume_session_id) and adopted is None
-    # The resume budget (CONSECUTIVE_RESUMES_WITHOUT_NEW_WORK_BUDGET), charged at
-    # the launch site: every resume launch spends one and takes the session's
-    # turn count as its baseline, and every fresh session id starts the budget
-    # over. The next death compares against that baseline to see whether the
-    # resume produced anything. Charging at the launch rather than at the death
-    # is what counts a startup resume (--resume-session-id, or the by-hand
-    # resume below) against the budget, and what keeps a successor from
-    # inheriting its predecessor's spent budget and turn count.
+    # Charge at launch so startup resumes count, and a successor does not inherit a predecessor's spent budget.
     consecutive_resumes_without_new_work = 0
     substantive_turns_at_the_last_resume = None
     if adopted:
@@ -2407,12 +1350,7 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
     print(f"handoff-supervisor: {settings.agent} in {settings.working_directory}")
     print(f"handoff-supervisor: watching {settings.handoff_path}")
 
-    # The resume path (crash recovery, nedschorus#120) must not meet a stale
-    # handoff either: the recovery script defers to boot-ignition when one
-    # waits, but this flag can be run by hand, and the wait loop would then
-    # kill the just-resumed session for a file predating it (PR #131 review,
-    # finding 4). Mark any waiting handoff consumed BEFORE the resume launch —
-    # the operator chose the transcript over the handoff by passing the flag.
+    # Consume a waiting handoff before resume, or the wait loop would kill the resumed session for an old handoff.
     if next_launch_resumes_the_session and settings.handoff_path.is_file():
         stale_fields = parse_handoff_file(settings.handoff_path)
         stale_counter = counter_from(stale_fields)
@@ -2425,22 +1363,14 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
             )
             state["consumed_counter"] = stale_counter
 
-    # A fresh boot may find an unconsumed handoff — a crash or reboot ended the
-    # previous cycle after the write but before a supervisor acted on it. Ignite
-    # from it directly. Launching first and letting the wait loop find the file
-    # would kill the just-born session for a handoff that predates it.
+    # Process an existing handoff before launching, or the wait loop would kill the new session for an old handoff.
     if adopted is None and not next_launch_resumes_the_session and settings.handoff_path.is_file():
         boot_fields = parse_handoff_file(settings.handoff_path)
         boot_counter = counter_from(boot_fields)
         consumed = state.get("consumed_counter")
         if boot_counter is not None and (consumed is None or boot_counter > consumed):
             if boot_fields.get("dont-restart"):
-                # The handoff asks for a consultation before any relaunch;
-                # boot-ignition must not steamroll it. Same terminal rule as
-                # the in-cycle dont-restart branch below. Stopping here is a
-                # seat stood down on purpose, so it is recorded as an exit —
-                # its code unknown, since the session ended before this
-                # supervisor started.
+                # Boot recovery must honor dont-restart too; a deliberate stand-down needs an exit record.
                 if not sys.stdin.isatty():
                     print("handoff-supervisor: dont-restart, and no terminal to ask on; stopping")
                     state["consumed_counter"] = boot_counter
@@ -2458,9 +1388,7 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
                 if retiring_session_id else (None, None)
             )
             if successor_session_id is None:
-                # No retiring transcript to extract (new machine, or it is
-                # gone). The next-step still carries the work: ignite with it
-                # alone rather than discarding the handoff.
+                # When the retiring transcript is unavailable, the next step still provides work to carry forward.
                 successor_session_id = str(uuid.uuid4())
                 ignition_plan = BootRecoveryIgnitionPlan(next_step_from(boot_fields))
                 print("handoff-supervisor: igniting from an unconsumed handoff without a dialog extract")
@@ -2469,30 +1397,13 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
             state["consumed_counter"] = boot_counter
             session_id = successor_session_id
 
-    # Issue 242's change 5, ruled 2026-09-02: a by-hand launch resumes a
-    # crashed seat. Reaching here having taken none of the branches above means
-    # no first prompt, no --resume-session-id, no adopted session and no
-    # unconsumed handoff — which is what `launch-claude-mac <seat>` or
-    # `launch-claude-ubuntu <seat>` looks like on a seat that is simply down.
-    # Until now that minted an empty session whose first turn said "No handoff
-    # exists yet; ask what to work on", discarding the crashed context;
-    # measured on both machines 2026-09-02, and the shape of the 2026-08-21
-    # tmux death, where three supervisors minted near-empty successors beside
-    # three intact 1-2MB transcripts.
-    #
-    # A recorded exit means the seat was stopped under supervision rather than
-    # crashed, and still gets the fresh session. Any record counts, whatever
-    # its code and whether or not the code is known, which is the rule
-    # recover-crashed-seats.py applies to the same state file — so a seat this
-    # supervisor resumes by hand is a seat that tool would also call a crash.
+    # An exit record means a supervised stop; without one, resume the crashed context instead of starting empty.
     if (not settings.first_prompt and not settings.resume_session_id
             and adopted is None and ignition_plan is None
             and agent_exit_record_from_supervisor_state(state) is None):
         by_hand_session_id, by_hand_detail = worth_resuming.newest_real_transcript(
             project_directory_for_working_directory(settings.working_directory))
         if by_hand_session_id is not None:
-            # Reported in the terminal, as the design asks: this is a by-hand
-            # launch, so someone is reading it.
             print("handoff-supervisor: no waiting handoff and no recorded exit — "
                   f"resuming this seat's last transcript {by_hand_session_id} "
                   "rather than starting it empty")
@@ -2514,33 +1425,24 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
                 f"handoff-supervisor: adopted running session {session_id} "
                 f"(process {adopted.process_id}, generation {generation})"
             )
-            process, adopted = adopted, None  # adoption applies to this pass only
+            process, adopted = adopted, None
         else:
-            # Only on the launch path: an adopted session is alive in this
-            # directory, and changing files under a working agent is the one
-            # thing this must never do.
+            # An adopted session is still working in this directory, so syncing would change files under it.
             branch_sync_report = sync_working_branch_with_main(settings.working_directory)
             print(f"handoff-supervisor: {branch_sync_report}")
             if ignition_plan is not None:
-                # Here, not where the plan was made: the sync above is what
-                # produces the branch-state line the prompt carries, and it
-                # cannot run earlier — the retiring session still owned the
-                # tree when the plan was composed. The overview check reads
-                # origin/main, which that sync has just fetched, and runs only
-                # here, once per reincarnation: see overview_refresh_due_lines.
+                # Sync after the retiring session releases the tree; then compose the prompt using the fetched main.
                 overview_refresh_due = overview_refresh_due_lines(
                     settings.working_directory)
                 for line in overview_refresh_due:
                     print(f"handoff-supervisor: {line}")
-                # Once per reincarnation as well: see memory_review_due_lines.
                 memory_review_due = memory_review_due_lines()
                 for line in memory_review_due:
                     print(f"handoff-supervisor: {line}")
                 prompt = ignition_plan.compose(branch_sync_report, overview_refresh_due,
                                                memory_review_due)
                 ignition_plan = None
-            # Read after the sync: where the file sits in the seat's own
-            # checkout, the sync may just have brought it forward.
+            # Read after sync, which may have updated the prompt file.
             appended_system_prompt_file = appended_system_prompt_file_for_launch(
                 settings.appended_system_prompt_file,
                 settings.appended_system_prompt_agent_part_path,
@@ -2562,24 +1464,16 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
                 handoff_supervisor_agent_name=settings.agent,
                 update_timeout_seconds=settings.agent_update_timeout_seconds,
             )
-            # Each launch decides afresh: a startup resume applies to the first
-            # launch only, and the death path below sets it again for its own.
             next_launch_resumes_the_session = False
 
         handoff_fields = wait_for_handoff(
             process, settings.handoff_path, state.get("consumed_counter"), settings.state_path, state
         )
         if handoff_fields is None:
-            # wait_for_handoff saw poll() report the exit, which is what sets a
-            # launched session's returncode; an adopted one's stays None.
             death = resume_or_stop_after_a_death_without_a_handoff(process.returncode)
             print(f"handoff-supervisor: {death.reason}")
             if death.resume:
-                # Gate 1, the budget. Measured against the count taken when
-                # the last resume launched: growth means that resume produced
-                # work, and the budget is handed back whole. A session launched
-                # fresh has no resume to compare against, so its first death
-                # finds the budget in hand.
+                # Only substantive work restores the resume budget; launch bookkeeping must not sustain a loop.
                 substantive_turns = substantive_turn_count_of_session_transcript(
                     session_id, settings.working_directory)
                 if (substantive_turns_at_the_last_resume is None
@@ -2589,10 +1483,7 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
                     print(f"handoff-supervisor: {consecutive_resumes_without_new_work} consecutive "
                           "resume(s) added nothing to this session's transcript — it is looping, "
                           "and each launch costs money; not resuming again")
-                # Gate 2, the no-terminal refusal. A resumed session inherits
-                # this supervisor's stdio exactly as a successor does, so
-                # without a terminal it reads EOF at its first need for input
-                # and dies after one turn (observed 2026-08-14).
+                # A resumed session inherits stdio and will read EOF without a terminal.
                 elif not sys.stdin.isatty():
                     print("handoff-supervisor: this supervisor has no terminal to seat a resumed "
                           "session on — not resuming. A seated supervisor "
@@ -2603,8 +1494,6 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
                           f"(resume {consecutive_resumes_without_new_work + 1} of "
                           f"{CONSECUTIVE_RESUMES_WITHOUT_NEW_WORK_BUDGET} before the transcript "
                           "has to grow again)")
-                    # The same session id and the same generation: a resume
-                    # continues one conversation rather than starting the next.
                     prompt = RESUME_PROMPT_WHEN_A_SESSION_ENDED_WITHOUT_A_HANDOFF
                     next_launch_resumes_the_session = True
                     continue
@@ -2612,15 +1501,8 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
             print("handoff-supervisor: session ended without a handoff; supervisor stopping")
             return 0
 
-        # A successor inherits this process's stdio, so without a terminal
-        # there is no seat to relaunch onto: the successor reads EOF at its
-        # first need for input and dies after one turn — observed 2026-08-14,
-        # when an adopted console session was killed and its successor
-        # reported into a log file. Refusing BEFORE the kill and the consume
-        # leaves the session alive and its handoff intact for a seated
-        # supervisor (a launcher-owned tmux pane) or a by-hand relaunch.
-        # dont-restart is exempt: that flow consumes and stops without ever
-        # launching a successor, which needs no seat.
+        # Check before killing or consuming: without a terminal a successor reads EOF; leave the handoff recoverable.
+        # dont-restart needs no terminal because no successor launches.
         if not sys.stdin.isatty() and not handoff_fields.get("dont-restart"):
             print(
                 "handoff-supervisor: a handoff arrived, but this supervisor has no terminal to "
@@ -2635,11 +1517,7 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
 
         if handoff_fields.get("dont-restart"):
             if not sys.stdin.isatty():
-                # Nobody can answer: this supervisor has no terminal (its stdin
-                # is redirected, not a launcher's tmux pane), and asking would
-                # raise EOFError before the consumed counter is recorded —
-                # leaving the next supervisor to re-fire on a stale handoff. Not
-                # relaunching is the answer dont-restart asks for, so take it.
+                # Without a terminal, asking would raise EOFError before consuming the handoff and trigger it again next time.
                 print("handoff-supervisor: dont-restart, and no terminal to ask on; stopping")
                 answer = "n"
             else:
@@ -2655,14 +1533,10 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
             settings, session_id, handoff_fields, generation
         )
         if successor_session_id is None:
-            # The session is stopped and no successor follows. The handoff stays
-            # unconsumed, so recovery still defers to boot-ignition over this record.
+            # Leave the handoff unconsumed so recovery still prefers boot-ignition to the exit record.
             record_agent_exit_in_supervisor_state(settings.state_path, state, process.returncode)
             return 0
 
-        # Here, and only on the handoff path: the retiring session is stopped
-        # and the successor not yet launched. A first launch is left to the
-        # launchers' boot report.
         print(f"handoff-supervisor: "
               f"{remove_finished_worktrees_at_handoff(settings.working_directory)}")
 
@@ -2763,11 +1637,7 @@ def main(argv=None) -> int:
         print(f"handoff-supervisor: no such command: {arguments.agent_command}", file=sys.stderr)
         return 3
 
-    # A missing file WARNS and launches without it, rather than refusing. The
-    # default points into the checkout beside this script, and a supervisor run
-    # from a tree that does not have the file yet — an older checkout, or one
-    # mid-rebase — must still be able to seat its agent. Losing the appended
-    # text degrades a session; refusing to launch loses the seat.
+    # A missing prompt file must not strand a seat running from an older or mid-rebase checkout.
     appended_system_prompt_file = arguments.agent_append_system_prompt_file
     if appended_system_prompt_file and not Path(appended_system_prompt_file).is_file():
         print(

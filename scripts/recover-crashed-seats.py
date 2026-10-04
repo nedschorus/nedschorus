@@ -160,22 +160,11 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-# The supervisor's path within a checkout, defined once because this file
-# needs it twice: the import just below loads this checkout's copy as a
-# module, and launch_seat's box branch names the durable checkout's copy in
-# the tmux command it hand-composes (see the module docstring's "Checkout"
-# paragraph). Both were siblings of this script until the supervisor moved
-# into nc-systems/handoff/ on 2026-09-20; the import was re-pathed then and
-# the tmux command was not, so off macOS -- where launcher_path() is None and
-# that branch is the only one -- recovery launched a session that ran a file
-# that no longer existed, and every recovered seat was reported LAUNCHED BUT
-# DID NOT COME UP. One name here is what makes a third move a single edit.
+# Share the relative path so imports and box launches cannot diverge.
 SUPERVISOR_SCRIPT_WITHIN_A_CHECKOUT = Path("nc-systems") / "handoff" / "handoff-supervisor.py"
 SUPERVISOR_SCRIPT = Path(__file__).resolve().parent.parent / SUPERVISOR_SCRIPT_WITHIN_A_CHECKOUT
 LAUNCH_CLAUDE_MAC_WITHIN_A_CHECKOUT = Path("scripts") / "launch-claude-mac"
-# The checkout a launched seat's supervisor runs from, whichever checkout this
-# program runs from (see the module docstring's "Checkout" paragraph). main()
-# rebinds it from --checkout when that is given.
+# Use a durable checkout: removing a worktree must not break a recovered supervisor.
 durable_checkout = Path("~/Projects/nedschorus").expanduser()
 
 _supervisor_spec = importlib.util.spec_from_file_location(
@@ -190,23 +179,15 @@ _watcher_spec = importlib.util.spec_from_file_location(
 watcher = importlib.util.module_from_spec(_watcher_spec)
 _watcher_spec.loader.exec_module(watcher)
 
-# For its retire step alone (retire_seat_tmux_session), run when an operator
-# says to close a seat's leftover idle shell: the kill rules — every socket
-# holding the name, no survivor left behind as a decoy — are that script's,
-# and a second copy of them here would drift from it.
+# Reuse retirement rules so every socket holding the seat’s name is cleared consistently.
 _resupervise_spec = importlib.util.spec_from_file_location(
     "resupervise_seat", Path(__file__).with_name("resupervise-seat.py")
 )
 resupervise = importlib.util.module_from_spec(_resupervise_spec)
 _resupervise_spec.loader.exec_module(resupervise)
 
-# Which of a seat's transcripts is worth resuming, defined once in a module so
-# this tool and handoff-supervisor.py cannot drift on it (issue 242's change 5:
-# a by-hand launch resumes a crashed seat). A module rather than either program,
-# because this tool already loads handoff-supervisor.py below and a supervisor
-# that loaded this tool back would run this module body a second time as an
-# orphan copy. The names are re-exported at this module's level because callers
-# and this script's test suite reach them through it.
+# A shared module avoids circular loading between recovery and the supervisor.
+# Re-export the names for callers that reach them through this module.
 _worth_resuming_spec = importlib.util.spec_from_file_location(
     "seat_transcript_worth_resuming",
     Path(__file__).with_name("seat-transcript-worth-resuming.py"))
@@ -220,44 +201,18 @@ SYNTHETIC_ASSISTANT_MODEL = worth_resuming.SYNTHETIC_ASSISTANT_MODEL
 first_user_turn_text = worth_resuming.first_user_turn_text
 substantive_turn_count = worth_resuming.substantive_turn_count
 newest_real_transcript = worth_resuming.newest_real_transcript
-# The supervisor's reincarnation opener is deliberately NOT a skip marker.
-# The supervisor composes it only after marking the handoff consumed — on
-# both its boot-ignition and in-cycle paths — so the transcript before a
-# successor carrying it is a parent that handed off and is retired. A
-# successor that never worked is still the seat's current incarnation, and
-# is resumed (the 2026-09-10 Mac reboot, nedschorus#116, comment of
-# 2026-09-11: two successors whose only reply was a session-limit notice
-# were passed over for their retired parents). Shortened to the span both
-# eras share: openers before 2026-08-30 read "it is the dialog from the
-# session you are continuing, written N minutes ago" and sit in transcripts
-# on disk; openers since read "— the dialog from the session you are
-# continuing, written at <UTC>Z". Do not lengthen it back to either full
-# sentence.
+# Do not skip a handoff successor: its parent is already retired.
+# Keep the marker short enough to match both timestamp forms stored in transcripts.
 REINCARNATION_OPENER_MARKER = "the dialog from the session you are continuing"
-# Anchored where the supervisor puts it — the start of the first turn,
-# "Read <extract path> — ", in both eras — because the marker text alone
-# also turns up quoted inside a hand-written first brief (this seat's own,
-# 2026-09-11; PR review of 7e33908, finding 2). Measured 2026-09-11: all 80
-# supervisor openers on this Mac match, and the hand brief does not.
+# Anchor the opener to avoid matching its text quoted in a hand-written brief.
 REINCARNATION_OPENER_PATTERN = re.compile(
     r"Read .+? — (?:it is )?" + re.escape(REINCARNATION_OPENER_MARKER))
-# The supervisor's other ignition shape: a boot that finds an unconsumed
-# handoff but no dialog to extract (BootRecoveryIgnitionPlan) puts the next
-# step first and then this note. It is composed in the same consumed-handoff
-# block as the opener, and fired four times on this Mac, 2026-08-16/17
-# (review finding 1).
+# Boot ignition without a dialog also consumes the handoff and retires the parent.
 BOOT_RECOVERY_IGNITION_MARKER = "(Recovered at supervisor boot:"
 
 
 def default_agents_root() -> Path:
-    """${NEDSCHORUS_AGENTS_ROOT:-~/agents} on the Mac, as launch-claude-mac
-    resolves it. Resolving differently means, on a machine where that
-    variable is set, assessing ~/agents while every seat lives elsewhere —
-    recovery then refuses on "no seat directory" (PR #131 round-4 review
-    note; user-ruled 2026-08-22: allowed overrides must work). Off macOS it
-    is ~/agents whatever the variable holds: launch-claude-ubuntu reads no
-    such variable, so a box seat is always ~/agents/<name> (see the module
-    docstring's "Agents root" paragraph)."""
+    # Match the launcher: only the Mac launcher reads NEDSCHORUS_AGENTS_ROOT.
     if not agents_root_is_movable_on_this_machine():
         return Path("~/agents").expanduser()
     return Path(os.environ.get("NEDSCHORUS_AGENTS_ROOT") or "~/agents").expanduser()
@@ -268,26 +223,12 @@ def default_handoff_directory() -> Path:
 
 
 def harness_project_directory(seat_directory: Path, projects_root: Path) -> Path:
-    """The harness's transcript directory for sessions run in this seat.
-
-    Delegates to watch-agent-dialogs.py's project_directory_for_seat — the
-    one probe-verified statement of the harness's mangling rule (every
-    character outside ASCII [a-zA-Z0-9] becomes a dash, underscores
-    included). The first build re-derived the rule locally as
-    replace("/","-").replace(".","-"), which preserves underscores — and an
-    underscore-named seat's intact transcript became invisible, routing
-    recovery to ignite beside the prize (PR #131 review round 2, P1;
-    CLAUDE.md's use-the-existing-name rule applies to functions too).
-    """
+    # The harness replaces every non-ASCII-alphanumeric character, including underscores.
     return watcher.project_directory_for_seat(seat_directory, projects_root)
 
 
 def run_tmux(*arguments_after_tmux, socket_name=None):
-    """One tmux call; None when tmux cannot answer (missing binary, timeout).
-
-    Mirrors resupervise-seat.py's guard for the same reason: a machine
-    without tmux must get a refusal, not a traceback.
-    """
+    """Return the tmux result, or None when tmux cannot answer."""
     if shutil.which("tmux") is None:
         return None
     socket_arguments = [] if socket_name is None else ["-L", socket_name]
@@ -301,15 +242,7 @@ def run_tmux(*arguments_after_tmux, socket_name=None):
 
 
 def tmux_session_alive_anywhere(name: str):
-    """(alive, detail): whether any tmux server still holds this seat's name.
-    alive is None when tmux cannot answer at all — the caller refuses, the
-    same fail-closed rule as the lsof check (PR #131 review, finding 1: an
-    unanswerable liveness axis must never read as "dead").
-
-    Per-seat servers (2026-08-21) put a seat's session on socket -L <name>;
-    seats launched before that change live on the default socket. Both are
-    checked, and either holding the name means the seat is NOT dead.
-    """
+    """Return (alive, detail), with alive None when tmux cannot answer."""
     for socket_name in dict.fromkeys((name, "default")):
         completed = run_tmux("has-session", "-t", f"={name}", socket_name=socket_name)
         if completed is None:
@@ -322,29 +255,7 @@ def tmux_session_alive_anywhere(name: str):
 
 def processes_rooted_in_seat_directory(seat_directory: Path,
                                        require_a_complete_listing=False):
-    """(process_ids, unusable_detail): the id of every live process whose
-    working directory is the seat directory or under it — or (None, why) when
-    lsof's answer cannot be trusted.
-
-    The same lsof contract as resupervise-seat.py and clean-worktrees.py:
-    vacancy is proven, never assumed, so every unusable answer is None here
-    and occupied to the caller below.
-
-    It reads process ids (`-F pn`) as well as paths because a path alone
-    cannot tell a seat's own leftover shell from anything else rooted in the
-    seat — and telling those apart is the whole of the idle-shell proof below
-    (ruled 2026-09-17).
-
-    require_a_complete_listing is for the callers that read this list the
-    other way round. By default a listing that names the seat is positive
-    evidence however lsof exited, because for "is anything in there?" a
-    partial answer that says yes is still a yes. The idle-shell proof asks the
-    opposite — "is nothing in there but these panes?" — and a partial listing
-    cannot answer that at all, so those callers demand a listing lsof did not
-    flag. Measured 2026-09-17: this lsof exits zero on both machines in the
-    ordinary case, the box's unreadable-process lines included, so the demand
-    costs nothing that works today.
-    """
+    """Return (process_ids, detail), with process_ids None when vacancy is unproven."""
     if shutil.which("lsof") is None:
         return None, "lsof is not installed, so the seat cannot be proven vacant"
     try:
@@ -372,11 +283,7 @@ def processes_rooted_in_seat_directory(seat_directory: Path,
                     return None, (f"the occupancy check (lsof) named {prefix} without a "
                                   "usable process id; vacancy unproven")
                 rooted.append(process_id)
-    # A listing that names the seat is positive evidence however the run
-    # exited, so a match is answered before the exit code is judged — the rule
-    # this check has kept since PR #131's review, and the one
-    # require_a_complete_listing suspends for the callers reading the list the
-    # other way round.
+    # A partial listing proves presence, but cannot prove that only the excused panes remain.
     if rooted and not require_a_complete_listing:
         return rooted, ""
     if listing.returncode != 0:
@@ -387,20 +294,8 @@ def processes_rooted_in_seat_directory(seat_directory: Path,
 
 
 def seat_directory_occupied(seat_directory: Path, apart_from_process_ids=()):
-    """(occupied, detail): is any live process rooted in the seat directory?
-
-    An unusable answer counts as occupied, because recovering a seat something
-    is still working in is the one harm this script must never do.
-
-    apart_from_process_ids are the panes of a leftover idle shell this
-    recovery has just retired at the operator's word (ruled 2026-09-17). Those
-    processes WERE the session that was closed, and they die on tmux's signal
-    rather than on this script's clock: counting them would refuse the very
-    seat the operator just cleared, whenever lsof ran before the shell had
-    finished exiting. Excusing a process turns this into a question about what
-    is NOT in the listing, which a partial listing cannot answer, so a run
-    with panes to excuse demands a complete one.
-    """
+    """Return (occupied, detail), treating an unusable listing as occupied."""
+    # Retired panes may still be exiting; excluding them requires a complete listing.
     rooted, unusable_detail = processes_rooted_in_seat_directory(
         seat_directory, require_a_complete_listing=bool(apart_from_process_ids))
     if rooted is None:
@@ -411,53 +306,16 @@ def seat_directory_occupied(seat_directory: Path, apart_from_process_ids=()):
     return False, ""
 
 
-# What a pane may be running for its session to be nothing but the after-exit
-# shell. tmux names the command of the pane terminal's foreground process
-# group, so a shell here means the shell has nothing in the foreground — and
-# ONLY that. Measured on this Mac, 2026-09-17: a LIVE attached seat reports
-# `zsh` too, because the launcher's pane command is
-# `zsh -c "trap ...; <supervisor>; <after-exit>"` and the supervisor runs as
-# its child inside the same process group (seat fleet-restart-at-login, pane
-# process 27178 `zsh`, supervisor 27179 `Python`). The occupancy half of the
-# proof below is what separates the two, and neither half alone is enough.
+# A live attached seat can also report a shell as its foreground command.
+# The process-occupancy check is required to prove the shell is idle.
 LEFTOVER_IDLE_SHELL_PANE_COMMANDS = (
     "bash", "zsh", "sh", "dash", "ksh", "fish", "tcsh", "csh",
 )
 
 
 def tmux_session_is_a_leftover_idle_shell(name: str, seat_directory: Path):
-    """(proven, pane_process_ids, detail): is every tmux session holding this
-    seat's name nothing but the shell an attached launch leaves open?
-
-    The launcher's AFTER_EXIT_COMMAND ends `exec ${SHELL:-/bin/sh}` in the
-    seat's directory (scripts/launch-claude-mac, scripts/launch-claude-ubuntu),
-    so that shell REPLACES the pane's process and keeps its process id — which
-    is why a pane's own id is the id to expect from lsof below.
-
-    proven is True only when both measurements say so, and False whenever
-    either cannot be taken — the same fail-closed rule the checks above keep:
-
-      1. Every pane of every session named for this seat, on the seat's own
-         socket and the default one, runs one of
-         LEFTOVER_IDLE_SHELL_PANE_COMMANDS. This catches work in the pane's
-         foreground wherever its working directory is, and it is also what
-         stops a recovery run from inside the seat's own window from closing
-         the terminal doing the closing: that pane would report the recovery
-         tool, not a shell (the hazard resupervise-seat.py guards with $TMUX).
-      2. Every process rooted in the seat directory is one of those panes'
-         own process ids. This is the half that separates an idle shell from a
-         live attached seat, whose pane reports a shell as well.
-
-    pane_process_ids are those panes' process ids, which the caller hands back
-    to the occupancy check after retiring the session.
-
-    Taken twice when an operator is asked: by assess_seat, before the
-    question, and by recover_seat again after a yes, immediately before the
-    retire (ruled 2026-09-18), since anything may have started in that shell
-    while the question waited. A False here does not say whether the session
-    is still there, so recover_seat asks tmux_session_alive_anywhere that
-    before it leaves the session alone.
-    """
+    """Return (proven_idle, pane_process_ids, detail) for every session holding the name."""
+    # The launcher execs the leftover shell, preserving the pane PID for the lsof check.
     pane_process_ids = []
     sockets_holding = []
     for socket_name in dict.fromkeys((name, "default")):
@@ -513,43 +371,22 @@ def tmux_session_is_a_leftover_idle_shell(name: str, seat_directory: Path):
         f"{seat_directory.resolve()}")
 
 
-# The verdicts whose recovery launches the seat: recover_seat's
-# defer-to-boot-ignition, resume and ignite branches (--ignite-fallback turns a
-# resume into an ignite, still a launch).
 LEFTOVER_IDLE_SHELL_REASSESSMENT_VERDICTS_THAT_LAUNCH = (
     "defer-to-boot-ignition", "resume", "ignite",
 )
-# The verdicts whose recovery launches nothing on this tool's own account, and
-# launches the seat only on an operator's yes (ruled 2026-09-18): to the
-# leftover-shell question, and for a recorded exit also to the same question
-# asked when no leftover session holds the seat's name. recover_seat's
-# offer-after-recorded-exit and seat-asked-to-be-consulted branches.
 LEFTOVER_IDLE_SHELL_REASSESSMENT_VERDICTS_RESTARTED_ONLY_ON_THE_OPERATORS_WORD = (
     "offer-after-recorded-exit", "seat-asked-to-be-consulted",
 )
 
 
 def restart_question_for_a_seat_with_a_recorded_exit(name: str, exit_code) -> str:
-    """The question an operator at a terminal is asked about a seat whose
-    supervisor recorded its agent's exit, with a leftover shell holding the
-    seat's name or with no session at all (both ruled 2026-09-18).
-
-    Worded by the recorded exit code (ruled 2026-09-18), because a supervisor
-    also records the exit of an agent that died with an error while it
-    watched — the design record: "a seat whose agent crashed while its
-    supervisor kept watching produces a record too" — and for that seat
-    "stopped on purpose" can be false. Code zero, or a code the record does not
-    know, keeps the words ruled first; any other code is named instead.
-    """
+    # A recorded nonzero exit may be an agent failure, not an intentional stop.
     if exit_code is None or exit_code == 0:
         return f"{name} stopped on purpose. Restart it anyway? y/n"
     return f"{name} stopped with exit code {exit_code}. Restart it? y/n"
 
 
 def restart_after_recorded_exit_described(session_id) -> str:
-    """What a yes to restart_question_for_a_seat_with_a_recorded_exit does, in
-    the words a dry run reports it with: resume the recorded session, or start
-    fresh when there is none."""
     if session_id is None:
         return "restart the seat as a fresh session"
     return f"restart the seat resuming session {session_id}"
@@ -557,36 +394,7 @@ def restart_after_recorded_exit_described(session_id) -> str:
 
 def leftover_idle_shell_question_for_seat(name: str, predicted_verdict: str,
                                           predicted_detail=None) -> str:
-    """The question an operator is asked, in the user's own words. One line,
-    because it is read in the middle of a fleet-wide run.
-
-    Ruled 2026-09-18 in a walk, of the words before these: "that is a confusing
-    y/n question. kind of a double negative. I don't care about 'thes
-    session'. I care about the reboot-test. perhaps resume reboot-test? Y/N."
-    So the question names the seat and asks whether to restart it — "restart",
-    not "resume", which in this project means picking up the seat's last
-    conversation, and only the resume verdict does that. A yes restarts the
-    seat on every verdict worded here:
-
-      - a verdict that launches: "Restart <seat>? y/n".
-      - offer-after-recorded-exit: restart_question_for_a_seat_with_a_recorded_exit,
-        worded by the exit code in predicted_detail, (exit_code, recorded_at,
-        session_id): "<seat> stopped on purpose. Restart it anyway? y/n" for
-        code zero or an unknown code, "<seat> stopped with exit code <code>.
-        Restart it? y/n" for any other. The rule that a seat stopped on
-        purpose is not brought back is about this tool doing it on its own;
-        here the operator decides.
-      - seat-asked-to-be-consulted, ruled 2026-09-18: "<seat>'s handoff says:
-        <its dont-restart reason>. Restart it? y/n", the reason read from
-        predicted_detail, (counter, reason).
-
-    Those five verdicts are the only ones this is ever called with. A predicted
-    refuse or seat-already-running is not asked about at all (ruled 2026-09-18):
-    recover_seat reports it straight away and leaves the window open, before
-    reaching here. Anything else raises rather than put a question whose words
-    were never chosen for it, and the suite walks every verdict assess_seat can
-    return to keep each one either worded here or reported without asking.
-    """
+    # Restart can launch fresh; resume specifically continues the previous conversation.
     if predicted_verdict in LEFTOVER_IDLE_SHELL_REASSESSMENT_VERDICTS_THAT_LAUNCH:
         return f"Restart {name}? y/n"
     if (predicted_verdict
@@ -596,7 +404,7 @@ def leftover_idle_shell_question_for_seat(name: str, predicted_verdict: str,
     if predicted_verdict == "offer-after-recorded-exit":
         predicted_exit_code, _, _ = predicted_detail
         return restart_question_for_a_seat_with_a_recorded_exit(name, predicted_exit_code)
-    _, reason = predicted_detail  # seat-asked-to-be-consulted: (counter, reason)
+    _, reason = predicted_detail
     reason = reason.strip()
     if not reason.endswith((".", "!", "?")):
         reason += "."
@@ -604,32 +412,15 @@ def leftover_idle_shell_question_for_seat(name: str, predicted_verdict: str,
 
 
 def recovery_has_an_operator_terminal() -> bool:
-    """Is there an operator at a terminal to be asked a question?
-
-    Both ends of the terminal, not stdin alone. restart-live-seats-at-login.py
-    runs this tool as `run(command, stdout=subprocess.PIPE, text=True)` (its
-    launch_seats_decided_restart), which inherits stdin: run by hand from a
-    terminal, that child would have a tty on stdin and a pipe on stdout — a
-    question nobody can see, in front of an input() that never returns.
-    Asking only when the answer can be both shown and read keeps the
-    2026-09-16 refusal, and a recorded exit's NOT RELAUNCHED line, in place on
-    every path an operator is not watching.
-    """
+    # A caller may inherit terminal stdin while capturing stdout, hiding a blocking question.
     try:
         return bool(sys.stdin.isatty() and sys.stdout.isatty())
     except (AttributeError, ValueError):
-        # A stream closed or replaced by something that cannot answer: no
-        # terminal, so no question.
         return False
 
 
 def ask_operator_yes_or_no(question: str) -> bool:
-    """True only on an explicit yes. Everything else is a no (ruled
-    2026-09-17) — a bare return, a word this does not know, end of input, an
-    interrupt — because a no falls back to what this tool does with nobody to
-    ask (the leftover shell's refusal, a recorded exit's NOT RELAUNCHED line),
-    which is the safe one.
-    """
+    """Return True only for an explicit yes."""
     try:
         answer = input(f"{question} ")
     except (EOFError, KeyboardInterrupt):
@@ -639,14 +430,7 @@ def ask_operator_yes_or_no(question: str) -> bool:
 
 
 def is_unreplied_reincarnation_successor(transcript_path: Path) -> bool:
-    """A successor the supervisor started from a handoff that never replied:
-    no substantive turn at all once the harness's own turns are set aside.
-    The 2026-09-10 shape — ignited at 20:09 PDT, its only turn the
-    session-limit notice, then the Mac rebooted. Both of the supervisor's
-    ignition shapes count, the dialog opener and the boot-recovery note.
-    Either way it is the seat's current incarnation (see
-    REINCARNATION_OPENER_MARKER), so it is resumed, and its resume prompt
-    says its first reply never happened rather than that it crashed."""
+    """Return whether a handoff successor has no substantive turns."""
     first_turn = first_user_turn_text(transcript_path)
     return ((REINCARNATION_OPENER_PATTERN.match(first_turn) is not None
              or BOOT_RECOVERY_IGNITION_MARKER in first_turn)
@@ -659,17 +443,8 @@ def resume_prompt_path(handoff_directory: Path, name: str) -> Path:
 
 def write_resume_prompt(handoff_directory: Path, name: str,
                         unreplied_successor: bool = False) -> Path:
-    """The resumed session's first turn (PR #131 review, finding 2): without
-    this, the supervisor's default first prompt tells a mid-task agent that
-    no handoff exists and to ask for work — pointing it away from the
-    context the resume just restored. The hand recovery sent no prompt; a
-    supervised launch must send one, so it says what actually happened.
-    An unreplied reincarnation successor did not die mid-work — it never
-    started — so "continue the work you were doing" would be false for it
-    (the 2026-09-10 reboot); it is told to act on its ignition prompt."""
-    # A --handoff-dir that does not exist yet must not crash the recovery
-    # after assessment already chose to resume (PR #134 review, finding 2);
-    # created the same way the supervisor creates its own on startup.
+    # The supervisor’s default prompt would ask for work despite the restored context.
+    # An unreplied successor must act on its ignition prompt instead of continuing nonexistent work.
     handoff_directory.mkdir(parents=True, exist_ok=True)
     prompt_path = resume_prompt_path(handoff_directory, name)
     if unreplied_successor:
@@ -698,35 +473,14 @@ def write_resume_prompt(handoff_directory: Path, name: str,
 
 def first_prompt_after_recorded_exit_path(handoff_directory: Path, name: str,
                                           by_hand: bool) -> Path:
-    """Where write_first_prompt_after_recorded_exit puts its prompt: one file
-    for the restart an operator says yes to, another for the by-hand resume
-    command a report prints, so neither overwrites the other's words."""
+    # Separate files keep an operator restart from overwriting the printed by-hand prompt.
     kind = "by-hand-resume" if by_hand else "operator-restart"
     return handoff_directory / f"{name}-{kind}-after-recorded-exit-prompt.md"
 
 
 def write_first_prompt_after_recorded_exit(handoff_directory: Path, name: str,
                                            by_hand: bool, resuming: bool) -> Path:
-    """The first turn of a seat brought back after its supervisor recorded its
-    agent's exit — at an operator's yes (by_hand False), or by the by-hand
-    resume command the NOT RELAUNCHED line prints (by_hand True, always
-    resuming).
-
-    Without it the supervisor's own first prompt is the wrong one: a resume
-    with no prompt file tells the agent its session "ended without writing a
-    handoff", which reads as a crash,
-    for a seat that got here precisely because its exit was recorded (review
-    5240813304 on the pull request that added the record).
-
-    Every clause is true wherever it is used. The record is described as what
-    it is — a supervisor records it when a session is stopped on purpose, and
-    the design record admits it also follows an agent that failed with its
-    supervisor watching — so the prompt never says which this was. The
-    session it names is the seat's last one, which a resume need not be: a
-    stillborn successor is passed over for its parent. "The operator" is only
-    in the prompt for a yes at this tool's terminal; whoever runs a printed
-    command may be someone else. None says "crash".
-    """
+    # The supervisor’s default resume prompt describes a crash; a recorded exit proves no such thing.
     handoff_directory.mkdir(parents=True, exist_ok=True)
     prompt_path = first_prompt_after_recorded_exit_path(handoff_directory, name, by_hand)
     recorded = (f"This seat's supervisor recorded the exit of its last session, "
@@ -748,45 +502,42 @@ def write_first_prompt_after_recorded_exit(handoff_directory: Path, name: str,
 
 
 def newest_dialog_extract(handoff_directory: Path, name: str):
-    """The newest <name>-dialog-NNNN.md, for the ignite fallback."""
+    """Return the newest <name>-dialog-NNNN.md for the ignite fallback."""
     extracts = sorted(handoff_directory.glob(f"{name}-dialog-*.md"))
     return extracts[-1] if extracts else None
 
 
 def launcher_path():
-    """The local machine's seat launcher, the durable checkout's (see the
-    module docstring's "Checkout" paragraph). Box recovery runs this script ON
-    the box, where the Mac launcher is absent — launch-claude-ubuntu is a
-    Mac-side wrapper that drives the box over ssh, so it is not the box-local
-    answer; there, the launch is composed directly (see launch_seat)."""
+    """Return the durable checkout’s Mac launcher, or None off macOS."""
+    # launch-claude-ubuntu is a Mac-side ssh wrapper, not a box-local launcher.
     if sys.platform == "darwin":
-        # Absolute, because an iTerm window's command starts in / with a bare
-        # PATH (--open-iterm-window-per-seat); main() absolutizes --checkout.
+        # iTerm window commands start in / with a bare PATH; the launcher path must be absolute.
         return durable_checkout / LAUNCH_CLAUDE_MAC_WITHIN_A_CHECKOUT
     return None
 
 
+def reach_clause_for_a_running_seat(name: str) -> str:
+    """Return the report clause naming how the operator opens a seat recovery left running."""
+    # Recovery launches detached on the seat's own tmux socket, where a plain `tmux attach` finds nothing.
+    if launcher_path() is not None:
+        return f"; reach it with: launch-claude-mac {name}"
+    return (f"; reach it with: launch-claude-ubuntu {name} from the Mac, "
+            f"or tmux -L {name} attach -t {name} here")
+
+
 def durable_checkout_file_a_launch_here_runs() -> Path:
-    """The file in the durable checkout that a launch on this machine runs:
-    launch-claude-mac where there is a launcher, and off macOS the supervisor
-    launch_seat's box branch names."""
     if launcher_path() is None:
         return durable_checkout / SUPERVISOR_SCRIPT_WITHIN_A_CHECKOUT
     return durable_checkout / LAUNCH_CLAUDE_MAC_WITHIN_A_CHECKOUT
 
 
 def agents_root_is_movable_on_this_machine() -> bool:
-    """Whether a seat's agents root may be chosen here: on the Mac only,
-    where launch-claude-mac reads NEDSCHORUS_AGENTS_ROOT. Off macOS, where
-    launcher_path() is None, a seat is always ~/agents/<name>; see the
-    module docstring's "Agents root" paragraph for the rulings."""
     return launcher_path() is not None
 
 
 def compose_supervisor_arguments_for_seat_launch(handoff_directory: Path,
                                                  extra_supervisor_arguments: str) -> str:
-    """The supervisor's arguments for a recovery launch: always the handoff
-    directory this recovery assessed with (see launch_seat), then the rest."""
+    # The supervisor must consume the same handoff directory recovery assessed.
     supervisor_arguments = f"--handoff-dir {shlex.quote(str(handoff_directory))}"
     if extra_supervisor_arguments:
         supervisor_arguments += f" {extra_supervisor_arguments}"
@@ -796,15 +547,6 @@ def compose_supervisor_arguments_for_seat_launch(handoff_directory: Path,
 def by_hand_launch_command_for_seat(name: str, seat_directory: Path, handoff_directory: Path,
                                     extra_supervisor_arguments: str,
                                     first_prompt_file: Path = None) -> str:
-    """The command an operator types to launch this seat under a supervisor,
-    carrying what launch_seat would pass: the agents root, the supervisor
-    arguments, and a first-prompt file through the launcher's own
-    --first-prompt-file, as launch_seat passes it. On the Mac it runs
-    launch-claude-mac; elsewhere it names launch-claude-ubuntu, which is run on
-    the Mac and drives the box, and whose --first-prompt-file takes a box-side
-    path — which a file this tool wrote on the box is. The box form carries
-    no agents root: launch-claude-ubuntu reads none and always seats the box's
-    ~/agents/<name> (user-ruled 2026-09-22, merge-lane-2's walk)."""
     launcher = launcher_path()
     words = [] if launcher is None else [
         f"NEDSCHORUS_AGENTS_ROOT={shlex.quote(str(seat_directory.parent))}"]
@@ -823,34 +565,11 @@ def by_hand_launch_command_for_seat(name: str, seat_directory: Path, handoff_dir
 
 def launch_seat(name: str, seat_directory: Path, handoff_directory: Path,
                 extra_supervisor_arguments: str, first_prompt_file: Path = None):
-    """Start the seat detached under its supervisor, on its own tmux server.
-
-    On the Mac this rides launch-claude-mac (which owns the update step,
-    checkout prep, and transition socket selection). On the box — where the
-    only launcher is the Mac-side ssh wrapper — the supervisor is started
-    directly in a per-seat tmux session, mirroring what launch-claude-ubuntu
-    composes remotely, the durable checkout's supervisor included; the
-    update/prep steps are skipped, which recovery can afford (the seat ran
-    that checkout minutes before the crash).
-
-    The supervisor is always told the handoff directory this recovery
-    assessed with (PR #131 review round 3, codex finding A: without it the
-    supervisor fell back to its own default, so under --handoff-dir the
-    boot-ignition watched an empty directory and supervisor state split
-    across two directories). The launcher branch likewise pins the agents
-    root the assessment used (codex finding B: the launcher's own
-    NEDSCHORUS_AGENTS_ROOT default made it create and attach a fresh seat
-    beside the assessed one — under --agents-root, and on the DEFAULT
-    no-flag path on any machine where that variable is set).
-    """
+    """Start the seat detached under its supervisor on its own tmux server."""
+    # Pin the assessed agents root and handoff directory so launch defaults cannot select another seat.
     launcher = launcher_path()
     environment = dict(os.environ)
-    # shlex.quote, not hand-written single quotes: each value here is parsed
-    # by exactly one shell (the launcher appends it verbatim and tmux runs
-    # the composed command through sh), and an apostrophe in an operator's
-    # path breaks a hand-quoted string — the kill has already happened by
-    # then, so the seat stays down while the output says otherwise (PR #134
-    # review, finding 1).
+    # Each value passes through one shell; shlex.quote preserves apostrophes in paths.
     supervisor_arguments = compose_supervisor_arguments_for_seat_launch(
         handoff_directory, extra_supervisor_arguments)
     if launcher is not None:
@@ -861,28 +580,8 @@ def launch_seat(name: str, seat_directory: Path, handoff_directory: Path,
             command += ["--first-prompt-file", str(first_prompt_file)]
         return subprocess.run(command, env=environment, check=False).returncode
 
-    # This branch hand-composes what the launcher would have composed, so it
-    # must carry the launcher's seat environment too — the task-list binding
-    # included (nedschorus#141, scripts/launch-claude-mac, where the
-    # mechanism is written out). Without it, the recovered generation runs
-    # with no task tools and no pin: its list is invisible, TaskList returns
-    # empty and TaskUpdate answers "Task not found", both with no error —
-    # the launcher comment's Warning 2, arriving at the one moment
-    # continuity is being promised. The launcher branch above needs nothing
-    # here; it runs the launcher, which does this itself.
-    # The seat's git identity rides here for the same reason (user-ruled
-    # 2026-09-22, the per-seat identity the launchers export): without it a
-    # boot-restarted or crash-recovered box seat commits under the clone's
-    # shared .git/config identity, and a recovery run by hand from another
-    # box seat hands the recovered seat the RECOVERING seat's name, because
-    # the per-seat tmux server copies the caller's environment. The explicit
-    # export overrides whatever the caller carried.
-    # The one-time store migration rides here too (user-ruled 2026-08-29):
-    # this branch bypasses the launcher, so without the rename a recovered
-    # seat would pin to an empty prefixed store while its list sat under the
-    # old unprefixed name. The name is embedded unquoted inside the
-    # double-quoted paths so $HOME expands box-side, safe for the same
-    # reason as the launchers: seat names are charset-validated at launch.
+    # This branch bypasses the launcher: preserve its task-store migration and binding.
+    # Export the seat’s own git identity, since tmux otherwise inherits the recovering seat’s identity.
     supervisor_command = (
         'export PATH="$HOME/.local/bin:$PATH"; '
         f'if [ -d "$HOME/.claude/tasks/{name}-tasks" ] && '
@@ -911,22 +610,9 @@ def launch_seat(name: str, seat_directory: Path, handoff_directory: Path,
 def iterm_window_command_text(name: str, seat_directory: Path, handoff_directory: Path,
                              extra_supervisor_arguments: str,
                              first_prompt_file: Path = None) -> str:
-    """The command an iTerm window runs to launch this seat ATTACHED
-    (nedschorus#242 change 6; the #120 overview, § recover into a window).
-
-    The window's process is a child of iTerm, not of this script, so it
-    inherits iTerm's environment. What launch_seat passes through the
-    environment — the supervisor arguments and the agents root — is written
-    into the command instead, `/usr/bin/env 'NAME=value' <launcher> <seat>`;
-    written naively, each window would start a fresh seat while looking like
-    a recovery. iTerm2 splits the text shell-style with one level of quoting,
-    so every word is single-quoted. It has no POSIX '\\'' escape (measured
-    2026-09-02, recorded in open-iterm-window-running-command), so no word
-    here may contain a single quote — an apostrophe in a path, or the shell
-    quoting shlex.quote adds around a handoff directory holding a space.
-    main() refuses both before anything launches; this raises rather than
-    open a window whose command iTerm would split wrong.
-    """
+    """Return the command for an attached recovery in an iTerm window."""
+    # iTerm inherits its own environment, so recovery settings travel in the command.
+    # iTerm’s command parser cannot carry POSIX single-quote escapes.
     words = ["/usr/bin/env",
              "LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS="
              + compose_supervisor_arguments_for_seat_launch(
@@ -945,47 +631,21 @@ def iterm_window_command_text(name: str, seat_directory: Path, handoff_directory
 def open_seat_in_iterm_window(name: str, seat_directory: Path, handoff_directory: Path,
                               extra_supervisor_arguments: str,
                               first_prompt_file: Path = None):
-    """launch_seat's twin for --open-iterm-window-per-seat: the seat is born
-    attached in its own iTerm window, through open-iterm-window-running-command
-    (the only sanctioned way to open a window that runs a command,
-    nedschorus#27). Born attached, its pane drops to a shell in the seat's
-    directory when the supervisor exits, instead of closing. Returns the
-    opener's exit code, which says the window was asked for — not that the
-    seat came up inside it (#242 change 4 is that check)."""
+    """Return the opener’s exit code; success confirms a window request, not a running seat."""
     opener = Path(__file__).resolve().with_name("open-iterm-window-running-command")
     command_text = iterm_window_command_text(name, seat_directory, handoff_directory,
                                              extra_supervisor_arguments, first_prompt_file)
     return subprocess.run([str(opener), command_text], check=False).returncode
 
 
-# The three answers seat_supervisor_confirmed_by_ps gives. Only the first lets
-# assess_seat call a seat already running (user-ruled 2026-09-16).
 SUPERVISOR_CONFIRMED_BY_PS = "confirmed-by-ps"
 SUPERVISOR_ASSUMED_WITHOUT_PS = "assumed-without-ps"
 SUPERVISOR_NOT_CONFIRMED = "supervisor-not-confirmed"
 
 
 def seat_supervisor_confirmed_by_ps(name: str, lock_path: Path):
-    """(answer, identity): is the holder of this seat's supervisor lock a live
-    supervisor of this seat, CONFIRMED by ps?
-
-    SUPERVISOR_CONFIRMED_BY_PS: ps ran, and the holder runs the supervisor for
-    this seat. SUPERVISOR_ASSUMED_WITHOUT_PS: process_is_supervisor_for_agent
-    said yes only because ps could not be run and a process with the lock's
-    id exists. SUPERVISOR_NOT_CONFIRMED: anything else — no lock, an
-    unreadable one (the launcher's own reclaim handles a stale lock), or a
-    holder that is not this seat's supervisor. identity is the predicate's
-    sentence, or why there was no process to ask about.
-
-    The predicate is used unchanged, because its other callers act on its
-    assumption deliberately (see its docstring) and a second copy of its
-    identity rules would drift. What this adds is knowing whether ps answered
-    without reading the predicate's English: the reader handed to it records
-    that. supervisor.read_process_command_line is looked up when the reader
-    runs, not bound as a default argument, so a test that replaces the module
-    attribute reaches this function — unlike the predicate's own default
-    reader, which its docstring's NOTE warns about.
-    """
+    """Return (confirmation_status, identity), distinguishing unavailable ps from proof."""
+    # The shared predicate can assume liveness without ps; recovery must distinguish that from proof.
     try:
         holder = int(lock_path.read_text(encoding="utf-8").strip())
     except FileNotFoundError:
@@ -1016,55 +676,7 @@ ASK_TO_CLOSE_THE_LEFTOVER_IDLE_SHELL_VERDICT = "ask-to-close-the-leftover-idle-s
 def assess_seat(name: str, agents_root: Path, handoff_directory: Path,
                 projects_root: Path, retired_pane_process_ids=(),
                 predicting_as_though_the_leftover_idle_shell_were_closed=False):
-    """Decide what recovery this seat needs.
-
-    Returns (verdict, detail): seat-already-running / refuse /
-    ask-to-close-the-leftover-idle-shell (detail is (refusal,
-    pane_process_ids, shell_detail)) / defer-to-boot-ignition /
-    seat-asked-to-be-consulted (detail is (counter, the handoff's dont-restart
-    reason)) / offer-after-recorded-exit (detail is
-    (exit_code, recorded_at, session_id), session_id None when nothing could
-    be resumed) / resume (detail is (session_id, transcript_path)) / ignite
-    (detail is the reason no resume is possible).
-
-    ask-to-close-the-leftover-idle-shell decides nothing by itself: the seat's
-    tmux session is alive with no confirmed supervisor, AND this function
-    could prove it is nothing but a leftover idle shell, so the caller may put
-    the question to an operator (user-ruled 2026-09-17). It is the caller that
-    knows whether there is anyone to ask, and the caller that carries the
-    refusal to give when there is not — which is why the refusal travels in
-    the detail rather than being composed twice.
-
-    retired_pane_process_ids are the panes of a leftover idle shell the caller
-    has just closed. They are excused from the occupancy check, so the
-    assessment runs as though that session had never been there — which is
-    what the operator asked for by answering yes.
-
-    predicting_as_though_the_leftover_idle_shell_were_closed is for
-    predicted_assessment_once_the_leftover_idle_shell_is_closed alone: it reads a
-    live tmux session as already closed, so the assessment can be taken before
-    the retire. Without it a live session always decides at the `if alive:`
-    branch, retired_pane_process_ids or not, because they are consulted only
-    at the occupancy check after it.
-
-    offer-after-recorded-exit launches nothing on this tool's own account
-    (nedschorus#242 change 2): the seat's supervisor recorded that its agent
-    exited, so it is not a crash, and the seat is offered to be brought back by
-    hand — or restarted, when an operator at a terminal says yes to the
-    restart question recover_seat asks, leftover shell or none (ruled
-    2026-09-18). Any recorded exit counts, code zero or not, known or not; only
-    a seat with no record is resumed automatically.
-
-    seat-already-running is not a refusal (user-ruled 2026-09-16, on the
-    question PR #426's reviewer asked): a seat a live supervisor of which is
-    confirmed was not recovered because it did not need to be, and --all
-    lists every seat that ever ran, live ones included. The supervisor must
-    be CONFIRMED by ps (user-ruled 2026-09-16, on PR #426's review of this
-    verdict): a tmux session alive with no confirmed supervisor, and a
-    supervisor only assumed because ps could not be run, are refuse — each
-    is a liveness question this tool could not answer, not a seat found
-    running. Everything else this function cannot prove safe stays refuse.
-    """
+    """Return (verdict, detail) for the seat’s recovery."""
     seat_directory = agents_root / name
     if not seat_directory.is_dir():
         return "refuse", f"no seat directory at {seat_directory}"
@@ -1073,35 +685,12 @@ def assess_seat(name: str, agents_root: Path, handoff_directory: Path,
     if alive is None:
         return "refuse", detail
 
-    # A supervisor lock held by a live supervisor means one is starting or
-    # racing this assessment (PR #131 review, question 3): the launch this
-    # script would start exits at once against that lock, and finding-1's fix
-    # would then report a failure — reporting the seat as running here is
-    # clearer. This is the check that catches a supervisor which has claimed
-    # its lock but not yet written a state file, which supervisor_liveness
-    # cannot see.
-    #
-    # Held by a live SUPERVISOR OF THIS SEAT, not merely a live process
-    # (nedschorus#242 change 1): this file outlives a reboot and process ids
-    # are reused across it, so a bare check would call the very seat the login
-    # restart was asked to bring back already running, and leave it down.
-    #
-    # Asked here, before the tmux answer is acted on, because a live tmux
-    # session needs the same confirmation.
+    # Locks survive reboots and PIDs are reused; confirm the holder is this seat’s supervisor.
+    # Check before tmux: a supervisor may hold its lock before writing state.
     lock_path = supervisor.supervisor_lock_path(handoff_directory, name)
     supervisor_answer, identity = seat_supervisor_confirmed_by_ps(name, lock_path)
 
-    # A live tmux session is not proof that the seat is running: an attached
-    # launch leaves its pane open at a shell in the seat's directory after the
-    # supervisor exits (scripts/launch-claude-mac, AFTER_EXIT_COMMAND), so the
-    # session outlives the supervisor. Refused unless a live supervisor of this
-    # seat is confirmed (user-ruled 2026-09-16, PR #426 review 5228560398) —
-    # and either way nothing is launched into a live session.
-    #
-    # Unless that session can be PROVEN to be that leftover shell and nothing
-    # else, in which case it becomes a question for an operator rather than a
-    # refusal (user-ruled 2026-09-17). The refusal below is what an unattended
-    # caller still gets, unchanged, so it is composed here either way.
+    # Attached sessions outlive supervisors as shells; tmux liveness alone cannot prove a seat is running.
     if alive and not predicting_as_though_the_leftover_idle_shell_were_closed:
         if supervisor_answer == SUPERVISOR_CONFIRMED_BY_PS:
             return "seat-already-running", (
@@ -1116,21 +705,13 @@ def assess_seat(name: str, agents_root: Path, handoff_directory: Path,
             tmux_session_is_a_leftover_idle_shell(name, seat_directory))
         if not leftover_shell:
             return "refuse", refusal
-        # No question is composed here: its words depend on a prediction that
-        # recover_seat takes only where the question is shown, so an
-        # unattended run does exactly what it did before the prediction.
         return ASK_TO_CLOSE_THE_LEFTOVER_IDLE_SHELL_VERDICT, (
             refusal, pane_process_ids, shell_detail)
 
     if supervisor_answer == SUPERVISOR_CONFIRMED_BY_PS:
         return "seat-already-running", (
             f"the supervisor lock at {lock_path} is held by a live supervisor — {identity}")
-    # ps could not be run and a process with the lock's id exists: the
-    # predicate assumes a supervisor rather than risk a second one
-    # (nedschorus#346), and this tool launches nothing on that assumption. But
-    # it is an assumption, not a seat found running, so it is refused and
-    # counts as not recovered (user-ruled 2026-09-16, PR #426 review
-    # 5228492424): an unattended caller must not be told the seat is up.
+    # Unavailable ps is an assumption of liveness, not proof the seat recovered.
     if supervisor_answer == SUPERVISOR_ASSUMED_WITHOUT_PS:
         return "refuse", (
             f"the supervisor lock at {lock_path} names a live process, but ps could not "
@@ -1139,11 +720,7 @@ def assess_seat(name: str, agents_root: Path, handoff_directory: Path,
     state_path = supervisor.supervisor_state_path(handoff_directory, name)
     supervisor_alive, liveness_detail = supervisor.supervisor_liveness(state_path)
     if supervisor_alive:
-        # supervisor_liveness reads the same lock through the same predicate,
-        # so it says yes on its own only when a supervisor claimed the lock
-        # after the check above — and it says yes by the same assumption when
-        # ps cannot be run, which it does not report apart. So the lock is
-        # asked again, and only a confirmed supervisor is already running.
+        # A supervisor may claim its lock after the first check; recheck because liveness can also assume ps failed.
         watching_answer, watching_identity = seat_supervisor_confirmed_by_ps(name, lock_path)
         if watching_answer == SUPERVISOR_CONFIRMED_BY_PS:
             return ("seat-already-running",
@@ -1167,10 +744,7 @@ def assess_seat(name: str, agents_root: Path, handoff_directory: Path,
         state = supervisor.read_supervisor_state(state_path)
         consumed = state.get("consumed_counter")
         if counter is None:
-            # A handoff whose counter is missing or unparseable would be
-            # consumed by nobody — the supervisor's wait loop ignores it too.
-            # Resuming past it silently discards whatever it says (PR #131
-            # review, question 2); the operator decides, with both paths named.
+            # The supervisor cannot consume a handoff without a valid counter; resuming would discard its request.
             return "refuse", (
                 f"a handoff exists at {handoff_path} but its restart-counter is "
                 "missing or unreadable, so no supervisor would ever consume it. "
@@ -1180,15 +754,7 @@ def assess_seat(name: str, agents_root: Path, handoff_directory: Path,
         if consumed is None or counter > consumed:
             dont_restart = fields.get("dont-restart")
             if dont_restart:
-                # The seat asked to be consulted before a relaunch and died before
-                # a supervisor could ask. Launching it only let the supervisor stop
-                # at once, after which this tool waited out
-                # SEAT_COMES_UP_DEADLINE_SECONDS and offered the forced restart the
-                # seat had declined (nedschorus#350; user-ruled 2026-09-17: launch
-                # nothing). The handoff stays unconsumed, so a by-hand launch still
-                # reaches the supervisor's restart question. The reason travels
-                # apart from the report, which recover_seat composes, because the
-                # leftover-shell question shows it too.
+                # Leave the handoff unconsumed so a by-hand launch still asks the supervisor’s restart question.
                 return "seat-asked-to-be-consulted", (counter, dont_restart)
             return "defer-to-boot-ignition", (
                 f"an unconsumed handoff waits (counter {counter}, consumed "
@@ -1199,10 +765,7 @@ def assess_seat(name: str, agents_root: Path, handoff_directory: Path,
     session_id, found = newest_real_transcript(
         harness_project_directory(seat_directory, projects_root))
 
-    # After the handoff checks, which a waiting handoff still settles, and in
-    # place of both automatic launches below (nedschorus#242 change 2, ruled
-    # 2026-09-02): a supervisor that outlived its agent recorded the exit, so
-    # the seat did not crash, whatever the code says.
+    # A waiting handoff takes precedence; otherwise a recorded exit requires an operator restart.
     exit_record = supervisor.agent_exit_record_from_supervisor_state(
         supervisor.read_supervisor_state(state_path))
     if exit_record is not None:
@@ -1217,46 +780,17 @@ def assess_seat(name: str, agents_root: Path, handoff_directory: Path,
 def predicted_assessment_once_the_leftover_idle_shell_is_closed(
         name: str, agents_root: Path, handoff_directory: Path, projects_root: Path,
         pane_process_ids):
-    """(verdict, detail): the assessment the reassessment after a yes is
-    expected to give, taken while the leftover idle shell's tmux session is
-    still alive.
-
-    It decides only what the operator is shown: whether the question is put at
-    all (ruled 2026-09-18 — a predicted refuse or seat-already-running is
-    reported straight away with this detail as its reason, and the window is
-    left open), and in which words (ruled 2026-09-17, reworded 2026-09-18). What
-    a yes actually does is decided, exactly as before, by the assessment
-    recover_seat runs AFTER the retire, read with the operator's word to
-    restart. The two can disagree when the seat's state moves while the
-    operator thinks — a supervisor starting, a handoff landing — and then the
-    real outcome wins and the line it prints says what actually happened. No
-    attempt is made to close that gap, except for the leftover shell itself:
-    recover_seat proves it idle again immediately before the retire (ruled
-    2026-09-18), because the retire kills whatever holds the seat's name.
-
-    It is assess_seat itself, reading the live session as closed and excusing
-    its panes from the occupancy check as the reassessment will. Past the tmux
-    check assess_seat only reads (the supervisor lock and state, ps, lsof, the
-    handoff, the transcripts), so asking early changes nothing on disk.
-    """
+    """Return (verdict, detail) as though the idle shell were closed, without changing state."""
+    # Only the question uses this prediction; state can change before the post-retirement assessment.
     return assess_seat(
         name, agents_root, handoff_directory, projects_root,
         retired_pane_process_ids=pane_process_ids,
         predicting_as_though_the_leftover_idle_shell_were_closed=True)
 
 
-# A supervisor notices its session has died within HANDOFF_POLL_SECONDS and then
-# stops and removes its lock, so anything checked sooner than that can see a
-# supervisor that is already finished. Three times the interval leaves room for
-# the cleanup that follows.
+# Allow the supervisor to notice a dead session and remove its lock before checking survival.
 SEAT_SETTLE_SECONDS = 3 * supervisor.HANDOFF_POLL_SECONDS
-# How long a supervisor may take to appear at all. The launcher runs its Claude
-# update step BEFORE starting the supervisor, and on the window path this script
-# does not wait for the launcher — it waits only for the opener, which returns as
-# soon as the window exists. So this has to cover an update, not a process start.
-# A version change was observed taking tens of seconds on 2026-09-11; this is a
-# generous multiple of that, and only a seat that never comes up pays it in full.
-# Tunable: it is a fact about the user's machines, not about this program.
+# The deadline must cover the launcher’s update step; opening a window does not wait for launch.
 SEAT_COMES_UP_DEADLINE_SECONDS = 120.0
 SEAT_COMES_UP_POLL_SECONDS = 0.5
 
@@ -1266,30 +800,9 @@ def wait_for_the_seat_to_come_up(name: str, handoff_directory: Path,
                                  deadline_seconds=SEAT_COMES_UP_DEADLINE_SECONDS,
                                  identity_check=None, sleep=time.sleep,
                                  monotonic=time.monotonic):
-    """(came_up, why): did a supervisor actually start for this seat and survive?
-
-    nedschorus#242 change 4. A launch that exits zero says the launcher ran, not
-    that the seat came back: a resume whose session dies inside Claude — a
-    session id that no longer resolves, say — leaves the launcher exiting zero
-    while the supervisor starts, watches the session end without a handoff, and
-    stops. Reported as success, that is the login restart telling an absent
-    operator the fleet is back when it is not.
-
-    Two waits, and they are different. First, poll until a supervisor is seen at
-    all, which can take as long as the launcher's update step. Then wait out
-    SEAT_SETTLE_SECONDS and look again, because a supervisor whose session has
-    already died still holds its lock for up to HANDOFF_POLL_SECONDS — so a
-    single check right after it appears would call that coming up. The settle is
-    measured from when the supervisor was FIRST SEEN, never from the launch:
-    on the window path the launch returns before the launcher has even started.
-
-    So what this answers is that a supervisor appeared and survived the settle,
-    which is not quite that the seat is back: handoff-supervisor.py claims its
-    lock at :1383, BEFORE supervise_sessions starts the session, so the first
-    sighting can precede the session existing at all, and a session that dies
-    more than SEAT_SETTLE_SECONDS after the lock appeared still reads here as
-    come up (PR #329 review, raised as a question and left as a bound).
-    """
+    """Return (came_up, reason) after a supervisor appears and survives the settle interval."""
+    # Settle from first sighting, not launch: the launcher may still be updating.
+    # The supervisor claims its lock before starting the session, so survival is only a bounded check.
     if identity_check is None:
         identity_check = supervisor.process_is_supervisor_for_agent
     lock_path = supervisor.supervisor_lock_path(handoff_directory, name)
@@ -1321,13 +834,8 @@ def wait_for_the_seat_to_come_up(name: str, handoff_directory: Path,
 
 def came_up_or_failure_report(name: str, handoff_directory: Path,
                               offer_ignite_fallback: bool):
-    """None when the seat came up, else the report that says it did not.
-
-    The offer is a sentence, not an action (nedschorus#242 change 4 says offer):
-    falling back automatically would spend a session on a recovery that may be
-    the wrong one. On the ignite paths there is nothing further to offer, because
-    the degraded restart is what just failed.
-    """
+    """Return None if the seat came up, otherwise a failure report."""
+    # Automatic fallback could spend a session on the wrong recovery; offer it instead.
     came_up, why = wait_for_the_seat_to_come_up(name, handoff_directory)
     if came_up:
         return None
@@ -1336,27 +844,9 @@ def came_up_or_failure_report(name: str, handoff_directory: Path,
     return f"{name}: LAUNCHED BUT DID NOT COME UP — {why}{offer}"
 
 
-# Every report class that means the seat is NOT running once this tool is done.
-# ALREADY RUNNING is deliberately not one: that seat is running, and --all lists
-# every seat that ever ran, so counting it made one live seat fail a whole run
-# (user-ruled 2026-09-16, on the question PR #426's reviewer asked).
-# main counts these for its exit code, and the suite enumerates this same tuple,
-# so a failure report is covered the moment it is named here. It is one named
-# tuple rather than substrings spelled into main because that is exactly how
-# LAUNCHED BUT DID NOT COME UP slipped through: it contains neither "REFUSED"
-# nor "LAUNCH FAILED", so the failure #242 change 4 was added to catch was
-# printed, logged, and then exited zero — a login restart still reporting the
-# fleet is back to an absent operator, by way of the status code this time
-# (PR #329 review, finding 1).
-# A seat that asked to be consulted is left down on purpose, but it is down: were
-# it not counted, the login restart would list it with the seats that came up.
+# Count every report that leaves a seat down; ALREADY RUNNING needs no recovery.
 SEAT_ASKED_TO_BE_CONSULTED_REPORT_MARKER = "NOT RELAUNCHED, AT ITS OWN REQUEST"
-# So is a seat whose supervisor recorded its agent's exit (nedschorus#242
-# change 2): nothing is launched for it, and it is down.
 SEAT_NOT_RELAUNCHED_AFTER_RECORDED_EXIT_REPORT_MARKER = "NOT RELAUNCHED AFTER A RECORDED EXIT"
-# So is a seat an operator said to restart whose leftover shell's session, still
-# holding the seat's name, could no longer be proven idle when it was about to
-# be closed: it was left alone, so the seat is still down (ruled 2026-09-18).
 SEAT_NOT_RESTARTED_AFTER_THE_OPERATORS_YES_REPORT_MARKER = "NOT RESTARTED"
 SEAT_NOT_RECOVERED_REPORT_MARKERS = (
     "REFUSED",
@@ -1366,25 +856,12 @@ SEAT_NOT_RECOVERED_REPORT_MARKERS = (
     SEAT_NOT_RELAUNCHED_AFTER_RECORDED_EXIT_REPORT_MARKER,
     SEAT_NOT_RESTARTED_AFTER_THE_OPERATORS_YES_REPORT_MARKER,
 )
-# The report class for assess_seat's seat-already-running verdict. Named so the
-# suites can pin that it contains none of the markers above.
 SEAT_ALREADY_RUNNING_REPORT_MARKER = "ALREADY RUNNING"
-# The predicted verdicts for which the leftover-shell question is not put (ruled
-# 2026-09-18), each with the report class its line carries — the class the
-# same verdict carries everywhere else, so what counts outcomes counts these
-# the same way. A yes would close a window and then report a problem the
-# operator must fix anyway, and a running seat is no time to offer closing a
-# window at all.
+# A predicted refusal needs operator action anyway; a running seat must keep its window.
 LEFTOVER_IDLE_SHELL_PREDICTIONS_REPORTED_WITHOUT_ASKING = {
     "refuse": "REFUSED",
     "seat-already-running": SEAT_ALREADY_RUNNING_REPORT_MARKER,
 }
-# The report, after the seat's name, when an operator has said yes but the
-# leftover shell's tmux session, still holding the seat's name, can no longer
-# be proven an idle shell, so it is not closed. The user's words, approved
-# 2026-09-18 after he asked of the line before them "What are we refusing. I
-# don't care about tmux sessions."; kept at this one site so that a rewording
-# is one edit.
 LEFTOVER_IDLE_SHELL_NOT_PROVEN_AGAIN_REPORT = (
     f"{SEAT_NOT_RESTARTED_AFTER_THE_OPERATORS_YES_REPORT_MARKER} — something may have "
     "started in it while you were answering, so it was left alone")
@@ -1395,38 +872,10 @@ def recover_seat(name: str, agents_root: Path, handoff_directory: Path,
                  open_iterm_window: bool = False,
                  retired_pane_process_ids=None,
                  restart_at_the_operators_word: bool = False) -> str:
-    """One seat's recovery. Returns a one-line report. With open_iterm_window
-    the seat is launched attached in its own iTerm window instead of
-    detached (--open-iterm-window-per-seat); nothing else changes — not the
-    deadness checks, the transcript choice, or the resume decision.
-
-    retired_pane_process_ids and restart_at_the_operators_word are set only
-    by this function's one re-entry, after an operator has answered yes to
-    restarting a seat behind a leftover idle shell, and that shell was
-    closed. retired_pane_process_ids carries the panes that were closed past
-    the occupancy check; being not-None, it is also what stops the question
-    being asked a second time in the same recovery.
-    restart_at_the_operators_word is that yes: the operator's word to
-    restart, which a seat carrying a recorded exit or a handoff asking to be
-    consulted needs before it is launched (ruled 2026-09-18).
-
-    A seat carrying a recorded exit (2a in this module's docstring) is also
-    asked about with no leftover session at all — after a reboot, say — when
-    an operator is at a terminal and this is not a dry run (ruled
-    2026-09-18): "<seat> stopped on purpose. Restart it anyway? y/n", or
-    "<seat> stopped with exit code <code>. Restart it? y/n" when the recorded
-    code is neither zero nor unknown. A yes restarts it exactly as the
-    leftover-shell yes does, and its line says the operator said to restart
-    it; a no, or nobody to ask, leaves the NOT RELAUNCHED line it has always
-    had. Under --all that is one question per such seat, each answered on its
-    own (the user accepted that cost)."""
+    """Recover one seat and return a one-line report."""
     verdict, detail = assess_seat(name, agents_root, handoff_directory, projects_root,
                                   retired_pane_process_ids=retired_pane_process_ids or ())
-    # Before every branch that can launch, the leftover-shell question
-    # included, so no shell is closed for a launch that cannot happen; never a
-    # launch from this program's own checkout instead (the module docstring's
-    # "Checkout" paragraph). A seat already running or refused launches
-    # nothing, and keeps its own line.
+    # Check launch prerequisites before closing any shell, so a missing durable checkout leaves the window intact.
     if verdict not in ("seat-already-running", "refuse"):
         needed = durable_checkout_file_a_launch_here_runs()
         if not needed.is_file():
@@ -1436,45 +885,30 @@ def recover_seat(name: str, agents_root: Path, handoff_directory: Path,
     in_window = " in a new iTerm window" if open_iterm_window else ""
 
     def would_open(extra_supervisor_arguments: str, first_prompt_file: Path = None) -> str:
-        """The dry run's view of the window: the command it would run."""
+        """Return the command a dry run would open in a window."""
         if not open_iterm_window:
             return ""
         return "; would open an iTerm window running: " + iterm_window_command_text(
             name, seat_directory, handoff_directory, extra_supervisor_arguments,
             first_prompt_file)
 
-    # Before every branch below, because it decides which assessment the rest
-    # of this function acts on (user-ruled 2026-09-17). The seat's tmux
-    # session is alive with no confirmed supervisor, and assess_seat proved it
-    # is nothing but the shell an attached launch leaves open. With an
-    # operator at a terminal that is a question, unless a yes can already be
-    # seen to end in a refusal or a running seat, which is reported at once
-    # (user-ruled 2026-09-18); with no one to ask — at boot, under
-    # restart-live-seats-at-login — it is the refusal it has always been.
+    # Resolve the leftover shell first, because the resulting assessment controls every launch branch.
     if verdict == ASK_TO_CLOSE_THE_LEFTOVER_IDLE_SHELL_VERDICT:
         refusal, pane_process_ids, shell_detail = detail
 
         def the_prediction():
-            """Taken only where the operator is shown something — a dry run's
-            line and an operator's terminal — so an unattended run never takes
-            it. It decides whether the question is put and in which words; the
-            reassessment after the retire below still decides what a yes does."""
+            """Predict the result only when a question or dry-run report needs it."""
             return predicted_assessment_once_the_leftover_idle_shell_is_closed(
                 name, agents_root, handoff_directory, projects_root, pane_process_ids)
 
         def reported_without_asking(predicted_verdict, predicted_detail) -> str:
-            """The report for a predicted refuse or seat-already-running (ruled
-            2026-09-18): the prediction's own reason, in the class that verdict
-            carries everywhere else. Its reason was found with the shell read as
-            closed, which the line says, so it is never read as the window's
-            fault."""
+            """Report a predicted refusal or running seat without closing the window."""
             return (f"{LEFTOVER_IDLE_SHELL_PREDICTIONS_REPORTED_WITHOUT_ASKING[predicted_verdict]}"
                     f" — {predicted_detail}. This was found assessing the seat as though "
                     "its leftover shell were already closed")
 
         def what_a_yes_does(predicted_verdict, predicted_detail) -> str:
-            """The dry run's account of a yes, after the session is closed: what
-            the reassessment below is predicted to do with the operator's word."""
+            """Describe the predicted recovery after closing the shell."""
             if predicted_verdict == "offer-after-recorded-exit":
                 return restart_after_recorded_exit_described(predicted_detail[2])
             if predicted_verdict == "seat-asked-to-be-consulted":
@@ -1483,9 +917,7 @@ def recover_seat(name: str, agents_root: Path, handoff_directory: Path,
             return "assess the seat without it"
 
         if dry_run:
-            # Reported whether or not anyone is at a terminal: a dry run's
-            # job is to say what a real run would do, and a run this one
-            # cannot see — an operator's, later — is the one that would ask.
+            # A dry run must describe the question a later attended run would ask.
             predicted_verdict, predicted_detail = the_prediction()
             if predicted_verdict in LEFTOVER_IDLE_SHELL_PREDICTIONS_REPORTED_WITHOUT_ASKING:
                 return (f"{name}: with an operator at a terminal would ask nothing, leave the "
@@ -1494,27 +926,19 @@ def recover_seat(name: str, agents_root: Path, handoff_directory: Path,
                         "With no terminal it refuses")
             question = leftover_idle_shell_question_for_seat(name, predicted_verdict,
                                                              predicted_detail)
-            # The line an unattended run gives, which a no gives too, is
-            # quoted whole, as the recorded exit's dry run quotes its own, so
-            # its REFUSED counts in main: a practice run exits 1 when any seat
-            # would stay down with nobody at the keyboard (ruled 2026-09-18).
+            # Include the refusal class so a dry run counts unattended seats that would stay down.
             return (f"{name}: would ask an operator at a terminal — \"{question}\" — and on a "
                     f"yes close that session and "
                     f"{what_a_yes_does(predicted_verdict, predicted_detail)} ({shell_detail}); "
                     f"on a no, or with no terminal, it reports: REFUSED — {refusal}")
         if retired_pane_process_ids is not None:
-            # A session still holding the name after the retire below. Asking
-            # again would loop; this tool cannot clear that state.
+            # Asking again would loop if retirement left a session holding the name.
             return (f"{name}: REFUSED — the leftover shell was closed, but a tmux session "
                     f"named '{name}' still holds the name: clear it by hand, then rerun "
                     "this recovery")
         if not recovery_has_an_operator_terminal():
             return f"{name}: REFUSED — {refusal}"
         predicted_verdict, predicted_detail = the_prediction()
-        # A yes here would only close a window and then report what the
-        # prediction already shows, so nothing is asked and nothing is retired
-        # (ruled 2026-09-18) — what this tool did for every live window before
-        # the question existed.
         if predicted_verdict in LEFTOVER_IDLE_SHELL_PREDICTIONS_REPORTED_WITHOUT_ASKING:
             return (f"{name}: {reported_without_asking(predicted_verdict, predicted_detail)}, "
                     "so nothing was asked and its window was left open")
@@ -1523,28 +947,15 @@ def recover_seat(name: str, agents_root: Path, handoff_directory: Path,
         print(f"recover-crashed-seats: {shell_detail}")
         if not ask_operator_yes_or_no(question):
             return f"{name}: REFUSED — {refusal}"
-        # The proof again, immediately before the retire (ruled 2026-09-18, on
-        # the independent review's question): the operator may think for as
-        # long as he likes, and the retire kills whatever holds the seat's name
-        # when it runs — work he started in that very shell while the question
-        # waited included. So a yes closes the session only if it is still
-        # nothing but an idle shell. The panes this proof finds are the ones
-        # the retire closes, so they, not the first proof's, are the panes
-        # excused from the occupancy check after it.
+        # Recheck immediately before retirement: work may have started while the operator considered the question.
+        # Only the panes proved idle now may be excused from the next occupancy check.
         still_a_leftover_shell, rechecked_pane_process_ids, _ = (
             tmux_session_is_a_leftover_idle_shell(name, seat_directory))
         if still_a_leftover_shell:
             pane_process_ids = rechecked_pane_process_ids
         else:
-            # What is left alone is a session still there, since only a session
-            # can hold work; tmux is asked whether one is, never the proof's
-            # words. Gone — the operator exited the shell himself, say — holds
-            # no work, so the recovery goes on as it did before the recheck:
-            # the retire finds nothing, and the first proof's panes are
-            # excused. With no answer from tmux, the refusal is the one
-            # assess_seat gives for it, in that call's own words. The retire
-            # would not report it: it reads an unanswered socket as holding
-            # nothing.
+            # A failed idle proof does not prove the session exists; a vanished session holds no work.
+            # Ask tmux explicitly, since retirement treats an unanswered socket as empty.
             session_still_there, liveness_detail = tmux_session_alive_anywhere(name)
             if session_still_there is None:
                 return f"{name}: REFUSED — {liveness_detail}"
@@ -1560,47 +971,29 @@ def recover_seat(name: str, agents_root: Path, handoff_directory: Path,
         else:
             closed = "the leftover shell was already gone when it was retired"
         print(f"recover-crashed-seats: {name}: {closed}")
-        # The assessment again, with those panes excused from the occupancy
-        # check: the seat is now read as though the session had never been
-        # there, and with the operator's word to restart it — which a seat
-        # carrying a recorded exit, or a handoff asking to be consulted, needs
-        # before it is launched (ruled 2026-09-18). This assessment, not the
-        # prediction the question was worded by, decides what happens: if the
-        # seat's state moved while the operator thought, the two disagree, and
-        # the line this one prints says what actually happened.
+        # Reassess after retirement: state may have changed while the operator answered.
         rest = recover_seat(name, agents_root, handoff_directory, projects_root,
                             dry_run, ignite_fallback, open_iterm_window,
                             retired_pane_process_ids=pane_process_ids,
                             restart_at_the_operators_word=True)
-        # In the report, so the recovery log records that a session was closed
-        # and on whose word.
-        return (f"{rest} (the operator said to restart it, so the leftover shell was closed "
-                f"first: {closed})")
+        # The reach clause stays last, so the operator finds it at the end of every line that left a seat running.
+        reach = reach_clause_for_a_running_seat(name)
+        rest_without_reach = rest[:-len(reach)] if rest.endswith(reach) else rest
+        left_running_reach = reach if rest.endswith(reach) else ""
+        return (f"{rest_without_reach} (the operator said to restart it, so the leftover shell "
+                f"was closed first: {closed}){left_running_reach}")
 
-    # Before any dry-run or launch branch: a dry run reports the same class,
-    # and nothing is launched for a seat that is already running.
     if verdict == "seat-already-running":
         return f"{name}: {SEAT_ALREADY_RUNNING_REPORT_MARKER} — {detail}"
 
     if verdict == "refuse":
         return f"{name}: REFUSED — {detail}"
 
-    # Also before the dry-run branch: nothing is launched without the
-    # operator's word, which a dry run never has, since it asks nobody.
     if verdict == "seat-asked-to-be-consulted":
         counter, reason = detail
         if restart_at_the_operators_word:
-            # Ruled 2026-09-18: what "restart" means for a seat that asked to
-            # be consulted. It means the one launch this seat's own report
-            # tells an operator to make by hand: plain, leaving its handoff
-            # unconsumed, so that the supervisor's boot-ignition finds the
-            # dont-restart and asks its own "restart? y/n" on the seat's
-            # terminal before it starts a session. That is a
-            # second question after the operator's yes here, and in a detached
-            # launch it waits in a tmux session nobody is looking at; its
-            # supervisor holds its lock while it waits, so the come-up check
-            # below reads the seat as up. No --ignite-fallback is offered: it
-            # is the forced restart the seat declined (nedschorus#350).
+            # A plain launch preserves dont-restart for the supervisor’s own question, even when detached.
+            # Do not offer ignite fallback: it would bypass that request.
             launch_exit_code = launch(name, seat_directory, handoff_directory, "")
             if launch_exit_code != 0:
                 return (f"{name}: LAUNCH FAILED (exit {launch_exit_code}) — the seat is "
@@ -1611,42 +1004,24 @@ def recover_seat(name: str, agents_root: Path, handoff_directory: Path,
             return (f"{name}: relaunched plain{in_window}, although an unconsumed handoff "
                     f"(counter {counter}) asks to be consulted before a relaunch: {reason}. Its "
                     "supervisor asks its own restart question before it starts a session: "
-                    "answer it in the seat's tmux session")
+                    f"answer it in the seat's tmux session{reach_clause_for_a_running_seat(name)}")
         return (f"{name}: {SEAT_ASKED_TO_BE_CONSULTED_REPORT_MARKER} — an unconsumed handoff "
                 f"(counter {counter}) asks to be consulted before a relaunch: {reason}. Nothing "
                 f"was launched. To bring it back, launch it by hand (launch-claude-mac {name} "
                 f"or launch-claude-ubuntu {name}) and answer its supervisor's restart question")
 
-    # Also before the dry-run branches: nothing is launched without the
-    # operator's word, which a dry run never has.
     if verdict == "offer-after-recorded-exit":
         exit_code, recorded_at, session_id = detail
         code_text = "an unknown exit code" if exit_code is None else f"exit code {exit_code}"
         recorded = (f"its supervisor recorded at {recorded_at} that its agent exited with "
                     f"{code_text}")
         question = restart_question_for_a_seat_with_a_recorded_exit(name, exit_code)
-        # With no leftover session — after a reboot, say — the operator is
-        # asked here (ruled 2026-09-18). A seat that came through the
-        # leftover-shell question was asked there, and its line gains that
-        # question's suffix, saying the shell was closed; here nothing was
-        # closed, so the line says only whose word it was. Nothing is asked in
-        # a dry run, which changes nothing, nor with nobody at a terminal to
-        # answer — at boot, under restart-live-seats-at-login — and then the
-        # line below is unchanged.
         the_operator_said_yes_here = (not restart_at_the_operators_word and not dry_run
                                       and recovery_has_an_operator_terminal()
                                       and ask_operator_yes_or_no(question))
         on_whose_word = " (the operator said to restart it)" if the_operator_said_yes_here else ""
         if restart_at_the_operators_word or the_operator_said_yes_here:
-            # Ruled 2026-09-18: the operator said yes to "<seat> stopped on
-            # purpose. Restart it anyway?" or "<seat> stopped with exit code
-            # <code>. Restart it?", so the seat is restarted — resuming
-            # its session if there is one, fresh if there is none. The rule that
-            # a seat stopped on purpose is not brought back is about this tool
-            # doing it on its own. --ignite-fallback does not change this: its
-            # degraded restart tells the agent that its session ended without
-            # writing a handoff, which a recorded exit says it did not, and the ruling
-            # names these two outcomes only. So no fallback is offered either.
+            # Ignite fallback would describe a crash despite the recorded exit; restart by resume or fresh launch only.
             if session_id is None:
                 launch_exit_code = launch(
                     name, seat_directory, handoff_directory, "",
@@ -1668,16 +1043,14 @@ def recover_seat(name: str, agents_root: Path, handoff_directory: Path,
             did_not_come_up = came_up_or_failure_report(name, handoff_directory, False)
             if did_not_come_up is not None:
                 return f"{did_not_come_up}{on_whose_word}"
-            return f"{name}: {relaunched} after {recorded}{no_session}{on_whose_word}"
+            return (f"{name}: {relaunched} after {recorded}{no_session}{on_whose_word}"
+                    f"{reach_clause_for_a_running_seat(name)}")
         fresh = by_hand_launch_command_for_seat(name, seat_directory, handoff_directory, "")
         if session_id is None:
             by_hand = f"to bring it back by hand as a fresh session: {fresh}"
         else:
-            # The resume carries its own first prompt, or the supervisor's
-            # default for a resume tells the agent its session ended without a handoff
-            # (review 5240813304). Written here, where the command naming it is
-            # printed, so the command works when it is typed. A dry run changes
-            # nothing, so it names the file without writing it.
+            # The printed resume command needs its own prompt to avoid falsely describing the exit as a crash.
+            # Dry runs name the prompt without writing it.
             prompt_file = first_prompt_after_recorded_exit_path(handoff_directory, name,
                                                                 by_hand=True)
             if not dry_run:
@@ -1693,10 +1066,7 @@ def recover_seat(name: str, agents_root: Path, handoff_directory: Path,
                           f"{recorded} and stopped without launching a successor, so this is "
                           f"not treated as a crash and nothing is launched; {by_hand}")
         if dry_run:
-            # Reported whether or not anyone is at a terminal, as the
-            # leftover-shell question's dry run is: a run this one cannot
-            # see, an operator's, is the one that would ask. The unattended
-            # line is quoted whole, so its class still counts in main.
+            # Keep the unattended report class in the dry-run line so outcome counting still works.
             return (f"{name}: would ask an operator at a terminal — \"{question}\" — and on a "
                     f"yes {restart_after_recorded_exit_described(session_id)}; on a no, or "
                     f"with no terminal, it reports: {not_relaunched}")
@@ -1708,21 +1078,17 @@ def recover_seat(name: str, agents_root: Path, handoff_directory: Path,
         exit_code = launch(name, seat_directory, handoff_directory, "")
         if exit_code != 0:
             return f"{name}: LAUNCH FAILED (exit {exit_code}) — the seat is still down"
-        # Not offered to an operator who just used it. This path is chosen by
-        # the verdict alone — assess_seat never sees the flag — so a run that
-        # passed --ignite-fallback lands here too, and was told to try the flag
-        # it had already tried (PR #329 review, finding 2).
+        # Do not offer ignite fallback after that same fallback has failed.
         did_not_come_up = came_up_or_failure_report(name, handoff_directory,
                                                     not ignite_fallback)
         if did_not_come_up is not None:
             return did_not_come_up
-        return f"{name}: relaunched plain{in_window} — {detail}"
+        return f"{name}: relaunched plain{in_window} — {detail}{reach_clause_for_a_running_seat(name)}"
 
     if verdict == "resume" and not ignite_fallback:
         session_id, transcript = detail
         size_kb = transcript.stat().st_size // 1024
         unreplied_successor = is_unreplied_reincarnation_successor(transcript)
-        # In the report, so the recovery log records which prompt was sent.
         unreplied_note = ("; it is the successor its handoff started, which "
                           "never replied" if unreplied_successor else "")
         resume_arguments = f"--resume-session-id {shlex.quote(session_id)}"
@@ -1739,11 +1105,9 @@ def recover_seat(name: str, agents_root: Path, handoff_directory: Path,
         if did_not_come_up is not None:
             return did_not_come_up
         return (f"{name}: relaunched resuming {session_id} "
-                f"({size_kb}KB transcript){in_window}{unreplied_note}")
+                f"({size_kb}KB transcript){in_window}{unreplied_note}"
+                f"{reach_clause_for_a_running_seat(name)}")
 
-    # ignite: fresh session reading the newest dialog extract — the degraded
-    # mode (user-directed 2026-08-21), and the only path when nothing real
-    # remains to resume.
     extract = newest_dialog_extract(handoff_directory, name)
     if extract is None:
         if dry_run:
@@ -1755,7 +1119,8 @@ def recover_seat(name: str, agents_root: Path, handoff_directory: Path,
         did_not_come_up = came_up_or_failure_report(name, handoff_directory, False)
         if did_not_come_up is not None:
             return did_not_come_up
-        return f"{name}: relaunched fresh{in_window} (nothing to resume, no extract to read)"
+        return (f"{name}: relaunched fresh{in_window} (nothing to resume, no extract to read)"
+                f"{reach_clause_for_a_running_seat(name)}")
     prompt = (
         f"Read {extract} — it is the dialog from this seat's last recorded "
         "session; the session that followed it ended without writing a handoff "
@@ -1774,20 +1139,12 @@ def recover_seat(name: str, agents_root: Path, handoff_directory: Path,
     did_not_come_up = came_up_or_failure_report(name, handoff_directory, False)
     if did_not_come_up is not None:
         return did_not_come_up
-    return f"{name}: relaunched fresh{in_window} igniting from {extract.name}"
+    return (f"{name}: relaunched fresh{in_window} igniting from {extract.name}"
+            f"{reach_clause_for_a_running_seat(name)}")
 
 
 def append_to_recovery_log(handoff_directory: Path, report: str):
-    """One timestamped line per seat verdict, appended durably.
-
-    The printed reports otherwise live only in the operator's scrollback,
-    and a post-crash investigator needs the decision AS MADE AT THE TIME —
-    state moves after a recovery (handoffs consumed, seats relaunched), so
-    the verdict may not be re-derivable later (user-ruled 2026-08-22: a
-    simple durable log). Dry runs do not log: --dry-run promises to change
-    nothing, and it is itself the investigator's probe. A log failure never
-    blocks a recovery — the seat matters more than the record.
-    """
+    # Recovery changes state, so the original verdict may not be reconstructible later.
     log_path = handoff_directory / "recover-crashed-seats-log.txt"
     try:
         handoff_directory.mkdir(parents=True, exist_ok=True)
@@ -1833,8 +1190,6 @@ def main(argv=None) -> int:
         global durable_checkout
         durable_checkout = Path(os.path.abspath(Path(arguments.checkout).expanduser()))
 
-    # Before anything is read or launched; see the module docstring's
-    # "Agents root" paragraph for why.
     if arguments.agents_root and not agents_root_is_movable_on_this_machine():
         print("recover-crashed-seats: off macOS, re-run without --agents-root.",
               file=sys.stderr)
@@ -1848,21 +1203,12 @@ def main(argv=None) -> int:
                      else Path("~/.claude/projects").expanduser())
 
     if arguments.open_iterm_window_per_seat:
-        # Refused with the reason, never silently downgraded to a detached
-        # launch: the Ubuntu box is headless, with no iTerm2 and no
-        # launch-claude-mac.
+        # The Ubuntu box is headless and has neither iTerm2 nor launch-claude-mac.
         if launcher_path() is None:
             parser.error("--open-iterm-window-per-seat needs macOS: it opens iTerm2 "
                          "windows running launch-claude-mac, and neither exists here")
-        # Every path the window's command carries; see iterm_window_command_text
-        # for why a single quote cannot be carried. The handoff directory is
-        # the strict one: it travels INSIDE the supervisor arguments, where
-        # shlex.quote wraps a space in the very quotes iTerm2 cannot carry, so
-        # a handoff directory needing any shell quoting is refused (review of
-        # e55904d, finding 1: composing anyway raised from inside the composer,
-        # which under --all abandons the seats after it and leaves a written
-        # resume prompt with no window). The rest are whole words this composer
-        # quotes itself, so a space in them is carried intact.
+        # The handoff path is nested in shell-quoted supervisor arguments, which iTerm cannot carry.
+        # Reject unsupported quoting before any seat launches; other paths may contain spaces.
         if shlex.quote(str(handoff_directory)) != str(handoff_directory):
             parser.error("--open-iterm-window-per-seat cannot carry a handoff directory "
                          "that needs shell quoting — a space or an apostrophe in it — "
@@ -1873,11 +1219,7 @@ def main(argv=None) -> int:
                              f"an apostrophe into an iTerm window: {path}")
 
     if arguments.all:
-        # A directory under the agents root is a SEAT only if something ever
-        # ran there: a supervisor state file, a handoff, or a transcript
-        # directory (PR #131 review, finding 6 — an empty leftover from a
-        # mistyped launch is not a seat, and "not running" is not "crashed").
-        # A never-run directory can still be recovered by NAME, deliberately.
+        # A never-run directory is not a crashed seat; explicit names may still recover one.
         def ever_ran(name: str) -> bool:
             return (supervisor.supervisor_state_path(handoff_directory, name).is_file()
                     or supervisor.handoff_file_path(handoff_directory, name).is_file()
@@ -1905,10 +1247,6 @@ def main(argv=None) -> int:
             append_to_recovery_log(handoff_directory, report)
         if any(marker in report for marker in SEAT_NOT_RECOVERED_REPORT_MARKERS):
             not_recovered += 1
-    # Nonzero when ANY seat was not recovered, not only when every one was:
-    # three seats up and one down used to exit zero, telling an unattended
-    # caller the fleet came back (user-ruled 2026-09-16, merge-lane walk item
-    # 6 — the multi-seat half of the shape PR #329 fixed for one seat).
     return 1 if not_recovered else 0
 
 

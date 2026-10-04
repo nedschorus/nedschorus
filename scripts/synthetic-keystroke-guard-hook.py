@@ -1,89 +1,9 @@
 #!/usr/bin/env python3
-"""PreToolUse guard: block Bash commands that send synthetic keystrokes at a
-surface an operator may be typing on, and teach the safe form in the error.
+"""Block synthetic keystrokes that could race an operator’s typing.
 
-The rule (nedschorus#27, learned twice on 2026-08-17): synthetic keystrokes
-race the human's real ones and splice. AppleScript `write text` corrupted a
-window-open command on the user's Mac while he typed; tmux `paste-buffer`
-carries the same hazard for any attached session. The safe forms pass the
-command as an argument — scripts/open-iterm-window-running-command for a
-user-facing window, tmux new-session/respawn-pane with a command for
-lifecycle — and injection into a *detached* tmux session stays permitted
-until the inbox design (nedschorus#37) replaces it.
-
-Decisions, in order:
-- AppleScript synthetic typing — iTerm `write text`, System Events
-  `keystroke`/`key code` — in the arguments of an invoked `osascript` (or in
-  a heredoc body it consumes): always denied; the opener script fully covers
-  the legitimate use.
-- tmux keystroke verbs (`send-keys`/`paste-buffer` and their documented
-  aliases `send`/`pasteb`): allowed when every `-t` target of that invocation
-  verifiably has no attached client (the guard itself runs `tmux
-  display-message -p '#{session_attached}'`, over ssh when that tmux is
-  ssh-wrapped); denied with the verification recipe when a target is
-  attached, unnamed, an unexpanded variable or placeholder (`$SEAT`,
-  xargs' `{}`), or unverifiable. A target tmux
-  does not know is allowed — keystrokes to a nonexistent session type
-  nothing, and the command fails on its own.
-- `CLAUDE_VERIFIED_DETACHED=1` as an environment-assignment prefix on the
-  command (or on the ssh command wrapping it) skips the tmux check: the
-  escape hatch for a caller that has just verified detachment itself. The
-  same text inside a keystroke payload string is data and does not count.
-
-How the guard reads a command (the 2026-08-17 review round, PR #82): it
-tokenizes the shell text with quoting resolved and splits it into simple
-commands, so only words in an actually-invoked command count — quoted prose
-like `git commit -m "document the osascript write text rule"` or `grep -rn
-"tmux send-keys" scripts/` is a single data word and passes. Heredoc bodies
-are split out first (quote-state carried across lines, so `<<` inside a
-string, a here-string `<<<`, or arithmetic like `1<<20` opens no phantom
-heredoc); a body is data unless its consumer executes it — `osascript
-<<EOF` is checked for synthetic typing, and a body piped to or fed to a
-shell (`sh`, `bash`, `zsh`) is analyzed as a command itself, as are `sh -c`
-execution strings (the c may ride in a flag cluster, `bash -lc`) and `eval`
-arguments. Unquoted `#` comments are stripped the way the shell strips
-them. An `ssh` whose
-remote command contains the tmux invocation attributes probes to that host
-(carrying -p/-i/-l); ssh found elsewhere in a command — e.g. inside a
-keystroke payload — attributes nothing.
-
-Which tmux SERVER the probe asks (per-seat servers, 2026-08-21): fleet seats
-run one tmux server per seat (`tmux -L <seat>`, the launchers' rule since
-the Mac's single default server died and took all three Mac seats down at
-once), so "no server running" on the default socket no longer means a
-session is down — it may be attached on its own socket, and a probe that
-stopped at the default socket would misjudge it as safe to type into. The
-probe therefore dials, in order:
-- the server the guarded command itself dials: its own -L/-S flag when it
-  carries one — probed EXCLUSIVELY, since keystrokes can only land on the
-  server the command addresses and other sockets are irrelevant — else the
-  same plain resolution the command will get ($TMUX's server when the
-  command runs inside tmux, the default socket otherwise). The plain probe
-  also covers the transition: seats launched before the per-seat change
-  still live on the default server.
-- only when that server does not know the session and the command carried
-  no socket flag: the seat's own per-seat server, `-L <session part of the
-  target>` (socket name == session name is the launchers' convention). A
-  hit there rules the decision.
-An unverifiable probe (timeout, unreachable host) denies immediately — fail
-closed, never shopping past an error to a later "unknown". A session that NO
-probed server knows stays allowed: keystrokes to a nonexistent session type
-nothing, and the command fails on its own.
-
-All probes share one wall-clock budget (PROBE_BUDGET_SECONDS) kept under the
-hook's own registered timeout, because a PreToolUse hook that times out
-FAILS OPEN in the harness: on overrun the guard denies as unverifiable
-instead of dying. Probe results are cached per (host, server flags, target)
-within one invocation.
-
-Detection is literal, not adversarial: it corrects the habit of composing
-these commands directly, which is the only way the failures have happened.
-Known pass-throughs by design: invocations laundered through generated
-files, python, command substitution inside double quotes, a script fed to
-a shell's stdin (`echo ... | sh`), or ssh option forms the probe cannot
-reproduce (combined `-p2222`, `-o`/`-J` chains — the probe then dials its
-default route, which can misjudge a box it cannot actually see).
-"""
+Pass commands as launch arguments; detached tmux injection is permitted.
+Detection is literal, not a complete shell interpreter: generated scripts and
+unsupported ssh option forms can escape analysis."""
 
 import json
 import re
@@ -94,9 +14,7 @@ import time
 
 OPENER = "scripts/open-iterm-window-running-command"
 
-# The hook's settings.json registration must give the hook more than this
-# budget (currently 30s registered vs 18s budget): a timed-out hook fails
-# open, so the guard must always answer inside its own timeout.
+# Keep this budget below the registered hook timeout: timed-out hooks fail open.
 PROBE_BUDGET_SECONDS = 18.0
 PER_PROBE_TIMEOUT_SECONDS = 10.0
 SSH_CONNECT_TIMEOUT_SECONDS = 5
@@ -105,19 +23,16 @@ MAX_ANALYSIS_DEPTH = 4
 KEYSTROKE_VERBS = {"send-keys", "send", "paste-buffer", "pasteb"}
 SHELL_CONSUMER_PROGRAMS = {"sh", "bash", "zsh", "dash", "ksh"}
 
-# tmux flags that precede the command verb and consume a value.
 TMUX_GLOBAL_VALUE_FLAGS = {"-S", "-L", "-f", "-c", "-T"}
 
-# ssh options that consume a following value; anything else starting with "-"
-# is a bare flag. Needed to find the hostname in an ssh-wrapped command.
+# Options with values must be skipped as pairs to locate the ssh hostname.
 SSH_VALUE_OPTIONS = {
     "-o", "-p", "-i", "-l", "-F", "-J", "-E", "-L", "-R", "-D", "-W",
     "-b", "-c", "-e", "-m", "-Q", "-S", "-B", "-w",
 }
-# The subset the probe re-uses so it dials the same box the command would.
 SSH_CARRIED_OPTIONS = {"-p", "-i", "-l"}
 
-# Sentinel ssh host for a chain the probe cannot reproduce (ssh inside ssh).
+# Sentinel for an ssh chain the probe cannot reproduce.
 NESTED_SSH_HOST = "<nested-ssh>"
 
 APPLESCRIPT_TYPING_PATTERN = re.compile(r"write text|\bkeystroke\b|\bkey code\b")
@@ -125,6 +40,13 @@ APPLESCRIPT_TYPING_PATTERN = re.compile(r"write text|\bkeystroke\b|\bkey code\b"
 ENVIRONMENT_ASSIGNMENT_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 
 COMMAND_SEPARATOR_CHARS = ";\n&|()`"
+
+# Hex encoding isolates expansion commands from quote and glob scanners.
+# NUL cannot occur in a real shell command, so the marker cannot collide with command text.
+EXPANDED_BODY_COMMANDS_MARK = "\x00"
+
+# Bound recursion because a crashed PreToolUse hook lets the command through.
+MAX_SUBSTITUTION_NESTING = 64
 
 SYNTHETIC_TYPING_REASON = (
     "Blocked: AppleScript synthetic typing — iTerm `write text`, System "
@@ -171,8 +93,7 @@ NO_TARGET_REASON = (
 
 
 class GuardRun:
-    """Per-invocation mutable state: the shared probe budget clock, the
-    (host, target) probe cache, and analysis recursion depth."""
+    """Shared probe budget, cache, and recursion depth for one guard invocation."""
 
     def __init__(self, runner, clock):
         self.runner = runner
@@ -182,136 +103,287 @@ class GuardRun:
         self.depth = 0
 
 
-def scan_line_for_heredoc_markers(line, in_single, in_double):
-    """Find heredoc delimiters opened on this shell line. Quote-aware, with
-    quote state carried in and out so a `<<` inside a string — even a string
-    opened on an earlier line — is data. `<<<` is a here-string and a purely
-    numeric "delimiter" is arithmetic (`1<<20`); neither opens a heredoc.
-    Returns (terminators, in_single, in_double)."""
+class HeredocScanState:
+    """Quote, substitution, and parameter-expansion state carried between shell lines."""
+
+    def __init__(self):
+        self.in_single = False
+        self.in_ansi_c = False   # inside $'...', where \' does not end the string
+        self.in_double = False
+        self.substitution_depths = []
+        self.braces = []  # (substitution level, parenthesis count) for each open ${
+
+
+def scan_line_for_heredoc_markers(line, state):
+    """Return (terminator, body_is_expanded, operator_index) triples and update quote state."""
+    # Quoted << is data, <<< is a here-string, and numeric delimiters can be arithmetic shifts.
     terminators = []
+    depths = state.substitution_depths
+    braces = state.braces
     i, n = 0, len(line)
     while i < n:
         char = line[i]
-        if in_single:
+        if state.in_single or state.in_ansi_c:
+            if char == "\\" and state.in_ansi_c:
+                i += 2
+                continue
             if char == "'":
-                in_single = False
+                state.in_single = state.in_ansi_c = False
             i += 1
             continue
-        if in_double:
-            if char == "\\":
+        if state.in_double:
+            if char == "\\" or line[i:i + 2] == "$$":
                 i += 2
                 continue
             if char == '"':
-                in_double = False
+                state.in_double = False
+            elif line[i:i + 2] == "$(":
+                depths.append(0)
+                state.in_double = False
+                i += 1
             i += 1
             continue
-        if char == "\\":
+        if char == "\\" or line[i:i + 2] == "$$":
+            i += 2
+            continue
+        if line[i:i + 2] == "$'":
+            state.in_ansi_c = True
             i += 2
             continue
         if char == "'":
-            in_single = True
+            state.in_single = True
             i += 1
             continue
         if char == '"':
-            in_double = True
+            state.in_double = True
+            i += 1
+            continue
+        if depths and line[i:i + 2] == "${":
+            braces.append((len(depths), depths[-1]))
+            i += 2
+            continue
+        in_braces = bool(braces) and braces[-1][0] == len(depths)
+        if char == "}" and in_braces:
+            braces.pop()
+            i += 1
+            continue
+        if char in "()" and depths:
+            if in_braces and depths[-1] <= braces[-1][1] and not (
+                    char == "(" and line[i - 1:i] == "$"):
+                i += 1  # A parenthesis in the expansion pattern does not close the substitution.
+                continue
+            if char == "(":
+                depths[-1] += 1
+            elif depths[-1]:
+                depths[-1] -= 1
+            else:
+                depths.pop()
+                state.in_double = True  # Resume the surrounding string after the substitution closes.
+                while braces and braces[-1][0] > len(depths):
+                    braces.pop()
             i += 1
             continue
         if char == "#" and (i == 0 or line[i - 1] in " \t;&|()`"):
-            break  # unquoted comment — the rest of the line is not shell
+            break
         if char == "<" and line[i:i + 2] == "<<" and line[i:i + 3] != "<<<" \
                 and (i == 0 or line[i - 1] != "<"):
-            prefix = line[:i]
-            if "$((" in prefix and "))" not in prefix[prefix.rindex("$(("):]:
-                i += 2  # inside shell arithmetic, e.g. $((x<<2))
+            if inside_shell_arithmetic(line[:i]):
+                i += 2  # Arithmetic << is a shift, not a heredoc.
                 continue
             j = i + 2
             if j < n and line[j] == "-":
                 j += 1
             while j < n and line[j] in " \t":
                 j += 1
-            if j < n and line[j] in "'\"":
-                closing = line.find(line[j], j + 1)
-                if closing != -1:
-                    terminators.append(line[j + 1:closing])
-                    i = closing + 1
-                    continue
+            delimiter = read_heredoc_delimiter(line, j)
+            if delimiter is None:
                 i = j + 1
                 continue
-            match = re.match(r"""[^\s<>|&;()'"`]+""", line[j:])
-            if match:
-                delimiter = match.group(0)
-                if not delimiter.isdigit():
-                    terminators.append(delimiter)
-                i = j + len(delimiter)
-                continue
-            i = j
+            terminator, body_is_expanded, end = delimiter
+            if end > j and not (body_is_expanded and terminator.isdigit()):
+                terminators.append((terminator, body_is_expanded, i))
+            i = end
             continue
         i += 1
-    return terminators, in_single, in_double
+    return terminators
+
+
+def inside_shell_arithmetic(prefix):
+    """Return whether a shift is inside arithmetic rather than a nested command substitution."""
+    if "$((" not in prefix:
+        return False
+    tail = prefix[prefix.rindex("$((") + 3:]
+    if "))" in tail:
+        return False
+    open_substitutions = 0
+    k = 0
+    while k < len(tail):
+        if tail[k:k + 2] == "$(" and tail[k + 2:k + 3] != "(":
+            open_substitutions += 1
+            k += 2
+            continue
+        if tail[k] == ")" and open_substitutions:
+            open_substitutions -= 1
+        k += 1
+    return open_substitutions == 0
+
+
+def read_heredoc_delimiter(line, start):
+    """Return (terminator, body_is_expanded, end), or None for an unclosed quote."""
+    # Any quoting in a delimiter suppresses expansion; all quoting is removed from the terminator.
+    terminator = []
+    quoted = False
+    i, n = start, len(line)
+    while i < n and line[i] not in " \t<>|&;()`":
+        if line[i] == "\\":
+            terminator.append(line[i + 1:i + 2])
+            quoted = True
+            i += 2
+        elif line[i] in "'\"":
+            closing = line.find(line[i], i + 1)
+            if closing == -1:
+                return None
+            terminator.append(line[i + 1:closing])
+            quoted = True
+            i = closing + 1
+        else:
+            terminator.append(line[i])
+            i += 1
+    return "".join(terminator), not quoted, i
+
+
+def substitutions_in_expanded_text(text):
+    """Return command lists executed while expanding an unquoted-delimiter heredoc."""
+    # An unclosed substitution runs nothing; the shell rejects it and stops expansion.
+    found = []
+    i, n = 0, len(text)
+    while i < n:
+        if text[i] == "\\" or text[i:i + 2] == "$$":
+            i += 2
+        elif text[i:i + 2] == "$(":
+            _commands, closing = tokenize_command_list(text, i + 2, (i,))
+            if closing >= n:
+                break
+            found.append(text[i + 2:closing])
+            i = closing + 1
+        elif text[i] == "`":
+            closing = i + 1
+            while closing < n and text[closing] != "`":
+                closing += 2 if text[closing] == "\\" else 1
+            if closing >= n:
+                break
+            found.append(text[i + 1:closing])
+            i = closing + 1
+        else:
+            i += 1
+    return found
 
 
 def split_out_heredocs(command):
-    """Return (shell_view, heredocs): the command with heredoc bodies removed,
-    and a list of (consumer_line, body) pairs.
-
-    A heredoc body is data to the shell — a commit message or a written file
-    mentioning `osascript` and `write text` is prose, not keystrokes, and the
-    guard blocked its own commit message before learning this. But the body IS
-    the script when the consumer executes it (`osascript <<EOF`, `sh <<EOF`),
-    so consumers are kept for the caller to judge.
-
-    Terminator matching strips indentation, which is laxer than the shell
-    for `<<` without a dash; a body ending early only exposes more lines to
-    analysis — the fail-closed direction."""
+    """Return (shell_view, heredocs), retaining consumers and encoded expansion commands."""
+    # A body is data unless its consumer executes it; unquoted delimiters also execute substitutions.
+    # Lax terminator matching exposes extra text to analysis rather than hiding commands.
     shell_lines, heredocs = [], []
-    lines = command.split("\n")
+    lines = command.replace(EXPANDED_BODY_COMMANDS_MARK, "").split("\n")
     index = 0
-    in_single = in_double = False
+    state = HeredocScanState()
     while index < len(lines):
         line = lines[index]
-        terminators, in_single, in_double = scan_line_for_heredoc_markers(
-            line, in_single, in_double)
-        shell_lines.append(line)
+        terminators = scan_line_for_heredoc_markers(line, state)
         index += 1
-        for terminator in terminators:
+        expanded_bodies = []  # (operator_index, marked command lists)
+        for terminator, body_is_expanded, operator_index in terminators:
             body_lines = []
-            while index < len(lines) and lines[index].strip() != terminator:
+            while index < len(lines):
+                candidate = lines[index].strip()
+                if candidate == terminator:
+                    index += 1
+                    break
+                if candidate.startswith(terminator + ")"):
+                    lines[index] = lines[index].lstrip()[len(terminator):]
+                    break  # The suffix beginning at ) resumes shell syntax.
                 body_lines.append(lines[index])
                 index += 1
-            index += 1  # the terminator line itself
-            heredocs.append((line, "\n".join(body_lines)))
+            body = "\n".join(body_lines)
+            heredocs.append((line, body))
+            if body_is_expanded:
+                expanded_bodies.append((operator_index, "".join(
+                    EXPANDED_BODY_COMMANDS_MARK
+                    + text.encode("utf-8", "surrogatepass").hex()
+                    + EXPANDED_BODY_COMMANDS_MARK
+                    for text in substitutions_in_expanded_text(body))))
+        for operator_index, marked in reversed(expanded_bodies):
+            line = line[:operator_index] + marked + line[operator_index:]
+        shell_lines.append(line)
     return "\n".join(shell_lines), heredocs
 
 
-def tokenize_simple_commands(shell_text):
-    """Split shell text into simple commands — lists of words with quoting
-    resolved — cut at ;, newlines, &, |, parentheses, and backticks. Quoted
-    material becomes part of a word and never separates, which is what lets
-    the guard tell `tmux send-keys` the invocation from "tmux send-keys" the
-    quoted prose. Not a full shell grammar: redirections stay as plain words
-    and expansions are not performed."""
+def tokenize_simple_commands(shell_text, glob_markers=None):
+    """Return simple commands with quoting resolved and substitutions preceding their consumers."""
+    # This is not a full shell grammar: redirects remain words and expansions are not performed.
+    # Glob markers preserve which characters were unquoted and unescaped.
+    commands, _end = tokenize_command_list(shell_text, 0, (), glob_markers)
+    return commands
+
+
+class SubstitutionCommand(list):
+    """Words tagged with enclosing substitutions so callers keep subshell state isolated."""
+
+    def __init__(self, words, substitution):
+        super().__init__(words)
+        self.substitution = substitution
+
+
+def read_whole_command_list(text, substitution, glob_markers):
+    """Read all commands, including those after an unmatched closing parenthesis."""
+    commands, start = [], 0
+    while start < len(text):
+        found, end = tokenize_command_list(text, start, substitution, glob_markers)
+        commands.extend(found)
+        start = end + 1
+    return commands
+
+
+def tokenize_command_list(shell_text, start, substitution, glob_markers=None):
+    """Return (commands, end), where end is the closing substitution index or text length."""
     commands, current = [], []
     word = None
+    open_parentheses = 0
+    brace_depths = []   # Parenthesis depth at each open ${
+    last_dollar = None  # Index of the last unquoted, unescaped $
+    # Each case carries its parenthesis depth and phase: header before in,
+    # pattern before ), then body until ;;, ;& or ;;&.
+    open_cases = []
 
     def end_word():
         nonlocal word
         if word is not None:
-            current.append("".join(word))
+            text = "".join(word)
+            current.append(text)
             word = None
+            if text == "case" and len(current) == 1:
+                open_cases.append([open_parentheses, "header"])
+            elif (open_cases and open_cases[-1][1] == "header"
+                    and len(current) == 3 and current[0] == "case" and text == "in"):
+                open_cases[-1][1] = "pattern"
+                end_command()
+            elif open_cases and text == "esac" and len(current) == 1:
+                open_cases.pop()
 
     def end_command():
         nonlocal current
         end_word()
         if current:
-            commands.append(current)
+            commands.append(
+                SubstitutionCommand(current, substitution) if substitution else current)
             current = []
 
-    i, n = 0, len(shell_text)
+    i, n = start, len(shell_text)
     while i < n:
         char = shell_text[i]
         if char == "\\":
             if i + 1 < n and shell_text[i + 1] == "\n":
-                i += 2  # line continuation
+                i += 2
                 continue
             if word is None:
                 word = []
@@ -322,23 +394,59 @@ def tokenize_simple_commands(shell_text):
         if char == "'":
             if word is None:
                 word = []
-            closing = shell_text.find("'", i + 1)
-            if closing == -1:
-                word.append(shell_text[i + 1:])
-                i = n
+            closing = i + 1
+            if last_dollar == i - 1:
+                # $'...' permits escaped quotes, so \' does not end the string.
+                while closing < n and shell_text[closing] != "'":
+                    closing += 2 if shell_text[closing] == "\\" else 1
             else:
-                word.append(shell_text[i + 1:closing])
-                i = closing + 1
+                closing = shell_text.find("'", i + 1)
+                if closing == -1:
+                    closing = n
+            word.append(shell_text[i + 1:closing])
+            i = min(closing + 1, n)
             continue
         if char == '"':
             if word is None:
                 word = []
             piece = []
+            lost_its_place = False
             j = i + 1
             while j < n and shell_text[j] != '"':
                 if shell_text[j] == "\\" and j + 1 < n and shell_text[j + 1] in '"\\$`':
                     piece.append(shell_text[j + 1])
                     j += 2
+                elif shell_text[j:j + 2] == "$$":
+                    piece.append("$$")
+                    j += 2
+                elif (shell_text[j] == "`" and not lost_its_place
+                      and len(substitution) < MAX_SUBSTITUTION_NESTING):
+                    closing = j + 1
+                    while closing < n and shell_text[closing] != "`":
+                        closing += 2 if shell_text[closing] == "\\" else 1
+                    if closing >= n:
+                        # An unmatched backtick is rejected by the shell and runs nothing.
+                        piece.append(shell_text[j])
+                        j += 1
+                        continue
+                    inner = re.sub(r'\\([$`\\"])', r"\1", shell_text[j + 1:closing])
+                    commands.extend(read_whole_command_list(
+                        inner, substitution + (j,), glob_markers))
+                    piece.append(shell_text[j:closing + 1])
+                    j = closing + 1
+                elif (shell_text[j:j + 2] == "$(" and not lost_its_place
+                      and len(substitution) < MAX_SUBSTITUTION_NESTING):
+                    substituted, closing = tokenize_command_list(
+                        shell_text, j + 2, substitution + (j,), glob_markers)
+                    commands.extend(substituted)
+                    if closing < n:
+                        piece.append(shell_text[j:closing + 1])
+                        j = closing + 1
+                    else:
+                        # An unclosed substitution must not swallow commands after the string.
+                        lost_its_place = True
+                        piece.append("$(")
+                        j += 2
                 else:
                     piece.append(shell_text[j])
                     j += 1
@@ -349,23 +457,83 @@ def tokenize_simple_commands(shell_text):
             end_word()
             i += 1
             continue
+        if char == EXPANDED_BODY_COMMANDS_MARK:
+            closing = shell_text.find(EXPANDED_BODY_COMMANDS_MARK, i + 1)
+            if closing == -1:
+                closing = n
+            encoded = shell_text[i + 1:closing]
+            try:
+                body_text = bytes.fromhex(encoded).decode("utf-8", "surrogatepass")
+            except ValueError:
+                body_text = encoded  # An input NUL rather than an encoded expansion marker.
+            # Substitutions can contain heredocs whose bodies also need classification.
+            body_shell_view, _nested_heredocs = split_out_heredocs(body_text)
+            commands.extend(read_whole_command_list(
+                body_shell_view, substitution + (i,), glob_markers))
+            i = closing + 1
+            continue
         if char in COMMAND_SEPARATOR_CHARS:
+            if (brace_depths and char in "()"
+                    and open_parentheses <= brace_depths[-1]
+                    and not (char == "(" and shell_text[i - 1] in "$<>")):
+                # Parentheses in ${...} patterns are data unless a nested substitution opened them.
+                if word is None:
+                    word = []
+                word.append(char)
+                i += 1
+                continue
+            end_word()  # Finish esac before interpreting its following parenthesis.
+            if open_cases and open_cases[-1][0] == open_parentheses:
+                expected = open_cases[-1][1]
+                if char == ")" and expected == "pattern":
+                    end_command()
+                    open_cases[-1][1] = "body"
+                    i += 1
+                    continue
+                if char == "(" and expected == "pattern" and not current:
+                    i += 1  # Optional opening parenthesis in a case pattern.
+                    continue
+                if (char == ";" and expected == "body"
+                        and shell_text[i + 1:i + 2] in (";", "&")):
+                    end_command()
+                    open_cases[-1][1] = "pattern"
+                    i += 3 if shell_text[i + 1:i + 3] == ";&" else 2
+                    continue
             end_command()
+            if char == "(":
+                open_parentheses += 1
+            elif char == ")":
+                if open_parentheses:
+                    open_parentheses -= 1
+                elif substitution:
+                    return commands, i
             i += 1
             continue
         if char == "#" and word is None:
-            # A word-initial unquoted # opens a comment, exactly the shell's
-            # rule — foo#bar stays one word (N3: a comment mentioning the
-            # banned forms must not deny the command below it).
+            # Only a word-initial unquoted # opens a shell comment; foo#bar stays one word.
             while i < n and shell_text[i] != "\n":
                 i += 1
             continue
         if word is None:
             word = []
-        word.append(char)
+        if shell_text[i:i + 2] == "$$":
+            # $$ is the process ID; neither dollar starts an expansion.
+            word.append("$$")
+            i += 2
+            continue
+        if char == "$":
+            last_dollar = i
+            if shell_text[i + 1:i + 2] == "{":
+                brace_depths.append(open_parentheses)
+                word.append("${")
+                i += 2
+                continue
+        elif char == "}" and brace_depths:
+            brace_depths.pop()
+        word.append(glob_markers.get(char, char) if glob_markers else char)
         i += 1
     end_command()
-    return commands
+    return commands, n
 
 
 def is_program(word, name):
@@ -373,10 +541,7 @@ def is_program(word, name):
 
 
 def parse_ssh_invocation(words):
-    """Given the words after an `ssh`, return (host, carried_options,
-    remote_words). carried_options are the -p/-i/-l pairs the probe re-uses
-    so it dials the same box. Combined forms like -p2222 read as bare flags
-    and are not carried — a probe that then fails denies as unverifiable."""
+    """Return (host, carried_options, remote_words), carrying only separate -p/-i/-l pairs."""
     carried = []
     index = 0
     while index < len(words):
@@ -394,10 +559,7 @@ def parse_ssh_invocation(words):
 
 
 def find_tmux_keystroke_verb(words):
-    """Return the index of the tmux command verb within the words after
-    `tmux` when that verb is a keystroke verb, else None. Walks tmux's
-    pre-verb global flags rather than grepping, so `tmux kill-session -t
-    send` — where 'send' is a target value — is not read as the send alias."""
+    """Return the keystroke verb’s index after tmux global flags, or None."""
     index = 0
     while index < len(words):
         word = words[index]
@@ -412,12 +574,7 @@ def find_tmux_keystroke_verb(words):
 
 
 def extract_tmux_server_flags(words):
-    """The -L/-S socket flag pair the tmux invocation itself carries, from
-    the pre-verb global flags: ["-L", "name"], ["-S", "path"], or []. The
-    probe must dial the same server the command will — with per-seat servers
-    (one tmux server per seat, 2026-08-21), the default server knowing
-    nothing about a session says nothing about the server a socket-flagged
-    command actually addresses."""
+    """Return the invocation’s -L/-S pair, or an empty list."""
     index = 0
     while index < len(words):
         word = words[index]
@@ -434,23 +591,18 @@ def extract_tmux_server_flags(words):
         if word.startswith("-"):
             index += 1
             continue
-        return []  # reached the command verb without a socket flag
+        return []
     return []
 
 
 def per_seat_server_flags_for_target(target):
-    """The -L flags of the per-seat server a target's session would live on:
-    socket name == session name, the launchers' rule since 2026-08-21. The
-    session name is the target up to any ':' window/pane qualifier, with
-    tmux's '=' exact-match prefix stripped."""
+    # The launchers use the session name as the per-seat socket name.
     session_name = target.lstrip("=").split(":", 1)[0]
     return ["-L", session_name] if session_name else []
 
 
 def extract_tmux_targets(words):
-    """All -t values in the words after a keystroke verb: `-t name`,
-    `-tname`, and (via the tokenizer) quoted names with spaces. Deduplicated,
-    order preserved."""
+    """Return unique -t targets in invocation order."""
     targets = []
     index = 0
     while index < len(words):
@@ -474,8 +626,7 @@ def probe_argv(target, server_flags, ssh_context):
     if ssh_context is None:
         return tmux_argv
     host, carried = ssh_context
-    # ssh joins its command words with spaces and the remote shell re-splits,
-    # so each word is quoted — a target like 'seat a' must survive the trip.
+    # ssh joins words and the remote shell re-splits them; quote targets containing spaces.
     remote = " ".join(shlex.quote(part) for part in tmux_argv)
     return (["ssh", "-o", "BatchMode=yes",
              "-o", "ConnectTimeout=%d" % SSH_CONNECT_TIMEOUT_SECONDS]
@@ -483,11 +634,7 @@ def probe_argv(target, server_flags, ssh_context):
 
 
 def probe_recipe(target, server_flags, ssh_context):
-    """The by-hand verification command a deny message teaches. Carries the
-    guarded command's own socket flags when it has them; otherwise appends
-    the per-seat-server probe, since a seat's session lives on its own
-    socket (2026-08-21) and the plain probe alone can answer 'no server
-    running' about a seat that is very much attached."""
+    """Return a by-hand verification command for the target’s possible servers."""
     def one_probe(flags):
         flags_text = "".join(" %s" % part for part in flags)
         if ssh_context is None or ssh_context[0] == NESTED_SSH_HOST:
@@ -509,11 +656,7 @@ def probe_recipe(target, server_flags, ssh_context):
 
 
 def run_attachment_probe(target, server_flags, ssh_context, guard):
-    """One probe against one tmux server. Returns ("count", n) when that
-    server answered, ("unknown", error) when it does not know the session
-    (or is not running at all), ("unverifiable", error) otherwise. Probes
-    share the guard's global budget (a timed-out hook fails open, so
-    overruns must deny, not die)."""
+    """Return (status, count_or_error), with status count, unknown, or unverifiable."""
     remaining = guard.deadline - guard.clock()
     if remaining <= 0:
         return ("unverifiable",
@@ -524,18 +667,11 @@ def run_attachment_probe(target, server_flags, ssh_context, guard):
     try:
         completed = guard.runner(argv, capture_output=True, text=True,
                                  timeout=min(PER_PROBE_TIMEOUT_SECONDS, remaining))
-    except Exception as error:  # timeout, missing binary — cannot verify
+    except Exception as error:
         return ("unverifiable", str(error))
     if completed.returncode != 0:
         error_text = (completed.stderr or "").strip()
-        # Three shapes mean "this server cannot answer for that session":
-        # "can't find" (server knows sessions, not this one), "no server
-        # running" (socket file exists, no server behind it), and "error
-        # connecting" (connect-stage failure: absent socket file — the
-        # steady state for a never-dialed socket path, PR #122 review P2-2 —
-        # or a refused connection on a dead server's leftover socket; matched
-        # broadly on purpose, since every connect-stage reason means exactly
-        # this). All three mean the NEXT candidate server may still know it.
+        # An unknown session or unavailable socket may exist on the next candidate server.
         if ("can't find" in error_text or "no server running" in error_text
                 or "error connecting" in error_text):
             return ("unknown", error_text)
@@ -543,10 +679,7 @@ def run_attachment_probe(target, server_flags, ssh_context, guard):
                 error_text or "probe exited %d" % completed.returncode)
     stdout_text = (completed.stdout or "").strip()
     if not stdout_text:
-        # rc 0 with empty stdout is tmux's CANFAIL shape for display-message
-        # against a session this (live) server does not know — NOT a count of
-        # 0 attached clients (PR #122 review P2-1). Treating it as a count
-        # ended the candidate loop and the per-seat -L probe never ran.
+        # tmux CANFAIL returns exit 0 with empty stdout for an unknown session, not zero attached clients.
         return ("unknown", "server answered but does not know the session")
     try:
         return ("count", int(stdout_text))
@@ -555,20 +688,9 @@ def run_attachment_probe(target, server_flags, ssh_context, guard):
 
 
 def query_session_attached(target, server_flags, ssh_context, guard):
-    """Return (attached_count, error). attached_count is None when
-    unverifiable; a session NO probed server knows counts as 0 — there is
-    nothing to type into, and the command fails on its own.
-
-    Which servers are probed (per-seat tmux servers, 2026-08-21): when the
-    command carries its own -L/-S socket flag, exactly that server — the
-    only one its keystrokes can reach. Otherwise the plain resolution first
-    (the same $TMUX-or-default dial the unflagged command gets, which also
-    covers pre-change seats still on the default server), then the seat's
-    own server (-L <session part of the target>) — without that second
-    probe, an attached session on its own server reads as "no server
-    running" and would be misjudged as detached. An unverifiable probe
-    denies immediately rather than shopping on to a later "unknown".
-    Results are cached per (host, server flags, target)."""
+    """Return (attached_count, error), with None for unverifiable and 0 for unknown sessions."""
+    # An explicit socket is exclusive; otherwise an unknown default session may exist on its own socket.
+    # Stop on an unverifiable probe rather than accepting a later unknown result.
     key = (ssh_context, tuple(server_flags), target)
     if key in guard.probe_cache:
         return guard.probe_cache[key]
@@ -590,13 +712,13 @@ def query_session_attached(target, server_flags, ssh_context, guard):
         if kind == "unverifiable":
             result = (None, detail)
             break
-        result = (0, detail)  # unknown on this server — the next may know it
+        result = (0, detail)
     guard.probe_cache[key] = result
     return result
 
 
 def analyze_simple_command(words, ssh_context, verified, guard):
-    """Rule on one simple command. Returns a deny reason or None."""
+    """Return a denial reason, or None."""
     index = 0
     while index < len(words) and ENVIRONMENT_ASSIGNMENT_PATTERN.match(words[index]):
         index += 1
@@ -621,15 +743,11 @@ def analyze_simple_command(words, ssh_context, verified, guard):
     after = body[special_index + 1:]
 
     if special_kind == "eval":
-        # eval's arguments are a command; the old substring scan caught this
-        # incidentally, the parser must catch it deliberately.
         return analyze_command_text(" ".join(after), ssh_context, verified,
                                     guard)
 
     if special_kind == "shell":
-        # An inline execution string (`sh -c '...'`) is a command, not data,
-        # and the c may ride in a flag cluster — `bash -lc`, `sh -euc` (N2).
-        # A shell without -c executes a file — laundering, disclaimed.
+        # The execution flag can be clustered, as in bash -lc or sh -euc.
         for position, word in enumerate(after):
             if (word.startswith("-") and not word.startswith("--")
                     and word[1:].isalpha() and "c" in word[1:]
@@ -651,8 +769,7 @@ def analyze_simple_command(words, ssh_context, verified, guard):
             remote_context = (NESTED_SSH_HOST, ())
         else:
             remote_context = (host, tuple(carried))
-        # Re-joining mirrors ssh itself: it joins the words with spaces and
-        # the remote shell re-parses them.
+        # ssh joins command words with spaces before the remote shell parses them.
         return analyze_command_text(" ".join(remote_words), remote_context,
                                     verified, guard)
 
@@ -661,16 +778,13 @@ def analyze_simple_command(words, ssh_context, verified, guard):
         return None
     if verified:
         return None
-    # The command's own -L/-S socket flag names the only server its
-    # keystrokes can reach, so the probes must dial that same server.
+    # An explicit socket names the only server these keystrokes can reach.
     server_flags = extract_tmux_server_flags(after[:verb_index])
     targets = extract_tmux_targets(after[verb_index + 1:])
     if not targets:
         return NO_TARGET_REASON
     for target in targets:
-        # $VAR and `...` are shell expansions; {} is xargs'/parallel's
-        # substitution placeholder (N1) — probing any of them literally gets
-        # "can't find" and would allow while the real target may be attached.
+        # Probing expansions or xargs placeholders literally would report unknown and allow a possibly attached target.
         if "$" in target or "`" in target or "{}" in target:
             return UNRESOLVED_TARGET_REASON.format(
                 target=target, probe=probe_recipe(target, server_flags, ssh_context))
@@ -686,8 +800,7 @@ def analyze_simple_command(words, ssh_context, verified, guard):
 
 
 def analyze_command_text(text, ssh_context, verified, guard):
-    """Analyze shell text (the whole Bash command, an ssh remote command, or
-    a shell-consumed heredoc body). Returns a deny reason or None."""
+    """Return a denial reason for shell text, or None."""
     if guard.depth >= MAX_ANALYSIS_DEPTH:
         return None
     guard.depth += 1

@@ -11,7 +11,7 @@ the builder.
 **The specification is canonical, not this document.**
 [`nc-systems/main-gatekeeper/main-gatekeeper-design.md`](../../nc-systems/main-gatekeeper/main-gatekeeper-design.md)
 (design-as-of 2026-07-24) states the contract; the build bindings in
-[`docs/issues/queue/3-gatekeeper-build-bindings.md`](queue/3-gatekeeper-build-bindings.md)
+[`docs/issues/3-gatekeeper-build-bindings.md`](3-gatekeeper-build-bindings.md)
 (user-walked 2026-07-30) supplement it with B1–B6. This plan only says what
 gets built in what order, and answers questions those two documents leave
 open. Where this plan and the specification appear to disagree, the
@@ -1105,7 +1105,7 @@ not redone:
    'ruff|mypy|pytest|gitleaks|nc-checkin-quality-gate|check battery' main --`
    over `docs/issues/3-main-gatekeeper-build-slice-plan.md`,
    `nc-systems/main-gatekeeper/main-gatekeeper-design.md` and
-   `docs/issues/queue/3-gatekeeper-build-bindings.md` returns zero hits in
+   `docs/issues/3-gatekeeper-build-bindings.md` returns zero hits in
    all three; the same query over `nc-systems/main-gatekeeper/main-gatekeeper.py` also returns
    zero. Only the two toolchain documents name it. All five slices are
    built, so today the gate screens the request, builds the candidate and

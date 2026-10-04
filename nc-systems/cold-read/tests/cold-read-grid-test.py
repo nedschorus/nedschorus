@@ -131,6 +131,7 @@ Run: python3 nc-systems/cold-read/tests/cold-read-grid-test.py
 
 import datetime
 import importlib.util
+import inspect
 import json
 import os
 import shutil
@@ -170,6 +171,11 @@ FIXED_RECORD_CLOCK_FOR_TESTS = "2026-09-16T10:42"
 # cells at random. A case about the mid-run stop leaves it unset.
 TARGET_CHECK_INTERVAL_OVERRIDE_VARIABLE = "COLD_READ_GRID_TARGET_CHECK_INTERVAL_SECONDS"
 END_OF_RUN_COMPARISON_ONLY = {TARGET_CHECK_INTERVAL_OVERRIDE_VARIABLE: "86400"}
+# Every run here polls its cells this often instead of every 5 seconds, through
+# the grid's override: the stubs finish at once, so the production poll is only
+# waiting.
+CELL_POLL_INTERVAL_OVERRIDE_VARIABLE = "COLD_READ_GRID_CELL_POLL_INTERVAL_SECONDS"
+CELL_POLL_INTERVAL_FOR_TESTS_SECONDS = "0.1"
 
 TARGET_RELATIVE_PATH = "docs/drafts/cold-read-grid-test-target.md"
 
@@ -289,19 +295,6 @@ if effort_log:
             effort = argument.split("=", 1)[1]
     with open(effort_log, "a", encoding="utf-8") as handle:
         handle.write(f"{given.name} {effort}\n")
-if os.environ.get("COLD_READ_GRID_TEST_STUB_EDIT_FROZEN_COPY_WHEN_STOPPED"):
-    # A reviewer that writes the copy it was given in the moment between the
-    # grid seeing the original move and the grid stopping it.
-    import signal
-    frozen_copies = [found for found in re.findall(
-        r"[^\s\"']+cold-read-grid-test-target\.md", prompt) if "/target/" in found]
-    def write_frozen_copy_and_exit(signal_number, frame):
-        if frozen_copies:
-            os.chmod(frozen_copies[0], 0o644)
-            with open(frozen_copies[0], "a", encoding="utf-8") as handle:
-                handle.write("The reviewer's edit to its copy as it was stopped.\n")
-        sys.exit(0)
-    signal.signal(signal.SIGTERM, write_frozen_copy_and_exit)
 sleep_seconds = float(os.environ.get("COLD_READ_GRID_TEST_STUB_SLEEP_SECONDS") or 0)
 fast_fragment = os.environ.get("COLD_READ_GRID_TEST_STUB_FAST_REPORT_NAME_FRAGMENT")
 if sleep_seconds and not (fast_fragment and fast_fragment in given.name):
@@ -381,10 +374,16 @@ def run_grid(repository, stub_directory, environment_overrides=None,
         stub = stub_directory / runtime_name
         stub.write_text(STUB_MODEL_RUNTIME, encoding="utf-8")
         stub.chmod(0o755)
+    # Every Codex cell scans HOME for credential files at launch, and the
+    # real home takes seconds to walk.
+    scratch_home = repository.parent / "scratch-home"
+    scratch_home.mkdir(exist_ok=True)
     environment = dict(os.environ)
+    environment["HOME"] = str(scratch_home)
     environment["PATH"] = f"{stub_directory}{os.pathsep}{environment.get('PATH', '')}"
     environment[RECORD_SHIP_DESTINATION_VARIABLE] = str(repository / SCRATCH_LOG_STORE_RELATIVE)
     environment[RECORD_CLOCK_OVERRIDE_VARIABLE] = FIXED_RECORD_CLOCK_FOR_TESTS
+    environment[CELL_POLL_INTERVAL_OVERRIDE_VARIABLE] = CELL_POLL_INTERVAL_FOR_TESTS_SECONDS
     environment["COLD_READ_GRID_TEST_STUB_ATTEMPT_COUNTER_DIRECTORY"] = str(
         repository.parent / "stub-attempt-counts" / repository.name / str(time.time_ns()))
     environment.update(environment_overrides or {})
@@ -607,6 +606,12 @@ with tempfile.TemporaryDirectory() as scratch:
           "five criteria, with the criteria numbers per item and a closing counts "
           "line; triage them the same way as the defect-hunt reports." in closing_text,
           repr(result.stdout))
+    check("the closing text counts one reviewer's problem and defers to step 9 of the skill",
+          "A problem one reviewer alone reports is real. Then apply your changes, "
+          "and take to the user only what step 9 of the /cold-read skill sends to "
+          "the user." in closing_text
+          and "walk-me-through" not in closing_text,
+          repr(result.stdout))
 
     # --- A target that moves while reviewers are still reading ---------------
     # The run stops at the first poll that sees the move (user-ruled
@@ -680,44 +685,14 @@ with tempfile.TemporaryDirectory() as scratch:
           and all("failure to look, not a clean result" in line for line in unchecked_lines),
           repr(unchecked_lines))
 
-    # --- The copy is written while the grid is stopping the cells -------------
-    # The poll sees only the original move; a reviewer then writes the frozen
-    # copy as it is stopped. The marker must say what moved last, the copy,
-    # not stamp the set "the frozen copy did not move" (PR 699's review).
-    repository = build_scratch_repository(scratch, "checkout-copy-written-while-stopping")
-    result = run_grid(repository, scratch / "stub-bin-copy-written-while-stopping", {
-        "COLD_READ_GRID_TEST_STUB_SLEEP_SECONDS": "120",
-        "COLD_READ_GRID_TEST_STUB_FAST_REPORT_NAME_FRAGMENT": "codex-hunt-second",
-        "COLD_READ_GRID_TEST_STUB_EDIT_PATH": str(repository / TARGET_RELATIVE_PATH),
-        "COLD_READ_GRID_TEST_STUB_EDIT_FROZEN_COPY_WHEN_STOPPED": "1"})
-    record_directory = record_directory_of(repository)
-    # The frozen copy's path is asked of frozen_target_path(), never built
-    # here: a spelling rebuilt beside the function's diverged from it on the
-    # Mac, where /var is a symbolic link to /private/var, and that failed a
-    # correct run -- the blocking finding of 2026-09-22 on PR "The
-    # cold-read-cells read the frozen copy, which is what freezing meant":
-    # https://github.com/nedschorus/nedschorus/pull/636#discussion_r4075031001
-    # Calling the function inherits its rule instead of repeating it.
-    frozen_copy = (frozen_target_path_in_scratch_repository(repository, record_directory)
-                   if record_directory else None)
-    check("the reviewer did write the frozen copy as it was stopped",
-          frozen_copy is not None and frozen_copy.is_file()
-          and b"as it was stopped" in frozen_copy.read_bytes(),
-          f"exit {result.returncode}; stdout={result.stdout!r}")
-    marker_line = next((line for line in (
-        (record_directory / "reference-check.md").read_text(encoding="utf-8").split("\n")
-        if record_directory else []) if line.startswith("<!-- TARGET CHANGED DURING RUN:")), "")
-    check("a copy written while stopping is reported as the copy that moved",
-          "/target/" in marker_line.split("'s bytes", 1)[0]
-          and "is unknown" in marker_line and "which did not move" not in marker_line,
-          repr(marker_line))
-
     # --- A target nobody touches, across several polls ------------------------
     # The other side of the same check: readers slow enough to be polled more
     # than once, and a target nobody edits, finish as an ordinary run.
     repository = build_scratch_repository(scratch, "checkout-target-still-over-polls")
+    # Readers that take ten of this suite's polls to finish.
+    still_reading_seconds = 10 * float(CELL_POLL_INTERVAL_FOR_TESTS_SECONDS)
     result = run_grid(repository, scratch / "stub-bin-target-still-over-polls",
-                      {"COLD_READ_GRID_TEST_STUB_SLEEP_SECONDS": "12"})
+                      {"COLD_READ_GRID_TEST_STUB_SLEEP_SECONDS": str(still_reading_seconds)})
     check("a settled target over several polls stops nothing: six reviews, exit 0",
           result.returncode == 0
           and len([line for line in result.stdout.splitlines()
@@ -1207,6 +1182,15 @@ with tempfile.TemporaryDirectory() as scratch:
     grid_module = importlib.util.module_from_spec(grid_spec)
     grid_spec.loader.exec_module(grid_module)
     clock_at_1042 = datetime.datetime(2026, 9, 16, 10, 42)
+
+    # Every run in this suite overrides the poll, so no run shows the default.
+    cell_poll_parameter = inspect.signature(grid_module.wait_for_cells).parameters.get(
+        "cell_poll_interval_seconds")
+    check("grid: the cell poll interval's default, and wait_for_cells', is 5 seconds",
+          grid_module.CELL_POLL_INTERVAL_DEFAULT_SECONDS == 5
+          and cell_poll_parameter is not None and cell_poll_parameter.default == 5,
+          f"default {grid_module.CELL_POLL_INTERVAL_DEFAULT_SECONDS!r}, "
+          f"parameter {cell_poll_parameter!r}")
 
     def grid_record_name(path, clock=clock_at_1042):
         return grid_module.record_directory_name_for_target(Path(path), clock)

@@ -8,13 +8,17 @@ the real ~/.claude: the source home is overridden too.
 Run: python3 scripts/transcript-mirror-to-log-store-test.py   (exit 0 = all passed)
 """
 
+import calendar
 import fcntl
 import json
 import os
 import pathlib
+import re
+import shutil
 import subprocess
 import sys
 import tempfile
+import time
 
 SCRIPTS_DIR = pathlib.Path(__file__).resolve().parent
 MIRROR = SCRIPTS_DIR / "transcript-mirror-to-log-store.py"
@@ -24,6 +28,14 @@ RULED_DESTINATION = "nedlern@ned-box:/home/nedlern/nedschorus-logs/transcripts"
 RSYNC_SSH_TRANSPORT = ("ssh -o BatchMode=yes -o ConnectTimeout=10"
                        " -o ServerAliveInterval=15 -o ServerAliveCountMax=4")
 SERVER_ALIVE_OPTIONS = ("ServerAliveInterval=15", "ServerAliveCountMax=4")
+STAMP_NAME = "last-complete-mirror-pass-utc.txt"
+STAMP_LINE = re.compile(r"\A(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ)\n\Z")
+
+
+def stamp_seconds(text):
+    """Return the stamp's time as epoch seconds, or None if it is not one stamp line."""
+    match = STAMP_LINE.match(text)
+    return calendar.timegm(time.strptime(match.group(1), "%Y-%m-%dT%H:%M:%SZ")) if match else None
 
 STUB_RECORDER = """#!/usr/bin/env python3
 import json, os, sys
@@ -36,6 +48,9 @@ if sys.argv[0].endswith("ssh") and "wc -l" in " ".join(sys.argv):
     print(os.environ.get("MIRROR_TEST_STORE_COUNT", "0"))
 if sys.argv[0].endswith("rsync") and os.environ.get("MIRROR_TEST_RSYNC_STDERR"):
     sys.stderr.write(os.environ["MIRROR_TEST_RSYNC_STDERR"] + "\\n")
+if sys.argv[0].endswith("ssh") and "last-complete-mirror-pass-utc.txt" in " ".join(sys.argv) and os.environ.get("MIRROR_TEST_SSH_STAMP_EXIT"):
+    sys.stderr.write(os.environ.get("MIRROR_TEST_SSH_STDERR", "") + "\\n")
+    sys.exit(int(os.environ["MIRROR_TEST_SSH_STAMP_EXIT"]))
 if sys.argv[0].endswith("ssh") and "mkdir -p" in " ".join(sys.argv) and os.environ.get("MIRROR_TEST_SSH_MKDIR_EXIT"):
     sys.stderr.write(os.environ.get("MIRROR_TEST_SSH_STDERR", "") + "\\n")
     sys.exit(int(os.environ["MIRROR_TEST_SSH_MKDIR_EXIT"]))
@@ -97,6 +112,13 @@ with tempfile.TemporaryDirectory(prefix="transcript-mirror-test-") as scratch_na
           (store / machine / "projects" / "-Users-el-agents-MD-skills" / "memory" / "MEMORY.md").is_file())
     check("handoffs land under transcripts/<machine>/handoffs/",
           (store / machine / "handoffs" / "MD-skills-dialog-0001.md").is_file())
+    stamp = store / machine / STAMP_NAME
+    stamped = stamp_seconds(stamp.read_text()) if stamp.is_file() else None
+    check("a pass in which every source mirrored writes the stamp beside projects/ and handoffs/: one UTC time line, now",
+          stamped is not None and abs(stamped - time.time()) < 120,
+          repr(stamp.read_text()) if stamp.is_file() else f"{stamp} missing")
+    check("the stamp's .partial file does not outlive the rename",
+          not (store / machine / (STAMP_NAME + ".partial")).exists())
     check("each line carries the local and store counts",
           "local 2 files, store 2 files" in lines[0] and "local 1 files, store 1 files" in lines[1],
           result.stdout)
@@ -144,6 +166,12 @@ with tempfile.TemporaryDirectory(prefix="transcript-mirror-test-") as scratch_na
           repr(result.stdout + result.stderr))
     check("--failures-only still mirrors: the new handoff reached the store",
           (store / machine / "handoffs" / "MD-skills-dialog-0002.md").is_file())
+    stamp.write_text("2001-09-09T01:46:40Z\n")
+    result = run_mirror(home, str(store), args=QUIET)
+    restamped = stamp_seconds(stamp.read_text())
+    check("--failures-only: a quiet complete pass rewrites the stamp with the time of this pass",
+          result.returncode == 0 and result.stdout == ""
+          and restamped is not None and abs(restamped - time.time()) < 120, repr(stamp.read_text()))
     # A quiet pass writes nothing to the log, so the lock file's mtime,
     # rewritten as every run starts, is the record of when the mirror last ran.
     os.utime(lock_path, (1_000_000_000, 1_000_000_000))
@@ -155,6 +183,57 @@ with tempfile.TemporaryDirectory(prefix="transcript-mirror-test-") as scratch_na
     result = run_mirror(bare_home, str(scratch / "store-bare"), args=QUIET)
     check("--failures-only: a missing source directory is not a failure and prints nothing, exit 0",
           result.returncode == 0 and result.stdout == "", result.stdout)
+    check("a pass that found neither source directory writes no stamp",
+          not (scratch / "store-bare" / machine / STAMP_NAME).exists(),
+          str(list((scratch / "store-bare").rglob("*"))))
+    projects_only_home = make_home(scratch / "projects-only")
+    shutil.rmtree(projects_only_home / ".claude" / "handoffs")
+    result = run_mirror(projects_only_home, str(scratch / "store-projects-only"), args=QUIET)
+    check("a pass that found one source directory, the other missing, still writes the stamp",
+          result.returncode == 0
+          and (scratch / "store-projects-only" / machine / STAMP_NAME).is_file(),
+          repr(result.stdout + result.stderr))
+
+    # The stamp holds the time the pass started: an rsync that takes two
+    # seconds must not push the stamp past the moment the copying began.
+    slow_bin = scratch / "slow-rsync-bin"
+    slow_bin.mkdir()
+    rsync_starts = scratch / "rsync-starts.txt"
+    slow_rsync = slow_bin / "rsync"
+    slow_rsync.write_text(f"""#!/usr/bin/env python3
+import os, sys, time
+if "--version" not in sys.argv:
+    with open({str(rsync_starts)!r}, "a") as starts:
+        starts.write(repr(time.time()) + "\\n")
+    time.sleep(2)
+os.execv({shutil.which("rsync")!r}, ["rsync", *sys.argv[1:]])
+""")
+    slow_rsync.chmod(0o755)
+    result = run_mirror(home, str(store), args=QUIET,
+                        extra_env={"PATH": f"{slow_bin}{os.pathsep}{os.environ.get('PATH', '')}"})
+    starts = [float(line) for line in rsync_starts.read_text().split()] if rsync_starts.is_file() else []
+    started_stamp = stamp_seconds(stamp.read_text())
+    check("the stamp holds the time the pass started, not the time it ended",
+          result.returncode == 0 and starts and started_stamp is not None
+          and started_stamp <= starts[0],
+          f"exit {result.returncode}, stamp {stamp.read_text()!r}, rsync starts {starts}")
+
+    # On ned-box the stamp is written locally: a write that fails is the
+    # same FAILED line the ssh path prints, not a traceback.
+    locked_home = make_home(scratch / "locked")
+    locked_machine = scratch / "store-locked" / machine
+    (locked_machine / "projects").mkdir(parents=True)
+    (locked_machine / "handoffs").mkdir()
+    locked_machine.chmod(0o555)
+    try:
+        result = run_mirror(locked_home, str(scratch / "store-locked"), args=QUIET)
+    finally:
+        locked_machine.chmod(0o755)
+    check("--failures-only: a local stamp that cannot be written is one FAILED line naming the stamp, exit 1, no traceback",
+          result.returncode == 1
+          and result.stdout.startswith(f"FAILED: pass-time stamp — could not write {locked_machine / STAMP_NAME}")
+          and len(result.stdout.splitlines()) == 1 and "Traceback" not in result.stderr,
+          repr(result.stdout + result.stderr))
     with lock_path.open("w") as held:
         fcntl.flock(held, fcntl.LOCK_EX)
         result = run_mirror(home, str(store), args=QUIET)
@@ -176,6 +255,16 @@ with tempfile.TemporaryDirectory(prefix="transcript-mirror-test-") as scratch_na
     calls = [json.loads(line) for line in argv_log.read_text().splitlines()]
     rsync_calls = [c for c in calls if c[0].endswith("rsync")]
     ssh_calls = [c for c in calls if c[0].endswith("ssh")]
+    stamp_calls = [c for c in ssh_calls if STAMP_NAME in " ".join(c)]
+    remote_stamp = f"/home/nedlern/nedschorus-logs/transcripts/{machine}/{STAMP_NAME}"
+    check("remote mode writes the stamp on ned-box once, after both rsyncs, through a .partial file renamed over it",
+          len(stamp_calls) == 1 and calls[-1] == stamp_calls[0]
+          and stamp_calls[0][-2] == "nedlern@ned-box"
+          and f"> {remote_stamp}.partial && mv -f -- {remote_stamp}.partial {remote_stamp}" in stamp_calls[0][-1],
+          str(stamp_calls))
+    check("the remote stamp command carries one UTC time line",
+          bool(stamp_calls) and re.search(r"printf %s '\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ\n'", stamp_calls[0][-1]),
+          str(stamp_calls))
     check("remote mode exits 0 and reports both sources",
           result.returncode == 0 and result.stdout.count("mirrored:") == 2, result.stdout + result.stderr)
     check("two rsync calls, -a, over batch-mode ssh, into transcripts/<machine>/<source>/ on ned-box",
@@ -211,6 +300,9 @@ with tempfile.TemporaryDirectory(prefix="transcript-mirror-test-") as scratch_na
           result.returncode == 1 and result.stdout.count("FAILED:") == 2
           and "rsync exit 23" in result.stdout and "ned-box unreachable" not in result.stdout,
           result.stdout)
+    check("a pass with a FAILED source leaves the stamp alone: no stamp is written",
+          not any(STAMP_NAME in line for line in argv_log.read_text().splitlines()),
+          argv_log.read_text())
     argv_log.unlink()
     result = run_mirror(home, RULED_DESTINATION, dict(
         remote_env, MIRROR_TEST_RSYNC_VERSION_LINE=OPENRSYNC_VERSION_LINE, MIRROR_TEST_RSYNC_EXIT="23"))
@@ -264,6 +356,16 @@ with tempfile.TemporaryDirectory(prefix="transcript-mirror-test-") as scratch_na
     check("--failures-only: a failed preparation's ssh stderr still reaches the log",
           result.stderr.count("ssh: connect to host ned-box port 22: Operation timed out") == 2,
           repr(result.stderr))
+    argv_log.unlink()
+    result = run_mirror(home, RULED_DESTINATION, dict(
+        remote_env, MIRROR_TEST_SSH_STAMP_EXIT="255",
+        MIRROR_TEST_SSH_STDERR="ssh: connect to host ned-box port 22: Connection refused"), QUIET)
+    check("--failures-only: a stamp that cannot be written is one FAILED line naming the stamp and its exit, exit 1",
+          result.returncode == 1 and result.stdout.count("FAILED:") == 1
+          and result.stdout.startswith("FAILED: pass-time stamp — could not write nedlern@ned-box:")
+          and "(exit 255)" in result.stdout, result.stdout)
+    check("--failures-only: a failed stamp write's ssh stderr reaches the log",
+          "Connection refused" in result.stderr, repr(result.stderr))
     argv_log.unlink()
     result = run_mirror(home, RULED_DESTINATION, dict(
         remote_env, MIRROR_TEST_RSYNC_VERSION_LINE=GNU_VERSION_LINE, MIRROR_TEST_RSYNC_EXIT="23"), QUIET)

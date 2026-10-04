@@ -492,6 +492,74 @@ def identity_answers_recording_when_asked(monotonic, *answers):
     return check_recording_when_asked, asked_at
 
 
+def run_reach_clause_cases(root: Path):
+    """Every line that leaves a seat running ends naming how to reach it, per machine."""
+    real_launcher_path = recovery.launcher_path
+    mac_launcher = recovery.durable_checkout / recovery.LAUNCH_CLAUDE_MAC_WITHIN_A_CHECKOUT
+    machines = [
+        ("the Mac", lambda: mac_launcher, "; reach it with: launch-claude-mac seat-a"),
+        ("ned-box", lambda: None,
+         "; reach it with: launch-claude-ubuntu seat-a from the Mac, "
+         "or tmux -L seat-a attach -t seat-a here"),
+    ]
+    try:
+        for machine, launcher, expected_clause in machines:
+            recovery.launcher_path = launcher
+            check(f"REACH ({machine}): the reach clause, byte for byte",
+                  recovery.reach_clause_for_a_running_seat("seat-a") == expected_clause,
+                  recovery.reach_clause_for_a_running_seat("seat-a"))
+            slug = machine.replace(" ", "-")
+
+            workspace = Workspace(root / f"reach-resume-{slug}")
+            all_dead()
+            write_transcript(workspace.project_directory(), "crashed-session", "real work",
+                             records=6)
+            capture_launches(workspace)
+            report = workspace.recover()
+            check(f"REACH ({machine}): a resumed seat's line ends with the reach clause",
+                  "relaunched resuming crashed-session" in report
+                  and report.endswith(expected_clause), report)
+
+            workspace = Workspace(root / f"reach-ignite-{slug}")
+            all_dead()
+            write_transcript(workspace.project_directory(), "crashed-session", "real work")
+            (workspace.handoffs / f"{workspace.name}-dialog-0007.md").write_text(
+                "the dialog extract", encoding="utf-8")
+            capture_launches(workspace)
+            report = workspace.recover(ignite_fallback=True)
+            check(f"REACH ({machine}): an ignited seat's line ends with the reach clause",
+                  "igniting from seat-a-dialog-0007.md" in report
+                  and report.endswith(expected_clause), report)
+
+            workspace = Workspace(root / f"reach-fresh-{slug}")
+            all_dead()
+            capture_launches(workspace)
+            report = workspace.recover()
+            check(f"REACH ({machine}): a fresh seat's line ends with the reach clause",
+                  "relaunched fresh (nothing to resume, no extract to read)" in report
+                  and report.endswith(expected_clause), report)
+
+            workspace = Workspace(root / f"reach-defer-{slug}")
+            all_dead()
+            (workspace.handoffs / f"{workspace.name}-handoff.md").write_text(
+                "# Handoff\nrestart-counter: 9\nnext-step: go\n", encoding="utf-8")
+            capture_launches(workspace)
+            report = workspace.recover()
+            check(f"REACH ({machine}): a plain relaunch's line ends with the reach clause",
+                  "relaunched plain" in report and report.endswith(expected_clause), report)
+
+            workspace = Workspace(root / f"reach-dry-run-{slug}")
+            all_dead()
+            write_transcript(workspace.project_directory(), "crashed-session", "real work",
+                             records=6)
+            capture_launches(workspace)
+            report = workspace.recover(dry_run=True)
+            check(f"REACH ({machine}): a dry run launches nothing, so it names no reach",
+                  "reach it with" not in report, report)
+    finally:
+        recovery.launcher_path = real_launcher_path
+
+
 def run_came_up_cases(root: Path):
     """nedschorus#242 change 4: a launch exiting zero says the launcher ran, not
     that the seat came back. A resume whose session dies inside Claude leaves the
@@ -1434,8 +1502,8 @@ with tempfile.TemporaryDirectory() as temporary:
     # recovery marker reaches the successor, never what the prompt says; and
     # it composes with an empty branch-sync report, so the branch-state
     # sentence is not in this fixture at all. The wording is pinned in
-    # nc-systems/handoff/tests/handoff-supervisor-test.py, by the boot-recovery
-    # check that pull request [the ignition prompt's sentences are constants,
+    # nc-systems/handoff/tests/handoff-supervisor-successor-prompt-test.py, by
+    # the boot-recovery check that pull request [the ignition prompt's sentences are constants,
     # and both branch-state call sites are pinned whole]
     # (https://github.com/nedschorus/nedschorus/pull/590) added. Look there,
     # not here, before trusting that a wording change is guarded.
@@ -2399,6 +2467,7 @@ with tempfile.TemporaryDirectory() as temporary:
           completed.stderr)
 
     run_came_up_cases(root)
+    run_reach_clause_cases(root)
 
     # The same thing through recover_seat, on each path that can offer the
     # degraded restart and on one that cannot.
@@ -3246,7 +3315,8 @@ with tempfile.TemporaryDirectory() as temporary:
           report_yes == (
               f"seat-a: relaunched resuming resume-me after its supervisor recorded at "
               f"{recorded_at} that its agent exited with exit code 0"
-              + the_operator_said_to_restart_it_and_nothing_was_closed)
+              + the_operator_said_to_restart_it_and_nothing_was_closed
+              + recovery.reach_clause_for_a_running_seat("seat-a"))
           and "leftover" not in report_yes and "closed" not in report_yes
           and not any(marker in report_yes
                       for marker in recovery.SEAT_NOT_RECOVERED_REPORT_MARKERS),
@@ -3269,7 +3339,8 @@ with tempfile.TemporaryDirectory() as temporary:
           report_yes_fresh == (
               f"seat-a: relaunched fresh after its supervisor recorded at {recorded_at} that "
               "its agent exited with exit code 1, with no session to resume"
-              + the_operator_said_to_restart_it_and_nothing_was_closed),
+              + the_operator_said_to_restart_it_and_nothing_was_closed
+              + recovery.reach_clause_for_a_running_seat("seat-a")),
           report_yes_fresh)
 
     # --ignite-fallback does not turn that restart into an ignite, as it does
@@ -3414,7 +3485,8 @@ with tempfile.TemporaryDirectory() as temporary:
                   workspace.handoffs / "two-seats-second-supervisor-state.json")[
                   recovery.supervisor.AGENT_EXIT_RECORDED_AT_STATE_KEY]
               + " that its agent exited with exit code 1"
-              + the_operator_said_to_restart_it_and_nothing_was_closed),
+              + the_operator_said_to_restart_it_and_nothing_was_closed
+              + recovery.reach_clause_for_a_running_seat("two-seats-second")),
           (workspace.launches, exit_code, logged_lines))
 
     # --- the leftover idle shell is a question, not a refusal ---------------
@@ -3445,7 +3517,8 @@ with tempfile.TemporaryDirectory() as temporary:
         question_for_a_seat_that_asked_to_be_consulted)
     the_operator_said_to_restart_it = (
         "(the operator said to restart it, so the leftover shell was closed first: closed "
-        "the leftover shell — retired the tmux session on socket seat-a)")
+        "the leftover shell — retired the tmux session on socket seat-a)"
+        + recovery.reach_clause_for_a_running_seat("seat-a"))
 
     def asked_only(question, seen):
         """The operator saw exactly this one of the questions, followed by the
@@ -4187,7 +4260,7 @@ with tempfile.TemporaryDirectory() as temporary:
     relaunched_after_the_session_was_gone = (
         "seat-a: relaunched resuming resume-me (0KB transcript) (the operator said to restart "
         "it, so the leftover shell was closed first: the leftover shell was already gone when "
-        "it was retired)")
+        "it was retired)" + recovery.reach_clause_for_a_running_seat("seat-a"))
     check("LEFTOVER SHELL: a session gone while the question waited is not refused: the retire "
           "finds nothing, and the seat is relaunched, its line byte for byte",
           events == ["proof", "question", "proof", "retire"]

@@ -55,10 +55,25 @@ the proof that the fixture exercises the rule in dispute, the hyphen as a
 word end, not merely that the check is able to fail.
 
 SKILLS FIRST HAS ITS OWN RULE. A skill's entry begins `/`, which also sorts
-below every letter, so the key alone happens to keep skills first. The test
-does not leave the page's second claim to that accident: a skill following a
-term is faulted by its own rule, with its own instruction, and a case pins
-that it is that rule and not the sort that fires.
+below every letter, so the key alone happens to keep skills first above any
+term that begins with a letter. The test does not leave the page's second
+claim to that accident: a skill following a term is faulted by its own rule,
+with its own instruction, and a case pins that it is that rule and not the
+sort that fires.
+
+THE KEY IS NOT APPLIED ACROSS THE BOUNDARY FROM THE SKILLS TO THE TERMS.
+`-` sorts below `/`, so the key alone would put a term that begins with a
+hyphen above every skill. The page has one, the filename suffix `-draft`,
+approved for the page in the approval-walk
+glossary-names-for-ambiguous-project-words-2026-10-01 (items 3.1 and 3.2,
+"y", 2026-10-01). Before this rule no position passed for it: above the
+skills the skills-first rule fired, and below any entry the key fired. So the
+key compares skills with skills and terms with terms, and the pair of the
+last skill and the first term is left to the skills-first rule alone. Word by
+word, a leading hyphen ends an empty first word, so such a term is the first
+term, directly below the skills. A case pins that the fixture exercises this
+boundary: the key alone faults the fixture's last skill and its hyphen-led
+term.
 
 A PAGE THE CHECK CANNOT READ IS A FAILURE, NOT A PASS. An entry is a line
 beginning `- **term**`. Were that format to change, the check would read no
@@ -108,6 +123,8 @@ def ordering_faults(page):
         if later.startswith("/") and not earlier.startswith("/"):
             faults.append(f"line {number}: move the skill {later!r} above "
                           f"every term; skills come first.")
+        elif earlier.startswith("/") and not later.startswith("/"):
+            continue  # the boundary from the skills to the terms
         elif collation_key(later) < collation_key(earlier):
             faults.append(f"line {number}: {later!r} sorts before {earlier!r} "
                           f"on the entry above; move it into alphabetical "
@@ -131,6 +148,7 @@ Prose that is not an entry.
 
 - **/ghi-write** — a skill.
 - **/handoff** — a skill.
+- **-draft** — the first term, because a leading hyphen ends an empty word.
 - **agent-seat** — a term.
 - **C-numbers** — capitalised, after a lower-case term.
 - **SDLC-term** — capitalised, before a lower-case term.
@@ -176,6 +194,21 @@ skill_after_term = ordering_faults(swapped(FIXTURE, "/handoff", "agent-seat"))
 check("a skill after a term is faulted by the skills-first rule",
       any("skills come first" in fault for fault in skill_after_term),
       f"got {skill_after_term!r}")
+
+check("the key alone puts the hyphen-led term above the last skill, so the "
+      "next cases exercise the boundary from the skills to the terms",
+      "-draft".casefold() < "/handoff".casefold(),
+      "the fixture no longer crosses the boundary; choose a term that does")
+
+check("a hyphen-led term below another term is faulted",
+      ordering_faults(swapped(FIXTURE, "-draft", "agent-seat")),
+      "the key went unapplied among the terms")
+
+hyphen_term_among_skills = ordering_faults(
+    swapped(FIXTURE, "/handoff", "-draft"))
+check("a hyphen-led term above a skill is faulted by the skills-first rule",
+      any("skills come first" in fault for fault in hyphen_term_among_skills),
+      f"got {hyphen_term_among_skills!r}")
 
 unreadable = ordering_faults(FIXTURE.replace("- **", "* **"))
 check("a page with no readable entries is a failure, not a pass",

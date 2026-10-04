@@ -22,7 +22,7 @@ Prior disposition, superseded: candidate-on-GHI, not built, user-ruled 2026-07-2
 
 ## Riders, drained from the queue 2026-09-02
 
-Source: `docs/issues/queue/18-write-test-plan-agent-native-riders.md`, from the agent-native testing walk of 2026-07-29/30. Queued for drain since then; drained here.
+Source: `git show 7a99785c:docs/issues/queue/18-write-test-plan-agent-native-riders.md`, from the agent-native testing walk of 2026-07-29/30. Queued for drain since then; drained here.
 
 1. **Oracle-and-red-condition rule (the skill's core).** Every planned check, of any test kind, states its oracle (what is measured or compared) and its red condition (the reading that means fail) before implementation. A check whose red condition cannot occur proves nothing. This is the structural counter to implementation-mirroring tests (the user's ~95%-useless observation): a test copied from the implementation cannot state a failure it would detect.
 

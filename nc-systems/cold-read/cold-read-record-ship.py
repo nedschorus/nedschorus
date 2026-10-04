@@ -82,6 +82,47 @@ with the design:
      record's -2 rename gives the second read a directory of its own, and
      nothing is lost by waiting for it.
 
+ONE STEP, JUDGED BY WHAT THE STORE HOLDS. The new files are copied into a
+staging directory beside the record's (`.ship-staging-<name>-<random>`),
+whose name is this shipment's alone. Everything that reads or writes the
+record's directory then runs as ONE step, one ssh call to ned-box running
+place_staged_files_and_read_them_back in python3, or the same function in
+this process when the store is local: it takes the store's inventory again,
+judges it under rules 2 and 4, places the new files, replaces triage.md,
+reads the store's digests back, and removes the staging directory.
+
+  PLACING BY HARD LINK. The new files are placed into the record's directory
+  by hard link, one at a time, in a fixed order. A hard link is never made
+  over an existing file -- the link call fails when the name exists, in one
+  step -- so a file already in the store is never replaced, and placing stops
+  at the first name holding other bytes; triage.md is then left as the store
+  holds it. The store's digests of the new files are read back: a file
+  holding other bytes is REFUSED under rule 2, a file the store does not hold
+  is FAILED, and `shipped:` is printed only when every new file holds this
+  shipment's bytes.
+
+  NO LOCK. The shipper takes no lock. Two shipments of one record name at one
+  moment do not occur in real use: each record is shipped by the seat that
+  made it, and repeat shipments of one record arrive one after another. If
+  two ever do overlap and disagree on a file, the read-back finds that the
+  store does not hold this shipment's bytes for it, and the shipper prints
+  REFUSED or FAILED instead of `shipped:`. A file only one of the two has
+  lands either way, so the record can then hold files of both, which the
+  shipment that failed has said. Preventing the overlap would take a lock
+  whose abandoned copies need reclaiming, which costs more than the failure
+  it prevents.
+
+A staging directory outlives its shipment only when the copy into it fails
+and ned-box cannot be reached to remove it, or the shipment is killed before
+the step; nothing reads it.
+
+NO LOCK IN THE REPLACE STEP EITHER. replace_with_staged_files, the path a
+walk's minutes, dispositions and appended walk text and a seat's files take,
+takes no lock, for the reason NO LOCK gives above. Before any rename it looks
+for another staging directory of the same name; if one is there, another
+shipment is running or left it behind, so the step replaces nothing and the
+shipper prints FAILED naming it.
+
 The store's directories are created on first use, and a README.md at the
 store's root is rewritten from STORE_README in this file whenever it differs:
 it says what the store is, how to cite a file in it, and which program or
@@ -123,14 +164,20 @@ the invocation). A destination with no `host:` prefix is local.
 
 import argparse
 import hashlib
+import inspect
+import json
 import shlex
 import os
 import importlib.util
 import pathlib
+import secrets
+import shutil
 import socket
 import subprocess
 import sys
 import tempfile
+import textwrap
+import typing
 
 # This file sits in nc-systems/cold-read/, two directories below the root.
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent.parent
@@ -170,6 +217,22 @@ RSYNC_IO_TIMEOUT_SECONDS = "120"
 RSYNC_EXIT_CONNECTION_FAILED = 255
 PROVENANCE_COMMENT_PREFIX = "<!-- provenance:"
 
+# The new files of one shipment are copied into a directory of this name
+# beside the record's own, then hard-linked into place; see ONE STEP, JUDGED
+# BY WHAT THE STORE HOLDS above. A leading dot keeps it out of an ordinary
+# listing of the store; the record's name and a random part keep two
+# shipments apart.
+STAGING_DIRECTORY_PREFIX = ".ship-staging-"
+# Marks the one ssh call that runs the placing step, so a test's stub `ssh`
+# can tell it from the inventory.
+PLACE_STAGED_FILES_MARKER = "# cold-read-record-ship: place staged files"
+# Marks the one ssh call that links a walk's add-only files into the store,
+# for the same reason; see link_staged_files_never_over_existing.
+LINK_STAGED_FILES_MARKER = "# cold-read-record-ship: link staged files"
+# Marks the one ssh call that replaces store files with staged ones, for the
+# same reason; see replace_with_staged_files.
+REPLACE_WITH_STAGED_FILES_MARKER = "# cold-read-record-ship: replace with staged files"
+
 EXIT_SHIPPED = 0
 EXIT_FAILED = 1
 EXIT_REFUSED = 2
@@ -177,12 +240,11 @@ EXIT_BAD_INVOCATION = 64
 
 # The note at the door of the log-store, written into it by this program.
 #
-# AGENT-FACING TEXT, so it is instruction and nothing else: what the store is,
-# how to cite a file in it, which program or skill owns each kind, and what to
-# edit to change this file. No dates, no ruling citations, no account of why it reads
-# this way -- those live here and in `refresh_store_readme` below, where a
-# maintainer reads them (user-ruled 2026-09-18, on the force-push guard's
-# refusal, in CLAUDE.md).
+# AGENT-FACING TEXT, so it says what the store is, how to cite a file in it,
+# which program or skill owns each kind, and what to edit to change this file,
+# with a reason wherever the reason helps the reader act. It cites no ruling
+# and no date: a ruling or a date says only who decided and when, which does
+# not help a reader use the store.
 #
 # It used to list every kind and how its files were named. That restatement
 # went stale at each ruling that changed one, and when the cold-read-records'
@@ -227,6 +289,8 @@ in the nedschorus repository, which this machine also clones:
   main, written by `scripts/daily-full-test-run-of-main.py`
 - `pull-request-head-test-runs/` -- each machine's test log of a pull request's
   head, one per commit, written by `scripts/pull-request-head-test-run.py`
+- `daily-memory-review-marks/` -- the daily memory review's started and done
+  marks, written by `nc-systems/handoff/daily-memory-review-mark.py`
 
 To change this file, edit STORE_README in
 nc-systems/cold-read/cold-read-record-ship.py. The next shipment rewrites this file
@@ -301,31 +365,6 @@ def rsync_command(host, source: pathlib.Path, target: pathlib.PurePosixPath, *ex
     if host:
         command += ["-e", " ".join(SSH_COMMAND)]
     return command + [f"{source}/", destination]
-
-
-def rsync_one_file_command(host, source: pathlib.Path,
-                           target: pathlib.PurePosixPath) -> list:
-    """rsync of ONE file over the store's copy of it: the replace path rule 4
-    describes, which the add-only copy above cannot take (--ignore-existing is
-    what it is for). The source is a file and not a directory, so no trailing
-    slash is appended to either side.
-
-    --ignore-times, because whether to copy was already decided here by
-    comparing sha256 on both sides. rsync's own quick check is size and
-    modification time to the second and it skips a file the two agree on: a
-    triage rewritten to the same length within the second the stored copy
-    carries would be silently not copied, leaving the store's old bytes behind
-    a line saying they had been replaced. Measured on this Mac's openrsync,
-    which skipped exactly that file, by scripts/seat-shared-file-ship.py's
-    `rsync_one_file`, and scripts/walk-files-ship.py passes the flag for the
-    same reason. Never --inplace: rsync writes the file whole or not at all,
-    so an interrupted replacement leaves the store's old copy intact."""
-    destination = f"{host}:{target}" if host else str(target)
-    command = ["rsync", "-a", "--ignore-times", "--timeout",
-               RSYNC_IO_TIMEOUT_SECONDS]
-    if host:
-        command += ["-e", " ".join(SSH_COMMAND)]
-    return command + [str(source), destination]
 
 
 def refresh_store_readme(root) -> None:
@@ -521,6 +560,401 @@ def store_inventory(host, store_dir: pathlib.PurePosixPath):
     return completed, inventory
 
 
+def place_staged_files(host, staging_dir: pathlib.PurePosixPath,
+                       store_dir: pathlib.PurePosixPath, local_digests: dict):
+    """Run place_staged_files_and_read_them_back for this shipment and return
+    the process and the step's outcome. One ssh round trip remotely, the
+    function sent as a python3 program with its request as JSON on stdin, so
+    no path is ever parsed by a shell; the same function in this process when
+    the store is local. An unreachable host, or a step that did not finish,
+    is an outcome of None. See ONE STEP, JUDGED BY WHAT THE STORE HOLDS in the
+    docstring."""
+    request = {"store_dir": str(store_dir), "staging_dir": str(staging_dir),
+               "local_digests": local_digests,
+               "replaceable": TRIAGE_FILE_REPLACED_IN_THE_STORE}
+    if host is None:
+        try:
+            outcome = place_staged_files_and_read_them_back(request)
+        except OSError as failed:
+            # stdout carries the OS's own reason, which the FAILED line prints.
+            return subprocess.CompletedProcess([], 1, failed.strerror or str(failed),
+                                               f"{failed}\n"), None
+        return subprocess.CompletedProcess([], 0, "", ""), outcome
+    completed = subprocess.run(
+        SSH_COMMAND + [host, f"python3 -c {shlex.quote(place_staged_files_program())}"],
+        input=json.dumps(request), capture_output=True, text=True,
+        encoding="utf-8", check=False)
+    if completed.returncode != 0:
+        return completed, None
+    try:
+        outcome = json.loads(completed.stdout.strip().splitlines()[-1])
+    except (IndexError, ValueError):
+        return completed, None
+    return completed, outcome if isinstance(outcome, dict) else None
+
+
+def place_staged_files_program() -> str:
+    """The python3 program the remote step runs on ned-box: the function
+    below, by its own source, and a line that reads its request from stdin
+    and prints its outcome as one line of JSON."""
+    return (f"{PLACE_STAGED_FILES_MARKER}\n"
+            f"import json, sys\n"
+            f"{textwrap.dedent(inspect.getsource(place_staged_files_and_read_them_back))}"
+            f"print(json.dumps(place_staged_files_and_read_them_back("
+            f"json.load(sys.stdin))))\n")
+
+
+def place_staged_files_and_read_them_back(request: dict) -> dict:
+    """The one step that reads and writes the record's directory in the store:
+    inventory, rules 2 and 4, placing by hard link, the triage.md replacement
+    and the read-back. It removes the staging directory however it ends. It
+    runs on ned-box as its own python3 program, sent by its source, so it
+    imports what it uses and calls nothing else in this file.
+
+    `request` holds store_dir, staging_dir, local_digests ({relative path:
+    sha256} of the whole record) and replaceable (triage.md). The outcome:
+      differing -- add-only files the store holds with other bytes; when any
+        is named, nothing was placed (rule 2).
+      added -- the files the store did not hold, which this step tried to
+        place.
+      displaced -- the store's digest of the triage.md this step replaced,
+        or None (rule 4). triage.md is replaced only after every new file
+        was placed.
+      stored -- the store's digest of each added file and of a replaced
+        triage.md, read after placing; a name absent here is not in the store.
+    """
+    import hashlib
+    import os
+    import pathlib
+    import shutil
+
+    store = pathlib.Path(request["store_dir"])
+    staging = pathlib.Path(request["staging_dir"])
+    local = request["local_digests"]
+    replaceable = request["replaceable"]
+
+    def digest_of(path):
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+
+    try:
+        store.mkdir(parents=True, exist_ok=True)
+        in_store = {path.relative_to(store).as_posix(): digest_of(path)
+                    for path in sorted(store.rglob("*")) if path.is_file()}
+        differing = sorted(relative for relative, digest in local.items()
+                           if relative != replaceable and relative in in_store
+                           and in_store[relative] != digest)
+        if differing:
+            return {"differing": differing, "added": [], "displaced": None,
+                    "stored": {}}
+        added = sorted(relative for relative in local if relative not in in_store)
+        displaced = None
+        for relative in added:
+            target = store / relative
+            try:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                os.link(staging / relative, target)
+            except FileExistsError:
+                # Only another shipment of this name, running at the same
+                # moment, can have placed it since the inventory above.
+                if relative != replaceable and digest_of(target) != local[relative]:
+                    break
+            except OSError:
+                break
+        else:
+            # Reached only when placing did not stop, so a shipment that
+            # ends REFUSED or FAILED leaves the store's triage.md as it was.
+            triage = store / replaceable
+            if replaceable in local and triage.is_file():
+                held = digest_of(triage)
+                if held != local[replaceable]:
+                    # A rename within one filesystem: the name holds the old
+                    # file or the new one, never part of either.
+                    os.replace(staging / replaceable, triage)
+                    displaced = held
+        read_back = added + ([replaceable] if displaced is not None
+                             and replaceable not in added else [])
+        stored = {relative: digest_of(store / relative) for relative in read_back
+                  if (store / relative).is_file()}
+        return {"differing": [], "added": added, "displaced": displaced,
+                "stored": stored}
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
+
+
+def link_staged_files_never_over_existing(host, staging_dir: pathlib.PurePosixPath,
+                                          store_dir: pathlib.PurePosixPath,
+                                          relatives: list):
+    """Hard-link each staged file into the store directory, in the order
+    given, then remove the staging directory and return the process and the
+    store's {relative path: sha256} of `relatives` -- the files the store now
+    holds under those names, whoever put them there. An unreachable host is
+    an inventory of None, as in store_inventory.
+
+    A link is never made over an existing file: a name already taken is left
+    as it is, and placing goes on past it, so the caller judges each file by
+    the digest read back. This is scripts/walk-files-ship.py's add-only
+    placing, which refuses a walk's files one by one while the rest still
+    ship; a cold-read-record is placed by place_staged_files instead.
+
+    One ssh round trip remotely, running
+    link_staged_files_never_over_existing_script; plain filesystem calls and
+    hashlib locally, as store_inventory does."""
+    if host is None:
+        staging, store = pathlib.Path(staging_dir), pathlib.Path(store_dir)
+        try:
+            for relative in relatives:
+                target = store / relative
+                target.parent.mkdir(parents=True, exist_ok=True)
+                try:
+                    os.link(staging / relative, target)
+                except FileExistsError:
+                    continue
+                except OSError:
+                    break
+        finally:
+            shutil.rmtree(staging, ignore_errors=True)
+        after = {relative: hashlib.sha256((store / relative).read_bytes()).hexdigest()
+                 for relative in relatives if (store / relative).is_file()}
+        return subprocess.CompletedProcess([], 0, "", ""), after
+    script = link_staged_files_never_over_existing_script(staging_dir, store_dir, relatives)
+    completed = subprocess.run(SSH_COMMAND + [host, script],
+                               capture_output=True, text=True, check=False)
+    if completed.returncode != 0:
+        return completed, None
+    after = {}
+    for line in completed.stdout.splitlines():
+        digest, _, relative = line.partition("  ")
+        if digest and relative:
+            after[relative] = digest
+    return completed, after
+
+
+def link_staged_files_never_over_existing_script(staging_dir: pathlib.PurePosixPath,
+                                                 store_dir: pathlib.PurePosixPath,
+                                                 relatives: list) -> str:
+    """The POSIX sh script link_staged_files_never_over_existing runs on
+    ned-box: link each file, leaving a name already taken as it is, remove
+    the staging directory, print `sha256sum`'s line for each of `relatives`
+    the store holds. `ln` without -f fails when the name exists, and makes
+    the link in the same step when it does not."""
+    quoted_relatives = " ".join(shlex.quote(relative) for relative in relatives)
+    staging = shlex.quote(str(staging_dir))
+    store = shlex.quote(str(store_dir))
+    return (
+        f"{LINK_STAGED_FILES_MARKER}\n"
+        f"for relative in {quoted_relatives}; do\n"
+        f"  mkdir -p -- \"$(dirname -- {store}/\"$relative\")\" || break\n"
+        f"  ln -- {staging}/\"$relative\" {store}/\"$relative\" 2>/dev/null || :\n"
+        f"done\n"
+        f"rm -rf -- {staging}\n"
+        f"cd -- {store} || exit 0\n"
+        f"for relative in {quoted_relatives}; do\n"
+        f"  if [ -f \"$relative\" ]; then sha256sum -- \"$relative\"; fi\n"
+        f"done\n")
+
+
+class StagedReplacement(typing.NamedTuple):
+    """What replace_with_staged_files did with one file. `displaced_sha256` is
+    the store's digest of the file the rename replaced, read in the same step
+    as the rename, or None when there was none; `stored_sha256` is the
+    store's digest of the name after every rename of the call, whoever's
+    bytes they are, or None when the name holds no file."""
+
+    replaced: bool
+    displaced_sha256: typing.Optional[str]
+    stored_sha256: typing.Optional[str]
+
+
+class OtherShipmentStaging(typing.NamedTuple):
+    """replace_with_staged_files found another shipment's staging directory
+    for the same name and replaced nothing. `paths` names each one."""
+
+    paths: tuple
+
+
+# The random part of a staging directory's name: secrets.token_hex(6).
+STAGING_DIRECTORY_TOKEN_LENGTH = 12
+
+
+def other_staging_directories_local(staging_dir: pathlib.Path) -> tuple:
+    """Every other staging directory beside this one for the same name."""
+    stem = staging_dir.name[:-STAGING_DIRECTORY_TOKEN_LENGTH]
+    others = []
+    if staging_dir.parent.is_dir():
+        for entry in sorted(staging_dir.parent.iterdir()):
+            token = entry.name[len(stem):]
+            if (entry.name != staging_dir.name and entry.name.startswith(stem)
+                    and len(token) == STAGING_DIRECTORY_TOKEN_LENGTH
+                    and all(c in "0123456789abcdef" for c in token)
+                    and entry.is_dir()):
+                others.append(str(entry))
+    return tuple(others)
+
+
+def other_shipment_failure_lines(label: str, staging: OtherShipmentStaging) -> tuple:
+    """The FAILED line for stdout and the instruction line for stderr, shared
+    by every shipper whose replace step returned OtherShipmentStaging."""
+    paths = ", ".join(staging.paths)
+    return (f"FAILED: {label} — another shipment of it is running, or one left "
+            f"its staging directory behind: {paths}; nothing was replaced.",
+            f"When no other shipment of {label} is running, delete {paths} and "
+            f"run this again.")
+
+
+def replace_with_staged_files(host, staging_dir: pathlib.PurePosixPath,
+                              store_dir: pathlib.PurePosixPath,
+                              replacements: list):
+    """Rename staged files over the store's, for the files a shipper REPLACES
+    by design: the walk's minutes and dispositions, a walk text the walk only
+    added to (scripts/walk-files-ship.py) and a seat's own files
+    (scripts/seat-shared-file-ship.py). Returns the process and
+    {store relative path: StagedReplacement}, or None for an unreachable
+    host, as store_inventory does. The staging directory is left for the
+    caller to remove, with remove_staging_directory or by placing the rest.
+
+    `replacements` is a list of (staged relative path, store relative path,
+    required sha256 or None). A required digest makes the rename conditional:
+    it runs only while the store still holds those bytes, which is how the
+    walk text's APPENDED TO rule is held to the stored copy it was tested
+    against. None replaces whatever is there.
+
+    WHY A RENAME OF A STAGED COPY, AND NOT rsync STRAIGHT ONTO THE NAME. The
+    shippers read the store's digest, decided, and copied with rsync, which
+    takes seconds over ssh; a second shipment of the same name in those
+    seconds was replaced without a word, the replacement announcement naming
+    the bytes the first look saw, or nothing when it saw no file. Here the
+    digest of what is about to be displaced is read immediately before the
+    rename, in one shell, so the announcement names what was actually
+    displaced, and the store is read again afterwards, so a caller judges its
+    outcome on what the store holds.
+
+    NO LOCK; A CHECK INSTEAD. Two shipments of one name at one moment do not
+    occur in real use: each walk's or seat's files are shipped by the seat
+    that owns them. A read-back cannot see a rename that runs after it, so an
+    overlap is caught before it can do harm: each shipment's staging directory
+    exists from its copy until its placing ends, and this step renames
+    nothing when another staging directory for the same name is there,
+    returning OtherShipmentStaging. Two shipments that overlap therefore both
+    stop, or the later one replaces what the earlier one placed and names its
+    digest. A leftover staging directory from a crashed shipment stops every
+    shipment of that name until it is deleted; nothing here reclaims it.
+
+    One ssh round trip remotely, running replace_with_staged_files_script;
+    os.replace and hashlib locally."""
+    if host is None:
+        staging, store = pathlib.Path(staging_dir), pathlib.Path(store_dir)
+        others = other_staging_directories_local(staging)
+        if others:
+            return subprocess.CompletedProcess([], 0, "", ""), OtherShipmentStaging(others)
+        outcomes = {}
+        store.mkdir(parents=True, exist_ok=True)
+        for staged_relative, store_relative, required in replacements:
+            target = store / store_relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            displaced = (hashlib.sha256(target.read_bytes()).hexdigest()
+                         if target.is_file() else None)
+            replaced = required is None or displaced == required
+            if replaced:
+                os.replace(staging / staged_relative, target)
+            outcomes[store_relative] = (replaced, displaced)
+        stored = {
+            store_relative: hashlib.sha256(
+                (store / store_relative).read_bytes()).hexdigest()
+            for store_relative in outcomes
+            if (store / store_relative).is_file()}
+        return subprocess.CompletedProcess([], 0, "", ""), {
+            store_relative: StagedReplacement(replaced, displaced,
+                                              stored.get(store_relative))
+            for store_relative, (replaced, displaced) in outcomes.items()}
+    script = replace_with_staged_files_script(staging_dir, store_dir, replacements)
+    completed = subprocess.run(SSH_COMMAND + [host, script],
+                               capture_output=True, text=True, check=False)
+    if completed.returncode != 0:
+        return completed, None
+    acted, stored, others = {}, {}, []
+    for line in completed.stdout.splitlines():
+        word, _, rest = line.partition(" ")
+        digest, _, relative = rest.partition(" ")
+        if not relative:
+            continue
+        if word == "other":
+            others.append(relative)
+        elif word in ("replaced", "kept"):
+            acted[relative] = (word == "replaced", None if digest == "-" else digest)
+        elif word == "stored":
+            stored[relative] = digest
+    if others:
+        return completed, OtherShipmentStaging(tuple(others))
+    return completed, {
+        relative: StagedReplacement(replaced, displaced, stored.get(relative))
+        for relative, (replaced, displaced) in acted.items()}
+
+
+def replace_with_staged_files_script(staging_dir: pathlib.PurePosixPath,
+                                     store_dir: pathlib.PurePosixPath,
+                                     replacements: list) -> str:
+    """The POSIX sh script replace_with_staged_files runs on ned-box. For each
+    file: read the store's digest of the name (`-` for none), rename the
+    staged copy over it when no digest is required or the store's is the
+    required one, and print `replaced <digest> <name>` or `kept <digest>
+    <name>`. Then print `stored <digest> <name>` for each name the store
+    holds. `mv -f` within one directory tree is a rename, so the name holds
+    the old file or the new one, never part of either. A digest that cannot
+    be read exits 1 before anything more is renamed. First it prints
+    `other - <path>` for each other staging directory of the same name and,
+    if there is one, renames nothing: see NO LOCK; A CHECK INSTEAD in
+    replace_with_staged_files."""
+    arguments = " ".join(
+        f"{shlex.quote(staged)} {shlex.quote(target)} {required or '-'}"
+        for staged, target, required in replacements)
+    quoted_targets = " ".join(shlex.quote(target) for _, target, _ in replacements)
+    staging = shlex.quote(str(staging_dir))
+    store = shlex.quote(str(store_dir))
+    return (
+        f"{REPLACE_WITH_STAGED_FILES_MARKER}\n"
+        f"self={staging}; others=0\n"
+        f"stem=$(basename -- \"$self\"); stem=${{stem%{'?' * STAGING_DIRECTORY_TOKEN_LENGTH}}}\n"
+        f"for other in \"$(dirname -- \"$self\")\"/\"$stem\"{'[0-9a-f]' * STAGING_DIRECTORY_TOKEN_LENGTH}; do\n"
+        f"  if [ -d \"$other\" ] && [ \"$other\" != \"$self\" ]; then\n"
+        f"    printf 'other - %s\\n' \"$other\"; others=1\n"
+        f"  fi\n"
+        f"done\n"
+        f"[ $others = 0 ] || exit 0\n"
+        f"mkdir -p -- {store} || exit 1\n"
+        f"set -- {arguments}\n"
+        f"while [ $# -gt 0 ]; do\n"
+        f"  staged=$1; target=$2; required=$3; shift 3\n"
+        f"  mkdir -p -- \"$(dirname -- {store}/\"$target\")\" || exit 1\n"
+        f"  current=-\n"
+        f"  if [ -f {store}/\"$target\" ]; then\n"
+        f"    current=$(sha256sum < {store}/\"$target\" | cut -d' ' -f1)\n"
+        f"    [ -n \"$current\" ] || exit 1\n"
+        f"  fi\n"
+        f"  if [ \"$required\" = - ] || [ \"$required\" = \"$current\" ]; then\n"
+        f"    mv -f -- {staging}/\"$staged\" {store}/\"$target\" || exit 1\n"
+        f"    printf 'replaced %s %s\\n' \"$current\" \"$target\"\n"
+        f"  else\n"
+        f"    printf 'kept %s %s\\n' \"$current\" \"$target\"\n"
+        f"  fi\n"
+        f"done\n"
+        f"for target in {quoted_targets}; do\n"
+        f"  if [ -f {store}/\"$target\" ]; then\n"
+        f"    printf 'stored %s %s\\n' \"$(sha256sum < {store}/\"$target\" | cut -d' ' -f1)\" \"$target\"\n"
+        f"  fi\n"
+        f"done\n")
+
+
+def remove_staging_directory(host, staging_dir: pathlib.PurePosixPath) -> None:
+    """Remove a staging directory a failed copy may have left. Best effort: the
+    copy that failed may have failed because ned-box is unreachable, and then
+    this fails too and the directory stays, which nothing reads."""
+    if host is None:
+        shutil.rmtree(pathlib.Path(staging_dir), ignore_errors=True)
+        return
+    subprocess.run(SSH_COMMAND + [host, f"rm -rf -- {shlex.quote(str(staging_dir))}"],
+                   capture_output=True, text=True, check=False)
+
+
 def ship_one(host, records_path: pathlib.PurePosixPath, record_dir: pathlib.Path) -> int:
     """One directory, one stdout line, one exit code."""
     name = record_dir.name
@@ -540,6 +974,9 @@ def ship_one(host, records_path: pathlib.PurePosixPath, record_dir: pathlib.Path
         sys.stderr.write(ensured.stderr)
         return EXIT_FAILED
 
+    # Taken to refuse, or to find nothing new, before anything is copied. Both
+    # answers stand: an add-only file never changes once in the store. The
+    # placing step takes the inventory again.
     listed, in_store = store_inventory(host, store_dir)
     if in_store is None:
         reason = ("ned-box unreachable" if listed.returncode == RSYNC_EXIT_CONNECTION_FAILED
@@ -553,18 +990,16 @@ def ship_one(host, records_path: pathlib.PurePosixPath, record_dir: pathlib.Path
     new_files = sorted(relative for relative in local if relative not in in_store)
     # Rule 4: the record's own triage.md is replaced rather than refused, so it
     # leaves `differing` here and the refusal below is about the add-only files
-    # alone. The digest it displaces is kept for the stderr announcement, which
-    # is written only once the copy has landed.
-    displaced_triage_digest = None
-    if TRIAGE_FILE_REPLACED_IN_THE_STORE in differing:
+    # alone.
+    triage_differs = TRIAGE_FILE_REPLACED_IN_THE_STORE in differing
+    if triage_differs:
         differing.remove(TRIAGE_FILE_REPLACED_IN_THE_STORE)
-        displaced_triage_digest = in_store[TRIAGE_FILE_REPLACED_IN_THE_STORE]
-    if differing:
+    def refuse(differing_files):
         # The loop only gathers; the one print comes after it, so a
         # cold-read-record with several differing files still gets
         # exactly one stdout line.
         described = []
-        for relative in differing:
+        for relative in differing_files:
             local_line = provenance_comment_of(local_first_line(record_dir / relative))
             if host:
                 store_line = provenance_comment_of(remote_first_line(host, store_dir / relative))
@@ -577,37 +1012,50 @@ def ship_one(host, records_path: pathlib.PurePosixPath, record_dir: pathlib.Path
               f"and ship again.")
         return EXIT_REFUSED
 
-    if not new_files and displaced_triage_digest is None:
+    def nothing_new():
         print(f"shipped: {name} — nothing new, all files already there; "
               f"record at {citation}")
         return EXIT_SHIPPED
-    if new_files:
-        transferred = subprocess.run(
-            rsync_command(host, record_dir, store_dir, "--ignore-existing"),
-            capture_output=True, text=True, check=False)
-        if transferred.returncode != 0:
-            reason = ("ned-box unreachable" if transferred.returncode == RSYNC_EXIT_CONNECTION_FAILED
-                      else f"rsync exit {transferred.returncode}")
-            print(f"FAILED: {name} — {reason} during the copy; a later run finishes it.")
-            sys.stderr.write(transferred.stderr)
-            return EXIT_FAILED
+
+    if differing:
+        return refuse(differing)
+    if not new_files and not triage_differs:
+        return nothing_new()
+
+    # Copied beside the record's directory, then placed into it by the one
+    # step: see ONE STEP, JUDGED BY WHAT THE STORE HOLDS in the docstring.
+    staging_dir = records_path / (f"{STAGING_DIRECTORY_PREFIX}{name}-"
+                                  f"{secrets.token_hex(6)}")
+    transferred = subprocess.run(
+        rsync_command(host, record_dir, staging_dir),
+        capture_output=True, text=True, check=False)
+    if transferred.returncode != 0:
+        remove_staging_directory(host, staging_dir)
+        reason = ("ned-box unreachable" if transferred.returncode == RSYNC_EXIT_CONNECTION_FAILED
+                  else f"rsync exit {transferred.returncode}")
+        print(f"FAILED: {name} — {reason} during the copy; a later run finishes it.")
+        sys.stderr.write(transferred.stderr)
+        return EXIT_FAILED
+    placed, outcome = place_staged_files(host, staging_dir, store_dir, local)
+    if outcome is None:
+        if host is None:
+            reason = placed.stdout
+        elif placed.returncode == RSYNC_EXIT_CONNECTION_FAILED:
+            reason = "ned-box unreachable"
+        else:
+            reason = f"ssh exit {placed.returncode}"
+        print(f"FAILED: {name} — {reason} while placing the copied files; "
+              f"a later run finishes it.")
+        sys.stderr.write(placed.stderr)
+        return EXIT_FAILED
+    if outcome["differing"]:
+        return refuse(outcome["differing"])
+    added, stored = outcome["added"], outcome["stored"]
+    displaced_triage_digest = outcome["displaced"]
+    if displaced_triage_digest is not None and TRIAGE_FILE_REPLACED_IN_THE_STORE in added:
+        added.remove(TRIAGE_FILE_REPLACED_IN_THE_STORE)
     if displaced_triage_digest is not None:
-        # The replacement is its own rsync of that one file: the copy above
-        # passes --ignore-existing, which is what keeps every other file
-        # add-only, and a file the store already holds is exactly what it
-        # skips.
         triage_relative = TRIAGE_FILE_REPLACED_IN_THE_STORE
-        replaced = subprocess.run(
-            rsync_one_file_command(host, record_dir / triage_relative,
-                                   store_dir / triage_relative),
-            capture_output=True, text=True, check=False)
-        if replaced.returncode != 0:
-            reason = ("ned-box unreachable" if replaced.returncode == RSYNC_EXIT_CONNECTION_FAILED
-                      else f"rsync exit {replaced.returncode}")
-            print(f"FAILED: {name} — {reason} while replacing "
-                  f"{triage_relative}; a later run finishes it.")
-            sys.stderr.write(replaced.stderr)
-            return EXIT_FAILED
         # The triage's path in the store on ned-box, which the snapshots copy:
         # the store's root from this module's constant, since the destination
         # may be a local override and the snapshots never are, and the kind
@@ -627,9 +1075,26 @@ def ship_one(host, records_path: pathlib.PurePosixPath, record_dir: pathlib.Path
               f"snapshots: on ned-box, run `sha256sum "
               f"/mnt/backup/timeshift/snapshots/*/localhost{stored_triage}` and "
               f"take a snapshot whose line shows that digest.", file=sys.stderr)
+    # The replaced triage.md is read back and judged like an added file: an
+    # overlapping shipment's replacement can land after this one's, and then
+    # the store holds the other shipment's triage, not this one's.
+    judged = added + ([TRIAGE_FILE_REPLACED_IN_THE_STORE]
+                      if displaced_triage_digest is not None else [])
+    taken = sorted(relative for relative in judged
+                   if relative in stored and stored[relative] != local[relative])
+    if taken:
+        return refuse(taken)
+    missing = sorted(relative for relative in judged if relative not in stored)
+    if missing:
+        print(f"FAILED: {name} — not in the store after the copy: "
+              f"{', '.join(missing)}; a later run finishes it.")
+        sys.stderr.write(placed.stderr)
+        return EXIT_FAILED
+    if not added and displaced_triage_digest is None:
+        return nothing_new()
     summary = []
-    if new_files:
-        summary.append(f"{len(new_files)} file(s) added")
+    if added:
+        summary.append(f"{len(added)} file(s) added")
     if displaced_triage_digest is not None:
         summary.append(f"{TRIAGE_FILE_REPLACED_IN_THE_STORE} replaced")
     print(f"shipped: {name} — {'; '.join(summary)}; record at {citation}")

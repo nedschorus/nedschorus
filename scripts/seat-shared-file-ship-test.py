@@ -39,10 +39,25 @@ RULED_RECORDS_DESTINATION = (
     "nedlern@ned-box:/home/nedlern/nedschorus-logs/cold-read-records")
 RULED_SEATS_DESTINATION = "nedlern@ned-box:/home/nedlern/nedschorus-logs/seats"
 
+# The stub for both `ssh` and `rsync`: append argv to the log named in the
+# environment, and answer the call that renames the staged file into place as
+# a store no other shipment is writing to answers: nothing displaced, and the
+# store holding the staged file's bytes, read from the directory the file was
+# shipped from (SEAT_SHIP_TEST_LOCAL_DIRECTORY).
 STUB_RECORDER = """#!/usr/bin/env python3
 import json, os, sys
 with open(os.environ["SEAT_SHIP_TEST_ARGV_LOG"], "a") as log:
     log.write(json.dumps(sys.argv) + "\\n")
+script = sys.argv[-1]
+if "# cold-read-record-ship: replace with staged files" in script:
+    import hashlib, shlex
+    words = shlex.split(next(line for line in script.splitlines()
+                             if line.startswith("set -- "))[len("set -- "):])
+    for staged, target in zip(words[0::3], words[1::3]):
+        with open(os.path.join(os.environ["SEAT_SHIP_TEST_LOCAL_DIRECTORY"], staged), "rb") as f:
+            local = hashlib.sha256(f.read()).hexdigest()
+        print("replaced - " + target)
+        print("stored " + local + " " + target)
 """
 
 failures = []
@@ -153,6 +168,26 @@ with tempfile.TemporaryDirectory(prefix="seat-shared-file-ship-test-") as scratc
           result.stdout.strip() == expected_citation
           and result.stdout.count("\n") == 1,
           repr(result.stdout))
+
+    # --- Another shipment's staging directory stops the replace -----------
+    stored_before = (seats_root / "cold-read-research" / "measurement.md").read_bytes()
+    other_staging = (seats_root / "cold-read-research"
+                     / ".ship-staging-measurement.md-0123456789ab")
+    other_staging.mkdir()
+    fresh.write_text("# measurement\n\nrevised while another shipment ran\n",
+                     encoding="utf-8")
+    result = ship(local_destination, str(fresh), "--seat", "cold-read-research")
+    check("another shipment's staging directory for the file makes it FAILED, "
+          "exit 1, naming that directory, with nothing replaced",
+          result.returncode == 1
+          and result.stdout.startswith("FAILED: cold-read-research/measurement.md")
+          and str(other_staging) in result.stdout
+          and str(other_staging) in result.stderr
+          and (seats_root / "cold-read-research" / "measurement.md").read_bytes()
+          == stored_before,
+          result.stdout + result.stderr)
+    other_staging.rmdir()
+    fresh.write_text("# measurement\n", encoding="utf-8")
 
     # --- Byte-identical copies nothing; a difference REPLACES and says so --
     stored = seats_root / "cold-read-research" / "measurement.md"
@@ -371,6 +406,7 @@ with tempfile.TemporaryDirectory(prefix="seat-shared-file-ship-test-") as scratc
     remote_env = {
         "PATH": f"{stub_dir}{os.pathsep}{os.environ['PATH']}",
         "SEAT_SHIP_TEST_ARGV_LOG": str(argv_log),
+        "SEAT_SHIP_TEST_LOCAL_DIRECTORY": str(good.parent),
     }
     result = ship(RULED_RECORDS_DESTINATION, str(good),
                   "--seat", "cold-read-research", extra_env=remote_env)
@@ -388,9 +424,11 @@ with tempfile.TemporaryDirectory(prefix="seat-shared-file-ship-test-") as scratc
           ssh_calls and all("BatchMode=yes" in " ".join(c)
                             and "ConnectTimeout=10" in " ".join(c)
                             for c in ssh_calls), str(ssh_calls))
+    replacing_marker = "# cold-read-record-ship: replace with staged files"
     readme_calls = [c for c in ssh_calls
                     if "mkdir -p" in " ".join(c)
-                    and "seats/cold-read-research" in " ".join(c)]
+                    and "seats/cold-read-research" in " ".join(c)
+                    and replacing_marker not in c[-1]]
     check("one ssh call makes the seat's directory and refreshes the README, "
           "as it did when it placed a bullet instead",
           len(readme_calls) == 1
@@ -408,14 +446,25 @@ with tempfile.TemporaryDirectory(prefix="seat-shared-file-ship-test-") as scratc
           str(readme_calls))
     check("one ssh call asks for the stored file's sha256 before copying",
           any("sha256sum" in " ".join(c) for c in ssh_calls), str(ssh_calls))
-    check("exactly one rsync call, into the seat's own directory, over batch "
-          "ssh",
+    staging_prefix = (f"{RULED_SEATS_DESTINATION}/cold-read-research/"
+                      f".ship-staging-good.md-")
+    check("exactly one rsync call, into a staging directory in the seat's own "
+          "directory named for the file, over batch ssh",
           len(rsync_calls) == 1 and "-a" in rsync_calls[0]
           and "ssh -o BatchMode=yes -o ConnectTimeout=10" in rsync_calls[0]
           and rsync_calls[0][-2] == str(good)
-          and rsync_calls[0][-1]
-          == f"{RULED_SEATS_DESTINATION}/cold-read-research/good.md",
+          and rsync_calls[0][-1].startswith(staging_prefix)
+          and rsync_calls[0][-1].endswith("/"),
           str(rsync_calls))
+    replacing_calls = [c for c in ssh_calls if replacing_marker in c[-1]]
+    staging_used = (rsync_calls[0][-1].partition(":")[2].rstrip("/")
+                    if rsync_calls else "")
+    check("then one ssh call renames the staged file over the seat's file, and "
+          "one removes the staging directory",
+          len(replacing_calls) == 1 and "mv -f -- " in replacing_calls[0][-1]
+          and "set -- good.md good.md -" in replacing_calls[0][-1]
+          and any(c[-1] == f"rm -rf -- {staging_used}" for c in ssh_calls),
+          str(ssh_calls))
     check("rsync is never asked to delete or to write in place",
           not any(flag in rsync_calls[0] for flag in ("--delete", "--inplace")),
           str(rsync_calls))
@@ -508,6 +557,128 @@ with tempfile.TemporaryDirectory(prefix="seat-shared-file-ship-test-") as scratc
               == survey.read_text(encoding="utf-8")
               and f"sha256 {displaced_good_digest}" in complained.getvalue(),
               printed.getvalue() + complained.getvalue())
+
+# --- TWO SHIPMENTS OF ONE SEAT FILE AT ONCE -----------------------------------
+# Two sessions of one seat ship a file of one name in the same seconds. The
+# other shipment's bytes are made to land at a chosen moment of this one, in
+# this process: after this one has read the store's digest ("after-listing"),
+# after its rsync has run ("after-copy"), or the instant after its own rename
+# put the file in place ("after-rename"). A seat replaces its own files, so
+# either shipment may end up the one kept; what must never happen is a
+# replacement nobody announced, or the citation printed while the store holds
+# the other shipment's bytes.
+with tempfile.TemporaryDirectory(prefix="seat-shared-file-ship-race-test-") as race_scratch_name:
+    race_scratch = pathlib.Path(race_scratch_name)
+    saved_destination = os.environ.pop(DESTINATION_VARIABLE, None)
+    try:
+        racing = load_ship_module("seat_shared_file_ship_racing")
+    finally:
+        if saved_destination is not None:
+            os.environ[DESTINATION_VARIABLE] = saved_destination
+    saved_stored_digest = racing.stored_digest
+    saved_subprocess_run = subprocess.run
+    saved_os_replace = os.replace
+    this_text = "# survey, this session's\n"
+    other_text = "# survey, the other session's\n"
+
+    def ship_while_the_other_lands(case_label, landing_text, moment):
+        """Ship this session's survey.md while the other session's lands at
+        `moment`. Returns the exit code, stdout, stderr, the text the store
+        keeps, and the names in the seat's directory."""
+        source = race_scratch / f"local-{case_label}" / "survey.md"
+        source.parent.mkdir(parents=True)
+        source.write_text(this_text, encoding="utf-8")
+        seats = race_scratch / f"store-{case_label}" / "seats"
+        landed_path = seats / "cold-read-research" / "survey.md"
+        landed = []
+
+        def land_the_other():
+            if not landed:
+                landed.append(moment)
+                landed_path.parent.mkdir(parents=True, exist_ok=True)
+                landed_path.write_text(landing_text, encoding="utf-8")
+
+        def digest_then_land(copy_host, target):
+            answer = saved_stored_digest(copy_host, target)
+            if moment == "after-listing":
+                land_the_other()
+            return answer
+
+        def run_then_land(command, *args, **kwargs):
+            completed = saved_subprocess_run(command, *args, **kwargs)
+            if moment == "after-copy" and command and command[0] == "rsync":
+                # Written over whatever this shipment's copy put there: the
+                # other session's copy finishing after this one's.
+                land_the_other()
+            return completed
+
+        def replace_then_land(staged, destination, *args, **kwargs):
+            saved_os_replace(staged, destination, *args, **kwargs)
+            if moment == "after-rename" and pathlib.Path(destination) == landed_path:
+                land_the_other()
+
+        destination = racing.SeatsStoreDestination(
+            copy_host=None, citation_host="nedlern@ned-box", seats_path=seats)
+        out, err = io.StringIO(), io.StringIO()
+        racing.stored_digest = digest_then_land
+        subprocess.run = run_then_land
+        os.replace = replace_then_land
+        try:
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                code = racing.ship_one_file(destination, "cold-read-research",
+                                            source, "survey.md")
+        finally:
+            racing.stored_digest = saved_stored_digest
+            subprocess.run = saved_subprocess_run
+            os.replace = saved_os_replace
+        kept = landed_path.read_text(encoding="utf-8") if landed_path.is_file() else None
+        return (code, out.getvalue(), err.getvalue(), kept,
+                sorted(p.name for p in landed_path.parent.iterdir()))
+
+    other_digest = hashlib.sha256(other_text.encode("utf-8")).hexdigest()
+    citation_end = "/seats/cold-read-research/survey.md"
+
+    code, out, err, kept, names = ship_while_the_other_lands(
+        "after-listing", other_text, "after-listing")
+    check("a file the other session lands after this one found none in the store "
+          "is replaced, the citation printed, this session's bytes kept",
+          code == 0 and out.strip().endswith(citation_end) and kept == this_text,
+          f"exit {code}: {out}{err}; store keeps {kept!r}")
+    check("and that replacement is announced on stderr with the displaced "
+          "file's digest, never silent",
+          f"sha256 {other_digest}" in err and "REPLACED" in err, err)
+
+    code, out, err, kept, names = ship_while_the_other_lands(
+        "after-copy", other_text, "after-copy")
+    check("a file the other session lands after this one's copy ran: either "
+          "this session's bytes are kept and the displaced digest announced, or "
+          "the line is FAILED -- never the citation over the other's bytes",
+          (code == 0 and out.strip().endswith(citation_end) and kept == this_text
+           and f"sha256 {other_digest}" in err)
+          or (code == 1 and out.startswith("FAILED:") and kept == other_text),
+          f"exit {code}: {out}{err}; store keeps {kept!r}")
+
+    code, out, err, kept, names = ship_while_the_other_lands(
+        "after-rename", other_text, "after-rename")
+    check("a file the other session renames in the instant after this one's: "
+          "FAILED, exit 1, one line, never the citation",
+          code == 1 and out.startswith("FAILED:") and out.count("\n") == 1
+          and kept == other_text, f"exit {code}: {out}{err}; store keeps {kept!r}")
+
+    code, out, err, kept, names = ship_while_the_other_lands(
+        "same-bytes", this_text, "after-listing")
+    check("the other session landing the SAME bytes is no replacement: the "
+          "citation, exit 0, and no REPLACED line",
+          code == 0 and out.strip().endswith(citation_end) and kept == this_text
+          and "REPLACED" not in err, f"exit {code}: {out}{err}")
+
+    check("no shipment leaves anything in the seat's directory beside the file",
+          all(sorted(p.name for p in (race_scratch / f"store-{label}" / "seats"
+                                      / "cold-read-research").iterdir())
+              == ["survey.md"]
+              for label in ("after-listing", "after-copy", "after-rename",
+                            "same-bytes")),
+          str(names))
 
 print()
 if failures:

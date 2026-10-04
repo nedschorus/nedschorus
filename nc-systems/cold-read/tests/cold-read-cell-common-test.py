@@ -352,7 +352,12 @@ def run_cell_launcher(repository, stub_directory, plan, report_path, *arguments,
     stub = stub_directory / runtime
     stub.write_text(STUB_MODEL_RUNTIME, encoding="utf-8")
     stub.chmod(0o755)
+    # The Codex cell scans HOME for credential files at launch, and the real
+    # home takes seconds to walk. A case that checks the scan gives its own.
+    scratch_home = repository.parent / "scratch-home"
+    scratch_home.mkdir(exist_ok=True)
     environment = dict(os.environ)
+    environment["HOME"] = str(scratch_home)
     environment["PATH"] = f"{stub_directory}{os.pathsep}{environment.get('PATH', '')}"
     environment["COLD_READ_CELL_TEST_STUB_PLAN"] = json.dumps(plan)
     environment["COLD_READ_CELL_TEST_STUB_REPORT_PATH"] = str(report_path)

@@ -11,7 +11,7 @@ A boss direction (2026-08-06, at the CLAUDE.md admission of the entry-checkpoint
 ## What it touches
 
 - Founding plan § The entry checkpoint (the manifest-line-per-import rule) and § Standing decisions (the rewrite policy: per-pick four-class classification, legacy-feature-queue).
-- The git-gatekeeper's queued import check (docs/issues/queue/3-gatekeeper-build-bindings.md) — do not build import enforcement before this reconciliation rules.
+- The git-gatekeeper's queued import check (docs/issues/3-gatekeeper-build-bindings.md) — do not build import enforcement before this reconciliation rules.
 - entry-manifest.md as the import record.
 
 ## Close condition

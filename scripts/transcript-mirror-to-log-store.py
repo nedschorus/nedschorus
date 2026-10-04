@@ -63,6 +63,20 @@ hourly log held no exit-23 run and no line from openrsync in 461 runs
 (measured 2026-09-30), so there is no sample to tell the two apart by their
 text.
 
+WHEN IT LAST COMPLETED A PASS, SEEN FROM NED-BOX. A run in which every
+source mirrored ends by writing the UTC time that pass started, as one line
+like `2026-10-03T23:40:12Z`, to MIRROR_PASS_STAMP_FILE_NAME in the store beside
+that machine's projects/ and handoffs/, writing a `.partial` file and renaming
+it over the stamp. The start time, not the end, so that every transcript
+written before the stamp's time is in the copy. A run with any FAILED source
+leaves the stamp alone, so its time is the last pass that reached the store
+whole; so does a run that found neither source directory, because it copied
+nothing and a fresh stamp would make a mirror reading the wrong home look
+current. A stamp that cannot be written is itself a FAILED line and exit 1, on
+either machine. The backup search on ned-box reads
+the Mac's stamp to say how far behind its copy may be, which the lock file
+below cannot tell it, because that file is on the Mac.
+
 WHEN IT LAST RAN. The log cannot say: a healthy quiet run appends nothing.
 Every run rewrites the lock file, `~/.claude/.transcript-mirror.lock`
 (LOCK_FILE_NAME, opened for writing), as it starts, so its mtime is when
@@ -88,7 +102,9 @@ fires StartInterval jobs on this Mac
 repository; com.nedlern.agent-ping was the casualty). Each machine runs its
 own `python3`: the Mac's Homebrew link and ned-box's system one. The lines,
 run from each machine's reference checkout, which the stop hook keeps on
-main:
+main, are installed by
+nc-systems/general-tools/install-scheduled-jobs-on-this-machine.py from the
+table beside that program, which is where a change to them is made:
 
   Mac:     * * * * * /opt/homebrew/bin/python3 /Users/el/Projects/nedschorus/scripts/transcript-mirror-to-log-store.py --failures-only >> /Users/el/.claude/transcript-mirror.log 2>&1
   ned-box: * * * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/scripts/transcript-mirror-to-log-store.py --failures-only >> /home/nedlern/.claude/transcript-mirror.log 2>&1
@@ -110,9 +126,11 @@ import fcntl
 import functools
 import os
 import pathlib
+import shlex
 import socket
 import subprocess
 import sys
+import time
 
 PROGRAM = "transcript-mirror-to-log-store"
 
@@ -123,24 +141,22 @@ MACHINE_NAME_ELSEWHERE = "mac"
 DESTINATION_ENVIRONMENT_VARIABLE = "TRANSCRIPT_MIRROR_DESTINATION"
 SOURCE_HOME_ENVIRONMENT_VARIABLE = "TRANSCRIPT_MIRROR_SOURCE_HOME"
 
-# (name in the store, path under the home) -- the store keeps the name.
+# Store name and path relative to the source home.
 SOURCES = (
     ("projects", pathlib.Path(".claude") / "projects"),
     ("handoffs", pathlib.Path(".claude") / "handoffs"),
 )
 
-# ServerAlive*: a connected ssh gives up about 60 s after the far end stops
-# answering -- a dead TCP session after the Mac slept mid-run -- instead of
-# hanging and holding the lock. rsync's -e transport is built from this list.
+# Bound dead SSH sessions so a sleeping Mac cannot hold the mirror lock indefinitely.
 SSH_COMMAND = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10",
                "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=4"]
 RSYNC_IO_TIMEOUT_SECONDS = "300"
-# rsync: some source files vanished before they could be transferred. On a
-# live tree that is a session ending, not a failure. The code depends on
-# which rsync is on PATH; see rsync_vanished_exit_code.
+# Vanishing files are expected in a live transcript tree.
 RSYNC_EXIT_VANISHED_GNU = 24
 RSYNC_EXIT_VANISHED_OPENRSYNC = 23
 LOCK_FILE_NAME = ".transcript-mirror.lock"
+# The backup search on ned-box reads this file beside the Mac copy's projects/.
+MIRROR_PASS_STAMP_FILE_NAME = "last-complete-mirror-pass-utc.txt"
 
 EXIT_MIRRORED = 0
 EXIT_FAILED = 1
@@ -149,25 +165,15 @@ EXIT_LOCKED = 3
 
 @functools.lru_cache(maxsize=None)
 def rsync_vanished_exit_code() -> int:
-    """The exit the rsync on PATH gives when source files vanished mid-run:
-    23 for openrsync, 24 for GNU rsync. Detected once per run from the first
-    line of `rsync --version`, which opens "openrsync" on the Mac's
-    /usr/bin/rsync and "rsync  version 3.4.1" on ned-box.
-
-    Measured 2026-09-08 with a 4,000-file tree, 500 files deleted while rsync
-    ran: exit 23 on the Mac (openrsync, stderr "open (2)" errors, everything
-    else copied) and exit 24 on ned-box (rsync 3.4.1, "file has vanished").
-    GNU's 23 is a genuine partial-transfer error and openrsync's 24 is not
-    the vanished case, so each implementation gets exactly its own code.
-    openrsync propagates ssh's 255 correctly; a transcript appended during
-    transfer is exit 0 on both."""
+    """Return the installed rsync’s exit code for vanished source files."""
+    # GNU uses 24; openrsync uses 23, which can also hide other partial-transfer errors.
     completed = subprocess.run(["rsync", "--version"], capture_output=True, text=True, check=False)
     first_line = completed.stdout.partition("\n")[0]
     return RSYNC_EXIT_VANISHED_OPENRSYNC if first_line.startswith("openrsync") else RSYNC_EXIT_VANISHED_GNU
 
 
 def split_destination(destination: str):
-    """(host, path) from an scp-form destination; host is None for a local path."""
+    """Return (host, path) from an scp destination; host is None for local paths."""
     head = destination.split("/", 1)[0]
     if ":" in head:
         host, _, rest = destination.partition(":")
@@ -181,8 +187,7 @@ def this_machine_name() -> str:
 
 
 def destination_for_this_machine():
-    """(host, transcripts path/<machine>): the override, else the constant,
-    which on ned-box itself is the same path with no host."""
+    """Return (host, machine-specific store path); host is None for a local copy."""
     override = os.environ.get(DESTINATION_ENVIRONMENT_VARIABLE)
     if override:
         host, path = split_destination(override)
@@ -198,7 +203,7 @@ def source_home() -> pathlib.Path:
 
 
 def rsync_command(host, source: pathlib.Path, target: pathlib.PurePosixPath) -> list:
-    """-a and never --delete: see the docstring."""
+    # Never use --delete: transcripts removed locally must remain in the store.
     destination = f"{host}:{target}/" if host else f"{target}/"
     command = ["rsync", "-a", "--timeout", RSYNC_IO_TIMEOUT_SECONDS]
     if host:
@@ -219,7 +224,7 @@ def count_files_local(path: pathlib.Path) -> int:
 
 
 def count_files_in_store(host, path: pathlib.PurePosixPath):
-    """The store's file count under path, or None when it could not be asked."""
+    """Return the file count, or None if the store could not be queried."""
     if host is None:
         return count_files_local(pathlib.Path(path))
     completed = subprocess.run(
@@ -264,6 +269,34 @@ def mirror_one(host, machine_path: pathlib.PurePosixPath, name: str, source: pat
     return EXIT_MIRRORED
 
 
+def write_mirror_pass_stamp(host, machine_path: pathlib.PurePosixPath,
+                            pass_started_at: time.struct_time) -> int:
+    """Record in the store the UTC start time of a pass in which every source mirrored."""
+    # Write then rename, so a reader never sees a half-written time.
+    stamp_text = time.strftime("%Y-%m-%dT%H:%M:%SZ", pass_started_at) + "\n"
+    stamp = machine_path / MIRROR_PASS_STAMP_FILE_NAME
+    partial = machine_path / (MIRROR_PASS_STAMP_FILE_NAME + ".partial")
+    if host is None:
+        try:
+            pathlib.Path(machine_path).mkdir(parents=True, exist_ok=True)
+            pathlib.Path(partial).write_text(stamp_text)
+            os.replace(partial, stamp)
+        except OSError as error:
+            print(f"FAILED: pass-time stamp — could not write {stamp} ({error})")
+            return EXIT_FAILED
+        return EXIT_MIRRORED
+    completed = subprocess.run(
+        SSH_COMMAND + [host, f"mkdir -p -- {shlex.quote(str(machine_path))} && "
+                             f"printf %s {shlex.quote(stamp_text)} > {shlex.quote(str(partial))} && "
+                             f"mv -f -- {shlex.quote(str(partial))} {shlex.quote(str(stamp))}"],
+        capture_output=True, text=True, check=False)
+    if completed.returncode != 0:
+        print(f"FAILED: pass-time stamp — could not write {host}:{stamp} (exit {completed.returncode})")
+        sys.stderr.write(completed.stderr)
+        return EXIT_FAILED
+    return EXIT_MIRRORED
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(
         description="Mirror this machine's Claude Code transcripts and handoffs into the log-store.")
@@ -281,8 +314,12 @@ def main(argv=None) -> int:
                 print(f"{PROGRAM}: another run holds {lock_path}; leaving it to finish")
             return EXIT_LOCKED
         host, machine_path = destination_for_this_machine()
+        pass_started_at = time.gmtime()
         outcomes = [mirror_one(host, machine_path, name, home / relative, failures_only)
                     for name, relative in SOURCES]
+        any_source_found = any((home / relative).is_dir() for _, relative in SOURCES)
+        if EXIT_FAILED not in outcomes and any_source_found:
+            outcomes.append(write_mirror_pass_stamp(host, machine_path, pass_started_at))
     return EXIT_FAILED if EXIT_FAILED in outcomes else EXIT_MIRRORED
 
 

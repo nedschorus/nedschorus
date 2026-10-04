@@ -1,67 +1,8 @@
 #!/usr/bin/env python3
-"""Run one `claude update` at a time on this machine, under a shared lock.
+"""Serialize agent-binary updates across launchers and supervisors.
 
-    python3 scripts/agent-binary-update-under-lock.py \\
-        --program-name launch-claude-mac --timeout-seconds 120 -- claude update
-
-WHY THE UPDATES ARE SERIALIZED (user-approved 2026-09-22, superwalk item 2).
-Three places in the fleet run `claude update`: both launchers
-(scripts/launch-claude-mac, scripts/launch-claude-ubuntu) and
-handoff-supervisor.py's update_agent_binary, before every session it
-launches. The double update, launcher then supervisor, is deliberate (PR "A
-handoff restart updates the agent binary, as a launcher launch does",
-https://github.com/nedschorus/nedschorus/pull/645). At a login restart,
-restart-live-seats-at-login / recover-crashed-seats.py brings seats back one
-at a time but moves on about 6 s after each supervisor's lock appears
-(SEAT_SETTLE_SECONDS), and each supervisor's first launch then runs `claude
-update`, a download of about 217 MB. So two updates on one machine can
-overlap, and nothing serialized them. Whether `claude update` tolerates a
-concurrent run is unknown; the plausible harm is a half-written binary or
-symlink that breaks the next launch. Every caller now goes through this one
-file, so every update on a machine waits for the one before it.
-
-WHY fcntl.flock IN PYTHON, AND ONE HELPER FOR ALL THREE CALLERS. The
-supervisor and the launchers must take the SAME kind of lock, or they do not
-exclude each other: a flock and a mkdir-lock never see each other. macOS
-ships no `flock` binary and its bash is 3.2, so the launchers reach the lock
-through this file, run with the python3 both of them already require, and
-the supervisor imports the same function. A flock is released by the kernel
-when its holder dies, however it dies, so there is no stale lock to detect
-and no pid-liveness check to get wrong on two operating systems -- the part
-a mkdir-lock would need and could get wrong.
-
-WHY THIS FILE ALSO OWNS THE TIMEOUT. The launchers used to wrap `claude
-update` in `perl -e 'alarm ...'` (Mac) and GNU `timeout` (box). Kept outside
-this helper, either would kill the Python parent and orphan a still-running
-`claude update` whose lock had just been released -- perl's exec avoided that
-only because perl became claude. So the helper runs the command itself, with
-subprocess.run's timeout, exactly as the supervisor always did.
-
-ONE BUDGET COVERS THE WAIT AND THE RUN. --timeout-seconds bounds the whole
-step: time spent waiting for another update comes out of the time the
-command may run. A launch is therefore delayed no longer than it was before
-the lock existed. The update that waited behind another is almost always a
-no-op once it gets the lock, because the machine is already current.
-
-WHY THE LOCK FILE LIVES WHERE IT DOES. ~/.local/state/claude/ is the native
-installer's own state directory on both machines (measured 2026-09-22). Its
-locks/ subdirectory is Claude Code's, holding JSON pid-locks named
-<version>.lock, so this file sits beside that directory, never inside it,
-where Claude Code's own lock handling could read or reap it. The lock file
-is never unlinked: removing a flock'd file while another process waits on it
-would let a third process lock a new file of the same name.
-
-WHAT IT REPORTS. Exactly the cases the caller cannot see for itself: it had
-to wait, it gave up waiting, it killed the command at the limit, or the
-command could not be started. A command that runs to completion prints its
-own diagnosis, and a paraphrase here would add nothing (the 2026-08-31
-Homebrew refusal exited 0, recorded in scripts/launch-claude-mac). Every
-handled path exits 0 and a completed command's own status passes through, so
-an update never blocks a launch.
-
-A timeout of 0 skips the update entirely and takes no lock -- the
-supervisor's --agent-update-timeout-seconds 0, which the test suites use.
-"""
+macOS has no flock binary; all callers must share Python's flock lock.
+Keep the timeout inside the lock holder so timeout handling cannot orphan an unlocked update."""
 
 import argparse
 import errno
@@ -78,19 +19,16 @@ LOCK_POLL_INTERVAL_SECONDS = 0.25
 
 
 def agent_binary_update_lock_path() -> Path:
-    """The lock file, resolved against $HOME at call time, so a sandboxed
-    HOME in a test suite holds its own lock rather than the machine's."""
+    """Return the lock path using the current HOME."""
+    # Keep the file outside Claude's locks/ directory, whose pid-lock handling may reap files.
+    # Never unlink a flock file: waiters could hold the old inode while a newcomer locks a new one.
     return Path(os.path.expanduser(AGENT_BINARY_UPDATE_LOCK_PATH))
 
 
 def run_agent_binary_update_under_lock(command, timeout_seconds, program_name,
                                        lock_path=None) -> int:
-    """Run command while holding the machine's agent-binary update lock.
-
-    Returns the command's own exit status when it ran to completion, else 0.
-    Never raises for a lock or a command problem: the caller launches a
-    session next whatever happens here.
-    """
+    """Return the command's exit status, or 0 on lock or execution problems."""
+    # Waiting and execution share one timeout budget so lock contention cannot extend launch delay.
     if not timeout_seconds:
         return 0
     deadline = time.monotonic() + timeout_seconds
@@ -125,9 +63,7 @@ def run_agent_binary_update_under_lock(command, timeout_seconds, program_name,
                       f"to finish", file=sys.stderr)
                 said_waiting = True
             time.sleep(LOCK_POLL_INTERVAL_SECONDS)
-        # The lock is held from here until lock_file closes. The command does
-        # not inherit it (subprocess closes descriptors by default), so a
-        # process the update leaves behind cannot keep the lock.
+        # The child must not inherit the lock: descendants left running would otherwise keep the lock held.
         remaining_seconds = max(deadline - time.monotonic(), 0.001)
         try:
             return subprocess.run(command, timeout=remaining_seconds).returncode
