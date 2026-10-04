@@ -237,6 +237,8 @@ with tempfile.TemporaryDirectory() as temporary_directory:
           result.stdout)
     check("a never-pushed branch is told to rebase it itself, not that something will",
           "never been pushed" in warning and "git rebase origin/main" in warning, warning)
+    check("the never-pushed advice names the selective test run",
+          "--only-suites-whose-recorded-inputs-changed-since origin/main" in warning, warning)
     check("and told the Stop hook's rebase needs a clean tree",
           "only when the tree is clean" in warning, warning)
     check("the first warning cost exactly one three-dot diff",

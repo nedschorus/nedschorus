@@ -118,7 +118,8 @@ PUSHED_HEAD_STATE_KEYS = ("pushed", "pushed-with-local-commits",
 NEVER_PUSHED_ADVICE = (
     "This branch has never been pushed, so nobody else has it: commit or set aside "
     "your work and run `git rebase origin/main` — the Stop hook rebases a never-pushed "
-    "branch only when the tree is clean — then rerun the tests for what you touched."
+    "branch only when the tree is clean — then run `python3 scripts/run-all-test-suites.py "
+    "--only-suites-whose-recorded-inputs-changed-since origin/main`."
 )
 # A pushed branch that conflicts with main is the one exception: no commit on
 # top can clear a conflict, so it is cleared by a hand-merge (CLAUDE.md, "How a
