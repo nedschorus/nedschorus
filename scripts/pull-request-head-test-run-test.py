@@ -12,18 +12,13 @@ scripts/run-all-test-suites.py and run from a second clone that plays main's,
 which prints lines in the real runner's shapes and exits as the case tells
 it; ned-box is played by an ssh first on PATH that records its arguments and
 runs the command it was handed here; the machine's name is set per case; and
-the moment, the wait and the clock are passed in, so no case sleeps but the
-one that shows a writer waiting for the test log's lock. Each run a fixture
-makes reads a process number of its own, as each real run has one: two runs
-made at one moment by one process would write the same bytes, and a test log
-holds a record once. The far side of an ssh whose client has died is played
-by the command run with stderr a pipe whose reader is gone, and a preferred
-encoding that is not UTF-8 by a `locale` the program is handed for one run.
-Two writers at once are played by holding the first writer's input while the
-second writes; a writer that finds the test log locked, by this suite holding
-the lock; a writer killed while it holds the lock, by a process that takes
-the lock and is killed; and a write the test log takes part of, by the
-shell's limit on the size of a file. The one case that passes no
+the moment, the wait and the clock are passed in, so no case sleeps.
+Each run a fixture makes reads a process number of its own, as each real run
+has one. The far side of an ssh whose client has died is played by the command
+run with stderr a pipe whose reader is gone, and a preferred encoding that is
+not UTF-8 by a `locale` the program is handed for one run. Two writers at once
+are played by holding the first writer's input while the second writes; a
+write the test log takes part of, by the shell's limit on the size of a file. The one case that passes no
 --test-suite-runner-program replaces the function that runs the runner, so
 the real runner beside the program is named and never started. The wait
 passed in counts its calls and stops a case that waits more often than any
@@ -34,7 +29,6 @@ Prints one line per case and exits non-zero if any case fails.
 """
 
 import contextlib
-import fcntl
 import importlib.util
 import io
 import json
@@ -42,12 +36,10 @@ import os
 import re
 import shlex
 import shutil
-import signal
 import socket
 import subprocess
 import sys
 import tempfile
-import time
 import types
 from datetime import datetime, timezone
 from pathlib import Path
@@ -218,9 +210,6 @@ FAILING_RUNNER_LINES = [
 
 THE_REFERENCE_CLONES_RUNNER = object()
 
-ALREADY_WRITTEN = ("pull-request-head-test-run: already written: the test log there holds "
-                   "the whole record of this run, byte for byte.\n"
-                   "Tell the user the record is written.\n")
 A_RECORDS_FIRST_LINE = re.compile(
     r"pull-request-head-test-run: (ned-box|mac), started "
     r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z, a record of (\d+) lines")
@@ -1258,27 +1247,6 @@ def run_cases_on_the_mac(workspace: Path):
           and written_by_hand.stdout == "" and written_by_hand.stderr == "",
           f"{written_by_hand.returncode} {written_by_hand.stdout} {written_by_hand.stderr}")
 
-    # --- That command, run again after a later run of the same head added its record
-    later = unreachable.run(hostname="a-mac-that-is-not-ned-box", exits=(1,),
-                            lines=FAILING_RUNNER_LINES, moment=A_LATER_MOMENT)
-    record_of_the_later_run = unreachable.record("mac")
-    written_by_hand = subprocess.run(["/bin/sh", "-c", remedy_as_printed], env=environment,
-                                     capture_output=True, text=True, check=False)
-    check("run again after a later run of the same head has added its record, that command "
-          "adds nothing, exits 0 and says the record is written: the test log holds the "
-          "earlier run's record once, and the later run's record after it",
-          later.code == 1 and record_of_the_later_run is not None and local_copy is not None
-          and record_of_the_later_run.startswith(
-              "pull-request-head-test-run: mac, started 2026-10-01T04:00:00Z, a record of ")
-          and FAILING_SUMMARY_LINE in record_of_the_later_run.splitlines()
-          and written_by_hand.returncode == 0
-          and unreachable.test_log("mac") == local_copy + record_of_the_later_run
-          and unreachable.record_files()
-          == [f"pull-request-head-test-runs/mac/{unreachable.head}.txt"]
-          and written_by_hand.stdout == ALREADY_WRITTEN and written_by_hand.stderr == "",
-          f"{later!r}\n{written_by_hand.returncode} {written_by_hand.stdout} "
-          f"{written_by_hand.stderr}")
-
     # --- That command, run for the first time when the test log holds other runs' ---
     # --- records: of an earlier run, of a later run, of a run of the same second ----
     for state, moment_of_the_other_run in (
@@ -1381,18 +1349,6 @@ def run_cases_of_a_record_cut_short_on_the_way(workspace: Path):
           and FAILING_SUMMARY_LINE in local_copy.splitlines()
           and fixture.record_files() == [record_path],
           f"{written_by_hand.returncode} {written_by_hand.stderr}")
-    run_a_second_time = subprocess.run(["/bin/sh", "-c", remedy_as_printed], env=environment,
-                                       capture_output=True, text=True, check=False)
-    check("the remedy, run a second time, finds its own run's whole record there: it "
-          "adds nothing, exits 0, leaves no other file, and says the record is written",
-          run_a_second_time.returncode == 0 and record_of_the_earlier_run is not None
-          and fixture.test_log("mac") == record_of_the_earlier_run + local_copy
-          and fixture.record_files() == [record_path]
-          and run_a_second_time.stderr == ""
-          and run_a_second_time.stdout == ALREADY_WRITTEN,
-          f"{run_a_second_time.returncode} {run_a_second_time.stdout} "
-          f"{run_a_second_time.stderr}")
-
     # --- The far side added the record, and the client died before the exit
     # status came back: the program says the record was not written, and the
     # record is in the test log.
@@ -1412,18 +1368,18 @@ def run_cases_of_a_record_cut_short_on_the_way(workspace: Path):
                                      capture_output=True, text=True, check=False)
     check("when the far side added the record and the ssh client then failed, the "
           "program exits 5 and says the record was not written, with the run's whole "
-          "record in the test log; the remedy, run as printed, adds nothing, exits 0, "
-          "leaves no other file, and says the record is written: the test log holds that "
-          "record once",
+          "record in the test log; the remedy, run as printed, appends the record again, "
+          "exits 0, leaves no other file, and says nothing: the test log holds the "
+          "record twice",
           result.code == 5 and local_copy != ""
           and result.stderr.startswith(
               "pull-request-head-test-run: the record was not written to "
               f"nedlern@ned-box:{added.log_store}/{record_path} (ssh nedlern@ned-box "
               f"exited 255: ssh: the connection was lost).\n")
-          and written_by_hand.returncode == 0 and added.test_log("mac") == local_copy
+          and written_by_hand.returncode == 0 and added.test_log("mac") == local_copy * 2
           and added.record_files() == [record_path]
           and written_by_hand.stderr == ""
-          and written_by_hand.stdout == ALREADY_WRITTEN,
+          and written_by_hand.stdout == "",
           f"{result!r}\n{written_by_hand.returncode} {written_by_hand.stdout} "
           f"{written_by_hand.stderr}")
 
@@ -1464,6 +1420,43 @@ def run_cases_of_a_record_cut_short_on_the_way(workspace: Path):
           and in_the_way.test_log("ned-box") == local_copy
           and in_the_way.record_files() == [record_path],
           f"{written_by_hand.returncode} {written_by_hand.stderr}")
+
+
+def run_cases_of_a_record_the_test_log_takes_part_of(workspace: Path):
+    """A test log the size limit lets take only part of the record, through
+    main as a run on the Mac calls it: the remedy is the repair by hand, never
+    an append of the whole record behind the partial one."""
+    probe = workspace / "file-size-limit-probe"
+    subprocess.run(["/bin/sh", "-c", 'ulimit -f 1; head -c 8192 /dev/zero > "$1"', "sh",
+                    str(probe)], capture_output=True, check=False)
+    limit = probe.stat().st_size
+    fixture = Fixture(workspace / "on-the-mac-with-a-test-log-that-takes-part-of-the-record")
+    record_path = f"pull-request-head-test-runs/mac/{fixture.head}.txt"
+    test_log = fixture.log_store / record_path
+    test_log.parent.mkdir(parents=True)
+    earlier = "x" * (limit - 2) + "\n"
+    test_log.write_text(earlier, encoding="utf-8")
+    result = fixture.run(hostname="a-mac-that-is-not-ned-box",
+                         ssh_body='ulimit -f 1; exec /bin/sh -c "$1"')
+    citation = f"nedlern@ned-box:{fixture.log_store}/{record_path}"
+    stderr_lines = result.stderr.splitlines()
+    check("when the test log takes only part of the record, the program exits 5, says a "
+          "partial record now ends the test log, and gives the repair by hand before any "
+          "append, never the append alone",
+          result.code == 5 and len(stderr_lines) == 4
+          and stderr_lines[0].startswith(
+              f"pull-request-head-test-run: the record was not written to {citation} "
+              f"(ssh nedlern@ned-box exited 1: pull-request-head-test-run: not written: "
+              f"the test log took only part of the record.): a partial record now ends "
+              f"that test log")
+          and stderr_lines[2] == f"Remove the partial record from the end of {citation} by hand."
+          and stderr_lines[3].startswith(
+              "Once it is removed, write the record by running on this machine: ")
+          and "When ned-box answers ssh again" not in result.stderr
+          and (fixture.test_log("mac") or "").startswith(earlier)
+          and len(earlier) < len(fixture.test_log("mac"))
+          < len(earlier) + len(fixture.local_copy().read_text(encoding="utf-8")),
+          f"limit {limit} {result!r}")
 
 
 def run_cases_of_the_write_command_under_each_shell(workspace: Path):
@@ -1550,53 +1543,6 @@ def run_cases_of_the_write_command_under_each_shell(workspace: Path):
               and read_after_the_write == (first + second).encode("utf-8")
               and files_left() == ["a-head.txt"],
               f"{added.returncode} {added.stderr!r} {read_after_the_write!r}")
-        for which, record_there in (("the first of the two there", first),
-                                    ("the last of the two there", second)):
-            again = write(record_there)
-            check(f"under {shell} the command run again for a record the test log holds, "
-                  f"{which}: exit 0, the test log left byte for byte, no other file, "
-                  f"nothing on stderr, and stdout that the record is written",
-                  again.returncode == 0
-                  and test_log.read_bytes() == (first + second).encode("utf-8")
-                  and files_left() == ["a-head.txt"] and again.stderr == b""
-                  and again.stdout.decode("utf-8") == ALREADY_WRITTEN,
-                  f"{again.returncode} {again.stdout!r} {again.stderr!r} {files_left()}")
-        run_with_no_reader_on("stdout", command_for(second), second)
-        check(f"under {shell} the command run again for a record the test log holds, with "
-              f"no reader on stdout: the test log left byte for byte, and no other file",
-              test_log.read_bytes() == (first + second).encode("utf-8")
-              and files_left() == ["a-head.txt"], f"{files_left()}")
-        fed_nothing = subprocess.run(
-            [shell, "-c", command_for(second)], input=b"", capture_output=True, check=False)
-        check(f"under {shell} the command handed nothing, for a record the test log holds: "
-              f"exit 1 on the count, nothing on stdout: the count is taken before the test "
-              f"log is looked at, so nothing handed over is not read as a record already "
-              f"written",
-              fed_nothing.returncode == 1 and fed_nothing.stdout == b""
-              and test_log.read_bytes() == (first + second).encode("utf-8")
-              and fed_nothing.stderr.decode("utf-8") == "pull-request-head-test-run: not "
-              f"written: {len(second.encode('utf-8'))} bytes of the record were sent and "
-              "another count arrived.\nRun this command again.\n",
-              f"{fed_nothing.returncode} {fed_nothing.stdout!r} {fed_nothing.stderr!r}")
-        # A record is in the test log when the whole of it is, from the start
-        # of a line: neither of these two is.
-        opens_the_same = second.splitlines(keepends=True)[0] + "and then differs\n"
-        ends_a_line_there = "which is longer\nline two\nline three\n"
-        log_so_far = first + second
-        for which, record in (
-                ("that opens with the line a record there opens with, and then differs",
-                 opens_the_same),
-                ("whose bytes are in the test log from the middle of a line there",
-                 ends_a_line_there)):
-            added = write(record)
-            log_so_far += record
-            check(f"under {shell} a record {which}, is not read as written already: it is "
-                  f"added, exit 0, nothing said",
-                  ends_a_line_there in second and opens_the_same[:20] == second[:20]
-                  and added.returncode == 0 and added.stdout == b"" and added.stderr == b""
-                  and test_log.read_bytes() == log_so_far.encode("utf-8"),
-                  f"{added.returncode} {added.stdout!r} {added.stderr!r}")
-
         # A write the test log takes part of. Under a limit of one block on
         # the size of a file, 512 bytes or 1024 by the shell, a test log of
         # fewer bytes takes the start of a record of 4096 and no more.
@@ -1605,23 +1551,20 @@ def run_cases_of_the_write_command_under_each_shell(workspace: Path):
         of_4096_bytes = "x" * 4095 + "\n"
         taken_in_part = write(of_4096_bytes, file_name="another-head.txt",
                               before="ulimit -f 1; ")
-        check(f"under {shell} a write the test log takes part of, here under a limit on a "
-              f"file's size: exit 1, the test log cut back to what it held, byte for byte, "
-              f"nothing on stdout, and stderr that it is cut back and what to do",
+        check(f"under {shell} a short append exits 1, leaves the partial record in the "
+              f"test log, says nothing on stdout, and reports the failure and manual repair",
               short.returncode == 0 and taken_in_part.returncode == 1
-              and another_test_log.read_bytes() == first.encode("utf-8")
+              and len(first.encode("utf-8")) < another_test_log.stat().st_size
+              < len((first + of_4096_bytes).encode("utf-8"))
+              and (first + of_4096_bytes).encode("utf-8").startswith(
+                  another_test_log.read_bytes())
               and taken_in_part.stdout == b""
               and taken_in_part.stderr.decode("utf-8") == "pull-request-head-test-run: not "
-              "written: the test log took part of the record and is cut back to what it "
-              "held.\nRun this command again.\n",
+              "written: the test log took only part of the record.\n"
+              "Before appending another record, repair the partial record in the test log "
+              "by hand.\n",
               f"{short.returncode} {taken_in_part.returncode} {taken_in_part.stderr!r} "
               f"{len(another_test_log.read_bytes())}")
-        written_whole = write(of_4096_bytes, file_name="another-head.txt")
-        check(f"under {shell} the same command, run again with no such limit, adds the "
-              f"whole record after what the test log held",
-              written_whole.returncode == 0
-              and another_test_log.read_bytes() == (first + of_4096_bytes).encode("utf-8"),
-              f"{written_whole.returncode} {written_whole.stderr!r}")
 
 
 def run_cases_of_what_the_write_command_holds():
@@ -1738,170 +1681,6 @@ def run_cases_of_two_writers_at_once(workspace: Path):
           and files_left == ["a-head.txt"], f"{code_of_the_first} {files_left}")
 
 
-def run_cases_of_the_test_logs_lock(workspace: Path):
-    """What a writer does while another process holds the test log's lock,
-    and after a process that held it was killed. In the first part this suite
-    holds the lock for a second and a half, the one wait on a clock in the
-    suite, with three writers started: one of another run, and two copies of
-    one run's command, as when a refusal's command is run twice at once. The
-    lock this suite holds is a shared one: a writer waits for it only when the
-    lock the writer takes is exclusive, which is what keeps two writers apart."""
-    root = workspace / "the-test-log-is-locked"
-    test_log = root / "pull-request-head-test-runs" / "ned-box" / "a-head.txt"
-    test_log.parent.mkdir(parents=True)
-    there = "a record already in the test log\n"
-    test_log.write_text(there, encoding="utf-8")
-    of_another_run = "the whole record of another run\nits second line\n"
-    of_the_run = "the whole record of the run whose command is run twice\nits second line\n"
-
-    def started(record):
-        writer = subprocess.Popen(
-            ["/bin/sh", "-c", program.write_record_command(
-                str(root), "ned-box", "a-head.txt", len(record))],
-            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        writer.stdin.write(record.encode("utf-8"))
-        writer.stdin.close()
-        return writer
-
-    def ended(writer):
-        """(exit code, stdout, stderr) of a writer, which is killed, with None
-        for its exit code, when it has not ended in 20 seconds."""
-        try:
-            code = writer.wait(timeout=20)
-        except subprocess.TimeoutExpired:
-            writer.kill()
-            writer.wait()
-            code = None
-        output = (code, writer.stdout.read().decode("utf-8"),
-                  writer.stderr.read().decode("utf-8"))
-        writer.stdout.close()
-        writer.stderr.close()
-        return output
-
-    with open(test_log, "rb") as held_by_this_suite:
-        fcntl.flock(held_by_this_suite.fileno(), fcntl.LOCK_SH)
-        writers = [started(of_another_run), started(of_the_run), started(of_the_run)]
-        time.sleep(1.5)
-        none_has_ended = all(writer.poll() is None for writer in writers)
-        while_locked = test_log.read_text(encoding="utf-8")
-        fcntl.flock(held_by_this_suite.fileno(), fcntl.LOCK_UN)
-        outputs = [ended(writer) for writer in writers]
-    after = test_log.read_text(encoding="utf-8")
-    check("writers that find the test log locked by another process, with a shared lock, "
-          "wait: a second and a half on, none has ended and the test log is as it was",
-          none_has_ended and while_locked == there,
-          f"{none_has_ended} {while_locked!r} {outputs!r}")
-    check("once the lock is released each of them exits 0, the writer of another run "
-          "having said nothing, and the test log holds what it held and then each run's "
-          "whole record once, in the order the writers got the lock",
-          [output[0] for output in outputs] == [0, 0, 0]
-          and outputs[0][1:] == ("", "")
-          and after in (there + of_another_run + of_the_run,
-                        there + of_the_run + of_another_run),
-          f"{outputs!r} {after!r}")
-    check("of two copies of one run's command started at once, one adds the record and "
-          "says nothing, and the other says the record is written: the record is in the "
-          "test log once",
-          sorted(output[1] for output in outputs[1:]) == ["", ALREADY_WRITTEN]
-          and [output[2] for output in outputs[1:]] == ["", ""]
-          and after.count(of_the_run) == 1, f"{outputs!r} {after!r}")
-
-    # A process that takes the lock and is killed while it holds it.
-    holder = subprocess.Popen(
-        [sys.executable, "-c",
-         "import fcntl, sys, time\n"
-         "test_log = open(sys.argv[1], 'rb')\n"
-         "fcntl.flock(test_log, fcntl.LOCK_EX)\n"
-         "print('locked', flush=True)\n"
-         "time.sleep(600)\n", str(test_log)], stdout=subprocess.PIPE)
-    of_a_later_run = "the whole record of a run that starts while a killed holder had the lock\n"
-    try:
-        it_holds_the_lock = holder.stdout.readline() == b"locked\n"
-        writer = started(of_a_later_run)
-        holder.send_signal(signal.SIGKILL)
-        holder.wait()
-        output = ended(writer)
-    finally:
-        if holder.poll() is None:
-            holder.kill()
-            holder.wait()
-        holder.stdout.close()
-    check("a process that is killed while it holds the test log's lock leaves no lock to "
-          "clear and no file: a writer started while it held the lock adds its whole "
-          "record once the process is gone, exits 0 and says nothing",
-          it_holds_the_lock and output == (0, "", "")
-          and test_log.read_text(encoding="utf-8") == after + of_a_later_run
-          and sorted(os.listdir(test_log.parent)) == ["a-head.txt"],
-          f"{it_holds_the_lock} {output!r} {sorted(os.listdir(test_log.parent))}")
-
-
-def run_cases_of_two_writers_of_one_run(workspace: Path):
-    """One run can have two writers at once: its own write still running on
-    the far side after the client died, and the command its refusal printed,
-    which is the same command. The first writer is handed half the run's
-    record and held; the second is handed the whole record and ends; the first
-    is then handed the rest. The log-store root's name holds spaces and a
-    single quote, so the command is run on a path that needs quoting."""
-    record_of_the_run = (
-        "pull-request-head-test-run: ned-box, started 2026-10-01T03:30:01Z, a record of 39 "
-        "lines\n"
-        + "".join(f"line {number} of the run's own record\n" for number in range(2, 40)))
-    first_half = record_of_the_run[:len(record_of_the_run) // 2]
-    the_rest = record_of_the_run[len(first_half):]
-    of_an_earlier_run = ("pull-request-head-test-run: ned-box, started 2026-10-01T03:30:00Z, "
-                         "a record of 2 lines\nan earlier run's whole record\n")
-    of_a_later_run = ("pull-request-head-test-run: ned-box, started 2026-10-01T03:30:02Z, a "
-                      "record of 2 lines\na later run's whole record\n")
-    count = 0
-    for shell in ("/bin/sh", "/bin/bash", "/bin/dash"):
-        if not Path(shell).is_file():
-            print(f"SKIP  two writers of one run under {shell}: this machine has no {shell}")
-            continue
-        for state, there_before in (("no test log there", ""),
-                                    ("an earlier run's record there", of_an_earlier_run),
-                                    ("a later run's record there", of_a_later_run)):
-            count += 1
-            root = workspace / f"two writers of one run's record, {count}"
-            test_log = root / "pull-request-head-test-runs" / "ned-box" / "a-head.txt"
-            if there_before:
-                test_log.parent.mkdir(parents=True)
-                test_log.write_bytes(there_before.encode("utf-8"))
-            command = program.write_record_command(
-                str(root), "ned-box", "a-head.txt", len(record_of_the_run.encode("utf-8")))
-            first = subprocess.Popen([shell, "-c", command], stdin=subprocess.PIPE,
-                                     stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            try:
-                first.stdin.write(first_half.encode("utf-8"))
-                first.stdin.flush()
-                second = subprocess.run([shell, "-c", command],
-                                        input=record_of_the_run.encode("utf-8"),
-                                        capture_output=True, check=False)
-                after_the_second = test_log.read_bytes() if test_log.is_file() else None
-                stdout_of_the_first, stderr_of_the_first = first.communicate(
-                    the_rest.encode("utf-8"), timeout=20)
-            finally:
-                if first.poll() is None:
-                    first.kill()
-                    first.wait()
-            files_left = sorted(os.listdir(test_log.parent))
-            check(f"under {shell}, {state}: one writer of a run has been handed half the "
-                  f"run's record when a second writer of the run is handed the whole of "
-                  f"it; the second adds the record after what was there, exits 0 and says "
-                  f"nothing; the first, handed the rest after that, adds nothing, says "
-                  f"the record is written and exits 0; the record is in the test log once "
-                  f"and no other file is left",
-                  second.returncode == 0 and second.stdout == b"" and second.stderr == b""
-                  and after_the_second == (there_before + record_of_the_run).encode("utf-8")
-                  and first.returncode == 0 and stderr_of_the_first == b""
-                  and stdout_of_the_first.decode("utf-8") == ALREADY_WRITTEN
-                  and test_log.read_bytes()
-                  == (there_before + record_of_the_run).encode("utf-8")
-                  and files_left == ["a-head.txt"],
-                  f"{second.returncode} {second.stdout!r} {second.stderr!r} "
-                  f"{first.returncode} {stdout_of_the_first!r} {stderr_of_the_first!r} "
-                  f"{files_left}")
-
-
 def run_cases_as_a_program(workspace: Path):
     """The program run as a reviewer runs it: its own process, its real clock
     and wait, the moment taken from the machine. ned-box is the fake ssh on
@@ -2001,12 +1780,11 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     run_cases_of_a_subject_that_holds_line_boundaries_that_are_no_line_feed(workspace_root)
     run_cases_on_the_mac(workspace_root)
     run_cases_of_a_record_cut_short_on_the_way(workspace_root)
+    run_cases_of_a_record_the_test_log_takes_part_of(workspace_root)
     run_cases_of_the_write_command_under_each_shell(workspace_root)
     run_cases_of_what_the_write_command_holds()
     run_cases_of_the_two_byte_counts(workspace_root)
     run_cases_of_two_writers_at_once(workspace_root)
-    run_cases_of_the_test_logs_lock(workspace_root)
-    run_cases_of_two_writers_of_one_run(workspace_root)
     run_cases_as_a_program(workspace_root)
     run_log_store_readme_cases()
 

@@ -4,7 +4,7 @@
 The checkout must match the recorded head before testing, at runner startup, and after testing;
 a change made and reverted during the suites remains undetectable.
 
-A writer killed during a partial append can leave a torn record that prevents subsequent records from being read.
+A partial append can leave a torn record that prevents subsequent records from being read.
 
 Exit codes: 0 suites passed, 1 suite failed, 2 refused or unable to start, 4 failed step,
 5 record not written, 7 uncaught exception. Local logs and the record remain available for recovery."""
@@ -71,10 +71,14 @@ MAIN_AS_THE_CLONE_HAS_IT = "refs/remotes/origin/main"
 # Must match the runner's commit_and_state wording.
 RUNNER_STATE_WHEN_TRACKED_FILES_MATCH = "tracked files match that commit"
 
+# The caller sees only the first line of the append's error, so this phrase in it is what
+# tells a partial record left in the test log from a record not written at all.
+TEST_LOG_TOOK_PART_OF_THE_RECORD = "the test log took only part of the record"
+
 # Keep this one-line command ASCII and free of single quotes so the recovery command remains shell-copyable.
-# Check byte length before locking: interrupted ssh input otherwise looks like a complete record.
+# Check byte length before appending: interrupted ssh input otherwise looks like a complete record.
 PULL_REQUEST_HEAD_TEST_LOG_APPEND_PROGRAM = "; ".join((
-    "import fcntl, os, sys",
+    "import os, sys",
     f'sys.excepthook = lambda kind, error, trace: sys.stderr.write("{PROGRAM}: not written: '
     f'%s: %s\\n" % (kind.__name__, error))',
     "test_log, bytes_sent = sys.argv[1], int(sys.argv[2])",
@@ -82,16 +86,10 @@ PULL_REQUEST_HEAD_TEST_LOG_APPEND_PROGRAM = "; ".join((
     f'len(record) == bytes_sent or sys.exit("{PROGRAM}: not written: %d bytes of the record '
     f'were sent and another count arrived.\\nRun this command again." % bytes_sent)',
     "os.makedirs(os.path.dirname(test_log), exist_ok=True)",
-    "log = os.open(test_log, os.O_RDWR | os.O_APPEND | os.O_CREAT, 0o666)",
-    "fcntl.flock(log, fcntl.LOCK_EX)",
-    "length = os.fstat(log).st_size",
-    "there = os.pread(log, length, 0)",
-    f'(there.startswith(record) or b"\\n" + record in there) and (print("{PROGRAM}: already '
-    f'written: the test log there holds the whole record of this run, byte for byte.\\nTell '
-    f'the user the record is written."), sys.exit())',
-    f'os.write(log, record) == bytes_sent or (os.ftruncate(log, length), sys.exit("{PROGRAM}: '
-    f'not written: the test log took part of the record and is cut back to what it held.'
-    f'\\nRun this command again."))',
+    "log = os.open(test_log, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o666)",
+    f'os.write(log, record) == bytes_sent or sys.exit("{PROGRAM}: '
+    f'not written: {TEST_LOG_TOOK_PART_OF_THE_RECORD}.'
+    f'\\nBefore appending another record, repair the partial record in the test log by hand.")',
 ))
 
 
@@ -151,8 +149,8 @@ def why_the_run_is_no_verdict_on_the_head(checkout: Path, head: str, completed) 
 
 def write_record_command(log_store_root: str, machine: str, file_name: str,
                          bytes_sent: int) -> str:
-    """Build an idempotent append command for the record supplied on stdin."""
-    # exec makes the timeout kill the lock holder; keep the command ASCII for filesystem encoding.
+    """Build a checked append command for the record supplied on stdin."""
+    # exec makes the timeout kill the writer; keep the command ASCII for filesystem encoding.
     test_log = (f"{log_store_root}/{PULL_REQUEST_HEAD_TEST_RUNS_KIND_DIRECTORY_NAME}/"
                 f"{machine}/{file_name}")
     return (f"exec python3 -c {shlex.quote(PULL_REQUEST_HEAD_TEST_LOG_APPEND_PROGRAM)} "
@@ -354,13 +352,24 @@ def main(argv=None, now=None, wait=time.sleep, monotonic=time.monotonic) -> int:
             len((record + "\n").encode("utf-8")))
         by_hand = ([*mark.NED_BOX_SSH_COMMAND, ssh_target, remedy_command] if ssh_target
                    else ["/bin/sh", "-c", remedy_command])
+        append_by_hand = (f"{' '.join(shlex.quote(part) for part in by_hand)} < "
+                          f"{shlex.quote(str(local_copy))}")
+        if TEST_LOG_TOOK_PART_OF_THE_RECORD in str(error):
+            print(f"{PROGRAM}: the record was not written to {citation} ({error}): "
+                  f"a partial record now ends that test log, and appending the record "
+                  f"again would leave it in the middle.\n"
+                  f"Tell the user what the line above says, and the remedy in the lines "
+                  f"below.\n"
+                  f"Remove the partial record from the end of {citation} by hand.\n"
+                  f"Once it is removed, write the record by running on this machine: "
+                  f"{append_by_hand}", file=sys.stderr)
+            return daily.EXIT_RECORD_NOT_WRITTEN
         when = ("When ned-box answers ssh again" if ssh_target
                 else "When the cause is fixed")
         print(f"{PROGRAM}: the record was not written to {citation} ({error}).\n"
               f"Tell the user what the line above says, and the remedy in the line below.\n"
-              f"{when}, write the record by running on this machine: "
-              f"{' '.join(shlex.quote(part) for part in by_hand)} < "
-              f"{shlex.quote(str(local_copy))}", file=sys.stderr)
+              f"{when}, write the record by running on this machine: {append_by_hand}",
+              file=sys.stderr)
         return daily.EXIT_RECORD_NOT_WRITTEN
 
     if summary is not None and verdict_is_on_the_head:
