@@ -465,6 +465,10 @@ def run_cases():
                   and f"head {head[:12]} is already in {given_base}" in completed.stderr
                   and "SUMMARY" not in completed.stdout,
                   f"rc={completed.returncode} out={completed.stdout} err={completed.stderr}")
+            check(f"{case_name}: given --head, the command it suggests keeps <number> "
+                  f"for the reader to fill in",
+                  "gh pr view <number> --json headRefOid,baseRefOid" in completed.stderr,
+                  f"rc={completed.returncode} out={completed.stdout} err={completed.stderr}")
             check(f"{case_name}: no lock taken, no worktree made, no cosmic-ray run",
                   not (control / "machine.lock").exists()
                   and len(worktrees_of(repository)) == 1 and calls(control) == [],
