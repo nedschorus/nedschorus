@@ -30,7 +30,7 @@
 # soon after starting" — the caller is told nothing about PATH, and the
 # evidence closes with the window. Three windows were lost that way.
 #
-# The wrapper is `<login shell> -l -c 'exec "$@"' <this script's name> <command...>`.
+# The wrapper is `/bin/zsh -l -c 'exec "$@"' <this script's name> <command...>`.
 # The point of the `exec "$@"` form, rather than handing the command to the
 # shell as a string to parse, is that IT CHANGES NOTHING ABOUT THE COMMAND.
 # The shell reads the login files (which is the whole purpose), then execs
@@ -98,60 +98,16 @@ if [ "${OPEN_ITERM_WINDOW_DRY_RUN:-}" != "1" ] && ! command -v osascript >/dev/n
     exit 1
 fi
 
-# The login shell to wrap the command in — see THE COMMAND RUNS UNDER A LOGIN
-# SHELL above. $SHELL is the user's own, so the window gets the PATH that user
-# would have in a terminal; /bin/sh is the fallback when it is unset, and also
-# when it holds anything that iTerm2's word-splitting would not deliver as a
-# single word, since this value is spliced into the command string it parses.
-#
-# It must also be a shell of the POSIX family, and that is not a formality:
-# /bin/csh and /bin/tcsh are in this Mac's /etc/shells, and both reject `-l`
-# and have no `exec "$@"` — a window opened under one would die instantly with
-# nothing said, which is the exact failure this wrapper exists to end (external
-# review of this change, 2026-09-02, P2). The named shells below are the ones
-# whose `-l -c 'exec "$@"'` form is POSIX; anything else falls back rather than
-# being guessed at.
-#
-# THE FALLBACK IS ANNOUNCED, because /bin/sh does not read another shell's
-# login files: a fish or csh user whose PATH is set in ~/.config/fish or
-# ~/.cshrc gets /bin/sh's PATH, which may still not hold what they asked to
-# run (second external review round of this change, 2026-09-02, P2). The
-# window then dies the original way. Nobody in this fleet runs such a shell —
-# $SHELL is /bin/zsh on this Mac — so supporting their syntax would be
-# building for a configuration that does not exist here; what is worth having
-# is that the substitution is never silent, since a silent one recreates
-# exactly the "died and said nothing" failure this wrapper was written to end.
-LOGIN_SHELL=${SHELL:-/bin/sh}
-FALLBACK_REASON=
-case $LOGIN_SHELL in
-    /*) ;;
-    *) FALLBACK_REASON="it is not an absolute path" ;;
-esac
-if [ -z "$FALLBACK_REASON" ]; then
-    case $LOGIN_SHELL in
-        *[[:space:]]* | *\'* | *\"*)
-            FALLBACK_REASON="it contains whitespace or quotes, which iTerm2's word-splitting would not deliver as one word"
-            ;;
-    esac
-fi
-if [ -z "$FALLBACK_REASON" ]; then
-    case ${LOGIN_SHELL##*/} in
-        sh | bash | zsh | dash | ksh | ksh93 | mksh) ;;
-        *)
-            FALLBACK_REASON="it is not a POSIX-family shell, so it has no '-l -c \"exec \\\$@\"' form"
-            ;;
-    esac
-fi
-if [ -n "$FALLBACK_REASON" ]; then
-    echo "open-iterm-window-running-command: not using \$SHELL ($LOGIN_SHELL) — $FALLBACK_REASON. Falling back to /bin/sh -l, which does NOT read that shell's login files, so anything on PATH only through them will still not be found." >&2
-    LOGIN_SHELL=/bin/sh
+if ! test -x /bin/zsh; then
+    echo "open-iterm-window-running-command: window creation stopped because /bin/zsh is missing or not executable" >&2
+    exit 1
 fi
 
 # `exec "$@"` is a fixed script, not the caller's text: the shell reads its
 # login files and then execs iTerm's argument vector unchanged. The word after
 # it is the shell's $0, which names this tool in anything the shell reports
 # (a "command not found" names the opener, not a bare "zsh").
-WRAPPED_COMMAND="$LOGIN_SHELL -l -c 'exec \"\$@\"' open-iterm-window-running-command $COMMAND_TEXT"
+WRAPPED_COMMAND="/bin/zsh -l -c 'exec \"\$@\"' open-iterm-window-running-command $COMMAND_TEXT"
 
 # Escape for embedding in an AppleScript double-quoted string.
 ESCAPED=$(printf '%s' "$WRAPPED_COMMAND" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g')
