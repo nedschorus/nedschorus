@@ -1562,9 +1562,9 @@ def main():
         target = repo / "docs/design.md"
         target.write_text(
             "`widget-frobnicator` `shared-vocabulary` `literal.name` "
-            "`branch-only-name` `binary-known-name`\n", encoding="utf-8")
+            "`branch-only-name` `binary-known-name` `list[0`\n", encoding="utf-8")
         (repo / "known.txt").write_text(
-            "prefixSHARED-VOCABULARYsuffix literalXname\n", encoding="utf-8")
+            "prefixSHARED-VOCABULARYsuffix literalXname list[0\n", encoding="utf-8")
         (repo / "known.bin").write_bytes(b"\x00BINARY-KNOWN-NAME\x00")
         git(repo, "add", "-A")
         git(repo, "commit", "-qm", "main vocabulary")
@@ -1572,8 +1572,19 @@ def main():
         (repo / "known.txt").write_text("branch-only-name\n", encoding="utf-8")
         git(repo, "add", "-A")
         git(repo, "commit", "-qm", "branch vocabulary")
-        names = runner_leak.filter_names_known_on_main(
-            runner_leak.coined_names(target), "docs/design.md", repo)
+        # `list[0` is an unbalanced bracket: read as a regex, git refuses it.
+        query_error = io.StringIO()
+        try:
+            with contextlib.redirect_stderr(query_error):
+                names = runner_leak.filter_names_known_on_main(
+                    runner_leak.coined_names(target), "docs/design.md", repo)
+        except SystemExit as exit_:
+            names = set()
+            check("main vocabulary is matched as fixed strings, regex characters included",
+                  False, f"exit {exit_.code}: {query_error.getvalue()!r}")
+        else:
+            check("main vocabulary is matched as fixed strings, regex characters included",
+                  "list[0" not in names, str(names))
         buffer = io.StringIO()
         with contextlib.redirect_stdout(buffer):
             runner_leak.leak_scan(names, target.read_text(encoding="utf-8"), "request")
@@ -1591,12 +1602,29 @@ def main():
                   {"absent-candidate-name"}, "docs/design.md", repo)
               == {"absent-candidate-name"})
 
+        request = base / "request.md"
+        request.write_text("widget-frobnicator\nshared-vocabulary\n", encoding="utf-8")
+        driven = runner_over(repo, base)
+        launched = []
+        driven.run_claude = lambda *args, **kwargs: (
+            launched.append("claude") or (0, any_attack_report, "a-test-model", ""))
+        code, out, err = drive_main(driven, [
+            "--target", "docs/design.md", "--attack", "fresh-eyes",
+            "--runtime", "claude", "--problem-statement", str(request)])
+        check("a whole run warns on a design-only name in the request",
+              "LEAK-WARNING: design name `widget-frobnicator`" in out,
+              f"exit {code}, stdout {out!r}, stderr {err!r}")
+        check("a whole run draws no LEAK-WARNING for a name found elsewhere on main",
+              "LEAK-WARNING" in out and "design name `shared-vocabulary`" not in out,
+              f"exit {code}, stdout {out!r}, stderr {err!r}")
+
         git(repo, "update-ref", "-d", "refs/remotes/origin/main")
         driven = runner_over(repo, base)
-        request = base / "request.md"
+        driven.RECORDS_ROOT = base / "records-of-the-failed-query-run"
         request.write_text("widget-frobnicator\n", encoding="utf-8")
         launched = []
-        driven.run_claude = lambda *args, **kwargs: launched.append("claude")
+        driven.run_claude = lambda *args, **kwargs: (
+            launched.append("claude") or (0, any_attack_report, "a-test-model", ""))
         code, out, err = drive_main(driven, [
             "--target", "docs/design.md", "--attack", "fresh-eyes",
             "--runtime", "claude", "--problem-statement", str(request)])
