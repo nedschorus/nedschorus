@@ -224,11 +224,15 @@ OVERVIEW_REFRESH_REMINDER_MARKS_UNREAD_TEMPLATE = (
     "user that the handoff-supervisor could not read the day's overview-refresh "
     "reminder marks, giving the location {marks_location} and the error above, "
     "and that an overview-refresh line in this prompt may therefore repeat a "
-    "refresh the user was already shown today. "
-    "When the error names `ssh nedlern@ned-box`, ned-box did not answer this "
-    "machine: also tell the user that `ssh nedlern@ned-box true`, run on the "
-    "Mac, shows whether ned-box answers again, and that the next "
-    "agent-session's start reads the marks again."
+    "refresh the user was already shown today."
+)
+
+# Appended only when ned-box gave no answer; an answer that does not parse
+# came from ned-box, so the ssh check would mislead.
+OVERVIEW_REFRESH_REMINDER_MARKS_NED_BOX_DID_NOT_ANSWER_SENTENCE = (
+    " Because ned-box did not answer this machine, also tell the user that "
+    "`ssh nedlern@ned-box true`, run on the Mac, shows whether ned-box answers "
+    "again, and that the next agent-session's start reads the marks again."
 )
 
 MEMORY_REVIEW_DUE_FROM_PACIFIC_HOUR = 12
@@ -914,7 +918,9 @@ def overview_refresh_due_lines(working_directory: Path,
         return tuple(line for _, line in still_to_give) + (
             OVERVIEW_REFRESH_REMINDER_MARKS_UNREAD_TEMPLATE.format(
                 marks_location=reminder_mark.daily_overview_refresh_reminder_mark_citation(''),
-                error=f"{type(error).__name__}: {error}"),)
+                error=f"{type(error).__name__}: {error}")
+            + (OVERVIEW_REFRESH_REMINDER_MARKS_NED_BOX_DID_NOT_ANSWER_SENTENCE
+               if getattr(error, "ned_box_did_not_answer", False) else ""),)
     lines = []
     for system, line in still_to_give:
         file_name = reminder_mark.daily_overview_refresh_reminder_mark_file_name(today, system)
