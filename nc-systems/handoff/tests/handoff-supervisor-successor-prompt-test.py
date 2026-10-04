@@ -968,6 +968,24 @@ EXPECTED_OVERVIEW_REFRESH_DUE_INSTRUCTION_TEMPLATE = (
 DAILY_OVERVIEW_REFRESH_REMINDER_MARK_SCRIPT_PATH = (
     SYSTEM_DIRECTORY / "daily-overview-refresh-reminder-mark.py")
 
+# The line a successor is given when the day's reminder marks cannot be read,
+# word for word. A template: the marks' location and the error are filled in.
+EXPECTED_OVERVIEW_REFRESH_REMINDER_MARKS_UNREAD_TEMPLATE = (
+    "overview check could not read the day's reminder marks in {marks_location}, "
+    "so no line is withheld for a reminder already given: {error}"
+    " — Before you act on any overview-refresh line in this prompt, tell the "
+    "user that the handoff-supervisor could not read the day's overview-refresh "
+    "reminder marks, giving the location {marks_location} and the error above, "
+    "and that an overview-refresh line in this prompt may therefore repeat a "
+    "refresh the user was already shown today. "
+    "When the error names `ssh nedlern@ned-box`, ned-box did not answer this "
+    "machine: also tell the user that `ssh nedlern@ned-box true`, run on the "
+    "Mac, shows whether ned-box answers again, and that the next "
+    "agent-session's start reads the marks again."
+)
+
+REMINDER_MARKS_UNREAD_LINE_OPENING = "overview check could not read the day's reminder marks in "
+
 
 def expected_overview_refresh_due_line(system: str, pinned: str, main: str,
                                        count: int) -> str:
@@ -1283,7 +1301,9 @@ def run_overview_refresh_withheld_while_pull_request_open_cases(workspace: Path)
         directory.mkdir()
         calls = directory / "calls"
         if without_gh:
-            (directory / "git").symlink_to(shutil.which("git"))
+            # python3 too: the day's reminder marks are read through it.
+            for program in ("git", "python3"):
+                (directory / program).symlink_to(shutil.which(program))
             search_path = str(directory)
         else:
             fake_gh = directory / "gh"
@@ -1495,6 +1515,8 @@ def run_overview_refresh_once_a_day_cases(workspace: Path):
         if reminder_mark is not None:
             replace(reminder_mark, "DAILY_OVERVIEW_REFRESH_REMINDER_MARKS_DIRECTORY",
                     str(marks_directory))
+            replace(reminder_mark, "ssh_target_for_this_machine",
+                    fixture.SSH_TARGET_FOR_THIS_MACHINE_UNPATCHED)
         if read_timeout is not None:
             replace(supervisor, "OVERVIEW_REFRESH_REMINDER_MARKS_READ_TIMEOUT_SECONDS",
                     read_timeout)
@@ -1608,29 +1630,34 @@ def run_overview_refresh_once_a_day_cases(workspace: Path):
         an_hour_later,
         ssh_body="echo 'ssh: connect to host ned-box port 22: No route to host' >&2\n"
                  "echo 'second line' >&2\nexit 255")
+    unreachable_line = EXPECTED_OVERVIEW_REFRESH_REMINDER_MARKS_UNREAD_TEMPLATE.format(
+        marks_location=mark_citation(""),
+        error="DailyMemoryReviewReadOrWriteFailed: ssh nedlern@ned-box exited 255: ssh: "
+              "connect to host ned-box port 22: No route to host")
     check("when ned-box cannot be reached, every due line is given, the marked system's "
-          "too",
-          due == (gadget_line, widget_line), f"{due!r}\n{console}")
-    check("when ned-box cannot be reached, the console says what could not be read, "
-          "with ssh's first line",
-          "handoff-supervisor: overview check could not read the day's reminder marks in "
-          f"{mark_citation('')}, so no line is withheld for a reminder already given: "
-          "DailyMemoryReviewReadOrWriteFailed: ssh nedlern@ned-box exited 255: ssh: "
-          "connect to host ned-box port 22: No route to host\n" in console, console)
+          "too, and after them one line saying what could not be read, with ssh's first "
+          "line, for the successor to tell the user",
+          due == (gadget_line, widget_line, unreachable_line),
+          f"{due!r}\nexpected: {(gadget_line, widget_line, unreachable_line)!r}\n{console}")
+    # The supervisor prints every returned line, so printing here too would
+    # show the failure twice.
+    check("when ned-box cannot be reached, the overview check prints nothing of the "
+          "failure itself",
+          "could not read the day's reminder marks" not in console, console)
 
     due, console, calls = due_at(an_hour_later, ssh_body="exec sleep 30", read_timeout=1)
-    check("when the read of the marks times out, every due line is given and the console "
-          "says so",
-          due == (gadget_line, widget_line)
-          and "could not read the day's reminder marks" in console
-          and "ssh nedlern@ned-box timed out after 1 s" in console, f"{due!r}\n{console}")
+    check("when the read of the marks times out, every due line is given and then the "
+          "line saying so, with the timeout",
+          due[:2] == (gadget_line, widget_line) and len(due) == 3
+          and due[2].startswith(REMINDER_MARKS_UNREAD_LINE_OPENING)
+          and "ssh nedlern@ned-box timed out after 1 s" in due[2], f"{due!r}\n{console}")
 
     due, console, calls = due_at(an_hour_later, ssh_body="echo 'this is not json'")
-    check("when the read's output does not parse, every due line is given and the "
-          "console says so",
-          due == (gadget_line, widget_line)
-          and "could not read the day's reminder marks" in console
-          and "does not parse" in console, f"{due!r}\n{console}")
+    check("when the read's output does not parse, every due line is given and then the "
+          "line saying so",
+          due[:2] == (gadget_line, widget_line) and len(due) == 3
+          and due[2].startswith(REMINDER_MARKS_UNREAD_LINE_OPENING)
+          and "does not parse" in due[2], f"{due!r}\n{console}")
 
     # A mark for today that does not hold the time it was written is not a
     # mark: a file cut short as it was written, or one written by hand.
@@ -1888,6 +1915,61 @@ def run_overview_refresh_due_prompt_cases(workspace: Path):
           f"{result.returncode} {launched[-900:]!r} {result.stdout[-600:]}")
     check("the supervisor prints the overview-refresh-due line on its console",
           f"handoff-supervisor: {expected}" in result.stdout, result.stdout[-900:])
+
+    # End to end, the marks unreadable: the successor is given the due line and,
+    # after it, the line saying the marks could not be read, and the console
+    # shows that line once. The read goes over ssh from the Mac and through
+    # /bin/sh to python3 on ned-box; a fake of each, first on PATH, fails it
+    # on either machine.
+    unread_directory = workspace / "overview-refresh-marks-unread-handoffs"
+    unread_directory.mkdir()
+    (unread_directory / "marksunread-handoff.md").write_text(
+        "written-at: 2026-09-28T00:00:00Z\nnext-step: resume the audit\nrestart-counter: 5\n",
+        encoding="utf-8")
+    supervisor.write_supervisor_state(
+        unread_directory / "marksunread-supervisor-state.json",
+        {"consumed_counter": 4, "launched_session_id": "no-such-session", "generation": 4})
+    unread_record_path = unread_directory / "launch-record.txt"
+    unread_stub_agent = unread_directory / "stub-agent"
+    unread_stub_agent.write_text(
+        stub_agent.read_text(encoding="utf-8").replace(str(record_path),
+                                                       str(unread_record_path)),
+        encoding="utf-8")
+    unread_stub_agent.chmod(0o755)
+    failing_read_directory = unread_directory / "failing-marks-read"
+    failing_read_directory.mkdir()
+    for program in ("ssh", "python3"):
+        (failing_read_directory / program).write_text(
+            "#!/bin/sh\necho 'marks read failed in this fixture' >&2\nexit 255\n",
+            encoding="utf-8")
+        (failing_read_directory / program).chmod(0o755)
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT_PATH), "--agent", "marksunread", "--cd", str(seat),
+         "--handoff-dir", str(unread_directory), "--agent-command", str(unread_stub_agent),
+         "--agent-update-timeout-seconds", "0"],
+        capture_output=True, text=True, check=False, stdin=subprocess.DEVNULL, timeout=60,
+        env={**os.environ,
+             "PATH": f"{failing_read_directory}{os.pathsep}{no_open_pull_requests}"
+                     f"{os.pathsep}{os.environ.get('PATH', '')}"})
+    launched = (unread_record_path.read_text(encoding="utf-8")
+                if unread_record_path.is_file() else "")
+    check("an ignited successor whose reminder marks cannot be read is given the "
+          "overview-refresh-due line and, after it, the line saying the marks could "
+          "not be read, with the error, and the instruction to tell the user",
+          expected in launched and REMINDER_MARKS_UNREAD_LINE_OPENING in launched
+          and launched.index(expected) < launched.index(REMINDER_MARKS_UNREAD_LINE_OPENING)
+          and "marks read failed in this fixture" in launched
+          and "Before you act on any overview-refresh line in this prompt, tell the user"
+          in launched,
+          f"{result.returncode} {launched[-1500:]!r} {result.stdout[-900:]}")
+    check("the supervisor prints the line saying the marks could not be read on its "
+          "console, once",
+          result.stdout.count("handoff-supervisor: " + REMINDER_MARKS_UNREAD_LINE_OPENING) == 1,
+          result.stdout[-1500:])
+    check("the template the supervisor fills is word for word what was built",
+          getattr(supervisor, "OVERVIEW_REFRESH_REMINDER_MARKS_UNREAD_TEMPLATE", None)
+          == EXPECTED_OVERVIEW_REFRESH_REMINDER_MARKS_UNREAD_TEMPLATE,
+          repr(getattr(supervisor, "OVERVIEW_REFRESH_REMINDER_MARKS_UNREAD_TEMPLATE", None)))
 
 
 # The memory-review-due instruction, word for word. A template: the mark
