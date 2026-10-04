@@ -50,6 +50,7 @@ alone.
 Run: python3 scripts/launch-claude-mac-test.py
 """
 
+import errno
 import fcntl
 import os
 import subprocess
@@ -412,6 +413,58 @@ def main() -> int:
         check("update lock: a failed update preserves its diagnosis and exit status",
               result.returncode == 3 and result.stderr == "update failed\n",
               (result.returncode, result.stderr))
+
+        # A lock that cannot be opened is a failure, not "another update is
+        # running": exit 1, the lock path in the line, and the update not run.
+        # ~/.local is a regular file here, so the lock's directory cannot exist.
+        unopenable_home = root / "update-lock-unopenable-home"
+        unopenable_home.mkdir()
+        (unopenable_home / ".local").write_text("not a directory\n")
+        update_ran_marker = root / "update-lock-unopenable-update-ran"
+        unopenable_lock_path = unopenable_home / ".local" / "state" / "claude" / "agent-binary-update.lock"
+        result = subprocess.run(
+            [sys.executable, str(LAUNCHER.with_name(UPDATE_LOCK_HELPER_NAME)),
+             "--program-name", "launch-claude-mac", "--timeout-seconds", "30",
+             "--", sys.executable, "-c",
+             f"open({str(update_ran_marker)!r}, 'w').close()"],
+            env={**os.environ, "HOME": str(unopenable_home)},
+            capture_output=True, text=True, timeout=3)
+        check("update lock: an unopenable lock exits 1, names the lock, and skips the update",
+              result.returncode == 1 and result.stdout == ""
+              and result.stderr.startswith(
+                  f"launch-claude-mac: the update lock {unopenable_lock_path} could not be opened (")
+              and result.stderr.endswith(
+                  "); skipping the update and launching on the installed version\n")
+              and result.stderr.count("\n") == 1
+              and not update_ran_marker.exists(),
+              (result.returncode, result.stdout, result.stderr, update_ran_marker.exists()))
+
+        # flock failing for any reason but "held" (ENOLCK on a network
+        # filesystem, for one) is also a failure. No real filesystem here gives
+        # ENOLCK on demand, so the helper runs in a child whose flock raises it.
+        enolck_lock_path = root / "update-lock-enolck" / "agent-binary-update.lock"
+        update_ran_marker = root / "update-lock-enolck-update-ran"
+        enolck_driver = (
+            "import errno, importlib.util, sys\n"
+            f"spec = importlib.util.spec_from_file_location('helper', {str(LAUNCHER.with_name(UPDATE_LOCK_HELPER_NAME))!r})\n"
+            "helper = importlib.util.module_from_spec(spec)\n"
+            "spec.loader.exec_module(helper)\n"
+            "def flock_fails(*_):\n"
+            "    raise OSError(errno.ENOLCK, 'No locks available')\n"
+            "helper.fcntl.flock = flock_fails\n"
+            "sys.exit(helper.run_agent_binary_update_under_lock(\n"
+            f"    [sys.executable, '-c', \"open({str(update_ran_marker)!r}, 'w').close()\"],\n"
+            f"    30, 'launch-claude-mac', lock_path={str(enolck_lock_path)!r}))\n")
+        result = subprocess.run([sys.executable, "-B", "-c", enolck_driver],
+                                capture_output=True, text=True, timeout=10)
+        check("update lock: a flock error other than held exits 1, names the lock, and skips the update",
+              result.returncode == 1 and result.stdout == ""
+              and result.stderr == (
+                  f"launch-claude-mac: the update lock {enolck_lock_path} could not be "
+                  f"taken ([Errno {errno.ENOLCK}] No locks available); skipping the update "
+                  "and launching on the installed version\n")
+              and not update_ran_marker.exists(),
+              (result.returncode, result.stdout, result.stderr, update_ran_marker.exists()))
 
         # A limit of 0 skips the update entirely, lock included: nothing
         # waits, no update runs, and the lock file is never created.
