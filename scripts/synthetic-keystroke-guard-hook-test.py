@@ -254,9 +254,11 @@ check("the probe asked tmux for session_attached",
 reason = decide("tmux paste-buffer -t seat-a", StubRunner(stdout="1\n"))
 check("paste-buffer at an attached session is denied",
       reason is not None and "attached client" in reason, reason)
-check("the attached denial teaches the safe forms",
-      reason is not None and "open-iterm-window-running-command" in reason and "#37" in reason,
+check("the attached denial sends a message for another agent-seat to SendMessage",
+      reason is not None and "SendMessage tool" in reason and "#37" not in reason,
       reason)
+check("the attached denial carries the show-the-user line for this machine",
+      reason is not None and guard.show_the_user_line() in reason, reason)
 
 runner = StubRunner(stdout="0\n")
 check("ssh-wrapped injection to a detached box session is allowed",
@@ -278,8 +280,11 @@ reason = decide("ssh ned 'tmux send-keys -t gatekeeper Enter'",
                 StubRunner(stderr="ssh: connect to host ned: Operation timed out", returncode=255))
 check("an unverifiable target is denied, fail-closed",
       reason is not None and "could not verify" in reason, reason)
-check("the unverifiable denial carries the probe recipe and the override",
-      reason is not None and "session_attached" in reason and "CLAUDE_VERIFIED_DETACHED=1" in reason,
+check("the unverifiable denial carries the check command and the override",
+      reason is not None
+      and "Check the target with: python3 scripts/synthetic-keystroke-guard-hook.py "
+          "--is-target-detached gatekeeper --ssh-host ned" in reason
+      and "CLAUDE_VERIFIED_DETACHED=1" in reason and "session_attached" not in reason,
       reason)
 
 check("the CLAUDE_VERIFIED_DETACHED=1 override skips the probe",
@@ -289,6 +294,9 @@ check("the CLAUDE_VERIFIED_DETACHED=1 override skips the probe",
 reason = decide("tmux paste-buffer", StubRunner())
 check("keystrokes with no -t target are denied",
       reason is not None and "no -t target" in reason, reason)
+check("the no-target denial carries SendMessage and the show-the-user line",
+      reason is not None and "SendMessage tool" in reason
+      and guard.show_the_user_line() in reason and "#37" not in reason, reason)
 
 check("tmux without keystroke verbs passes (capture-pane is reading, not typing)",
       decide("ssh ned 'tmux capture-pane -p -t gatekeeper'", StubRunner()) is None)
@@ -312,15 +320,18 @@ check("F5: a -t value that happens to spell 'send' is not a verb (kill-session -
 runner = StubRunner()
 reason = decide('tmux send-keys -t "$SEAT" x', runner)
 check("F8a: an unexpanded variable target is denied naming the variable case",
-      reason is not None and "unexpanded variable" in reason
-      and "CLAUDE_VERIFIED_DETACHED=1" in reason and not runner.calls,
+      reason is not None and "unexpanded variable" in reason and not runner.calls,
       reason)
+check("F8a: the unresolved-target denial offers no override, since no probe can check it",
+      reason is not None and "CLAUDE_VERIFIED_DETACHED=1" not in reason, reason)
+check("F8a: the unresolved-target denial shows the xargs placeholder literally",
+      reason is not None and "If the target is xargs' or parallel's {}," in reason, reason)
 
 runner = StubRunner(stderr="can't find pane: {}", returncode=1)
 reason = decide("tmux ls -F '#{session_name}' | xargs -I{} tmux send-keys -t {} cmd",
                 runner)
 check("N1: an xargs {} placeholder target is unresolvable, not a can't-find allow",
-      reason is not None and "placeholder" in reason and not runner.calls,
+      reason is not None and "replacement string" in reason and not runner.calls,
       (reason, runner.calls))
 
 runner = StubRunner(stdout="0\n")
@@ -528,9 +539,9 @@ check("per-seat: an unverifiable first probe denies without shopping to a second
 
 reason = decide("tmux send-keys -t seat-a x",
                 StubRunner(stderr="server exited unexpectedly", returncode=2))
-check("per-seat: the unverifiable denial teaches the per-seat probe recipe too",
+check("per-seat: the unverifiable denial's check command names the target alone",
       reason is not None and "could not verify" in reason
-      and "tmux -L seat-a display-message" in reason,
+      and "--is-target-detached seat-a\n" in reason,
       reason)
 
 
@@ -948,6 +959,92 @@ check("ssh -p and -i are carried into the probe's own dial",
       (host, carried))
 check("no remote command means nothing to analyze",
       guard.parse_ssh_invocation(["ned"]) == ("ned", [], []))
+
+
+# Each denial gives one instruction to a line.
+for name, text in (("ATTACHED_REASON", guard.ATTACHED_REASON),
+                   ("UNVERIFIED_REASON", guard.UNVERIFIED_REASON),
+                   ("NO_TARGET_REASON", guard.NO_TARGET_REASON),
+                   ("UNRESOLVED_TARGET_REASON", guard.UNRESOLVED_TARGET_REASON),
+                   ("SYNTHETIC_TYPING_REASON", guard.SYNTHETIC_TYPING_REASON)):
+    check(f"{name} cites no issue and names no date",
+          "nedschorus#" not in text and "#37" not in text and "2026" not in text, text)
+
+check("the AppleScript denial tells an agent typing into another application to stop",
+      "If you meant to type into another application, stop and tell the user what you wanted typed."
+      in guard.SYNTHETIC_TYPING_REASON, guard.SYNTHETIC_TYPING_REASON)
+
+# The show-the-user line is chosen by the platform the guard runs on.
+check("on the Mac, the show-the-user line names the window opener",
+      guard.show_the_user_line("darwin") ==
+      "If the purpose is to show the user something, open a window with "
+      "scripts/open-iterm-window-running-command <command...>",
+      guard.show_the_user_line("darwin"))
+check("elsewhere, the show-the-user line says the opener runs only on the Mac",
+      guard.show_the_user_line("linux") ==
+      "If the purpose is to show the user something, tell the user the command to run; "
+      "the window opener runs only on the Mac.",
+      guard.show_the_user_line("linux"))
+
+
+# --- the check mode, --is-target-detached ---
+
+def run_check(arguments, runner):
+    out = io.StringIO()
+    status = guard.run_check_mode(arguments, runner=runner, clock=lambda: 0.0, out=out)
+    return status, out.getvalue().strip()
+
+
+status, printed = run_check(["seat-a"], StubRunner(stdout="0\n"))
+check("check mode: a detached session prints detached and exits 0",
+      (status, printed) == (0, "detached"), (status, printed))
+status, printed = run_check(["seat-a"], StubRunner(stdout="2\n"))
+check("check mode: an attached session prints attached and exits 1",
+      (status, printed) == (1, "attached"), (status, printed))
+status, printed = run_check(["gatekeeper", "--ssh-host", "ned"],
+                            StubRunner(stderr="ssh: connect to host ned: Operation timed out",
+                                       returncode=255))
+check("check mode: a failed probe prints could not verify with the error and exits 2",
+      status == 2 and printed.startswith("could not verify: ")
+      and "Operation timed out" in printed, (status, printed))
+status, printed = run_check(["seat-a"], StubRunner(stdout="\n"))
+check("check mode: an empty answer is not read as 0 attached clients",
+      status != 0 or printed == "detached", (status, printed))
+
+runner = ScriptedProbeRunner([("", "no server running on /tmp/tmux-501/default", 1),
+                              ("1\n", "", 0)])
+status, printed = run_check(["seat-a"], runner)
+check("check mode: it probes the seat's own server when the default has none",
+      (status, printed) == (1, "attached") and len(runner.calls) == 2
+      and runner.calls[1][:3] == ["tmux", "-L", "seat-a"], (status, printed, runner.calls))
+
+runner = StubRunner(stdout="0\n")
+status, printed = run_check(["gatekeeper", "--ssh-host", "ned", "--ssh-option", "-p", "2222",
+                             "--tmux-server-flag", "-L", "gatekeeper"], runner)
+check("check mode: the ssh host, carried option and server flag reach the probe",
+      status == 0 and runner.calls and runner.calls[0][0] == "ssh"
+      and "-p" in runner.calls[0] and "2222" in runner.calls[0] and "ned" in runner.calls[0]
+      and "-L gatekeeper" in runner.calls[0][-1], runner.calls)
+check("check mode: each probe may take longer than the hook's own",
+      runner.call_kwargs and runner.call_kwargs[0]["timeout"] > guard.PER_PROBE_TIMEOUT_SECONDS,
+      runner.call_kwargs)
+
+status, printed = run_check(["seat-a", "--bogus"], StubRunner())
+check("check mode: an unrecognised argument prints could not verify and exits 2",
+      status == 2 and printed.startswith("could not verify: "), (status, printed))
+
+command = guard.check_command("gatekeeper", ["-L", "gatekeeper"], ("ned", ("-p", "2222")))
+target, server_flags, ssh_context = guard.parse_check_mode_arguments(
+    __import__("shlex").split(command)[3:])
+check("the check command the denial prints parses back to the same probe",
+      (target, server_flags, ssh_context) == ("gatekeeper", ["-L", "gatekeeper"], ("ned", ("-p", "2222"))),
+      (command, target, server_flags, ssh_context))
+
+completed = subprocess.run([sys.executable, str(HOOK_SCRIPT), "--is-target-detached"],
+                           capture_output=True, text=True, check=False)
+check("check mode end to end: no target prints could not verify and exits 2",
+      completed.returncode == 2 and completed.stdout.startswith("could not verify: "),
+      (completed.returncode, completed.stdout, completed.stderr))
 
 
 print()
