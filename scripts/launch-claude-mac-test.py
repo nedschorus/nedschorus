@@ -781,6 +781,27 @@ def main() -> int:
               (sandbox.invoked_commands()[:200],
                sorted(str(p) for p in sandbox.workdir.iterdir())))
 
+        # A first argument starting with - is refused as a seat name: the
+        # first argument is always the name, so the launcher would otherwise
+        # launch a seat named after the option.
+        for label, first_argument in (("--help typed first", "--help"),
+                                      ("an option typed before the name",
+                                       "--no-attach")):
+            sandbox = MacLaunchSandbox(root / f"dash-seat-name-{first_argument}")
+            result = sandbox.run("~/agents", seat_name=first_argument,
+                                 attach=True)
+            check(f"{label}: refused with exit 2, naming the argument and "
+                  "printing the usage line",
+                  result.returncode == 2
+                  and f'a seat named "{first_argument}"' in result.stderr
+                  and "usage: launch-claude-mac <name>" in result.stderr,
+                  (result.returncode, result.stderr[:300]))
+            check(f"{label}: refused before any side effect",
+                  sandbox.invoked_commands() == ""
+                  and not any(sandbox.workdir.iterdir()),
+                  (sandbox.invoked_commands()[:200],
+                   sorted(str(p) for p in sandbox.workdir.iterdir())))
+
         # --- the after-exit shell inherits the credential, as it inherits
         # the task-list pin and for the same reason: the `claude --continue`
         # that shell offers is the same seat, and a `gh` typed there is the

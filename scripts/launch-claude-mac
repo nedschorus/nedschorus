@@ -76,11 +76,15 @@ SCRIPT_DIRECTORY=$(cd "$(dirname "$0")" && pwd)
 REPOSITORY_ROOT=$(cd "$SCRIPT_DIRECTORY/.." && pwd)
 SUPERVISOR="$REPOSITORY_ROOT/nc-systems/handoff/handoff-supervisor.py"
 
+usage_line() {
+    echo "usage: launch-claude-mac <name> [--no-attach] [--first-prompt-file <path>]" >&2
+}
+
 # The no-name case is the common mistake, so it teaches rather than scolds:
 # what a name is for, and which agents are running right now to pick from or
 # avoid colliding with.
 usage() {
-    echo "usage: launch-claude-mac <name> [--no-attach] [--first-prompt-file <path>]" >&2
+    usage_line
     echo >&2
     echo "Every agent is named, and the name is the whole configuration: it names the" >&2
     echo "tmux session, the home directory ($AGENTS_ROOT/<name>), and the agent's handoff" >&2
@@ -114,6 +118,16 @@ usage() {
 }
 
 [ $# -ge 1 ] || usage
+# The first argument is always the seat name, so an option typed first
+# would otherwise launch a seat named after the option.
+case "$1" in
+    (-*)
+        printf '%s\n' "launch-claude-mac: refused to launch a seat named \"$1\": the first argument is always the seat name, and a seat name cannot start with -." >&2
+        echo "If you wanted help: this launcher has no help option; its usage line follows." >&2
+        echo "If you meant an option: put the seat name first and the options after it." >&2
+        usage_line
+        exit 2 ;;
+esac
 AGENT_NAME="$1"
 shift
 ATTACH=yes
