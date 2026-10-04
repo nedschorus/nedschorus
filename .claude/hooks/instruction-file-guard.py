@@ -8,14 +8,11 @@ the hook wiring. Transcripts share the protected auto-memory directory.
 This hook sees Edit, Write and NotebookEdit calls, not writes through shell
 commands or other programs.
 
-The refusals tell the agent to create the marker with the Write tool: on the
-Mac, Claude Code's auto-mode classifier refuses a shell command that writes the
-marker, while the Write tool passes on the Edit allow rule in the Mac's user
-settings, ~/.claude/settings.json, not in this repository's settings. ned-box's
-user settings run in bypassPermissions mode with no allow list, so no classifier
-runs there and the Write tool also passes. In the machine's reference checkout,
-session-location-write-guard.py refuses the Write of the marker and the edit
-itself, so the refusals send the agent to its own worktree."""
+The refusals tell the agent to create the marker with the Write tool, because
+Claude Code's auto-mode classifier can refuse a shell command that writes the
+marker. In the machine's reference checkout, session-location-write-guard.py
+refuses the Write of the marker and the edit itself, so the refusals send the
+agent to its own worktree."""
 
 import json
 import os
