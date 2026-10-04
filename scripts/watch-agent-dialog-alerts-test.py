@@ -99,10 +99,11 @@ def install_python_sigint_handler_in_the_test_process():
     A process that inherits SIGINT as SIG_IGN keeps it: CPython installs
     default_int_handler at startup only over SIG_DFL, so an inherited SIG_IGN
     survives and nothing raises KeyboardInterrupt.
-    watch-agent-dialog-alerts.py depends on that exception for the interrupt
-    — it installs a handler for SIGTERM only and catches KeyboardInterrupt
-    for SIGINT — so a watcher started with SIGINT ignored discards the signal
-    the three interrupt cases send, and no grace window is long enough.
+    watch-agent-dialog-alerts.py keeps that disposition: it installs its own
+    SIGINT handler only in place of default_int_handler, and leaves an
+    inherited SIG_IGN as it is, as CPython does — so a watcher started with
+    SIGINT ignored discards the signal the interrupt cases send, and no grace
+    window is long enough.
 
     The child cannot fix this from inside the child, and this is where it is
     fixed instead: a Python handler is a CAUGHT signal, and a caught signal is
@@ -1053,18 +1054,63 @@ def child_watcher_pid(parent_pid, target):
     return int(pids[0]) if pids else None
 
 
-def process_id_is_gone(pid, timeout=10.0):
-    """True once no process has this pid (a zombie counts as gone)."""
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        result = subprocess.run(["ps", "-o", "stat=", "-p", str(pid)],
-                                capture_output=True, text=True, check=False)
-        state = result.stdout.strip()
-        if result.returncode != 0 or not state or state.startswith("Z"):
-            return True
-        time.sleep(0.1)
-    return False
+def process_id_is_running(pid):
+    """True when a process has this pid and is not a zombie, checked once."""
+    result = subprocess.run(["ps", "-o", "stat=", "-p", str(pid)],
+                            capture_output=True, text=True, check=False)
+    state = result.stdout.strip()
+    return result.returncode == 0 and bool(state) and not state.startswith("Z")
 
+
+def process_id_is_gone(pid, timeout=10.0):
+    """True once no running process has this pid (a zombie counts as gone).
+
+    The pid is checked at least once, then again every 0.1 s until the
+    timeout; a timeout of 0 or less means that single check.
+    """
+    deadline = time.monotonic() + timeout
+    while True:
+        if not process_id_is_running(pid):
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(0.1)
+
+
+
+def run_process_probe_cases():
+    """The pid probes the several-target cases rely on, against a real zombie."""
+    live = subprocess.Popen(["sleep", "30"])
+    try:
+        check("a live process counts as running",
+              process_id_is_running(live.pid), f"pid={live.pid}")
+        check("a live process is not gone, even with a timeout of 0",
+              not process_id_is_gone(live.pid, timeout=0.0), f"pid={live.pid}")
+    finally:
+        live.kill()
+        live.wait()
+
+    # An exited child this process has not reaped stays a zombie until wait().
+    zombie = subprocess.Popen([sys.executable, "-c", "pass"])
+    deadline = time.monotonic() + 10.0
+    state = ""
+    while time.monotonic() < deadline:
+        state = subprocess.run(["ps", "-o", "stat=", "-p", str(zombie.pid)],
+                               capture_output=True, text=True,
+                               check=False).stdout.strip()
+        if state.startswith("Z"):
+            break
+        time.sleep(0.02)
+    try:
+        check("an exited, unreaped child does not count as running",
+              state.startswith("Z") and not process_id_is_running(zombie.pid),
+              f"pid={zombie.pid} state={state!r}")
+        check("an exited, unreaped child is gone with a timeout of 0",
+              state.startswith("Z")
+              and process_id_is_gone(zombie.pid, timeout=0.0),
+              f"pid={zombie.pid} state={state!r}")
+    finally:
+        zombie.wait()
 
 def parent_process_id(pid):
     result = subprocess.run(["ps", "-o", "ppid=", "-p", str(pid)],
@@ -1414,7 +1460,7 @@ def run_several_target_cases():
         time.sleep(3.0)
         still_running = (watcher.process.poll() is None
                          and mac_pid is not None
-                         and not process_id_is_gone(mac_pid, timeout=0.0)
+                         and process_id_is_running(mac_pid)
                          and parent_process_id(mac_pid) == watcher.process.pid)
         lines = watcher.stop()
         check("a child watcher killed outright is announced under its "
@@ -1485,6 +1531,7 @@ if __name__ == "__main__":
     run_escape_and_termination_unit_cases()
     run_stop_signal_handler_unit_cases()
     run_subprocess_cases()
+    run_process_probe_cases()
     run_several_target_cases()
     print()
     if failures:
