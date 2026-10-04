@@ -222,7 +222,9 @@ with tempfile.TemporaryDirectory(prefix="pre-reboot-saver-test-") as scratch_nam
     subprocess.run(["rm", "-rf", str(gone)], check=True)
     broken = add_worktree(clone_two, tmp_two / "aab-broken", "broken-branch")
     (broken / ".git").write_text(f"gitdir: {scratch / 'no-such-gitdir'}\n")
-    untracked_only = add_worktree(clone_two, tmp_two / "-home-nedlern-agents-gamma" / "wt-untracked",
+    # Under "zzz-", so it sorts after both failure fixtures ("-" sorts before "a").
+    untracked_only = add_worktree(clone_two, tmp_two / "zzz-scratch" / "-home-nedlern-agents-gamma"
+                                  / "wt-untracked",
                                   "untracked-branch")
     nested = untracked_only / "nested"
     nested.mkdir()
@@ -277,7 +279,8 @@ with tempfile.TemporaryDirectory(prefix="pre-reboot-saver-test-") as scratch_nam
           saver.copy_host_and_store(default, "ned-box") == (None, store_path)
           and saver.copy_host_and_store(default, "ned-box.local") == (None, store_path))
     check("elsewhere the default destination goes over ssh to ned-box",
-          saver.copy_host_and_store(default, "Edwards-MacBook-Air") == ("nedlern@ned-box", store_path))
+          saver.copy_host_and_store(default, "Edwards-MacBook-Air") == ("nedlern@ned-box", store_path)
+          and saver.copy_host_and_store(default, "ned-box2") == ("nedlern@ned-box", store_path))
     check("on ned-box a destination given by hand is used as given",
           saver.copy_host_and_store("otherhost:/srv/store", "ned-box") == ("otherhost", "/srv/store")
           and saver.copy_host_and_store("/local/store", "ned-box") == (None, "/local/store"))
