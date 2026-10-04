@@ -54,8 +54,13 @@ def one_line_snippet(text, limit):
     return " ¶ ".join(text.strip().splitlines())[:limit]
 
 
-def event_lines(seat_name, raw_record, snippet_chars):
-    """Yield event lines from a raw transcript record, skipping unrecognized records."""
+def event_lines(seat_name, raw_record, snippet_chars, resend_state=None):
+    """Yield event lines from a raw transcript record, skipping unrecognized records.
+
+    resend_state is a dict the caller keeps for one transcript, so that a queued
+    message the harness re-sends after an interrupt is shown once."""
+    if resend_state is None:
+        resend_state = {}
     try:
         entry = json.loads(raw_record.decode("utf-8", errors="replace"))
     except (json.JSONDecodeError, ValueError):
@@ -78,6 +83,7 @@ def event_lines(seat_name, raw_record, snippet_chars):
             if block_type == "text":
                 text = block.get("text")
                 if isinstance(text, str) and text.strip():
+                    resend_state.pop("queued_text", None)
                     yield f"{seat_name} AGENT: {one_line_snippet(text, snippet_chars)}"
             elif block_type == "tool_use":
                 tool_input = block.get("input")
@@ -96,6 +102,22 @@ def event_lines(seat_name, raw_record, snippet_chars):
                     yield (f"{seat_name} MSG→{to}: "
                            f"{one_line_snippet(text, MSG_SNIPPET_CHARS)}")
 
+    # A message the user types mid-turn has no user record, only this attachment;
+    # the same shape carries peer and task messages, which origin.kind tells apart.
+    elif entry.get("type") == "attachment":
+        attachment = entry.get("attachment")
+        if not isinstance(attachment, dict) or attachment.get("type") != "queued_command":
+            return
+        origin = attachment.get("origin")
+        if not isinstance(origin, dict) or origin.get("kind") != "human":
+            return
+        prompt = attachment.get("prompt")
+        if not isinstance(prompt, str) or not prompt.strip():
+            return
+        resend_state["queued_text"] = prompt.strip()
+        resend_state["interrupted"] = False
+        yield f"{seat_name} USER: {one_line_snippet(prompt, snippet_chars)}"
+
     elif entry.get("type") == "user":
         if isinstance(content, str):
             texts = [content]
@@ -108,6 +130,12 @@ def event_lines(seat_name, raw_record, snippet_chars):
             if not isinstance(text, str):
                 continue
             stripped = text.strip()
+            if stripped.startswith("[Request interrupted"):
+                resend_state["interrupted"] = True
+            elif (resend_state.get("interrupted")
+                    and stripped == resend_state.get("queued_text")):
+                resend_state.pop("queued_text", None)
+                continue
             # Injected monitor notifications must be skipped to prevent self-watch feedback.
             if not stripped or stripped.startswith("<") or stripped.startswith("[SYSTEM"):
                 continue
@@ -130,6 +158,7 @@ class SeatFollower:
         self.missing_announced = False
         self.followed_offsets = {}  # Offsets survive _close so switching back to a live transcript does not replay its history.
         self.last_followed_path = None
+        self.resend_state = {}
 
     def newest_candidate(self):
         try:
@@ -200,7 +229,8 @@ class SeatFollower:
         # Hold an unterminated fragment until the writer completes it.
         *complete_records, self.pending = self.pending.split(b"\n")
         for raw_record in complete_records:
-            for line in event_lines(self.seat_name, raw_record, self.snippet_chars):
+            for line in event_lines(self.seat_name, raw_record, self.snippet_chars,
+                                    self.resend_state):
                 emit(line)
 
     def _open(self, path, start_at_end, resume_offset=None):
@@ -216,6 +246,7 @@ class SeatFollower:
             self.offset = 0
         self.followed_offsets[path] = self.offset
         self.pending = b""
+        self.resend_state = {}
 
     def _close(self):
         if self.transcript_path is not None:
