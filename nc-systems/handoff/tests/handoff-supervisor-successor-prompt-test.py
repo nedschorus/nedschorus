@@ -1683,6 +1683,24 @@ def run_overview_refresh_once_a_day_cases(workspace: Path):
           and "exited 127" in due[2]
           and "did not answer" not in due[2], f"{due!r}\n{console}")
 
+    # Any other exception carries no word on whether ned-box answered.
+    def read_that_raises_without_the_attribute(*_arguments, **_options):
+        raise RuntimeError("the marks read broke in this fixture")
+
+    if reminder_mark is not None:
+        unpatched_read = reminder_mark.read_daily_overview_refresh_reminder_marks
+        reminder_mark.read_daily_overview_refresh_reminder_marks = (
+            read_that_raises_without_the_attribute)
+        try:
+            due, console, calls = due_at(an_hour_later)
+        finally:
+            reminder_mark.read_daily_overview_refresh_reminder_marks = unpatched_read
+    check("when the marks read raises an exception that says nothing of ned-box "
+          "answering, the line does not say ned-box did not answer",
+          len(due) == 3 and due[2].startswith(REMINDER_MARKS_UNREAD_LINE_OPENING)
+          and "RuntimeError: the marks read broke in this fixture" in due[2]
+          and "did not answer" not in due[2], f"{due!r}\n{console}")
+
     # A mark for today that does not hold the time it was written is not a
     # mark: a file cut short as it was written, or one written by hand.
     gadget_mark = marks_directory / "2026-10-01-gadget.txt"
