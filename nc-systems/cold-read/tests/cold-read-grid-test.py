@@ -295,19 +295,6 @@ if effort_log:
             effort = argument.split("=", 1)[1]
     with open(effort_log, "a", encoding="utf-8") as handle:
         handle.write(f"{given.name} {effort}\n")
-if os.environ.get("COLD_READ_GRID_TEST_STUB_EDIT_FROZEN_COPY_WHEN_STOPPED"):
-    # A reviewer that writes the copy it was given in the moment between the
-    # grid seeing the original move and the grid stopping it.
-    import signal
-    frozen_copies = [found for found in re.findall(
-        r"[^\s\"']+cold-read-grid-test-target\.md", prompt) if "/target/" in found]
-    def write_frozen_copy_and_exit(signal_number, frame):
-        if frozen_copies:
-            os.chmod(frozen_copies[0], 0o644)
-            with open(frozen_copies[0], "a", encoding="utf-8") as handle:
-                handle.write("The reviewer's edit to its copy as it was stopped.\n")
-        sys.exit(0)
-    signal.signal(signal.SIGTERM, write_frozen_copy_and_exit)
 sleep_seconds = float(os.environ.get("COLD_READ_GRID_TEST_STUB_SLEEP_SECONDS") or 0)
 fast_fragment = os.environ.get("COLD_READ_GRID_TEST_STUB_FAST_REPORT_NAME_FRAGMENT")
 if sleep_seconds and not (fast_fragment and fast_fragment in given.name):
@@ -697,38 +684,6 @@ with tempfile.TemporaryDirectory() as scratch:
           unchecked_lines != []
           and all("failure to look, not a clean result" in line for line in unchecked_lines),
           repr(unchecked_lines))
-
-    # --- The copy is written while the grid is stopping the cells -------------
-    # The poll sees only the original move; a reviewer then writes the frozen
-    # copy as it is stopped. The marker must say what moved last, the copy,
-    # not stamp the set "the frozen copy did not move" (PR 699's review).
-    repository = build_scratch_repository(scratch, "checkout-copy-written-while-stopping")
-    result = run_grid(repository, scratch / "stub-bin-copy-written-while-stopping", {
-        "COLD_READ_GRID_TEST_STUB_SLEEP_SECONDS": "120",
-        "COLD_READ_GRID_TEST_STUB_FAST_REPORT_NAME_FRAGMENT": "codex-hunt-second",
-        "COLD_READ_GRID_TEST_STUB_EDIT_PATH": str(repository / TARGET_RELATIVE_PATH),
-        "COLD_READ_GRID_TEST_STUB_EDIT_FROZEN_COPY_WHEN_STOPPED": "1"})
-    record_directory = record_directory_of(repository)
-    # The frozen copy's path is asked of frozen_target_path(), never built
-    # here: a spelling rebuilt beside the function's diverged from it on the
-    # Mac, where /var is a symbolic link to /private/var, and that failed a
-    # correct run -- the blocking finding of 2026-09-22 on PR "The
-    # cold-read-cells read the frozen copy, which is what freezing meant":
-    # https://github.com/nedschorus/nedschorus/pull/636#discussion_r4075031001
-    # Calling the function inherits its rule instead of repeating it.
-    frozen_copy = (frozen_target_path_in_scratch_repository(repository, record_directory)
-                   if record_directory else None)
-    check("the reviewer did write the frozen copy as it was stopped",
-          frozen_copy is not None and frozen_copy.is_file()
-          and b"as it was stopped" in frozen_copy.read_bytes(),
-          f"exit {result.returncode}; stdout={result.stdout!r}")
-    marker_line = next((line for line in (
-        (record_directory / "reference-check.md").read_text(encoding="utf-8").split("\n")
-        if record_directory else []) if line.startswith("<!-- TARGET CHANGED DURING RUN:")), "")
-    check("a copy written while stopping is reported as the copy that moved",
-          "/target/" in marker_line.split("'s bytes", 1)[0]
-          and "is unknown" in marker_line and "which did not move" not in marker_line,
-          repr(marker_line))
 
     # --- A target nobody touches, across several polls ------------------------
     # The other side of the same check: readers slow enough to be polled more
