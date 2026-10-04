@@ -865,23 +865,6 @@ def captured_stream_as_text(captured) -> str:
     return captured
 
 
-def blob_fingerprint(data: bytes) -> str:
-    """git's blob hash for a byte string: sha1 over git's header for a blob of
-    that size, its NUL terminator, and the bytes.
-
-    The same value `git hash-object` prints for a file holding those bytes,
-    which is how the ledger's record of what it wrote stays comparable with a
-    snapshot's record of what is on disk (the repository
-    sets no .gitattributes and no core.autocrlf, so no clean filter stands
-    between the two). Raw bytes are also the right input for a write detector:
-    a rewrite that a filter would normalize away is still a write.
-    """
-    digest = hashlib.sha1()
-    digest.update(b"blob %d\0" % len(data))
-    digest.update(data)
-    return digest.hexdigest()
-
-
 def file_fingerprint(file_path: pathlib.Path) -> str:
     """git's blob hash of a file's current contents, or "absent".
 
@@ -896,32 +879,6 @@ def file_fingerprint(file_path: pathlib.Path) -> str:
         for chunk in iter(lambda: handle.read(1 << 20), b""):
             digest.update(chunk)
     return digest.hexdigest()
-
-
-def git_status_code_for_path(file_path: pathlib.Path,
-                             repo_root: pathlib.Path) -> str:
-    """The two-character status git gives one path, or the ignored code when
-    git says nothing about it — the entry worktree_snapshot would record.
-
-    Asked once per report the runner writes, so the ledger records what git
-    actually says rather than assuming the record directory is still ignored.
-    Where that ignore rule is absent — an older revision, or a worktree whose
-    .gitignore has been edited — git calls each report `??`, and a ledger
-    entry claiming `!!` would make every later cell's check name the runner's
-    own report as a worktree modification.
-    """
-    completed = subprocess.run(
-        ["git", "status", "--porcelain", "-z", "-uall", "--", str(file_path)],
-        cwd=repo_root, stdout=subprocess.PIPE, text=True, check=False,
-    )
-    entry = completed.stdout.split("\0")[0]
-    return entry[:2] if entry else IGNORED_PATH_STATUS_CODE
-
-
-def path_watched_as_ignored(path: str) -> bool:
-    """Whether a repo-relative path lies under a watched ignored path."""
-    return any(path == watched or path.startswith(watched + "/")
-               for watched in IGNORED_PATHS_WATCHED_FOR_WRITES)
 
 
 def worktree_snapshot(repo_root: pathlib.Path = REPO_ROOT) -> dict:
@@ -1159,143 +1116,23 @@ def stray_paths(baseline: dict, now: dict) -> list:
                   if now.get(path) != baseline.get(path))
 
 
-class RunnerReportWriteLedger:
-    """The reports this run wrote itself: path -> snapshot entry, in the shape
-    worktree_snapshot records.
+def write_report(out_path: pathlib.Path, text: str) -> bool:
+    """Write the report and answer whether the path was already occupied."""
+    occupied = out_path.exists()
+    out_path.write_bytes(text.encode("utf-8"))
+    return occupied
 
-    The runner writes every cell's report into RECORDS_ROOT, which the write
-    detector watches, so without this the first report written would be named
-    as a stray by every cell that finished after it — a warning on every
-    ordinary run, which teaches its readers to ignore the warning that matters.
-    The ledger holds each report's fingerprint rather than exempting its path:
-    a cell overwriting a finished report is precisely the write the watch
-    exists to catch, and a path exemption would excuse it.
 
-    In a run the ledger watches the review copy while the reports land in the
-    requester's checkout, outside it, so write_report records nothing and only
-    answers whether the report path was occupied. The bookkeeping below is
-    for a ledger whose checkout is the one the reports land in.
-
-    main() runs the cells concurrently, so one cell's report write and another
-    cell's stray snapshot can interleave. The lock keeps a snapshot from
-    reading a report mid-write, and makes each report's fingerprint recorded
-    before any snapshot that could see the file.
-
-    The ledger also holds the record directory this run owns, because two runs
-    can overlap in one worktree — a case fresh_record_dir is built for — and
-    the watch is repo-wide while a ledger is per-invocation. Without that,
-    each run would name the other run's reports as its own cells' stray writes.
-    """
-
-    # git's shapes for a path it has never had in the index. Another live run
-    # only ever creates files under the record root; it never modifies or
-    # stages an existing one. So these are the statuses an entry may carry and
-    # still be excused as somebody else's legitimate work — a ` M` or `A `
-    # there is nobody's routine business and stays reported.
-    NEW_TO_GIT_STATUS_CODES = (IGNORED_PATH_STATUS_CODE, "??")
-
-    def __init__(self, own_record_dir: pathlib.Path = None,
-                 repo_root: pathlib.Path = None) -> None:
-        # The checkout the detector watches: in a run, the review copy the
-        # cells read, which is where a cell's write lands (see
-        # review_copy_of_commit). The requester's own checkout is not watched;
-        # the requester may keep working in it while the cells run.
-        self._repo_root = repo_root or REPO_ROOT
-        self._own_record_dir = own_record_dir
-        self._writes = {}
-        self._lock = threading.Lock()
-
-    def write_report(self, out_path: pathlib.Path, text: str,
-                     repo_root: pathlib.Path = None) -> bool:
-        """Write one cell's report, record it as this runner's own work, and
-        answer whether the path was already occupied.
-
-        Occupied means a stray write that this report has just erased: the
-        record directory is claimed by mkdir when the run starts and only this
-        ledger writes reports into it, so anything already at the path arrived
-        during this run from somewhere else. A write that simply repaired such
-        a file and recorded the repair as the runner's own work would leave the
-        cell's write reported nowhere.
-
-        The bytes are written, not the string, so the fingerprint recorded is
-        of exactly what landed on disk on any platform.
-        """
-        repo_root = repo_root or self._repo_root
-        data = text.encode("utf-8")
-        with self._lock:
-            occupied = out_path.exists()
-            out_path.write_bytes(data)
-            try:
-                path = out_path.relative_to(repo_root).as_posix()
-            except ValueError:
-                # A record root outside the watched checkout is a path the
-                # detector never looks at, so there is nothing to account for:
-                # in a run, every report, since the reports land in the
-                # requester's checkout and the detector watches the copy.
-                return occupied
-            # git's own word on the path, and the fingerprint of the text
-            # handed in rather than of the file just written: a cell writing
-            # between the write and the hash would otherwise have its content
-            # recorded as the runner's own.
-            self._writes[path] = (git_status_code_for_path(out_path, repo_root),
-                                  blob_fingerprint(data))
-            return occupied
-
-    def stray_paths_since(self, baseline: dict,
-                          repo_root: pathlib.Path = None) -> list:
-        """Paths changed since baseline that this run can account for — its own
-        reports excepted, another live run's reports left out of it.
-
-        Under a watched ignored path this run accounts for what was on disk
-        when it started, what its own ledger wrote, and everything inside the
-        record directory it owns except its scratch subtree, where the cells
-        are told to work. A file that merely appears elsewhere under
-        the record root is what a second invocation of this runner
-        legitimately creates, and from here the two are indistinguishable.
-        Everything git reports outside those paths is compared in full, as
-        before.
-        """
-        repo_root = repo_root or self._repo_root
-        with self._lock:
-            expected = {**baseline, **self._writes}
-            own_dir = self._own_record_directory(repo_root)
-            # The subtree holding every cell's sanctioned working space; None
-            # when this run has no record directory inside the repository.
-            scratch_root = (None if own_dir is None
-                            else f"{own_dir}/{CELL_SCRATCH_DIRECTORY_NAME}")
-            now = {path: entry
-                   for path, entry in worktree_snapshot(repo_root).items()
-                   if self._reportable_by_this_run(path, entry, expected,
-                                                   own_dir, scratch_root)}
-            return stray_paths(expected, now)
-
-    def _own_record_directory(self, repo_root: pathlib.Path):
-        """This run's record directory, repo-relative, or None when it has
-        none or it lies outside the repository."""
-        if self._own_record_dir is None:
-            return None
-        try:
-            return self._own_record_dir.relative_to(repo_root).as_posix()
-        except ValueError:
-            return None
-
-    @staticmethod
-    def _reportable_by_this_run(path: str, entry: tuple, expected: dict,
-                                own_dir: str, scratch_root: str) -> bool:
-        # This run's scratch subtree, exempt whatever git says about the path:
-        # every cell is given a directory under it and told to keep its notes
-        # and drafts there, so a write there is the behaviour the prompt asked
-        # for, not a stray. Only this run's scratch —
-        # an earlier run's leftover scratch was on disk at the start, sits in
-        # the baseline, and is compared like any other file.
-        if scratch_root is not None and path.startswith(scratch_root + "/"):
-            return False
-        if path in expected or not path_watched_as_ignored(path):
-            return True
-        if own_dir is not None and (path == own_dir
-                                    or path.startswith(own_dir + "/")):
-            return True
-        return entry[0] not in RunnerReportWriteLedger.NEW_TO_GIT_STATUS_CODES
+def stray_paths_since(baseline: dict, repo_root: pathlib.Path,
+                      scratch_record_dir: pathlib.Path) -> list:
+    """Compare the review copy with its baseline, exempting permitted scratch."""
+    try:
+        scratch_root = (scratch_record_dir / CELL_SCRATCH_DIRECTORY_NAME
+                        ).relative_to(repo_root).as_posix() + "/"
+    except ValueError:
+        scratch_root = None
+    return [path for path in stray_paths(baseline, worktree_snapshot(repo_root))
+            if scratch_root is None or not path.startswith(scratch_root)]
 
 
 def record_directory_target_stem(target: pathlib.Path) -> str:
@@ -1703,8 +1540,8 @@ class FailedLaunch(typing.NamedTuple):
 
 def launch_cell_once(cell: str, attack: str, runtime: str, prompt: str,
                      target: str, out_dir: pathlib.Path, baseline_status: dict,
-                     corpus: tuple, report_ledger: RunnerReportWriteLedger,
-                     checkout: pathlib.Path, relaunched_after: str = ""):
+                     corpus: tuple, checkout: pathlib.Path,
+                     scratch_record_dir: pathlib.Path, relaunched_after: str = ""):
     """Launch one cell once, and save its report when it wrote one. Returns
     None when the report was saved, and the FailedLaunch otherwise; prints the
     agent-binary's own words and the launch's warnings, and neither the
@@ -1748,7 +1585,7 @@ def launch_cell_once(cell: str, attack: str, runtime: str, prompt: str,
         cause_class, detail = (cause[0] if cause and cause[0]
                                else (f"exit-{code}", "no output"))
         return FailedLaunch(cause_class, detail, fallback_from)
-    stray = report_ledger.stray_paths_since(baseline_status)
+    stray = stray_paths_since(baseline_status, checkout, scratch_record_dir)
     if stray:
         print(f"WARNING: the review copy was modified outside the cells' scratch "
               f"directories, seen when {cell} finished: {', '.join(stray)}",
@@ -1766,10 +1603,7 @@ def launch_cell_once(cell: str, attack: str, runtime: str, prompt: str,
         quote_scan(corpus, output, cell)
     revision = reviewed_revision(baseline_status, checkout)
     out_path = out_dir / f"{cell}.md"
-    # Through the ledger, not straight to disk: the report lands in a directory
-    # the write detector watches, and the ledger is what tells this write from
-    # a cell's.
-    overwrote_stray_write = report_ledger.write_report(
+    overwrote_stray_write = write_report(
         out_path,
         provenance_line(runtime, model, attack, target, fresh_eyes, revision,
                         fallback_from, relaunched_after)
@@ -1843,7 +1677,6 @@ def failed_cell_lines(attack: str, runtime: str, failure: FailedLaunch,
 def run_cell(attack: str, runtime: str, target: str, context: list,
              problem_statement: pathlib.Path, out_dir: pathlib.Path,
              baseline_status: dict, corpus: tuple,
-             report_ledger: RunnerReportWriteLedger,
              checkout: pathlib.Path = None,
              scratch_record_dir: pathlib.Path = None) -> tuple:
     """Run one cell in `checkout`, the review copy, with its scratch directory
@@ -1863,8 +1696,8 @@ def run_cell(attack: str, runtime: str, target: str, context: list,
 
     def launch(relaunched_after: str = ""):
         return launch_cell_once(cell, attack, runtime, prompt, target, out_dir,
-                                baseline_status, corpus, report_ledger, checkout,
-                                relaunched_after)
+                                baseline_status, corpus, checkout,
+                                scratch_record_dir or out_dir, relaunched_after)
 
     if RUN_STOPPED.is_set():
         return cell, False
@@ -2157,7 +1990,6 @@ def run_cells_in_review_copy(args, target_path: pathlib.Path, run_log: RunOutput
 
         baseline_status = worktree_snapshot(checkout)
         corpus = tracked_files_corpus(checkout)
-        report_ledger = RunnerReportWriteLedger(copy_record_dir, checkout)
         CELLS_FINISHED.clear()
         global CELLS_FINISHED_AT_THE_STOP
         CELLS_FINISHED_AT_THE_STOP = None
@@ -2167,7 +1999,7 @@ def run_cells_in_review_copy(args, target_path: pathlib.Path, run_log: RunOutput
                 futures = [
                     pool.submit(run_cell, attack, runtime, args.target, args.context,
                                 args.problem_statement, out_dir, baseline_status, corpus,
-                                report_ledger, checkout, copy_record_dir)
+                                checkout, copy_record_dir)
                     for attack, runtime in cells
                 ]
                 for future in concurrent.futures.as_completed(futures):

@@ -36,10 +36,6 @@ holes under test were found reviewing PRs #98, #102 and #147, and nedschorus#161
     deliberate limit case 11 records)
   - a write the runner's own report write erased before anything compared it:
     the artifact ended up correct and the cell's write was reported nowhere
-  - two runs overlapping in one worktree, each naming the other's reports as
-    its own cells' stray writes, and a ledger entry that assumed the record
-    directory was still ignored, which named the runner's own report wherever
-    that ignore rule was absent
   - the check itself gated to codex, so a claude cell's write went unseen: on
     2026-08-21 a claude cell wrote a 25,170-byte file to the worktree root and
     nothing caught it, because run_cell only ran the comparison for codex
@@ -73,6 +69,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+from unittest.mock import patch
 import time
 
 # Before anything runs git: a run started with GIT_DIR set, or with another
@@ -338,80 +335,6 @@ def main():
               f"{records_name}/2026-08-23-design/cut-claude.md" in found,
               f"stray list was {found}; baseline was {baseline}")
 
-    # Case 8: the runner writes every cell's report INTO the watched record
-    # directory, so its own writes have to be told apart from a cell's, or the
-    # first report written would be named as a stray by every cell that
-    # finished after it. The ledger records what the runner wrote and what it
-    # contained: a bare path exemption would excuse exactly the write case 7
-    # exists to catch.
-    ledger_class = getattr(runner, "RunnerReportWriteLedger", None)
-    missing_ledger = "RunnerReportWriteLedger is not present on the runner under test"
-    with tempfile.TemporaryDirectory() as scratch:
-        repo = new_repo(pathlib.Path(scratch))
-        (repo / ".gitignore").write_text(f"{records_name}/\n", encoding="utf-8")
-        git(repo, "add", "-A")
-        git(repo, "commit", "-qm", "ignore the record directory")
-        out_dir = repo / records_name / "2026-08-23-design"
-        out_dir.mkdir(parents=True)
-        baseline = snapshot(repo)
-        if ledger_class is None:
-            check("a report the runner wrote itself is not reported as a stray",
-                  False, missing_ledger)
-            check("a cell overwriting another cell's finished report is detected",
-                  False, missing_ledger)
-        else:
-            ledger = ledger_class()
-            report = out_dir / "cut-claude.md"
-            ledger.write_report(report, "the report this cell produced\n", repo)
-            found = ledger.stray_paths_since(baseline, repo)
-            check("a report the runner wrote itself is not reported as a stray",
-                  found == [], f"stray list was {found}")
-            report.write_text("a cell wrote over this finished report\n", encoding="utf-8")
-            found = ledger.stray_paths_since(baseline, repo)
-            check("a cell overwriting another cell's finished report is detected",
-                  f"{records_name}/2026-08-23-design/cut-claude.md" in found,
-                  f"stray list was {found}")
-
-    # Case 9: the ledger under the concurrency main() actually creates. The
-    # cells run in a ThreadPoolExecutor, so one cell's report write and
-    # another cell's stray snapshot interleave, and a snapshot that catches a
-    # report mid-write — or before its fingerprint is recorded — names a stray
-    # where nothing strayed. A warning on an ordinary run is worse than no
-    # warning: it teaches its reader to skip the one that means something.
-    # Measured 2026-08-23 with the ledger's lock replaced by a no-op: 45 of 60
-    # rounds reported a spurious stray; with the lock, none of 60.
-    if ledger_class is None:
-        check("concurrent report writes produce no spurious stray", False, missing_ledger)
-    else:
-        with tempfile.TemporaryDirectory() as scratch:
-            repo = new_repo(pathlib.Path(scratch))
-            (repo / ".gitignore").write_text(f"{records_name}/\n", encoding="utf-8")
-            git(repo, "add", "-A")
-            git(repo, "commit", "-qm", "ignore the record directory")
-            out_dir = repo / records_name / "2026-08-23-design"
-            out_dir.mkdir(parents=True)
-            ledger = ledger_class()
-            baseline = snapshot(repo)
-            spurious = []
-
-            def write_reports_and_check(cell_name):
-                for round_number in range(15):
-                    ledger.write_report(
-                        out_dir / f"{cell_name}.md",
-                        f"{cell_name} report body, round {round_number}\n" * 50, repo)
-                    found = ledger.stray_paths_since(baseline, repo)
-                    if found:
-                        spurious.append((cell_name, round_number, found))
-
-            workers = [threading.Thread(target=write_reports_and_check,
-                                        args=(f"cell-{index}",)) for index in range(4)]
-            for worker in workers:
-                worker.start()
-            for worker in workers:
-                worker.join()
-            check("concurrent report writes produce no spurious stray", spurious == [],
-                  f"{len(spurious)} spurious report(s); first was {spurious[:1]}")
-
     # Case 10: the watched ignored paths belong to the write detector, not to
     # the provenance line. They are not part of any commit, so a record
     # directory left over from an earlier run must not turn `worktree=clean`
@@ -446,192 +369,18 @@ def main():
         check("a write to an ignored path outside the watch list is NOT detected "
               "(the declared limit)", found == [], f"stray list was {found}")
 
-    # A ledger for one run's own report directory. Before PR #147 the ledger
-    # took no record directory, so a pre-fix runner raises TypeError here; the
-    # cases below then report themselves failing rather than crashing the run.
-    def new_ledger(own_record_dir):
-        if ledger_class is None:
-            return None
-        try:
-            return ledger_class(own_record_dir)
-        except TypeError:
-            return None
-
-    ledger_takes_no_record_dir = ("the ledger under test takes no record "
-                                  "directory (pre-PR-#147 signature)")
-
-    # Case 12: two runner invocations overlapping in one worktree. Each run's
-    # stray check walks the whole record root, so it sees the other run's
-    # legitimately written reports — which are in neither its own baseline
-    # (taken before the other run's directory had files) nor its own ledger,
-    # which is per-invocation state. Reported on PR #147: both runs printed
-    # `WARNING: cut-codex modified the worktree`, each naming a file the other
-    # run's RUNNER wrote, one of them accusing its own cell of a write that
-    # cell never made. Concurrent runs are a scenario this file supports on
-    # purpose — see fresh_record_dir's docstring and case 17.
     with tempfile.TemporaryDirectory() as scratch:
-        repo = new_repo(pathlib.Path(scratch))
-        (repo / ".gitignore").write_text(f"{records_name}/\n", encoding="utf-8")
-        git(repo, "add", "-A")
-        git(repo, "commit", "-qm", "ignore the record directory")
-        dir_a = repo / records_name / "2026-08-23-design"
-        dir_b = repo / records_name / "2026-08-23-design-2"
-        dir_a.mkdir(parents=True)
-        dir_b.mkdir(parents=True)
-        ledger_a, ledger_b = new_ledger(dir_a), new_ledger(dir_b)
-        if ledger_a is None or ledger_b is None:
-            for case_name in (
-                    "a concurrent run's reports are not this run's stray",
-                    "a concurrent run that started first is not this run's stray",
-                    "a new file a cell writes in this run's own record directory is detected",
-                    "a new file elsewhere under the record root is NOT reported "
-                    "(the concurrency carve-out)"):
-                check(case_name, False, ledger_takes_no_record_dir)
-        else:
-            # Run A takes its baseline, then run B writes a report of its own.
-            baseline_a = snapshot(repo)
-            ledger_b.write_report(dir_b / "cut-claude.md", "run B's report\n", repo)
-            found = ledger_a.stray_paths_since(baseline_a, repo)
-            check("a concurrent run's reports are not this run's stray",
-                  found == [], f"stray list was {found}")
-
-            # The other ordering: run A's directory already held a report when
-            # run B took its baseline, and A goes on writing.
-            ledger_a.write_report(dir_a / "cut-claude.md", "run A's report\n", repo)
-            baseline_b = snapshot(repo)
-            ledger_a.write_report(dir_a / "cut-codex.md", "run A's second report\n", repo)
-            found = ledger_b.stray_paths_since(baseline_b, repo)
-            check("a concurrent run that started first is not this run's stray",
-                  found == [], f"stray list was {found}")
-
-            # What the run's own directory still buys: a cell writing anything
-            # into it is this run's business and is named.
-            (dir_a / "cell-scribble.md").write_text("a cell wrote this\n", encoding="utf-8")
-            found = ledger_a.stray_paths_since(baseline_a, repo)
-            check("a new file a cell writes in this run's own record directory is detected",
-                  f"{records_name}/2026-08-23-design/cell-scribble.md" in found,
-                  f"stray list was {found}")
-
-            # The price of the fix, asserted rather than left to be discovered:
-            # a brand-new file under the record root but outside this run's own
-            # directory is exactly what a concurrent run legitimately makes, so
-            # it is no longer reported. Overwriting a file that was there when
-            # the run started, or one this run wrote, is still reported — those
-            # are the cases above and cases 7, 8 and 14.
-            (repo / records_name / "cell-scribble-elsewhere.md").write_text(
-                "a cell wrote this\n", encoding="utf-8")
-            found = ledger_a.stray_paths_since(baseline_a, repo)
-            check("a new file elsewhere under the record root is NOT reported "
-                  "(the concurrency carve-out)",
-                  f"{records_name}/cell-scribble-elsewhere.md" not in found,
-                  f"stray list was {found}")
-
-    # Case 13: the runner invoked where `sanity-check-records/` is NOT ignored
-    # — a revision without that .gitignore line, or a worktree where it has
-    # been edited. git then reports every report the runner writes as `??`,
-    # while the ledger recorded `!!` on the assumption that the ignore rule
-    # still held, so each later codex cell named the runner's own report as a
-    # worktree modification even though its fingerprint matched
-    # (chatgpt-codex-connector, P2 on PR #147).
-    with tempfile.TemporaryDirectory() as scratch:
-        repo = new_repo(pathlib.Path(scratch))  # no ignore rule for the record root
-        out_dir = repo / records_name / "2026-08-23-design"
-        out_dir.mkdir(parents=True)
-        if ledger_class is None:
-            check("a report written where the record root is not ignored is not a stray",
-                  False, missing_ledger)
-        else:
-            ledger = ledger_class()
-            baseline = snapshot(repo)
-            ledger.write_report(out_dir / "cut-claude.md", "the report\n", repo)
-            found = ledger.stray_paths_since(baseline, repo)
-            check("a report written where the record root is not ignored is not a stray",
-                  found == [], f"stray list was {found}")
-
-    # Case 14: a cell running `git add -f` on a report the runner wrote. The
-    # ledger records the status git gives the path, so a later change of that
-    # status diverges from the record and is named — the property case 13's
-    # fix must not trade away. Passes before and after case 13.
-    with tempfile.TemporaryDirectory() as scratch:
-        repo = new_repo(pathlib.Path(scratch))
-        (repo / ".gitignore").write_text(f"{records_name}/\n", encoding="utf-8")
-        git(repo, "add", "-A")
-        git(repo, "commit", "-qm", "ignore the record directory")
-        out_dir = repo / records_name / "2026-08-23-design"
-        out_dir.mkdir(parents=True)
-        if ledger_class is None:
-            check("a cell force-adding a report the runner wrote is detected",
-                  False, missing_ledger)
-        else:
-            ledger = ledger_class()
-            baseline = snapshot(repo)
-            report = out_dir / "cut-claude.md"
-            ledger.write_report(report, "the report\n", repo)
-            git(repo, "add", "-f", str(report))
-            found = ledger.stray_paths_since(baseline, repo)
-            check("a cell force-adding a report the runner wrote is detected",
-                  f"{records_name}/2026-08-23-design/cut-claude.md" in found,
-                  f"stray list was {found}")
-
-    # Case 15: a cell writing to a report path BEFORE the runner writes its
-    # report there. The runner's own write repaired the file, the ledger then
-    # recorded the repaired content, and the cell's write was never reported
-    # (PR #147 finding 2). The record directory is claimed fresh by mkdir and
-    # only the ledger writes reports into it, so anything already at the path
-    # was put there during this run by something else.
-    with tempfile.TemporaryDirectory() as scratch:
-        repo = new_repo(pathlib.Path(scratch))
-        (repo / ".gitignore").write_text(f"{records_name}/\n", encoding="utf-8")
-        git(repo, "add", "-A")
-        git(repo, "commit", "-qm", "ignore the record directory")
-        out_dir = repo / records_name / "2026-08-23-design"
-        out_dir.mkdir(parents=True)
-        if ledger_class is None:
-            check("a report path a cell wrote to first is reported", False, missing_ledger)
-            check("an unoccupied report path is not reported", False, missing_ledger)
-        else:
-            ledger = ledger_class()
-            scribbled = out_dir / "cut-claude.md"
-            scribbled.write_text("a cell scribbled here first\n", encoding="utf-8")
-            check("a report path a cell wrote to first is reported",
-                  ledger.write_report(scribbled, "the claude report\n", repo) is True,
-                  "write_report did not report the occupied path")
-            check("an unoccupied report path is not reported",
-                  ledger.write_report(out_dir / "cut-codex.md",
-                                      "the codex report\n", repo) is False,
-                  "write_report reported an unoccupied path")
-
-    # Case 16: the ledger fingerprints the text it was handed, not the file it
-    # has just written — which closes the window where a cell writing between
-    # those two steps would have its content recorded as the runner's own work,
-    # and removes a subprocess per report (PR #147 finding 3, raised as a
-    # simplification; the window is microseconds wide and was not reproduced).
-    # The window cannot be hit on demand, so the mechanism is what is checked:
-    # file_fingerprint is replaced by a sentinel for the duration of the write,
-    # and a ledger that consults the disk records the sentinel — after which
-    # its own report reads as a stray.
-    with tempfile.TemporaryDirectory() as scratch:
-        repo = new_repo(pathlib.Path(scratch))
-        (repo / ".gitignore").write_text(f"{records_name}/\n", encoding="utf-8")
-        git(repo, "add", "-A")
-        git(repo, "commit", "-qm", "ignore the record directory")
-        out_dir = repo / records_name / "2026-08-23-design"
-        out_dir.mkdir(parents=True)
-        if ledger_class is None:
-            check("the ledger fingerprints the text it was handed, not the file on disk",
-                  False, missing_ledger)
-        else:
-            ledger = ledger_class()
-            baseline = snapshot(repo)
-            real_file_fingerprint = runner.file_fingerprint
-            try:
-                runner.file_fingerprint = lambda *arguments: "SENTINEL-NOT-A-FINGERPRINT"
-                ledger.write_report(out_dir / "cut-claude.md", "the report\n", repo)
-            finally:
-                runner.file_fingerprint = real_file_fingerprint
-            found = ledger.stray_paths_since(baseline, repo)
-            check("the ledger fingerprints the text it was handed, not the file on disk",
-                  found == [], f"stray list was {found}")
+        out_dir = pathlib.Path(scratch)
+        scribbled = out_dir / "cut-claude.md"
+        scribbled.write_text("a cell scribbled here first\n", encoding="utf-8")
+        check("a report path a cell wrote to first is reported",
+              runner.write_report(scribbled, "the claude report\n") is True,
+              "write_report did not report the occupied path")
+        check("an unoccupied report path is not reported",
+              runner.write_report(out_dir / "cut-codex.md", "the codex report\n") is False,
+              "write_report reported an unoccupied path")
+        check("the occupied report contains the runner's report",
+              scribbled.read_text(encoding="utf-8") == "the claude report\n")
 
     # Case 17: two runs starting together must not be handed the same record
     # directory. A look-then-create claim passes both when neither has written
@@ -648,28 +397,35 @@ def main():
     if records_root is not None:
         runner.RECORDS_ROOT = records_root
 
-    # Case 18: run_cell's worktree check must run for a claude cell, not only
-    # a codex one. On 2026-08-21 a claude cell wrote a 25,170-byte file to the
-    # worktree root anyway, and run_cell's `if runtime == "codex":` gate never
-    # looked (nedschorus#161). run_claude is replaced by a stand-in so no
-    # model is called, and report_ledger is a bare stand-in too — cases 1-17
-    # above already cover the real ledger's bookkeeping; this case is about
-    # the gate in run_cell, exercised directly, not the ledger it calls.
+    with tempfile.TemporaryDirectory() as scratch:
+        repo = pathlib.Path(scratch) / "review-copy"
+        repo.mkdir()
+        new_repo(repo)
+        (repo / ".gitignore").write_text(f"{records_name}/\n", encoding="utf-8")
+        git(repo, "add", "-A")
+        git(repo, "commit", "-qm", "ignore records")
+        out_dir = pathlib.Path(scratch) / "reports"
+        out_dir.mkdir()
+        copy_record_dir = repo / records_name / "current-run"
+        baseline = snapshot(repo)
+        runner.write_report(out_dir / "cut-claude.md", "report\n")
+        found = runner.stray_paths_since(baseline, repo, copy_record_dir)
+        check("reports outside the review copy do not appear as stray writes",
+              found == [], f"stray list was {found}")
+        scribbled = repo / records_name / "elsewhere.md"
+        scribbled.parent.mkdir(parents=True)
+        scribbled.write_text("a cell wrote here\n", encoding="utf-8")
+        found = runner.stray_paths_since(baseline, repo, copy_record_dir)
+        check("new files anywhere under the watched record root are detected",
+              found == [f"{records_name}/elsewhere.md"], f"stray list was {found}")
+
+    # The worktree check must run for either runtime.
     import contextlib
     import io
 
-    class StubLedger:
-        def __init__(self, stray):
-            self._stray = stray
-
-        def stray_paths_since(self, baseline):
-            return self._stray
-
-        def write_report(self, out_path, text):
-            return False
-
     runner_gate = load_runner()
     stray_name = "stray-file-a-claude-cell-should-not-write.md"
+    runner_gate.worktree_snapshot = lambda checkout: {stray_name: ("??", "content")}
     # Report-shaped, so the cell reaches the report write the way a real one
     # does: a text lacking the cut prompt's sections is refused (case 23).
     runner_gate.run_claude = lambda prompt, checkout=None: (
@@ -681,12 +437,17 @@ def main():
     # scratch directory under the one it is handed, and a relative path here
     # would leave that directory wherever this file happens to be run from.
     with tempfile.TemporaryDirectory() as scratch:
+        out_path = pathlib.Path(scratch) / "cut-claude.md"
+        out_path.write_text("occupied", encoding="utf-8")
         with contextlib.redirect_stdout(buffer):
             runner_gate.run_cell(
                 "cut", "claude", "docs/agents/sanity-checker-cut-attack-prompt.md",
                 [], pathlib.Path("unused-problem-statement.md"),
-                pathlib.Path(scratch), {}, (), StubLedger([stray_name]))
+                pathlib.Path(scratch), {}, ())
     output = buffer.getvalue()
+    check("an occupied report path prints the existing warning",
+          f"WARNING: cut-claude found a stray write at its own report path and "
+          f"overwrote it: {out_path}\n" in output, f"output was {output!r}")
     check("a claude cell that leaves a stray path behind is warned about, "
           "same as a codex cell",
           "WARNING: the review copy was modified outside the cells' scratch "
@@ -714,7 +475,7 @@ def main():
     # Case 20: the write detector exempts this run's scratch subtree. A cell
     # writing notes where its prompt told it to write must not be named as a
     # stray — a warning on ordinary behaviour teaches its reader to skip the
-    # warning that means something, the same defect case 9 measures. The
+    # warning that means something. The
     # exemption is of the subtree and only of THIS run's: everywhere else,
     # inside the run's own record directory included, is watched unchanged.
     with tempfile.TemporaryDirectory() as scratch:
@@ -729,60 +490,42 @@ def main():
         earlier_scratch.mkdir(parents=True)
         (earlier_scratch / "leftover.md").write_text("an earlier run's notes\n",
                                                      encoding="utf-8")
-        ledger = new_ledger(out_dir)
-        if ledger is None:
-            for case_name in (
-                    "a cell writing in its own scratch directory is not a stray",
-                    "the exemption covers the whole scratch subtree",
-                    "the scratch exemption does not reach the rest of the record directory",
-                    "an earlier run's scratch is not exempt"):
-                check(case_name, False, ledger_takes_no_record_dir)
-        else:
-            baseline = snapshot(repo)
-            cell_scratch = runner.cell_scratch_dir(out_dir, "cut-claude")
-            (cell_scratch / "working-notes.md").write_text(
-                "the notes this cell took\n", encoding="utf-8")
-            found = ledger.stray_paths_since(baseline, repo)
-            check("a cell writing in its own scratch directory is not a stray",
-                  found == [], f"stray list was {found}")
+        baseline = snapshot(repo)
+        cell_scratch = runner.cell_scratch_dir(out_dir, "cut-claude")
+        (cell_scratch / "working-notes.md").write_text(
+            "the notes this cell took\n", encoding="utf-8")
+        found = runner.stray_paths_since(baseline, repo, out_dir)
+        check("a cell writing in its own scratch directory is not a stray",
+              found == [], f"stray list was {found}")
 
-            # Every cell's directory, not just the one that happens to ask:
-            # stray_paths_since is per run and cannot tell which cell is
-            # calling it, so the exemption is of the whole subtree.
-            other_scratch = runner.cell_scratch_dir(out_dir, "fresh-eyes-codex")
-            (other_scratch / "sketch-draft.md").write_text(
-                "another cell's draft\n", encoding="utf-8")
-            found = ledger.stray_paths_since(baseline, repo)
-            check("the exemption covers the whole scratch subtree",
-                  found == [], f"stray list was {found}")
+        # Every cell's directory, not just the one that happens to ask:
+        # stray_paths_since is per run and cannot tell which cell is
+        # calling it, so the exemption is of the whole subtree.
+        other_scratch = runner.cell_scratch_dir(out_dir, "fresh-eyes-codex")
+        (other_scratch / "sketch-draft.md").write_text(
+            "another cell's draft\n", encoding="utf-8")
+        found = runner.stray_paths_since(baseline, repo, out_dir)
+        check("the exemption covers the whole scratch subtree",
+              found == [], f"stray list was {found}")
 
-            # Where the exemption stops: the rest of the run's own record
-            # directory is the reports, and a cell writing there is case 12's
-            # third check — still named.
-            (out_dir / "cell-scribble.md").write_text("a cell wrote this\n",
-                                                      encoding="utf-8")
-            found = ledger.stray_paths_since(baseline, repo)
-            check("the scratch exemption does not reach the rest of the record directory",
-                  f"{records_name}/2026-08-29-design/cell-scribble.md" in found,
-                  f"stray list was {found}")
+        (out_dir / "cell-scribble.md").write_text("a cell wrote this\n",
+                                                  encoding="utf-8")
+        found = runner.stray_paths_since(baseline, repo, out_dir)
+        check("the scratch exemption does not reach the rest of the record directory",
+              f"{records_name}/2026-08-29-design/cell-scribble.md" in found,
+              f"stray list was {found}")
 
-            # An earlier run's scratch belongs to nobody here: it was on disk
-            # when this run started, sits in the baseline, and is compared like
-            # any other file.
-            (earlier_scratch / "leftover.md").write_text(
-                "a cell wrote over this\n", encoding="utf-8")
-            found = ledger.stray_paths_since(baseline, repo)
-            check("an earlier run's scratch is not exempt",
-                  f"{records_name}/2026-08-28-design/scratch/cut-claude/leftover.md"
-                  in found, f"stray list was {found}")
+        # An earlier run's scratch belongs to nobody here: it was on disk
+        # when this run started, sits in the baseline, and is compared like
+        # any other file.
+        (earlier_scratch / "leftover.md").write_text(
+            "a cell wrote over this\n", encoding="utf-8")
+        found = runner.stray_paths_since(baseline, repo, out_dir)
+        check("an earlier run's scratch is not exempt",
+              f"{records_name}/2026-08-28-design/scratch/cut-claude/leftover.md"
+              in found, f"stray list was {found}")
 
-    # Case 21: the boundary of case 20, asserted rather than assumed — the same
-    # service case 11 does for the ignored-path watch. The exemption is of the
-    # subtree, so it holds whatever git says about a path inside it: a cell
-    # running `git add -f` on its own scratch file is not reported, where the
-    # same act on a report is (case 14). This case passes before and after
-    # case 20's exemption is written; it states the carve-out's price, and it
-    # fails if the exemption ever silently narrows to unstaged files.
+    # Scratch is permitted regardless of git status, including staged files.
     with tempfile.TemporaryDirectory() as scratch:
         repo = new_repo(pathlib.Path(scratch))
         (repo / ".gitignore").write_text(f"{records_name}/\n", encoding="utf-8")
@@ -790,18 +533,13 @@ def main():
         git(repo, "commit", "-qm", "ignore the record directory")
         out_dir = repo / records_name / "2026-08-29-design"
         out_dir.mkdir(parents=True)
-        ledger = new_ledger(out_dir)
-        if ledger is None:
-            check("a cell force-adding its own scratch file is NOT reported "
-                  "(the declared limit)", False, ledger_takes_no_record_dir)
-        else:
-            baseline = snapshot(repo)
-            note = runner.cell_scratch_dir(out_dir, "cut-claude") / "working-notes.md"
-            note.write_text("the notes this cell took\n", encoding="utf-8")
-            git(repo, "add", "-f", str(note))
-            found = ledger.stray_paths_since(baseline, repo)
-            check("a cell force-adding its own scratch file is NOT reported "
-                  "(the declared limit)", found == [], f"stray list was {found}")
+        baseline = snapshot(repo)
+        note = runner.cell_scratch_dir(out_dir, "cut-claude") / "working-notes.md"
+        note.write_text("the notes this cell took\n", encoding="utf-8")
+        git(repo, "add", "-f", str(note))
+        found = runner.stray_paths_since(baseline, repo, out_dir)
+        check("a cell force-adding its own scratch file is NOT reported "
+              "(the declared limit)", found == [], f"stray list was {found}")
 
     # Case 22: the scratch path reaches the cell. The sentence granting the
     # working space lives in the prompt MD, where the cold read reviews it;
@@ -825,8 +563,7 @@ def main():
     # it, and the runner saved the answer — the text below opens one of them —
     # in place of a 3,684-word review, printed `saved:` and
     # exited 0 (nedschorus#397). The runtime stand-ins return what a cell
-    # captured; the ledger stand-in writes for real, so "no report" is
-    # checked on disk rather than read off a write that never happens. The
+    # captured; reports are checked on disk. The
     # stand-ins answer the same text at every launch, so the refused cell is
     # launched a second time and refused again (cases 38 to 43 are the
     # relaunch's own).
@@ -838,15 +575,8 @@ def main():
                   "**QUESTIONS**\n\nNone.\n\nLeanness Certification:\n\n"
                   "- the whole document\n")
 
-    class WritingStubLedger(StubLedger):
-        def __init__(self):
-            super().__init__([])
-
-        def write_report(self, out_path, text):
-            out_path.write_text(text, encoding="utf-8")
-            return False
-
     runner_refusal = load_runner()
+    runner_refusal.worktree_snapshot = lambda checkout: {}
     runner_refusal.CLI_VERSION_CACHE.update({"claude": "1.1.1-test",
                                              "codex": "2.2.2-test"})
     for runtime in runner_refusal.RUNTIMES:
@@ -861,7 +591,7 @@ def main():
                     _, cell_ok = runner_refusal.run_cell(
                         "cut", runtime, "docs/x.md", [],
                         pathlib.Path("unused-problem-statement.md"), out_dir,
-                        {}, (), WritingStubLedger())
+                        {}, ())
                 report_written = (out_dir / f"cut-{runtime}.md").is_file()
             output = buffer.getvalue()
             if is_report:
@@ -974,7 +704,7 @@ def main():
                         _, cell_ok = runner_timeout.run_cell(
                             "cut", runtime, "docs/x.md", [],
                             pathlib.Path("unused-problem-statement.md"),
-                            pathlib.Path(scratch), {}, (), StubLedger([]))
+                            pathlib.Path(scratch), {}, ())
                 except Exception as error:
                     raised = error
             output = buffer.getvalue()
@@ -1030,7 +760,7 @@ def main():
                 _, cell_ok = runner_chain_timeout.run_cell(
                     "cut", "claude", "docs/x.md", [],
                     pathlib.Path("unused-problem-statement.md"),
-                    pathlib.Path(scratch), {}, (), StubLedger([]))
+                    pathlib.Path(scratch), {}, ())
     finally:
         runner_chain_timeout.run_agent_binary_unless_run_stopped = real_chain_timeout_run
     output = buffer.getvalue()
@@ -2000,7 +1730,7 @@ def main():
     # are replaced, and each stand-in counts its launches.
     capacity = "ERROR: Selected model is at capacity. Please try a different model."
 
-    def run_cell_capturing(module, runtime, ledger=None, target="docs/x.md",
+    def run_cell_capturing(module, runtime, target="docs/x.md",
                            context=(), problem_statement=None):
         """(cell_ok, output, raised, out_dir's report text or None) for one
         cut cell run through run_cell in a temporary record directory."""
@@ -2009,10 +1739,11 @@ def main():
         with tempfile.TemporaryDirectory() as scratch:
             out_dir = pathlib.Path(scratch)
             try:
-                with contextlib.redirect_stdout(buffer):
+                with contextlib.redirect_stdout(buffer), patch.object(
+                        module, "worktree_snapshot", return_value={}):
                     _, cell_ok = module.run_cell(
                         "cut", runtime, target, list(context), problem_statement,
-                        out_dir, {}, (), ledger or WritingStubLedger())
+                        out_dir, {}, ())
             except Exception as error:
                 raised = error
             report_path = out_dir / f"cut-{runtime}.md"
@@ -2156,7 +1887,7 @@ def main():
     with tempfile.TemporaryDirectory() as scratch:
         with contextlib.redirect_stdout(recording):
             runner_relaunch.run_cell("cut", "codex", "docs/x.md", [], None,
-                                     pathlib.Path(scratch), {}, (), StubLedger([]))
+                                     pathlib.Path(scratch), {}, ())
     failed_writes = [text for text in recording.writes if "FAILED:" in text]
     check("a cell that ends on its FAILED lines is counted as finished, so a stop "
           "after it does not make the run a stopped run",
@@ -2279,7 +2010,7 @@ def main():
             del launched_commands[:]
             runner_classes.run_agent_binary_unless_run_stopped = fake_run
             cell_ok, output, raised, report = run_cell_capturing(
-                runner_classes, runtime, ledger=StubLedger([]))
+                runner_classes, runtime)
             failed = [line for line in output.splitlines() if line.startswith("FAILED:")]
             relaunched = expected_class not in runner_classes.common.USER_CLEARABLE_CAUSE_CLASSES
             check(f"a {runtime} CLI's own failure text is classed {expected_class} "
