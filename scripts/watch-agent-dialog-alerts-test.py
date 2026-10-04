@@ -59,6 +59,7 @@ checked (the attempts demonstrably happened) and how the immediate restart
 after a held stream is measured.
 """
 
+import errno
 import importlib.util
 import json
 import os
@@ -378,13 +379,70 @@ def run_escape_and_termination_unit_cases():
 
 
 def _raises_watcher_terminated():
+    return _handler_raises(watcher_module.raise_watcher_terminated,
+                           signal.SIGTERM,
+                           watcher_module.WatcherTerminated)[0]
+
+
+def _handler_raises(handler, signal_number, expected_exception):
+    """Call a stop-signal handler here; return whether it raised and what it left both signals at.
+
+    The handlers ignore further stop signals, so this restores both
+    dispositions: a watcher started later by this suite would otherwise
+    inherit an ignored SIGINT.
+    """
+    saved = {number: signal.getsignal(number)
+             for number in (signal.SIGTERM, signal.SIGINT)}
     try:
-        watcher_module.raise_watcher_terminated(signal.SIGTERM, None)
-    except watcher_module.WatcherTerminated:
-        return True
-    except BaseException:
-        return False
-    return False
+        try:
+            handler(signal_number, None)
+            raised = False
+        except expected_exception:
+            raised = True
+        except BaseException:
+            raised = False
+        left = {number: signal.getsignal(number) for number in saved}
+    finally:
+        for number, disposition in saved.items():
+            signal.signal(number, disposition)
+    return raised, left
+
+
+def run_stop_signal_handler_unit_cases():
+    both_ignored = {signal.SIGTERM: signal.SIG_IGN, signal.SIGINT: signal.SIG_IGN}
+    raised, left = _handler_raises(watcher_module.raise_watcher_terminated,
+                                   signal.SIGTERM,
+                                   watcher_module.WatcherTerminated)
+    check("the SIGTERM handler ignores further SIGTERM and SIGINT before "
+          "raising, so a second signal cannot cut the announcement short",
+          raised and left == both_ignored, f"raised={raised} left={left}")
+    raised, left = _handler_raises(
+        watcher_module.raise_keyboard_interrupt_once, signal.SIGINT,
+        KeyboardInterrupt)
+    check("the SIGINT handler ignores further SIGTERM and SIGINT and raises "
+          "KeyboardInterrupt",
+          raised and left == both_ignored, f"raised={raised} left={left}")
+
+    saved = {number: signal.getsignal(number)
+             for number in (signal.SIGTERM, signal.SIGINT)}
+    try:
+        signal.signal(signal.SIGINT, signal.default_int_handler)
+        watcher_module.install_stop_signal_handlers()
+        installed = (signal.getsignal(signal.SIGTERM),
+                     signal.getsignal(signal.SIGINT))
+        signal.signal(signal.SIGINT, signal.SIG_IGN)
+        watcher_module.install_stop_signal_handlers()
+        inherited_ignore_kept = signal.getsignal(signal.SIGINT) is signal.SIG_IGN
+    finally:
+        for number, disposition in saved.items():
+            signal.signal(number, disposition)
+    check("the stop handlers are installed for SIGTERM and for a SIGINT at "
+          "its default",
+          installed == (watcher_module.raise_watcher_terminated,
+                        watcher_module.raise_keyboard_interrupt_once),
+          f"{installed}")
+    check("an inherited ignored SIGINT stays ignored, as CPython keeps it",
+          inherited_ignore_kept)
 
 
 def new_announcer(hold_seconds=300.0):
@@ -558,7 +616,8 @@ def remote_environment(control_directory, fake_bin_directory):
 class WatcherProcess:
     """The wrapper as a subprocess, both its streams drained by threads."""
 
-    def __init__(self, *flags, environment=None, stdin_text=None):
+    def __init__(self, *flags, environment=None, stdin_text=None,
+                 new_session=False):
         self.lines = []
         self.error_lines = []
         # stdin_text gives the wrapper a real, readable stdin with content
@@ -568,7 +627,8 @@ class WatcherProcess:
             [sys.executable, "-u", str(WATCH_SCRIPT), *flags],
             stdin=(subprocess.PIPE if stdin_text is not None else None),
             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            text=True, encoding="utf-8", env=environment)
+            text=True, encoding="utf-8", env=environment,
+            start_new_session=new_session)
         if stdin_text is not None:
             self.process.stdin.write(stdin_text)
             self.process.stdin.close()
@@ -993,6 +1053,237 @@ def child_watcher_pid(parent_pid, target):
     return int(pids[0]) if pids else None
 
 
+def process_id_is_gone(pid, timeout=10.0):
+    """True once no process has this pid (a zombie counts as gone)."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        result = subprocess.run(["ps", "-o", "stat=", "-p", str(pid)],
+                                capture_output=True, text=True, check=False)
+        state = result.stdout.strip()
+        if result.returncode != 0 or not state or state.startswith("Z"):
+            return True
+        time.sleep(0.1)
+    return False
+
+
+def parent_process_id(pid):
+    result = subprocess.run(["ps", "-o", "ppid=", "-p", str(pid)],
+                            capture_output=True, text=True, check=False)
+    text = result.stdout.strip()
+    return int(text) if text.isdigit() else None
+
+
+# A stop signal repeated every millisecond until the watcher exits: Monitor
+# signals the whole group and the several-target parent forwards the same
+# signal, so a second one can land while the watcher announces its loss.
+STOP_SIGNAL_STORM_INTERVAL_SECONDS = 0.001
+STOP_SIGNAL_STORM_RUNS = 5
+
+
+def signal_storm_until_exit(watcher, signal_number, whole_group=False,
+                            timeout=SIGNALLED_EXIT_GRACE_SECONDS):
+    """Send the signal repeatedly until the watcher exits; return its exit code."""
+    pid = watcher.process.pid
+    deadline = time.monotonic() + timeout
+    while watcher.process.poll() is None and time.monotonic() < deadline:
+        try:
+            if whole_group:
+                os.killpg(pid, signal_number)
+            else:
+                os.kill(pid, signal_number)
+        except (ProcessLookupError, PermissionError):
+            break
+        time.sleep(STOP_SIGNAL_STORM_INTERVAL_SECONDS)
+    try:
+        returncode = watcher.process.wait(timeout=max(0.0, deadline - time.monotonic()) + 1.0)
+    except subprocess.TimeoutExpired:
+        returncode = None
+    if returncode is None:
+        try:
+            if whole_group:
+                os.killpg(pid, signal.SIGKILL)
+            else:
+                watcher.process.kill()
+        except (ProcessLookupError, PermissionError):
+            pass
+        watcher.process.wait()
+        returncode = (f"still running {timeout:g}s into the signals, so "
+                      f"SIGKILLed")
+    for thread in watcher._threads:
+        thread.join(timeout=2)
+    return returncode
+
+
+def run_repeated_stop_signal_cases(scratch):
+    """A repeated stop signal must not cost a watcher its NOT WATCHING line."""
+    for signal_number, wording, expected_code in [
+            (signal.SIGTERM, "terminated (SIGTERM)", 143),
+            (signal.SIGINT, "interrupted", 130)]:
+        name = signal.Signals(signal_number).name
+        lost = []
+        for run in range(STOP_SIGNAL_STORM_RUNS):
+            stream = FakeDialogStream(scratch / f"storm-{name}-{run}", [
+                {"hold_seconds": 120, "exit_code": 0}])
+            watcher = watcher_against(stream, "--hold-seconds", "60",
+                                      "--retry-seconds", "30")
+            watcher.wait_for("WATCH mac: started")
+            stream.wait_for_attempts(1)
+            returncode = signal_storm_until_exit(watcher, signal_number)
+            if not (returncode == expected_code
+                    and any("NOT WATCHING" in line and wording in line
+                            for line in watcher.lines)):
+                lost.append(f"run {run}: rc={returncode} lines={watcher.lines}")
+            wait_until_gone(stream.marker)
+        check(f"a {name} repeated every millisecond still leaves the "
+              f"watcher's NOT WATCHING line and exit {expected_code}, in "
+              f"each of {STOP_SIGNAL_STORM_RUNS} runs",
+              not lost, "\n".join(lost))
+
+        lost = []
+        for run in range(STOP_SIGNAL_STORM_RUNS):
+            case_directory = scratch / f"group-storm-{name}-{run}"
+            fake_bin = case_directory / "fake-bin"
+            write_fake_ssh(fake_bin, case_directory,
+                           ["ssh: connect to host ned-box port 22: "
+                            "Connection refused"], 255)
+            stream = FakeDialogStream(case_directory, [
+                {"hold_seconds": 120, "exit_code": 0}])
+            watcher = WatcherProcess(
+                "--target", "mac", "--target", "ned-box",
+                "--local-dialog-script-path", str(stream.path),
+                "--remote-ssh-destination", "watcher-test@fake-ned-box",
+                "--hold-seconds", "60", "--retry-seconds", "30",
+                environment=remote_environment(case_directory, fake_bin),
+                new_session=True)
+            watcher.wait_for("WATCH mac: started")
+            watcher.wait_for("WATCH ned-box: NOT WATCHING")
+            stream.wait_for_attempts(1)
+            returncode = signal_storm_until_exit(watcher, signal_number,
+                                                 whole_group=True)
+            missing = [target for target in ("mac", "ned-box")
+                       if not any(line.startswith(f"WATCH {target}: NOT WATCHING")
+                                  and wording in line
+                                  for line in watcher.lines)]
+            if returncode != expected_code or missing:
+                lost.append(f"run {run}: rc={returncode} missing={missing} "
+                            f"lines={watcher.lines}")
+            wait_until_gone(stream.marker)
+        check(f"a {name} repeated every millisecond to the several-target "
+              f"watcher's whole process group leaves both targets' NOT "
+              f"WATCHING lines and exit {expected_code}, in each of "
+              f"{STOP_SIGNAL_STORM_RUNS} runs",
+              not lost, "\n".join(lost))
+
+
+def run_closed_output_case(scratch, kill_a_quiet_child=False):
+    """The several-target watcher stops everything when its reader goes away.
+
+    By default the Mac stream ends after the reader closes, so the next line
+    written meets the closed pipe. With kill_a_quiet_child both streams stay
+    quiet and the ned-box child watcher is killed instead, so the only line
+    left to write is that child's own-exit announcement.
+    """
+    case_directory = scratch / ("closed-output-quiet-child-killed"
+                                if kill_a_quiet_child else "closed-output")
+    fake_bin = case_directory / "fake-bin"
+    write_fake_ssh(fake_bin, case_directory,
+                   ["ssh: connect to host ned-box port 22: Connection refused"],
+                   255)
+    # The Mac stream ends after 1.5 s, so its child watcher writes a line
+    # after the reader below has closed the pipe.
+    first_attempt = ({"hold_seconds": 120, "exit_code": 0} if kill_a_quiet_child
+                     else {"hold_seconds": 1.5, "exit_code": 0})
+    stream = FakeDialogStream(case_directory, [
+        first_attempt, {"hold_seconds": 120, "exit_code": 0}])
+    process = subprocess.Popen(
+        [sys.executable, "-u", str(WATCH_SCRIPT),
+         "--target", "mac", "--target", "ned-box",
+         "--local-dialog-script-path", str(stream.path),
+         "--remote-ssh-destination", "watcher-test@fake-ned-box",
+         "--hold-seconds", "0.5", "--retry-seconds", "30"],
+        stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL, text=True,
+        env=remote_environment(case_directory, fake_bin),
+        start_new_session=True)
+    baselines = 0
+    deadline = time.monotonic() + 20.0
+    while baselines < 2 and time.monotonic() < deadline:
+        line = process.stdout.readline()
+        if not line:
+            break
+        if ": started" in line:
+            baselines += 1
+    child_pids = [child_watcher_pid(process.pid, target)
+                  for target in ("mac", "ned-box")]
+    process.stdout.close()
+    if kill_a_quiet_child and child_pids[1] is not None:
+        os.kill(child_pids[1], signal.SIGKILL)
+    try:
+        returncode = process.wait(timeout=15)
+    except subprocess.TimeoutExpired:
+        returncode = "still running 15 s after its output closed"
+        os.killpg(process.pid, signal.SIGKILL)
+        process.wait()
+    check("when its output closes, the several-target watcher exits and "
+          "takes both child watchers with it"
+          + (", even when the only line left is a killed child's own-exit "
+             "announcement" if kill_a_quiet_child else ""),
+          baselines == 2 and returncode == 0 and None not in child_pids
+          and all(process_id_is_gone(pid) for pid in child_pids),
+          f"baselines={baselines} rc={returncode} child pids={child_pids}")
+    wait_until_gone(stream.marker)
+
+
+def run_child_watcher_start_failure_case(scratch):
+    """A child watcher that cannot start stops the ones already running."""
+    stream = FakeDialogStream(scratch / "start-failure", [
+        {"hold_seconds": 120, "exit_code": 0}])
+    arguments = watcher_module.parse_arguments([
+        "--target", "mac", "--target", "ned-box",
+        "--local-dialog-script-path", str(stream.path),
+        "--hold-seconds", "60", "--retry-seconds", "30"])
+    started = []
+    emitted = []
+    real_popen = subprocess.Popen
+    real_emit = watcher_module.emit
+    saved_handlers = {number: signal.getsignal(number)
+                      for number in (signal.SIGTERM, signal.SIGINT)}
+
+    def popen_failing_for_ned_box(command, **options):
+        if "ned-box" in command:
+            raise OSError(errno.EMFILE, "Too many open files")
+        process = real_popen(command, env=stream.environment(), **options)
+        started.append(process)
+        return process
+
+    subprocess.Popen = popen_failing_for_ned_box
+    watcher_module.emit = emitted.append
+    try:
+        returncode = watcher_module.watch_targets_in_child_processes(
+            arguments, ["mac", "ned-box"])
+    except Exception as error:
+        returncode = f"raised {error!r}"
+    finally:
+        subprocess.Popen = real_popen
+        watcher_module.emit = real_emit
+        for number, handler in saved_handlers.items():
+            signal.signal(number, handler)
+    check("a child watcher that cannot start makes the several-target "
+          "watcher stop the child already running and exit 1",
+          returncode == 1 and len(started) == 1
+          and process_id_is_gone(started[0].pid),
+          f"rc={returncode} started={[p.pid for p in started]}")
+    check("and the failure is announced under that target, with the reason",
+          any(line.startswith("WATCH ned-box: NOT WATCHING")
+              and "Too many open files" in line for line in emitted),
+          "\n".join(emitted))
+    for process in started:
+        if process.poll() is None:
+            process.kill()
+            process.wait()
+    wait_until_gone(stream.marker)
+
+
 def run_several_target_cases():
     with tempfile.TemporaryDirectory() as scratch_name:
         scratch = Path(scratch_name)
@@ -1040,13 +1331,16 @@ def run_several_target_cases():
               box_refused and box_broken
               and not any(line.startswith("WATCH mac: NOT WATCHING")
                           for line in lines_before_stop), "\n".join(lines))
+        argv_path = scratch / "both" / "ssh-argv.json"
+        argv_text = (argv_path.read_text(encoding="utf-8")
+                     if argv_path.is_file() else "<no ssh ran>")
         check("the ned-box child watcher gets the ssh destination and path "
               "options",
-              json.loads((scratch / "both" / "ssh-argv.json")
-                         .read_text(encoding="utf-8"))[-2:]
+              argv_path.is_file()
+              and json.loads(argv_text)[-2:]
               == ["watcher-test@fake-ned-box",
                   "python3 -u ~/fake/watch-agent-dialogs.py"],
-              (scratch / "both" / "ssh-argv.json").read_text(encoding="utf-8"))
+              argv_text)
 
         # --------------------------------------------------------------
         # A SIGTERM to the one process announces the loss on both
@@ -1057,6 +1351,8 @@ def run_several_target_cases():
         watcher.wait_for("WATCH ned-box: NOT WATCHING")
         stream.wait_for_attempts(1)
         parent_pid = watcher.process.pid
+        child_pids = [child_watcher_pid(parent_pid, target)
+                      for target in ("mac", "ned-box")]
         returncode = watcher.terminate_and_wait()
         check("a SIGTERM to the several-target watcher announces the loss "
               "for each target",
@@ -1073,16 +1369,24 @@ def run_several_target_cases():
               returncode == 143, f"rc={returncode}")
         check("a SIGTERM to the several-target watcher takes the dialog "
               "stream and both child watchers with it",
-              wait_until_gone(stream.marker)
-              and child_watcher_pid(parent_pid, "mac") is None
-              and child_watcher_pid(parent_pid, "ned-box") is None,
-              f"{stream.marker} or a child watcher still running")
+              None not in child_pids
+              and wait_until_gone(stream.marker)
+              and all(process_id_is_gone(pid) for pid in child_pids),
+              f"child pids {child_pids}: {stream.marker} or a child watcher "
+              f"still running")
 
         stream, watcher = both_targets(scratch / "both-interrupt")
         watcher.wait_for("WATCH mac: started")
         watcher.wait_for("WATCH ned-box: NOT WATCHING")
         stream.wait_for_attempts(1)
+        child_pids = [child_watcher_pid(watcher.process.pid, target)
+                      for target in ("mac", "ned-box")]
         returncode = watcher.interrupt_and_wait()
+        check("an interrupt to the several-target watcher takes both child "
+              "watchers with it",
+              None not in child_pids
+              and all(process_id_is_gone(pid) for pid in child_pids),
+              f"child pids {child_pids}: a child watcher still running")
         check("an interrupt to the several-target watcher announces the "
               "loss for each target and exits 130",
               returncode == 130
@@ -1101,10 +1405,17 @@ def run_several_target_cases():
         watcher.wait_for("WATCH mac: started")
         watcher.wait_for("WATCH ned-box: NOT WATCHING")
         box_pid = child_watcher_pid(watcher.process.pid, "ned-box")
+        mac_pid = child_watcher_pid(watcher.process.pid, "mac")
         if box_pid is not None:
             os.kill(box_pid, signal.SIGKILL)
         announced = watcher.wait_for("its watcher exited on its own")
-        still_running = watcher.process.poll() is None
+        # Several of the parent's one-second relay joins, so a parent that
+        # gives up after one child dies has had time to do so.
+        time.sleep(3.0)
+        still_running = (watcher.process.poll() is None
+                         and mac_pid is not None
+                         and not process_id_is_gone(mac_pid, timeout=0.0)
+                         and parent_process_id(mac_pid) == watcher.process.pid)
         lines = watcher.stop()
         check("a child watcher killed outright is announced under its "
               "target, with its status",
@@ -1112,8 +1423,9 @@ def run_several_target_cases():
               and any(line.startswith("WATCH ned-box: NOT WATCHING")
                       and "rc=-9" in line for line in lines),
               f"pid={box_pid}\n" + "\n".join(lines))
-        check("and the other target's watcher keeps running",
-              still_running, "\n".join(lines))
+        check("and 3 s later the parent is still running and the other "
+              "target's watcher is still its child",
+              still_running, f"mac pid {mac_pid}\n" + "\n".join(lines))
         wait_until_gone(stream.marker)
 
         # --------------------------------------------------------------
@@ -1134,20 +1446,44 @@ def run_several_target_cases():
               f"attempts={stream.attempt_count()}\n" + "\n".join(lines))
         wait_until_gone(stream.marker)
 
-        result = subprocess.run(
+        # A watcher that wrongly accepts the flags must still reach neither
+        # ned-box nor the real dialog watcher, and must not outlive the case.
+        label_directory = scratch / "label"
+        write_fake_ssh(label_directory / "fake-bin", label_directory,
+                       ["ssh: refused by the test"], 255)
+        label_stream = FakeDialogStream(label_directory, [
+            {"hold_seconds": 120, "exit_code": 0}])
+        label_process = subprocess.Popen(
             [sys.executable, str(WATCH_SCRIPT), "--target", "mac",
              "--target", "ned-box", "--label", "both",
-             "--local-dialog-script-path", str(WATCH_SCRIPT)],
-            capture_output=True, text=True, check=False, timeout=30,
-            env=remote_environment(scratch / "label", scratch / "no-ssh-here"))
+             "--local-dialog-script-path", str(label_stream.path),
+             "--remote-ssh-destination", "watcher-test@fake-ned-box"],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+            env=remote_environment(label_directory,
+                                   label_directory / "fake-bin"),
+            start_new_session=True)
+        try:
+            _, label_stderr = label_process.communicate(timeout=10)
+            label_returncode = label_process.returncode
+        except subprocess.TimeoutExpired:
+            os.killpg(label_process.pid, signal.SIGKILL)
+            _, label_stderr = label_process.communicate()
+            label_returncode = "still running after 10 s"
         check("--label with two targets exits 2 and says why",
-              result.returncode == 2 and "--label" in result.stderr,
-              f"rc={result.returncode} stderr={result.stderr!r}")
+              label_returncode == 2 and "--label" in label_stderr,
+              f"rc={label_returncode} stderr={label_stderr!r}")
+        wait_until_gone(label_stream.marker)
+
+        run_closed_output_case(scratch)
+        run_closed_output_case(scratch, kill_a_quiet_child=True)
+        run_child_watcher_start_failure_case(scratch)
+        run_repeated_stop_signal_cases(scratch)
 
 
 if __name__ == "__main__":
     run_unit_cases()
     run_escape_and_termination_unit_cases()
+    run_stop_signal_handler_unit_cases()
     run_subprocess_cases()
     run_several_target_cases()
     print()
