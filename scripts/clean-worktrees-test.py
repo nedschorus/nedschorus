@@ -530,6 +530,200 @@ with tempfile.TemporaryDirectory() as scratch:
           and git(checkout, "branch", "--list", "worktree-agent-aaaaaaaaaaaaaaaa3").strip() == "",
           removal.stdout)
 
+# --- Kept files already in the log-store ---------------------------------
+# A worktree whose only ignored files are cold-read-records or walk files is
+# removable once the store holds byte-identical copies. The store here is a
+# scratch directory named through the record shipper's override, and the
+# remote cases put a stub ssh first on PATH.
+RECORD_SHIP_DESTINATION_VARIABLE = "COLD_READ_RECORD_SHIP_DESTINATION"
+
+
+def run_clean_with_store(repo, destination, *flags, stub_ssh_directory=None):
+    environment = dict(os.environ)
+    environment[RECORD_SHIP_DESTINATION_VARIABLE] = destination
+    if stub_ssh_directory is not None:
+        environment["PATH"] = (f"{stub_ssh_directory}{os.pathsep}"
+                               f"{environment.get('PATH', '')}")
+    return subprocess.run(
+        [sys.executable, str(CLEAN_SCRIPT), "--repo", str(repo), *flags],
+        capture_output=True, text=True, check=False, env=environment,
+    )
+
+
+def write_stub_ssh(directory, body):
+    directory.mkdir(parents=True, exist_ok=True)
+    stub = directory / "ssh"
+    stub.write_text(body, encoding="utf-8")
+    stub.chmod(0o755)
+    return directory
+
+
+def report_line_of(output, worktree_name):
+    return next((line for line in output.splitlines()
+                 if line.startswith(f"{worktree_name}: ")), "")
+
+
+with tempfile.TemporaryDirectory() as scratch:
+    scratch = Path(scratch)
+    checkout = scratch / "checkout"
+    origin = scratch / "origin.git"
+    checkout.mkdir()
+    git(checkout, "init", "-b", "main")
+    git(checkout, "config", "user.email", "test@test.invalid")
+    git(checkout, "config", "user.name", "clean-worktrees test")
+    (checkout / "docs").mkdir()
+    (checkout / "docs" / "README.md").write_text("# docs\n", encoding="utf-8")
+    (checkout / ".gitignore").write_text(
+        "cold-read-records/\ndocs/walk/\nscratch-state/\n__pycache__/\n", encoding="utf-8")
+    git(checkout, "add", "-A")
+    git(checkout, "commit", "-m", "seed")
+    subprocess.run(["git", "init", "--bare", str(origin)], capture_output=True, check=True)
+    git(checkout, "remote", "add", "origin", str(origin))
+    git(checkout, "push", "-u", "origin", "main")
+    managed = checkout / ".claude" / "worktrees"
+    managed.mkdir(parents=True)
+
+    store_root = scratch / "nedschorus-logs"
+    store_records = store_root / "cold-read-records"
+    store_walk = store_root / "walk"
+    store_records.mkdir(parents=True)
+    store_walk.mkdir(parents=True)
+    local_destination = str(store_records)
+    remote_destination = f"fakehost:{store_records}"
+
+    def add_worktree_with_files(name, files):
+        path = managed / name
+        git(checkout, "worktree", "add", "-b", f"{name}-branch", str(path), "origin/main")
+        for relative, text in files.items():
+            (path / relative).parent.mkdir(parents=True, exist_ok=True)
+            (path / relative).write_text(text, encoding="utf-8")
+        return path
+
+    def put_in_store(store_relative, text):
+        target = store_root / store_relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(text, encoding="utf-8")
+
+    put_in_store("cold-read-records/rec-shipped/triage.md", "triage\n")
+    put_in_store("cold-read-records/rec-shipped/cell-1/report.md", "report\n")
+    put_in_store("walk/walk-shipped-minutes.md", "minutes\n")
+    put_in_store("cold-read-records/rec-differs/triage.md", "the store's version\n")
+    # Copies exist for the two unshippable shapes too, so they are kept
+    # because no shipper ships them, not because the store lacks them.
+    put_in_store("cold-read-records/stray.md", "stray\n")
+    put_in_store("walk/walk-shipped-minutes.md", "minutes\n")
+
+    shipped_wt = add_worktree_with_files("shipped-wt", {
+        "cold-read-records/rec-shipped/triage.md": "triage\n",
+        "cold-read-records/rec-shipped/cell-1/report.md": "report\n",
+        "cold-read-records/rec-shipped/__pycache__/x.pyc": "junk",
+        "docs/walk/walk-shipped-minutes.md": "minutes\n",
+    })
+    unshipped_wt = add_worktree_with_files("unshipped-wt", {
+        "cold-read-records/rec-shipped/triage.md": "triage\n",
+        "docs/walk/walk-never-shipped-minutes.md": "minutes\n",
+    })
+    differs_wt = add_worktree_with_files("differs-wt", {
+        "cold-read-records/rec-differs/triage.md": "this worktree's version\n",
+    })
+    other_ignored_wt = add_worktree_with_files("other-ignored-wt", {
+        "docs/walk/walk-shipped-minutes.md": "minutes\n",
+        "scratch-state/ledger.md": "state\n",
+    })
+    nested_walk_wt = add_worktree_with_files("nested-walk-wt", {
+        "docs/walk/sub/walk-shipped-minutes.md": "minutes\n",
+    })
+    record_file_at_top_wt = add_worktree_with_files("record-file-at-top-wt", {
+        "cold-read-records/stray.md": "stray\n",
+    })
+
+    symlink_record_wt = add_worktree_with_files("symlink-record-wt", {})
+    (symlink_record_wt / "cold-read-records" / "rec-shipped").mkdir(parents=True)
+    (symlink_record_wt / "cold-read-records" / "rec-shipped" / "triage.md").symlink_to(
+        store_records / "rec-shipped" / "triage.md")
+
+    local = run_clean_with_store(checkout, local_destination)
+    check("a symlink under cold-read-records/ is not a shipped copy, so it keeps",
+          report_line_of(local.stdout, "symlink-record-wt").startswith(
+              "symlink-record-wt: kept"), local.stdout)
+    check("a worktree whose only kept files are already in the log-store is done",
+          report_line_of(local.stdout, "shipped-wt").startswith("shipped-wt: done")
+          and "already in the log-store" in report_line_of(local.stdout, "shipped-wt"),
+          local.stdout)
+    unshipped_line = report_line_of(local.stdout, "unshipped-wt")
+    check("a walk file missing from the log-store keeps the worktree",
+          unshipped_line.startswith("unshipped-wt: kept")
+          and "not yet in the log-store" in unshipped_line
+          and "walk-never-shipped-minutes.md" in unshipped_line, unshipped_line)
+    differs_line = report_line_of(local.stdout, "differs-wt")
+    check("a record that differs from the log-store's copy keeps the worktree",
+          differs_line.startswith("differs-wt: kept") and "differ" in differs_line
+          and "rec-differs/triage.md" in differs_line, differs_line)
+    check("another ignored file beside shipped ones keeps the worktree",
+          report_line_of(local.stdout, "other-ignored-wt").startswith(
+              "other-ignored-wt: kept — 1 uncommitted"), local.stdout)
+    check("a file in a subdirectory of docs/walk/, which no shipper ships, keeps it",
+          report_line_of(local.stdout, "nested-walk-wt").startswith(
+              "nested-walk-wt: kept — 1 uncommitted"), local.stdout)
+    check("a file directly in cold-read-records/, outside any record, keeps it",
+          report_line_of(local.stdout, "record-file-at-top-wt").startswith(
+              "record-file-at-top-wt: kept — 1 uncommitted"), local.stdout)
+    check("a store that answered is not reported as a failure",
+          "FAILED" not in local.stdout and local.returncode == 0,
+          f"exit {local.returncode}: {local.stdout}")
+
+    # Over ssh, the same comparison through one remote sha256sum per worktree.
+    echo_ssh = write_stub_ssh(scratch / "ssh-runs-locally",
+                              '#!/bin/sh\nfor last; do :; done\nexec sh -c "$last"\n')
+    remote = run_clean_with_store(checkout, remote_destination, stub_ssh_directory=echo_ssh)
+    check("over ssh, shipped files are matched by the store's sha256",
+          report_line_of(remote.stdout, "shipped-wt").startswith("shipped-wt: done"),
+          remote.stdout + remote.stderr)
+    check("over ssh, a file missing from the store keeps the worktree",
+          "not yet in the log-store" in report_line_of(remote.stdout, "unshipped-wt"),
+          remote.stdout)
+    check("over ssh, a differing file keeps the worktree",
+          "differ" in report_line_of(remote.stdout, "differs-wt"), remote.stdout)
+
+    calls_log = scratch / "unreachable-ssh-calls.log"
+    unreachable_ssh = write_stub_ssh(
+        scratch / "ssh-unreachable",
+        f"#!/bin/sh\necho call >> '{calls_log}'\n"
+        "echo 'ssh: connect to host fakehost port 22: No route to host' >&2\nexit 255\n")
+    unreachable = run_clean_with_store(checkout, remote_destination, "--remove",
+                                       stub_ssh_directory=unreachable_ssh)
+    unreachable_line = report_line_of(unreachable.stdout, "shipped-wt")
+    check("a log-store that cannot be reached keeps the worktree",
+          shipped_wt.exists() and unreachable_line.startswith("shipped-wt: kept")
+          and "could not be reached" in unreachable_line, unreachable.stdout)
+    failed_line = next((line for line in unreachable.stdout.splitlines()
+                        if line.startswith("log-store check FAILED")), "")
+    check("an unreachable log-store is reported on a FAILED line naming the worktree",
+          "shipped-wt" in failed_line and "No route to host" in failed_line
+          and "for differs-wt:" in failed_line
+          and "ssh nedlern@ned-box true" in failed_line, unreachable.stdout)
+    check("an unreachable log-store makes the exit 1", unreachable.returncode == 1,
+          str(unreachable.returncode))
+    ssh_calls = calls_log.read_text(encoding="utf-8").count("call") if calls_log.exists() else 0
+    check("after ned-box fails to answer, the run does not try ssh again",
+          ssh_calls == 1, f"{ssh_calls} ssh call(s): {unreachable.stdout}")
+    only_done_unreachable = run_clean_with_store(checkout, remote_destination, "--only-done",
+                                                 stub_ssh_directory=unreachable_ssh)
+    check("--only-done carries the log-store FAILED line too",
+          "log-store check FAILED" in only_done_unreachable.stdout,
+          only_done_unreachable.stdout)
+
+    removal = run_clean_with_store(checkout, local_destination, "--remove")
+    check("--remove removes the worktree whose kept files are all in the log-store",
+          not shipped_wt.exists() and "shipped-wt: removed" in removal.stdout,
+          removal.stdout + removal.stderr)
+    check("--remove keeps every worktree with an unshipped, differing or other file",
+          unshipped_wt.exists() and differs_wt.exists() and other_ignored_wt.exists()
+          and nested_walk_wt.exists() and record_file_at_top_wt.exists(), removal.stdout)
+    check("the log-store's copies are untouched by a removal",
+          (store_records / "rec-shipped" / "triage.md").read_text(encoding="utf-8") == "triage\n"
+          and (store_walk / "walk-shipped-minutes.md").exists(), "store changed")
+
 print()
 if failures:
     print(f"{len(failures)} case(s) failed: {', '.join(failures)}")
