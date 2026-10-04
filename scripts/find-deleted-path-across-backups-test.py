@@ -1957,7 +1957,7 @@ with tempfile.TemporaryDirectory() as tmp:
           reports[0].status == NOT_FOUND
           and reports[0].lines[-2:] == [
               age_line,
-              "the Mac's mirror last completed a pass at %s UTC, 3 min before this search, by its stamp at %s"
+              "the Mac's mirror last completed a pass that started at %s UTC, 3 min before this search, by its stamp at %s"
               % (time.strftime("%Y-%m-%d %H:%M", time.gmtime(passed)), stamp)],
           "%s %s" % (reports[0].status, reports[0].lines))
 
@@ -1965,7 +1965,7 @@ with tempfile.TemporaryDirectory() as tmp:
                            log_store_root=str(store))
     check("on the box: ... and after a hit as well, FOUND unchanged",
           reports[0].status == FOUND
-          and any(line.startswith("the Mac's mirror last completed a pass at ") for line in reports[0].lines),
+          and any(line.startswith("the Mac's mirror last completed a pass that started at ") for line in reports[0].lines),
           "%s %s" % (reports[0].status, reports[0].lines))
 
     stamp.write_text("half a ti")

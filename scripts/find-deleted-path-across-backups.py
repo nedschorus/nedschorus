@@ -228,7 +228,8 @@ itself, never an assumed schedule: `rsync -a` keeps each file's time from the
 Mac, so this dates the newest transcript, not the pass. The second reads the
 stamp the mirror writes beside the copy's projects/ at the end of every pass
 in which every source reached the store, MAC_MIRROR_PASS_STAMP_FILE_NAME, and
-says when that pass was, or says plainly that the stamp is missing or holds no
+says when that pass started, so every transcript written before that time is
+in the copy, or says plainly that the stamp is missing or holds no
 time, so the pass time is not known. A Mac that is asleep or off writes no
 transcripts, so its copy stays complete however old either time is; a Mac
 that is awake but whose mirror has stopped shows as a stamp that falls behind
@@ -1178,7 +1179,7 @@ def _mac_mirror_pass_line(stamp_path):
         passed = calendar.timegm(time.strptime(text.strip(), MAC_MIRROR_PASS_STAMP_FORMAT))
     except ValueError:
         return "the Mac's mirror pass-time stamp at %s holds no time (%r), %s" % (stamp_path, text[:80], unknown)
-    return ("the Mac's mirror last completed a pass at %s UTC, %s before this search, by its stamp at %s"
+    return ("the Mac's mirror last completed a pass that started at %s UTC, %s before this search, by its stamp at %s"
             % (time.strftime("%Y-%m-%d %H:%M", time.gmtime(passed)), _age_in_words(time.time() - passed), stamp_path))
 
 

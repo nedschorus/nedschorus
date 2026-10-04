@@ -14,6 +14,7 @@ import json
 import os
 import pathlib
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -182,6 +183,57 @@ with tempfile.TemporaryDirectory(prefix="transcript-mirror-test-") as scratch_na
     result = run_mirror(bare_home, str(scratch / "store-bare"), args=QUIET)
     check("--failures-only: a missing source directory is not a failure and prints nothing, exit 0",
           result.returncode == 0 and result.stdout == "", result.stdout)
+    check("a pass that found neither source directory writes no stamp",
+          not (scratch / "store-bare" / machine / STAMP_NAME).exists(),
+          str(list((scratch / "store-bare").rglob("*"))))
+    projects_only_home = make_home(scratch / "projects-only")
+    shutil.rmtree(projects_only_home / ".claude" / "handoffs")
+    result = run_mirror(projects_only_home, str(scratch / "store-projects-only"), args=QUIET)
+    check("a pass that found one source directory, the other missing, still writes the stamp",
+          result.returncode == 0
+          and (scratch / "store-projects-only" / machine / STAMP_NAME).is_file(),
+          repr(result.stdout + result.stderr))
+
+    # The stamp holds the time the pass started: an rsync that takes two
+    # seconds must not push the stamp past the moment the copying began.
+    slow_bin = scratch / "slow-rsync-bin"
+    slow_bin.mkdir()
+    rsync_starts = scratch / "rsync-starts.txt"
+    slow_rsync = slow_bin / "rsync"
+    slow_rsync.write_text(f"""#!/usr/bin/env python3
+import os, sys, time
+if "--version" not in sys.argv:
+    with open({str(rsync_starts)!r}, "a") as starts:
+        starts.write(repr(time.time()) + "\\n")
+    time.sleep(2)
+os.execv({shutil.which("rsync")!r}, ["rsync", *sys.argv[1:]])
+""")
+    slow_rsync.chmod(0o755)
+    result = run_mirror(home, str(store), args=QUIET,
+                        extra_env={"PATH": f"{slow_bin}{os.pathsep}{os.environ.get('PATH', '')}"})
+    starts = [float(line) for line in rsync_starts.read_text().split()] if rsync_starts.is_file() else []
+    started_stamp = stamp_seconds(stamp.read_text())
+    check("the stamp holds the time the pass started, not the time it ended",
+          result.returncode == 0 and starts and started_stamp is not None
+          and started_stamp <= starts[0],
+          f"exit {result.returncode}, stamp {stamp.read_text()!r}, rsync starts {starts}")
+
+    # On ned-box the stamp is written locally: a write that fails is the
+    # same FAILED line the ssh path prints, not a traceback.
+    locked_home = make_home(scratch / "locked")
+    locked_machine = scratch / "store-locked" / machine
+    (locked_machine / "projects").mkdir(parents=True)
+    (locked_machine / "handoffs").mkdir()
+    locked_machine.chmod(0o555)
+    try:
+        result = run_mirror(locked_home, str(scratch / "store-locked"), args=QUIET)
+    finally:
+        locked_machine.chmod(0o755)
+    check("--failures-only: a local stamp that cannot be written is one FAILED line naming the stamp, exit 1, no traceback",
+          result.returncode == 1
+          and result.stdout.startswith(f"FAILED: pass-time stamp — could not write {locked_machine / STAMP_NAME}")
+          and len(result.stdout.splitlines()) == 1 and "Traceback" not in result.stderr,
+          repr(result.stdout + result.stderr))
     with lock_path.open("w") as held:
         fcntl.flock(held, fcntl.LOCK_EX)
         result = run_mirror(home, str(store), args=QUIET)
