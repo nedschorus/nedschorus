@@ -19,8 +19,10 @@ Run: python3 scripts/open-iterm-window-running-command-test.py
 """
 
 import os
+import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 OPENER_SCRIPT = Path(__file__).with_name("open-iterm-window-running-command")
@@ -126,7 +128,16 @@ for login_shell in ("/bin/bash", "/usr/local/bin/fish", "", "relative shell"):
           and result.stderr == "",
           result.stdout or result.stderr)
 
-# Override the executable check without changing the machine's /bin/zsh.
+# Override the executable check without changing the machine's /bin/zsh. A dry run
+# never runs zsh, so this case runs for real, with a stand-in osascript on PATH that
+# the opener must not reach.
+stand_in_directory = Path(tempfile.mkdtemp())
+stand_in_osascript = stand_in_directory / "osascript"
+stand_in_osascript.write_text("#!/bin/sh\necho osascript-was-run\n")
+stand_in_osascript.chmod(0o755)
+environment_without_dry_run = {key: value for key, value in os.environ.items()
+                               if key != "OPEN_ITERM_WINDOW_DRY_RUN"}
+environment_without_dry_run["PATH"] = f"{stand_in_directory}:{os.environ.get('PATH', '')}"
 result = subprocess.run(
     ["sh", "-s", "--", "echo hi"],
     input='''test() {
@@ -137,7 +148,8 @@ result = subprocess.run(
 }
 ''' + OPENER_SCRIPT.read_text(),
     capture_output=True, text=True,
-    env={**os.environ, "OPEN_ITERM_WINDOW_DRY_RUN": "1"})
+    env=environment_without_dry_run)
+shutil.rmtree(stand_in_directory, ignore_errors=True)
 check("an unavailable /bin/zsh stops window creation with an error",
       result.returncode == 1 and result.stdout == ""
       and "window creation stopped" in result.stderr

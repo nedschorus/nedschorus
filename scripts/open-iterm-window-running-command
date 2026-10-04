@@ -98,7 +98,7 @@ if [ "${OPEN_ITERM_WINDOW_DRY_RUN:-}" != "1" ] && ! command -v osascript >/dev/n
     exit 1
 fi
 
-if ! test -x /bin/zsh; then
+if [ "${OPEN_ITERM_WINDOW_DRY_RUN:-}" != "1" ] && ! test -x /bin/zsh; then
     echo "open-iterm-window-running-command: window creation stopped because /bin/zsh is missing or not executable" >&2
     exit 1
 fi
