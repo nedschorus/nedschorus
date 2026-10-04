@@ -100,7 +100,8 @@ each write the crontab as read is saved to
 time>.txt, and the newest CRONTAB_BACKUPS_KEPT are kept. Every FAILED write
 names that file and the command that restores it, and a write that held
 prints its path, so a later wrong edit can be undone from it too. A backup
-that cannot be saved is FAILED, and the crontab is not written. When
+that cannot be saved is FAILED, and the crontab is not written; an old backup
+that cannot be deleted is named in a WARNING, and the write goes ahead. When
 `crontab -l` fails for any reason but "no crontab for <user>", nothing is
 written: an unreadable crontab taken for an empty one would be replaced by the
 table's lines alone.
@@ -387,7 +388,15 @@ def backup_crontab_before_write(previous_text: str, backup_directory: Path) -> P
     backup_path.write_bytes(previous_text.encode("utf-8", "surrogateescape"))
     backups = sorted(backup_directory.glob(f"{CRONTAB_BACKUP_FILE_PREFIX}*.txt"))
     for old_backup in backups[:-CRONTAB_BACKUPS_KEPT]:
-        old_backup.unlink()
+        try:
+            old_backup.unlink()
+        except OSError as error:
+            print(f"WARNING: the old crontab backup {old_backup} could not be deleted: {error}. "
+                  f"The new backup is saved, so the crontab write goes ahead, and this warning "
+                  f"does not change the exit code.", file=sys.stderr)
+            print("Nothing needs doing now. Each later crontab write tries the delete again and "
+                  "repeats this warning while it fails; to stop it, remove the cause the error "
+                  "names, such as the file's permissions.", file=sys.stderr)
     return backup_path
 
 
