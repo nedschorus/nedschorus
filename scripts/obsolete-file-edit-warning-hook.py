@@ -1,20 +1,13 @@
 #!/usr/bin/env python3
 """Warn the agent when it edits a file origin/main has already moved.
 
-User-ruled 2026-09-17, on the proposal deferred 2026-09-15 in
-docs/issues/324-checkout-freshness-catch-up-reports-instead-of-merging.md
-("Next, proposed and not built: warn on the obsolete FILE, not the branch"):
-"the fact that its rare doesn't mean its not important when it happens."
-
-THE CASE IT EXISTS FOR, 2026-09-17: an agent spent twenty minutes editing
-assess_seat in scripts/recover-crashed-seats.py while a pull request that
-changed that very function merged. It caught this only because it checked
-before committing. Nothing told it. The Stop hook
-(scripts/checkout-freshness-catch-up.py) tells a seat how far behind its
-whole checkout is, at the end of a turn — orientation, not the file in the
-agent's hands at the moment its hands are on it. This hook is the other
-half: it fires only when an agent actually touches a file main has changed,
-and it names THAT file, then.
+The Stop hook (scripts/checkout-freshness-catch-up.py) tells a seat how far
+behind its whole checkout is, at the end of a turn — orientation, not the
+file in the agent's hands at the moment its hands are on it. Without this
+hook an agent can keep editing a function that a merged pull request already
+changed, and nothing tells it. This hook is the other half: it fires only
+when an agent actually touches a file main has changed, and it names THAT
+file, then.
 
 Wired as a `PostToolUse` hook matching `Edit|Write`. `Read` is deliberately
 NOT matched: an agent reads far more files than it writes, and a warning
@@ -28,11 +21,10 @@ context. Plain stdout on a PostToolUse hook that exits 0 goes to the debug
 log and reaches nobody — the hooks reference names `UserPromptSubmit`,
 `UserPromptExpansion`, `SessionStart` and `PostModelSwitch` as the only
 events where plain stdout becomes context, and PostToolUse is not among
-them. Checked against the reference (code.claude.com/docs/en/hooks) rather
-than assumed: assuming a channel's reach is the mistake nedschorus#324 is a
-record of, and before 2026-09-15 every report the Stop hook made was read by
-nobody for exactly that reason. No `decision` field, ever: this must never
-block a tool call or cost the agent a turn.
+them (code.claude.com/docs/en/hooks). Check a channel's reach against that
+reference rather than assume it: a report on the wrong channel is read by
+nobody. No `decision` field, ever: this must never block a tool call or cost
+the agent a turn.
 
 THE SET. `git diff --name-only --no-renames HEAD...origin/main`. The three
 dots, and why two would be wrong, are explained once, in
@@ -43,9 +35,7 @@ it there rather than here.
 rename's DESTINATION. Without the flag, a file main renamed away from the
 path this branch still holds it at is absent from the set, so editing it
 draws no warning — the one case guaranteed to conflict, since main has
-deleted that path. Found in review of PR #463, the pull request that added
-this hook, and measured there against 76 renames in main's last 200 commits.
-With the flag a rename lists both paths, which is what a merge-base diff
+deleted that path. With the flag a rename lists both paths, which is what a merge-base diff
 means by "changed": the old path lost its file and the new path gained one.
 The commit count below still measures for the old path, because `rev-list`
 with a pathspec counts the commit that deleted it.
@@ -70,13 +60,10 @@ checkout's HEAD — either moving changes the answer, so either moving
 invalidates. A cache hit costs one `git rev-parse` and a set lookup. Only a
 real answer is ever cached: a diff that failed is not an empty set, and
 writing one as though it were would silence this hook until the next commit
-or fetch (user-ruled 2026-09-17).
+or fetch.
 
-EVERY CLAUSE OF THE WARNING IS COMPUTED, never asserted. The same
-obsolete_files_by_category() docstring records the user rejecting a line with
-false clauses — "are you sure they are older than main — or are you just
-saying that?" (2026-09-15). So: the commit count is measured and dropped if
-it cannot be, and the advice is chosen from the head's actual state, not
+EVERY CLAUSE OF THE WARNING IS COMPUTED, never asserted: the commit count is
+measured and dropped if it cannot be, and the advice is chosen from the head's actual state, not
 guessed. Note what the never-pushed advice does NOT say: that the Stop hook
 will rebase the branch at turn end. It will not, in this very case — an
 agent that just edited a file has a dirty tree, and
@@ -107,7 +94,7 @@ COMMIT_COUNT_TIMEOUT_SECONDS = 15
 
 # Which head states mean "somebody else may have this branch". These are the
 # four of head_state()'s keys that imply a push of this branch happened; the
-# frozen-head rule (CLAUDE.md, ruled 2026-09-08) applies to every one of them.
+# frozen-head rule in CLAUDE.md applies to every one of them.
 # Its others — unpushed, pushed-history, detached, unknown — are handled
 # separately in head_advice(). pushed-history is frozen too, but its commits
 # were pushed under another branch name, so "This branch is pushed" would be
@@ -124,10 +111,8 @@ NEVER_PUSHED_ADVICE = (
 )
 # A pushed branch that conflicts with main is the one exception: no commit on
 # top can clear a conflict, so it is cleared by a hand-merge (CLAUDE.md, "How a
-# change reaches main"; user-ruled 2026-09-21, worded 2026-09-30 in walk
-# open-items-this-seat-holds-2026-09-24, items 22 to 24). This text used to
-# forbid every merge, which sent an agent with a conflict to the one move that
-# cannot clear it.
+# change reaches main"). Forbidding every merge here would send an agent with
+# a conflict away from the one move that clears it.
 PUSHED_ADVICE = (
     "This branch is pushed, so its review may be running: do not rebase or amend "
     "it. A fix for this topic is a new commit on top. If it conflicts with main, "
@@ -250,7 +235,7 @@ def obsolete_path_set(freshness, checkout: Path, git_directory: Path,
     either way, once, and the next turn end asks again. Here the answer is
     CACHED, so one failed diff would read as "nothing obsolete" for every
     edit until HEAD or origin/main next moved. Seeing the return code is the
-    whole point of making this one call directly (user-ruled 2026-09-17), and
+    whole point of making this one call directly, and
     a failure caches nothing, so the very next edit asks git again.
     """
     cache_path = git_directory / PATH_SET_CACHE_FILE_NAME

@@ -296,7 +296,7 @@ REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 RECORDS_DIRECTORY_NAME = "sanity-check-records"
 RECORDS_ROOT = REPO_ROOT / RECORDS_DIRECTORY_NAME
 # The record reaches the log-store by program, not by an agent remembering to
-# run one (nedschorus#392), the way nc-systems/cold-read/cold-read-grid.py ships its own.
+# run one, the way nc-systems/cold-read/cold-read-grid.py ships its own.
 RECORD_SHIPPER = REPO_ROOT / "scripts" / "sanity-check-record-ship.py"
 _common_spec = importlib.util.spec_from_file_location(
     "cold_read_cell_common", REPO_ROOT / "nc-systems" / "cold-read" / "cold-read-cell-common.py")
@@ -393,8 +393,8 @@ CELL_SCRATCH_DIRECTORY_NAME = "scratch"
 REVIEW_COPIES_ROOT = pathlib.Path.home() / ".cache" / "nedschorus-sanity-check-review-copies"
 
 # What the run saves in its record beside the reports: everything it printed,
-# and the request the fresh-eyes cells were given. Both used to be copied in by
-# hand, when an agent remembered (nedschorus#412, item 3).
+# and the request the fresh-eyes cells were given, so neither depends on an
+# agent remembering to copy it in.
 SANITY_CHECK_RUN_LOG_FILE_NAME = "sanity-check-run.log"
 SANITY_CHECK_REQUEST_COPY_FILE_NAME = "sanity-check-request.md"
 
@@ -403,9 +403,8 @@ SANITY_CHECK_REQUEST_COPY_FILE_NAME = "sanity-check-request.md"
 # the porcelain was parsed; the record directory is the ignored path that
 # matters, because the runner writes every cell's report there and triage then
 # reads those reports against each other — a cell overwriting a finished report
-# corrupts the comparison and the run still looked clean (raised as an inline
-# P2 on PR #98, fixed 2026-08-23). Watching the whole ignore list instead —
-# `git status --ignored` — was ruled out (user, 2026-08-23): it enumerates and
+# corrupts the comparison while the run still looks clean. Watching the whole
+# ignore list instead — `git status --ignored` — costs too much: it enumerates and
 # fingerprints every ignored file in the repository, one subprocess each, to
 # catch a rare write. Writes to other ignored paths (ghi-mirror/,
 # cold-read-records/, __pycache__/) are therefore still undetected; the test
@@ -423,10 +422,8 @@ IGNORED_PATHS_WATCHED_FOR_WRITES = (RECORDS_DIRECTORY_NAME,)
 IGNORED_PATH_STATUS_CODE = "!!"
 
 # The claude runtime's chain, tried in order until one produces a review.
-# "claude-fable-5" is obsolete (user, 2026-09-04: "fable 5 is now obsolete.
-# 5.1 is current"), and Fable is sometimes unavailable (user, 2026-09-11:
-# "sometimes fable is not available, so it should fall back to opus in that
-# case"), so Opus 5 stands behind it and ends the chain.
+# "claude-fable-5" is obsolete, and Fable is sometimes unavailable, so Opus 5
+# stands behind it and ends the chain.
 #
 # WHAT COUNTS AS A FAILURE WORTH FALLING BACK FROM follows the house chain,
 # run_model_chain in nc-systems/cold-read/cold-read-cell-common.py: a model that exits
@@ -435,12 +432,11 @@ IGNORED_PATH_STATUS_CODE = "!!"
 # That module is not imported here: it is built around the cold-read cell's
 # command line and report file, and this runner has neither.
 CLAUDE_MODEL_CHAIN = ("claude-fable-5-1", "claude-opus-5")
-# gpt-6-sol from 2026-09-22 and gpt-6.1-sol since 2026-10-01, matching
-# cold-read-codex-cell.py's `deep` tier; the id needs codex-cli 0.159.1 or
-# later.
+# Matches cold-read-codex-cell.py's `deep` tier; the id needs codex-cli 0.159.1
+# or later.
 CODEX_MODEL = "gpt-6.1-sol"
-# xhigh for both runtimes: user calibration 2026-08-03 for codex, confirmed
-# for both by the 2026-08-17 tier probe (max earned neither slot).
+# xhigh for both runtimes, by the user's calibration and a tier probe of both:
+# max earned neither slot.
 REASONING_EFFORT = "xhigh"
 CELL_TIMEOUT_SECONDS = 3600
 
@@ -472,10 +468,8 @@ ATTACK_PROMPT_FILES = {
 # prompts-to-code table and its coverage list, fresh-eyes's five sections — and
 # a test pins every phrase to its prompt's body. The smallest phrase each
 # section's reports carry, not heading syntax, which the models reshape.
-# This check was rejected on 2026-08-19 with the condition "reopen on the
-# first observed miss". The miss came on 2026-09-15: two claude cells saved a
-# reply to a Stop hook's note in place of their reviews, and the runner
-# printed `saved:` for both (nedschorus#397).
+# Without this check, a cell that replies to a Stop hook's note in place of its
+# review has that reply saved, and the runner prints `saved:` for it.
 ATTACK_REPORT_REQUIRED_PHRASES = {
     "cut": ("questions", "leanness"),
     "mechanization": ("prompts-to-code", "coverage"),
@@ -501,15 +495,13 @@ GENERIC_HYPHENATED_WORDS = {
 def prompt_body(attack: str) -> str:
     """The prompt below the file's body marker, its scratch placeholder intact.
 
-    The marker is a line no ordinary edit produces. The boundary was the first
-    `---` line until 2026-08-19, and `---` is ordinary markdown punctuation: a
-    horizontal rule added to the header, or one written inside a code fence,
-    silently moved the split and shipped header text to the cells in place of
-    their instructions. It also forced a YAML-frontmatter special case, since
-    frontmatter is delimited by `---` too. A marker that collides with nothing
-    needs neither the special case nor an editor's memory (user-ruled
-    2026-08-19, on the first live check of the cut prompt, where five of six
-    cells raised the old boundary independently).
+    The marker is a line no ordinary edit produces. A boundary of `---` would be
+    ordinary markdown punctuation: a horizontal rule added to the header, or
+    one written inside a code fence, would silently move the split and ship
+    header text to the cells in place of their instructions. It would also
+    force a YAML-frontmatter special case, since frontmatter is delimited by
+    `---` too. A marker that collides with nothing needs neither the special
+    case nor an editor's memory.
 
     The scratch placeholder is checked here for the same reason and in the same
     place: every cell is given a scratch directory, and a body that no longer
@@ -521,12 +513,10 @@ def prompt_body(attack: str) -> str:
     path = ATTACK_PROMPT_FILES[attack]
     lines = path.read_text(encoding="utf-8").splitlines()
     # A line that IS the marker, not a line that spells it inside a sentence.
-    # No shipped header spells it any more: commit "prompt headers: the
-    # marker-split sentence cut from all three (user-ruled 2026-08-22)",
-    # 70a813b, left them saying "everything below the marker", which names
-    # the marker without carrying it. The strict equality is what makes
-    # either wording harmless, and the test keeps the mistakable case alive
-    # from a synthetic header.
+    # The shipped headers say "everything below the marker", which names the
+    # marker without carrying it, but a header that spelled it would be
+    # harmless too: the strict equality is what makes either wording safe, and
+    # the test keeps the mistakable case alive from a synthetic header.
     marker_lines = [i for i, line in enumerate(lines)
                     if line.strip() == PROMPT_BODY_MARKER]
     if len(marker_lines) != 1:
@@ -579,9 +569,8 @@ def leak_scan(design_names: set, text: str, where: str) -> None:
 
     Each warning names the line it matched, number and text, because the
     request's off-limits list must name the design's own paths, so every run
-    has expected hits: one run printed 22 warnings naming only the file, and
-    telling those from a real leak meant searching the file by hand
-    (nedschorus#412, item 6)."""
+    has expected hits, and warnings naming only the file would leave telling
+    those from a real leak to a search of the file by hand."""
     lines = text.splitlines()
     for name in sorted(design_names):
         pattern = re.compile(rf"(?<![\w-]){re.escape(name)}(?![\w-])", re.IGNORECASE)
@@ -593,9 +582,9 @@ def leak_scan(design_names: set, text: str, where: str) -> None:
 
 
 def injected_instruction_files(checkout: pathlib.Path = None) -> list:
-    """Instruction files the cell CLIs load on their own — the leak channel a
-    2026-08-17 canary exposed (a cell disclosed that the injected project
-    CLAUDE.md carried the design's thesis). Conventional paths, not a verified
+    """Instruction files the cell CLIs load on their own — a leak channel: an
+    injected project CLAUDE.md can carry the design's thesis to a cell that is
+    meant not to know it. Conventional paths, not a verified
     enumeration; the report scan is the catch-all behind this. The project's
     files are the ones in `checkout`, the review copy the cells run in."""
     home = pathlib.Path.home()
@@ -615,8 +604,7 @@ def assemble_prompt(attack: str, target: str, context: list,
                     problem_statement: pathlib.Path,
                     scratch_directory: str) -> str:
     # Data only below the rule: every instruction lives in the prompt MDs,
-    # which get a cold read; nothing reviewable hides here (user-ruled
-    # 2026-08-17). The scratch path is substituted into the body for the same
+    # which get a cold read; nothing reviewable hides here. The scratch path is substituted into the body for the same
     # reason: the sentence granting the working space is in the MD where it
     # can be reviewed, and only the path — data, and different for every cell
     # — comes from here. Absolute, not repo-relative: a cell resolves it the
@@ -644,15 +632,13 @@ def run_claude(prompt: str, checkout: pathlib.Path = None) -> tuple:
     # is a fallback, not the cell's failure.
     # Runs in `checkout`, the review copy, so every path the cell resolves is
     # the reviewed commit's (see review_copy_of_commit).
-    # Every cell may check facts on the internet (user-ruled 2026-08-18);
-    # isolation and write discipline are instructed in the prompts and
-    # checked (leak scan; worktree check), never enforced here. Write joined
-    # the tool set on 2026-08-29, when the cells gained a sanctioned scratch
-    # directory: the prompt now names a place to put notes and drafts, so the
-    # tool that place needs is here. Withholding it never was the protection
-    # it looked like — a claude cell wrote to the worktree on 2026-08-21 with
-    # no write tool at all (nedschorus#161), which is why run_cell's worktree
-    # check runs for claude cells too, not only codex's.
+    # Every cell may check facts on the internet; isolation and write
+    # discipline are instructed in the prompts and checked (leak scan;
+    # worktree check), never enforced here. Write is in the tool set because
+    # the prompt names a sanctioned scratch directory for notes and drafts.
+    # Withholding it would not be the protection it looks like — a claude cell
+    # can write to the worktree with no write tool at all, which is why
+    # run_cell's worktree check runs for claude cells too, not only codex's.
     failed_attempts = []
     last_cause = None
     for model in CLAUDE_MODEL_CHAIN:
@@ -668,12 +654,12 @@ def run_claude(prompt: str, checkout: pathlib.Path = None) -> tuple:
             "--output-format", "text",
             "--allowedTools", "Read,Grep,Glob,WebSearch,WebFetch,Write",
             # User settings only: this repository's .claude/settings.json wires
-            # Stop hooks, and on 2026-09-15 checkout-freshness-catch-up.py spoke
-            # inside two cells as origin/main moved; each cell answered the
-            # note, and the answer, captured as the final message, was saved in
-            # place of the review (nedschorus#397). The flag also keeps out the
-            # project's CLAUDE.md, skills and write guards (measured
-            # 2026-09-16); the write detector in run_cell covers the guards.
+            # Stop hooks such as checkout-freshness-catch-up.py, which speak
+            # inside a cell as origin/main moves; a cell that answers the note
+            # has the answer, captured as the final message, saved in place of
+            # the review. The flag also keeps out the project's CLAUDE.md,
+            # skills and write guards; the write detector in run_cell covers
+            # the guards.
             "--setting-sources", "user",
         ]
         try:
@@ -699,8 +685,7 @@ def run_claude(prompt: str, checkout: pathlib.Path = None) -> tuple:
         # nc-systems/cold-read/cold-read-cell-common.py). A CLI that is logged out or out of
         # credits explains itself on one of these streams and nowhere else, so
         # discarding them leaves "WARNING: <model> failed (exit 1)" as the whole
-        # account of why -- the 54-byte cold-read log of 2026-08-23, which is
-        # what taught the house chain to capture both. It is worse here than it
+        # account of why. It is worse here than it
         # was there: the chain continues past a failed attempt, so a run whose
         # first model is logged out still saves a report, and that one line is
         # the only trace of the degradation in the output. Re-emitted before any
@@ -753,8 +738,7 @@ def run_agent_binary_unless_run_stopped(command: list, input: str = None,
     RUN_STOPPED unset could launch after the handler's last look at the
     table: the agent-binary was killed alone, the child it then started held
     its pipes, and the run waited for that child with every stop signal
-    ignored, its review copy left behind (found in review of the pull request
-    that introduced the review copy). The wait after the start is outside the
+    ignored, its review copy left behind. The wait after the start is outside the
     lock and is subprocess.run's own: on a timeout the agent-binary is killed
     and TimeoutExpired raised with the streams it had written."""
     with AGENT_BINARY_LAUNCH_LOCK:
@@ -790,15 +774,14 @@ def run_codex(prompt: str, checkout: pathlib.Path = None) -> tuple:
     # `-C checkout`, the review copy: the directory the cell reads, and the
     # root its profile lets it write under, where its scratch directory is.
     # workspace-write plus network: the cells may reach the internet and
-    # GitHub to check facts (user-ruled 2026-08-18; the read-only sandbox
-    # blocks even DNS, measured that day). Disk writes are possible here and
+    # GitHub to check facts, and the read-only sandbox blocks even DNS. Disk
+    # writes are possible here and
     # confined by the prompt to the cell's own scratch directory; run_cell's
     # worktree check detects strays outside it — containment over prevention,
     # the house doctrine. Both come from a permission profile extending
-    # `:workspace` with network on, which also denies every credential file
-    # (user-ruled 2026-09-29, item 8 of the walk
-    # what-a-cold-read-reviewer-may-read-2026-09-28, "y"): the builder the
-    # cold-read Codex cell uses, in nc-systems/cold-read/cold-read-cell-common.py.
+    # `:workspace` with network on, which also denies every credential file:
+    # the builder the cold-read Codex cell uses, in
+    # nc-systems/cold-read/cold-read-cell-common.py.
     last_message_path = pathlib.Path(tempfile.mkstemp(suffix=".md", prefix="attack-cell-")[1])
     command = [
         "codex", "exec",
@@ -870,7 +853,7 @@ def captured_stream_as_text(captured) -> str:
 
     subprocess.TimeoutExpired carries what the child had written before it was
     cut off, and CPython raises it before the decoding step, so a call that
-    asked for text still gets bytes (measured on 3.13, 2026-09-17); a stream
+    asked for text still gets bytes (measured on Python 3.13); a stream
     that was never piped, and a piped one the child wrote nothing to, arrive
     as None. Undecodable bytes are replaced, never raised on: a runtime cut off
     partway through a character must not turn a timeout into a crash.
@@ -888,7 +871,7 @@ def blob_fingerprint(data: bytes) -> str:
 
     The same value `git hash-object` prints for a file holding those bytes,
     which is how the ledger's record of what it wrote stays comparable with a
-    snapshot's record of what is on disk (verified 2026-08-23; the repository
+    snapshot's record of what is on disk (the repository
     sets no .gitattributes and no core.autocrlf, so no clean filter stands
     between the two). Raw bytes are also the right input for a write detector:
     a rewrite that a filter would normalize away is still a write.
@@ -924,8 +907,8 @@ def git_status_code_for_path(file_path: pathlib.Path,
     actually says rather than assuming the record directory is still ignored.
     Where that ignore rule is absent — an older revision, or a worktree whose
     .gitignore has been edited — git calls each report `??`, and a ledger
-    entry claiming `!!` made every later cell's check name the runner's own
-    report as a worktree modification (chatgpt-codex-connector, P2 on PR #147).
+    entry claiming `!!` would make every later cell's check name the runner's
+    own report as a worktree modification.
     """
     completed = subprocess.run(
         ["git", "status", "--porcelain", "-z", "-uall", "--", str(file_path)],
@@ -946,15 +929,12 @@ def worktree_snapshot(repo_root: pathlib.Path = REPO_ROOT) -> dict:
     sees as dirty or untracked, plus every file under
     IGNORED_PATHS_WATCHED_FOR_WRITES. Both halves are needed, because each
     catches what the other misses. A file already modified before the run keeps its
-    ` M` line when a cell rewrites it, so a label alone misses that write
-    (Codex finding on PR #98); staging a file changes its status without
-    changing its bytes, so a fingerprint alone misses `git add` (found by
-    `codex exec review` on PR #102, where the fingerprint-only version was a
-    regression against the label comparison it replaced).
+    ` M` line when a cell rewrites it, so a label alone misses that write;
+    staging a file changes its status without changing its bytes, so a
+    fingerprint alone misses `git add`.
 
     The paths come from `--porcelain -z -uall`, because plain porcelain hides
-    writes two ways (both found reviewing PR #102, both silent by
-    construction). Without `-z`, git C-quotes a non-ASCII pathname, and the
+    writes two ways, both silent by construction. Without `-z`, git C-quotes a non-ASCII pathname, and the
     unquoted result names no file on disk, so it fingerprints as "absent"
     before and after a cell rewrites it. Without `-uall`, git collapses a
     wholly-untracked directory into one `dir/` entry, so every file a cell
@@ -1005,9 +985,8 @@ QUOTE_MINIMUM_WORDS = 4
 
 # Typographic quotation marks and apostrophes, folded to their straight forms
 # before a quote is compared with its source: a model writing ’ for the
-# document's ' is quoting it faithfully. One run's replay found 16 of 24
-# "quote found in no tracked file" warnings were exactly that
-# (nedschorus#412, item 4).
+# document's ' is quoting it faithfully, and without the fold most "quote found
+# in no tracked file" warnings are exactly that.
 TYPOGRAPHIC_QUOTES_FOLDED = str.maketrans({
     "\u2018": "'", "\u2019": "'", "\u201a": "'", "\u201b": "'",
     "\u201c": '"', "\u201d": '"', "\u201e": '"', "\u201f": '"',
@@ -1047,7 +1026,7 @@ def quote_scan(corpus: tuple, report: str, cell: str) -> None:
     """Print a WARNING per quoted span in a report that appears in no tracked
     file. A quote is a search string: found anywhere, it is verbatim; found
     nowhere, it is the one failure that matters — words that exist in no file.
-    No attribution convention is asked of the cells (user-ruled 2026-08-19).
+    No attribution convention is asked of the cells.
     Information for triage, never a gate: a quote may legitimately come from
     git history or the web, and the warning says where it was not found."""
     for match in re.finditer(r'"([^"\n]+)"|\u201c([^\u201d\n]+)\u201d', report):
@@ -1078,9 +1057,9 @@ CLI_VERSION_CACHE = {}
 def runtime_cli_version(runtime: str) -> str:
     """The reviewing CLI's version, measured by this runner, once per runtime.
 
-    In each report's provenance line because nedschorus#161's second instance
-    leaned on the cells' self-reported CLI versions for a cross-version fact;
-    the runner measures it instead. Spaces become hyphens so the value stays
+    In each report's provenance line because a cell's self-reported CLI version
+    is not one to lean on for a cross-version fact; the runner measures it
+    instead. Spaces become hyphens so the value stays
     one token in the space-separated provenance line. "unknown" on any probe
     failure: a version probe must never fail a review cell, and "unknown" is
     a visible answer, not a silent one.
@@ -1153,9 +1132,9 @@ def reviewed_revision(baseline: dict, checkout: pathlib.Path = None) -> str:
     the run starts; `worktree=dirty(N)` would say N paths differed from the
     commit, and the commit would not reproduce what the cell saw.
     Recorded by the runner rather than asked of the reviewer: the machine holds
-    this fact exactly, and a document moves under a walk — every quote in the
-    first live check's reports pointed at a version that no longer existed
-    before the walk on them finished (user-ruled 2026-08-19).
+    this fact exactly, and a document moves under a walk, so the reports'
+    quotes can point at a version that no longer exists before the walk on them
+    finishes.
     """
     completed = subprocess.run(
         ["git", "rev-parse", "--short", "HEAD"], cwd=checkout or REPO_ROOT,
@@ -1175,7 +1154,7 @@ def stray_paths(baseline: dict, now: dict) -> list:
     """Paths whose status or fingerprint changed while the cells ran — a cell
     writing to the worktree, which its prompt forbids on either runtime.
     Compared over the union of both snapshots, so a file that appears,
-    changes, or disappears all count (Codex finding on PR #98)."""
+    changes, or disappears all count."""
     return sorted(path for path in set(now) | set(baseline)
                   if now.get(path) != baseline.get(path))
 
@@ -1205,8 +1184,7 @@ class RunnerReportWriteLedger:
     The ledger also holds the record directory this run owns, because two runs
     can overlap in one worktree — a case fresh_record_dir is built for — and
     the watch is repo-wide while a ledger is per-invocation. Without that,
-    each run named the other run's reports as its own cells' stray writes
-    (PR #147 finding 1).
+    each run would name the other run's reports as its own cells' stray writes.
     """
 
     # git's shapes for a path it has never had in the index. Another live run
@@ -1235,9 +1213,9 @@ class RunnerReportWriteLedger:
         Occupied means a stray write that this report has just erased: the
         record directory is claimed by mkdir when the run starts and only this
         ledger writes reports into it, so anything already at the path arrived
-        during this run from somewhere else. Until PR #147 the runner's write
-        simply repaired such a file and recorded the repair as its own work,
-        and the cell's write was reported nowhere.
+        during this run from somewhere else. A write that simply repaired such
+        a file and recorded the repair as the runner's own work would leave the
+        cell's write reported nowhere.
 
         The bytes are written, not the string, so the fingerprint recorded is
         of exactly what landed on disk on any platform.
@@ -1258,7 +1236,7 @@ class RunnerReportWriteLedger:
             # git's own word on the path, and the fingerprint of the text
             # handed in rather than of the file just written: a cell writing
             # between the write and the hash would otherwise have its content
-            # recorded as the runner's own (PR #147 finding 3).
+            # recorded as the runner's own.
             self._writes[path] = (git_status_code_for_path(out_path, repo_root),
                                   blob_fingerprint(data))
             return occupied
@@ -1307,7 +1285,7 @@ class RunnerReportWriteLedger:
         # This run's scratch subtree, exempt whatever git says about the path:
         # every cell is given a directory under it and told to keep its notes
         # and drafts there, so a write there is the behaviour the prompt asked
-        # for, not a stray (user-ruled 2026-08-29). Only this run's scratch —
+        # for, not a stray. Only this run's scratch —
         # an earlier run's leftover scratch was on disk at the start, sits in
         # the baseline, and is compared like any other file.
         if scratch_root is not None and path.startswith(scratch_root + "/"):
@@ -1323,8 +1301,8 @@ class RunnerReportWriteLedger:
 def record_directory_target_stem(target: pathlib.Path) -> str:
     """The target's part of its record directory's name: the file's stem, and
     for a skill its directory's name before it. Every skill's file is
-    `SKILL.md`, so two skills checked on one day were told apart only by a
-    `-2` suffix (nedschorus#412, item 7)."""
+    `SKILL.md`, so without the directory's name two skills checked on one day
+    would be told apart only by a `-2` suffix."""
     if target.stem == "SKILL":
         return f"{target.parent.name}-{target.stem}"
     return target.stem
@@ -1337,8 +1315,8 @@ def repository_relative_review_path(path: str, repo_root: pathlib.Path):
     The cells run in a copy of the last commit and resolve a relative name
     inside that copy. A name passed on as written would send them elsewhere:
     an absolute path inside the checkout names the requester's live file,
-    which the copy exists to keep the cells away from, and it passed every
-    check until a cold read of the skill found it (2026-10-01). So the name
+    which the copy exists to keep the cells away from, and nothing else would
+    catch it. So the name
     is the resolved file's place under the resolved root: `.` and `..`
     segments are folded, a checkout reached through a symbolic link (macOS's
     /tmp) still counts as this checkout, and a symbolic link inside the
@@ -1396,23 +1374,21 @@ def review_copy_of_commit(commit: str, record_name: str,
     removed when the run ends, a run that fails included: the checkout every
     cell reads and works in.
 
-    The cells used to read the requester's live checkout for the tens of
-    minutes a run takes. So the requester could change nothing while they ran
-    (the write detector could not tell the requester's edit from a cell's), a
-    text edited mid-run was not the text the provenance line named, and a
-    cell's stray write landed in the checkout itself (nedschorus#161). In a
-    copy of the commit the reviewed text is exactly that commit, the
-    requester's checkout is free for its own work again, and a cell's write
-    lands in the copy, where the detector reports it and the removal throws
-    it away (user-ruled 2026-09-30, walk
-    open-questions-concerns-and-recommendations-2026-09-30, item 2, "Y").
+    Cells reading the requester's live checkout for the tens of minutes a run
+    takes would leave the requester unable to change anything while they ran
+    (the write detector cannot tell the requester's edit from a cell's), a
+    text edited mid-run would not be the text the provenance line named, and a
+    cell's stray write would land in the checkout itself. In a copy of the
+    commit the reviewed text is exactly that commit, the requester's checkout
+    is free for its own work, and a cell's write lands in the copy, where the
+    detector reports it and the removal throws it away.
 
     A clone, not a `git worktree`: a worktree shares the repository's refs,
     config and stash, which every session's checkout shares too, so a cell
     running `git stash` or `git checkout -b` in it would change the live
     repository. `--local` hardlinks the object store where it can, so the
     copy has the whole history in about a third of a second (measured on
-    this repository, 2026-09-30), a commit on no branch included. The clone
+    this repository), a commit on no branch included. The clone
     names the live checkout as its `origin` remote, the one way left from the
     copy back into it, so the remote is removed; the live repository's own
     `origin/*` refs are fetched in by path instead, so `origin/main` in the
@@ -1618,8 +1594,8 @@ def stop_run_on_signal(signal_number: int, _frame) -> None:
 
 class RunOutputCopiedToRecordLog:
     """This run's standard output, also written to SANITY_CHECK_RUN_LOG_FILE_NAME in its
-    record, so a later reader can see every warning the run printed; an agent
-    used to copy it there by hand, when it remembered (nedschorus#412, item 3).
+    record, so a later reader can see every warning the run printed without an
+    agent having to remember to copy it there.
 
     It stands in for sys.stdout from the start of a run. What is printed
     before the record directory exists — the SKIPPED and LEAK-WARNING lines —
@@ -1676,12 +1652,12 @@ class RunOutputCopiedToRecordLog:
 def fresh_record_dir(target_stem: str) -> pathlib.Path:
     """A record directory this run owns alone: the date-stem name, suffixed
     -2, -3, ... when that name is taken — a same-day second pass or re-run
-    never overwrites earlier reports (Codex finding on PR #98).
+    never overwrites earlier reports.
 
     The directory is claimed by creating it, not by testing first and creating
     after: two runs starting together on the same target and date both pass a
     look-then-create test and return the same path, and the second overwrites
-    the first (found by `codex exec review` on PR #102)."""
+    the first."""
     base = RECORDS_ROOT / f"{datetime.date.today().isoformat()}-{target_stem}"
     counter = 1
     while True:
@@ -1698,11 +1674,10 @@ def cell_scratch_dir(out_dir: pathlib.Path, cell: str) -> pathlib.Path:
     `<record dir>/scratch/<audit>-<runtime>/`.
 
     A review agent's deliverable is its reply, but an agent working a document
-    still needs somewhere to put notes and drafts. The prompts used to answer
-    that with a prohibition — "write no files" — which the agents did not
-    reliably keep (nedschorus#161) and the write detector then reported. A
-    sanctioned directory replaces the prohibition (user-ruled 2026-08-29): the
-    path is substituted into that cell's prompt, the detector exempts the
+    still needs somewhere to put notes and drafts. A prohibition — "write no
+    files" — is one agents do not reliably keep, and the write detector would
+    then report every such write. A sanctioned directory replaces the
+    prohibition: the path is substituted into that cell's prompt, the detector exempts the
     subtree, and nothing here is ever read as findings.
 
     Inside the run's record directory rather than a temporary one, so it is
@@ -1781,7 +1756,7 @@ def launch_cell_once(cell: str, attack: str, runtime: str, prompt: str,
     # After the worktree check, so a cell that ran to the end has its writes
     # compared whatever it returned; before the quote scan and the write, so a
     # text that is not a report raises no warnings to triage, never lands as a
-    # report, and is printed so the runtime's words survive (nedschorus#397).
+    # report, and is printed so the runtime's words survive.
     missing = missing_report_phrases(attack, output)
     if missing:
         print(output, flush=True)
@@ -1931,7 +1906,7 @@ def ship_record(record_dir: pathlib.Path) -> str:
     FAILED line of this program's own when the shipper could not run.
 
     Never raises, and never changes the run's exit code: the shipper's outcome
-    is reported, not enforced (nedschorus#392; the same shape as
+    is reported, not enforced (the same shape as
     nc-systems/cold-read/cold-read-grid.py's ship_record). A sanity check that found
     something and could not reach ned-box has still found it, and the record
     stays on disk for a later run.
@@ -2123,8 +2098,8 @@ def run_cells_in_review_copy(args, target_path: pathlib.Path, run_log: RunOutput
             cells.append((attack, runtime))
 
     # Validate every prompt this run will use before any cell launches, so a
-    # broken boundary fails before model cost — as documented; until 2026-08-21
-    # validation ran lazily inside each cell (cold-read finding, verified).
+    # broken boundary fails before model cost, as documented, rather than
+    # lazily inside each cell.
     for attack in dict.fromkeys(cell_attack for cell_attack, _ in cells):
         prompt_body(attack)
 
@@ -2256,7 +2231,7 @@ def print_completion_of_run_that_saved_no_report(out_dir: pathlib.Path, ship=Non
 def print_run_completion(out_dir: pathlib.Path, ship=None) -> None:
     """Ship this run's record and say what the requesting agent does next.
 
-    The shipping is the program's, not the agent's (nedschorus#392): the record
+    The shipping is the program's, not the agent's: the record
     is a log, and a log that reaches the store only when someone remembers to
     push it is a log that is sometimes lost. `ship` is the shipper to call, for
     the test; the default is this module's ship_record.
