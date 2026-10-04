@@ -277,6 +277,52 @@ forms = [hit.form for hit in go_went.find_style_guide_word_hits_in_markdown(
 check("a flagged form that does not begin with its row's word is flagged", forms == ["went"],
       forms)
 
+capitalised_form_page = WELL_FORMED_PAGE.replace("| `land` | `land`, `landed` | | \"merge\" |",
+                                                 "| `PR` | `PR`, `PRs` | | \"pull request\" |")
+try:
+    capitalised = load_checker_from_page("capitalised-flagged-form", capitalised_form_page)
+    forms = [hit.form for hit in capitalised.find_style_guide_word_hits_in_markdown(
+        "Open the PR now.\n", capitalised.APPLIES_TO_FILES)]
+    check("a flagged form written with a capital is flagged", forms == ["PR"], forms)
+except Exception as error:
+    check("a flagged form written with a capital is flagged", False, repr(error))
+
+PARSEABLE_TABLE_VARIANTS = {
+    "a separator row without a trailing pipe":
+        WELL_FORMED_PAGE.replace("|---|---|---|---|---|", "|---|---|---|---|---"),
+    "an indented heading straight after the table": WELL_FORMED_PAGE + "  ## Next section\n",
+}
+for case_name, page in PARSEABLE_TABLE_VARIANTS.items():
+    try:
+        entries = checker.parse_words_to_avoid_table(page)
+        check(f"parses: {case_name}", len(entries) == 1, entries)
+    except checker.StyleGuidePageError as error:
+        check(f"parses: {case_name}", False, repr(error))
+
+INDENTED_CODE_CASES = {
+    "an indented code block after prose": ("Some prose here.\n\n    git switch seat\n", []),
+    "an indented code block at the start": ("    git switch seat\n", []),
+    "a tab-indented code block": ("Prose.\n\n\tgit switch seat\n", []),
+    "a list item's indented continuation is prose":
+        ("- an item\n\n    continued about the seat\n", ["seat"]),
+    "an indented line inside a paragraph is prose": ("prose\n    about the seat\n", ["seat"]),
+    "prose after a list, then an indented code block":
+        ("- a\n\nthe seat\n\n    code seat\n", ["seat"]),
+    "a four-space paragraph after a two-space continuation of a list item is prose":
+        ("- item\n\n  continuation\n\n    about the seat\n", ["seat"]),
+    "a lazy continuation keeps the list item open":
+        ("- item\nlazy line\n\n    about the seat\n", ["seat"]),
+    "a list marker inside an indented code block is code, and a fence there opens nothing":
+        ("    ~~~\n    - walk\n    ~~~\n\nThe seat is free.\n", ["seat"]),
+    "a line indented one space after a blank keeps the list item open":
+        ("- a\n\n x seat\n\n    code seat\n", ["seat", "seat"]),
+    "an unindented line after a blank ends the list item, whatever its second character":
+        ("- a\n\nA seat\n\n    code seat\n", ["seat"]),
+}
+for case_name, (text, expected) in INDENTED_CODE_CASES.items():
+    forms = file_hit_forms(text)
+    check(f"indented code: {case_name}", forms == expected, forms)
+
 report_text = "\n".join(hook.REPORT_OPENING_LINES) + "\n" + hook.MORE_HITS_LINE
 forms = file_hit_forms(report_text)
 check("the report's own wording uses no listed word", forms == [], forms)
@@ -451,6 +497,15 @@ with tempfile.TemporaryDirectory() as temporary_directory:
                                    "code block\nthe seat in code\n"))
     check("text added inside a fence the file already holds is flagged, the accepted cost",
           [form for form, _ in edit_hits(result, "docs/committed.md")] == ["seat"],
+          result.stdout + result.stderr)
+
+    # The piece may continue a list item the file holds above it, so an indented
+    # line in an Edit's new_string is prose, never an indented code block.
+    result = run_hook(edit_payload(checkout, committed_file, "x",
+                                   "    The record is deleted once the work lands.\n\n"
+                                   "    A second paragraph about the seat.\n"))
+    check("an Edit whose new_string starts indented is searched as prose",
+          [form for form, _ in edit_hits(result, "docs/committed.md")] == ["lands", "seat"],
           result.stdout + result.stderr)
 
     result = run_hook(edit_payload(checkout, committed_file, "x", "One walk.",
