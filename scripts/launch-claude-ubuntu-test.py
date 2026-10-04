@@ -867,6 +867,27 @@ def main() -> int:
         check("bad override: nothing was sent to the box",
               result["remote"] == "", result["remote"][:200])
 
+        # A first argument starting with - is refused as a seat name: the
+        # first argument is always the name, so the launcher would otherwise
+        # launch a seat named after the option.
+        for label, arguments in (("--help typed first", ["--help"]),
+                                 ("an option typed before the name",
+                                  ["--no-attach", "seat-x"])):
+            harness = LaunchHarness(root / f"dash-seat-name-{arguments[0]}")
+            result = harness.run(arguments)
+            check(f"{label}: refused with exit 2, naming the argument and "
+                  "printing the usage line",
+                  result["launched"].returncode == 2
+                  and f'a seat named "{arguments[0]}"' in result["launched"].stderr
+                  and "usage: launch-claude-ubuntu <name>" in result["launched"].stderr,
+                  (result["launched"].returncode,
+                   result["launched"].stderr[:300]))
+            check(f"{label}: nothing was sent to the box",
+                  result["remote"] == "", result["remote"][:200])
+            check(f"{label}: no seat directory was created",
+                  not (harness.home / "agents" / arguments[0]).exists(),
+                  str(harness.home / "agents"))
+
         # --- 15. the after-exit shell inherits the credential, as it
         # inherits the task-list pin and for the same reason: the
         # `claude --continue` that shell offers is the same seat.
