@@ -30,9 +30,9 @@ printed as ERRORED and counts against the run like a survivor.
 
 Exit codes: 0 every mutant was killed, 1 a mutant survived, errored or was
 not run, or a changed file has no suite, 2 could not run (cosmic-ray missing,
-a git step failed, the worktree could not be made, or a suite fails or cannot
-be launched on the unmutated head), 3 not run because another process holds
-the lock.
+a git step failed, the head commit is already in the base, the worktree could
+not be made, or a suite fails or cannot be launched on the unmutated head),
+3 not run because another process holds the lock.
 """
 
 import argparse
@@ -322,6 +322,18 @@ def main(argv=None):
         merge_base = run_or_raise(["git", "merge-base", head, base], checkout,
                                   environment,
                                   what=f"git merge-base {head} {base}").strip()
+        if merge_base == head:
+            number = (arguments.pull_request if arguments.pull_request is not None
+                      else "<number>")
+            raise CouldNotRun(
+                f"{PROGRAM}: not run — head {head[:12]} is already in {base}, so "
+                f"there are no changed lines to test. Either the pull request is "
+                f"merged, or it adds no commits of its own.\n"
+                f"If it is merged and you want to test what it changed:\n"
+                f"  gh pr view {number} --json headRefOid,baseRefOid\n"
+                f"  git fetch origin <baseRefOid>\n"
+                f"  then run this again with --head <headRefOid> --base <baseRefOid>.\n"
+                f"If it adds no commits of its own, there is nothing to test.")
         files = changed_python_files_to_mutate(checkout, merge_base, head,
                                                environment)
         recordings_directory = runner.recordings_directory_for(

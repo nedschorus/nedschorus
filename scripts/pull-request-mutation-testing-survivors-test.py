@@ -447,6 +447,59 @@ def run_cases():
               json.dumps(calls(control)))
 
     # ------------------------------------------------------------------
+    # A head commit already in the base, as a merged pull request's is:
+    # exit 2 before the lock or a worktree, not a 0-mutant success.
+    # ------------------------------------------------------------------
+    with tempfile.TemporaryDirectory() as scratch_name:
+        repository, base, head = scratch_repository(scratch_name, HEAD_FILES)
+        venv, control = fake_venv(scratch_name, {"dump": []})
+        git(repository, "commit", "-q", "--allow-empty", "-m", "merged later")
+        base_containing_head = git(repository, "rev-parse", "HEAD")
+        for case_name, given_base in [
+                ("a base that contains the head commit", base_containing_head),
+                ("a base equal to the head commit", head)]:
+            completed = run_script(repository, control, "--head", head,
+                                   "--base", given_base, "--cosmic-ray-venv", str(venv))
+            check(f"{case_name}: exit 2, saying the head commit is already in the base",
+                  completed.returncode == 2
+                  and f"head {head[:12]} is already in {given_base}" in completed.stderr
+                  and "SUMMARY" not in completed.stdout,
+                  f"rc={completed.returncode} out={completed.stdout} err={completed.stderr}")
+            check(f"{case_name}: given --head, the command it suggests keeps <number> "
+                  f"for the reader to fill in",
+                  "gh pr view <number> --json headRefOid,baseRefOid" in completed.stderr,
+                  f"rc={completed.returncode} out={completed.stdout} err={completed.stderr}")
+            check(f"{case_name}: no lock taken, no worktree made, no cosmic-ray run",
+                  not (control / "machine.lock").exists()
+                  and len(worktrees_of(repository)) == 1 and calls(control) == [],
+                  f"{worktrees_of(repository)} {json.dumps(calls(control))}")
+
+    # ------------------------------------------------------------------
+    # A change with no Python file to mutate is still a pass: the run
+    # covered everything it tests.
+    # ------------------------------------------------------------------
+    for case_name, head_files, delete_path in [
+            ("a change to a non-Python file only", {"docs/notes.md": "notes\n"}, None),
+            ("a change that only deletes a Python file", {}, "scripts/gone.py")]:
+        with tempfile.TemporaryDirectory() as scratch_name:
+            if delete_path is None:
+                repository, base, head = scratch_repository(scratch_name, head_files)
+            else:
+                repository, base, _ = scratch_repository(scratch_name,
+                                                         {delete_path: "VALUE = 1\n"})
+                base = git(repository, "rev-parse", "HEAD")
+                git(repository, "rm", "-q", delete_path)
+                git(repository, "commit", "-q", "-m", "delete")
+                head = git(repository, "rev-parse", "HEAD")
+            venv, control = fake_venv(scratch_name, {"dump": []})
+            completed = run_script(repository, control, "--head", head, "--base", base,
+                                   "--cosmic-ray-venv", str(venv))
+            check(f"{case_name}: exit 0 with 0 mutants on 0 files",
+                  completed.returncode == 0
+                  and "SUMMARY: 0 mutants on changed lines of 0 file(s)" in completed.stdout,
+                  f"rc={completed.returncode} out={completed.stdout} err={completed.stderr}")
+
+    # ------------------------------------------------------------------
     # cosmic-ray missing.
     # ------------------------------------------------------------------
     with tempfile.TemporaryDirectory() as scratch_name:
