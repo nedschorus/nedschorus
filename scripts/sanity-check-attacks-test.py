@@ -3349,6 +3349,35 @@ sys.exit(module.main())
               list(runner_removal.REVIEW_COPIES_ROOT.iterdir()) == holders,
               str(list(runner_removal.REVIEW_COPIES_ROOT.iterdir())))
 
+        # A stop signal that lands during a removal that leaves the copy: the
+        # signal still propagates, and the copy is still reported.
+        runner_stopped_removal = runner_over(repo, base)
+
+        def removal_stopped_by_signal(directory):
+            raise runner_stopped_removal.RunStoppedBySignal(signal.SIGTERM)
+
+        runner_stopped_removal.remove_directory_whatever_signal_arrives = (
+            removal_stopped_by_signal)
+        before = set(runner_stopped_removal.REVIEW_COPIES_ROOT.iterdir())
+        printed = io.StringIO()
+        propagated = None
+        try:
+            with contextlib.redirect_stdout(printed):
+                with runner_stopped_removal.review_copy_of_commit(head, "design", repo):
+                    pass
+        except runner_stopped_removal.RunStoppedBySignal as raised:
+            propagated = raised
+        left = set(runner_stopped_removal.REVIEW_COPIES_ROOT.iterdir()) - before
+        stopped_holder = next(iter(left)) if len(left) == 1 else None
+        check("a removal a stop signal interrupts and that leaves the copy still "
+              "names the copy and manual deletion, and the signal still propagates",
+              propagated is not None and stopped_holder is not None
+              and runner_stopped_removal.REVIEW_COPY_NOT_REMOVED == stopped_holder
+              and (f"WARNING: the review copy could not be removed: "
+                   f"{stopped_holder.resolve()}\nDelete that directory by hand.\n")
+              in printed.getvalue(),
+              f"propagated {propagated!r}, left {left}, stdout {printed.getvalue()!r}")
+
     # Case 57: a cell whose thread first runs after the run is stopped. It
     # launches nothing and does not count as finished, so the run ends with
     # its STOPPED line: a run that never launched that cell has not saved

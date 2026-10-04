@@ -1444,14 +1444,20 @@ def review_copy_of_commit(commit: str, record_name: str,
                 raise RuntimeError(f"{' '.join(command[:2])} failed: {step.stderr.strip()}")
         yield checkout
     finally:
-        remove_directory_whatever_signal_arrives(holder)
-        # Printed, not raised: an exception here would replace a stop signal
-        # already on its way out, and would end the run before its record is
-        # shipped. REVIEW_COPY_NOT_REMOVED makes the run fail after shipping.
-        if holder.exists():
-            REVIEW_COPY_NOT_REMOVED = holder
-            print(f"WARNING: the review copy could not be removed: {holder.resolve()}\n"
-                  "Delete that directory by hand.", flush=True)
+        # The leftover check is in a finally of its own because the removal
+        # re-raises a stop signal that arrived during it, and that copy too
+        # must be reported.
+        try:
+            remove_directory_whatever_signal_arrives(holder)
+        finally:
+            # Printed, not raised: an exception here would replace a stop
+            # signal already on its way out, and would end the run before its
+            # record is shipped. REVIEW_COPY_NOT_REMOVED makes the run fail
+            # after shipping.
+            if holder.exists():
+                REVIEW_COPY_NOT_REMOVED = holder
+                print(f"WARNING: the review copy could not be removed: {holder.resolve()}\n"
+                      "Delete that directory by hand.", flush=True)
 
 
 def remove_directory_whatever_signal_arrives(directory: pathlib.Path) -> None:
