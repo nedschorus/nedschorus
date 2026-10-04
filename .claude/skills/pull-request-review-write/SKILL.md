@@ -1,6 +1,6 @@
 ---
 name: pull-request-review-write
-description: Use BEFORE writing or revising a review on a pull request — whether asked by the user, by another agent, or as a seat's standing merge duty. Covers how the review is delivered: one finding per comment, each naming the condition under which the wrong thing happens. Not for reading a review someone else wrote.
+description: Use BEFORE writing or revising a review on a pull request — whether asked by the user, by another agent, or as an agent-seat's standing merge duty. Covers how the review is delivered: one finding per comment, each naming the condition under which the wrong thing happens. Not for reading a review someone else wrote.
 ---
 
 # pull-request-review-write

@@ -16,4 +16,4 @@ This page defines the system-terms of this project's skills: the terms they alon
 - **sanity-check-record** — the directory one /sanity-check run leaves behind, `sanity-check-records/<date>-<target-stem>/` (for a skill, `<date>-<skill directory>-SKILL/`), holding its reports; kept as a log.
 - **sanity-check-request** — the file the requesting agent writes for the fresh-eyes-attack: a problem statement plus off-limits and read-first lists, passed to the runner as `--problem-statement`.
 - **walk-document** — the file `docs/walk/<name>.md`, the text of an approval-walk as presented to the user.
-- **walk-minutes** — the document the /walk-me-through skill uses to record the outcome of each item of a walk.
+- **walk-minutes** — the document the /walk-me-through skill uses to record the outcome of each item of an approval-walk.
