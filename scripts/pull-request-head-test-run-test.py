@@ -1423,6 +1423,43 @@ def run_cases_of_a_record_cut_short_on_the_way(workspace: Path):
           f"{written_by_hand.returncode} {written_by_hand.stderr}")
 
 
+def run_cases_of_a_record_the_test_log_takes_part_of(workspace: Path):
+    """A test log the size limit lets take only part of the record, through
+    main as a run on the Mac calls it: the remedy is the repair by hand, never
+    an append of the whole record behind the partial one."""
+    probe = workspace / "file-size-limit-probe"
+    subprocess.run(["/bin/sh", "-c", 'ulimit -f 1; head -c 8192 /dev/zero > "$1"', "sh",
+                    str(probe)], capture_output=True, check=False)
+    limit = probe.stat().st_size
+    fixture = Fixture(workspace / "on-the-mac-with-a-test-log-that-takes-part-of-the-record")
+    record_path = f"pull-request-head-test-runs/mac/{fixture.head}.txt"
+    test_log = fixture.log_store / record_path
+    test_log.parent.mkdir(parents=True)
+    earlier = "x" * (limit - 2) + "\n"
+    test_log.write_text(earlier, encoding="utf-8")
+    result = fixture.run(hostname="a-mac-that-is-not-ned-box",
+                         ssh_body='ulimit -f 1; exec /bin/sh -c "$1"')
+    citation = f"nedlern@ned-box:{fixture.log_store}/{record_path}"
+    stderr_lines = result.stderr.splitlines()
+    check("when the test log takes only part of the record, the program exits 5, says a "
+          "partial record now ends the test log, and gives the repair by hand before any "
+          "append, never the append alone",
+          result.code == 5 and len(stderr_lines) == 4
+          and stderr_lines[0].startswith(
+              f"pull-request-head-test-run: the record was not written to {citation} "
+              f"(ssh nedlern@ned-box exited 1: pull-request-head-test-run: not written: "
+              f"the test log took only part of the record.): a partial record now ends "
+              f"that test log")
+          and stderr_lines[2] == f"Remove the partial record from the end of {citation} by hand."
+          and stderr_lines[3].startswith(
+              "Once it is removed, write the record by running on this machine: ")
+          and "When ned-box answers ssh again" not in result.stderr
+          and (fixture.test_log("mac") or "").startswith(earlier)
+          and len(earlier) < len(fixture.test_log("mac"))
+          < len(earlier) + len(fixture.local_copy().read_text(encoding="utf-8")),
+          f"limit {limit} {result!r}")
+
+
 def run_cases_of_the_write_command_under_each_shell(workspace: Path):
     """The command that adds a record to a test log, run by itself under
     /bin/sh and under bash and dash where the machine has them: ned-box's
@@ -1744,6 +1781,7 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     run_cases_of_a_subject_that_holds_line_boundaries_that_are_no_line_feed(workspace_root)
     run_cases_on_the_mac(workspace_root)
     run_cases_of_a_record_cut_short_on_the_way(workspace_root)
+    run_cases_of_a_record_the_test_log_takes_part_of(workspace_root)
     run_cases_of_the_write_command_under_each_shell(workspace_root)
     run_cases_of_what_the_write_command_holds()
     run_cases_of_the_two_byte_counts(workspace_root)
