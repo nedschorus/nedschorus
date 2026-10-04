@@ -31,7 +31,7 @@ WORDS_TO_AVOID_HEADING = "## Words to avoid"
 WORDS_TO_AVOID_COLUMNS = ("Word", "Forms flagged", "Forms not flagged", "Write instead",
                           "Applies to")
 CODE_SPAN_CONTENT_PATTERN = re.compile(r"`([^`]+)`")
-TABLE_SEPARATOR_ROW_PATTERN = re.compile(r"^\|(?:\s*:?-+:?\s*\|)+$")
+TABLE_SEPARATOR_ROW_PATTERN = re.compile(r"^\|?\s*:?-+:?\s*(?:\|\s*:?-+:?\s*)*\|?$")
 
 
 class StyleGuidePageError(ValueError):
@@ -62,7 +62,7 @@ def parse_words_to_avoid_table(page_text: str) -> Tuple[StyleGuideWordListEntry,
     table_lines = []
     for line in lines[heading_index + 1:]:
         line = line.rstrip()
-        if line.startswith("#"):
+        if line.lstrip().startswith("#"):
             break
         if not line.strip():
             if table_lines:
@@ -116,6 +116,8 @@ class StyleGuideWordHit(NamedTuple):
 # Accept list markers and indentation before fences; missing an opener would invert later fence tracking.
 FENCE_PATTERN = re.compile(r"^[ \t]*(?:(?:[-*+]|\d{1,9}[.)])[ \t]+)?(`{3,}|~{3,})")
 BLOCKQUOTE_LINE_PATTERN = re.compile(r"^[ \t]*>")
+LIST_ITEM_LINE_PATTERN = re.compile(r"^[ \t]*(?:[-*+]|\d{1,9}[.)])[ \t]")
+INDENTED_LINE_PATTERN = re.compile(r"^(?: {4}|[ ]{0,3}\t)")
 
 # Blank with equal-length spaces to preserve offsets; code spans must hide embedded quotes and slashes.
 # Mask link targets before slash tokens so adjacent link text remains searchable.
@@ -146,11 +148,14 @@ def _exempt_form_pattern_text(form: str) -> str:
 
 def _compile_scope(applies_to: str):
     entries = [entry for entry in STYLE_GUIDE_WORD_LIST if applies_to in entry.applies_to]
+    # Keyed lower-case because a hit is looked up by its lower-cased text; a form written
+    # with a capital in the table, such as `PR`, would otherwise raise KeyError at a hit.
     entry_by_form = {}
     for entry in entries:
         for form in entry.inflected_forms:
-            entry_by_form[form] = entry
-    forms = sorted(entry_by_form, key=len, reverse=True)
+            entry_by_form[form.lower()] = entry
+    forms = sorted({form for entry in entries for form in entry.inflected_forms},
+                   key=len, reverse=True)
     word_pattern = re.compile(
         FORM_NOT_PRECEDED_BY
         + "(?:" + "|".join(_either_case_first_letter(form) for form in forms) + ")"
@@ -218,12 +223,30 @@ def find_style_guide_word_hits_in_markdown(
     hits = []
     open_fence = None   # (fence character, fence length) while inside a fenced block
     open_code_span_run = None
+    # An indented code block starts only after a blank line, and a line indented under a
+    # list item continues the item rather than starting code, so both are tracked.
+    previous_line_blank = True
+    inside_indented_code = False
+    inside_list = False
     lines = text.split("\n")
     line_start = 0
     for line_index, raw_line in enumerate(lines):
         line = raw_line.rstrip("\r")
         this_line_start = line_start
         line_start += len(raw_line) + 1
+        line_blank = not line.strip()
+        if open_fence is None and not line_blank:
+            indented = INDENTED_LINE_PATTERN.match(line) is not None
+            if LIST_ITEM_LINE_PATTERN.match(line):
+                inside_list = True
+            elif not indented:
+                inside_list = False
+            inside_indented_code = indented and not inside_list and (
+                previous_line_blank or inside_indented_code)
+        previous_line_blank = line_blank
+        if inside_indented_code and not line_blank:
+            open_code_span_run = None
+            continue
         fence = FENCE_PATTERN.match(line)
         if open_fence is not None:
             if (fence and fence.group(1)[0] == open_fence[0]
