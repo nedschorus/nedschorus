@@ -182,10 +182,8 @@ import typing
 # This file sits in nc-systems/cold-read/, two directories below the root.
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent.parent
 # What a cold-read-record is called and where it lives, defined once in a
-# module so no program keeps its own copy (user-ruled 2026-09-19, walk
-# file-naming-and-location-standards-cold-read-findings, item 4). The
-# convention -- importlib for a module whose filename has hyphens -- is
-# nc-systems/cold-read/cold-read-cell-common.py's.
+# module so no program keeps its own copy. importlib, because the filename
+# has hyphens.
 _record_names_spec = importlib.util.spec_from_file_location(
     "cold_read_record_names",
     pathlib.Path(__file__).with_name("cold-read-record-names.py"))
@@ -246,21 +244,11 @@ EXIT_BAD_INVOCATION = 64
 # and no date: a ruling or a date says only who decided and when, which does
 # not help a reader use the store.
 #
-# It used to list every kind and how its files were named. That restatement
-# went stale at each ruling that changed one, and when the cold-read-records'
-# triage file was renamed from dispositions.md to triage.md a reader following
-# this text would have looked for the old name, not found it, and reported a
-# finished triage as unfinished. So on 2026-09-19 it became a pointer to the
-# file-naming wiki page instead (user-ruled, walk
-# file-naming-and-location-standards-cold-read-findings, item 5).
-#
-# It lists the kinds again, each naming ONLY its owner, never a naming rule
-# (user-ruled 2026-09-27, walk file-naming-page-revision-2026-09-23, item 9).
-# The user's rewrite of that wiki page dropped the kinds, because he did not
-# want the page to copy the systems' own conventions and drift from them, so
-# the pointer pointed at nothing. An owner changes far less often than a
-# naming rule, and the naming rule stays with the owner. The 2026-09-07
-# ruling that made the store at all is "separate the system from its logs".
+# It lists the kinds, each naming ONLY its owner, never a naming rule: a
+# restated naming rule goes stale whenever the owner changes it, and a reader
+# following the stale text looks for a file by a name it no longer has. An
+# owner changes far less often than a naming rule, and the naming rule stays
+# with the owner.
 STORE_README = """\
 # nedschorus-logs
 
@@ -370,15 +358,10 @@ def rsync_command(host, source: pathlib.Path, target: pathlib.PurePosixPath, *ex
 def refresh_store_readme(root) -> None:
     """STORE_README into <root>/README.md, on this machine, when it differs.
 
-    REWRITTEN WHENEVER IT DIFFERS, not only when it is missing (user-ruled
-    2026-09-19, walk file-naming-and-location-standards-cold-read-findings,
-    item 5). The README was written once, when the store was new, and never
-    again, so every later ruling that changed the text left the live file
-    behind: read over ssh on 2026-09-19 it still gave cold-read-record names
-    in the old date-first order, still called the triage file
-    dispositions.md, still said a walk has four files, and had no analysis/
-    entry at all. Refreshing here means the next shipment carries a change,
-    and nobody edits a file on ned-box by hand to land one.
+    REWRITTEN WHENEVER IT DIFFERS, not only when it is missing: a README
+    written only once falls behind every later change to the text.
+    Refreshing here means the next shipment carries a change, and nobody
+    edits a file on ned-box by hand to make one.
 
     The README is the shippers' own file, so the add-only rule that protects
     the records does not cover it.
@@ -396,8 +379,8 @@ def refresh_store_readme(root) -> None:
     uncaught traceback on a store that is correct.
 
     `mkstemp` creates the file 0600 and the store's README has always been
-    world-readable (0664 on ned-box, read 2026-09-20), so the mode is widened
-    before the rename rather than leaving the store's index owner-only.
+    world-readable, so the mode is widened before the rename rather than
+    leaving the store's index owner-only.
     """
     readme = pathlib.Path(root) / "README.md"
     try:
@@ -437,10 +420,8 @@ def make_directory_and_refresh_readme_script(directory, root) -> str:
     sees the old file whole or the new one whole. Writing through the live
     file instead would leave the store's own index empty or half-written when
     the shipment is interrupted, and nothing would repair it until a later
-    shipment happened to run to completion. Interruption is measured here,
-    not hypothetical: the ssh link to ned-box dropped eight times across
-    2026-09-19 and 2026-09-20, the last with `client_loop: send disconnect:
-    Broken pipe`. `mkdir -p` of the kind's directory runs first and creates
+    shipment happened to run to completion; the ssh link to ned-box does
+    drop. `mkdir -p` of the kind's directory runs first and creates
     the root as its parent, so `mktemp` has somewhere to put the temporary on
     a store that is new, and the closing `rm -f` removes it when `cmp` found
     no difference.
@@ -449,9 +430,7 @@ def make_directory_and_refresh_readme_script(directory, root) -> str:
     error the shell can see: it is a clean EOF on a short stream, so `cat`
     returns 0 on the prefix that arrived, `cmp` finds a real difference, and
     `mv` publishes the truncation over a good README with the script exiting
-    0. Measured by the merge lane on 2026-09-21 against the previous head: a
-    60-byte prefix of this text replaced the live README, return code 0,
-    nothing on stderr. So the text's byte count is written into this script
+    0. So the text's byte count is written into this script
     and `wc -c` on the received temporary must equal it; a stream that ends
     short is refused and nothing is landed. The count is what STORE_README
     encodes to in UTF-8, which is the encoding `ensure_store` and the seat
@@ -464,16 +443,15 @@ def make_directory_and_refresh_readme_script(directory, root) -> str:
 
     THE TEMPORARY'S NAME COMES FROM `mktemp`, never a fixed README.md.new.
     Every shipment from every seat refreshes this README, nothing locks, and
-    two overlapping shipments on one name collide two ways, both measured by
-    the merge lane on 2026-09-21: the winner's closing `rm -f` falls between
+    two overlapping shipments on one name collide two ways: the winner's
+    closing `rm -f` falls between
     the loser's `cat` and its `cmp`, so the loser exits 1 on a store that is
     correct; and when the two send different text, which two checkouts at
     different commits do, the winner's `mv` renames the inode out from under a
     writer still holding it open and the loser's remaining bytes land inside
     the live README. A unique name is reachable by neither. `mktemp` creates
     the temporary 0600, so the mode is widened before the rename, the store's
-    README having always been world-readable (0664 on ned-box, read
-    2026-09-20).
+    README having always been world-readable.
 
     A temporary orphaned by a drop is no longer overwritten by the next run,
     each run's name being its own: a drop that arrives as a short stream is
@@ -483,10 +461,10 @@ def make_directory_and_refresh_readme_script(directory, root) -> str:
     overlap the unique name fixes.
 
     POSIX shell only -- ned-box's /bin/sh is dash, with uutils coreutils
-    0.8.0 for `mktemp`, `wc` and `chmod` and GNU diffutils 3.12 for `cmp`; the
-    template form of `mktemp` and `[ "$(wc -c < f)" -eq n ]` were run there on
-    2026-09-20. `chmod` takes `--` BEFORE the mode: a trailing one is a file
-    name to this Mac's BSD chmod, which then exits 1.
+    for `mktemp`, `wc` and `chmod` and GNU diffutils for `cmp`; the template
+    form of `mktemp` and `[ "$(wc -c < f)" -eq n ]` work there. `chmod` takes
+    `--` BEFORE the mode: a trailing one is a file name to the Mac's BSD
+    chmod, which then exits 1.
     """
     return (f"mkdir -p -- '{directory}' || exit 1\n"
             f"readme_new=$(mktemp '{root}/README.md.XXXXXX') || exit 1\n"
@@ -539,8 +517,8 @@ def store_inventory(host, store_dir: pathlib.PurePosixPath):
     the digest the cold-read-grid already records for the cold-read-target, so
     a reader can compare a cold-read-record's frozen cold-read-target with the
     cold-read-grid's fingerprint by eye.
-    rsync's own --itemize-changes was tried first and dropped: the Mac ships
-    openrsync and ned-box ships rsync 3.4, and their itemize formats differ.
+    Not rsync's --itemize-changes: the Mac ships openrsync and ned-box ships
+    rsync, and their itemize formats differ.
     """
     if host is None:
         directory = pathlib.Path(store_dir)
@@ -818,11 +796,12 @@ def replace_with_staged_files(host, staging_dir: pathlib.PurePosixPath,
     walk text's APPENDED TO rule is held to the stored copy it was tested
     against. None replaces whatever is there.
 
-    WHY A RENAME OF A STAGED COPY, AND NOT rsync STRAIGHT ONTO THE NAME. The
-    shippers read the store's digest, decided, and copied with rsync, which
-    takes seconds over ssh; a second shipment of the same name in those
-    seconds was replaced without a word, the replacement announcement naming
-    the bytes the first look saw, or nothing when it saw no file. Here the
+    WHY A RENAME OF A STAGED COPY, AND NOT rsync STRAIGHT ONTO THE NAME. A
+    shipper that read the store's digest, decided, and then copied with
+    rsync, which takes seconds over ssh, would replace a second shipment of
+    the same name in those seconds without a word, the replacement
+    announcement naming the bytes the first look saw, or nothing when it saw
+    no file. Here the
     digest of what is about to be displaced is read immediately before the
     rename, in one shell, so the announcement names what was actually
     displaced, and the store is read again afterwards, so a caller judges its
@@ -1106,7 +1085,7 @@ def ship_from_command_line(description: str, records_dir: pathlib.Path,
     """The `<record directory> | --all` command line, for this program and for
     the other kinds that ship record directories the same way.
 
-    scripts/sanity-check-record-ship.py (nedschorus#392) is the second caller:
+    scripts/sanity-check-record-ship.py is the second caller:
     same command line, same rules, same exits, its own kind directory in the
     store and its own directory in the checkout. It calls this rather than
     holding a second copy, so the two cannot drift on what --all skips or what
@@ -1116,8 +1095,7 @@ def ship_from_command_line(description: str, records_dir: pathlib.Path,
     sanity-check record does not use: its twice-written file is
     finding-dispositions.md, written at the run's close and updated as the
     findings' status moves, and it stays add-only and refused on difference.
-    That is the same defect rule 4 fixes here, in a second program, and it is
-    a second topic -- the 2026-09-20 ruling names this program's triage.md.
+    That is the same defect rule 4 fixes here, left open in that kind.
 
     `records_dir` is where --all looks in this checkout; `destination` is the
     (host, path) pair the caller got from destination_for_this_machine, with
@@ -1147,9 +1125,9 @@ def ship_from_command_line(description: str, records_dir: pathlib.Path,
     shipped, refused, failed, skipped = [], [], [], []
     for record_dir in directories:
         # An empty directory is not a cold-read-record and not a failure: a run
-        # that made no reports left it, and counting it failed made every --all
-        # exit 1 until somebody deleted it (found by PR #285's reviewer). A
-        # single empty directory named on the command line is still exit 64.
+        # that made no reports leaves one, and counting it failed would make
+        # every --all exit 1 until somebody deleted it. A single empty
+        # directory named on the command line is still exit 64.
         if not any(record_dir.iterdir()):
             print(f"skipped: {record_dir.name} — empty directory")
             skipped.append(record_dir.name)

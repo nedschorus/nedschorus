@@ -1,19 +1,17 @@
 #!/usr/bin/env python3
 """Raise an agent-seat's own tasks when they come due, at the end of each turn.
 
-Design approved by the user 2026-10-02: "a Stop hook, at the end of each turn,
-reads the agent-seat's own task list ... the idle check built first". Wired as
-a Stop hook in .claude/settings.json.
+Wired as a Stop hook in .claude/settings.json.
 
 WHAT A TASK IS. A Claude Code task is the file
 `~/.claude/tasks/<CLAUDE_CODE_TASK_LIST_ID>/<id>.json`, with the keys
 activeForm, blockedBy, blocks, description, id, metadata, status and subject
-(measured 2026-10-02; activeForm and metadata are optional, and a few files
-carry `owner`). An agent-seat's list id is `nedschorus-<seat>-tasks`, read
-from the environment variable CLAUDE_CODE_TASK_LIST_ID, which the hook
-inherits from the session. No list id, no work: a session without one prints
-nothing. Only `*.json` files are read; the list directory also holds the
-harness's `.lock`. Task files are never written.
+(activeForm and metadata are optional, and a few files carry `owner`). An
+agent-seat's list id is `nedschorus-<seat>-tasks`, read from the environment
+variable CLAUDE_CODE_TASK_LIST_ID, which the hook inherits from the session;
+a session without one prints nothing. Only `*.json` files are read, because
+the list directory also holds the harness's `.lock`. Task files are never
+written.
 
 WHAT MAKES A TASK DUE. Two optional keys in a task's `metadata`:
 
@@ -29,94 +27,72 @@ WHAT MAKES A TASK DUE. Two optional keys in a task's `metadata`:
 An open task (status pending or in_progress) is raised when its due time has
 passed or its waits_on is met, and only when every task in its blockedBy is
 completed. A blockedBy id with no task file does not hold the task: a deleted
-task can never complete, and holding on it would silence the task for good
-with nothing said. A blocker file that exists but cannot be read does hold
-it, because its status is unknown.
+task can never complete, and holding on it would silence the task for good.
+A blocker file that exists but cannot be read does hold it, because its
+status is unknown.
 
-RAISED ONCE. The hook records, per task, the due_utc string it raised the
-task for and the waits_on list it raised the task for, and does not raise the
-task again for the same value. A task whose due_utc or waits_on is changed can
-be raised again. This is what keeps the hook from holding an agent in a loop:
-the Stop hook's additionalContext continues the conversation, so a hook that
-said the same thing at every turn boundary would never let the agent stop
-(the failure scripts/handoff-context-threshold-hook.py's docstring records
-for its own deferral). The record is written, atomically, BEFORE anything is
-printed, and nothing is printed if the write fails, so a raise whose record
-was lost cannot happen.
+RAISED ONCE. The hook records, per task, the due_utc and waits_on values it
+raised the task for, and does not raise the task again for the same value;
+changing either lets the task be raised again. The Stop hook's
+additionalContext continues the conversation, so a hook that said the same
+thing at every turn boundary would never let the agent stop. The record is
+written atomically BEFORE anything is printed, and nothing is printed if the
+write fails, so a raise whose record was lost cannot happen.
 
 THE STATE FILE is
 `~/.local/state/claude/agent-seat-due-task-raise-state/<list id>.json`,
-outside the task directory so the harness's own handling of that directory
-never meets it. ~/.local/state/claude/ is where
-scripts/agent-binary-update-under-lock.py keeps its lock for the same
-reason: the native installer's state directory exists on both machines. Its
-`raised` entries are pruned to the task files that still exist, and its
-`checks` entries to the conditions an open task still names. A state file
-that cannot be parsed is treated as empty and replaced on the next write:
-the alternative, silence on any fault, would mute the hook for good after
-one torn file, and the atomic write makes a torn file unlikely in the first
-place. Two sessions sharing one list id that stop at the same instant could
-each raise the same task once; that is not locked against.
+outside the task directory so the harness's handling of that directory never
+meets it; ~/.local/state/claude/ exists on both machines. Its `raised`
+entries are pruned to the task files that still exist, and its `checks`
+entries to the conditions an open task still names. A state file that cannot
+be parsed is treated as empty and replaced on the next write, because
+silence on any fault would mute the hook for good after one torn file. Two
+sessions sharing one list id that stop at the same instant could each raise
+the same task once; that is not locked against.
 
 GITHUB, and only for waits_on. A condition is checked with `gh pr view` or
 `gh issue view` (read-only), GH_TOKEN removed from the environment so gh
-uses its keyring login as the project's launchers arrange, stdin closed, each
-call bounded by GH_CALL_TIMEOUT_SECONDS and all of a run's calls together by
+uses its keyring login, stdin closed, each call bounded by
+GH_CALL_TIMEOUT_SECONDS and all of a run's calls together by
 GH_CALLS_TOTAL_BUDGET_SECONDS. A condition checked within
 CONDITION_RECHECK_INTERVAL_SECONDS is answered from the state file. A failed,
 timed-out or unparsable check is "not met", recorded with its time so it too
 waits the interval, and is never reported. No condition is checked for a
-task already raised for its current waits_on, or held by blockedBy, so a
-seat whose tasks have no waits_on makes no network call at all. The same
-call fetches the pull request's or issue's title and URL, which the raise
-line cites as the project's citation rule asks; a condition gh never
+task already raised for its current waits_on, or held by blockedBy, so an
+agent-seat whose tasks have no waits_on makes no network call. The same call
+fetches the title and URL the raise line cites; a condition gh never
 answered is cited by its number alone.
 
 OUTPUT. Something to raise: one JSON object,
 {"hookSpecificOutput": {"hookEventName": "Stop", "additionalContext": ...}},
-which Claude Code 2.1.287's schema describes as "non-error feedback delivered
-to the model; the conversation continues so the model can act on it". No
-`decision` field and no `systemMessage`: the text is for the agent. The text
-is one instruction per due task, then the instruction for a task that cannot
-be acted on yet. Nothing to raise, or any fault: nothing printed, exit 0.
-The hook never exits nonzero: a fault here must not stop a turn ending.
+which Claude Code delivers to the model as non-error feedback while the
+conversation continues. No `decision` field and no `systemMessage`: the text
+is for the agent. The text is one instruction per due task, then the
+instruction for a task that cannot be acted on yet. Nothing to raise, or any
+fault: nothing printed, exit 0. The hook never exits nonzero: a fault here
+must not stop a turn ending.
 
 ONLY THE AGENT-SEAT'S OWN SESSION IS RAISED, never a headless `claude -p`
-child an agent-seat's program starts. A child inherits the seat's
+child an agent-seat's program starts. A child inherits the agent-seat's
 environment, CLAUDE_CODE_TASK_LIST_ID included, and the raise text would be
-the last thing the child says, which is what its caller reads as the answer.
-On 2026-09-16 that happened to ghi-info, run as `claude -p` by
-scripts/ghi-info-ask.py: a Stop hook's text replaced the answer its caller
-was waiting for (scripts/handoff-context-threshold-hook.py's docstring has
-the account). Measured 2026-10-02 on Claude Code 2.1.287, launching from an
-agent-seat's environment with a scratch task list holding one passed task:
-a plain `claude -p` in this checkout ran this hook, and its answer came back
-as "Probe task completed. The stop hook successfully raised the overdue
-task, and I've processed it." in place of "ok". So two signals silence it:
+the last thing the child says, which its caller reads as the answer. Two
+signals silence the hook:
 
   NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER set, the variable
-      scripts/ghi-info-ask.py sets for its child and the handoff hook already
+      scripts/ghi-info-ask.py sets for its child and the handoff hook also
       honours.
-  CLAUDE_CODE_SESSION_ATTENDED == "0". Claude Code sets this variable for
-      every hook and tool it runs, "1" when the session is attended. Measured
-      the same day with a probe Stop hook that recorded its environment: an
-      interactive session (driven in a pty) gave "1" with
-      CLAUDE_CODE_ENTRYPOINT "cli"; a `claude -p` child gave "0" with
-      CLAUDE_CODE_ENTRYPOINT "sdk-cli", although the child had inherited "1"
-      and "cli" from the seat. The Stop payload carries no field that tells
-      the two apart. A missing variable does not silence the hook, so a
-      Claude Code that stops setting it costs the headless guard, not the
-      seat's reminders.
+  CLAUDE_CODE_SESSION_ATTENDED == "0". Claude Code sets this for every hook
+      it runs: "1" in an interactive session, "0" in a `claude -p` child,
+      even when the child inherited "1" from the agent-seat. The Stop payload
+      carries no field that tells the two apart. A missing variable does not
+      silence the hook, so a Claude Code that stops setting it costs the
+      headless guard, not the agent-seat's reminders.
 
 The project's own headless Claude callers run no project hook at all: the
 cold-read Claude cell, and the restater-judge cell through it, pass
 `--settings` with disableAllHooks; scripts/ghi-info-ask.py and
-scripts/sanity-check-attacks.py pass `--setting-sources user`. Measured the
-same day: a `claude -p` launched with each of those two forms left this
-hook's state file unwritten and answered "ok". The explain fresh read runs
-nc-systems/cold-read/cold-read-fast-read.py, whose cell is the agy cell, a
-program other than Claude Code that never runs these hooks (read from the
-code, not probed). The two signals cover a child started any other way.
+scripts/sanity-check-attacks.py pass `--setting-sources user`. The two
+signals cover a child started any other way.
 """
 
 import json

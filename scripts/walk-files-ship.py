@@ -167,8 +167,7 @@ WALK_KIND_DIRECTORY = "walk"
 
 # The record shipper is imported rather than copied, so the shippers cannot
 # drift on what the store is, how ssh and rsync are invoked, or how an
-# scp-form destination is split. The convention -- importlib for a module
-# whose filename has hyphens -- is scripts/seat-shared-file-ship.py's.
+# scp-form destination is split. importlib, because the filename has hyphens.
 _shipper_spec = importlib.util.spec_from_file_location(
     "cold_read_record_ship", REPO_ROOT / "nc-systems" / "cold-read" / "cold-read-record-ship.py")
 shipper = importlib.util.module_from_spec(_shipper_spec)
@@ -193,14 +192,11 @@ WALK_TEXT_ROLE_SUFFIX = ""
 REQUIRED_ROLE_SUFFIXES = (WALK_TEXT_ROLE_SUFFIX, MINUTES_ROLE_SUFFIX)
 NOTED_WHEN_ABSENT_ROLE_SUFFIXES = ("-draft", "-suggestions")
 # The files a walk replaces in the store (see REPLACED in the docstring); every
-# other role is add-only. The minutes since the first ruling; the dispositions
-# since the second (user-ruled 2026-09-18, walk
-# skill-sentences-and-shipper-questions-2026-09-18, item 5).
+# other role is add-only.
 REPLACED_ROLE_SUFFIXES = (MINUTES_ROLE_SUFFIX, "-dispositions")
 # The one add-only role a run replaces when the local file only grew (see
-# APPENDED TO in the docstring; user-ruled 2026-09-21, item 3 of the walk
-# md-skills-seat-questions-and-concerns-2026-09-21). Every other add-only role
-# is refused on any difference.
+# APPENDED TO in the docstring). Every other add-only role is refused on any
+# difference.
 ROLE_SUFFIX_REPLACED_WHEN_ONLY_APPENDED_TO = WALK_TEXT_ROLE_SUFFIX
 # What the store's listing prefixes a file's size in bytes with, so one
 # round trip carries both facts the rules need and the sha256sum lines keep
@@ -239,9 +235,9 @@ def walk_name_and_directory(argument: str):
     use, docs/walk/ being gitignored.
 
     In the path form the walk's name is found by PRESENCE, not by stripping a
-    role suffix alone, because a walk's own name may end in a role suffix: the
-    reviewer's case, docs/walk/cold-read-and-walk-file-names-and-dispositions.md,
-    which stripping alone resolved to a shorter walk that does not exist. The
+    role suffix alone, because a walk's own name may end in a role suffix:
+    docs/walk/cold-read-and-walk-file-names-and-dispositions.md is a walk text,
+    and stripping alone would resolve it to a shorter walk that does not exist. The
     candidates are the full stem and, for each role suffix the stem ends with,
     the stem without it; the longest candidate whose required files (the walk
     text and the minutes) are both in the directory is the walk. When none
@@ -289,13 +285,10 @@ def store_digests_and_sizes(copy_host, targets: list):
     sha256sum line sha256sum itself prints, and a size line of this program's
     own. An unreachable host is the process's non-zero return with a dict of
     None, and so is a stored file sha256sum cannot hash: the remote loop exits
-    1 at it. Without that exit the loop went on, its last `printf` made the
-    script exit 0, and the file was missing from the listing, which the caller
-    reads as not stored, so an add-only file in the store was copied over.
-    Raised by the Codex review cell as a question in the 2026-09-22 merge
-    review of PR "The walk-files shipper replaces a walk text the walk only
-    added to" (https://github.com/nedschorus/nedschorus/pull/653); fixed under
-    item 7 of the merge-lane-2 meta-walk, user-ruled 2026-09-24."""
+    1 at it. Without that exit the loop would go on, its last `printf` would
+    make the script exit 0, and the file would be missing from the listing,
+    which the caller reads as not stored, so an add-only file in the store
+    would be copied over."""
     if copy_host is None:
         stored = {}
         for target in targets:
@@ -571,9 +564,8 @@ def ship_walk(destination: WalkStoreDestination, name: str,
         replaced.sort(key=lambda replacement: [
             source.name for source in present.values()].index(replacement.file_name))
     added = [source.name for source in present.values() if source.name in added]
-    # The walk kind's directory in the store on ned-box, which the snapshots
-    # copy, built from the record shipper's constant, never written out again
-    # here; the destination may be a local override, the snapshots never.
+    # Built from the record shipper's constant, not the destination, which may
+    # be a local override the snapshots never hold.
     stored_walk_directory = (shipper.split_destination(
         shipper.LOG_STORE_RECORDS_DESTINATION)[1].parent / WALK_KIND_DIRECTORY)
     for replacement in replaced:
