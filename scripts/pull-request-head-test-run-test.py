@@ -774,8 +774,7 @@ def run_cases_on_ned_box(workspace: Path):
           daily.DAILY_FULL_TEST_RUN_LOCK_WAIT_BOUND_SECONDS == 3600
           and daily.DAILY_FULL_TEST_RUN_LOCK_WAIT_SECONDS == 2)
 
-    # The daily run's function hands its runner the lock a caller passes it.
-    # This program takes no lock, so its runner is handed no descriptor.
+    # The daily run's function starts the runner without passing it any descriptor.
     runs_of_the_runner = []
     subprocess_run = subprocess.run
 
@@ -1014,7 +1013,7 @@ def run_cases_on_ned_box(workspace: Path):
           and not recorded_inputs.exists(), repr(result))
     commands_run = []
 
-    def runner_that_is_not_started(command, run_from, wait, monotonic, lock_handle=None):
+    def runner_that_is_not_started(command, run_from, wait, monotonic):
         commands_run.append((command, run_from))
         return (subprocess.CompletedProcess(
             command, 0, stdout=f"{fixture.runner_first_line()}\n{PASSING_SUMMARY_LINE}\n",
