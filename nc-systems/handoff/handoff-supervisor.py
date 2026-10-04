@@ -11,9 +11,7 @@ The cycle, per reincarnation:
   1. Watch the handoff file for a restart-counter above the last consumed.
   2. Kill the running session.
   3. Extract its dialog to disk before anything else proceeds.
-  4. Carry the tasks forward: nothing to do under a seat-pinned task list,
-     where every generation shares one store; otherwise copy the retiring
-     session's records into the successor's task directory.
+  4. Each generation opens the same launcher-pinned task list.
   5. Print one queue-status line — to the console only. It does not ride
      the initial agent instructions (user-ruled 2026-08-29: "Also useless is the
      reminder there are files in the queues. Thats what queues are for.").
@@ -68,6 +66,9 @@ offer-versus-resume behaviour is unchanged.
 
 Never pass --allowedTools on the launch: it silently swallows the positional
 prompt, so the successor would boot with no instructions at all.
+
+Starting a supervisor requires a nonempty CLAUDE_CODE_TASK_LIST_ID from
+scripts/launch-claude-mac or scripts/launch-claude-ubuntu.
 
 Exit codes: 0 clean stop, 2 bad invocation, 3 the agent command is missing.
 """
@@ -140,7 +141,6 @@ SIGKILL_SESSION_EXIT_CODES = (137, -9)
 # Repeated workless resumes can loop indefinitely and spend money on each launch.
 CONSECUTIVE_RESUMES_WITHOUT_NEW_WORK_BUDGET = 1
 
-TASKS_ROOT = Path.home() / ".claude" / "tasks"
 PROJECTS_ROOT = Path.home() / ".claude" / "projects"
 # Live supervisors resolve this path at import; moving the extractor would break those processes.
 EXTRACTOR_PATH = SCRIPTS_DIRECTORY / "handoff-extract-conversation.py"
@@ -559,23 +559,6 @@ def written_at_wariness_sentence(written_at: str) -> str:
 def pinned_task_list_id() -> str:
     """Return the launcher-pinned task list ID, or an empty string when unpinned."""
     return os.environ.get("CLAUDE_CODE_TASK_LIST_ID", "").strip()
-
-
-def preseed_tasks(retiring_session_id: str, successor_session_id: str) -> int:
-    """Copy tasks before the successor boots; return the count, or zero for a shared pinned list."""
-    # The harness loads preexisting <N>.json files from ~/.claude/tasks/<session-id>/ at startup.
-    if pinned_task_list_id():
-        return 0
-    source = TASKS_ROOT / retiring_session_id
-    if not source.is_dir():
-        return 0
-    destination = TASKS_ROOT / successor_session_id
-    destination.mkdir(parents=True, exist_ok=True)
-    copied = 0
-    for task_file in sorted(source.glob("*.json")):
-        shutil.copy2(task_file, destination / task_file.name)
-        copied += 1
-    return copied
 
 
 def project_directory_for_working_directory(working_directory: Path) -> Path:
@@ -1282,7 +1265,7 @@ def carry_over_to_successor(settings: SupervisorSettings, retiring_session_id: s
             and handoff_written_by_session != retiring_session_id):
         print(f"handoff-supervisor: the handoff names session "
               f"{handoff_written_by_session} as its writer, not the tracked "
-              f"{retiring_session_id}; carrying over the writer's dialog and tasks")
+              f"{retiring_session_id}; carrying over the writer's dialog")
         retiring_session_id = handoff_written_by_session
 
     extract_path = settings.handoff_directory / f"{settings.agent}-dialog-{generation:04d}.md"
@@ -1305,15 +1288,6 @@ def carry_over_to_successor(settings: SupervisorSettings, retiring_session_id: s
     print(f"handoff-supervisor: {queue_status_line(settings.working_directory)}")
 
     successor_session_id = str(uuid.uuid4())
-    # A pinned list needs no copying; reporting zero carried tasks would suggest failed migration.
-    pinned_list = pinned_task_list_id()
-    if pinned_list:
-        print(f"handoff-supervisor: tasks live in the seat-pinned list {pinned_list}; "
-              f"the successor opens that same list, so nothing is carried")
-    else:
-        copied = preseed_tasks(retiring_session_id, successor_session_id)
-        print(f"handoff-supervisor: carried {copied} task record(s) to the successor")
-
     plan = DialogIgnitionPlan(
         extract_path, handoff_fields,
         project_directory_for_working_directory(settings.working_directory) / retiring_session_id,
@@ -1606,6 +1580,16 @@ def main(argv=None) -> int:
         alive, explanation = supervisor_liveness(state_path)
         print(explanation)
         return 0 if alive else 1
+
+    if not pinned_task_list_id():
+        print(
+            "handoff-supervisor: startup stopped because the agent-seat was not started "
+            "by a launcher that pins its task list; CLAUDE_CODE_TASK_LIST_ID is unset or empty.\n"
+            "On macOS, start the agent-seat with scripts/launch-claude-mac.\n"
+            "On Ubuntu, start the agent-seat with scripts/launch-claude-ubuntu.",
+            file=sys.stderr,
+        )
+        return 2
 
     if bool(arguments.adopt_session_id) != bool(arguments.adopt_process_id):
         parser.error("--adopt-session-id and --adopt-process-id must be given together")
