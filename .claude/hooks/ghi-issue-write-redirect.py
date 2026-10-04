@@ -64,7 +64,8 @@ DECISIONS, and where they depart from the design of record:
   raised this in its review of this hook. Refusing `--title` leaves the
   title one source, the GHI-MD's first heading, and the refusal sends the
   agent there. A title edit that also carries a body flag gets the body
-  refusal, which names `--title` among the flags to drop.
+  refusal, which tells the agent to run the title edit alone afterwards for
+  the title's instructions.
 - `gh issue comment --delete-last` passes: it removes a comment, which is
   the direction the ruling wants, and refusing it defends against nothing.
 - Another repository passes. `-R`/`--repo`, `GH_REPO=` in front of the
@@ -160,12 +161,6 @@ EDIT_BODY_FLAGS = {"--body", "--body-file", "--attach"}
 # What an agent reads. Each line is one instruction and the condition it
 # applies under; the rulings and reasons live in this docstring (user-ruled
 # 2026-09-18, CLAUDE.md).
-COMMENT_REFUSAL = (
-    "Do not comment on this project's issues.\n"
-    "Put the content in the issue's GHI-MD, docs/issues/<number>-*.md, then "
-    "land it with: python3 scripts/ghi-issue-write.py edit <path>\n"
-    "If the issue has no GHI-MD, stop and tell the user."
-)
 # The record line names the issue's files on main, looked up with the function
 # that builds the issue's body, so this hook and the GHI write tool cannot
 # disagree about which files the issue has. {outcome} is what the agent records.
@@ -189,10 +184,23 @@ RECORD_LINE_LOOKUP_FAILED = (
 )
 CLOSE_OUTCOME = "the outcome"
 REOPEN_OUTCOME = "why the issue is reopening"
+COMMENT_OUTCOME = "what the comment would say"
+EDIT_BODY_OUTCOME = "the change"
 NO_COMMENTS_LINE = (
     "Do not comment on this project's issues: what an issue says lives in its "
     "GHI-MD, and a comment would sit outside it."
 )
+# Ends the comment, body and title refusals, except where the lookup line only
+# says to stop: then there is no pull request to rerun after.
+RERUN_LINE = (
+    "If you opened that pull request: after it merges, pull main and run the same "
+    "python3 scripts/ghi-issue-write.py edit command again; the rerun updates the issue."
+)
+LABELS_ONLY_LINE = (
+    "To change only labels, assignees or the milestone, run gh issue edit without "
+    "--title, --body, --body-file and --attach; that needs no file."
+)
+COMMENT_REFUSAL = NO_COMMENTS_LINE + "\n{record_line}"
 CLOSE_WITH_COMMENT_REFUSAL = (
     NO_COMMENTS_LINE + "\n"
     "{record_line}\n"
@@ -215,22 +223,43 @@ CREATE_REFUSAL = (
     "run, stop and tell the user."
 )
 EDIT_BODY_REFUSAL = (
-    "Do not set this project's issue bodies with gh issue edit.\n"
-    "Edit the issue's GHI-MD, docs/issues/<number>-*.md, then land it with: "
-    "python3 scripts/ghi-issue-write.py edit <path>\n"
-    "To change only labels, assignees or the milestone, run gh issue edit "
-    "without --title, --body, --body-file and --attach.\n"
-    "If the issue has no GHI-MD, stop and tell the user."
+    "Do not set this project's issue bodies with gh issue edit: an issue's body is "
+    "the links to its files on main, and scripts/ghi-issue-write.py writes it from "
+    "those files.\n"
+    + LABELS_ONLY_LINE + "\n"
+    "If the command also set the title, run gh issue edit <number> --title alone "
+    "afterwards for the title's instructions.\n"
+    "{record_line}"
 )
+# The GHI write tool retitles an issue only when the issue has one file on main
+# and the edit changes that file's first heading, so {title_line} stops the
+# agent wherever the tool could not retitle.
 EDIT_TITLE_REFUSAL = (
-    "Do not set this project's issue titles with gh issue edit.\n"
-    "If the issue has more than one GHI-MD, or its GHI-MD's first heading "
-    "already reads the title you want, stop and tell the user.\n"
-    "Change the first heading of the issue's GHI-MD, docs/issues/<number>-*.md, "
-    "then land it with: python3 scripts/ghi-issue-write.py edit <path>\n"
-    "To change only labels, assignees or the milestone, run gh issue edit "
-    "without --title, --body, --body-file and --attach.\n"
-    "If the issue has no GHI-MD, stop and tell the user."
+    "Do not set this project's issue titles with gh issue edit: "
+    "scripts/ghi-issue-write.py sets an issue's title from the first heading of the "
+    "issue's GHI-MD, when the issue has one file on main and an edit changes that "
+    "heading.\n"
+    + LABELS_ONLY_LINE + "\n"
+    "{title_line}"
+)
+TITLE_LINES_ONE_FILE = (
+    "If the first heading of {path} already reads the title you want, stop and tell "
+    "the user.\n"
+    "Otherwise change that heading to the title you want, then open the edit's pull "
+    "request with: python3 scripts/ghi-issue-write.py edit {path}"
+)
+TITLE_LINE_SEVERAL_FILES = (
+    "The issue's files on main are: {paths}. scripts/ghi-issue-write.py changes the "
+    "title only of an issue with one file, so stop and tell the user."
+)
+TITLE_LINES_LOOKUP_FAILED = (
+    "If the issue has no file or two or more files, counting files named "
+    "docs/issues/<number>-*.md and designs in a system's docs/ directory, or the first "
+    "heading of the issue's GHI-MD already reads the title you want, stop and tell the "
+    "user.\n"
+    "Otherwise change the first heading of the issue's GHI-MD to the title you want, "
+    "then open the edit's pull request with: python3 scripts/ghi-issue-write.py edit "
+    "<path>"
 )
 DELETE_REFUSAL = (
     "Do not delete this project's issues: a deleted issue cannot be restored.\n"
@@ -435,6 +464,40 @@ def record_line(outcome, files):
     return RECORD_LINE_SEVERAL_FILES.format(outcome=outcome, paths=", ".join(files))
 
 
+def title_line(files):
+    if files is None:
+        return TITLE_LINES_LOOKUP_FAILED
+    if not files:
+        return RECORD_LINE_NO_FILE
+    if len(files) == 1:
+        return TITLE_LINES_ONE_FILE.format(path=files[0])
+    return TITLE_LINE_SEVERAL_FILES.format(paths=", ".join(files))
+
+
+def with_rerun_line(text, agent_may_open_pull_request):
+    if not agent_may_open_pull_request:
+        return text
+    return text + "\n" + RERUN_LINE
+
+
+def comment_refusal(files):
+    return with_rerun_line(
+        COMMENT_REFUSAL.format(record_line=record_line(COMMENT_OUTCOME, files)),
+        files != [])
+
+
+def edit_body_refusal(files):
+    return with_rerun_line(
+        EDIT_BODY_REFUSAL.format(record_line=record_line(EDIT_BODY_OUTCOME, files)),
+        files != [])
+
+
+def edit_title_refusal(files):
+    return with_rerun_line(
+        EDIT_TITLE_REFUSAL.format(title_line=title_line(files)),
+        files is None or len(files) == 1)
+
+
 def refusal_for(subcommand, arguments, repository_from_environment,
                 working_directory=None):
     """The refusal text for one `gh issue` invocation, or None to let it run."""
@@ -448,7 +511,8 @@ def refusal_for(subcommand, arguments, repository_from_environment,
                   or "--edit-last" in flags or "--attach" in flags)
         if "--delete-last" in flags and not writes:
             return None
-        return COMMENT_REFUSAL
+        return comment_refusal(
+            issue_files_on_main(issue_number_named(positionals), working_directory))
     if subcommand in ("close", "reopen"):
         if "--comment" not in flags:
             return None
@@ -463,11 +527,12 @@ def refusal_for(subcommand, arguments, repository_from_environment,
     if subcommand == "create":
         return CREATE_REFUSAL
     if subcommand == "edit":
+        if not (EDIT_BODY_FLAGS & set(flags)) and "--title" not in flags:
+            return None
+        files = issue_files_on_main(issue_number_named(positionals), working_directory)
         if EDIT_BODY_FLAGS & set(flags):
-            return EDIT_BODY_REFUSAL
-        if "--title" in flags:
-            return EDIT_TITLE_REFUSAL
-        return None
+            return edit_body_refusal(files)
+        return edit_title_refusal(files)
     if subcommand == "delete":
         files = issue_files_on_main(issue_number_named(positionals), working_directory)
         if files == []:
