@@ -10,6 +10,7 @@ A term used by one system alone is defined in that system's glossary, not here. 
 - **/explain** — a skill that re-explains a message the user could not follow, so he can understand the message without the agent-session's context.
 - **/ghi-write** — a skill used before any write to a GitHub issue.
 - **/handoff** — a skill that hands a session over to a new one.
+- **/pull-request-review-write** — a skill used before writing or revising a review on a pull request.
 - **/sanity-check** — a skill used to improve designs.
 - **/walk-me-through** — a skill that presents complex material to the user one item or step at a time.
 - **-draft** — the filename suffix of a document still being written and not yet put to review, such as `docs/drafts/<subject>-draft.md`. Written with its leading hyphen, -draft is this project's term; written without the hyphen, "draft" is the ordinary English word. Text that waits for the user's approval is pending approval; the GitHub label is the `draft` label; the directory is `docs/drafts/`.
