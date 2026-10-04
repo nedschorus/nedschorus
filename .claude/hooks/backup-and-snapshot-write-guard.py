@@ -21,13 +21,14 @@ PROTECTED_COMPONENT_SUFFIXES = (".sparsebundle",)
 
 DENY_MESSAGE = (
     "Refusing to modify {path}: it is backup state (Timeshift snapshots or configuration "
-    "on ned-box, or Time Machine state on the Mac), and backup state is never an agent's "
-    "to write — there is no approval lane for this, in this or any conversation "
-    "(user-ruled 2026-08-17). If you are trying to RECOVER a file, nothing here is in "
-    "your way: snapshots are ordinary readable directories, so copy the file out of the "
-    "snapshot tree instead of writing anything. If backup configuration genuinely needs "
-    "changing, that is the user's to do at his own keyboard — tell him what needs "
-    "changing and why, and stop."
+    "on ned-box, or Time Machine state on the Mac). Backup state is never an agent's to "
+    "write, because backups are how damage done by any agent is undone, and there is no "
+    "override for this in this or any conversation.\n"
+    "If you are trying to recover a file, copy the file out of the snapshot or backup "
+    "without writing to it; scripts/find-deleted-path-across-backups.py finds the copies.\n"
+    "If you cannot read the snapshot or backup, tell the user and stop.\n"
+    "If backup configuration needs changing, tell the user what needs changing and why, "
+    "and stop: the change is the user's to make at his own keyboard."
 )
 
 

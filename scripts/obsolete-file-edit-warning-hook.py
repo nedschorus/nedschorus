@@ -90,6 +90,7 @@ import. A staleness warning must never be the reason an edit fails.
 import importlib.util
 import json
 import sys
+import tempfile
 from pathlib import Path
 
 # The path set lives beside checkout-freshness-catch-up.py's
@@ -118,7 +119,8 @@ PUSHED_HEAD_STATE_KEYS = ("pushed", "pushed-with-local-commits",
 NEVER_PUSHED_ADVICE = (
     "This branch has never been pushed, so nobody else has it: commit or set aside "
     "your work and run `git rebase origin/main` — the Stop hook rebases a never-pushed "
-    "branch only when the tree is clean — then rerun the tests for what you touched."
+    "branch only when the tree is clean — then run `python3 scripts/run-all-test-suites.py "
+    "--only-suites-whose-recorded-inputs-changed-since origin/main`."
 )
 # A pushed branch that conflicts with main is the one exception: no commit on
 # top can clear a conflict, so it is cleared by a hand-merge (CLAUDE.md, "How a
@@ -132,6 +134,36 @@ PUSHED_ADVICE = (
     "clear the conflict with the hand-merge that scripts/branch-conflict-check.py "
     "describes. Your next topic starts with `git checkout -b <name> origin/main`."
 )
+
+
+GIT_OPERATION_IN_PROGRESS_LINE = (
+    "A git operation is in progress ({marker}): finish it before anything else."
+)
+DETACHED_HEAD_LINE = (
+    "This checkout is on a detached HEAD: make a branch (git switch -c "
+    "<a-branch-name>) before you commit, because a commit on a detached HEAD is on "
+    "no branch."
+)
+NO_OVERLAP_LINE = (
+    "main's changes to {path} do not overlap this checkout's copy; a rebase merges "
+    "them cleanly."
+)
+OVERLAP_LINE = (
+    "main's changes to {path} overlap this checkout's copy: after you make the branch "
+    "and commit your edit, run git rebase origin/main, which will stop on this file, "
+    "and resolve the conflict there."
+)
+MAIN_HAS_NO_FILE_LINE = (
+    "main no longer has a file at {path}: find out whether main moved or deleted it "
+    "(git log origin/main -- {path}) before you commit."
+)
+BRANCH_STATE_UNKNOWN_LINE = (
+    "git could not report this checkout's branch state ({text}): stop and tell the "
+    "user before you commit."
+)
+MERGE_FILE_TIMEOUT_SECONDS = 15
+# git merge-file exits with the number of conflicts, capped at 127; above that is an error.
+MERGE_FILE_HIGHEST_CONFLICT_COUNT = 127
 
 
 def _load_checkout_freshness_module():
@@ -257,36 +289,107 @@ def commits_on_main_touching(freshness, checkout: Path, repository_path: str):
     return count if count > 0 else None
 
 
-def head_advice(freshness, checkout: Path):
-    """What to do about the branch, or "" when the head's state is unclear.
+def git_operation_in_progress(freshness, git_directory: Path):
+    """The marker of a rebase, merge, cherry-pick or revert under way, or None."""
+    for marker in freshness.GIT_IN_PROGRESS_MARKERS:
+        if (git_directory / marker).exists():
+            return marker
+    return None
 
-    Dropped rather than guessed when head_state() answers "detached" or
-    "unknown": the advice flips entirely on whether anyone else has this
-    branch, and a wrong half of the line teaches the agent to discount the
-    whole of it.
+
+def overlap_line(freshness, checkout: Path, repository_path: str):
+    """Whether main's changes to the file overlap this checkout's copy, or "" when
+    git cannot say.
+
+    A two-way diff against main cannot answer this, because the agent's own edit is
+    part of it; a three-way merge of the file, with the merge base as the common
+    ancestor, answers it directly. The verdict is textual: changes that do not
+    overlap can still disagree.
     """
-    branch = freshness.run_git(["rev-parse", "--abbrev-ref", "HEAD"], checkout,
-                               timeout=REV_PARSE_TIMEOUT_SECONDS).stdout.strip()
-    state_key, _text = freshness.head_state(checkout, branch)
-    if state_key == "unpushed":
-        return NEVER_PUSHED_ADVICE
-    if state_key == "pushed-history":
-        return freshness.PUSHED_HISTORY_ADVICE
-    if state_key in PUSHED_HEAD_STATE_KEYS:
-        return PUSHED_ADVICE
+    merge_base = freshness.run_git(["merge-base", "HEAD", "origin/main"], checkout,
+                                   timeout=REV_PARSE_TIMEOUT_SECONDS)
+    if merge_base.returncode != 0 or not merge_base.stdout.strip():
+        return ""
+    main_copy = freshness.run_git(["show", f"origin/main:{repository_path}"], checkout,
+                                  timeout=REV_PARSE_TIMEOUT_SECONDS)
+    if main_copy.returncode != 0:
+        exists_on_main = freshness.run_git(
+            ["cat-file", "-e", f"origin/main:{repository_path}"], checkout,
+            timeout=REV_PARSE_TIMEOUT_SECONDS)
+        if exists_on_main.returncode == 1 or exists_on_main.returncode == 128:
+            return MAIN_HAS_NO_FILE_LINE.format(path=repository_path)
+        return ""
+    base_copy = freshness.run_git(
+        ["show", f"{merge_base.stdout.strip()}:{repository_path}"], checkout,
+        timeout=REV_PARSE_TIMEOUT_SECONDS)
+    if base_copy.returncode != 0:
+        return ""
+    working_copy = checkout / repository_path
+    if not working_copy.is_file():
+        return ""
+    with tempfile.TemporaryDirectory() as scratch:
+        base_path = Path(scratch) / "merge-base-copy"
+        main_path = Path(scratch) / "origin-main-copy"
+        base_path.write_text(base_copy.stdout, encoding="utf-8")
+        main_path.write_text(main_copy.stdout, encoding="utf-8")
+        merged = freshness.run_git(
+            ["merge-file", "-p", "-q", str(working_copy), str(base_path), str(main_path)],
+            checkout, timeout=MERGE_FILE_TIMEOUT_SECONDS)
+    if merged.returncode == 0:
+        return NO_OVERLAP_LINE.format(path=repository_path)
+    if 0 < merged.returncode <= MERGE_FILE_HIGHEST_CONFLICT_COUNT:
+        return OVERLAP_LINE.format(path=repository_path)
     return ""
 
 
-def obsolete_file_warning_line(repository_path: str, commit_count, advice: str) -> str:
-    """The one line the agent reads. Every clause of it measured."""
+def head_advice(freshness, checkout: Path, git_directory: Path, repository_path: str):
+    """(text, on its own lines) for what to do about the branch.
+
+    On a branch the advice continues the warning's one line, as it always has. A
+    detached HEAD and a branch state git could not report get lines of their own,
+    since each is a different instruction.
+    """
+    branch_answer = freshness.run_git(["rev-parse", "--abbrev-ref", "HEAD"], checkout,
+                                      timeout=REV_PARSE_TIMEOUT_SECONDS)
+    if branch_answer.returncode != 0:
+        text = (branch_answer.stderr or "").strip() or (
+            "git rev-parse exited %d" % branch_answer.returncode)
+        return BRANCH_STATE_UNKNOWN_LINE.format(text=text), True
+    branch = branch_answer.stdout.strip()
+    state_key, state_text = freshness.head_state(checkout, branch)
+    if state_key == "unpushed":
+        return NEVER_PUSHED_ADVICE, False
+    if state_key == "pushed-history":
+        return freshness.PUSHED_HISTORY_ADVICE, False
+    if state_key in PUSHED_HEAD_STATE_KEYS:
+        return PUSHED_ADVICE, False
+    if state_key == "detached":
+        marker = git_operation_in_progress(freshness, git_directory)
+        if marker is not None:
+            return GIT_OPERATION_IN_PROGRESS_LINE.format(marker=marker), True
+        lines = [DETACHED_HEAD_LINE]
+        verdict = overlap_line(freshness, checkout, repository_path)
+        if verdict:
+            lines.append(verdict)
+        return "\n".join(lines), True
+    return BRANCH_STATE_UNKNOWN_LINE.format(text=state_text), True
+
+
+def obsolete_file_warning_line(repository_path: str, commit_count, advice: str,
+                               advice_on_own_lines: bool = False) -> str:
+    """What the agent reads. Every clause of it measured."""
     if commit_count is None:
-        moved = "which origin/main has changed since this branch's merge base"
+        moved = ("which origin/main has changed since this checkout's merge base "
+                 "with origin/main")
     else:
         moved = (f"which {commit_count} commit(s) on origin/main have changed "
-                 f"since this branch's merge base")
+                 f"since this checkout's merge base with origin/main")
     line = (f"obsolete-file-edit-warning: you just changed {repository_path}, "
-            f"{moved} and this checkout does not have.")
-    return f"{line} {advice}" if advice else line
+            f"{moved} and this checkout does not have, so your edit is built on an "
+            f"old copy of the file.")
+    if not advice:
+        return line
+    return f"{line}\n{advice}" if advice_on_own_lines else f"{line} {advice}"
 
 
 def main() -> int:
@@ -334,10 +437,12 @@ def main() -> int:
 
     # Only from here on does anything cost more than a lookup: the count and
     # the head state are measured for the one file that actually warned.
+    advice, advice_on_own_lines = head_advice(freshness, checkout, git_directory,
+                                              repository_path)
     line = obsolete_file_warning_line(
         repository_path,
         commits_on_main_touching(freshness, checkout, repository_path),
-        head_advice(freshness, checkout))
+        advice, advice_on_own_lines)
     print(json.dumps({"hookSpecificOutput": {
         "hookEventName": "PostToolUse",
         "additionalContext": line,

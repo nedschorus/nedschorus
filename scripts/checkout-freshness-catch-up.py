@@ -128,12 +128,25 @@ GIT_IN_PROGRESS_MARKERS = (
 # open-items-this-seat-holds-2026-09-24, items 22 to 24). This text used to
 # forbid every merge, which sent an agent with a conflict to the one move that
 # cannot clear it.
+# The runner selects the suites a change can affect, so no agent picks them by hand.
+SELECTIVE_TEST_RUN_COMMAND = (
+    "python3 scripts/run-all-test-suites.py "
+    "--only-suites-whose-recorded-inputs-changed-since origin/main"
+)
+# The last line names the pre-push check because that check, not the agent,
+# fetches origin and refuses a conflicting push.
 REBASE_ADVICE = (
-    "This branch has never been pushed, so nobody else has it. Bring it up to "
-    "date now: commit or set aside any uncommitted work, run `git rebase "
-    "origin/main`, then rerun the test suites for what you touched. If the "
-    "rebase stops on a conflict, `git rebase --abort` puts everything back; then "
-    "resolve it by hand or stay behind, which costs nothing at merge."
+    "This branch has never been pushed, so nobody else has it. Bring the branch up "
+    "to date now: commit or set aside any uncommitted work, run `git rebase "
+    f"origin/main`, then run `{SELECTIVE_TEST_RUN_COMMAND}`.\n"
+    "If the rebase stops on a conflict that you can resolve now, resolve the "
+    "conflict and run `git rebase --continue`.\n"
+    "If the rebase stops on a conflict that you cannot resolve now, run `git rebase "
+    "--abort`, which puts everything back, and finish what you are doing first; this "
+    "note comes back at each turn's end until the branch is up to date.\n"
+    "A push that conflicts with origin/main is refused by the pre-push check, which "
+    "names the conflicting commit; if you cannot resolve that conflict, stop and tell "
+    "the user which files conflict."
 )
 LEAVE_IT_ADVICE = (
     "This branch is pushed, so its review may be running. Do not rebase or "
@@ -158,7 +171,7 @@ PUSHED_HISTORY_ADVICE = (
 DETACHED_ADVICE = "You are on a detached HEAD; check out your branch before working."
 UNKNOWN_ADVICE = ("Your head state could not be determined (a git command failed); nothing "
                   "was changed. Check `git status` before working.")
-AFTER_REBASE_ADVICE = "Rerun the test suites for what you touched: your work now sits on newer code."
+AFTER_REBASE_ADVICE = f"Run `{SELECTIVE_TEST_RUN_COMMAND}`: your work now sits on newer code."
 
 # Appended to EVERY note the agent receives, by tell() itself, so no note can
 # forget it. Agents were relaying these notes to the user, who ruled

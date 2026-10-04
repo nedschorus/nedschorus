@@ -165,7 +165,8 @@ with tempfile.TemporaryDirectory() as temporary_directory:
           and "scripts your tests run against (1): scripts/advance-one.py" in agent_text(result),
           agent_text(result))
     check("and told to rerun the suites for what it touched",
-          "Rerun the test suites" in agent_text(result), agent_text(result))
+          "--only-suites-whose-recorded-inputs-changed-since origin/main`: your work now "
+          "sits on newer code." in agent_text(result), agent_text(result))
     check("the rebased note ends by saying it is not for the user, byte for byte",
           agent_text(result).endswith("\n" + NOT_FOR_THE_USER_LINE), agent_text(result))
     check("the USER hears nothing about routine drift",
@@ -241,7 +242,16 @@ with tempfile.TemporaryDirectory() as temporary_directory:
           and not (seat_git_dir / "MERGE_HEAD").exists())
     check("the agent is told the conflicting file and how to proceed",
           "conflicts on shared.txt" in agent_text(result)
-          and "`git rebase --abort` puts everything back" in agent_text(result),
+          and "run `git rebase --abort`, which puts everything back" in agent_text(result),
+          agent_text(result))
+    check("the conflict note says when to resolve now and when to finish first",
+          "resolve the conflict and run `git rebase --continue`" in agent_text(result)
+          and "finish what you are doing first" in agent_text(result), agent_text(result))
+    check("the conflict note no longer says staying behind costs nothing",
+          "costs nothing" not in agent_text(result), agent_text(result))
+    check("the conflict note names the pre-push check and the selective test run",
+          "refused by the pre-push check" in agent_text(result)
+          and "--only-suites-whose-recorded-inputs-changed-since origin/main" in agent_text(result),
           agent_text(result))
     check("the conflict note ends by saying it is not for the user, byte for byte",
           agent_text(result).endswith("\n" + NOT_FOR_THE_USER_LINE), agent_text(result))

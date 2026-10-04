@@ -158,10 +158,14 @@ def run_mark_cases(workspace: Path):
     check("when ned-box cannot be reached, the exit is 1 and nothing is printed to stdout",
           code == 1 and stdout == "", f"{code} {stdout!r}")
     check("when ned-box cannot be reached, stderr carries ssh's first line and what to do",
-          stderr == "daily-overview-refresh-reminder-mark: the mark for handoff was not "
-          "written (ssh nedlern@ned-box exited 255: ssh: connect to host ned-box port 22: "
-          "No route to host) — tell the user this message, and run this command again once "
-          "the cause is fixed.\n", stderr)
+          stderr == "daily-overview-refresh-reminder-mark: the mark for handoff could not be "
+          "confirmed as written, so the next agent-seat to reincarnate today may show the "
+          "user the same overview refresh again: ssh nedlern@ned-box exited 255: ssh: "
+          "connect to host ned-box port 22: No route to host\n"
+          "Tell the user what the error above says.\n"
+          "When the user says the cause is fixed, run: "
+          "nc-systems/handoff/daily-overview-refresh-reminder-mark.py handoff "
+          "--shown-on-pacific-date 2026-09-30\n", stderr)
 
     code, stdout, stderr, calls = fixture.run(["handoff"], ssh_body="exec sleep 30",
                                               ssh_timeout=1)
@@ -182,10 +186,38 @@ def run_mark_cases(workspace: Path):
           "nothing written and no ssh",
           code == 2 and refused.mark_files() == [] and calls == [] and stdout == "",
           f"{code} {refused.mark_files()} {calls!r} {stdout!r}")
-    check("the refusal says what to pass",
-          stderr == "daily-overview-refresh-reminder-mark: pass the name of the system's "
-          "directory under nc-systems/, such as handoff, in place of "
-          "'docs/nedschorus-wiki/nedschorus-handoff-system-overview.md'.\n", stderr)
+    check("the refusal says nothing was written, and what to pass",
+          stderr == "daily-overview-refresh-reminder-mark: no daily-overview-refresh-reminder-"
+          "mark was written, because 'docs/nedschorus-wiki/nedschorus-handoff-system-"
+          "overview.md' is not a system's name.\n"
+          "Run this again with the name of the system's directory under nc-systems/, such "
+          "as handoff.\n", stderr)
+
+    dated = Fixture(workspace / "marks-dated")
+    code, stdout, stderr, calls = dated.run(["handoff", "--shown-on-pacific-date", "2026-09-30"])
+    check("a retry dated today's Pacific date writes today's mark",
+          code == 0 and dated.mark_files() == ["2026-09-30-handoff.txt"],
+          f"{code} {dated.mark_files()}\n{stderr}")
+    code, stdout, stderr, calls = dated.run(
+        ["handoff", "--shown-on-pacific-date", "2026-09-29"])
+    check("a retry for a day that has passed writes nothing, exits 0 and says why",
+          code == 0 and dated.mark_files() == ["2026-09-30-handoff.txt"] and calls == []
+          and stdout == "daily-overview-refresh-reminder-mark: no mark was written, because "
+          "2026-09-29 has passed; the next agent-seat to show the refresh writes the new "
+          "day's mark.\n", f"{code} {dated.mark_files()} {calls!r} {stdout!r}")
+    code, stdout, stderr, calls = dated.run(
+        ["handoff", "--shown-on-pacific-date", "2026-10-01"])
+    check("a date after today's Pacific date is refused, exit 2, with nothing written",
+          code == 2 and dated.mark_files() == ["2026-09-30-handoff.txt"] and calls == []
+          and stderr == "daily-overview-refresh-reminder-mark: no mark was written, because "
+          "2026-10-01 is after today's Pacific date.\n"
+          "Run this again without --shown-on-pacific-date, or with the date the user was "
+          "shown the refresh.\n", f"{code} {calls!r} {stderr!r}")
+    malformed = subprocess.run([sys.executable, str(SCRIPT_PATH), "handoff",
+                                "--shown-on-pacific-date", "yesterday"],
+                               capture_output=True, text=True, check=False)
+    check("a date that is not YYYY-MM-DD is a bad invocation, exit 2",
+          malformed.returncode == 2, f"{malformed.returncode} {malformed.stderr}")
 
     no_system = subprocess.run([sys.executable, str(SCRIPT_PATH)],
                                capture_output=True, text=True, check=False)

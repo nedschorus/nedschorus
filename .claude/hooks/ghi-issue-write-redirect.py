@@ -107,6 +107,7 @@ as the force-push guard does: one reader, reviewed once.
 import importlib.util
 import json
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -165,11 +166,45 @@ COMMENT_REFUSAL = (
     "land it with: python3 scripts/ghi-issue-write.py edit <path>\n"
     "If the issue has no GHI-MD, stop and tell the user."
 )
-STATE_CHANGE_COMMENT_REFUSAL = (
-    "Run gh issue {subcommand} again without --comment.\n"
-    "Record the reason in the issue's GHI-MD, docs/issues/<number>-*.md, "
-    "with: python3 scripts/ghi-issue-write.py edit <path>\n"
-    "If the issue has no GHI-MD, stop and tell the user."
+# The record line names the issue's files on main, looked up with the function
+# that builds the issue's body, so this hook and the GHI write tool cannot
+# disagree about which files the issue has. {outcome} is what the agent records.
+RECORD_LINE_NO_FILE = (
+    "This issue has no file on main under docs/issues/<number>-* or a system's "
+    "directory: stop and tell the user."
+)
+RECORD_LINE_ONE_FILE = (
+    "Record {outcome} in {path}, then open the edit's pull request with: "
+    "python3 scripts/ghi-issue-write.py edit {path}"
+)
+RECORD_LINE_SEVERAL_FILES = (
+    "The issue's files on main are: {paths}. Record {outcome} in the issue's GHI-MD "
+    "among them, then open the edit's pull request with: python3 "
+    "scripts/ghi-issue-write.py edit <that path>"
+)
+RECORD_LINE_LOOKUP_FAILED = (
+    "Record {outcome} in the issue's GHI-MD, a file named docs/issues/<number>-*.md "
+    "or a design in a system's docs/ directory, then open the edit's pull request "
+    "with: python3 scripts/ghi-issue-write.py edit <path>"
+)
+CLOSE_OUTCOME = "the outcome"
+REOPEN_OUTCOME = "why the issue is reopening"
+NO_COMMENTS_LINE = (
+    "Do not comment on this project's issues: what an issue says lives in its "
+    "GHI-MD, and a comment would sit outside it."
+)
+CLOSE_WITH_COMMENT_REFUSAL = (
+    NO_COMMENTS_LINE + "\n"
+    "{record_line}\n"
+    "Close the issue after that edit's pull request has merged and its rerun has "
+    "finished, without --comment: gh issue close <number> --reason completed, or "
+    "--reason \"not planned\", or --duplicate-of <the other issue's number>."
+)
+CLOSE_WITH_COMMENT_REFUSAL_NO_FILE = NO_COMMENTS_LINE + "\n" + RECORD_LINE_NO_FILE
+REOPEN_WITH_COMMENT_REFUSAL = (
+    NO_COMMENTS_LINE + "\n"
+    "Run gh issue reopen again without --comment.\n"
+    "{record_line}"
 )
 CREATE_REFUSAL = (
     "Do not file this project's issues with gh issue create.\n"
@@ -198,10 +233,26 @@ EDIT_TITLE_REFUSAL = (
     "If the issue has no GHI-MD, stop and tell the user."
 )
 DELETE_REFUSAL = (
-    "Do not delete this project's issues.\n"
-    "Close the issue instead: gh issue close <number> --reason completed, or "
-    "--reason \"not planned\"."
+    "Do not delete this project's issues: a deleted issue cannot be restored.\n"
+    "{record_line}\n"
+    "Close the issue after that edit's pull request has merged and its rerun has "
+    "finished, with the line below that fits.\n"
+    "If this issue covers the same work as another issue: gh issue close <number> "
+    "--duplicate-of <the other issue's number>\n"
+    "If the issue's work is done: gh issue close <number> --reason completed\n"
+    "If the issue will not be done, or was filed by mistake and duplicates no other "
+    "issue: gh issue close <number> --reason \"not planned\""
 )
+DELETE_REFUSAL_NO_FILE = (
+    "Do not delete this project's issues: a deleted issue cannot be restored.\n"
+    "This issue has no file on main under docs/issues/<number>-* or a system's "
+    "directory: if the issue was filed by mistake, close it with gh issue close "
+    "<number> --reason \"not planned\"; otherwise stop and tell the user."
+)
+
+ISSUE_NUMBER_IN_URL_PATTERN = re.compile(r"/issues/(\d+)(?:[/#?]|$)")
+# The lookup runs only on a refusal, and a refusal must still arrive if git hangs.
+ISSUE_FILE_LOOKUP_TIMEOUT_SECONDS = 10
 
 
 def normalized_repository(value):
@@ -338,7 +389,54 @@ def names_another_repository(flags, positionals, repository_from_environment):
                for value in named if value)
 
 
-def refusal_for(subcommand, arguments, repository_from_environment):
+def issue_number_named(positionals):
+    """The issue number the command names, from a number or an issue URL, or None."""
+    if not positionals:
+        return None
+    first = positionals[0]
+    if first.isdigit():
+        return int(first)
+    match = ISSUE_NUMBER_IN_URL_PATTERN.search(first)
+    return int(match.group(1)) if match else None
+
+
+def issue_files_on_main(number, working_directory):
+    """The issue's files on origin/main, as the GHI write tool lists them, or None
+    when they cannot be looked up: no number, no checkout, or a git failure."""
+    if number is None or not working_directory:
+        return None
+    try:
+        toplevel = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"], cwd=working_directory,
+            capture_output=True, text=True, check=False,
+            timeout=ISSUE_FILE_LOOKUP_TIMEOUT_SECONDS)
+        if toplevel.returncode != 0 or not toplevel.stdout.strip():
+            return None
+        tool_path = _REPOSITORY_ROOT / "scripts" / "ghi-issue-write.py"
+        tool_spec = importlib.util.spec_from_file_location("ghi_issue_write", tool_path)
+        tool = importlib.util.module_from_spec(tool_spec)
+        tool_spec.loader.exec_module(tool)
+
+        def runner(arguments, cwd=None):
+            return tool.run(arguments, timeout=ISSUE_FILE_LOOKUP_TIMEOUT_SECONDS, cwd=cwd)
+
+        return tool.ghi_md_paths_for_issue(number, Path(toplevel.stdout.strip()), runner)
+    except Exception:
+        return None
+
+
+def record_line(outcome, files):
+    if files is None:
+        return RECORD_LINE_LOOKUP_FAILED.format(outcome=outcome)
+    if not files:
+        return RECORD_LINE_NO_FILE
+    if len(files) == 1:
+        return RECORD_LINE_ONE_FILE.format(outcome=outcome, path=files[0])
+    return RECORD_LINE_SEVERAL_FILES.format(outcome=outcome, paths=", ".join(files))
+
+
+def refusal_for(subcommand, arguments, repository_from_environment,
+                working_directory=None):
     """The refusal text for one `gh issue` invocation, or None to let it run."""
     if subcommand not in VALUE_FLAGS:
         return None
@@ -352,9 +450,16 @@ def refusal_for(subcommand, arguments, repository_from_environment):
             return None
         return COMMENT_REFUSAL
     if subcommand in ("close", "reopen"):
-        if "--comment" in flags:
-            return STATE_CHANGE_COMMENT_REFUSAL.format(subcommand=subcommand)
-        return None
+        if "--comment" not in flags:
+            return None
+        files = issue_files_on_main(issue_number_named(positionals), working_directory)
+        if subcommand == "close":
+            if files == []:
+                return CLOSE_WITH_COMMENT_REFUSAL_NO_FILE
+            return CLOSE_WITH_COMMENT_REFUSAL.format(
+                record_line=record_line(CLOSE_OUTCOME, files))
+        return REOPEN_WITH_COMMENT_REFUSAL.format(
+            record_line=record_line(REOPEN_OUTCOME, files))
     if subcommand == "create":
         return CREATE_REFUSAL
     if subcommand == "edit":
@@ -364,11 +469,14 @@ def refusal_for(subcommand, arguments, repository_from_environment):
             return EDIT_TITLE_REFUSAL
         return None
     if subcommand == "delete":
-        return DELETE_REFUSAL
+        files = issue_files_on_main(issue_number_named(positionals), working_directory)
+        if files == []:
+            return DELETE_REFUSAL_NO_FILE
+        return DELETE_REFUSAL.format(record_line=record_line(CLOSE_OUTCOME, files))
     return None
 
 
-def analyze_command_text(command):
+def analyze_command_text(command, working_directory=None):
     """The refusal for the first refused `gh issue` write in the command, or
     None. Heredoc bodies are data and are dropped before reading."""
     shell_view, _heredoc_bodies = split_out_heredocs(command)
@@ -378,7 +486,7 @@ def analyze_command_text(command):
         invocation = find_gh_issue_invocation(words)
         if invocation is None:
             continue
-        refusal = refusal_for(*invocation)
+        refusal = refusal_for(*invocation, working_directory=working_directory)
         if refusal:
             return refusal
     return None
@@ -402,7 +510,10 @@ def main(stdin=sys.stdin):
     command = (payload.get("tool_input") or {}).get("command") or ""
     if not command:
         return 0
-    refusal = analyze_command_text(command)
+    working_directory = payload.get("cwd")
+    if not isinstance(working_directory, str):
+        working_directory = None
+    refusal = analyze_command_text(command, working_directory)
     if refusal:
         deny(refusal)
     return 0
