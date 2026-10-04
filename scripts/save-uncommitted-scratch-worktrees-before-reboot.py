@@ -5,7 +5,9 @@ A restart empties /tmp (on the Mac, /private/tmp). Commits on a branch survive
 in the clone, but a worktree under /tmp loses its uncommitted edits and its
 untracked files. For each worktree of the clone that lies under /tmp or
 /private/tmp and has uncommitted changes, this program saves `git diff HEAD`
-and a tar of the untracked files (files git ignores are not saved), writes a
+and a tar of the untracked files (files git ignores are not saved, except
+inside an untracked nested git repository, which is archived whole, its
+ignored files and its .git included), writes a
 manifest, copies them to the log-store on ned-box in one subdirectory per
 worktree under seats/<seat>/pre-reboot-<UTC date>/, verifies the copy by
 checksum, and prints what it saved. The agent-seat is read from the scratchpad path
