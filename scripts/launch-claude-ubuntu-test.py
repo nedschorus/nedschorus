@@ -409,6 +409,12 @@ class AnotherUpdateHoldsTheLock:
         self.lock_file.close()
 
 
+def tmux_argv_sets_mouse_mode_on(tmux_argv_text):
+    """True when the tmux argv, one argument per line, sets mouse mode on as
+    its own set-option command."""
+    return "set-option\n-g\nmouse\non" in tmux_argv_text
+
+
 def main() -> int:
     with tempfile.TemporaryDirectory(prefix="launch-claude-ubuntu-test-") as scratch:
         root = Path(scratch)
@@ -419,6 +425,9 @@ def main() -> int:
         check("default root: the remote string parses and runs (P1 exit 0)",
               result["replay"].returncode == 0,
               (result["replay"].returncode, result["replay"].stderr))
+        check("detached: tmux gets mouse mode on",
+              tmux_argv_sets_mouse_mode_on(result["tmux_argv"]),
+              result["tmux_argv"])
         check("default root: tmux -c arrives tilde-EXPANDED (P1 resolved it)",
               result["pane_directory"] == f"{harness.home}/agents/seat-a",
               result["pane_directory"])
@@ -523,6 +532,9 @@ def main() -> int:
               and argv_value(result["supervisor_argv"], "--cd")
               == "~/agents/seat-f",
               (result["replay"].returncode, result["replay"].stderr[:200]))
+        check("attached: tmux gets mouse mode on",
+              tmux_argv_sets_mouse_mode_on("\n".join(tmux_argv)),
+              tmux_argv)
         after_exit_cwd = harness.captures / "after-exit-cwd.txt"
         check("attached: the after-exit shell starts in the seat directory",
               after_exit_cwd.is_file()
