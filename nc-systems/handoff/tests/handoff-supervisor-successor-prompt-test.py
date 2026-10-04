@@ -1236,10 +1236,28 @@ def run_overview_refresh_due_cases(workspace: Path):
         f'exec "{real_git}" "$@"\n',
         encoding="utf-8")
     stub_git.chmod(0o755)
+
+    # The supervisor gives every git call in the check the same timeout, so a
+    # timeout short enough to end the hang quickly also ends a slow rev-parse,
+    # ls-tree or widget read on a loaded machine, and the check then returns
+    # () with nothing on the console. Only the hung read keeps the short one.
+    class SubprocessWhereOnlyTheHungReadTimesOutQuickly:
+        def __getattr__(self, name):
+            return getattr(subprocess, name)
+
+        def run(self, arguments, *positional, **keywords):
+            if "timeout" in keywords and not any(
+                    "nedschorus-aardvark-system-overview.md" in str(argument)
+                    for argument in arguments):
+                keywords["timeout"] = 60
+            return subprocess.run(arguments, *positional, **keywords)
+
     original_path = os.environ.get("PATH", "")
     had_timeout = hasattr(supervisor, "OVERVIEW_REFRESH_CHECK_GIT_TIMEOUT_SECONDS")
     original_timeout = getattr(supervisor, "OVERVIEW_REFRESH_CHECK_GIT_TIMEOUT_SECONDS", None)
     supervisor.OVERVIEW_REFRESH_CHECK_GIT_TIMEOUT_SECONDS = 1
+    real_supervisor_subprocess = supervisor.subprocess
+    supervisor.subprocess = SubprocessWhereOnlyTheHungReadTimesOutQuickly()
     console = io.StringIO()
     os.environ["PATH"] = f"{stub_directory}{os.pathsep}{original_path}"
     try:
@@ -1247,6 +1265,7 @@ def run_overview_refresh_due_cases(workspace: Path):
             due = overview_refresh_due_or_missing(repository)
     finally:
         os.environ["PATH"] = original_path
+        supervisor.subprocess = real_supervisor_subprocess
         if had_timeout:
             supervisor.OVERVIEW_REFRESH_CHECK_GIT_TIMEOUT_SECONDS = original_timeout
         else:
