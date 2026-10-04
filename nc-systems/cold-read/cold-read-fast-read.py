@@ -245,7 +245,7 @@ def full_run_class_of_target(target: pathlib.Path):
     the git worktree that holds it, not only this checkout: seats work in
     scratch worktrees, and a brief edited in one is the same document on a
     branch. Measured 2026-09-22: a fast read on a scratch worktree's copy of
-    docs/agents/doctrine-instructions.md said nothing, because relative_to
+    a seat brief under docs/agents/ said nothing, because relative_to
     raised against this checkout and the class came back None -- the
     warning ruled 2026-09-17 (item 4 of nedschorus#418's walk) silent where
     agents work. A file in no git worktree is still placed against this

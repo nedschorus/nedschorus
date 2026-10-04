@@ -94,7 +94,13 @@ read with `crontab -l` as bytes and written back whole in one `crontab -`
 call, the text on its standard input, then read back with `crontab -l` and
 compared with what was written. A write that exits 0 but reads back different
 is FAILED, and no line is reported installed, replaced or removed: on macOS,
-`crontab <file>` has installed an empty crontab and still exited 0. When
+`crontab <file>` has installed an empty crontab and still exited 0. Before
+each write the crontab as read is saved to
+~/.local/state/claude/scheduled-jobs-crontab-backups/crontab-before-write-<UTC
+time>.txt, and the newest CRONTAB_BACKUPS_KEPT are kept. Every FAILED write
+names that file and the command that restores it, and a write that held
+prints its path, so a later wrong edit can be undone from it too. A backup
+that cannot be saved is FAILED, and the crontab is not written. When
 `crontab -l` fails for any reason but "no crontab for <user>", nothing is
 written: an unreadable crontab taken for an empty one would be replaced by the
 table's lines alone.
@@ -149,6 +155,7 @@ import re
 import shlex
 import subprocess
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 PROGRAM = "install-scheduled-jobs-on-this-machine"
@@ -158,6 +165,9 @@ SCHEDULERS = ("cron", "launchd")
 PLIST_KEYS_THIS_PROGRAM_WRITES = (
     "Label", "ProgramArguments", "EnvironmentVariables", "StandardOutPath", "StandardErrorPath")
 NO_CRONTAB_PHRASE = "no crontab for"
+CRONTAB_BACKUP_DIRECTORY_UNDER_HOME = Path(".local") / "state" / "claude" / "scheduled-jobs-crontab-backups"
+CRONTAB_BACKUP_FILE_PREFIX = "crontab-before-write-"
+CRONTAB_BACKUPS_KEPT = 10
 PLIST_WRITTEN_BY_THIS_PROGRAM = (
     b"<!-- written by nc-systems/general-tools/install-scheduled-jobs-on-this-machine.py -->")
 
@@ -368,25 +378,52 @@ def crontab_without(text: str, jobs: list):
     return "".join(line + "\n" for line in lines), removed
 
 
-def write_crontab(text: str, run):
-    """Write the crontab and read it back; return None when it holds the text, else why not."""
+def backup_crontab_before_write(previous_text: str, backup_directory: Path) -> Path:
+    """Save the crontab as read, prune all but the newest backups, and return the new file."""
+    backup_directory.mkdir(parents=True, exist_ok=True)
+    # Microseconds keep two writes in one second from sharing a file; the name sorts by time.
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S.%fZ")
+    backup_path = backup_directory / f"{CRONTAB_BACKUP_FILE_PREFIX}{stamp}.txt"
+    backup_path.write_bytes(previous_text.encode("utf-8", "surrogateescape"))
+    backups = sorted(backup_directory.glob(f"{CRONTAB_BACKUP_FILE_PREFIX}*.txt"))
+    for old_backup in backups[:-CRONTAB_BACKUPS_KEPT]:
+        old_backup.unlink()
+    return backup_path
+
+
+def restore_command(backup_path: Path) -> str:
+    return f"crontab - < {shlex.quote(str(backup_path))}"
+
+
+def write_crontab(previous_text: str, text: str, backup_directory: Path, run):
+    """Back up, write the crontab and read it back; return None when it holds the text, else why not."""
+    try:
+        backup_path = backup_crontab_before_write(previous_text, backup_directory)
+    except OSError as error:
+        return (f"the crontab could not be backed up before the write: {error}; the crontab "
+                f"was not written, and no cron line was changed.",
+                f"Make {backup_directory} writable, and run this again.")
+    restore = (f"The crontab as it was before this write is saved at {backup_path}; to put it "
+               f"back, run `{restore_command(backup_path)}`.")
     written = run(["crontab", "-"], input=text.encode("utf-8", "surrogateescape"))
     if written.returncode != 0:
         return (f"`crontab -` exited {written.returncode}; no cron line was changed.",
-                "Read what crontab printed above, and run this again after that cause is removed.")
+                "Read what crontab printed above, and run this again after that cause is "
+                "removed. " + restore)
     try:
         read_back = read_crontab(run)
     except Refusal as refusal:
         return (f"`crontab -` exited 0, but the crontab could not be read back to confirm the "
                 f"write: {refusal.lines[0]}",
-                "Run `crontab -l` to see what the crontab now holds, and run this again after "
-                "it prints the crontab.")
+                "Run `crontab -l` to see what the crontab now holds; when it is wrong, put the "
+                "backup back. " + restore)
     if read_back != text:
         return (f"`crontab -` exited 0, but `crontab -l` reads back "
                 f"{len(crontab_lines(read_back))} line(s) where {len(crontab_lines(text))} "
                 f"were written; the crontab does not hold what was written.",
-                "Run `crontab -l` to see what the crontab now holds, restore any lost line, and "
-                "run this again.")
+                "Put the backup back, check it with `crontab -l`, and run this again. " + restore)
+    print(f"crontab backup: {backup_path} holds the crontab as it was before this write; "
+          f"`{restore_command(backup_path)}` puts it back.")
     return None
 
 
@@ -591,7 +628,8 @@ def refuse_missing_programs(machine, placed) -> None:
                 f"pull request, then run this again.")
 
 
-def install_mode(machine, placed, launch_agents_directory: Path, start_once: bool, run) -> int:
+def install_mode(machine, placed, launch_agents_directory: Path, start_once: bool,
+                 crontab_backup_directory: Path, run) -> int:
     launchd_jobs = [(job, placement) for job, placement in placed
                     if placement["scheduler"] == "launchd"]
     if start_once and not launchd_jobs:
@@ -606,7 +644,8 @@ def install_mode(machine, placed, launch_agents_directory: Path, start_once: boo
     if wanted:
         installed_text = read_crontab(run)
         new_text, outcomes = crontab_with(installed_text, wanted)
-        failure = write_crontab(new_text, run) if new_text != installed_text else None
+        failure = (write_crontab(installed_text, new_text, crontab_backup_directory, run)
+                   if new_text != installed_text else None)
         if failure:
             report_failed_crontab_write(failure)
             every_step_worked = False
@@ -630,13 +669,15 @@ def install_mode(machine, placed, launch_agents_directory: Path, start_once: boo
     return 0 if every_step_worked else 1
 
 
-def remove_mode(machine, placed, launch_agents_directory: Path, run) -> int:
+def remove_mode(machine, placed, launch_agents_directory: Path, crontab_backup_directory: Path,
+                run) -> int:
     every_step_worked = True
     cron_jobs = [job for job, placement in placed if placement["scheduler"] == "cron"]
     if cron_jobs:
         installed_text = read_crontab(run)
         new_text, removed = crontab_without(installed_text, cron_jobs)
-        failure = write_crontab(new_text, run) if new_text != installed_text else None
+        failure = (write_crontab(installed_text, new_text, crontab_backup_directory, run)
+                   if new_text != installed_text else None)
         if failure:
             report_failed_crontab_write(failure)
             return 1
@@ -660,13 +701,15 @@ def remove_mode(machine, placed, launch_agents_directory: Path, run) -> int:
     return 0 if every_step_worked else 1
 
 
-def remove_not_in_table_mode(machine, placed, launch_agents_directory: Path, run) -> int:
+def remove_not_in_table_mode(machine, placed, launch_agents_directory: Path,
+                             crontab_backup_directory: Path, run) -> int:
     installed_text = read_crontab(run)
     lines = crontab_lines(installed_text)
     stray = cron_lines_not_in_table(machine, placed, lines)
     if stray:
         kept = [line for index, line in enumerate(lines) if index not in stray]
-        failure = write_crontab("".join(line + "\n" for line in kept), run)
+        failure = write_crontab(installed_text, "".join(line + "\n" for line in kept),
+                                crontab_backup_directory, run)
         if failure:
             report_failed_crontab_write(failure)
             return 1
@@ -807,6 +850,7 @@ def main(argv=None, platform: str = sys.platform, home: Path = None, table_path:
         else Path(__file__).resolve().with_name(TABLE_FILE_NAME)
     if launch_agents_directory is None:
         launch_agents_directory = home / "Library" / "LaunchAgents"
+    crontab_backup_directory = home / CRONTAB_BACKUP_DIRECTORY_UNDER_HOME
     try:
         table = load_table(table_path)
         machine_name, machine = machine_of_this_host(table, table_path, platform, home)
@@ -817,10 +861,13 @@ def main(argv=None, platform: str = sys.platform, home: Path = None, table_path:
             return check_mode(machine, placed, launch_agents_directory, table_path, run,
                               every_job_selected=not arguments.job)
         if arguments.remove:
-            return remove_mode(machine, placed, launch_agents_directory, run)
+            return remove_mode(machine, placed, launch_agents_directory,
+                               crontab_backup_directory, run)
         if arguments.remove_not_in_table:
-            return remove_not_in_table_mode(machine, placed, launch_agents_directory, run)
-        return install_mode(machine, placed, launch_agents_directory, arguments.start_once, run)
+            return remove_not_in_table_mode(machine, placed, launch_agents_directory,
+                                            crontab_backup_directory, run)
+        return install_mode(machine, placed, launch_agents_directory, arguments.start_once,
+                            crontab_backup_directory, run)
     except Refusal as refusal:
         for line in refusal.lines:
             print(line, file=sys.stderr)

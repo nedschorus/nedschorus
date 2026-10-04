@@ -408,14 +408,8 @@ QUOTED_AGENT_DIRECTORY=$(escape_single_quotes "$AGENT_DIRECTORY")
 # them. Measured on this Mac 2026-08-22 (Claude Code 2.1.238, model
 # claude-sonnet-5): with the enable variable unset, the pin alone does
 # nothing — TaskCreate is not among the visible tools and no store directory
-# is ever created. The two are not symmetric, and it is worth being exact,
-# because reading them as interchangeable is what hid the supervisor's stale
-# accounting for a review round: the PIN alone does nothing, while ENABLE
-# alone gives a seat working task tools on a session-keyed store, whose
-# records the supervisor's pre-seed then carries across reincarnations
-# (handoff-supervisor.py, preseed_tasks). The pin is what makes the list the
-# SEAT's — one store every generation opens, rather than a fresh directory
-# each reincarnation has to copy into.
+# is ever created. Enable exposes the task tools; the pin makes every
+# generation open the same agent-seat's list.
 # One-time migration (user-ruled 2026-08-29): a store filled under the old
 # unprefixed '<name>-tasks' id is renamed to the prefixed id at launch, so a
 # relaunched seat keeps its list and the stale name dies loudly (no

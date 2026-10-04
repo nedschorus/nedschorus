@@ -98,9 +98,30 @@ class WatcherTerminated(BaseException):
     """A BaseException so generic Exception handlers cannot swallow termination."""
 
 
+def ignore_further_stop_signals():
+    # Monitor signals the whole process group and a several-target parent forwards the
+    # same signal, so a second one can land while the loss is being announced.
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
+
+
 def raise_watcher_terminated(signal_number, frame):
     # Do not announce in the signal handler: the interrupted code may hold the announcer lock.
+    ignore_further_stop_signals()
     raise WatcherTerminated()
+
+
+def raise_keyboard_interrupt_once(signal_number, frame):
+    ignore_further_stop_signals()
+    raise KeyboardInterrupt()
+
+
+def install_stop_signal_handlers():
+    # Monitor expires the process group with SIGTERM; coverage loss must be announced on that path too.
+    signal.signal(signal.SIGTERM, raise_watcher_terminated)
+    # An inherited SIG_IGN for SIGINT is kept, as CPython keeps it.
+    if signal.getsignal(signal.SIGINT) is signal.default_int_handler:
+        signal.signal(signal.SIGINT, raise_keyboard_interrupt_once)
 
 
 def strip_terminal_escape_sequences(line):
@@ -310,14 +331,17 @@ def parse_arguments(argv):
                     "ned-box, announcing the baseline and every gap in "
                     "coverage.")
     parser.add_argument("--target", choices=[TARGET_MAC, TARGET_NED_BOX],
-                        default=TARGET_MAC,
+                        action="append", default=None,
                         help=f"where the dialog watcher runs: {TARGET_MAC} "
                              f"for this machine (the merge-lane seat's own, "
                              f"hence the name), {TARGET_NED_BOX} for ned-box "
-                             f"over ssh (default: {TARGET_MAC})")
+                             f"over ssh; give it once per target to watch "
+                             f"several from one process, each in its own "
+                             f"child watcher labelled by its target "
+                             f"(default: {TARGET_MAC})")
     parser.add_argument("--label", default=None,
-                        help="name for this watcher in its own lines "
-                             "(default: the target)")
+                        help="name for this watcher in its own lines, with "
+                             "one --target only (default: the target)")
     parser.add_argument("--hold-seconds", type=float,
                         default=DEFAULT_HOLD_SECONDS,
                         help=f"how long a stream must stay up to count as "
@@ -346,45 +370,152 @@ def parse_arguments(argv):
     return parser.parse_args(argv)
 
 
+def invocation_error(arguments, targets):
+    """Return why the invocation cannot watch, or None when it can."""
+    if arguments.hold_seconds <= 0:
+        return "--hold-seconds must be > 0"
+    if arguments.retry_seconds < 0:
+        return "--retry-seconds must be >= 0"
+    if len(targets) > 1 and arguments.label is not None:
+        return "--label names one watcher; give it with one --target only"
+    if TARGET_NED_BOX in targets and not arguments.remote_ssh_destination.strip():
+        return "--remote-ssh-destination is empty"
+    local_script = Path(arguments.local_dialog_script_path).expanduser()
+    if TARGET_MAC in targets and not local_script.is_file():
+        return f"no dialog watcher at {local_script}"
+    return None
+
+
+def child_watcher_command(arguments, target):
+    """Return the command that runs this script as the watcher for one target."""
+    return [sys.executable, "-u", str(Path(__file__).resolve()),
+            "--target", target,
+            "--hold-seconds", repr(arguments.hold_seconds),
+            "--retry-seconds", repr(arguments.retry_seconds),
+            "--local-dialog-script-path", arguments.local_dialog_script_path,
+            "--remote-ssh-destination", arguments.remote_ssh_destination,
+            "--remote-dialog-script-path",
+            arguments.remote_dialog_script_path]
+
+
+def relay_child_watcher(target, process, stopping, output_closed):
+    """Relay one child watcher's lines; announce the child's own exit unless this process stopped it."""
+    # Keep draining after the output closes, so a child never blocks writing to this process.
+    for raw_line in process.stdout:
+        try:
+            emit(raw_line.rstrip("\n"))
+        except BrokenPipeError:
+            output_closed.set()
+    returncode = process.wait()
+    if not stopping.is_set():
+        try:
+            emit(f"WATCH {target}: NOT WATCHING — its watcher exited on its "
+                 f"own (rc={returncode}); nothing is being seen there until "
+                 f"this watcher is restarted")
+        except BrokenPipeError:
+            output_closed.set()
+
+
+def stop_child_watchers(children, relays, stopping, child_signal):
+    """Signal every running child watcher, relay its last lines, then make sure it is gone."""
+    stopping.set()
+    for process in children:
+        if process.poll() is None:
+            try:
+                process.send_signal(child_signal)
+            except OSError:
+                pass
+    # Each child needs up to CHILD_SHUTDOWN_SECONDS to stop its stream; relay
+    # its last lines within that, staying inside Monitor's SIGKILL deadline.
+    deadline = time.monotonic() + CHILD_SHUTDOWN_SECONDS + 1.0
+    for relay in relays:
+        relay.join(timeout=max(0.0, deadline - time.monotonic()))
+    for process in children:
+        stop_child(process)
+
+
+def watch_targets_in_child_processes(arguments, targets):
+    """Run one child watcher per target and relay their lines as one stream."""
+    # Each child keeps the single-target behaviour and announces its own baseline,
+    # gaps and termination; this process only relays and reports a child that exits.
+    stopping = threading.Event()
+    output_closed = threading.Event()
+    children = []
+    relays = []
+    install_stop_signal_handlers()
+    try:
+        for target in targets:
+            try:
+                process = subprocess.Popen(
+                    child_watcher_command(arguments, target),
+                    stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                    text=True, encoding="utf-8", errors="replace", bufsize=1)
+            except OSError as error:
+                emit(f"WATCH {target}: NOT WATCHING — its watcher could not "
+                     f"be started ({one_line_snippet(error, LAST_OUTPUT_LINE_SNIPPET_CHARS)}); "
+                     f"stopping the watchers already started, so nothing is "
+                     f"being watched until this watcher is restarted")
+                stop_child_watchers(children, relays, stopping, signal.SIGTERM)
+                return 1
+            children.append(process)
+            relay = threading.Thread(
+                target=relay_child_watcher,
+                args=(target, process, stopping, output_closed), daemon=True)
+            relay.start()
+            relays.append(relay)
+        while any(relay.is_alive() for relay in relays):
+            if output_closed.is_set():
+                stop_child_watchers(children, relays, stopping,
+                                    signal.SIGTERM)
+                # The reader is gone; __main__ treats this as a clean stop.
+                raise BrokenPipeError()
+            for relay in relays:
+                relay.join(timeout=1.0)
+        return 1
+    except (KeyboardInterrupt, WatcherTerminated) as stop:
+        # Monitor signals the whole process group, but a signal sent to this
+        # process alone must still reach the children so each announces its loss.
+        child_signal = (signal.SIGINT if isinstance(stop, KeyboardInterrupt)
+                        else signal.SIGTERM)
+        stop_child_watchers(children, relays, stopping, child_signal)
+        return 130 if isinstance(stop, KeyboardInterrupt) else SIGTERM_EXIT_CODE
+
+
 def main(argv=None):
     arguments = parse_arguments(argv)
-    if arguments.hold_seconds <= 0:
-        warn("watch-agent-dialog-alerts: --hold-seconds must be > 0")
+    targets = list(dict.fromkeys(arguments.target or [TARGET_MAC]))
+    error = invocation_error(arguments, targets)
+    if error:
+        warn(f"watch-agent-dialog-alerts: {error}")
         return 2
-    if arguments.retry_seconds < 0:
-        warn("watch-agent-dialog-alerts: --retry-seconds must be >= 0")
-        return 2
-    if arguments.target == TARGET_NED_BOX and not arguments.remote_ssh_destination.strip():
-        warn("watch-agent-dialog-alerts: --remote-ssh-destination is empty")
-        return 2
-    local_script = Path(arguments.local_dialog_script_path).expanduser()
-    if arguments.target == TARGET_MAC and not local_script.is_file():
-        warn(f"watch-agent-dialog-alerts: no dialog watcher at {local_script}")
-        return 2
-
-    label = arguments.label or arguments.target
-    alert_filter = compile_alert_filter(arguments.target)
-    command = child_command(arguments.target, local_script,
-                            arguments.remote_ssh_destination,
-                            arguments.remote_dialog_script_path)
-    what_is_run = (str(local_script) if arguments.target == TARGET_MAC
-                   else f"{arguments.remote_ssh_destination}:"
-                        f"{arguments.remote_dialog_script_path}")
 
     # Dialog snippets may contain characters the output encoding cannot represent.
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(errors="replace")
 
-    emit(baseline_line(label, arguments.target,
-                       len(alert_patterns_for_target(arguments.target)),
+    if len(targets) > 1:
+        return watch_targets_in_child_processes(arguments, targets)
+
+    target = targets[0]
+    local_script = Path(arguments.local_dialog_script_path).expanduser()
+    label = arguments.label or target
+    alert_filter = compile_alert_filter(target)
+    command = child_command(target, local_script,
+                            arguments.remote_ssh_destination,
+                            arguments.remote_dialog_script_path)
+    what_is_run = (str(local_script) if target == TARGET_MAC
+                   else f"{arguments.remote_ssh_destination}:"
+                        f"{arguments.remote_dialog_script_path}")
+
+    emit(baseline_line(label, target,
+                       len(alert_patterns_for_target(target)),
                        arguments.hold_seconds, arguments.retry_seconds,
                        what_is_run))
 
-    announcer = StreamCoverageAnnouncer(label, arguments.target,
+    announcer = StreamCoverageAnnouncer(label, target,
                                         arguments.hold_seconds,
                                         arguments.retry_seconds)
-    # Monitor expires the process group with SIGTERM; coverage loss must be announced on that path too.
-    signal.signal(signal.SIGTERM, raise_watcher_terminated)
+    install_stop_signal_handlers()
     try:
         while True:
             attempt_id = announcer.start_attempt()

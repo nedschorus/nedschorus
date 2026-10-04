@@ -40,6 +40,8 @@ _spec.loader.exec_module(supervisor)
 
 failures = []
 
+os.environ["CLAUDE_CODE_TASK_LIST_ID"] = "handoff-supervisor-test-pin-tasks"
+
 # No case may reach ned-box. On the Mac from noon Pacific, every launch that
 # composes a successor's first prompt runs memory_review_due_lines, which reads
 # ned-box over ssh, and many of the suites' cases launch the real supervisor.
