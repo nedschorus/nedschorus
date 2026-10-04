@@ -387,10 +387,7 @@ _common_spec.loader.exec_module(common)
 CREDENTIAL_DENYING_PERMISSION_PROFILE = "code-review-no-credentials"
 
 # One place to update as models change, matching cold-read-codex-cell.py's
-# `deep` tier (user-picked 2026-08-03; xhigh "OK for codex" same date;
-# moved from gpt-5.6-sol to gpt-6-sol 2026-09-22 along with that tier, and
-# to gpt-6.1-sol 2026-10-01 along with that tier, which needs codex-cli
-# 0.159.1 or later).
+# `deep` tier. gpt-6.1-sol needs codex-cli 0.159.1 or later.
 CODEX_MODEL = "gpt-6.1-sol"
 REASONING_EFFORT = "xhigh"
 REVIEW_TIMEOUT_SECONDS = 1800
@@ -584,8 +581,8 @@ def main(argv=None) -> int:
         stderr_tail()
         return 1
 
-    # Provenance header, so a report read later is pinned to its inputs
-    # (the cold-read cells' convention, user-required 2026-08-04).
+    # Provenance header, so a report read later is pinned to its inputs, as
+    # the cold-read cells' reports are.
     report = output_path.read_text(encoding="utf-8")
     kind = "base" if arguments.base else "commit"
     output_path.write_text(

@@ -110,17 +110,13 @@ import tempfile
 # This file sits in nc-systems/cold-read/, two directories below the root.
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent.parent
 AGY_CELL_LAUNCHER = pathlib.Path(__file__).with_name("cold-read-agy-cell.py")
-# The program that copies a cold-read-record to the log-store on ned-box
-# (user-ruled 2026-09-07: cold-read-records are logs, not system). Run after
-# a read on the records route lands its report; its one line goes to stderr,
-# since this program's stdout is the report path and nothing else, and a
-# shipping failure never fails the read.
+# The program that copies a cold-read-record to the log-store on ned-box.
+# Its one line goes to stderr, since this program's stdout is the report path
+# and nothing else, and a shipping failure never fails the read.
 RECORD_SHIPPER = pathlib.Path(__file__).with_name("cold-read-record-ship.py")
 # What a cold-read-record is called and where it lives, defined once in a
-# module so no program keeps its own copy (user-ruled 2026-09-19, walk
-# file-naming-and-location-standards-cold-read-findings, item 4). The
-# convention -- importlib for a module whose filename has hyphens -- is
-# nc-systems/cold-read/cold-read-cell-common.py's.
+# module so no program keeps its own copy. importlib, because the filename
+# has hyphens.
 _record_names_spec = importlib.util.spec_from_file_location(
     "cold_read_record_names",
     pathlib.Path(__file__).with_name("cold-read-record-names.py"))
@@ -142,9 +138,9 @@ EXIT_BAD_INVOCATION = 64
 # `prompt_file=` stamp field, so it says where the text came from.
 EMBEDDED_PROMPT_FILE_NAME = "cold-read-fast-read-embedded-fast-clarify-prompt.md"
 
-# The user's text (see the docstring): .claude/skills/cold-read/prompts/fast-clarify.md
-# as landed by PR #274 on 2026-09-07, verbatim. {TARGET_PATH} and
-# {REPORT_PATH} are substituted by the cold-read-cell launcher.
+# The user's text (see the docstring): .claude/skills/cold-read/prompts/fast-clarify.md,
+# verbatim. {TARGET_PATH} and {REPORT_PATH} are substituted by the
+# cold-read-cell launcher.
 FAST_CLARIFY_PROMPT_TEMPLATE = """\
 Read {TARGET_PATH} in full, including any YAML frontmatter, and answer three questions about it, in three sections, in the order below. Your context is deliberately minimal — what your runtime already loaded, the project glossary at `docs/nedschorus-wiki/nedschorus-glossary.md`, which you read before the documents, the document or documents under review, and what they reference, which you follow as far as you need to understand them, the way a reader would. A reference is a repository path; a bare file name that matches exactly one file in the repository, which you may search the repository for; or a web page they link to, GitHub issue and pull request pages included. A bare file name that matches no file or several is reported, not guessed at. Nothing else: do not go looking beyond what they reference. Report findings only about the document or documents under review, not about what you read along the way. Never open a credential file, even when the document names it: a `.token` file, anything under `~/.config/nedschorus/` or `~/.ssh/`, a program's login file, a keychain item, or a `.env` file. That limit is the point, because {TARGET_PATH} must be usable by a future agent who has only this info. {TARGET_PATH} is read-only: do not edit it or anything else in the checkout. The one file you create is your report. If {TARGET_PATH} contains multiple documents, treat them like chapters of one book: any one of them can define or explain what the others rely on, and they should be consistent amongst themselves; repetition is fine, gaps or inconsistencies are not. Read all of them, then answer the 3 questions for each document in the report.
 
@@ -178,20 +174,15 @@ PROGRAM = "cold-read-fast-read"
 WALK_DRAFT_SUFFIX = "-draft.md"
 # Both endings are the walk-me-through skill's to name; this program only
 # follows them, and scripts/walk-file-endings-match-the-skill-test.py fails
-# if these two drift from what .claude/skills/walk-me-through/SKILL.md says
-# (user-ruled 2026-09-19, walk
-# file-naming-and-location-standards-cold-read-findings, item 4).
+# if these two drift from what .claude/skills/walk-me-through/SKILL.md says.
 WALK_SUGGESTIONS_SUFFIX = "-suggestions.md"
 
-# WHICH DOCUMENTS THIS READ DOES NOT FINISH (user-ruled 2026-09-17, item 4 of
-# nedschorus#418, after PR #332 merged a skill change on a fast read alone).
-# The /cold-read skill's step 2 sends a class of documents to the
-# cold-read-full-run and gives everything else the fast read only. Nothing
-# enforced that, so this program says so when its target is in that class:
-# one line on stderr, and one line in the report that ships with the record.
-# It is a warning, not a refusal -- the fast read is the full run's first
-# step, so running it here is right; landing on it alone is what the ruling
-# is against.
+# WHICH DOCUMENTS THIS READ DOES NOT FINISH. The /cold-read skill's step 2
+# sends a class of documents to the cold-read-full-run and gives everything
+# else the fast read only, so this program says so when its target is in that
+# class: one line on stderr, and one line in the report that ships with the
+# record. It is a warning, not a refusal -- the fast read is the full run's
+# first step, so running it here is right; merging on it alone is not.
 FULL_RUN_DIRECTORIES_RELATIVE = (
     (pathlib.Path(".claude") / "skills", "a skill or a skill's prompt"),
     (pathlib.Path("docs") / "agents", "a file under docs/agents/"),
@@ -203,9 +194,8 @@ FULL_RUN_DIRECTORIES_RELATIVE = (
 # `<component>-design.md`, `<component>-contract.md` and
 # `<component>-test-design.md` (its section on where artifacts land). Step 2
 # and this program both use the glossary's term, design-contract. No
-# directory is a design class: a directory entry for
-# docs/design-to-main/ once called that directory's glossary "a design", and a
-# design's glossary is not in step 2's list. The suffixes are matched whole, so
+# directory is a design class: docs/design-to-main/ also holds that system's
+# glossary, which is not in step 2's list. The suffixes are matched whole, so
 # `-design-notes.md` -- notes about a design, not the design -- is not one.
 FULL_RUN_NAME_SUFFIXES = (
     ("-test-design.md", "a test design"),
@@ -223,8 +213,7 @@ def checkout_root_holding(target: pathlib.Path) -> pathlib.Path:
     """The top of the git worktree holding `target`, or REPO_ROOT when git
     finds none (the target's directory is missing or in no repository).
     GIT_DIR and GIT_WORK_TREE are dropped for this one call: set in the
-    environment they override -C and would name the wrong worktree
-    (nedschorus#639)."""
+    environment they override -C and would name the wrong worktree."""
     environment = {name: value for name, value in os.environ.items()
                    if name not in ("GIT_DIR", "GIT_WORK_TREE")}
     completed = subprocess.run(
@@ -244,11 +233,8 @@ def full_run_class_of_target(target: pathlib.Path):
     `target` is absolute and resolved. It is placed relative to the top of
     the git worktree that holds it, not only this checkout: seats work in
     scratch worktrees, and a brief edited in one is the same document on a
-    branch. Measured 2026-09-22: a fast read on a scratch worktree's copy of
-    a seat brief under docs/agents/ said nothing, because relative_to
-    raised against this checkout and the class came back None -- the
-    warning ruled 2026-09-17 (item 4 of nedschorus#418's walk) silent where
-    agents work. A file in no git worktree is still placed against this
+    branch; placed against this checkout alone, the warning would be silent
+    where agents work. A file in no git worktree is still placed against this
     checkout, so a copy somewhere else is not classified: the class list is
     about where a document lives in the repository.
     """
@@ -301,22 +287,18 @@ def fast_read_report_path_for_target(
             / "fast-read.md")
 
 
-# THE RECORD-NAME RULE (user-ruled 2026-09-18, walk
-# docs/walk/cold-read-and-walk-file-names-and-dispositions, item 4):
-# `<file stem>-<YYYY-MM-DD>`, and `SKILL-<skill name>-<YYYY-MM-DD>` for a
-# skill; a second read of one document on one day takes -2, -3. The document
-# comes first so every read of one document sits together in the log-store's
-# listing. It replaced `<YYYY-MM-DD>-<HHMM>-<parent directory>-<file stem>`
-# (ruled 2026-09-16), and knowingly gives up what that form bought: two
-# documents with the same stem in different directories read on one day come
-# out as -2 of each other (target/ shows which was which), and the -N count
-# says nothing about which draft each read was. Both accepted at the walk.
+# THE RECORD-NAME RULE: `<file stem>-<YYYY-MM-DD>`, and
+# `SKILL-<skill name>-<YYYY-MM-DD>` for a skill; a second read of one document
+# on one day takes -2, -3. The document comes first so every read of one
+# document sits together in the log-store's listing. Two documents with the
+# same stem in different directories read on one day come out as -2 of each
+# other (target/ shows which was which), and the -N count says nothing about
+# which draft each read was; both are accepted.
 # The code implementing it is not restated: nc-systems/cold-read/cold-read-record-names.py
 # holds it, and this program and nc-systems/cold-read/cold-read-grid.py both import it, so
 # the two cannot drift apart. nc-systems/cold-read/tests/cold-read-record-names-test.py fails a
 # program that writes its own copy back. The report inside the record is
-# bare `fast-read.md` (item 5): the directory says which read, the file says
-# what it is.
+# bare `fast-read.md`: the directory says which read, the file says what it is.
 RECORD_CLOCK_OVERRIDE_VARIABLE = "COLD_READ_RECORD_CLOCK_OVERRIDE"
 RECORD_CLOCK_OVERRIDE_FORMAT = "%Y-%m-%dT%H:%M"
 
@@ -347,19 +329,16 @@ fresh_record_dir = record_names.fresh_record_directory
 
 # --- Sentence ids -------------------------------------------------------
 #
-# nedschorus#284 step 2. The reader is handed a copy of the cold-read-target
-# with an id on every sentence, and Question 1 asks it to restate each sentence
-# under its id. That replaces the four-word anchor, which the 2026-09-07
-# measurement found suppresses paraphrase but still leaves the author matching
-# restatements to sentences by eye. With ids the match is mechanical, so this
-# program can attach each original sentence to the restatement that claims it
-# and name the sentences no restatement claimed.
+# The reader is handed a copy of the cold-read-target with an id on every
+# sentence, and Question 1 asks it to restate each sentence under its id. A
+# four-word anchor leaves the author matching restatements to sentences by
+# eye; with ids the match is mechanical, so this program can attach each
+# original sentence to the restatement that claims it and name the sentences
+# no restatement claimed.
 #
-# THE SPLIT IS MECHANICAL AND IMPERFECT BY RULING (the user, 2026-09-07: "I'm
-# fine with 1 and 2", accepting a marked temporary copy and an imperfect
-# split). A wrong boundary costs one mismatched id; it never loses text,
-# because every line of the original is emitted unchanged apart from the
-# inserted ids.
+# THE SPLIT IS MECHANICAL AND IMPERFECT, deliberately. A wrong boundary costs
+# one mismatched id; it never loses text, because every line of the original
+# is emitted unchanged apart from the inserted ids.
 SENTENCE_ID_MARKED_COPY_SUFFIX = "-with-sentence-ids.md"
 SENTENCE_ID_PATTERN = re.compile(r"\[s(\d+)\]")
 
@@ -370,13 +349,13 @@ SENTENCE_END_PATTERN = re.compile(r"""[.!?]["')\]]*\s+""")
 SENTENCE_OPENERS = "\"'(`[*_"
 # The closing marks a sentence end may carry after its full stop. Stripped
 # before asking whether a line's last sentence is finished, so `word."` reads
-# as finished and not as a sentence still running (reviewer of PR #303).
+# as finished and not as a sentence still running.
 SENTENCE_CLOSERS = "\"')]"
 
 # A unit with no letter and no digit carries nothing to restate: a table's
 # separator row `|---|---|`, a horizontal rule, a bare list marker. Giving it
-# an id put it in the never-restated list of every report, which is a false
-# signal in exactly the check the ids exist to provide (reviewer of PR #303).
+# an id would put it in the never-restated list of every report, a false
+# signal in exactly the check the ids exist to provide.
 def carries_words(text: str) -> bool:
     return any(character.isalnum() for character in text)
 
@@ -560,9 +539,9 @@ def attach_sentences_and_coverage(report_text: str, sentences: dict,
     Only an id STANDING ALONE on its line is treated as a restatement, which
     is the shape Question 1 asks for. An id cited inside a sentence of
     Question 2 or 3 is a reference to that sentence, not a restatement of it,
-    and counting it as one marked a skipped sentence covered (reviewer of PR
-    #303). Such a citation gets no original attached either, because attaching
-    one under each would bury the reviewer's own words.
+    and counting it as one would mark a skipped sentence covered. Such a
+    citation gets no original attached either, because attaching one under
+    each would bury the reviewer's own words.
     """
     claimed = []
     unknown = []
@@ -595,11 +574,9 @@ def attach_sentences_and_coverage(report_text: str, sentences: dict,
     if document is not None:
         # The provenance stamp at the top of the report names the marked copy
         # the reviewer read, not the cold-read-target, so this line says which
-        # cold-read-target that was (reviewer of PR #303). Whether the copy
-        # is still there depends on the route, and saying it is gone when it
-        # is not was the defect the reviewer of PR #307 caught: the records
-        # route keeps it beside the report as evidence, and only the walk
-        # route's copy is temporary.
+        # cold-read-target that was. Whether the copy is still there depends
+        # on the route: the records route keeps it beside the report as
+        # evidence, and only the walk route's copy is temporary.
         coverage.append(
             f"- The reviewer read `{marked_copy_kept}`, the marked copy of "
             f"`{document}`, kept beside this report."
@@ -627,11 +604,8 @@ def attach_sentences_and_coverage(report_text: str, sentences: dict,
 # (`&#123;`) and a URL's fragment (`https://x.com/page#12`) out and still finds
 # every number in `#214/#169` and `#264-#268`. A URL without a scheme is not
 # kept out, nor one with `/` right before its `#` (`x.com/page#12` reads as an
-# owner/repo reference), and no walk file has either. A markdown heading needs
-# a space after its `#`, so `## 3` never matches. Measured on the 53 walk files
-# in this checkout, 2026-09-18: 340, of which 269 bare `#N`, 53 with a
-# repository prefix and 18 links whose text is the number; 32 follow the word
-# task, and 10 sit in inline code quoting a draft.
+# owner/repo reference), and walk files do not use either. A markdown heading
+# needs a space after its `#`, so `## 3` never matches.
 BARE_REFERENCE_PATTERN = re.compile(
     r"(?:(?<![&\w/.:-])[A-Za-z0-9][\w.-]*(?:/[\w.-]+)?|(?<![&\w]))#\d+(?!\w)")
 
@@ -670,7 +644,7 @@ def bare_references_section(references: list) -> str:
 def freeze_target(target: pathlib.Path, record_dir: pathlib.Path) -> None:
     """Copy the cold-read-target's bytes into the cold-read-record before the
     cold-read-cell reads it, so the cold-read-record says exactly what was
-    reviewed (user-ruled 2026-09-07)."""
+    reviewed."""
     frozen = record_names.frozen_target_path(target, record_dir)
     frozen.parent.mkdir(parents=True, exist_ok=True)
     frozen.write_bytes(target.read_bytes())

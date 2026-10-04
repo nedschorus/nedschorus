@@ -1,14 +1,11 @@
 #!/usr/bin/env python3
 """Put one file a seat must share into the log-store, and print its citation.
 
-WHAT PROBLEM THIS SOLVES (user-ruled 2026-09-08). A seat often has a file the
-other machine must read and git will not carry: a measurement output, a
-prompt draft, a survey, a scratch report another seat is asked to look at.
-Until now those stayed where they were written, and a citation of them was
-unreachable from anywhere else -- the 2026-09-08 cross-machine survey
-measured 127 unresolvable citations against 14 resolvable. The user's ruling:
-"give every agent a directory ... to put all the files it needs to share that
-are not in git or git-main". This program is the way a file gets there.
+WHAT PROBLEM THIS SOLVES. A seat often has a file the other machine must read
+and git will not carry: a measurement output, a prompt draft, a survey, a
+scratch report another seat is asked to look at. Left where it was written,
+a citation of such a file is unreachable from anywhere else. This program is
+the way such a file gets into a directory both machines can reach.
 
 WHERE IT GOES. `seats/<seat>/<name>` under the log-store, alongside the kinds
 that are organized by kind:
@@ -26,17 +23,9 @@ ned-box's internal disk, snapshotted by Timeshift to a separate internal disk.
 Off-machine, not off-site.
 
 THE SNAPSHOT CADENCE IS NOT A PROMISE, which is why no printed line states it.
-Measured on 2026-09-23 with `sudo -n timeshift --list` on ned-box: daily
-snapshots through 2026-09-21_16-10-01, ten-minute ones only from
-2026-09-22_10-50-02 on (the configuration keeps 24 hourly, and older ones rotate
-out), and `/home/nedlern/**` included. Until 2026-09-22 these programs printed
-"the store is snapshotted every ten minutes by Timeshift" at the moment an
-agent decides whether a displaced file is recoverable; for the corrupted walk
-minutes of 2026-09-21 that was false, and it sent the search after a snapshot
-that never existed. The printed line now says only where to look and how to
-list what exists (task 112 of the cold-read-research seat; CLAUDE.md: text a
-program hands an agent at the moment it must act is instruction and nothing
-else).
+Timeshift's schedule on ned-box has changed before, and a printed cadence that
+was false sent a search after a snapshot that never existed. The printed line
+says only where to look and how to list what exists.
 
 THE STORE'S RULES HOLD HERE, WITH ONE DIFFERENCE INSIDE `seats/`. FAIL
 LOUDLY is the record shipper's (nc-systems/cold-read/cold-read-record-ship.py) and is
@@ -46,39 +35,33 @@ DIFFERENCE remain the rules of the records kind, which that program still
 enforces unchanged; here a file of the same name whose content differs is
 REPLACED, and the replacement is announced.
 
-    A SEAT REPLACES ITS OWN FILES. USER-RULED 2026-09-09, verbatim: "seats
-    can replace their own files." Add-only was ruled for RECORDS, which are
-    immutable logs, and the collision it prevents is two writers landing on
-    one path -- two machines reviewing one document on one day. Inside
-    `seats/<seat>/` that seat is the only writer, so that collision cannot
-    arise, and refusing bought nothing while costing friction: a seat's
-    shared file evolves -- a draft revised twice in an afternoon -- and under
-    add-only each revision needed a name of its own. Friction is what drives
-    non-use, and non-use is the problem this shared area exists to solve. So
-    a plain invocation replaces. There is no flag to ask for it, because a
-    flag is the friction again.
+    A SEAT REPLACES ITS OWN FILES. Add-only protects RECORDS, which are
+    immutable logs, from two writers arriving at one path -- two machines
+    reviewing one document on one day. Inside `seats/<seat>/` that seat is
+    the only writer, so that collision cannot arise, and refusing would only
+    cost friction: a seat's shared file evolves -- a draft revised twice in an
+    afternoon -- and under add-only each revision would need a name of its
+    own. Friction drives non-use, and non-use is the problem this shared area
+    exists to solve. So a plain invocation replaces, with no flag to ask for
+    it, because a flag is the friction again.
 
     THE REPLACEMENT IS NOT SILENT, AND THAT IS THE POINT. A seat is a series
-    of SESSIONS, not one process. This fleet hands off constantly, and a
-    fresh session can hold an older local copy of a file a previous session
-    already shipped; shipping that copy overwrites the newer stored one, and
-    silence would leave nothing to notice it by. So a replacement prints on
-    stderr that it replaced a file and the sha256 the store held. The event
-    is then visible in the session's own output, and the bytes it displaced
-    are identifiable by that digest in a Timeshift snapshot on ned-box, if a
-    snapshot taken before the replacement is still kept (see THE SNAPSHOT
-    CADENCE IS NOT A PROMISE, above). stdout does not change: one line, the
-    citation.
+    of SESSIONS, not one process, and a fresh session can hold an older local
+    copy of a file a previous session already shipped; shipping that copy
+    overwrites the newer stored one, and silence would leave nothing to notice
+    it by. So a replacement prints on stderr that it replaced a file and the
+    sha256 the store held. The event is then visible in the session's own
+    output, and the bytes it displaced are identifiable by that digest in a
+    Timeshift snapshot on ned-box, if a snapshot taken before the replacement
+    is still kept (see THE SNAPSHOT CADENCE IS NOT A PROMISE, above). stdout
+    does not change: one line, the citation.
 
 TWO SHIPMENTS OF ONE FILE AT ONCE. Two sessions of one seat can ship a file
-of one name in the same seconds. The store's digest was read, and the file
-copied with rsync, which takes seconds over ssh; a file the other shipment
-landed in those seconds was replaced with no REPLACED line, the store having
-held nothing when it was read, and the other shipment's citation then
-pointed at bytes it did not ship (GHI "Two shipments of one cold-read-record
-name at the same moment can lose a report while both say it shipped",
-https://github.com/nedschorus/nedschorus/issues/910, measured for the record
-shipper). So the file is copied into a staging directory beside it
+of one name in the same seconds. Were the store's digest read and the file
+then copied with rsync, which takes seconds over ssh, a file the other
+shipment stored in those seconds would be replaced with no REPLACED line,
+and the other shipment's citation would point at bytes it did not ship. So
+the file is copied into a staging directory beside it
 (`.ship-staging-<name>-<random>`, removed afterwards) and renamed over the
 stored file by the record shipper's replace_with_staged_files, which reads
 the digest of the file it displaces in the same step, and the store is read
@@ -94,27 +77,23 @@ shipper's replace_with_staged_files).
 
 WHY IT PRINTS THE CITATION. The line this program prints on success is the
 exact text to paste into a document, in the scp form that works from either
-machine. That is deliberate and it is the point: an agent that needs a
-citable path gets the correct one faster by running this than by writing a
-local path from memory. A tool nobody has a reason to run does not get run --
-the same store's `2026-09-05-perfect-test-cases` directory sat unshipped for
-three days with a working shipper on disk.
+machine. That is deliberate: an agent that needs a citable path gets the
+correct one faster by running this than by writing a local path from memory,
+and a tool nobody has a reason to run does not get run.
 
 THE CITATION ALWAYS CARRIES THE HOST, ned-box included, where the copy itself
 is a local one that wants no ssh. The host to COPY to and the host to CITE
 are two different things, and `seats_path_for_this_machine` keeps them apart;
-its docstring says why, because collapsing them back into one host is what
-printed an unusable citation on the machine that writes most of them.
+its docstring says why.
 
-WHAT DOES NOT ENFORCE USE. Nothing here fires on its own. The mechanical
-check that catches an unreachable citation after the fact is filed as a
-caller on nedschorus#42, the reference-integrity checker; a citation is the
-observable moment, since a file nobody cites needs no sharing.
+WHAT DOES NOT ENFORCE USE. Nothing here fires on its own; a check that
+catches an unreachable citation after the fact belongs to a
+reference-integrity checker, since a file nobody cites needs no sharing.
 
 USAGE
   scripts/seat-shared-file-ship.py <file> [<file> ...]
   scripts/seat-shared-file-ship.py --seat merge-lane notes.md
-  scripts/seat-shared-file-ship.py --as survey-2026-09-08.md /tmp/out.md
+  scripts/seat-shared-file-ship.py --as survey-notes.md /tmp/out.md
 
 THE SEAT NAME comes from `--seat`, else from CLAUDE_CODE_TASK_LIST_ID, which
 the supervisor sets to `nedschorus-<seat name>-tasks` in every seat's
@@ -148,8 +127,7 @@ PROGRAM = "seat-shared-file-ship"
 
 # The record shipper is imported rather than copied, so the two programs
 # cannot drift on what the store is, how ssh and rsync are invoked, or how an
-# scp-form destination is split. The convention -- importlib for a module
-# whose filename has hyphens -- is the cold-read cell launchers'.
+# scp-form destination is split. importlib, because the filename has hyphens.
 _shipper_spec = importlib.util.spec_from_file_location(
     "cold_read_record_ship", REPO_ROOT / "nc-systems" / "cold-read" / "cold-read-record-ship.py")
 shipper = importlib.util.module_from_spec(_shipper_spec)
@@ -213,9 +191,8 @@ def seats_path_for_this_machine() -> SeatsStoreDestination:
     how the tests point at a scratch directory -- both hosts come from the
     override, and there a bare local path legitimately has none.
 
-    Do not simplify the two back into one. One host is what this had first,
-    and on ned-box it printed a bare /home/nedlern/... path that resolves
-    from nowhere else.
+    Do not simplify the two back into one: with one host, ned-box prints a
+    bare /home/nedlern/... path that resolves from nowhere else.
     """
     copy_host, records_path = shipper.destination_for_this_machine()
     if os.environ.get(shipper.DESTINATION_ENVIRONMENT_VARIABLE):
@@ -234,19 +211,12 @@ def ensure_seat_directory(destination: SeatsStoreDestination, seat: str):
     here rather than restated: `refresh_store_readme` locally and
     `make_directory_and_refresh_readme_script` over ssh, so this program and
     nc-systems/cold-read/cold-read-record-ship.py cannot disagree about when the README is
-    rewritten. One ssh round trip remotely, as before.
+    rewritten. One ssh round trip remotely.
 
-    THIS PROGRAM USED TO APPEND A `seats/` BULLET to a README that lacked
-    one, placing it inside the list of kinds. The README stopped listing the
-    kinds on 2026-09-19 (user-ruled, walk
-    file-naming-and-location-standards-cold-read-findings, item 5), and lists
-    them again, each naming only its owner, since 2026-09-27 (user-ruled, walk
-    file-naming-page-revision-2026-09-23, item 9). The `seats/` line is in
-    STORE_README itself, so this program still appends nothing: the README is
-    written from STORE_README verbatim, and a bullet added here would start a
-    fight, this program adding it and the record shipper seeing the text
-    differ from STORE_README and writing it back, on every shipment either
-    made.
+    This program appends nothing to the README: the `seats/` line is in
+    STORE_README itself, and the README is written from STORE_README
+    verbatim, so a line added here would be written back by the record
+    shipper on every shipment either program made.
 
     The stdin encoding is pinned to UTF-8, as it is in the record shipper's
     `ensure_store`, because the remote script counts the bytes it receives
@@ -301,9 +271,8 @@ def rsync_one_file(copy_host, source: pathlib.Path,
     a revision that kept the file's length and was written in the same
     second as the stored copy's timestamp would be silently not copied,
     leaving the store's old bytes behind a printed citation and a line
-    saying they had been replaced. Measured on this Mac's openrsync, which
-    skipped exactly that file. With nothing in the store to skip the flag
-    does nothing.
+    saying they had been replaced; the Mac's openrsync does skip such a
+    file. With nothing in the store to skip the flag does nothing.
     """
     destination = f"{copy_host}:{target}" if copy_host else str(target)
     command = ["rsync", "-a", "--ignore-times", "--timeout",
@@ -390,12 +359,9 @@ def ship_one_file(destination: SeatsStoreDestination, seat: str,
                        if outcome.displaced_sha256 not in (None, local_digest)
                        else None)
     if replaced_digest is not None:
-        # Never on stdout: that line is the citation and nothing else. See
-        # "THE REPLACEMENT IS NOT SILENT" in this module's docstring for what
-        # this line is for.
-        # The file's path in the store on ned-box, which the snapshots copy,
-        # built from the record shipper's constant, never written out again
-        # here; the destination may be a local override, the snapshots never.
+        # Never on stdout: that line is the citation and nothing else.
+        # The path is built from the record shipper's constant, not the
+        # destination, which may be a local override the snapshots never hold.
         # Quoted, with the snapshot glob left outside the quotes for the shell.
         stored_path = shlex.quote(str(shipper.split_destination(
             shipper.LOG_STORE_RECORDS_DESTINATION)[1].parent
