@@ -107,17 +107,6 @@ therefore remove the worktree the first is testing. So a run holds an
 exclusive lock on daily-full-test-run-of-main.lock in its directory, and a
 second run exits 6 having done nothing.
 
-The runner holds the lock too: its process is started with the lock's file
-descriptor (`pass_fds`), and a lock taken with flock is held until every
-process holding that descriptor has closed it or exited. A program stopped by
-its process ID leaves its runner running, and the runner is what tests in the
-worktree, so the lock is held until the runner exits as well. No other
-process this program starts is given the descriptor. Nothing the runner
-starts holds the descriptor either: the runner starts each suite, strace and
-git with `subprocess.run`, which closes every descriptor above 2 in the
-process it starts, so a process a suite leaves behind cannot keep later daily
-runs out.
-
 WHAT IS REUSED. nc-systems/handoff/daily-memory-review-mark.py is loaded by
 path, the way nc-systems/handoff/handoff-supervisor.py loads it, for the
 Pacific date (pacific_time_of), the test that this machine is ned-box
@@ -293,10 +282,8 @@ def remove_worktree_of_main(clone: Path, worktree: Path):
 
 
 def run_test_suite_runner_waiting_for_the_machine_lock(command, worktree: Path, wait,
-                                                       monotonic, lock_handle=None):
+                                                       monotonic):
     """Return (process result, seconds waiting, whether the lock timed out)."""
-    # Pass the daily lock to the runner so killing the parent cannot expose a worktree still being tested.
-    descriptors_the_runner_holds = () if lock_handle is None else (lock_handle.fileno(),)
     waiting_started = monotonic()
     while True:
         attempt_started = monotonic()
@@ -304,7 +291,7 @@ def run_test_suite_runner_waiting_for_the_machine_lock(command, worktree: Path, 
             command, cwd=str(worktree),
             env=run_all_test_suites.environment_without_git_redirecting_variables(),
             stdin=subprocess.DEVNULL, capture_output=True, text=True, errors="replace",
-            check=False, pass_fds=descriptors_the_runner_holds)
+            check=False)
         waited = attempt_started - waiting_started
         if completed.returncode != run_all_test_suites.EXIT_LOCKED:
             return completed, waited, False
@@ -377,13 +364,13 @@ def main(argv=None, now=None, wait=time.sleep, monotonic=time.monotonic) -> int:
     try:
         return daily_full_test_run_under_lock(
             arguments, now, wait, monotonic, on_ned_box, machine, pacific_date, clone,
-            directory, lock_handle)
+            directory)
     finally:
         lock_handle.close()
 
 
 def daily_full_test_run_under_lock(arguments, now, wait, monotonic, on_ned_box, machine,
-                                   pacific_date, clone, directory, lock_handle) -> int:
+                                   pacific_date, clone, directory) -> int:
     mark = daily_memory_review_mark
     worktree = directory / DAILY_FULL_TEST_RUN_WORKTREE_DIRECTORY_NAME
     logs = directory / DAILY_FULL_TEST_RUN_LOGS_DIRECTORY_NAME
@@ -429,7 +416,7 @@ def daily_full_test_run_under_lock(arguments, now, wait, monotonic, on_ned_box, 
                                 arguments.recorded_inputs_directory]
                 completed, seconds_waiting_for_lock, lock_never_released = (
                     run_test_suite_runner_waiting_for_the_machine_lock(
-                        command, worktree, wait, monotonic, lock_handle))
+                        command, worktree, wait, monotonic))
                 if lock_never_released:
                     steps_failed.append((
                         f"not run — the lock was never released: "

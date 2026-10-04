@@ -1014,7 +1014,7 @@ def run_cases_on_ned_box(workspace: Path):
           and not recorded_inputs.exists(), repr(result))
     commands_run = []
 
-    def runner_that_is_not_started(command, run_from, wait, monotonic, lock_handle=None):
+    def runner_that_is_not_started(command, run_from, wait, monotonic):
         commands_run.append((command, run_from))
         return (subprocess.CompletedProcess(
             command, 0, stdout=f"{fixture.runner_first_line()}\n{PASSING_SUMMARY_LINE}\n",
