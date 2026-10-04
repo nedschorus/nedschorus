@@ -23,7 +23,7 @@ The user's reasoning, which this model serves:
 
 The agent-seats that exist are the directories under `~/agents` on either machine; an agent-seat's brief under `docs/agents`, where it has one, says what it owns. The user chooses which of them run.
 
-An agent-seat name is one word. It is an address typed to reach an agent, not a search key, so the multi-part naming rule in `CLAUDE.md` does not apply to it. `gatekeeper` naming the agent-seat that works on the main-gatekeeper is deliberate, not a collision to fix; the program keeps its `main-` prefix everywhere.
+An agent-seat name is one word. It is an address typed to reach an agent, not a search key, so the multi-part naming rule in `CLAUDE.md` does not apply to it.
 
 ## Pausing and retiring an agent-seat
 

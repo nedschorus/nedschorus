@@ -887,6 +887,14 @@ rebase the work, resubmit. Nothing is left behind; the workspace is swept.
 automatic integration (clean re-application, the usual case) and `conflict`
 (the new main touched the same content).
 
+## Kept by ruling — three cuts the 2026-08-10 subtraction review proposed
+
+The 2026-08-10 subtraction review proposed three cuts that the user rejected: items S1, S2 and S6 of `git show db917b5:md-review-records/2026-08-09-git-gatekeeper-design/dispositions.md`. The specification carries what was kept but not why, so the reasons are recorded here. All three apply one axis: simple-to-operate over simple-to-build, and a mechanical forcing function over a trained LLM habit.
+
+- **Slice 4's asynchronous machinery stays** (S1): `--no-wait`, the detached worker, `status` and `cancel`. Slow checks are expected once tests and reviews run at the gate, so the reason the review gave for deferring the machinery, that every check was fast, no longer holds.
+- **The deployed copy updates itself from main** (S2) rather than being copied into place by hand: simple-to-operate beats simple-to-build. What makes a stale copy safe is the fail-safe property in the specification's C2 bullet.
+- **The `--issue` field and the `Gatekeeper-issue` trailer stay** (S6). Nothing in the gate acts on the trailer's value; what the field buys is the forced, recorded answer: a check-in cannot proceed without naming a GHI or an explicit `none`. A mechanical guarantee gives that answer where an agent's habit of mentioning GHIs would not, and without the field a missing GHI could not be told apart from a forgotten one.
+
 ## Activation shape ruled 2026-09-14 — shape 1, and the slices that remain
 
 **Ruled 2026-09-14 at the merge-lane seat: shape 1.** Provenance, recorded
@@ -928,6 +936,8 @@ walked with the user"; that was stale — it put a walk item in front of the
 user on a false premise on 2026-09-14 — and the docstring is corrected with
 this section. Slice 6 is not built and will not be (2026-08-17); it keeps
 its number, so the slices below start at 7.
+
+**Dormant, and why.** The gate is built and dormant: nothing routes through it in ordinary use, and changes reach main by the pull-request lane `CLAUDE.md` describes. What would stop it today, if run, is its last step: since 2026-08-20 main's protection has required one approving review, with no account exempt and `enforce_admins` on, so the program as built, which pushes its candidate straight to main, would be refused there (specification § The credential and enforcement, the Branch protection bullet); slice 7 replaces that push. One live end-to-end check-in has gone through the gate: commit [b24e376](https://github.com/nedschorus/nedschorus/commit/b24e376947f8706112dddcbd72b6df4d613621e9) on 2026-08-18, user-authorized at the merge-lane agent-seat before the review requirement existed, recorded in `nc-systems/main-gatekeeper/main-gatekeeper-first-live-check-in-record.md`.
 
 ### What the gate's pull request carries and how it merges — ruled 2026-09-15
 
@@ -975,6 +985,8 @@ letterings, kept distinct on purpose.
 
 Same table as § The five slices. Shape 1 and slice 7's shape A are ruled
 here; slice 9's owner is unruled, and this table proposes no answer to it.
+
+The slice numbers are not a ruled build order: which of slices 7, 8 and 10 is built first is unruled, and slice 9 waits on the user's ruling of its owner.
 
 | Slice | Delivers | Spec tests | Retires |
 |---|---|---|---|
