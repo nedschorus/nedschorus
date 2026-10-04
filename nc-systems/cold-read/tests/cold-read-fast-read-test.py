@@ -86,6 +86,16 @@ from pathlib import Path
 SYSTEM_DIRECTORY = Path(__file__).resolve().parent.parent
 REPO_ROOT = SYSTEM_DIRECTORY.parent.parent
 
+# A variable that redirects git, left in this process, would send the scratch
+# repositories' git writes into the repository it names. Removed before any
+# git runs, so the programs this suite starts inherit the removal too.
+_git_environment_fixture_spec = importlib.util.spec_from_file_location(
+    "git_redirecting_environment_removal_test_fixture",
+    REPO_ROOT / "scripts" / "git-redirecting-environment-removal-test-fixture.py")
+_git_environment_fixture = importlib.util.module_from_spec(_git_environment_fixture_spec)
+_git_environment_fixture_spec.loader.exec_module(_git_environment_fixture)
+_git_environment_fixture.remove_git_redirecting_environment_variables_from_this_process()
+
 # The scratch repository every cold-read suite builds, defined once.
 _scratch_repository_fixture_spec = importlib.util.spec_from_file_location(
     "cold_read_scratch_repository_test_fixture",
@@ -172,6 +182,33 @@ def check(case_name, condition, detail=""):
     else:
         print(f"FAIL  {case_name}: {detail}")
         failures.append(case_name)
+
+
+def git_redirecting_variables_reaching_git():
+    """Each variable the test runner strips that this process still holds, and
+    each place git resolves, in a scratch repository, outside that repository."""
+    leaked = [name for name in _git_environment_fixture.GIT_REDIRECTING_ENVIRONMENT_VARIABLES
+              if name in os.environ]
+    with tempfile.TemporaryDirectory() as scratch:
+        repository = Path(scratch).resolve()
+        subprocess.run(["git", "-C", str(repository), "init", "-q"], env=dict(os.environ),
+                       capture_output=True, check=False)
+        resolved = subprocess.run(
+            ["git", "-C", str(repository), "rev-parse", "--path-format=absolute",
+             "--show-toplevel", "--git-dir", "--git-common-dir",
+             "--git-path", "index", "--git-path", "objects"],
+            env=dict(os.environ), capture_output=True, text=True, check=False)
+        outside = [line for line in resolved.stdout.splitlines()
+                   if not Path(line).resolve().is_relative_to(repository)]
+        if resolved.returncode != 0:
+            outside.append(f"git rev-parse exit {resolved.returncode}: {resolved.stderr.strip()}")
+    return leaked, outside
+
+
+_leaked, _outside = git_redirecting_variables_reaching_git()
+check("no variable that redirects git reaches this suite's git: a scratch repository's "
+      "work tree, git directory, index and objects all resolve inside it",
+      not _leaked and not _outside, f"still set: {_leaked}; resolved outside: {_outside}")
 
 
 def build_scratch_repository(scratch):

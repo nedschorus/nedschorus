@@ -101,14 +101,10 @@ REMOVE_THE_VARIABLES_ANOTHER_WAY = {
     "nc-systems/cold-read/tests/"
     "cold-read-scratch-repository-fixture-ignores-git-redirecting-environment-test.py":
         "it removes the six from its own environment before it runs git",
-    "nc-systems/cold-read/tests/cold-read-fast-read-test.py":
-        "its own `git init` runs with GIT_DIR and GIT_WORK_TREE removed",
     "scripts/branch-conflict-check-test.py":
         "its git runs with every GIT_ variable removed",
     "scripts/daily-full-test-run-of-main-test.py":
         "its fixture_git() runs with the runner's own stripped environment",
-    "scripts/find-deleted-path-across-backups-test.py":
-        "its git helpers remove GIT_DIR, and GIT_WORK_TREE with it",
     "scripts/git-client-side-hooks-pre-push-test.py":
         "every GIT_ variable is removed from each case's environment",
     "scripts/locate-file-copies-across-machines-test.py":
