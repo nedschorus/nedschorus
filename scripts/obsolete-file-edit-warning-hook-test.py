@@ -223,7 +223,7 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     check("the warning is one line",
           warning != "" and "\n" not in warning, repr(warning))
     check("the warning counts the commits on main that touched that file",
-          "1 commit(s) on origin/main have changed since this branch's merge base" in warning,
+          "1 commit(s) on origin/main have changed since this checkout's merge base with origin/main" in warning,
           warning)
     check("the warning reaches the agent on additionalContext, under the PostToolUse event",
           (emitted_object(result) or {}).get("hookSpecificOutput", {})
@@ -511,7 +511,7 @@ with tempfile.TemporaryDirectory() as temporary_directory:
           "scripts/main-will-rename-this.py" in renamed_warning,
           result.stdout + result.stderr)
     check("and the rename commit is counted for the path it was renamed away from",
-          "1 commit(s) on origin/main have changed since this branch's merge base"
+          "1 commit(s) on origin/main have changed since this checkout's merge base with origin/main"
           in renamed_warning, renamed_warning)
 
     # A checkout with no origin/main — a repository, but nothing to compare to.
@@ -523,6 +523,102 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     result = run_hook(hook_payload(lonely, lonely / "scripts/alone.py"))
     check("a repository with no origin/main exits 0 and prints nothing",
           silent(result), result.stdout + result.stderr)
+
+    # -----------------------------------------------------------------------
+    # A DETACHED HEAD, and a branch state git could not report: the hook works
+    # out the facts the agent would otherwise have to find, and says each on a
+    # line of its own.
+    # -----------------------------------------------------------------------
+    detached_origin = tmp / "detached-origin-repo"
+    detached_origin.mkdir()
+    git(["init", "-q", "-b", "main"], detached_origin)
+    configure_identity(detached_origin)
+    shared_lines = [f"line {number}\n" for number in range(1, 11)]
+    commit_file(detached_origin, "lib/shared.py", "".join(shared_lines), "shared file")
+    commit_file(detached_origin, "lib/gone.py", "main will delete this\n", "a file main deletes")
+    detached = tmp / "detached-checkout"
+    git(["clone", "-q", str(detached_origin), str(detached)], tmp)
+    configure_identity(detached)
+    git(["checkout", "-q", "--detach"], detached)
+    detached_git_dir = Path(git(["rev-parse", "--absolute-git-dir"], detached).stdout.strip())
+    changed_on_main = list(shared_lines)
+    changed_on_main[1] = "line 2, as main rewrote it\n"
+    commit_file(detached_origin, "lib/shared.py", "".join(changed_on_main), "main rewrites line 2")
+    git(["rm", "-q", "lib/gone.py"], detached_origin)
+    git(["commit", "-q", "-m", "main deletes gone.py"], detached_origin)
+    git(["fetch", "-q", "origin"], detached)
+    shared_file = detached / "lib/shared.py"
+
+    def detached_warning(edited):
+        return agent_text(run_hook(hook_payload(detached, edited)))
+
+    edited_far_away = list(shared_lines)
+    edited_far_away[8] = "line 9, as the agent edited it\n"
+    shared_file.write_text("".join(edited_far_away), encoding="utf-8")
+    warning = detached_warning(shared_file)
+    lines = warning.split("\n")
+    check("detached: the first line says the edit is built on an old copy",
+          lines[0].endswith("so your edit is built on an old copy of the file.")
+          and "this checkout's merge base with origin/main" in lines[0], warning)
+    check("detached: the warning tells the agent to make a branch before committing",
+          len(lines) > 1 and lines[1] == (
+              "This checkout is on a detached HEAD: make a branch (git switch -c "
+              "<a-branch-name>) before you commit, because a commit on a detached HEAD "
+              "is on no branch."), warning)
+    check("detached: an edit away from main's changes is told they do not overlap",
+          len(lines) == 3 and lines[2] == (
+              "main's changes to lib/shared.py do not overlap this checkout's copy; a "
+              "rebase merges them cleanly."), warning)
+    check("detached: the overlap check leaves the agent's file as the agent wrote it",
+          shared_file.read_text(encoding="utf-8") == "".join(edited_far_away),
+          shared_file.read_text(encoding="utf-8"))
+
+    edited_same_line = list(shared_lines)
+    edited_same_line[1] = "line 2, as the agent edited it\n"
+    shared_file.write_text("".join(edited_same_line), encoding="utf-8")
+    warning = detached_warning(shared_file)
+    check("detached: an edit of the lines main changed is told they overlap",
+          warning.split("\n")[-1] == (
+              "main's changes to lib/shared.py overlap this checkout's copy: after you "
+              "make the branch and commit your edit, run git rebase origin/main, which "
+              "will stop on this file, and resolve the conflict there."), warning)
+
+    gone_file = detached / "lib/gone.py"
+    gone_file.write_text("the agent edited this\n", encoding="utf-8")
+    warning = detached_warning(gone_file)
+    check("detached: an edit of a file main deleted is told main no longer has it",
+          warning.split("\n")[-1] == (
+              "main no longer has a file at lib/gone.py: find out whether main moved or "
+              "deleted it (git log origin/main -- lib/gone.py) before you commit."), warning)
+
+    (detached_git_dir / "rebase-merge").mkdir()
+    try:
+        warning = detached_warning(shared_file)
+    finally:
+        (detached_git_dir / "rebase-merge").rmdir()
+    lines = warning.split("\n")
+    check("detached mid-rebase: one line, finish the operation, and nothing else",
+          len(lines) == 2 and lines[1] ==
+          "A git operation is in progress (rebase-merge): finish it before anything else.",
+          warning)
+
+    branch_state_failing_git_directory = tmp / "branch-state-failing-git"
+    branch_state_failing_git_directory.mkdir()
+    (branch_state_failing_git_directory / "git").write_text(
+        "#!/bin/sh\n"
+        'if [ "$1" = "rev-parse" ] && [ "$2" = "--abbrev-ref" ]; then\n'
+        '  printf "shimmed: no branch state\\n" >&2\n'
+        "  exit 128\n"
+        "fi\n"
+        f'exec "{real_git}" "$@"\n', encoding="utf-8")
+    (branch_state_failing_git_directory / "git").chmod(0o755)
+    result = run_hook(hook_payload(detached, shared_file),
+                      path_prefix=branch_state_failing_git_directory)
+    lines = agent_text(result).split("\n")
+    check("unknown branch state: the hook passes on git's own failure and says to stop",
+          len(lines) == 2 and lines[1] == (
+              "git could not report this checkout's branch state (shimmed: no branch "
+              "state): stop and tell the user before you commit."), agent_text(result))
 
     # -----------------------------------------------------------------------
     # NEVER FETCHES. The Stop hook fetches on its own throttle; a PostToolUse
