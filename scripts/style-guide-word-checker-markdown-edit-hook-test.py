@@ -314,6 +314,10 @@ INDENTED_CODE_CASES = {
         ("- item\nlazy line\n\n    about the seat\n", ["seat"]),
     "a list marker inside an indented code block is code, and a fence there opens nothing":
         ("    ~~~\n    - walk\n    ~~~\n\nThe seat is free.\n", ["seat"]),
+    "a line indented one space after a blank keeps the list item open":
+        ("- a\n\n x seat\n\n    code seat\n", ["seat", "seat"]),
+    "an unindented line after a blank ends the list item, whatever its second character":
+        ("- a\n\nA seat\n\n    code seat\n", ["seat"]),
 }
 for case_name, (text, expected) in INDENTED_CODE_CASES.items():
     forms = file_hit_forms(text)
