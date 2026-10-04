@@ -571,6 +571,29 @@ def run_cases():
               calls(control) == [] and len(worktrees_of(repository)) == 1,
               f"calls={calls(control)} worktrees={worktrees_of(repository)}")
 
+    # A suite run killed while holding the lock leaves its traces for the next
+    # holder to remove; when that holder is this script, it must remove them.
+    with tempfile.TemporaryDirectory() as scratch_name:
+        repository, base, head = scratch_repository(scratch_name, HEAD_FILES)
+        venv, control = fake_venv(scratch_name, {"dump": [
+            [work_item("scripts/thing.py", 2, "core/NumberReplacer", "a"), result("killed")]]})
+        killed_run_logs = Path(scratch_name) / "killed-suite-run-logs"
+        left_trace = killed_run_logs / "recorded-inputs" / "some-suite-test.py.strace"
+        left_trace.mkdir(parents=True)
+        (left_trace / "trace.123").write_text("openat(...)\n")
+        kept_log = killed_run_logs / "some-suite-test.py.log"
+        kept_log.write_text("PASS\n")
+        (control / "machine.lock").write_text(
+            f"pid 99999, checkout /elsewhere, started 2026-10-04T00:00:00Z, "
+            f"logs in {killed_run_logs}\n")
+        completed = run_script(repository, control, "--head", head, "--base", base,
+                               "--cosmic-ray-venv", str(venv))
+        check("taking the lock removes the traces a killed suite run left, as the runner would",
+              completed.returncode == 0 and not left_trace.exists(),
+              f"rc={completed.returncode} trace_left={left_trace.exists()} err={completed.stderr}")
+        check("and removes only the traces, not the killed run's logs",
+              kept_log.exists(), f"log_kept={kept_log.exists()}")
+
     # In this process, so the lock's release is seen before the process exits.
     with tempfile.TemporaryDirectory() as scratch_name:
         repository, base, head = scratch_repository(scratch_name, HEAD_FILES)

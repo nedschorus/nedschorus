@@ -335,7 +335,7 @@ def main(argv=None):
         totals = dict.fromkeys(OUTCOME_KEYS, 0)
         untested = []
         lock_file = Path(arguments.lock_file or runner.DEFAULT_LOCK_FILE).expanduser()
-        lock_handle, holder, _ = runner.take_machine_lock(lock_file, checkout)
+        lock_handle, holder, previous_holder = runner.take_machine_lock(lock_file, checkout)
         if lock_handle is None:
             print(f"{PROGRAM}: not run — another process holds {lock_file}, the lock "
                   f"that keeps test runs on one machine apart. Its last recorded "
@@ -346,6 +346,9 @@ def main(argv=None):
                   f"Otherwise, run this again after the run holding the lock has "
                   f"finished.", file=sys.stderr)
             return EXIT_LOCKED
+        # Taking the lock overwrites the holder's log directory, so a killed suite
+        # run's traces are removed here or never.
+        runner.remove_traces_the_last_lock_holder_left(previous_holder)
         with tempfile.TemporaryDirectory(prefix=f"{PROGRAM}-") as scratch_name:
             scratch = Path(scratch_name)
             worktree = scratch / "worktree"
