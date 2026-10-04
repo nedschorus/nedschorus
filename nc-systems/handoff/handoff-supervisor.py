@@ -18,7 +18,8 @@ The cycle, per reincarnation:
   6. Launch the successor with the initial agent instructions. Beside the
      branch sync's line they carry one line per system whose code moved on
      main past its overview's pinned commit, until the user has been shown
-     that overview's refresh that day (overview_refresh_due_lines),
+     that overview's refresh that day (overview_refresh_due_lines), plus
+     one line saying so when the day's reminder marks cannot be read,
      and, on the Mac from noon Pacific, one line when the day's memory review
      is due (memory_review_due_lines).
   7. Keep the current and previous handoff and extract; delete older ones.
@@ -214,6 +215,20 @@ OVERVIEW_REFRESH_DUE_INSTRUCTION_TEMPLATE = (
     "has been shown the diff, run `python3 {reminder_mark_script} {system}`. "
     "When the user approves the diff, write {overview_path} from "
     "{overview_draft_path} and delete {overview_draft_path}."
+)
+
+OVERVIEW_REFRESH_REMINDER_MARKS_UNREAD_TEMPLATE = (
+    "overview check could not read the day's reminder marks in {marks_location}, "
+    "so no line is withheld for a reminder already given: {error}"
+    " — Before you act on any overview-refresh line in this prompt, tell the "
+    "user that the handoff-supervisor could not read the day's overview-refresh "
+    "reminder marks, giving the location {marks_location} and the error above, "
+    "and that an overview-refresh line in this prompt may therefore repeat a "
+    "refresh the user was already shown today. "
+    "When the error names `ssh nedlern@ned-box`, ned-box did not answer this "
+    "machine: also tell the user that `ssh nedlern@ned-box true`, run on the "
+    "Mac, shows whether ned-box answers again, and that the next "
+    "agent-session's start reads the marks again."
 )
 
 MEMORY_REVIEW_DUE_FROM_PACIFIC_HOUR = 12
@@ -781,7 +796,7 @@ def sync_working_branch_with_main(working_directory: Path) -> str:
 
 def overview_refresh_due_lines(working_directory: Path,
                                now: Optional[datetime] = None) -> tuple:
-    """Return unsuppressed overview-refresh reminders; report failures without blocking launch."""
+    """Return unsuppressed overview-refresh reminders, and a line for a reminder-marks read failure; never block launch."""
     # Read origin/main so unmerged seat work cannot trigger a refresh; Markdown-only refreshes must not trigger another.
     # Pins may name merges, so compare the commit range rather than last-commit identity.
     timeout = OVERVIEW_REFRESH_CHECK_GIT_TIMEOUT_SECONDS
@@ -894,12 +909,12 @@ def overview_refresh_due_lines(working_directory: Path,
         reminder_marks = reminder_mark.read_daily_overview_refresh_reminder_marks(
             today, OVERVIEW_REFRESH_REMINDER_MARKS_READ_TIMEOUT_SECONDS)
     except Exception as error:
-        print(f"handoff-supervisor: overview check could not read the day's reminder "
-              f"marks in {reminder_mark.daily_overview_refresh_reminder_mark_citation('')}, "
-              f"so no line is withheld for a reminder already given: "
-              f"{type(error).__name__}: {error}")
         # Unknown reminder state must not violate the daily reminder floor.
-        return tuple(line for _, line in still_to_give)
+        # The failure travels as a line so both the console and the successor see it.
+        return tuple(line for _, line in still_to_give) + (
+            OVERVIEW_REFRESH_REMINDER_MARKS_UNREAD_TEMPLATE.format(
+                marks_location=reminder_mark.daily_overview_refresh_reminder_mark_citation(''),
+                error=f"{type(error).__name__}: {error}"),)
     lines = []
     for system, line in still_to_give:
         file_name = reminder_mark.daily_overview_refresh_reminder_mark_file_name(today, system)
