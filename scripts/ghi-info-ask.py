@@ -100,9 +100,9 @@ the question at 20:16:59Z and then answered the checkout-freshness Stop hook
 13 seconds later; the caller got "No action needed on my part ..." with exit
 0, so its fallback ladder never fired. So the run no longer loads this
 project's settings (--setting-sources user, the flag PR #417 gave the
-cold-read cells for the same leak), and a reply that names no issue and is
-neither of the two boundary replies fails the ask instead of being passed
-back.
+cold-read cells for the same leak), and a reply that names no issue, has no
+`verdict: unrelated` line, and is neither of the two boundary replies fails
+the ask instead of being passed back.
 
 Post-check (design step 4): every pointer ghi-info returns is checked
 against the just-refreshed mirror by this script, never taken on the
