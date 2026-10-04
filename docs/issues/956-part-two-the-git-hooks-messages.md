@@ -1,18 +1,20 @@
 # Part two: the messages of the git hooks that run at commit and push
 
-This document is part two of GHI [Every refusal and warning a program hands an agent says why and what to do instead](https://github.com/nedschorus/nedschorus/issues/956). The GHI's GHI-MD, `docs/issues/956-every-refusal-and-warning-a-program-hands-an.md`, covers part one and lists all six parts under "Later parts". This part covers the git hooks that run when an agent commits or pushes. It shows each of their messages that leaves a question open, as the agent sees the message, and proposes the exact words to replace it. None of the proposed wording is built. The next action is one approval-walk with the user over the proposed texts, then one pull request, cut from main, that changes the messages and the test cases that assert them.
+This document is part two of GHI [Every refusal and warning a program hands an agent says why and what to do instead](https://github.com/nedschorus/nedschorus/issues/956). The GHI's GHI-MD, `docs/issues/956-every-refusal-and-warning-a-program-hands-an.md`, is part one, and its section "Later parts" lists the five parts after it, this one first. This part covers the messages of the git hooks that run when an agent commits or pushes. It shows each message that leaves the agent a question open, as the agent sees the message, and proposes the exact words to replace it, with the code changes the new words need. None of the proposed wording is built. The next action is one approval-walk with the user over the proposed texts and code changes, then one pull request, cut from main, that builds what the user approves, with its test cases.
 
 ## What a reader needs first
 
-**The git hooks.** Each clone sets `core.hooksPath` to the directory `scripts/git-client-side-hooks/` in the clone's reference checkout, which stays on main, so every agent-seat's worktree on a machine runs main's copy. Git runs:
+**Where the hooks run from.** Each machine's clone sets `core.hooksPath` to `scripts/git-client-side-hooks/` inside the clone's main checkout: `/Users/el/Projects/nedschorus` on the Mac and `/home/nedlern/Projects/nedschorus` on ned-box. That checkout stays on main, so every agent-seat's worktree on the machine runs main's copy of the hooks. The agent's own worktree has its own copy of every script, at the same relative paths, from whatever commit the worktree has checked out.
 
-- `pre-commit` before each commit; it refuses a commit made under the user's own name. Its refusal answers the four questions below already, so it has no section here.
-- `prepare-commit-msg` while git prepares each commit's message; it adds a trailer naming the Claude session that made the commit.
-- `pre-push` before each push; it runs `scripts/git-client-side-hooks-pre-push-conflict-check.py`, which runs `scripts/branch-conflict-check.py` on each branch being pushed to origin and refuses the push when the branch conflicts with origin/main.
+**The hooks.** The directory holds four hooks:
 
-A git hook's message is what the hook prints to stderr. An agent that runs `git commit` or `git push` through Bash sees that text in the command's output, mixed with git's own.
+- `pre-commit` refuses a commit made inside an agent-session when the commit's author or committer email address is one of the user's three addresses or the `unconfigured-agent` address. A commit made outside an agent-session is not checked. Git runs `pre-commit` for `git commit`, including `--amend`; `pre-merge-commit` runs the same check for a merge commit made by `git merge`; `git rebase` and `git cherry-pick` run neither; `--no-verify` skips both.
+- `prepare-commit-msg` adds a trailer naming the agent-session that made the commit: `Claude-Session: https://claude.ai/code/<id>` when the agent-session has a claude.ai link, otherwise `Claude-Session-Id: <id>`. It adds nothing outside an agent-session, and leaves a message that holds only comment lines untouched. Git runs it for every commit, including each commit a rebase, a cherry-pick or a merge makes.
+- `pre-push` runs `scripts/git-client-side-hooks-pre-push-conflict-check.py`, called the pre-push conflict check below. That program runs `scripts/branch-conflict-check.py` on each branch the push sends to the remote named origin, except main and except a deletion, and refuses the push when a branch conflicts with origin/main. A push of main, of a tag, of a deletion, or to another remote is never checked, and `git push --no-verify` skips the hook.
 
-**Failing open.** A pre-push hook that exits nonzero stops the push, and a prepare-commit-msg hook that exits nonzero stops the commit. Both hooks run for every agent-seat on the machine, so both exit 0 when they themselves fail: a broken hook must not stop every agent's work. The push or the commit goes ahead, and the hook's message is then the only sign that a check did not happen. Every message in this part is of that kind.
+A git hook's message is what the hook prints to stderr. An agent that runs `git commit` or `git push` through Bash sees the message in the command's output, among git's own lines.
+
+**Failing open.** A pre-push hook that exits nonzero stops the push, and a prepare-commit-msg hook that exits nonzero stops the commit. Both hooks run for every agent-seat on the machine, so both are written to exit 0 when their own work fails, as long as the hook itself starts: a failure in a hook must not stop every agent's work. CLAUDE.md's rule for a failure is that the program "prints what failed and exits nonzero"; these two hooks keep the first half and deliberately break the second, so the message is the only place the failure shows. Each message in this part reports such a failure: a conflict check that did not happen, or a trailer that may not have been added.
 
 **The four questions.** As in part one, a message is complete when the message says:
 
@@ -21,18 +23,39 @@ A git hook's message is what the hook prints to stderr. An agent that runs `git 
 3. What to do instead, as an instruction.
 4. Under which condition each instruction applies, when the message gives more than one.
 
-**Where the list comes from.** The audit's report, `nedlern@ned-box:/home/nedlern/nedschorus-logs/seats/MD-skills/refusal-and-warning-message-audit-2026-10-01.md`, found 8 of these hooks' 11 messages missing the third question, and one of them missing the second. Every message below was read again from main at the commit [Merge pull request #1025 from nedschorus/skill-start-new-agent-seat-on-ned-box](https://github.com/nedschorus/nedschorus/commit/1a23e5ef), and the line numbers are main's at that commit. Three messages answer all four questions and are left as they are: the pre-commit refusal, the pre-push refusal for a conflicting branch, and the pre-push message for a check that gave no answer, which names the command to run.
+**Where the list comes from.** Part one's audit put these four questions to 139 messages printed by this repository's programs; its report is `nedlern@ned-box:/home/nedlern/nedschorus-logs/seats/MD-skills/refusal-and-warning-message-audit-2026-10-01.md`. For the git hooks it found that seven pre-push messages give no instruction and that the trailer message gives no reason. A message the audit did not flag, the one for a check that gave no answer, is added here because the new texts would otherwise disagree with it in one push's output. Every message below was read again from main at the commit [Merge pull request #1025 from nedschorus/skill-start-new-agent-seat-on-ned-box](https://github.com/nedschorus/nedschorus/commit/1a23e5ef), and the line numbers are main's at that commit.
 
 ## What every unchecked push should tell the agent
 
-Six of the eight messages say only that the push "goes ahead unchecked". The agent cannot tell from that text whether anything is wrong with the branch, whether to do anything, or whether to tell anyone. Two facts decide what the agent should do:
+Seven of the messages below end "the push goes ahead unchecked". From that the agent cannot tell which branches went unchecked, whether to do anything, or whether to tell anyone. Three facts decide what each message should say:
 
-- The branch may still conflict with main. The check can be run by hand, as the pre-push message for a check that gave no answer already says: `python3 scripts/branch-conflict-check.py --head <commit>`, from the checkout that pushed. A conflict found then is cleared the way `scripts/branch-conflict-check.py` reports, as CLAUDE.md says.
-- A hook that cannot run its check is broken on that machine, for every agent-seat there, and only the user can repair the machine. CLAUDE.md requires a failure to be made visible to whoever acts on it.
+- A branch that was not checked may still conflict with main, and the agent can check the branch by running, from the agent's own worktree, `python3 scripts/branch-conflict-check.py --head <commit>`. That program prints a VERDICT line and says what to do: for a conflict, CLAUDE.md's procedure applies, which starts by seeing what the conflict is with.
+- In a push of several branches, one branch's check can go unrun while another branch conflicts. The conflict then refuses the whole push. So a message must say which branches were not checked, not that the push went ahead.
+- When the hook's own machinery fails, rather than a check merely running out of time, the next push on the same machine may fail the same way. The user is the one who can repair the machine or have the hook fixed, so the agent tells the user what the message says.
 
-So each proposed text below says what did not run and why the push went ahead, then gives the hand-run command, then says when to tell the user.
+So each proposed text names the branches that were not checked and the reason, gives one command per branch to run by hand, and, when the hook's machinery failed, tells the agent to tell the user the whole message. Where a reason is printed by git or by Python just above the hook's line, the text says so.
+
+## Code the new texts need
+
+The texts below name each unchecked branch and its commit. Two programs print them, and only one knows the branches today:
+
+- `scripts/git-client-side-hooks/pre-push`, the shell part, prints messages 1, 2 and 3 without reading what git hands the hook: the remote's name, and one line per ref the push sends. The proposal has it read those lines first, keep the branches the pre-push conflict check would check (remote origin, a ref under `refs/heads/` other than main, not a deletion), print nothing when there are none, and then pass the same lines on to the pre-push conflict check. The shell part stays POSIX sh, because a hook whose interpreter is missing stops every push. The two programs' rules for which branches count must agree, so `scripts/git-client-side-hooks-pre-push-test.py` gains cases that push main, a tag, a deletion, and to another remote, and asserts that both programs ignore each.
+- `scripts/git-client-side-hooks-pre-push-conflict-check.py` already knows each branch and commit in messages 4, 5, 6 and 9. For message 7 it names the branches when it had read them before the error, and otherwise says so.
+- `scripts/git-client-side-hooks/prepare-commit-msg` fills `{trailer}` in message 8 from the trailer it already builds.
 
 ## The messages, one at a time
+
+In the proposed texts, `{unchecked_lines}` is one line for each branch that went unchecked:
+
+```
+Check {branch} by hand from your worktree: python3 scripts/branch-conflict-check.py --head {commit}
+```
+
+and `{tell_user_line}` is:
+
+```
+Tell the user this whole message, including any error printed just above it: the next push on this machine may go unchecked the same way.
+```
 
 ### 1. python3 is not on PATH
 
@@ -44,18 +67,20 @@ So each proposed text below says what did not run and why the push went ahead, t
 pre-push: the conflict check did not run (no python3 on PATH); the push goes ahead unchecked.
 ```
 
-**What the agent cannot tell from the text.** What to do. The hand-run check needs python3 too, so the agent cannot run the check either.
+**What the agent cannot tell from the text.** Which branches went unchecked, what to do, and whether to tell anyone. The command to run by hand needs python3 too.
 
 **Proposed text.**
 
 ```
-pre-push: the conflict check did not run, because python3 is not on PATH; the push went ahead without being checked against origin/main.
-Tell the user this message: no agent-seat's push on this machine is being checked until python3 is on PATH.
+pre-push: the pre-push conflict check did not run, because this shell's PATH has no python3, so these branches were not checked for conflicts with origin/main: {branches}.
+Run the commands below from a shell whose PATH has python3.
+{unchecked_lines}
+{tell_user_line}
 ```
 
-### 2. The conflict check's Python file is missing
+### 2. The pre-push conflict check is missing
 
-**When an agent sees this.** The reference checkout that `core.hooksPath` points into has no `scripts/git-client-side-hooks-pre-push-conflict-check.py`, for example because the checkout is on a branch where the file does not exist.
+**When an agent sees this.** The main checkout that `core.hooksPath` points into has no `scripts/git-client-side-hooks-pre-push-conflict-check.py`, for example because the checkout was switched off main.
 
 **What the agent is told today** (`scripts/git-client-side-hooks/pre-push:36`; the hook fills in the path):
 
@@ -63,19 +88,19 @@ Tell the user this message: no agent-seat's push on this machine is being checke
 pre-push: the conflict check did not run (/Users/el/Projects/nedschorus/scripts/git-client-side-hooks/../git-client-side-hooks-pre-push-conflict-check.py is missing); the push goes ahead unchecked.
 ```
 
-**What the agent cannot tell from the text.** What to do.
+**What the agent cannot tell from the text.** Which branches went unchecked, what to do, and whether to tell anyone.
 
 **Proposed text** (`{path}` is the missing file):
 
 ```
-pre-push: the conflict check did not run, because {path} is missing; the push went ahead without being checked against origin/main.
-Check the branch by hand from this checkout: python3 scripts/branch-conflict-check.py --head <the commit you pushed>
-Tell the user this message: no agent-seat's push on this machine is being checked until that file is back.
+pre-push: the pre-push conflict check did not run, because {path} is missing, so these branches were not checked for conflicts with origin/main: {branches}.
+{unchecked_lines}
+{tell_user_line}
 ```
 
-### 3. The conflict check's Python file failed
+### 3. The pre-push conflict check exited with an unexpected status
 
-**When an agent sees this.** `scripts/git-client-side-hooks-pre-push-conflict-check.py` exits with a status other than 0 and 10, for example when Python cannot start the file.
+**When an agent sees this.** The pre-push conflict check exits with a status other than 0, which lets the push through, and 10, which refuses the push. Python prints its own error just above the hook's line.
 
 **What the agent is told today** (`scripts/git-client-side-hooks/pre-push:47`):
 
@@ -83,19 +108,19 @@ Tell the user this message: no agent-seat's push on this machine is being checke
 pre-push: the conflict check failed (exit 1); the push goes ahead unchecked.
 ```
 
-**What the agent cannot tell from the text.** What to do.
+**What the agent cannot tell from the text.** Which branches went unchecked, what to do, and whether to tell anyone.
 
 **Proposed text** (`{status}` is the exit status):
 
 ```
-pre-push: the conflict check failed with exit status {status}; the push went ahead without being checked against origin/main. Any error the check printed is above this line.
-Check the branch by hand from this checkout: python3 scripts/branch-conflict-check.py --head <the commit you pushed>
-Tell the user this message: the pre-push hook is failing on this machine.
+pre-push: the pre-push conflict check exited with status {status}, so these branches were not checked for conflicts with origin/main: {branches}.
+{unchecked_lines}
+{tell_user_line}
 ```
 
-### 4. branch-conflict-check.py is missing
+### 4. branch-conflict-check.py is missing from the main checkout
 
-**When an agent sees this.** The conflict check's Python file runs, but `scripts/branch-conflict-check.py` is not beside it.
+**When an agent sees this.** The pre-push conflict check runs, but `scripts/branch-conflict-check.py` is not beside it in the main checkout.
 
 **What the agent is told today** (`scripts/git-client-side-hooks-pre-push-conflict-check.py:151`):
 
@@ -103,18 +128,19 @@ Tell the user this message: the pre-push hook is failing on this machine.
 pre-push: the conflict check did not run (/Users/el/Projects/nedschorus/scripts/branch-conflict-check.py is missing); the push goes ahead unchecked.
 ```
 
-**What the agent cannot tell from the text.** What to do. The hand-run command is the missing file, so the agent cannot run the check either.
+**What the agent cannot tell from the text.** Which branches went unchecked, what to do, and whether to tell anyone. The agent's own worktree has its own copy of the file, so the agent can still run the check by hand.
 
 **Proposed text** (`{path}` is the missing file):
 
 ```
-pre-push: the conflict check did not run, because {path} is missing; the push went ahead without being checked against origin/main.
-Tell the user this message: no agent-seat's push on this machine is being checked until that file is back.
+pre-push: the pre-push conflict check did not run, because {path} is missing, so these branches were not checked for conflicts with origin/main: {branches}.
+{unchecked_lines}
+{tell_user_line}
 ```
 
 ### 5. The time budget ran out before a branch's turn
 
-**When an agent sees this.** One push carries several branches, and the check of the earlier branches used up the hook's time budget, 60 seconds unless `NEDSCHORUS_PRE_PUSH_CONFLICT_CHECK_SECONDS` sets another, before this branch's turn.
+**When an agent sees this.** One push carries several branches, and the checks of the earlier branches used up the hook's time budget before this branch's turn. The budget is 60 seconds, or the number of seconds in `NEDSCHORUS_PRE_PUSH_CONFLICT_CHECK_SECONDS` when that is a positive number.
 
 **What the agent is told today** (`scripts/git-client-side-hooks-pre-push-conflict-check.py:161`):
 
@@ -122,38 +148,46 @@ Tell the user this message: no agent-seat's push on this machine is being checke
 pre-push: the conflict check did not run for branch fix-layout (the 60-second budget was spent); the push goes ahead unchecked.
 ```
 
-**What the agent cannot tell from the text.** What to do. Nothing is broken here, so the user need not hear of it.
+**What the agent cannot tell from the text.** What to do. The earlier branch's own message says why that branch took the time, so this message does not tell the agent to tell the user.
 
-**Proposed text** (`{branch}`, `{budget}` and `{commit}` are filled in by the hook):
+**Proposed text** (`{budget}` is the budget in seconds):
 
 ```
-pre-push: the conflict check did not run for branch {branch}, because the earlier branches in this push used up its {budget}-second budget; the push went ahead without checking {branch} against origin/main.
-Check the branch by hand from this checkout: python3 scripts/branch-conflict-check.py --head {commit}
+pre-push: branch {branch} was not checked for conflicts with origin/main, because the earlier branches in this push used up the {budget}-second time budget.
+Check {branch} by hand from your worktree: python3 scripts/branch-conflict-check.py --head {commit}
 ```
 
 ### 6. The check gave no verdict
 
-**When an agent sees this.** `scripts/branch-conflict-check.py` could not be started, ran past the budget and was stopped, was killed, or exited with a status it never uses.
+**When an agent sees this.** `scripts/branch-conflict-check.py` ended without a result the pre-push conflict check can read. The pre-push conflict check builds one of five reasons: the program could not be started; it had not finished when the time budget ran out, and was stopped; it was killed by a signal; it exited 1, its status for a conflict, without a `VERDICT: CONFLICT` line; or it exited with another status.
 
-**What the agent is told today** (`scripts/git-client-side-hooks-pre-push-conflict-check.py:176`; the reason in parentheses is one of five the hook builds):
+**What the agent is told today** (`scripts/git-client-side-hooks-pre-push-conflict-check.py:176`):
 
 ```
 pre-push: the conflict check gave no verdict for branch fix-layout (it had not finished when the 60-second budget ran out, and was stopped); the push goes ahead unchecked.
 ```
 
-**What the agent cannot tell from the text.** What to do, and whether the reason means the hook is broken. A check that ran past the budget is usually a slow fetch; a check that could not be started, was killed, or exited with a status it never uses is a defect.
+**What the agent cannot tell from the text.** What to do, and whether to tell anyone.
 
-**Proposed text** (`{reason}` is the hook's reason, as today):
+**Proposed text, when the time budget ran out:**
 
 ```
-pre-push: the conflict check gave no verdict for branch {branch}, because {reason}; the push went ahead without checking {branch} against origin/main.
-Check the branch by hand from this checkout: python3 scripts/branch-conflict-check.py --head {commit}
-If the hand-run check also fails to give a verdict, tell the user this message and what the hand-run check printed.
+pre-push: branch {branch} was not checked for conflicts with origin/main, because scripts/branch-conflict-check.py had not finished when the {budget}-second time budget ran out, and was stopped.
+Check {branch} by hand from your worktree: python3 scripts/branch-conflict-check.py --head {commit}
+If that run also prints no VERDICT line, tell the user this whole message and what that run printed.
 ```
 
-### 7. The conflict check raised an error
+**Proposed text, for the other four reasons** (`{reason}` is the reason, as today):
 
-**When an agent sees this.** `scripts/git-client-side-hooks-pre-push-conflict-check.py` raises a Python exception, which the file catches so that the push is not stopped.
+```
+pre-push: branch {branch} was not checked for conflicts with origin/main, because scripts/branch-conflict-check.py gave no verdict: {reason}.
+Check {branch} by hand from your worktree: python3 scripts/branch-conflict-check.py --head {commit}
+{tell_user_line}
+```
+
+### 7. The pre-push conflict check raised an error
+
+**When an agent sees this.** The pre-push conflict check raises a Python `Exception`, which the program catches so that the push is not stopped.
 
 **What the agent is told today** (`scripts/git-client-side-hooks-pre-push-conflict-check.py:196`; the hook fills in the exception's type and text):
 
@@ -161,19 +195,27 @@ If the hand-run check also fails to give a verdict, tell the user this message a
 pre-push: the conflict check failed (<exception type>: <exception text>); the push goes ahead unchecked.
 ```
 
-**What the agent cannot tell from the text.** What to do. An exception here is a defect in the hook.
+**What the agent cannot tell from the text.** Which branches went unchecked, what to do, and whether to tell anyone.
 
-**Proposed text** (`{error}` is the exception's type and text, as today):
+**Proposed text, when the program had read the pushed branches** (`{error}` is the exception's type and text, as today):
 
 ```
-pre-push: the conflict check failed with {error}; the push went ahead without being checked against origin/main.
-Check the branch by hand from this checkout: python3 scripts/branch-conflict-check.py --head <the commit you pushed>
-Tell the user this message: the pre-push hook has a defect.
+pre-push: the pre-push conflict check failed with {error}, so these branches were not checked for conflicts with origin/main: {branches}.
+{unchecked_lines}
+{tell_user_line}
 ```
 
-### 8. The session trailer was not added
+**Proposed text, when the error came before the program had read them:**
 
-**When an agent sees this.** An agent runs `git commit` in a Claude session, and `git interpret-trailers` fails while adding the trailer that names the session. The commit still goes ahead.
+```
+pre-push: the pre-push conflict check failed with {error} before reading which branches this push sends, so no branch in this push was checked for conflicts with origin/main.
+For each branch this push sends to origin, other than main, run from your worktree: python3 scripts/branch-conflict-check.py --head <the branch's commit>
+{tell_user_line}
+```
+
+### 8. The session trailer may not have been added
+
+**When an agent sees this.** In an agent-session, `git interpret-trailers` fails while `prepare-commit-msg` adds the session trailer, and git prints the tool's error just above the hook's line. The commit goes on. The message can print during `git commit`, and once for each commit a rebase, a cherry-pick or a merge makes.
 
 **What the agent is told today** (`scripts/git-client-side-hooks/prepare-commit-msg:74`):
 
@@ -181,19 +223,58 @@ Tell the user this message: the pre-push hook has a defect.
 prepare-commit-msg: could not add the session trailer; add it by hand
 ```
 
-**What the agent cannot tell from the text.** Why the trailer matters, what the trailer is, and how to add the trailer by hand. A pushed commit is frozen, so the instruction must not have the agent amend a commit that is already pushed.
+**What the agent cannot tell from the text.** Why the trailer matters, what the trailer is, how to add the trailer, which commit to add it to, and what to do when adding it fails again. `git commit --amend` changes whatever commit `HEAD` is, and without `--only` it also commits whatever is staged. A pushed commit must not be amended, because amending it needs a force push.
 
 **Proposed text** (`{trailer}` is the trailer the hook meant to add, such as `Claude-Session: https://claude.ai/code/session_01ABC`):
 
 ```
-prepare-commit-msg: the session trailer was not added, so this commit does not record which Claude session made it; a reviewer uses the trailer to find the session. git interpret-trailers' error is above this line.
-If the commit is not pushed yet, add the trailer with: git commit --amend --no-edit --trailer "{trailer}"
-If the commit is pushed, leave it as it is.
+prepare-commit-msg: git interpret-trailers failed, so the trailer "{trailer}" may be missing from this commit's message; the trailer is how a reviewer finds the agent-session that made a commit. git's error is just above this line.
+If a rebase, merge or cherry-pick is in progress, leave its commits as they are, and tell the user this message once the operation is done.
+Otherwise, if git log -1 shows the commit you just made, that commit is not pushed, and its message lacks the trailer, add it with: git commit --amend --only --no-edit --trailer "{trailer}"
+If that amend fails, or the commit is already pushed, leave the commit as it is and tell the user this whole message.
 ```
 
-## Code the pull request changes besides the texts
+`--only` with no paths amends the message alone: tried in a scratch repository under git 2.56, a file staged before the amend stayed staged and stayed out of the commit.
 
-- `scripts/git-client-side-hooks-pre-push-conflict-check.py` passes the pushed commit, `local_object_id`, into messages 5 and 6, as the no-answer message already does.
-- Messages 2, 3 and 7 cannot name the pushed commit: `pre-push` has not read the pushed refs when it prints messages 2 and 3, and message 7 may come from a failure to read them. They say `<the commit you pushed>` instead.
-- `scripts/git-client-side-hooks/prepare-commit-msg` fills `{trailer}` from the `session_trailer` it already builds.
-- The test cases that assert these texts, in `scripts/git-client-side-hooks-pre-push-test.py` and `scripts/git-client-side-hooks-prepare-commit-msg-test.py`, change with the texts.
+### 9. The check gave no answer
+
+**When an agent sees this.** `scripts/branch-conflict-check.py` exits 2, its status for a run that could not decide, and prints one of its own reports, UNFETCHED, UNMATCHED, UNRESOLVED or UNANSWERED, each with its own instructions. The audit found this message complete; it is changed here so that its command matches the other texts and so that it says when to tell the user.
+
+**What the agent is told today** (`scripts/git-client-side-hooks-pre-push-conflict-check.py:169-174`; the report's own lines sit between the first line and the last):
+
+```
+pre-push: the conflict check gave no answer for branch fix-layout; the push goes ahead unchecked.
+<the report's lines>
+To get an answer, run scripts/branch-conflict-check.py --head <commit> from this checkout.
+```
+
+**Proposed text.**
+
+```
+pre-push: branch {branch} was not checked for conflicts with origin/main, because scripts/branch-conflict-check.py could not decide; its report follows.
+<the report's lines>
+Follow the report, then check {branch} again by hand from your worktree: python3 scripts/branch-conflict-check.py --head {commit}
+If that run also prints no VERDICT line, tell the user this whole message and what that run printed.
+```
+
+## A question for the user: the conflict refusal
+
+Two of the six cold-read reviewers found a gap in a message this part otherwise leaves as it is: the refusal of a push whose branch conflicts with origin/main. Its instructions come from `scripts/branch-conflict-check.py:265-272`:
+
+```
+VERDICT: CONFLICT -- <commit> conflicts with origin/main.
+Merge origin/main into the branch by hand, with the frozen head as first parent.
+Resolve the conflict and change nothing else in the merge.
+Before pushing, rerun the test suites for what the merge touched.
+```
+
+CLAUDE.md puts a step before the merge: "First see what the conflict is with. If main has deleted or replaced what the branch changes, do not merge: close the pull request with a comment naming the commit or pull request on main that replaced the work, and carry what main still lacks on a new topic branch cut from current main." The refusal omits that step, and on a branch's first push there is no frozen head yet. Part one's audit counted this message complete, and the program that prints it is one any agent also runs by hand. The choices are to add it to this part as message 10, to give it to a later part, or to leave it. The recommendation is to add it here, because pre-push prints it and the same pull request already changes the lines around it.
+
+## Messages left as they are
+
+- The `pre-commit` refusal (`scripts/git-client-side-hooks/pre-commit:125-131`) answers all four questions: it names the refused identity, says to commit under the agent-seat's own name, and gives each remedy with its condition.
+- The pre-push conflict check's closing line after a conflict, "Once the merge is committed, push again.", follows the conflict report above and depends on the question above.
+
+## Tests
+
+`scripts/git-client-side-hooks-pre-push-test.py` asserts parts of today's messages 1, 2, 3, 4, 6 and 9, and `scripts/git-client-side-hooks-prepare-commit-msg-test.py` asserts message 8. The pull request changes those cases with the texts, and adds cases for the messages and fills no case covers today: message 5, message 7 in both forms, the branch and commit named in every message, the trailer named in message 8, and the shell part's branch filter, as "Code the new texts need" says.
