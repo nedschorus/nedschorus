@@ -1602,13 +1602,10 @@ def processes_under_this_one() -> dict:
     listed them, from one `ps` call (the same flags on macOS and Linux); {}
     when ps cannot be run.
 
-    The cold-read-grid's process_parents
-    (nc-systems/cold-read/cold-read-grid.py) with one difference, which is why
-    it is not taken from there: that `ps` is a child of the process that asks,
-    and stop_processes_this_run_started walks the asking process's own
-    children, so each reading would hand it one more child, the reader of that
-    reading, and the walk would never end. The grid walks a launcher's tree,
-    which its own `ps` is not in."""
+    The `ps` that lists the processes is left out because it is a child of the
+    process that asks, and stop_processes_this_run_started walks the asking
+    process's own children: each reading would hand it one more child, the
+    reader of that reading, and the walk would never end."""
     try:
         with subprocess.Popen(["ps", "-A", "-o", "pid=", "-o", "ppid="],
                               stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
@@ -1644,11 +1641,9 @@ def stop_processes_this_run_started() -> None:
     own. Prints nothing: it runs inside a signal handler, where the main
     thread may hold the run log's lock.
 
-    The cold-read-grid's way of stopping a cell's process tree
-    (stop_process_tree in nc-systems/cold-read/cold-read-grid.py), applied to
-    this process's whole tree: frozen top-down with SIGSTOP, re-reading the
-    process table after each level, so a process cannot start another while
-    the tree is collected; then SIGTERM and SIGCONT to all, so each can end on
+    This process's whole tree is stopped this way: frozen top-down with
+    SIGSTOP, re-reading the process table after each level, so a process
+    cannot start another while the tree is collected; then SIGTERM and SIGCONT to all, so each can end on
     its own terms; then SIGKILL to whatever is left after the grace. The
     cells' threads reap the agent-binaries they launched; what those started
     is reaped by init.
