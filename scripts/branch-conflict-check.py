@@ -65,11 +65,83 @@ def base_branch_name(full_ref, remote):
     return None
 
 
-def merge_tree_exit_status(base_hash, head_hash, runner=run):
-    """Return merge-tree status: 0 clean, 1 conflict, otherwise no answer."""
+def merge_tree_answer(base_hash, head_hash, runner=run):
+    """Return (merge-tree status, its -z output): 0 clean, 1 conflict, otherwise no answer."""
     # Other failures, including an unwritable object database, must not be reported as conflicts.
-    status, _ = runner(["git", "merge-tree", "--write-tree", base_hash, head_hash])
-    return status
+    return runner(["git", "merge-tree", "--write-tree", "-z", base_hash, head_hash])
+
+
+def conflicted_paths(merge_tree_output):
+    """Return {path: set of index stages} for each conflicted path, in git's order."""
+    # With -z the tree hash comes first, then one "<mode> <object> <stage>\t<path>"
+    # field per conflicted stage, then an empty field before the messages.
+    stages = {}
+    for field in merge_tree_output.split("\0")[1:]:
+        meta, tab, path = field.partition("\t")
+        parts = meta.split(" ")
+        if not tab or len(parts) != 3:
+            break
+        stages.setdefault(path, set()).add(parts[2])
+    return stages
+
+
+def paths_deleted_on_base(stages):
+    """Return the conflicted paths the base deleted and the head still has."""
+    # The base is merge-tree's first side, so stage 2 is the base's version and
+    # stage 3 the head's: a path with an ancestor and a head version but no base
+    # version is one the base deleted while the branch changed it.
+    return [path for path, found in stages.items()
+            if "1" in found and "3" in found and "2" not in found]
+
+
+def deleting_commit(path, base_hash, head_hash, runner=run):
+    """Return the base-side commit that deleted path, or None."""
+    status, out = runner(["git", "log", "-1", "--format=%H", "--diff-filter=D",
+                          "%s..%s" % (head_hash, base_hash), "--", path])
+    return out if status == 0 and out else None
+
+
+def deleted_on_base_lines(head_hash, base, base_hash, stages, deleted, runner=run):
+    """Return the VERDICT lines for a conflict where the base deleted files the branch changes."""
+    lines = [
+        "VERDICT: CONFLICT -- %s conflicts with %s, and %s deleted %d file(s) "
+        "the branch changes." % (commit_label(head_hash, runner), base, base,
+                                 len(deleted)),
+    ]
+    unnamed = False
+    for path in deleted:
+        commit = deleting_commit(path, base_hash, head_hash, runner)
+        if commit is None:
+            unnamed = True
+            lines.append("DELETED ON %s: %s, by a commit this run could not find"
+                         % (base, path))
+        else:
+            lines.append("DELETED ON %s: %s, by %s"
+                         % (base, path, commit_label(commit, runner)))
+    others = [path for path in stages if path not in deleted]
+    for path in others:
+        lines.append("ALSO CONFLICTS: %s" % path)
+    lines.append(
+        "Do not merge %s into the branch: %s removed the file(s) above, so a "
+        "hand-merge would either bring a removed file back or drop the "
+        "branch's change to it." % (base, base))
+    if unnamed:
+        lines.append(
+            "If a deleting commit is not named above, find it with git log "
+            "--diff-filter=D %s -- <file>." % base)
+    lines += [
+        "If the branch has a pull request, close it with a comment naming the "
+        "commit that deleted each file.",
+        "If %s still lacks any of the branch's work, including what its change "
+        "to each deleted file was for, carry that work on a new topic branch "
+        "cut from current %s, in a new pull request that names the closed one."
+        % (base, base),
+    ]
+    if others:
+        lines.append(
+            "On the new topic branch, start each ALSO CONFLICTS file from %s's "
+            "version and reapply the branch's change to it by hand." % base)
+    return lines
 
 
 def commit_label(commit_hash, runner=run):
@@ -199,7 +271,7 @@ def check(head, base, pull_request=None, runner=run, sleep=time.sleep,
     if head_hash is None:
         return EXIT_BAD_INVOCATION, unresolved_lines("head", head)
 
-    merge_status = merge_tree_exit_status(base_hash, head_hash, runner)
+    merge_status, merge_output = merge_tree_answer(base_hash, head_hash, runner)
     if merge_status not in (MERGE_TREE_CLEAN, MERGE_TREE_CONFLICT):
         return EXIT_BAD_INVOCATION, [
             "UNANSWERED: git merge-tree exited %d merging %s into %s; do not "
@@ -260,6 +332,14 @@ def check(head, base, pull_request=None, runner=run, sleep=time.sleep,
                         "DISCLOSURE: git finds a conflict but GitHub reports "
                         "MERGEABLE; treating it as a conflict, because a merge "
                         "that git cannot do is not one to attempt.")
+
+    if conflict:
+        stages = conflicted_paths(merge_output)
+        deleted = paths_deleted_on_base(stages)
+        if deleted:
+            lines[0:0] = deleted_on_base_lines(
+                head_hash, base, base_hash, stages, deleted, runner)
+            return EXIT_CONFLICT, lines
 
     if conflict:
         lines[0:0] = [
