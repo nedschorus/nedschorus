@@ -2,7 +2,9 @@
 """Search typed user messages in Claude Code transcripts.
 
 The harness also labels tool results, reminders, and command output as user
-turns; exclude those when searching for the user’s own words."""
+turns; exclude those when searching for the user’s own words. A message the
+user types while the agent is mid-turn has no user turn: it is a queued_command
+attachment whose origin is human."""
 
 import argparse
 import glob
@@ -33,6 +35,39 @@ def typed_by_user(record):
     return text
 
 
+def queued_by_user(record):
+    """The text of a message the user typed while the agent was mid-turn, else None."""
+    # The same attachment shape also carries peer and task messages; only origin.kind tells them apart.
+    if record.get("type") != "attachment":
+        return None
+    attachment = record.get("attachment")
+    if not isinstance(attachment, dict) or attachment.get("type") != "queued_command":
+        return None
+    origin = attachment.get("origin")
+    if not isinstance(origin, dict) or origin.get("kind") != "human":
+        return None
+    prompt = attachment.get("prompt")
+    if not isinstance(prompt, str):
+        return None
+    return prompt.strip() or None
+
+
+def is_interrupt_notice(record):
+    """Whether the record is the harness's note that the user interrupted the agent."""
+    if record.get("type") != "user":
+        return False
+    content = (record.get("message") or {}).get("content")
+    if isinstance(content, str):
+        texts = [content]
+    elif isinstance(content, list):
+        texts = [block.get("text", "") for block in content
+                 if isinstance(block, dict) and block.get("type") == "text"]
+    else:
+        return False
+    return any(isinstance(text, str) and text.lstrip().startswith("[Request interrupted")
+               for text in texts)
+
+
 def assistant_text(record):
     """An assistant turn's prose, joined, or None."""
     if record.get("type") != "assistant":
@@ -54,6 +89,10 @@ def assistant_text(record):
 def read_turns(path):
     """Every turn in one transcript: (index, speaker, text, timestamp)."""
     turns = []
+    # After an interrupt the harness re-sends a queued message as a user turn; the same words
+    # typed again later are a new message, so only that re-send is dropped.
+    queued_text_awaiting_resend = None
+    interrupted_since_queued = False
     with open(path, "r", errors="replace") as handle:
         for line in handle:
             line = line.strip()
@@ -66,13 +105,27 @@ def read_turns(path):
             if not isinstance(record, dict):
                 continue
             stamp = record.get("timestamp", "")
-            text = typed_by_user(record)
+            if is_interrupt_notice(record):
+                interrupted_since_queued = True
+                continue
+            text = queued_by_user(record)
             if text is not None:
                 turns.append((len(turns), "user", text, stamp))
+                queued_text_awaiting_resend = text
+                interrupted_since_queued = False
+                continue
+            text = typed_by_user(record)
+            if text is not None:
+                if interrupted_since_queued and text == queued_text_awaiting_resend:
+                    queued_text_awaiting_resend = None
+                    continue
+                turns.append((len(turns), "user", text, stamp))
+                queued_text_awaiting_resend = None
                 continue
             text = assistant_text(record)
             if text is not None:
                 turns.append((len(turns), "agent", text, stamp))
+                queued_text_awaiting_resend = None
     return turns
 
 

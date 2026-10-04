@@ -67,6 +67,18 @@ def user_text(content):
     return {"type": "user", "message": {"role": "user", "content": content}}
 
 
+# The shape the harness writes for a message the user types mid-turn: no user record.
+def queued_message(prompt, origin_kind="human"):
+    return {"type": "attachment",
+            "attachment": {"type": "queued_command", "prompt": prompt,
+                           "commandMode": "prompt",
+                           "origin": {"kind": origin_kind}}}
+
+
+def interrupt_notice():
+    return user_text([{"type": "text", "text": "[Request interrupted by user]"}])
+
+
 def write_transcript(project_directory, name, records, mtime=None):
     project_directory.mkdir(parents=True, exist_ok=True)
     path = project_directory / name
@@ -225,6 +237,70 @@ def run_unit_cases():
           str(false_alarms(["rm -f x", "gh pr view 12", "git -C /x status"])))
 
 
+    # ------------------------------------------------------------------
+    # Messages typed mid-turn, through event_lines with one transcript's state.
+    # ------------------------------------------------------------------
+    def emitted(records):
+        state = {}
+        return [line for record in records
+                for line in watcher_module.event_lines(
+                    "alpha", json.dumps(record).encode(), 250, state)]
+
+    lines = emitted([queued_message("y"), assistant_text("Item 2?"),
+                     user_text("y")])
+    check("the same words typed again after the agent answered show twice",
+          lines == ["alpha USER: y", "alpha AGENT: Item 2?", "alpha USER: y"],
+          str(lines))
+    lines = emitted([queued_message("y"), assistant_text("Item 2?"),
+                     interrupt_notice(), user_text("y")])
+    check("a re-send is matched only before the agent answers the queued message",
+          lines.count("alpha USER: y") == 2, str(lines))
+    lines = emitted([queued_message("y"), interrupt_notice(),
+                     user_text("new request"), interrupt_notice(), user_text("y")])
+    check("a typed message between ends the wait for a queued message's re-send",
+          lines.count("alpha USER: y") == 2
+          and "alpha USER: new request" in lines, str(lines))
+    lines = emitted([queued_message("y"), interrupt_notice(), user_text("y"),
+                     user_text("y")])
+    check("only the first matching record after an interrupt is the re-send",
+          lines.count("alpha USER: y") == 2, str(lines))
+    lines = emitted([queued_message("y"), interrupt_notice(),
+                     user_text("<task-notification>done</task-notification>"),
+                     user_text("y")])
+    check("an injected record between does not end the wait for a re-send",
+          lines.count("alpha USER: y") == 1, str(lines))
+
+    # A transcript replaced on disk is read again from byte 0 as a new file, with no re-send pending.
+    with tempfile.TemporaryDirectory() as scratch:
+        seat_path = Path(scratch) / "agents" / "alpha"
+        seat_path.mkdir(parents=True)
+        projects_root = Path(scratch) / "projects"
+        project = watcher_module.project_directory_for_seat(seat_path, projects_root)
+        project.mkdir(parents=True)
+        transcript = write_transcript(
+            project, "12121212-1212-1212-1212-121212121212.jsonl",
+            [queued_message("y"), interrupt_notice()])
+        follower = watcher_module.SeatFollower(seat_path, projects_root, 250)
+        emitted_lines = []
+        saved_emit = watcher_module.emit
+        watcher_module.emit = emitted_lines.append
+        try:
+            follower.rescan(at_startup=True, from_start=True)
+            follower.poll()
+            replacement = transcript.with_name("replacement.tmp")
+            replacement.write_text(json.dumps(user_text("y")) + "\n")
+            os.replace(replacement, transcript)
+            follower.poll()
+        finally:
+            watcher_module.emit = saved_emit
+            follower._close()
+        check("a replaced transcript's first message is not taken for a re-send",
+              emitted_lines.count("alpha USER: y") == 2, str(emitted_lines))
+
+    lines = emitted([queued_message("   ")])
+    check("a queued message with no text emits nothing", lines == [], str(lines))
+
+
 def run_bad_invocation_cases(agents_root, projects_root):
     """--poll-seconds/--rescan-seconds must be > 0, --snippet-chars >= 1:
     one stderr line, exit 2. Fixture roots are passed so a future reorder
@@ -306,6 +382,13 @@ def run_all_cases():
              "message": {"role": "assistant",
                          "content": [{"type": "text",
                                       "text": "API Error: overloaded"}]}},
+            queued_message("QUEUED-ONLY-WORDS"),
+            assistant_text("answering the queued message"),
+            queued_message("QUEUED-TYPED-WORDS"),
+            interrupt_notice(),
+            user_text("QUEUED-TYPED-WORDS"),
+            queued_message("<cross-session-message>PEER-QUEUED-NEVER-SHOWN"
+                           "</cross-session-message>", origin_kind="peer"),
             "this line is not json {{{",
             assistant_text(long_text),
             assistant_text(many_newlines),
@@ -354,6 +437,12 @@ def run_all_cases():
               and "indented wrapper" not in everything, everything)
         check("user text starting with '[SYSTEM' is skipped",
               "a monitor line, skipped" not in everything, everything)
+        check("a message typed mid-turn becomes a USER line",
+              "alpha USER: QUEUED-ONLY-WORDS" in lines, everything)
+        check("a queued message re-sent after an interrupt shows once",
+              lines.count("alpha USER: QUEUED-TYPED-WORDS") == 1, everything)
+        check("a queued message whose origin is not human is skipped",
+              "PEER-QUEUED-NEVER-SHOWN" not in everything, everything)
         check("isApiErrorMessage becomes API-ERROR and nothing else",
               "alpha API-ERROR" in lines and "API Error: overloaded" not in everything,
               everything)
@@ -451,7 +540,8 @@ def run_all_cases():
         mtime_step = time.time()
         file_x = write_transcript(
             gamma_project, "ffffffff-ffff-ffff-ffff-ffffffffffff.jsonl",
-            [assistant_text("ALT-X-LINE-1")], mtime=mtime_step)
+            [assistant_text("ALT-X-LINE-1"), queued_message("ALT-X-QUEUED"),
+             interrupt_notice()], mtime=mtime_step)
         file_y = write_transcript(
             gamma_project, "99999999-9999-9999-9999-999999999999.jsonl",
             [assistant_text("ALT-Y-LINE-1")], mtime=mtime_step - 100)
@@ -466,6 +556,7 @@ def run_all_cases():
         watcher.wait_for("gamma AGENT: ALT-Y-LINE-2")
 
         mtime_step += 10
+        append_record(file_x, user_text("ALT-X-QUEUED"), mtime=mtime_step)
         append_record(file_x, assistant_text("ALT-X-LINE-2"), mtime=mtime_step)
         watcher.wait_for("gamma AGENT: ALT-X-LINE-2")
 
@@ -485,6 +576,8 @@ def run_all_cases():
               len(agent_lines) == len(set(agent_lines))
               and all(everything.count(marker) == 1 for marker in markers),
               everything)
+        check("alternating transcripts: a re-send after switching back shows once",
+              everything.count("gamma USER: ALT-X-QUEUED") == 1, everything)
         check("alternating transcripts: the WATCH switch line fires both ways",
               "gamma WATCH: switched to 99999999-9999-9999-9999-999999999999.jsonl"
               in lines
