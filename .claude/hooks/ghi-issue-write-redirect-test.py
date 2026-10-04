@@ -17,6 +17,7 @@ import io
 import json
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 HOOK_SCRIPT = Path(__file__).with_name("ghi-issue-write-redirect.py")
@@ -53,6 +54,15 @@ def decision_for(command, tool_name="Bash"):
     return output["permissionDecisionReason"]
 
 
+# The refusals as they read when the issue's files cannot be looked up, as in
+# these cases, whose checkout does not exist.
+CLOSE_WITH_COMMENT_FALLBACK = guard.CLOSE_WITH_COMMENT_REFUSAL.format(
+    record_line=guard.record_line(guard.CLOSE_OUTCOME, None))
+REOPEN_WITH_COMMENT_FALLBACK = guard.REOPEN_WITH_COMMENT_REFUSAL.format(
+    record_line=guard.record_line(guard.REOPEN_OUTCOME, None))
+DELETE_FALLBACK = guard.DELETE_REFUSAL.format(
+    record_line=guard.record_line(guard.CLOSE_OUTCOME, None))
+
 # Each refused form, and the refusal it must get.
 REFUSED = [
     ("comment with --body", 'gh issue comment 46 --body "done"',
@@ -84,13 +94,13 @@ REFUSED = [
     ("comment after a cd in the same command", "cd /tmp && gh issue comment 46 -b x",
      guard.COMMENT_REFUSAL),
     ("close with --comment", 'gh issue close 46 --comment "done" --reason completed',
-     guard.STATE_CHANGE_COMMENT_REFUSAL.format(subcommand="close")),
+     CLOSE_WITH_COMMENT_FALLBACK),
     ("close with -c", "gh issue close 46 -c done",
-     guard.STATE_CHANGE_COMMENT_REFUSAL.format(subcommand="close")),
+     CLOSE_WITH_COMMENT_FALLBACK),
     ("close with --comment=", "gh issue close 46 --comment=done",
-     guard.STATE_CHANGE_COMMENT_REFUSAL.format(subcommand="close")),
+     CLOSE_WITH_COMMENT_FALLBACK),
     ("reopen with -c", "gh issue reopen 46 -c again",
-     guard.STATE_CHANGE_COMMENT_REFUSAL.format(subcommand="reopen")),
+     REOPEN_WITH_COMMENT_FALLBACK),
     ("create", 'gh issue create --title "A" --body "B"', guard.CREATE_REFUSAL),
     ("create through the web", "gh issue create --web", guard.CREATE_REFUSAL),
     ("create by its alias new", 'gh issue new -t A -b B', guard.CREATE_REFUSAL),
@@ -115,7 +125,7 @@ REFUSED = [
     ("edit with a title naming this repository",
      'gh issue edit 46 -R nedschorus/nedschorus --title "T"',
      guard.EDIT_TITLE_REFUSAL),
-    ("delete", "gh issue delete 46 --yes", guard.DELETE_REFUSAL),
+    ("delete", "gh issue delete 46 --yes", DELETE_FALLBACK),
     ("the second command of a pipeline", "true | gh issue comment 46 -b x",
      guard.COMMENT_REFUSAL),
     # This repository named by a repository flag before the subcommand, in
@@ -129,7 +139,7 @@ REFUSED = [
      "gh --repo=nedschorus/nedschorus issue comment 46 -b x",
      guard.COMMENT_REFUSAL),
     ("delete with an attached -R value between gh and issue",
-     "gh -Rnedschorus/nedschorus issue delete 46 --yes", guard.DELETE_REFUSAL),
+     "gh -Rnedschorus/nedschorus issue delete 46 --yes", DELETE_FALLBACK),
     ("create with -R and a host between gh and issue",
      "gh -R github.com/nedschorus/nedschorus issue create -t A -b B",
      guard.CREATE_REFUSAL),
@@ -141,7 +151,7 @@ REFUSED = [
      guard.EDIT_BODY_REFUSAL),
     ("close with -R= between issue and the subcommand",
      "gh issue -R=nedschorus/nedschorus close 46 -c done",
-     guard.STATE_CHANGE_COMMENT_REFUSAL.format(subcommand="close")),
+     CLOSE_WITH_COMMENT_FALLBACK),
     ("comment with -R= after the subcommand",
      "gh issue comment 46 -R=nedschorus/nedschorus -b x",
      guard.COMMENT_REFUSAL),
@@ -251,12 +261,21 @@ for name, command in ALLOWED:
 # only says who decided and when. For example:
 #   passes: "Do not delete issues; a deleted issue cannot be restored."
 #   fails:  "Do not delete issues (user-ruled 2026-09-18)."
+RECORD_LINE_CASES = (None, [], ["docs/issues/46-a.md"],
+                     ["docs/issues/46-a.md", "docs/issues/46-b.md"])
 REFUSAL_TEXTS = [guard.COMMENT_REFUSAL, guard.CREATE_REFUSAL,
                  guard.EDIT_BODY_REFUSAL, guard.EDIT_TITLE_REFUSAL,
-                 guard.DELETE_REFUSAL,
-                 guard.STATE_CHANGE_COMMENT_REFUSAL.format(subcommand="close")]
+                 guard.DELETE_REFUSAL_NO_FILE, guard.CLOSE_WITH_COMMENT_REFUSAL_NO_FILE]
+for files in RECORD_LINE_CASES:
+    REFUSAL_TEXTS += [
+        guard.CLOSE_WITH_COMMENT_REFUSAL.format(
+            record_line=guard.record_line(guard.CLOSE_OUTCOME, files)),
+        guard.REOPEN_WITH_COMMENT_REFUSAL.format(
+            record_line=guard.record_line(guard.REOPEN_OUTCOME, files)),
+        guard.DELETE_REFUSAL.format(
+            record_line=guard.record_line(guard.CLOSE_OUTCOME, files))]
 OPENING_WORDS = ("Do not", "Put", "If", "Write", "Edit", "To change", "Close",
-                 "Run", "Record", "Change")
+                 "Run", "Record", "Change", "This", "The")
 for text in REFUSAL_TEXTS:
     for line in text.splitlines():
         check(f"refusal line is an instruction: {line[:48]}",
@@ -301,6 +320,81 @@ for command, should_refuse in (("gh issue comment 46 -b x", True),
     check(f"end to end, {command!r} {'is refused' if should_refuse else 'passes'}",
           result.returncode == 0 and refused == should_refuse,
           f"{result.returncode} {result.stdout} {result.stderr}")
+
+# The record line names the issue's files on main, looked up in the session's
+# checkout as the GHI write tool lists them.
+with tempfile.TemporaryDirectory() as temporary_directory:
+    root = Path(temporary_directory)
+    origin = root / "origin"
+    origin.mkdir()
+
+    def git(arguments, cwd):
+        return subprocess.run(["git", *arguments], cwd=cwd, capture_output=True,
+                              text=True, check=True)
+
+    git(["init", "-q", "-b", "main"], origin)
+    git(["config", "user.email", "test@example.com"], origin)
+    git(["config", "user.name", "test"], origin)
+    for relative in ("docs/issues/46-the-only-file.md", "docs/issues/47-the-ghi-md.md",
+                     "docs/issues/47-supporting-notes.md", "docs/issues/9-unrelated.md"):
+        (origin / relative).parent.mkdir(parents=True, exist_ok=True)
+        (origin / relative).write_text("# A file\n", encoding="utf-8")
+    git(["add", "-A"], origin)
+    git(["commit", "-q", "-m", "issue files"], origin)
+    session_checkout = root / "session-checkout"
+    git(["clone", "-q", str(origin), str(session_checkout)], root)
+
+    def refusal_in_checkout(command):
+        payload = {"tool_name": "Bash", "cwd": str(session_checkout),
+                   "tool_input": {"command": command}}
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            guard.main(stdin=io.StringIO(json.dumps(payload)))
+        text = stdout.getvalue().strip()
+        return json.loads(text)["hookSpecificOutput"]["permissionDecisionReason"] if text else None
+
+    refusal = refusal_in_checkout("gh issue close 46 -c done")
+    check("close: an issue with one file on main is told to record the outcome in it",
+          refusal is not None and refusal.split("\n")[1] ==
+          "Record the outcome in docs/issues/46-the-only-file.md, then open the edit's pull "
+          "request with: python3 scripts/ghi-issue-write.py edit docs/issues/46-the-only-file.md",
+          refusal)
+    check("close: the refusal says to close only after that edit has merged and its rerun",
+          refusal is not None and refusal.split("\n")[2].startswith(
+              "Close the issue after that edit's pull request has merged and its rerun has "
+              "finished, without --comment"), refusal)
+
+    refusal = refusal_in_checkout("gh issue close 47 --comment done")
+    check("close: an issue with several files on main is given all of them to choose among",
+          refusal is not None and refusal.split("\n")[1] ==
+          "The issue's files on main are: docs/issues/47-supporting-notes.md, "
+          "docs/issues/47-the-ghi-md.md. Record the outcome in the issue's GHI-MD among "
+          "them, then open the edit's pull request with: python3 "
+          "scripts/ghi-issue-write.py edit <that path>", refusal)
+
+    refusal = refusal_in_checkout("gh issue close 48 -c done")
+    check("close: an issue with no file on main is told to stop, and the message ends there",
+          refusal == guard.NO_COMMENTS_LINE + "\n" +
+          "This issue has no file on main under docs/issues/<number>-* or a system's "
+          "directory: stop and tell the user.", refusal)
+
+    refusal = refusal_in_checkout("gh issue reopen 46 -c again")
+    check("reopen: the record line asks for why the issue is reopening",
+          refusal is not None and refusal.split("\n")[2].startswith(
+              "Record why the issue is reopening in docs/issues/46-the-only-file.md"), refusal)
+
+    refusal = refusal_in_checkout(
+        "gh issue delete https://github.com/nedschorus/nedschorus/issues/46 --yes")
+    check("delete by URL: the issue number is read from the URL and its file named",
+          refusal is not None and refusal.split("\n")[1].startswith(
+              "Record the outcome in docs/issues/46-the-only-file.md"), refusal)
+    check("delete: the duplicate line comes first among the close lines",
+          refusal is not None and refusal.split("\n")[3].startswith(
+              "If this issue covers the same work as another issue: "), refusal)
+
+    refusal = refusal_in_checkout("gh issue delete 48 --yes")
+    check("delete: an issue with no file on main may be closed as not planned if filed by mistake",
+          refusal == guard.DELETE_REFUSAL_NO_FILE, refusal)
 
 print()
 if failures:
