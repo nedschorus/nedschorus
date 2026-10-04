@@ -3122,8 +3122,9 @@ with tempfile.TemporaryDirectory() as tmp:
     mac_dir = Path(tmp, "mac-transcripts", "p")
     mac_dir.mkdir(parents=True)
     session = Path(mac_dir, "session.jsonl")
-    # The decoy differs from the name only where a regex would match any character.
-    session.write_text('{"text": "decoy nedXsXv2X1XXmd and -notesXmd"}\n'
+    # Each decoy is matched by the name read as a regex but not by the name read literally:
+    # "." matches any character and "[1]" matches "1".
+    session.write_text('{"text": "decoy ned\'sXv21Xmd and -notesXmd"}\n'
                        '{"text": "wrote -notes.md here"}\n'
                        '{"text": "and ned\'s.v2[1].md there"}\n')
 
