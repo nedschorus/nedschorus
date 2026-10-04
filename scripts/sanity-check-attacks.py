@@ -262,15 +262,9 @@ Running a sanity-check, and reading its output:
   finishes the run's closing steps, prints what a finished run prints, with
   no `STOPPED:` line, and ends by the signal. A cell still running when the
   signal arrives makes the run a stopped run, whatever its calls return
-  afterwards. SIGKILL, and a
-  machine that stops, cannot be answered, so each run, before it makes its
-  own copy, removes the copies no live run owns and prints `removed: a review
-  copy an earlier run left behind, <path>` for each. A copy is a live run's
-  while that run holds the lock on the owner file beside the copy's
-  directory, `<directory>.owner`, which the operating system releases when
-  the process ends however it ends; so two runs at once never remove each
-  other's copy. An agent whose runner was killed outright still runs to its
-  own end, in a copy the next run removes from under it.
+  afterwards. SIGKILL and a machine that stops cannot be answered; delete
+  their leftover review-copy directories by hand. If a run cannot remove its
+  own copy, it fails and names the directory to delete by hand.
 - Each saved report opens with a provenance line: runtime, model, effort,
   the reviewing CLI's version (measured by this runner, not self-reported),
   audit, target, and the commit the review copy holds and its state, so
@@ -283,7 +277,6 @@ import argparse
 import concurrent.futures
 import contextlib
 import datetime
-import fcntl
 import hashlib
 import os
 import pathlib
@@ -340,8 +333,7 @@ RECOGNISED_FAILURE_TEXTS_FOR_MODEL = {
 
 # The signals that end a run early and that this runner answers by stopping
 # its agents and removing its review copy: see WHEN A RUN IS STOPPED in the
-# module docstring. SIGKILL cannot be answered; the next run removes the copy
-# a killed run left (remove_review_copies_no_live_run_owns).
+# module docstring.
 RUN_STOP_SIGNALS = (signal.SIGTERM, signal.SIGINT, signal.SIGHUP)
 # How long the stopped agents' processes are given to end on SIGTERM before
 # they are sent SIGKILL.
@@ -367,9 +359,9 @@ CELLS_FINISHED_AT_THE_STOP = None
 # thread already holding it cannot wait on itself; in a run the main thread,
 # which runs the handler, launches no agent-binary and never holds it.
 AGENT_BINARY_LAUNCH_LOCK = threading.RLock()
-# The name of the file beside a review copy's directory whose lock says a
-# live run owns that copy: see claim_review_copy_directory.
-REVIEW_COPY_OWNER_FILE_SUFFIX = ".owner"
+# The review copy this run could not remove, which makes the run fail once its
+# record is shipped; None while there is none.
+REVIEW_COPY_NOT_REMOVED = None
 
 # The line a cell prints when its first launch produced no report and the
 # runner launches it once more: `RETRYING: <cell> — <cause class> — <detail>`.
@@ -1427,9 +1419,11 @@ def review_copy_of_commit(commit: str, record_name: str,
     copy means what it means in the checkout. Made under REVIEW_COPIES_ROOT,
     in a directory of its own named for the record.
     """
+    global REVIEW_COPY_NOT_REMOVED
+    REVIEW_COPY_NOT_REMOVED = None
     REVIEW_COPIES_ROOT.mkdir(parents=True, exist_ok=True)
-    remove_review_copies_no_live_run_owns()
-    holder, owner_file = claim_review_copy_directory(record_name)
+    holder = pathlib.Path(tempfile.mkdtemp(
+        prefix=f"{record_name}-", dir=REVIEW_COPIES_ROOT))
     checkout = holder / "checkout"
     steps = (
         (["git", "clone", "--quiet", "--local", "--no-checkout",
@@ -1439,8 +1433,8 @@ def review_copy_of_commit(commit: str, record_name: str,
           "+refs/remotes/origin/*:refs/remotes/origin/*"], checkout),
         (["git", "checkout", "--quiet", "--detach", commit], checkout),
     )
-    # One try from the claim on, so the copy is removed however the run ends:
-    # a git step that fails, a run that raises, and a run a stop signal ends
+    # One try from directory creation on, so the copy is removed after a git
+    # step that fails, a run that raises, and a run a stop signal ends
     # while the copy is still being made.
     try:
         for command, cwd in steps:
@@ -1451,24 +1445,13 @@ def review_copy_of_commit(commit: str, record_name: str,
         yield checkout
     finally:
         remove_directory_whatever_signal_arrives(holder)
+        # Printed, not raised: an exception here would replace a stop signal
+        # already on its way out, and would end the run before its record is
+        # shipped. REVIEW_COPY_NOT_REMOVED makes the run fail after shipping.
         if holder.exists():
-            # The owner file stays, unlocked once this run ends, so the next
-            # run tries the removal again.
-            print(review_copy_not_removed_line(holder),
-                  flush=True)
-        else:
-            holder.with_name(holder.name + REVIEW_COPY_OWNER_FILE_SUFFIX).unlink(
-                missing_ok=True)
-        owner_file.close()
-
-
-def review_copy_not_removed_line(holder: pathlib.Path) -> str:
-    """The line a run prints when a review copy's removal leaves it in place.
-    The copy's owner file stays, and its lock is released when this run ends,
-    so the next run's remove_review_copies_no_live_run_owns removes the copy;
-    the requesting agent has nothing to do."""
-    return (f"WARNING: the review copy could not be removed: {holder}. "
-            f"Leave it; the next sanity-check run removes it.")
+            REVIEW_COPY_NOT_REMOVED = holder
+            print(f"WARNING: the review copy could not be removed: {holder.resolve()}\n"
+                  "Delete that directory by hand.", flush=True)
 
 
 def remove_directory_whatever_signal_arrives(directory: pathlib.Path) -> None:
@@ -1480,121 +1463,6 @@ def remove_directory_whatever_signal_arrives(directory: pathlib.Path) -> None:
     except RunStoppedBySignal:
         shutil.rmtree(directory, ignore_errors=True)
         raise
-
-
-def claim_review_copy_directory(record_name: str) -> tuple:
-    """A new, empty directory under REVIEW_COPIES_ROOT for one run's review
-    copy, and the open owner file beside it, locked for as long as this run
-    lives: (directory, owner file).
-
-    The lock is what tells a live run's copy from one a dead run left behind
-    (remove_review_copies_no_live_run_owns). The operating system drops it
-    when the process ends, however it ends, SIGKILL included, so no run has to
-    reach a line of its own for its copy to become removable; and two runs at
-    once each hold their own, so neither removes the other's. The owner file
-    is made and locked before the directory exists, so a directory with no
-    owner file is never a live run's. Another run may lock and remove an owner
-    file in the moment between its creation and this run's lock; the lock
-    would then be on a file no path names, so the file's identity is checked
-    under the lock and the claim starts again with a new name. The file's text
-    names the process, for a person reading the directory."""
-    while True:
-        descriptor, owner_name = tempfile.mkstemp(
-            prefix=f"{record_name}-", suffix=REVIEW_COPY_OWNER_FILE_SUFFIX,
-            dir=REVIEW_COPIES_ROOT)
-        owner_file = os.fdopen(descriptor, "w", encoding="utf-8")
-        fcntl.flock(owner_file.fileno(), fcntl.LOCK_EX)
-        holder = pathlib.Path(owner_name[:-len(REVIEW_COPY_OWNER_FILE_SUFFIX)])
-        try:
-            still_named = (os.stat(owner_name).st_ino
-                           == os.fstat(owner_file.fileno()).st_ino)
-            if still_named:
-                holder.mkdir()
-        except FileNotFoundError:
-            still_named = False
-        except FileExistsError:
-            # A directory of that name with no owner file until now: a copy
-            # left by a runner older than owner files. Leave it to the next
-            # run's removal and take another name.
-            pathlib.Path(owner_name).unlink(missing_ok=True)
-            still_named = False
-        if still_named:
-            owner_file.write(f"process {os.getpid()}, started "
-                             f"{datetime.datetime.now().isoformat(timespec='seconds')}\n")
-            owner_file.flush()
-            return holder, owner_file
-        owner_file.close()
-
-
-def remove_review_copies_no_live_run_owns() -> list:
-    """Remove every review copy under REVIEW_COPIES_ROOT that no live run
-    owns, and return the directories removed.
-
-    A run removes its own copy when it ends, and a run ended by SIGTERM,
-    SIGINT or SIGHUP does too (see WHEN A RUN IS STOPPED in the module
-    docstring). A run ended by SIGKILL, or by the machine stopping, cannot:
-    its copy, a whole checkout, would stay for good, one more for each such
-    run, which review of the pull request that introduced the copy measured.
-    So each run, before it makes its own copy, removes the ones left behind.
-    A copy is a live run's while that run holds the lock on its owner file
-    (claim_review_copy_directory); a lock this function can take means the
-    owner is gone. A directory with no owner file was made before copies had
-    owners, by a runner that never reached main, and is removed too. An owner
-    file with no directory is what a run killed between the two leaves, and is
-    removed when its lock can be taken. Two runs starting together may both
-    try one dead copy: one takes the lock and removes it, the other finds the
-    lock held and leaves it alone.
-    """
-    removed = []
-    for holder in sorted(path for path in REVIEW_COPIES_ROOT.iterdir() if path.is_dir()):
-        owner_path = holder.with_name(holder.name + REVIEW_COPY_OWNER_FILE_SUFFIX)
-        owner_file = lock_owner_file_no_live_run_holds(owner_path)
-        if owner_file is None and owner_path.exists():
-            continue
-        if not holder.is_dir():
-            # Its own run removed it, and its owner file, since this function
-            # listed the directory: nothing was left behind.
-            if owner_file is not None:
-                owner_file.close()
-            continue
-        remove_directory_whatever_signal_arrives(holder)
-        if holder.exists():
-            print(review_copy_not_removed_line(holder),
-                  flush=True)
-        else:
-            removed.append(holder)
-            print(f"removed: a review copy an earlier run left behind, {holder}",
-                  flush=True)
-            owner_path.unlink(missing_ok=True)
-        if owner_file is not None:
-            owner_file.close()
-    for owner_path in sorted(REVIEW_COPIES_ROOT.glob("*" + REVIEW_COPY_OWNER_FILE_SUFFIX)):
-        if owner_path.with_name(owner_path.name[:-len(REVIEW_COPY_OWNER_FILE_SUFFIX)]).exists():
-            continue
-        owner_file = lock_owner_file_no_live_run_holds(owner_path)
-        if owner_file is not None:
-            owner_path.unlink(missing_ok=True)
-            owner_file.close()
-    return removed
-
-
-def lock_owner_file_no_live_run_holds(owner_path: pathlib.Path):
-    """The owner file at `owner_path`, open and locked by this process, when
-    no live run holds its lock; None when a live run does, when the file is
-    not there, or when the path came to name another file while this function
-    waited for nothing: the lock is asked for without waiting."""
-    try:
-        owner_file = open(owner_path, "r+", encoding="utf-8")
-    except OSError:
-        return None
-    try:
-        fcntl.flock(owner_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-        if os.stat(owner_path).st_ino == os.fstat(owner_file.fileno()).st_ino:
-            return owner_file
-    except OSError:
-        pass
-    owner_file.close()
-    return None
 
 
 def processes_under_this_one() -> dict:
@@ -2357,7 +2225,7 @@ def run_cells_in_review_copy(args, target_path: pathlib.Path, run_log: RunOutput
         print_run_completion(out_dir)
     else:
         print_completion_of_run_that_saved_no_report(out_dir)
-    return 0 if ok else 1
+    return 0 if ok and REVIEW_COPY_NOT_REMOVED is None else 1
 
 
 def print_completion_of_run_that_saved_no_report(out_dir: pathlib.Path, ship=None) -> None:

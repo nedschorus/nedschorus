@@ -67,7 +67,6 @@ import os
 import pathlib
 import re
 import shlex
-import fcntl
 import shutil
 import signal
 import subprocess
@@ -2682,7 +2681,7 @@ sys.exit(module.main())
     # cell has saved its report and the claude cell is still working, with a
     # process of its own under it, when the signal arrives at the runner
     # alone. Afterwards: the runner ended by that signal; the claude launch
-    # and the process under it are gone; the copy and its owner file are gone;
+    # and the process under it are gone; the copy is gone;
     # the report already saved, the cells' scratch directories and a log that
     # says what happened are in the record, which is shipped; and nothing was
     # relaunched. SIGINT here goes to the runner's process alone, which used
@@ -2722,8 +2721,8 @@ sys.exit(module.main())
                             if record and (record / "sanity-check-run.log").is_file() else "")
                 check(f"{signal_name} to the runner while a cell runs: the cells had "
                       f"started and the copy was there",
-                      started and len(copies_mid_run) == 2
-                      and any(name.endswith(".owner") for name in copies_mid_run),
+                      started and len(copies_mid_run) == 1
+                      and not any(name.endswith(".owner") for name in copies_mid_run),
                       f"started {started}, copies root held {copies_mid_run}")
                 check(f"the runner ends by {signal_name}, after its own steps",
                       process.returncode == -stop_signal,
@@ -2732,7 +2731,7 @@ sys.exit(module.main())
                       f"and the process under it, are stopped",
                       len(claude_launches) == 1 and still_running == [],
                       f"launches {claude_launches}, still running {still_running}")
-                check(f"the review copy and its owner file are gone after {signal_name}",
+                check(f"the review copy is gone after {signal_name}",
                       left_in_copies_root(base) == [],
                       f"copies root holds {left_in_copies_root(base)}")
                 check(f"the report saved before {signal_name}, the scratch directories "
@@ -2863,79 +2862,6 @@ sys.exit(module.main())
           and raised is None and report is None and output == "",
           f"launched {launched_after_stop}, cell_ok {cell_ok}, raised {raised!r}, "
           f"report {report!r}, output {output!r}")
-
-    # Case 46: what a run killed outright leaves, and what the next run does
-    # with it. SIGKILL cannot be answered, so the copy stays: while the killed
-    # run was alive its copy was its own, and a second run's look at the root
-    # leaves it alone, because the live run holds the lock on its owner file;
-    # once the run is dead the operating system has dropped the lock, and the
-    # next run removes the copy before making its own. A directory with no
-    # owner file, what the runner made before copies had owners, goes too, and
-    # so does an owner file with no directory. A copy whose owner is alive,
-    # here a lock this test holds, stays.
-    with tempfile.TemporaryDirectory() as scratch:
-        base = pathlib.Path(scratch).resolve()
-        repo = scratch_repository_with_design(base)
-        programs, recorded = stand_in_agent_binaries(base)
-        process = subprocess.Popen(
-            [sys.executable, "-B", str(runner_driver(base, repo)),
-             "--target", "docs/design.md", "--attack", "cut", "--runtime", "claude"],
-            env=runner_process_environment(programs, recorded),
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        driven = runner_over(repo, base)
-        remove_leftovers = getattr(driven, "remove_review_copies_no_live_run_owns", None)
-        try:
-            started = wait_until(
-                lambda: len(recorded_process_ids(recorded, "claude")) == 1)
-            copies_root = base / "review-copies"
-            live_copies = [path for path in copies_root.iterdir() if path.is_dir()]
-            buffer = io.StringIO()
-            with contextlib.redirect_stdout(buffer):
-                removed_while_alive = remove_leftovers() if remove_leftovers else None
-            check("a second run's look at the copies leaves a live run's copy alone",
-                  started and len(live_copies) == 1 and removed_while_alive == []
-                  and live_copies[0].is_dir() and (live_copies[0] / "checkout").is_dir(),
-                  f"started {started}, copies {live_copies}, "
-                  f"removed {removed_while_alive}, printed {buffer.getvalue()!r}")
-            process.kill()
-            process.communicate()
-            end_stand_ins(recorded)
-            check("a run killed outright leaves its copy behind",
-                  len(live_copies) == 1 and live_copies[0].is_dir(),
-                  f"copies root holds {left_in_copies_root(base)}")
-            legacy = copies_root / "design-made-before-owner-files"
-            (legacy / "checkout").mkdir(parents=True)
-            (copies_root / "design-no-directory.owner").write_text("", encoding="utf-8")
-            kept = copies_root / "design-owned-by-a-live-run"
-            (kept / "checkout").mkdir(parents=True)
-            kept_owner = open(copies_root / "design-owned-by-a-live-run.owner", "w",
-                              encoding="utf-8")
-            fcntl.flock(kept_owner.fileno(), fcntl.LOCK_EX)
-            try:
-                driven.run_claude = lambda prompt, checkout=None: (
-                    0, any_attack_report, "a-test-model", "", None)
-                code, out, err = drive_main(driven, [
-                    "--target", "docs/design.md", "--attack", "cut",
-                    "--runtime", "claude"])
-                left = left_in_copies_root(base)
-            finally:
-                kept_owner.close()
-            check("the next run removes the killed run's copy, a copy with no owner "
-                  "file and an owner file with no copy, and says so",
-                  code == 0 and bool(live_copies) and not live_copies[0].exists()
-                  and not legacy.exists()
-                  and out.count("removed: a review copy an earlier run left behind, ") == 2
-                  and f"left behind, {live_copies[0]}\n" in out,
-                  f"exit {code}, copies root holds {left}, stdout {out!r}, stderr {err!r}")
-            check("and leaves the copy a live run owns, and nothing of its own",
-                  left == ["design-owned-by-a-live-run",
-                           "design-owned-by-a-live-run.owner"],
-                  f"copies root holds {left}")
-        finally:
-            if process.poll() is None:
-                process.kill()
-                process.communicate()
-            end_stand_ins(recorded)
 
     # Case 47: a byte that is not UTF-8 in what an agent-binary writes. A
     # Codex session's captured streams hold everything the model and its tools
@@ -3277,50 +3203,6 @@ sys.exit(module.main())
                 process.communicate()
             end_stand_ins(recorded)
 
-    # Case 53: another run's removal takes this run's owner file in the moment
-    # between its creation and this run's lock. The lock is then on a file no
-    # path names, and a copy made beside it would have no owner file: the next
-    # run would remove it from under this run's cells. The claim checks the
-    # file's identity under the lock and starts again with a new name.
-    with tempfile.TemporaryDirectory() as scratch:
-        root = pathlib.Path(scratch).resolve()
-        runner_claim = load_runner()
-        runner_claim.REVIEW_COPIES_ROOT = root
-        real_make_owner_file = runner_claim.tempfile.mkstemp
-        made = []
-
-        def owner_file_taken_before_the_lock(*arguments, **keywords):
-            descriptor, name = real_make_owner_file(*arguments, **keywords)
-            made.append(name)
-            if len(made) == 1:
-                # What another run's remove_review_copies_no_live_run_owns
-                # does to an owner file no lock holds yet.
-                os.unlink(name)
-            return descriptor, name
-
-        claimed, claim_error = None, None
-        try:
-            runner_claim.tempfile.mkstemp = owner_file_taken_before_the_lock
-            claimed = runner_claim.claim_review_copy_directory("design")
-        except Exception as error:
-            claim_error = error
-        finally:
-            runner_claim.tempfile.mkstemp = real_make_owner_file
-        holder, owner_file = claimed if claimed else (None, None)
-        owner_path = (holder.with_name(holder.name + runner_claim.REVIEW_COPY_OWNER_FILE_SUFFIX)
-                      if holder else None)
-        check("a claim whose owner file was taken before its lock starts again, and "
-              "its copy's directory has its owner file beside it",
-              claim_error is None and len(made) == 2 and holder is not None
-              and holder.is_dir() and owner_path.is_file()
-              and os.stat(owner_path).st_ino == os.fstat(owner_file.fileno()).st_ino
-              and sorted(path.name for path in root.iterdir())
-              == sorted([holder.name, owner_path.name]),
-              f"error {claim_error!r}, owner files made {made}, holder {holder}, "
-              f"root holds {sorted(path.name for path in root.iterdir())}")
-        if owner_file is not None:
-            owner_file.close()
-
     # Case 54: an agent-binary started in the moment the stop handler waits
     # for the launch lock. The handler makes later stop signals do nothing
     # before it waits, and a cell's thread may be starting an agent-binary
@@ -3436,48 +3318,36 @@ sys.exit(module.main())
                 process.communicate()
             end_stand_ins(recorded)
 
-    # Case 56: a review copy whose removal fails. The run says so and tells
-    # the requesting agent to leave it, because the copy's owner file stays
-    # and the next run removes the copy: both the run that made the copy and
-    # a later run's sweep of copies no live run owns print the line, and the
-    # sweep after them removes the copy.
+    # A failed removal must prevent a successful exit and name the manual action.
     with tempfile.TemporaryDirectory() as scratch:
         base = pathlib.Path(scratch).resolve()
-        (base / "repository").mkdir()
-        repo = new_repo(base / "repository")
+        repo = scratch_repository_with_design(base)
+        runner_removal = runner_over(repo, base)
+        runner_removal.run_claude = lambda prompt, checkout=None: (
+            0, any_attack_report, "a-test-model", "", None)
+        runner_removal.remove_directory_whatever_signal_arrives = lambda directory: None
+        code, out, err = drive_main(runner_removal, [
+            "--target", "docs/design.md", "--attack", "cut", "--runtime", "claude"])
+        holders = list(runner_removal.REVIEW_COPIES_ROOT.iterdir())
+        holder = holders[0] if len(holders) == 1 else None
+        expected = (f"WARNING: the review copy could not be removed: {holder}\n"
+                    "Delete that directory by hand.\n")
+        check("failed removal ends nonzero, names the full path and manual deletion, "
+              "and still ships the record",
+              code == 1 and holder is not None and holder.is_dir()
+              and expected in out and "record: " in out,
+              f"exit {code}, holders {holders}, stdout {out!r}, stderr {err!r}")
+        runner_removal = runner_over(repo, base)
         head = git(repo, "rev-parse", "HEAD").strip()
-        runner_removal = load_runner()
-        runner_removal.REVIEW_COPIES_ROOT = base / "review-copies"
-        real_removal = runner_removal.remove_directory_whatever_signal_arrives
-        own_copy_output, sweep_output, next_sweep_output = io.StringIO(), io.StringIO(), io.StringIO()
-        holders = []
-        try:
-            runner_removal.remove_directory_whatever_signal_arrives = lambda directory: None
-            with contextlib.redirect_stdout(own_copy_output):
-                with runner_removal.review_copy_of_commit(head, "design", repo) as checkout:
-                    holders.append(checkout.parent)
-            with contextlib.redirect_stdout(sweep_output):
-                runner_removal.remove_review_copies_no_live_run_owns()
-        finally:
-            runner_removal.remove_directory_whatever_signal_arrives = real_removal
-        with contextlib.redirect_stdout(next_sweep_output):
-            removed = runner_removal.remove_review_copies_no_live_run_owns()
-        holder = holders[0] if holders else None
-        expected = (f"WARNING: the review copy could not be removed: {holder}. "
-                    f"Leave it; the next sanity-check run removes it.\n")
-        check("a copy whose removal fails is named with the instruction to leave it, by "
-              "the run that made it and by a later run's sweep",
-              holder is not None and own_copy_output.getvalue() == expected
-              and sweep_output.getvalue() == expected,
-              f"holder {holder}, the run printed {own_copy_output.getvalue()!r}, "
-              f"the sweep printed {sweep_output.getvalue()!r}")
-        check("and the next sweep removes it, as the line says",
-              holder is not None and removed == [holder]
-              and next_sweep_output.getvalue()
-              == f"removed: a review copy an earlier run left behind, {holder}\n"
-              and not any(runner_removal.REVIEW_COPIES_ROOT.iterdir()),
-              f"removed {removed}, printed {next_sweep_output.getvalue()!r}, root holds "
-              f"{sorted(path.name for path in runner_removal.REVIEW_COPIES_ROOT.iterdir())}")
+        with runner_removal.review_copy_of_commit(head, "design", repo) as checkout:
+            check("a new run creates only its directory and leaves earlier copies alone",
+                  holder is not None and holder.is_dir()
+                  and set(runner_removal.REVIEW_COPIES_ROOT.iterdir())
+                  == {holder, checkout.parent},
+                  str(list(runner_removal.REVIEW_COPIES_ROOT.iterdir())))
+        check("a new run removes only its own copy",
+              list(runner_removal.REVIEW_COPIES_ROOT.iterdir()) == holders,
+              str(list(runner_removal.REVIEW_COPIES_ROOT.iterdir())))
 
     # Case 57: a cell whose thread first runs after the run is stopped. It
     # launches nothing and does not count as finished, so the run ends with
