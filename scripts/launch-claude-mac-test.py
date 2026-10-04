@@ -55,7 +55,6 @@ import os
 import subprocess
 import sys
 import tempfile
-import threading
 import time
 from pathlib import Path
 
@@ -181,8 +180,10 @@ class MacLaunchSandbox:
                    '  esac\n'
                    'done\n'
                    'exit 0\n')
-        for stub_name in ("claude", "git"):
-            write_stub(self.stubs, stub_name, record + "exit 0\n")
+        write_stub(self.stubs, "git", record + "exit 0\n")
+        write_stub(self.stubs, "claude", record +
+                   '[ "${1:-}" = "update" ] || exit 0\n'
+                   f'echo update >> "{self.captures}/claude-updates.txt"\n')
         # An attached pane ends in `exec $SHELL`. This stand-in records where
         # that shell starts and what it inherited — the environment a
         # `claude --continue` typed there would read its task-list binding
@@ -278,16 +279,6 @@ class MacLaunchSandbox:
     def update_lock_path(self):
         return self.home / ".local" / "state" / "claude" / "agent-binary-update.lock"
 
-    def claude_records_updates_against(self, release_marker: Path):
-        """Replace the claude stub with one that records, per `update`, whether
-        the other update's release marker existed yet: `after-release` means
-        this update waited for the lock, `before-release` means it did not."""
-        write_stub(self.stubs, "claude",
-                   '[ "${1:-}" = "update" ] || exit 0\n'
-                   f'if [ -e "{release_marker}" ]; then echo after-release; '
-                   'else echo before-release; fi '
-                   f'>> "{self.captures}/claude-updates.txt"\n')
-
     def claude_updates(self):
         path = self.captures / "claude-updates.txt"
         return (path.read_text(encoding="utf-8").splitlines()
@@ -300,34 +291,16 @@ class MacLaunchSandbox:
 
 
 class AnotherUpdateHoldsTheLock:
-    """Hold the machine's update lock from this test, as another update would,
-    releasing it after release_after_seconds (None: held until the block ends).
-    The release marker is written BEFORE the lock is released, so an update
-    that ran only after taking the lock always sees it."""
-
-    def __init__(self, lock_path: Path, release_marker: Path,
-                 release_after_seconds=None):
-        self.lock_path = lock_path
-        self.release_marker = release_marker
-        self.release_after_seconds = release_after_seconds
-        self.timer = None
-
-    def release(self):
-        self.release_marker.write_text("released", encoding="utf-8")
-        fcntl.flock(self.lock_file, fcntl.LOCK_UN)
+    def __init__(self, lock_path):
+        self.lock_path = Path(lock_path)
 
     def __enter__(self):
         self.lock_path.parent.mkdir(parents=True, exist_ok=True)
         self.lock_file = open(self.lock_path, "a")
         fcntl.flock(self.lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        if self.release_after_seconds is not None:
-            self.timer = threading.Timer(self.release_after_seconds, self.release)
-            self.timer.start()
         return self
 
     def __exit__(self, *exception):
-        if self.timer is not None:
-            self.timer.join()
         self.lock_file.close()
 
 
@@ -394,52 +367,55 @@ def main() -> int:
               result.returncode == 0 and sandbox.tmux_argv(),
               (result.returncode, result.stderr[:300]))
 
-        # --- the update runs under the machine-wide lock (user-approved
-        # 2026-09-22): a launch whose update finds another update holding the
-        # lock waits for it, then runs its own; one held past the limit is
-        # skipped with one line, and the launch still completes. The lock is
-        # held from this process on the sandbox HOME's lock file, which is
-        # the file the launcher's helper resolves there. ---------------------
-        sandbox = MacLaunchSandbox(root / "update-lock-wait")
-        release_marker = root / "update-lock-wait-released"
-        sandbox.claude_records_updates_against(release_marker)
-        with AnotherUpdateHoldsTheLock(sandbox.update_lock_path(), release_marker,
-                                       release_after_seconds=1.5):
-            result = sandbox.run(str(root / "update-lock-wait-agents"),
-                                 update_timeout_seconds=30)
-        check("update lock: an update started while another holds the lock "
-              "waits, then runs",
-              sandbox.claude_updates() == ["after-release"],
-              (sandbox.claude_updates(), result.stderr[:400]))
-        check("update lock: the waiting launch says it is waiting",
-              "launch-claude-mac: waiting for another update on this machine "
-              "to finish" in result.stderr, result.stderr[:400])
-        check("update lock: the launch completes after the wait, reaching tmux",
-              result.returncode == 0 and sandbox.tmux_argv(),
-              (result.returncode, result.stderr[:300]))
-
         sandbox = MacLaunchSandbox(root / "update-lock-bound")
-        release_marker = root / "update-lock-bound-released"
-        sandbox.claude_records_updates_against(release_marker)
-        with AnotherUpdateHoldsTheLock(sandbox.update_lock_path(), release_marker):
+        sandbox.write_seat_token("mac-claude", "test-token")
+        with AnotherUpdateHoldsTheLock(sandbox.update_lock_path()):
             started = time.monotonic()
             result = sandbox.run(str(root / "update-lock-bound-agents"),
-                                 update_timeout_seconds=1)
+                                 update_timeout_seconds=30)
             elapsed = time.monotonic() - started
-        check("update lock: a lock held past the limit skips this update",
+        check("update lock: a held lock skips this update immediately",
               sandbox.claude_updates() == [], sandbox.claude_updates())
-        check("update lock: the skip is reported in one line naming the limit",
-              "launch-claude-mac: another update on this machine was still "
-              "running after 1s; skipping this update and launching on the "
-              "installed version" in result.stderr, result.stderr[:400])
+        check("update lock: the skip is reported in exactly one line",
+              "Another claude update is running; this launch uses the claude already installed.\n"
+              == result.stderr, result.stderr[:400])
         check("update lock: the skipped launch still completes, without hanging",
               result.returncode == 0 and sandbox.tmux_argv() and elapsed < 15,
               (result.returncode, f"{elapsed:.1f}s", result.stderr[:300]))
 
+        with AnotherUpdateHoldsTheLock(sandbox.update_lock_path()):
+            result = subprocess.run(
+                [sys.executable, str(LAUNCHER.with_name(UPDATE_LOCK_HELPER_NAME)),
+                 "--program-name", "launch-claude-mac", "--timeout-seconds", "30",
+                 "--", sys.executable, "-c", "raise SystemExit(3)"],
+                env={**os.environ, "HOME": str(sandbox.home)},
+                capture_output=True, text=True, timeout=3)
+        check("update lock: a second process skips with exit status zero",
+              result.returncode == 0 and result.stdout == ""
+              and result.stderr == "Another claude update is running; this launch uses the claude already installed.\n",
+              (result.returncode, result.stdout, result.stderr))
+
+        result = sandbox.run(str(root / "update-lock-bound-agents"),
+                             update_timeout_seconds=30)
+        check("update lock: a free lock runs the update and completes the launch",
+              sandbox.claude_updates() == ["update"]
+              and result.returncode == 0 and sandbox.tmux_argv(),
+              (sandbox.claude_updates(), result.returncode, result.stderr))
+
+        result = subprocess.run(
+            [sys.executable, str(LAUNCHER.with_name(UPDATE_LOCK_HELPER_NAME)),
+             "--program-name", "launch-claude-mac", "--timeout-seconds", "30",
+             "--", sys.executable, "-c",
+             "import sys; print('update failed', file=sys.stderr); sys.exit(3)"],
+            env={**os.environ, "HOME": str(sandbox.home)},
+            capture_output=True, text=True, timeout=3)
+        check("update lock: a failed update preserves its diagnosis and exit status",
+              result.returncode == 3 and result.stderr == "update failed\n",
+              (result.returncode, result.stderr))
+
         # A limit of 0 skips the update entirely, lock included: nothing
         # waits, no update runs, and the lock file is never created.
         sandbox = MacLaunchSandbox(root / "update-lock-zero")
-        sandbox.claude_records_updates_against(root / "update-lock-zero-released")
         result = sandbox.run(str(root / "update-lock-zero-agents"),
                              update_timeout_seconds=0)
         check("update lock: a limit of 0 runs no update and takes no lock",
