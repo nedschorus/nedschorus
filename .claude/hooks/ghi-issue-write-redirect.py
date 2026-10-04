@@ -32,8 +32,8 @@ THE RULINGS IT CARRIES.
 THE BEHAVIOUR IT DEFENDS AGAINST, named per CLAUDE.md's reviewer rule: agents
 posting issue comments by hand. The /ghi-write skill tells them to do exactly
 that today — "until #46 builds the tool, plain `gh issue comment` naming the
-event kind is the interim path" — and `docs/agents/ghi-instructions.md`
-repeats it. Hand-filed and hand-edited issues are the case the design's
+event kind is the interim path" — and the ghi seat's brief, since deleted,
+repeated it. Hand-filed and hand-edited issues are the case the design's
 § The GHI write path already names; this hook is the one it specifies.
 
 DECISIONS, and where they depart from the design of record:

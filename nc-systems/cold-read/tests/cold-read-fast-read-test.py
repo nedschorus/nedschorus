@@ -805,7 +805,7 @@ check("a skill's prompt is in the class",
       class_of(root / ".claude/skills/cold-read/prompts/terminology.md")
       == "a skill or a skill's prompt")
 check("a file under docs/agents/ is in the class",
-      class_of(root / "docs/agents/ghi-instructions.md") == "a file under docs/agents/")
+      class_of(root / "docs/agents/pr-reviewer-instructions.md") == "a file under docs/agents/")
 check("so is one in its queue, which becomes such a file",
       class_of(root / "docs/agents/queue/some-agent-instructions.md")
       == "a file under docs/agents/")
@@ -839,7 +839,7 @@ check("a file outside the checkout is not classified",
 # A seat's scratch worktree is a checkout of the repository too: a brief
 # edited there is the same document on a branch, and the warning must fire
 # for it (measured 2026-09-22: it did not, on a scratch worktree's copy of
-# docs/agents/doctrine-instructions.md). A real second worktree of a scratch
+# a seat brief under docs/agents/). A real second worktree of a scratch
 # repository, with the module's own checkout pointed at the first, stands in
 # for the seat's. A directory in no repository keeps the old answer.
 with tempfile.TemporaryDirectory() as worktree_scratch:
