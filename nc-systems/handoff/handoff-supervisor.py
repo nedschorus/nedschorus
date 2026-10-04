@@ -71,10 +71,13 @@ prompt, so the successor would boot with no instructions at all.
 Starting a supervisor requires a nonempty CLAUDE_CODE_TASK_LIST_ID from
 scripts/launch-claude-mac or scripts/launch-claude-ubuntu.
 
-Exit codes: 0 clean stop, 2 bad invocation, 3 the agent command is missing.
+Exit codes: 0 clean stop, 2 bad invocation, 3 the agent command is missing,
+4 the supervisor lock could not be claimed.
 """
 
 import argparse
+import ctypes
+import fcntl
 import importlib.util
 import json
 import os
@@ -1182,26 +1185,113 @@ class AdoptedSession:
         return 0
 
 
-def claim_supervisor_lock(lock_path: Path) -> bool:
-    """Claim the agent's lock, reclaiming a stale lock or reporting a live owner."""
-    lock_path.parent.mkdir(parents=True, exist_ok=True)
+def supervisor_lock_filesystem_is_local(directory: Path):
+    """Return whether the filesystem is local, with its type for a refusal."""
+    if sys.platform == "darwin":
+        # Darwin's statvfs omits MNT_LOCAL; statfs64 exposes the mount flag.
+        class DarwinSupervisorLockFilesystem(ctypes.Structure):
+            _fields_ = [
+                ("block_size", ctypes.c_uint32), ("io_size", ctypes.c_int32),
+                ("counts", ctypes.c_uint64 * 5), ("fsid", ctypes.c_int32 * 2),
+                ("owner", ctypes.c_uint32), ("type", ctypes.c_uint32),
+                ("flags", ctypes.c_uint32), ("subtype", ctypes.c_uint32),
+                ("type_name", ctypes.c_char * 16),
+                ("mount_on", ctypes.c_char * 1024),
+                ("mount_from", ctypes.c_char * 1024),
+                ("reserved", ctypes.c_uint32 * 8),
+            ]
+
+        filesystem = DarwinSupervisorLockFilesystem()
+        statfs = ctypes.CDLL(None, use_errno=True).statfs64
+        statfs.argtypes = [ctypes.c_char_p, ctypes.POINTER(DarwinSupervisorLockFilesystem)]
+        statfs.restype = ctypes.c_int
+        if statfs(os.fsencode(directory), ctypes.byref(filesystem)) != 0:
+            error = ctypes.get_errno()
+            raise OSError(error, os.strerror(error), str(directory))
+        return bool(filesystem.flags & 0x1000), filesystem.type_name.decode()
+    if sys.platform == "linux":
+        finished = subprocess.run(
+            ["/usr/bin/stat", "-f", "-c", "%T", str(directory)],
+            capture_output=True, text=True, check=True)
+        filesystem = finished.stdout.strip()
+        # Unknown types are refused because they may implement remote locking.
+        return filesystem in {"ext2/ext3", "xfs", "btrfs", "tmpfs", "ramfs",
+                              "overlayfs", "zfs", "f2fs"}, filesystem
+    raise RuntimeError(f"cannot establish local filesystem on {sys.platform}")
+
+
+def refuse_old_code_supervisor(lock_file, agent: str):
+    # Delete this check once no supervisor started before this change is running.
     try:
-        descriptor = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-    except FileExistsError:
+        holder = int(lock_file.read().strip())
+    except ValueError:
+        return
+    if holder <= 0:
+        return
+    try:
+        finished = subprocess.run(
+            ["ps", "-ww", "-p", str(holder), "-o", "args="],
+            capture_output=True, text=True, timeout=PROCESS_COMMAND_LINE_READ_TIMEOUT_SECONDS)
+    except (OSError, subprocess.SubprocessError) as error:
+        raise RuntimeError(f"changeover check for {agent} failed: ps could not be run: {error}") from error
+    if finished.returncode == 1 and not finished.stdout.strip() and not finished.stderr.strip():
+        return
+    if finished.returncode != 0:
+        raise RuntimeError(f"changeover check for {agent} failed: ps exited "
+                           f"{finished.returncode}: {finished.stderr.strip()}")
+    words = finished.stdout.split()
+    named_agents = [word.partition("=")[2] for word in words if word.startswith("--agent=")]
+    named_agents += [words[index + 1] for index, word in enumerate(words)
+                     if word == "--agent" and index + 1 < len(words)]
+    if (any(word.rpartition("/")[2] == SUPERVISOR_SCRIPT_FILE_NAME for word in words)
+            and agent in named_agents):
+        raise RuntimeError(f"old-code supervisor {holder} is running for {agent}")
+
+
+def claim_supervisor_lock(lock_path: Path):
+    """Return an open file holding the agent's lifetime exclusive lock."""
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    local, filesystem = supervisor_lock_filesystem_is_local(lock_path.parent)
+    if not local:
+        raise RuntimeError(f"lock directory {lock_path.parent} is on {filesystem}, "
+                           "which is not a confirmed local filesystem")
+    agent = agent_name_from_supervisor_file(lock_path)
+    for _ in range(3):
+        lock_file = lock_path.open("a+", encoding="utf-8")
         try:
-            holder = int(lock_path.read_text(encoding="utf-8").strip())
-        except (ValueError, OSError):
-            holder = None
-        if holder is not None and holder != os.getpid():
-            held, _ = process_is_supervisor_for_agent(
-                holder, agent_name_from_supervisor_file(lock_path))
-            if held:
-                return False
-        lock_path.unlink(missing_ok=True)
-        return claim_supervisor_lock(lock_path)
-    os.write(descriptor, f"{os.getpid()}\n".encode("utf-8"))
-    os.close(descriptor)
-    return True
+            try:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError as error:
+                lock_file.seek(0)
+                holder = lock_file.read().strip()
+                raise RuntimeError(f"supervisor {holder or '(PID not yet written)'} "
+                                   f"is already running for {agent}") from error
+            try:
+                same_file = os.path.samestat(os.fstat(lock_file.fileno()), lock_path.stat())
+            except FileNotFoundError:
+                same_file = False
+            # An exiting holder can unlink after we open, before we acquire flock.
+            if not same_file:
+                lock_file.close()
+                continue
+            lock_file.seek(0)
+            refuse_old_code_supervisor(lock_file, agent)
+            lock_file.seek(0)
+            lock_file.truncate()
+            lock_file.write(f"{os.getpid()}\n")
+            lock_file.flush()
+            return lock_file
+        except BaseException:
+            lock_file.close()
+            raise
+    raise RuntimeError(f"lock path {lock_path} changed during all three claim attempts")
+
+
+def release_supervisor_lock(lock_path: Path, lock_file):
+    try:
+        lock_path.unlink()
+    finally:
+        lock_file.close()
 
 
 def wait_for_handoff(process, handoff_path: Path, consumed_counter, state_path: Path, state: dict):
@@ -1662,18 +1752,16 @@ def main(argv=None) -> int:
         adopted_session=adopted,
     )
 
-    if not claim_supervisor_lock(settings.lock_path):
-        print(
-            f"handoff-supervisor: another supervisor already holds {settings.agent} "
-            f"({settings.lock_path}); not starting a second one",
-            file=sys.stderr,
-        )
+    try:
+        lock_file = claim_supervisor_lock(settings.lock_path)
+    except (OSError, RuntimeError, subprocess.SubprocessError) as error:
+        print(f"handoff-supervisor: startup stopped: {error}", file=sys.stderr)
         return 4
 
     try:
         return supervise_sessions(settings)
     finally:
-        settings.lock_path.unlink(missing_ok=True)
+        release_supervisor_lock(settings.lock_path, lock_file)
 
 
 if __name__ == "__main__":

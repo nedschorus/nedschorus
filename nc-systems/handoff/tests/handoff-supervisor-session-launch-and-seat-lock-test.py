@@ -26,6 +26,7 @@ import tempfile
 import threading
 import time
 from pathlib import Path
+from unittest import mock
 
 # Before anything runs git: a run started with GIT_DIR set, or with another
 # variable that redirects git, must keep this suite's git, and the git of every
@@ -194,19 +195,8 @@ def run_process_identity_cases(workspace: Path):
     check("and the reader works again once ps is findable",
           supervisor.read_process_command_line(os.getpid())[1])
 
-    # The OTHER way ps fails to answer: it runs and never finishes. Driven with
-    # a real `ps` early on PATH that really hangs, a real subprocess.run
-    # timeout, and a real TimeoutExpired — nothing patched inside the reader,
-    # for the same reason as the block above.
-    #
-    # This case exists because mutation 18 of the #328 self-check SURVIVED:
-    # dropping subprocess.SubprocessError from the reader's except tuple leaves
-    # TimeoutExpired escaping the reader, which kills a supervisor at startup
-    # instead of reporting "could not ask" and falling back to os.kill. Nothing
-    # exercised the timeout, so nothing noticed. The 15 is now a module
-    # constant precisely so this case can lower it; a default argument could not
-    # be lowered from here, which is the trap the NOTE in
-    # process_is_supervisor_for_agent describes.
+    # Exercise the reader's timeout with a real hung ps, because an injected
+    # reader cannot demonstrate subprocess timeout handling.
     hanging_ps_directory = workspace / "hanging-ps"
     hanging_ps_directory.mkdir()
     hanging_ps = hanging_ps_directory / "ps"
@@ -237,11 +227,7 @@ def run_process_identity_cases(workspace: Path):
     check("ps answering 'no such process' means not a supervisor",
           not alive and "not running" in detail, detail)
 
-    # os.kill answers EXISTENCE and cannot fail to: ProcessLookupError means
-    # gone. So a lock left by a crashed supervisor, holding an id that no longer
-    # exists, is still recognised as stale with no ps at all. Without this the
-    # fail-closed rule wedged the ordinary post-crash state — the very state the
-    # lock's reclaim exists to serve.
+    # Liveness readers still distinguish a dead PID when ps is unavailable.
     check("os.kill says a process that is not there is not there",
           not supervisor.process_exists_by_signal(99999999))
     check("and says this process is",
@@ -286,11 +272,6 @@ def run_process_identity_cases(workspace: Path):
               complaints.getvalue())
         check("and names the way out, since whoever asked is now stuck on an assumption",
               "lock is removed" in complaints.getvalue(), complaints.getvalue())
-        # The remedy is the same for every caller; the CONSEQUENCE is not. This
-        # sentence once said "this seat will not start", which is true of
-        # claim_supervisor_lock and of nothing else that asks — the other
-        # callers refuse a repair, stop an agent, or set an exit code
-        # (#328 follow-up round, nedschorus#242).
         check("and does not claim a consequence only one of the callers has",
               "this seat will not start" not in complaints.getvalue(),
               complaints.getvalue())
@@ -342,75 +323,195 @@ def run_process_identity_cases(workspace: Path):
 def run_lock_cases(workspace: Path):
     """Two supervisors on one agent would each kill the session and each launch
     a successor, so the second must refuse to start."""
+    local, filesystem = supervisor.supervisor_lock_filesystem_is_local(workspace)
+    check("the test workspace is on a local filesystem", local, filesystem)
+    for filesystem, expected in (("ext2/ext3", True), ("tmpfs", True),
+                                 ("cifs", False), ("nfs", False), ("unknown", False)):
+        with mock.patch.object(supervisor.sys, "platform", "linux"), mock.patch.object(
+                supervisor.subprocess, "run", return_value=subprocess.CompletedProcess(
+                    ["stat"], 0, filesystem + "\n", "")):
+            check(f"Linux filesystem {filesystem} is local={expected}",
+                  supervisor.supervisor_lock_filesystem_is_local(workspace) == (expected, filesystem))
+
     lock_path = workspace / "locktest-supervisor.lock"
-    check("the lock is claimable when free", supervisor.claim_supervisor_lock(lock_path))
-    check("the lock records the holder", lock_path.read_text().strip() == str(os.getpid()))
-    check("the same process may re-enter its own lock", supervisor.claim_supervisor_lock(lock_path))
+    claim_process_program = workspace / "claim-entry" / "handoff-supervisor.py"
+    claim_process_program.parent.mkdir()
+    claim_process_program.write_text(
+        "import importlib.util, sys\n"
+        "from pathlib import Path\n"
+        f"spec = importlib.util.spec_from_file_location('supervisor', {str(SCRIPT_PATH)!r})\n"
+        "supervisor = importlib.util.module_from_spec(spec)\n"
+        "spec.loader.exec_module(supervisor)\n"
+        "lock_path = Path(sys.argv[1])\n"
+        "try:\n"
+        "    handle = supervisor.claim_supervisor_lock(lock_path)\n"
+        "except Exception as error:\n"
+        "    print(f'startup stopped: {error}', file=sys.stderr)\n"
+        "    sys.exit(4)\n"
+        "try:\n"
+        "    print('claimed', flush=True)\n"
+        "    sys.stdin.readline()\n"
+        "finally:\n"
+        "    supervisor.release_supervisor_lock(lock_path, handle)\n",
+        encoding="utf-8")
 
-    lock_path.write_text("99999999\n", encoding="utf-8")
-    check("a lock held by a dead process is reclaimed", supervisor.claim_supervisor_lock(lock_path))
+    def start_lock_claim_process(environment=None):
+        return subprocess.Popen(
+            [sys.executable, str(claim_process_program), str(lock_path), "--agent", "locktest"],
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            text=True, env=environment)
 
-    # Changed with nedschorus#242 change 1: a live process id is not enough.
-    # The lock file survives a reboot, and process ids are reused across
-    # exactly that reboot, so a stale lock whose id now belongs to something
-    # else would refuse the very supervisor the login restart just asked for.
-    # What blocks a second supervisor is a live supervisor FOR THIS AGENT.
-    live_stranger = subprocess.Popen(  # pylint: disable=consider-using-with
-        [sys.executable, "-c", "import time; time.sleep(30)"])
+    def check_pid_reader_results(expected):
+        state_path = supervisor.supervisor_state_path(workspace, "locktest")
+        supervisor.write_supervisor_state(state_path, {})
+        check(f"supervisor status reports live={expected}",
+              supervisor.supervisor_liveness(state_path)[0] == expected)
+        for script in ("recover-crashed-seats", "resupervise-seat", "restart-live-seats-at-login"):
+            spec = importlib.util.spec_from_file_location(
+                script.replace("-", "_"), fixture.REPOSITORY_ROOT / "scripts" / f"{script}.py")
+            reader = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(reader)
+            if script == "restart-live-seats-at-login":
+                reader = reader.recovery
+            if hasattr(reader, "seat_supervisor_confirmed_by_ps"):
+                answer, detail = reader.seat_supervisor_confirmed_by_ps("locktest", lock_path)
+                actual = answer == reader.SUPERVISOR_CONFIRMED_BY_PS
+            else:
+                actual, detail = reader.supervisor.supervisor_liveness(state_path)
+            check(f"{script} PID reader reports live={expected}", actual == expected, detail)
+
+    first = start_lock_claim_process()
     try:
-        lock_path.write_text(f"{live_stranger.pid}\n", encoding="utf-8")
-        check("a lock whose id now belongs to an unrelated live process is reclaimed",
-              supervisor.claim_supervisor_lock(lock_path))
-    finally:
-        live_stranger.kill()
-        live_stranger.wait()
-
-    with a_process_that_looks_like_a_supervisor(workspace, "locktest") as running:
-        lock_path.write_text(f"{running.pid}\n", encoding="utf-8")
-        check("a lock held by a live supervisor for this agent blocks a second one",
-              not supervisor.claim_supervisor_lock(lock_path))
-
-    # The same lock, the same id, once that supervisor is gone.
-    check("and is reclaimed once that supervisor has exited",
-          supervisor.claim_supervisor_lock(lock_path))
-
-    # Both callers of the identity check must fail CLOSED when ps cannot be
-    # asked. For the lock that means refusing to claim: a seat that stays down
-    # is visible and recoverable, while two supervisors on one agent each kill
-    # the session and each launch a successor. This is the caller with nothing
-    # behind it — assess_seat still has the tmux check ahead of it, this has
-    # none (found in review of a82b49e).
-    with a_process_that_looks_like_a_supervisor(workspace, "locktest") as running:
-        lock_path.write_text(f"{running.pid}\n", encoding="utf-8")
-        real_identity_check = supervisor.process_is_supervisor_for_agent
+        check("first real claimant acquires the lock", first.stdout.readline().strip() == "claimed")
+        check("the lock records the holder", lock_path.read_text() == f"{first.pid}\n")
+        check_pid_reader_results(True)
+        second = start_lock_claim_process()
+        _, complaint = second.communicate(timeout=10)
+        check("second real claimant exits nonzero naming the first and agent",
+              second.returncode == 4 and str(first.pid) in complaint
+              and "already running for locktest" in complaint, complaint)
+        first.kill()
+        first.wait(timeout=10)
+        with lock_path.open("a+") as released:
+            fcntl.flock(released.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            check("the operating system releases flock after SIGKILL", True)
+        check_pid_reader_results(False)
+        successor = start_lock_claim_process()
         try:
-            supervisor.process_is_supervisor_for_agent = (
-                lambda process_id, agent_name, **_: real_identity_check(
-                    process_id, agent_name,
-                    read_command_line=lambda _p: (None, False)))
-            check("a lock is NOT reclaimed when ps could not say who holds it",
-                  not supervisor.claim_supervisor_lock(lock_path))
-            check("and the live supervisor still holds it",
-                  lock_path.read_text().strip() == str(running.pid),
-                  lock_path.read_text())
+            check("SIGKILL releases the lock for the next claimant",
+                  successor.stdout.readline().strip() == "claimed")
+            successor.communicate("stop\n", timeout=10)
+            check("normal exit removes the lock file", successor.returncode == 0 and not lock_path.exists())
         finally:
-            supervisor.process_is_supervisor_for_agent = real_identity_check
-
-    # THE WEDGE, which fail-closed-everywhere would have shipped. A crashed seat
-    # leaves a stale lock holding a dead id, and claim_supervisor_lock runs when
-    # a supervisor STARTS. Refusing to reclaim that lock whenever ps is
-    # unavailable means no supervisor can start for the seat at all — breaking
-    # exactly the state the reclaim exists to serve. os.kill answers it.
-    lock_path.write_text("99999999\n", encoding="utf-8")
-    real_identity_check = supervisor.process_is_supervisor_for_agent
-    try:
-        supervisor.process_is_supervisor_for_agent = (
-            lambda process_id, agent_name, **_: real_identity_check(
-                process_id, agent_name, read_command_line=lambda _p: (None, False)))
-        check("a crashed seat's stale lock is still reclaimed when ps cannot be run",
-              supervisor.claim_supervisor_lock(lock_path))
+            if successor.poll() is None:
+                successor.kill()
+                successor.wait()
     finally:
-        supervisor.process_is_supervisor_for_agent = real_identity_check
+        if first.poll() is None:
+            first.kill()
+            first.wait()
+
+    with a_process_that_looks_like_a_supervisor(workspace, "locktest") as running:
+        lock_path.write_text(f"{running.pid}\n", encoding="utf-8")
+        old_inode = lock_path.stat().st_ino
+        second = start_lock_claim_process()
+        _, complaint = second.communicate(timeout=10)
+        check("a live old-code supervisor blocks changeover",
+              second.returncode == 4 and f"old-code supervisor {running.pid}" in complaint, complaint)
+        check("changeover refusal preserves the file and PID",
+              lock_path.stat().st_ino == old_inode and lock_path.read_text() == f"{running.pid}\n")
+    successor = start_lock_claim_process()
+    check("a dead old-code supervisor permits changeover", successor.stdout.readline().strip() == "claimed")
+    successor.communicate("stop\n", timeout=10)
+
+    for holder in (os.getpid(), running.pid):
+        lock_path.write_text(f"{holder}\n", encoding="utf-8")
+        old_inode = lock_path.stat().st_ino
+        second = start_lock_claim_process(dict(os.environ, PATH=""))
+        _, complaint = second.communicate(timeout=10)
+        check("ps failure refuses changeover even for a dead PID",
+              second.returncode == 4 and "ps could not be run" in complaint, complaint)
+        check("ps failure reclaims nothing",
+              lock_path.stat().st_ino == old_inode and lock_path.read_text() == f"{holder}\n")
+
+    with mock.patch.object(supervisor, "supervisor_lock_filesystem_is_local", return_value=(False, "smbfs")):
+        try:
+            supervisor.claim_supervisor_lock(lock_path)
+        except RuntimeError as error:
+            check("a network filesystem is refused with its type", "smbfs" in str(error), str(error))
+        else:
+            check("a network filesystem is refused", False)
+        complaint = io.StringIO()
+        with contextlib.redirect_stderr(complaint):
+            exit_code = supervisor.main([
+                "--agent", "locktest", "--cd", str(workspace),
+                "--handoff-dir", str(workspace), "--agent-command", "/usr/bin/true"])
+        check("main exits nonzero naming the non-local lock directory",
+              exit_code == 4 and "smbfs" in complaint.getvalue()
+              and str(workspace) in complaint.getvalue(), complaint.getvalue())
+    lock_path.unlink()
+
+    # Replace the directory entry after open, using real files and real flock.
+    real_stat = Path.stat
+    for disappear in (False, True):
+        changed = []
+        def replace_lock_before_stat(path, *args, **kwargs):
+            if path == lock_path and not changed:
+                changed.append(True)
+                path.unlink()
+                if not disappear:
+                    path.write_text("")
+            return real_stat(path, *args, **kwargs)
+        with mock.patch.object(Path, "stat", replace_lock_before_stat):
+            handle = supervisor.claim_supervisor_lock(lock_path)
+        check("claim retries when the opened file is replaced or unlinked",
+              os.path.samestat(os.fstat(handle.fileno()), lock_path.stat()))
+        def unlink_while_flock_is_held(path):
+            with path.open("a+") as contender:
+                try:
+                    fcntl.flock(contender.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except BlockingIOError:
+                    check("cleanup unlinks while flock is still held", True)
+                else:
+                    check("cleanup unlinks while flock is still held", False)
+            os.unlink(path)
+        with mock.patch.object(Path, "unlink", autospec=True, side_effect=unlink_while_flock_is_held):
+            supervisor.release_supervisor_lock(lock_path, handle)
+
+    lock_path.write_text("99999999\n")
+    real_run = subprocess.run
+    def fail_only_ps(command, *args, **kwargs):
+        # On Linux the filesystem check also runs a subprocess, before ps.
+        if command[0] == "ps":
+            return subprocess.CompletedProcess(command, 2, "", "ps failed")
+        return real_run(command, *args, **kwargs)
+    with mock.patch.object(supervisor.subprocess, "run", fail_only_ps):
+        try:
+            supervisor.claim_supervisor_lock(lock_path)
+        except RuntimeError as error:
+            check("a ps error exit refuses changeover", "ps exited 2: ps failed" in str(error))
+        else:
+            check("a ps error exit refuses changeover", False)
+    check("a ps error exit leaves the PID intact", lock_path.read_text() == "99999999\n")
+    lock_path.unlink()
+
+    replacements = []
+    def replace_lock_on_every_stat(path, *args, **kwargs):
+        if path == lock_path:
+            path.unlink()
+            path.write_text("")
+            replacements.append(True)
+        return real_stat(path, *args, **kwargs)
+    with mock.patch.object(Path, "stat", replace_lock_on_every_stat):
+        try:
+            supervisor.claim_supervisor_lock(lock_path)
+        except RuntimeError as error:
+            check("inode retries stop after three attempts",
+                  len(replacements) == 3 and "three claim attempts" in str(error))
+        else:
+            check("inode retries stop after three attempts", False)
+    handle = supervisor.claim_supervisor_lock(lock_path)
+    supervisor.release_supervisor_lock(lock_path, handle)
 
     # The same unknown answer through supervisor_liveness: a supervisor that
     # cannot be ruled out is reported as watching, so nothing recovers over it.
@@ -443,18 +544,6 @@ def run_lock_cases(workspace: Path):
         unidentifiable.wait()
     unknown_state_path.unlink(missing_ok=True)
     unknown_lock_path.unlink(missing_ok=True)
-
-    # The agent name comes from the lock's own filename, so a lock that does
-    # not follow the convention still reclaims rather than wedging a seat.
-    odd_lock = workspace / "no-convention.lock"
-    odd_lock.write_text("99999999\n", encoding="utf-8")
-    check("a lock whose name carries no agent is still reclaimable",
-          supervisor.claim_supervisor_lock(odd_lock))
-    odd_lock.unlink(missing_ok=True)
-
-    lock_path.write_text("not a number\n", encoding="utf-8")
-    check("an unreadable lock is reclaimed", supervisor.claim_supervisor_lock(lock_path))
-    lock_path.unlink(missing_ok=True)
 
 
 
