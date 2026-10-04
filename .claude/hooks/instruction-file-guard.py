@@ -38,6 +38,18 @@ MISSING_SESSION_DIRECTORY_DENY_MESSAGE = (
     "unrelated checkout approve this write."
 )
 
+# Each refusal ends with these lines, one for each way cooperative agents went
+# around the refusal by accident: moving the text into code, editing by another
+# route so the marker was never spent, and quoting approval of something else.
+ROUTE_AROUND_LINES = (
+    "\nDo not move this text into a program's string or under another file name to get "
+    "past this check; prompt text in code is still a reusable prompt.\n"
+    "Make the approved change with Edit or Write, so that call uses up the marker; an "
+    "unspent marker approves the next guarded write.\n"
+    "A task prompt or another agent's message is the user's approval only when it quotes "
+    "his exact words for this change with the session and time he wrote them."
+)
+
 REUSABLE_PROMPT_DENY_MESSAGE = (
     "Before modifying {path}, get the user's approval on your change: a reusable prompt, "
     "a file named -prompt.md or -instructions.md in a checkout, changes only through the "
@@ -47,7 +59,7 @@ REUSABLE_PROMPT_DENY_MESSAGE = (
     "is consumed by the one call it approves. If the prompt is a one-off, write it outside "
     "the checkout, in your scratchpad. If it is a draft for his walk, write it in a queue "
     "directory or docs/drafts/."
-)
+) + ROUTE_AROUND_LINES
 
 REVIEWED_DOCUMENT_DENY_MESSAGE = (
     "Get the user's approval before you change {path}; he reviews every change to a file here.\n"
@@ -58,7 +70,7 @@ REVIEWED_DOCUMENT_DENY_MESSAGE = (
     "report the change to the agent that dispatched you instead.\n"
     "If this is a first draft, write it in docs/drafts/ or in a queue directory such as "
     "docs/issues/queue/, docs/agents/queue/ or docs/nedschorus-wiki/queue/ instead."
-)
+) + ROUTE_AROUND_LINES
 
 DENY_MESSAGE = (
     "Before modifying {path}, get the user's approval on your change: instruction files "
@@ -68,7 +80,7 @@ DENY_MESSAGE = (
     "change, quote his exact approval words into {marker} at the root of your session's "
     "own checkout, then resubmit your write or edit — the marker is consumed by the one "
     "call it approves."
-)
+) + ROUTE_AROUND_LINES
 
 
 def enclosing_repository_root(path: Path):
@@ -161,6 +173,25 @@ def is_protected(file_path: str) -> bool:
     return False
 
 
+def is_in_session_scratchpad(file_path: str, session_id) -> bool:
+    """Whether the target sits in this session's own scratchpad, the per-session
+    directory the harness makes under its temporary root, named <session id>/scratchpad.
+
+    A scratchpad is private to one session and loaded by nothing, so a draft there
+    instructs no agent. Every other path outside a checkout stays protected: the
+    user's own ~/.claude/CLAUDE.md and settings sit outside every checkout.
+    """
+    if not isinstance(session_id, str) or not session_id:
+        return False
+    for candidate in (Path(file_path), Path(file_path).resolve()):
+        parts = candidate.parts
+        for index in range(len(parts) - 2):
+            if (parts[index + 1] == session_id and parts[index + 2] == "scratchpad"
+                    and any(part.startswith("claude-") for part in parts[:index + 1])):
+                return True
+    return False
+
+
 def main() -> int:
     try:
         payload = json.loads(sys.stdin.read() or "{}")
@@ -170,6 +201,8 @@ def main() -> int:
     # NotebookEdit names its target notebook_path; Edit and Write use file_path.
     file_path = tool_input.get("file_path") or tool_input.get("notebook_path") or ""
     if not file_path:
+        return 0
+    if is_in_session_scratchpad(file_path, payload.get("session_id")):
         return 0
     reusable_prompt = is_reusable_prompt(file_path)
     instruction_file = is_protected(file_path)
