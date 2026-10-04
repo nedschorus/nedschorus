@@ -1,12 +1,11 @@
 ---
 issue: "[Every refusal and warning a program hands an agent says why and what to do instead](https://github.com/nedschorus/nedschorus/issues/956)"
 ---
-
 # Every refusal and warning a program hands an agent says why and what to do instead
 
 When a program in this repository stops or warns an agent, the program's message is the agent's only account of what the program stopped and why. A message that leaves out the reason or the next step leaves the agent to guess, and a cooperative agent's guess can be the wrong action. This document shows each such message as the agent sees it and proposes the exact words to replace it. None of the proposed wording is built.
 
-This document covers the first of six parts, the hooks registered in `.claude/settings.json`; "Later parts" lists the other five. Each later part is drafted as a document of its own, in the same shape, and walked the same way; this GHI tracks all six. The next action is an approval-walk of the proposed words, one message to an item, for every message whatever directory its program sits in. Then the messages of this part, and the test cases that assert their text, change in one pull request. That pull request is cut from main after PR [CLAUDE.md: text a program hands an agent says what was stopped and why, and cites no ruling](https://github.com/nedschorus/nedschorus/pull/909) has merged, because the rule below is the one that pull request lands.
+This document covers the first of six parts, the hooks registered in `.claude/settings.json`; "Later parts" lists the other five. Each later part is drafted as a document of its own, in the same shape, and walked the same way; GHI [Every refusal and warning a program hands an agent says why and what to do instead](https://github.com/nedschorus/nedschorus/issues/956), whose GHI-MD this document is, tracks all six. The proposed words were put to the user in an approval-walk, one message to an item, and a second approval-walk ruled which of their instructions move into the programs' code. The next action is one pull request, cut from main, that changes the messages of this part, the code that replaces their instructions, and the test cases that assert their text. Section 14 and "Code the pull request changes besides the texts" list what the second walk added.
 
 ## What a reader needs first
 
@@ -65,13 +64,28 @@ If the issue has no GHI-MD, stop and tell the user.
 
 **What the agent cannot tell from the text.** Why the comment is refused. The first line reads as a correction of the command's form, so the agent may drop the outcome it meant to record and skip line two. The text also has the agent close the issue first and record the outcome after, where the /ghi-write skill closes an issue only after the edit recording the outcome has merged and its rerun has finished. And `docs/issues/<number>-*.md` can match several files: an issue's GHI-MD and its supporting files share the number.
 
-**Proposed text**, one text for each subcommand, since the skill orders closing and says nothing about reopening. For `close`:
+**Proposed text**, one text for each subcommand, since the skill orders closing and says nothing about reopening. The hook looks up the issue's files on main itself, because "the first file the issue's body links to" is not always the GHI-MD: the body lists an issue's files in filename order, and GHI 3's body lists a supporting file first. `{record_line}` is one of three lines, chosen by how many files the issue has on main (the examples are for `close`; for `reopen`, "the outcome" reads "why the issue is reopening"):
+
+```
+This issue has no file on main under docs/issues/<number>-* or a system's directory: stop and tell the user.
+```
+
+```
+Record the outcome in {path}, then open the edit's pull request with: python3 scripts/ghi-issue-write.py edit {path}
+```
+
+```
+The issue's files on main are: {paths}. Record the outcome in the issue's GHI-MD among them, then open the edit's pull request with: python3 scripts/ghi-issue-write.py edit <that path>
+```
+
+When the hook cannot look the files up, because it has no checkout or git fails, `{record_line}` is: "Record the outcome in the issue's GHI-MD, a file named docs/issues/<number>-*.md or a design in a system's docs/ directory, then open the edit's pull request with: python3 scripts/ghi-issue-write.py edit <path>". When the issue has no file, the message ends after `{record_line}`.
+
+For `close`:
 
 ```
 Do not comment on this project's issues: what an issue says lives in its GHI-MD, and a comment would sit outside it.
-Record the outcome in the issue's GHI-MD, the first file the issue's body links to, then open the edit's pull request with: python3 scripts/ghi-issue-write.py edit <path>
+{record_line}
 Close the issue after that edit's pull request has merged and its rerun has finished, without --comment: gh issue close <number> --reason completed, or --reason "not planned", or --duplicate-of <the other issue's number>.
-If the issue has no GHI-MD, stop and tell the user.
 ```
 
 For `reopen`:
@@ -79,11 +93,10 @@ For `reopen`:
 ```
 Do not comment on this project's issues: what an issue says lives in its GHI-MD, and a comment would sit outside it.
 Run gh issue reopen again without --comment.
-Record why the issue is reopening in the issue's GHI-MD, the first file the issue's body links to, then open the edit's pull request with: python3 scripts/ghi-issue-write.py edit <path>
-If the issue has no GHI-MD, stop and tell the user.
+{record_line}
 ```
 
-**What changes.** `STATE_CHANGE_COMMENT_REFUSAL` becomes two constants, one per subcommand. `.claude/hooks/ghi-issue-write-redirect-test.py` compares each refusal against its constant, and also requires every refusal line to start with one of its listed opening words and to contain neither "ruled" nor "2026"; every line above starts with "Do not", "Record", "Close", "Run" or "If", all already listed. The file is under `.claude/`, so the exact text must be approved-by-walk: the instruction-file guard refuses the edit until the user's approval words are quoted into its marker.
+**What changes.** `STATE_CHANGE_COMMENT_REFUSAL` becomes two templates, one per subcommand. The hook takes the issue number from the command's first positional argument, or from an issue URL there, imports `scripts/ghi-issue-write.py` by path and calls its `ghi_md_paths_for_issue` against origin/main, the same function that builds the issue's body, so the hook's answer and the tool's cannot disagree. `COMMENT_REFUSAL`, `EDIT_BODY_REFUSAL` and `EDIT_TITLE_REFUSAL` in the same hook carry the same `docs/issues/<number>-*.md` placeholder and take the same fill. `.claude/hooks/ghi-issue-write-redirect-test.py` compares each refusal against its template, and also requires every refusal line to start with one of its listed opening words and to contain neither "ruled" nor "2026"; the list gains "This" and "The", and needs a test case for each of the three record lines and for the fallback. Once `scripts/ghi-issue-write.py` gains the close command named under Related issues, the record and close lines shrink to one line naming that command; that change is its own pull request, after this one. The file is under `.claude/`, so the exact text must be approved-by-walk: the instruction-file guard refuses the edit until the user's approval words are quoted into its marker.
 
 ### 2. Deleting an issue
 
@@ -102,15 +115,20 @@ Close the issue instead: gh issue close <number> --reason completed, or --reason
 
 ```
 Do not delete this project's issues: a deleted issue cannot be restored.
-Record the outcome in the issue's GHI-MD, the first file the issue's body links to, then open the edit's pull request with: python3 scripts/ghi-issue-write.py edit <path>
+{record_line}
 Close the issue after that edit's pull request has merged and its rerun has finished, with the line below that fits.
 If this issue covers the same work as another issue: gh issue close <number> --duplicate-of <the other issue's number>
 If the issue's work is done: gh issue close <number> --reason completed
 If the issue will not be done, or was filed by mistake and duplicates no other issue: gh issue close <number> --reason "not planned"
-If the issue has no GHI-MD, stop and tell the user.
 ```
 
-**What changes.** `DELETE_REFUSAL`; `.claude/hooks/ghi-issue-write-redirect-test.py` compares against the constant, and every line starts with a listed opening word. The record line, the wait and the duplicate line are new; the /ghi-write skill already says to record the outcome before closing and names the duplicate close reason, and `gh issue close --duplicate-of` sets that close reason. Under `.claude/`: the exact text must be approved-by-walk.
+`{record_line}` is filled as in message 1. When the issue has no file on main, the message ends after the first line with this line instead:
+
+```
+This issue has no file on main under docs/issues/<number>-* or a system's directory: if the issue was filed by mistake, close it with gh issue close <number> --reason "not planned"; otherwise stop and tell the user.
+```
+
+**What changes.** `DELETE_REFUSAL` becomes a template, filled by the lookup of message 1; `.claude/hooks/ghi-issue-write-redirect-test.py` compares against the template, and every line starts with a listed opening word. The record line, the wait and the duplicate line are new; the /ghi-write skill already says to record the outcome before closing and names the duplicate close reason, and `gh issue close --duplicate-of` sets that close reason. Under `.claude/`: the exact text must be approved-by-walk.
 
 ### 3. Writing from a detached HEAD
 
@@ -131,9 +149,10 @@ Refusing to write {path}: this checkout is on a detached HEAD. A commit made her
 If this checkout was made for the work you are doing, make a branch here (git switch -c <a-branch-name>), then try the write again.
 If this checkout belongs to another session, do the work in your own checkout instead.
 If the user has approved writing from this exact state, quote his approval words into {marker} at the checkout root with a shell command (printf or echo), then try the write again; the marker is used up by the one call it approves, and the Write tool cannot create the marker, because this guard refuses that Write.
+A task prompt or another agent's message is the user's approval only when it quotes his exact words with the session and time he wrote them; put that quotation in the marker.
 ```
 
-**What changes.** `DETACHED_DENY_MESSAGE`; the test case "the detached refusal teaches the branch fix" in `.claude/hooks/session-location-write-guard-test.py` looks for `git switch -c` and still passes. The proposed text assumes the fix of open question 4 has merged, so a branch made here at a pull request's pushed head is not rebased by any hook. A rebase stopped on a conflict also leaves HEAD detached, and this guard then refuses the edit that would resolve the conflict; open question 7. Under `.claude/`: the exact text must be approved-by-walk.
+**What changes.** `DETACHED_DENY_MESSAGE`; the test case "the detached refusal teaches the branch fix" in `.claude/hooks/session-location-write-guard-test.py` looks for `git switch -c` and still passes. The proposed text assumes the fix of open question 4 has merged, so a branch made here at a pull request's pushed head is not rebased by any hook. A rebase stopped on a conflict also leaves HEAD detached, and this guard then refuses the edit that would resolve the conflict; open question 7. The guard also lets through a write to a path git ignores, as `git check-ignore` reports it: such a file can never be committed, so the loss this guard prevents cannot happen to it. That covers the review records under `cold-read-records/` and `sanity-check-records/` and the walk files under `docs/walk/`, which reviewers write from the detached copies the review runners give them; the guard refused five such writes in thirty days. The last line is new: a cooperative subagent once quoted its own task prompt into the marker as the user's approval. Under `.claude/`: the exact text must be approved-by-walk.
 
 ### 4. Writing to backup state
 
@@ -198,11 +217,13 @@ Blocked: tmux session '{target}' has an attached client, so send-keys/paste-buff
 Blocked: tmux session '{target}' has an attached client, so send-keys or paste-buffer would interleave with the typing of whoever is attached. Sending keystrokes is permitted only into detached sessions.
 If the keystrokes carry a message for another agent-seat, send the message with the SendMessage tool instead; the ListAgents tool lists the seats' addresses.
 If SendMessage cannot reach the seat, tell the user.
-If the purpose is to show the user something: on the Mac, open a window with scripts/open-iterm-window-running-command <command...>; on ned-box, tell the user the command to run.
+{show_line}
 Otherwise, do not send the keystrokes: tell the user what you were trying to do.
 ```
 
-**What changes.** `ATTACHED_REASON`; the test case at line 258 of `scripts/synthetic-keystroke-guard-hook-test.py` looks for `#37` in the text and changes with it.
+`{show_line}` is chosen by the guard from the platform it runs on, so the agent need not know which machine it is on. On the Mac: "If the purpose is to show the user something, open a window with scripts/open-iterm-window-running-command <command...>". Elsewhere: "If the purpose is to show the user something, tell the user the command to run; the window opener runs only on the Mac." Once PR [ned-box opens a window on the Mac through one forced command](https://github.com/nedschorus/nedschorus/pull/982) is merged and installed, the ned-box line can name `scripts/open-mac-window-from-ned-box.py` instead, in a change of its own.
+
+**What changes.** `ATTACHED_REASON`, and one test case per platform for `{show_line}`; the test case at line 258 of `scripts/synthetic-keystroke-guard-hook-test.py` looks for `#37` in the text and changes with it.
 
 ### 7. A tmux session the guard could not check
 
@@ -214,22 +235,23 @@ Otherwise, do not send the keystrokes: tell the user what you were trying to do.
 Blocked: could not verify that tmux target '{target}' has no attached client ({error}). Verify yourself with: {probe} — 0 means detached — then re-run this command with CLAUDE_VERIFIED_DETACHED=1 prefixed. Never inject keystrokes at a session someone may be typing in (nedschorus#27).
 ```
 
-**What the agent cannot tell from the text.** What to do when the probe does not print 0, or fails. And `{probe}` is not always one command: when the guarded command names no tmux socket and the target has a per-seat tmux server, `probe_recipe()` fills `{probe}` with a first probe, a parenthesis, and a second probe for the seat's own server. The text then speaks of one output where there can be two. The override, `CLAUDE_VERIFIED_DETACHED=1`, is the agent's own probe, set through an environment variable; none of the glossary's three kinds names it.
+**What the agent cannot tell from the text.** What to do when the probe does not print 0, or fails. Nor how to read the probe's answer: the guard's own reader knows four shapes of answer the agent does not, among them an empty reply that looks like 0 but, in the code's own words, is "NOT a count of 0 attached clients". And `{probe}` is not always one command: when the guarded command names no tmux socket and the target has a per-seat tmux server, `probe_recipe()` fills `{probe}` with a first probe, a parenthesis, and a second probe for the seat's own server. The text then speaks of one output where there can be two. The override, `CLAUDE_VERIFIED_DETACHED=1`, is the agent's own probe, set through an environment variable; none of the glossary's three kinds names it.
 
 **Proposed text.**
 
 ```
 Blocked: could not verify that tmux target '{target}' has no attached client ({error}). Keystrokes sent into a session someone is typing in interleave with that typing.
-Verify with this probe: {probe}
-If that probe prints "no server running", probe the seat's own tmux server: {per_seat_probe}
-If a probe prints 0, the session is detached: run this command at once with CLAUDE_VERIFIED_DETACHED=1 prefixed.
-If no probe prints 0, or the probes fail, do not send the keystrokes.
+Check the target with: {check_command}
+If it prints detached, run this command again at once with CLAUDE_VERIFIED_DETACHED=1 prefixed.
+If it prints anything else, do not send the keystrokes.
 If the keystrokes carry a message for another agent-seat, send the message with the SendMessage tool instead.
-If the purpose is to show the user something: on the Mac, open a window with scripts/open-iterm-window-running-command <command...>; on ned-box, tell the user the command to run.
+{show_line}
 Otherwise, tell the user what you were trying to do.
 ```
 
-**What changes.** `UNVERIFIED_REASON`, and `probe_recipe()` returns its two probes separately so each gets its own line; the third line appears only when there is a per-seat probe. `scripts/synthetic-keystroke-guard-hook-test.py` pins "could not verify", "session_attached" and "CLAUDE_VERIFIED_DETACHED=1" in this text; all three are kept.
+`{show_line}` is filled as in message 6.
+
+**What changes.** `UNVERIFIED_REASON`. The guard gains a command-line mode, `scripts/synthetic-keystroke-guard-hook.py --is-target-detached <target>` with the ssh host, carried options and server flags the hook used, which runs the guard's own `query_session_attached` with a longer time limit than the hook can afford and prints one word, `detached` or `attached`, or `could not verify` with the error, exiting 0, 1 or 2; the hook fills `{check_command}` with that command, so the agent never reads raw tmux output. `scripts/synthetic-keystroke-guard-hook-test.py` pins "could not verify" and "CLAUDE_VERIFIED_DETACHED=1" in this text, both kept; the test case that pins "session_attached" changes to pin the check mode, and the mode needs test cases for each of its answers.
 
 ### 8. A tmux target that still holds a variable
 
@@ -271,9 +293,11 @@ Blocked: this send-keys/paste-buffer names no -t target, so the keystrokes would
 Blocked: this send-keys or paste-buffer names no -t target, so the keystrokes would go to tmux's current session, which may be the session the user is typing in.
 If the keystrokes are meant for a detached session, name that session with -t and run the command again.
 If the keystrokes carry a message for another agent-seat, send the message with the SendMessage tool instead; the ListAgents tool lists the seats' addresses.
-If the purpose is to show the user something: on the Mac, open a window with scripts/open-iterm-window-running-command <command...>; on ned-box, tell the user the command to run.
+{show_line}
 Otherwise, do not send the keystrokes: tell the user what you were trying to do.
 ```
+
+`{show_line}` is filled as in message 6.
 
 **What changes.** `NO_TARGET_REASON`. Two test cases in `scripts/synthetic-keystroke-guard-hook-test.py`, at lines 290 and 347, look for "no -t target", which is kept.
 
@@ -315,13 +339,15 @@ Do not report this to the user: he does not need to hear that main moved, or wha
 **Proposed text.**
 
 ```
-This branch has never been pushed, so nobody else has it. Bring the branch up to date now: commit or set aside any uncommitted work, run `git rebase origin/main`, then rerun the test suites for what you touched.
+This branch has never been pushed, so nobody else has it. Bring the branch up to date now: commit or set aside any uncommitted work, run `git rebase origin/main`, then run `python3 scripts/run-all-test-suites.py --only-suites-whose-recorded-inputs-changed-since origin/main`.
 If the rebase stops on a conflict that you can resolve now, resolve the conflict and run `git rebase --continue`.
 If the rebase stops on a conflict that you cannot resolve now, run `git rebase --abort`, which puts everything back, and finish what you are doing first; this note comes back at each turn's end until the branch is up to date.
-Before you push this branch for the first time, run `git fetch origin`, rebase onto origin/main again, rerun the test suites, and push; if a conflict there cannot be resolved, stop and tell the user which files conflict, because a conflict you cannot resolve changes the work you are doing with him.
+A push that conflicts with origin/main is refused by the pre-push check, which names the conflicting commit; if you cannot resolve that conflict, stop and tell the user which files conflict.
 ```
 
-**What changes.** `REBASE_ADVICE`. One test case in `scripts/checkout-freshness-catch-up-test.py` looks for "`git rebase --abort` puts everything back", which the proposed text rewords; that test case changes. The first sentence is true once the fix of open question 4 has merged: a branch whose commits are already on GitHub is then no longer called never pushed. Resolving the conflict with the Edit tool meets message 3's refusal while the rebase is stopped; open question 7.
+The last line replaces a line the first approval-walk approved, which had the agent fetch, rebase and test by hand before the first push. Three programs already do those steps: this hook rebases an unpushed branch at each turn's end once the tree is clean; the pre-push hook installed on both machines runs `scripts/branch-conflict-check.py`, which fetches origin and refuses a conflicting push; and merge-lane-2 runs the selected test suites on the head merged onto main before merging. The test command is the one `CLAUDE.md` names for a push, because the test runner selects the suites the change can affect.
+
+**What changes.** `REBASE_ADVICE`. `AFTER_REBASE_ADVICE` in the same hook, "Rerun the test suites for what you touched: your work now sits on newer code.", and `NEVER_PUSHED_ADVICE` in `scripts/obsolete-file-edit-warning-hook.py`, which ends "then rerun the tests for what you touched.", name the same command in place of that phrase. One test case in `scripts/checkout-freshness-catch-up-test.py` looks for "`git rebase --abort` puts everything back", which the proposed text rewords; that test case changes. The first sentence is true once the fix of open question 4 has merged: a branch whose commits are already on GitHub is then no longer called never pushed. Resolving the conflict with the Edit tool meets message 3's refusal while the rebase is stopped; open question 7.
 
 ### 12. An edit to a file main has changed, on a detached HEAD or with no branch state reported
 
@@ -341,25 +367,44 @@ obsolete-file-edit-warning: you just changed scripts/recover-crashed-seats.py, w
 obsolete-file-edit-warning: you just changed {path}, which {count} commit(s) on origin/main have changed since this checkout's merge base with origin/main and this checkout does not have, so your edit is built on an old copy of the file.
 ```
 
-Then, on a detached HEAD:
+The hook works out for itself the facts the agent would otherwise have to find. On a branch, the instruction the warning gives today stays as it is. Then, on a detached HEAD while a rebase, merge, cherry-pick or revert is in progress, one line and nothing else:
 
 ```
-If git status says a rebase is in progress, finish the rebase first, and skip the lines below until it is done.
+A git operation is in progress ({marker}): finish it before anything else.
+```
+
+On a detached HEAD otherwise:
+
+```
 This checkout is on a detached HEAD: make a branch (git switch -c <a-branch-name>) before you commit, because a commit on a detached HEAD is on no branch.
-Compare your edit with main's copy: git diff origin/main -- {path}
-If main's changes touch the lines you edited, bring the branch up to date with origin/main before you commit, then check your edit again.
+{overlap_line}
 ```
 
-Or, when git did not report the branch state:
+`{overlap_line}` is the hook's verdict on whether main's changes to the file overlap the agent's edit, one of:
 
 ```
-git did not report this checkout's branch state: run git status to see it.
-Compare your edit with main's copy: git diff origin/main -- {path}
-If main's changes touch the lines you edited, bring the branch up to date with origin/main before you commit, then check your edit again.
-If git status fails too, stop and tell the user before you commit.
+main's changes to {path} do not overlap this checkout's copy; a rebase merges them cleanly.
 ```
 
-**What changes.** `head_advice` returns lines for the two states it now returns nothing for, and `obsolete_file_warning_line` gains "this checkout's merge base with origin/main" and the "so your edit…" clause for every variant, including the one with no count. `NEVER_PUSHED_ADVICE` keeps "This branch has never been pushed, so nobody else has it", which the fix of open question 4 makes true. `scripts/obsolete-file-edit-warning-hook-test.py` needs a test case for each state.
+```
+main's changes to {path} overlap this checkout's copy: after you make the branch and commit your edit, run git rebase origin/main, which will stop on this file, and resolve the conflict there.
+```
+
+```
+main no longer has a file at {path}: find out whether main moved or deleted it (git log origin/main -- {path}) before you commit.
+```
+
+When the verdict cannot be worked out for another reason, the line is left out, as the count is left out today. A clean verdict is textual: the first line still says main changed the file, because changes that do not overlap can still disagree.
+
+Or, when git did not report the branch state, after the first line:
+
+```
+git could not report this checkout's branch state ({text}): stop and tell the user before you commit.
+```
+
+A two-way `git diff origin/main -- {path}` could not answer the overlap question, because the agent's own edit is part of that diff; a three-way merge of the file answers it directly.
+
+**What changes.** `head_advice` returns lines for the two states it now returns nothing for, and keeps the failure text `head_state` returns, which it discards today, for the unknown-state line. The in-progress test reads `GIT_IN_PROGRESS_MARKERS`, already defined in `scripts/checkout-freshness-catch-up.py`, which this hook imports, against the git directory the hook already resolves; the location guard's change of open question 7 reads the same list. The overlap verdict takes `git merge-base HEAD origin/main`, writes the merge-base and origin/main copies of the file to temporary files, and runs `git merge-file -p` with the working copy as the current side: exit 0 is no overlap, a positive exit is an overlap, and a failed read of origin/main's copy is a file main no longer has. `obsolete_file_warning_line` gains "this checkout's merge base with origin/main" and the "so your edit…" clause for every variant, including the one with no count. `NEVER_PUSHED_ADVICE` keeps "This branch has never been pushed, so nobody else has it", which the fix of open question 4 makes true. `scripts/obsolete-file-edit-warning-hook-test.py` needs a test case for each state: in progress, overlap, no overlap, a file main no longer has, and unknown.
 
 ### 13. A second file under a tracked file's name
 
@@ -385,11 +430,40 @@ If both files are meant to exist and the file you wrote is not a draft, rename t
 If you wrote the file by mistake, delete the file you wrote.
 ```
 
-**What changes.** `collision_warning_line`. `{already}` and `{moved_from}` are the values the code builds today: every matching path, and the one matching path or "the file you moved from". `{draft_of}` is new: the one matching path, or "one of those files" when several match. The `-draft` ending is that pull request's convention for overview drafts; the file-naming page is where it would become general. A `-draft` name that is taken too draws this same warning again. The test case "the warning arrives as three lines, one instruction to a line" in `scripts/file-name-collision-warning-hook-test.py` becomes five lines.
+**What changes.** `collision_warning_line`. `{already}` and `{moved_from}` are the values the code builds today: every matching path, and the one matching path or "the file you moved from". `{draft_of}` is new: the one matching path, or "one of those files" when several match. The `-draft` ending is that pull request's convention for overview drafts; `docs/nedschorus-wiki/nedschorus-file-naming-and-location-standards.md` is where it would become general. A `-draft` name that is taken too draws this same warning again. The test case "the warning arrives as three lines, one instruction to a line" in `scripts/file-name-collision-warning-hook-test.py` becomes five lines.
 
-## Messages an open pull request adds
+### 14. Editing a file the user reviews
 
-PR [The instruction-file guard protects the files the user reviews, by where they sit](https://github.com/nedschorus/nedschorus/pull/852), at its head commit [An overview's draft takes a name of its own, its reminder goes out once a day, and the guard's test pins the hyphen of the two exempt endings](https://github.com/nedschorus/nedschorus/pull/852/commits/229c7c95b6dbac390d8ee7dde76bac6e0b975733), adds a program an agent runs, `nc-systems/handoff/daily-overview-refresh-reminder-mark.py`, which is on that pull request's branch and not yet on main, and adds or rewords five lines on the handoff-supervisor's console. The texts below were read from that head. None has had a /cold-read.
+**When an agent sees this.** An agent edits `CLAUDE.md`, a skill, a `-prompt.md` or `-instructions.md` file, or a reviewed document, and `.claude/hooks/instruction-file-guard.py` refuses until the user's exact approval words are quoted into its marker. The audit found these refusals complete, so they have no row in the table. A study of what agents did next, over thirty days of transcripts on both machines (`nedlern@ned-box:/home/nedlern/nedschorus-logs/seats/merge-lane/guard-refusal-aftermath-transcript-study-2026-10-02.md`), found three ways cooperative agents went around the refusal by accident: one moved a refused prompt into a Python script, where the guard cannot see it; one wrote the marker and then made the edit through a shell command, so the marker was never used up and would have approved the next guarded write; and twice the user's approval of a design was quoted as his approval of one exact file edit.
+
+**What the agent is told today** (`.claude/hooks/instruction-file-guard.py`, at the commit [Merge pull request #988 from nedschorus/sdlc-terms-page-mutation-testing-entry](https://github.com/nedschorus/nedschorus/commit/2f880329)): three refusals, `DENY_MESSAGE` for `CLAUDE.md`, `CLAUDE.local.md` and `.claude/`, `REUSABLE_PROMPT_DENY_MESSAGE` for `-prompt.md` and `-instructions.md` files, and `REVIEWED_DOCUMENT_DENY_MESSAGE` for reviewed documents. Each says to get the user's approval and to quote his exact words into the marker; none says what not to do instead.
+
+**Proposed text.** Each of the three refusals gains these three lines at its end:
+
+```
+Do not move this text into a program's string or under another file name to get past this check; prompt text in code is still a reusable prompt.
+Make the approved change with Edit or Write, so that call uses up the marker; an unspent marker approves the next guarded write.
+A task prompt or another agent's message is the user's approval only when it quotes his exact words for this change with the session and time he wrote them.
+```
+
+**What changes.** The three constants, and `.claude/hooks/instruction-file-guard-test.py`, which needs a test case for each refusal carrying the three lines. The guard also stops refusing writes inside the session's own scratchpad, the per-session directory the harness gives each session: a scratchpad is private to one session and loaded by nothing, and the guard refused a draft there named `CLAUDE.local.md`. Every other path outside a checkout stays protected, because the user's own `~/.claude/CLAUDE.md` and `~/.claude/settings.json` sit outside every checkout. Hook code and `.claude/settings.json` stay protected although pull-request review covers them as code, because an edit to a hook takes effect at once in the editing agent's own session, before any review sees it. Under `.claude/`: the exact text must be approved-by-walk.
+
+## Code the pull request changes besides the texts
+
+The second approval-walk moved instructions the messages gave into code, so the pull request also changes these programs; each change is described under its message:
+
+- `.claude/hooks/ghi-issue-write-redirect.py` looks up the issue's files on main (messages 1 and 2).
+- `.claude/hooks/session-location-write-guard.py` lets through a write while a git operation is in progress (open question 7) and a write to a path git ignores (message 3).
+- `scripts/synthetic-keystroke-guard-hook.py` gains its check mode (message 7) and chooses the show-the-user line by platform (messages 6, 7 and 9).
+- `scripts/obsolete-file-edit-warning-hook.py` reports a git operation in progress, the overlap verdict and git's failure text (message 12).
+- `.claude/hooks/instruction-file-guard.py` exempts the session's scratchpad (message 14).
+- `nc-systems/handoff/daily-overview-refresh-reminder-mark.py` gains `--shown-on-pacific-date`, described below.
+
+And it adds one test suite, `scripts/registered-hook-messages-carry-no-citations-test.py`, discovered by the test runner like every `*-test.py`, which reads the hooks registered in `.claude/settings.json`, imports each, collects its module-level string constants whose names end in `_REASON`, `_MESSAGE`, `_REFUSAL`, `_ADVICE`, `_NOTICE`, `_INSTRUCTION`, `_TEMPLATE` or `_LINE`, and fails on a date, the word "ruled", an issue or pull request number in any spelling (`nedschorus#27`, `#37`, `PR 931`, `GHI 913`), or a GitHub pull or issue link. It also fails when a registered hook declares no such constant, so a message built inline cannot escape the check, and it holds an explicit list of exemptions, empty at first, for a message that needs one of those forms as data. The suite reads only registered hooks' message constants: tried on main, it flagged the six messages of this table that carry a citation and nothing else among 50 constants, while across all 152 programs and tests about 16 of its 26 hits were dates or issue numbers that are data, not citations.
+
+## The mark program's messages and the supervisor's console
+
+PR [The instruction-file guard protects the files the user reviews, by where they sit](https://github.com/nedschorus/nedschorus/pull/852), now merged, added a program an agent runs, `nc-systems/handoff/daily-overview-refresh-reminder-mark.py`, and added or reworded five lines on the handoff-supervisor's console. The program's texts below are main's.
 
 The program writes a daily-overview-refresh-reminder-mark: the dated file in the log-store, one per system per day, recording that an agent-seat has shown the user that day's refreshed draft of the system's overview page, so that other agent-seats do not show it again. An agent-seat runs the program after the agent-seat has shown the user the difference between the overview page and the refreshed draft. The mark is written only after that, so an agent-seat that reincarnates in between gets the same reminder.
 
@@ -417,10 +491,25 @@ Run this again with the name of the system's directory under nc-systems/, such a
 ```
 daily-overview-refresh-reminder-mark: the mark for {system} could not be confirmed as written, so the next agent-seat to reincarnate today may show the user the same overview refresh again: {error}
 Tell the user what the error above says.
-When the user says the cause is fixed, run this command again, the same day in Pacific time; after midnight Pacific, do not run it, because the mark is dated by the day the command runs; the next agent-seat to show the refresh writes the new day's mark.
+When the user says the cause is fixed, run: nc-systems/handoff/daily-overview-refresh-reminder-mark.py {system} --shown-on-pacific-date {date}
 ```
 
-**Read by whoever watches the handoff-supervisor's console**, not by the agent-seat's agent (`nc-systems/handoff/handoff-supervisor.py`, lines 1736 to 1783 at that head). They are here as the background to open question 5. The first rewords a line on main; the other four are new:
+The program gains `--shown-on-pacific-date YYYY-MM-DD`, defaulting to today's Pacific date, and the failure message fills `{date}` with the day the user was shown the refresh, so a retry made the same Pacific day marks that day, and a retry made after that day writes nothing. A run whose date has passed writes nothing and exits 0 with:
+
+```
+daily-overview-refresh-reminder-mark: no mark was written, because {date} has passed; the next agent-seat to show the refresh writes the new day's mark.
+```
+
+A date after today is a mistake in the command, refused with:
+
+```
+daily-overview-refresh-reminder-mark: no mark was written, because {date} is after today's Pacific date.
+Run this again without --shown-on-pacific-date, or with the date the user was shown the refresh.
+```
+
+`nc-systems/handoff/tests/daily-overview-refresh-reminder-mark-test.py` needs a test case for each date case.
+
+**Read by whoever watches the handoff-supervisor's console**, not by the agent-seat's agent (`nc-systems/handoff/handoff-supervisor.py`). They are here as the background to open question 5:
 
 ```
 handoff-supervisor: overview check could not ask GitHub which open pull requests change an overview, so no line is withheld for a pull request: {error}
@@ -436,17 +525,26 @@ Each console report says what happened and why, and each is a report, not an ins
 
 `scripts/ghi-info-ask.py "Is there an open issue about the wording of the messages that hooks, guards and checks hand an agent when they refuse or warn: that each message must say what was refused, why, and what to do instead?"` answered that no open issue states this rule. It named two near neighbours: GHI [main-gatekeeper — the single check-in gate (design: nc-systems/main-gatekeeper/main-gatekeeper-design.md)](https://github.com/nedschorus/nedschorus/issues/3), which rules on the structure of a reply and not its wording, and GHI [A project style guide: words to avoid, a mechanical checker, and a check on unbacked promises](https://github.com/nedschorus/nedschorus/issues/14), the closest home for a phrasing rule.
 
-The defect behind open question 4 is filed as its own GHI: GHI [The checkout-freshness hook treats a new branch cut at a pull request's pushed head as never pushed, and rebases it](https://github.com/nedschorus/nedschorus/issues/913).
+The defect behind open question 4 is filed as its own GHI: GHI [The checkout-freshness hook treats a new branch cut at a pull request's pushed head as never pushed, and rebases it](https://github.com/nedschorus/nedschorus/issues/913), fixed by PR [The checkout-freshness hook treats a branch whose commits are already on GitHub as pushed, and leaves it alone](https://github.com/nedschorus/nedschorus/pull/931).
 
-## Open questions for the user
+Follow-ups the second approval-walk accepted, each its own change after this pull request:
+
+- a close command in `scripts/ghi-issue-write.py` that opens the outcome edit's pull request and, run again after that pull request merges, finishes the rerun and closes the issue; the issue guard then points a hand-typed `gh issue close` at it, and messages 1 and 2 shrink to one line;
+- the issue guard refuses a command that only quotes the words `gh issue comment` inside data; the fix belongs to the cold-read-research seat's planned replacement of the Bash guards' hand-written shell parser, which carries that command as a required test case;
+- a check that reports, and reverts, a guarded file changed without the user's approval by any means, a shell command included: approved writes record the file's hash and keep a copy, and a quotation of the user in a marker is checked against the transcript;
+- the handoff-supervisor's report that it could not read the reminder marks reaches the next agent-seat's handoff prompt (open question 5).
+
+## Questions the approval-walks settled
+
+The user answered each of these in the first approval-walk; the answers are as the recommendations say, except as noted.
 
 1. Messages 6 and 9 send an agent that wants to reach another agent-seat to "the nedschorus#37 inbox", and that GHI is closed: should the two messages name the SendMessage tool, which the agent-seats use today? Recommendation: yes, as proposed; the alternative is to leave the line out, so the agent must find SendMessage unprompted.
 2. Message 11 says staying behind main "costs nothing at merge", yet a conflict left unresolved now is a conflict at merge: should that instruction stay? Recommendation: no; the proposed text has the agent fetch and rebase again before the first push.
 3. Message 2 gains a line for a duplicate issue, and message 13 gains a line for a draft of an existing file: are both wanted? Recommendation: yes to both.
-4. A branch made at a pull request's pushed head, as message 3 instructs, has no copy on GitHub under its own name, so `checkout-freshness-catch-up.py` and `obsolete-file-edit-warning-hook.py` treat the branch as never pushed. The obsolete-file warning then instructs a rebase, and at a main session's turn end the freshness hook rebases the branch itself when the tree is clean, moving a frozen head. Wording cannot fix this; the GHI named under Related issues tracks the fix, which the user asked to have built at once (direction 1 of that GHI: a branch whose commits are already on a branch on GitHub counts as pushed). The messages pull request is cut after that fix merges, and messages 3, 11 and 12 assume it.
-5. When the handoff-supervisor cannot read the daily-overview-refresh-reminder-marks because ned-box cannot be reached, the report goes to the console only, so the agent cannot tell the user, as `CLAUDE.md` asks. Recommendation: a change of its own to the handoff-system, after PR [The instruction-file guard protects the files the user reviews, by where they sit](https://github.com/nedschorus/nedschorus/pull/852) merges.
-6. Do the two reworded messages of `daily-overview-refresh-reminder-mark.py` go into the open pull request that adds the program, or follow it? Recommendation: follow it, in the pull request that changes the hook messages. That pull request can touch the program only once that pull request has merged, and drafts the two messages against the program as merged.
-7. While a rebase or merge is stopped on a conflict, the checkout's HEAD is detached, so `session-location-write-guard.py` refuses the Edit or Write that would resolve the conflict, and message 3 then tells the agent to make a branch in the middle of the rebase. Recommendation: the guard recognises a rebase or merge in progress (`rebase-merge`, `rebase-apply`, `MERGE_HEAD`, `CHERRY_PICK_HEAD` or `REVERT_HEAD` in the worktree's git directory) and lets the write through, in the pull request that changes this guard's message; messages 11 and 12 assume it.
+4. A branch made at a pull request's pushed head, as message 3 instructs, has no copy on GitHub under its own name, so `checkout-freshness-catch-up.py` and `obsolete-file-edit-warning-hook.py` treat the branch as never pushed. The obsolete-file warning then instructs a rebase, and at a main session's turn end the freshness hook rebases the branch itself when the tree is clean, moving a frozen head. Wording cannot fix this; the GHI named under Related issues tracked the fix, which the user asked to have built at once, and which has merged (direction 1 of that GHI: a branch whose commits are already on a branch on GitHub counts as pushed). Messages 3, 11 and 12 assume it.
+5. When the handoff-supervisor cannot read the daily-overview-refresh-reminder-marks because ned-box cannot be reached, the report goes to the console only, so the agent cannot tell the user, as `CLAUDE.md` asks. Answered: a change of its own to the handoff-system, listed under Related issues.
+6. Do the two reworded messages of `daily-overview-refresh-reminder-mark.py` go into the pull request that added the program, or follow it? Settled when that pull request merged: they go into the pull request that changes the hook messages, drafted against the program as merged.
+7. While a rebase or merge is stopped on a conflict, the checkout's HEAD is detached, so `session-location-write-guard.py` refuses the Edit or Write that would resolve the conflict, and message 3 then tells the agent to make a branch in the middle of the rebase. Recommendation: the guard recognises a rebase or merge in progress (`rebase-merge`, `rebase-apply`, `MERGE_HEAD`, `CHERRY_PICK_HEAD` or `REVERT_HEAD` in the worktree's git directory, the list `GIT_IN_PROGRESS_MARKERS` in `scripts/checkout-freshness-catch-up.py` already holds) and lets the write through, in the pull request that changes this guard's message; messages 11 and 12 assume it.
 
 ## Later parts
 
