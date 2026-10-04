@@ -8,7 +8,7 @@ import argparse
 import importlib.util
 import re
 import sys
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 PROGRAM = "daily-overview-refresh-reminder-mark"
@@ -75,14 +75,33 @@ def main(argv=None, now=None) -> int:
         description="Record that the user has been shown today's refresh of one "
                     "system's overview.")
     parser.add_argument("system", help="the system's directory name under nc-systems/")
+    # A retry carries the day the user was shown the refresh, so a retry after that
+    # Pacific day cannot mark a day on which the user saw nothing.
+    parser.add_argument("--shown-on-pacific-date", type=date.fromisoformat, default=None,
+                        help="the Pacific date, YYYY-MM-DD, the user was shown the "
+                             "refresh; today's when left out")
     arguments = parser.parse_args(argv)
     if not re.fullmatch(SYSTEM_NAME_PATTERN, arguments.system):
-        print(f"{PROGRAM}: pass the name of the system's directory under nc-systems/, "
-              f"such as handoff, in place of {arguments.system!r}.", file=sys.stderr)
+        print(f"{PROGRAM}: no daily-overview-refresh-reminder-mark was written, because "
+              f"{arguments.system!r} is not a system's name.\n"
+              f"Run this again with the name of the system's directory under nc-systems/, "
+              f"such as handoff.", file=sys.stderr)
         return 2
     now = now or datetime.now(timezone.utc)
-    file_name = daily_overview_refresh_reminder_mark_file_name(
-        pacific_date_of(now), arguments.system)
+    today = pacific_date_of(now)
+    shown_on = (arguments.shown_on_pacific_date.isoformat()
+                if arguments.shown_on_pacific_date is not None else today)
+    if shown_on < today:
+        print(f"{PROGRAM}: no mark was written, because {shown_on} has passed; the next "
+              f"agent-seat to show the refresh writes the new day's mark.")
+        return 0
+    if shown_on > today:
+        print(f"{PROGRAM}: no mark was written, because {shown_on} is after today's "
+              f"Pacific date.\n"
+              f"Run this again without --shown-on-pacific-date, or with the date the user "
+              f"was shown the refresh.", file=sys.stderr)
+        return 2
+    file_name = daily_overview_refresh_reminder_mark_file_name(shown_on, arguments.system)
     content = now.astimezone(timezone.utc).strftime(REMINDER_MARK_TIME_FORMAT)
     try:
         daily_memory_review_mark.write_daily_memory_review_mark(
@@ -90,9 +109,13 @@ def main(argv=None, now=None) -> int:
             DAILY_OVERVIEW_REFRESH_REMINDER_MARK_SSH_TIMEOUT_SECONDS,
             marks_directory=DAILY_OVERVIEW_REFRESH_REMINDER_MARKS_DIRECTORY)
     except daily_memory_review_mark.DailyMemoryReviewReadOrWriteFailed as error:
-        print(f"{PROGRAM}: the mark for {arguments.system} was not written ({error}) — "
-              f"tell the user this message, and run this command again once the cause is fixed.",
-              file=sys.stderr)
+        print(f"{PROGRAM}: the mark for {arguments.system} could not be confirmed as "
+              f"written, so the next agent-seat to reincarnate today may show the user the "
+              f"same overview refresh again: {error}\n"
+              f"Tell the user what the error above says.\n"
+              f"When the user says the cause is fixed, run: "
+              f"nc-systems/handoff/daily-overview-refresh-reminder-mark.py {arguments.system} "
+              f"--shown-on-pacific-date {shown_on}", file=sys.stderr)
         return 1
     print(f"{PROGRAM}: the reminder for {arguments.system} is recorded for "
           f"{file_name[:len('YYYY-MM-DD')]} in "
