@@ -479,8 +479,13 @@ def run_lock_cases(workspace: Path):
             supervisor.release_supervisor_lock(lock_path, handle)
 
     lock_path.write_text("99999999\n")
-    with mock.patch.object(supervisor.subprocess, "run", return_value=subprocess.CompletedProcess(
-            ["ps"], 2, "", "ps failed")):
+    real_run = subprocess.run
+    def fail_only_ps(command, *args, **kwargs):
+        # On Linux the filesystem check also runs a subprocess, before ps.
+        if command[0] == "ps":
+            return subprocess.CompletedProcess(command, 2, "", "ps failed")
+        return real_run(command, *args, **kwargs)
+    with mock.patch.object(supervisor.subprocess, "run", fail_only_ps):
         try:
             supervisor.claim_supervisor_lock(lock_path)
         except RuntimeError as error:
