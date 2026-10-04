@@ -40,7 +40,10 @@ DEFAULT_CONTEXT_WINDOW_TOKENS = 200_000
 FIRST_TAIL_READ_BYTES = 256 * 1024
 
 # Keep the procedure in the skill so hook instructions cannot drift from it.
-HANDOFF_INSTRUCTION = "Run the handoff skill now."
+HANDOFF_INSTRUCTION = (
+    "This session has used {used_percentage:.0f}% of its context window, which has "
+    "reached the reincarnation threshold. Run the /handoff skill now."
+)
 
 HANDOFF_DEFERRED_NOTICE = (
     "Context at {used_percentage:.0f}% — handoff deferred while {running} run. "
@@ -333,7 +336,7 @@ def main(argv=None) -> int:
         pass
 
     print(
-        HANDOFF_INSTRUCTION,
+        HANDOFF_INSTRUCTION.format(used_percentage=used),
         file=sys.stderr,
     )
     return 2

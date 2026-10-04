@@ -44,10 +44,17 @@ with tempfile.TemporaryDirectory() as temporary_directory:
           str(result.returncode))
     check("the refusal says backup state is never an agent's to write",
           "never an agent's to write" in result.stderr, result.stderr)
-    check("the refusal offers no approval lane",
-          "no approval lane" in result.stderr, result.stderr)
+    check("the refusal offers no override",
+          "no override" in result.stderr, result.stderr)
     check("the refusal points recovery at copying out instead",
           "copy the file out" in result.stderr, result.stderr)
+    check("the refusal names the program that finds backup copies",
+          "scripts/find-deleted-path-across-backups.py" in result.stderr, result.stderr)
+    check("the refusal says what to do when the backup cannot be read",
+          "If you cannot read the snapshot or backup, tell the user and stop." in result.stderr,
+          result.stderr)
+    check("the refusal gives one instruction to a line",
+          len(result.stderr.strip().splitlines()) == 4, result.stderr)
     check("the refusal names no override marker",
           ".backup-write-approved" not in result.stderr
           and ".walk-approved" not in result.stderr,

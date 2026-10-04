@@ -49,56 +49,118 @@ EXPANDED_BODY_COMMANDS_MARK = "\x00"
 MAX_SUBSTITUTION_NESTING = 64
 
 SYNTHETIC_TYPING_REASON = (
-    "Blocked: AppleScript synthetic typing — iTerm `write text`, System "
-    "Events `keystroke`/`key code` — sends keystrokes that race the user's "
-    "real typing and splice (this exact failure corrupted a command on "
-    "2026-08-17; rule on nedschorus#27). To open a terminal window running "
-    f"a command for the user, run: {OPENER} <command...> — it passes the "
-    "command as the new session's own process, no keystrokes involved."
+    "Blocked: AppleScript synthetic typing (iTerm `write text`, System Events "
+    "`keystroke` or `key code`) sends keystrokes that race the user's real typing "
+    "and interleave with it.\n"
+    "If you want a terminal window running a command for the user, run: "
+    f"{OPENER} <command...> (it starts the command as the new window's own "
+    "process, with no keystrokes).\n"
+    "If you meant to type into another application, stop and tell the user what "
+    "you wanted typed."
+)
+
+# The window opener runs only on the Mac, so the guard names it only there.
+SHOW_THE_USER_ON_MAC_LINE = (
+    "If the purpose is to show the user something, open a window with "
+    f"{OPENER} <command...>"
+)
+SHOW_THE_USER_ELSEWHERE_LINE = (
+    "If the purpose is to show the user something, tell the user the command "
+    "to run; the window opener runs only on the Mac."
 )
 
 ATTACHED_REASON = (
-    "Blocked: tmux session '{target}' has an attached client, so "
-    "send-keys/paste-buffer would splice into whoever is typing there "
-    "(nedschorus#27; evidence on #37). Injection is permitted only into "
-    "detached sessions. To show the user something, open them a window with "
-    f"{OPENER}; for agent-to-agent messaging the durable path is the "
-    "nedschorus#37 inbox design."
+    "Blocked: tmux session '{target}' has an attached client, so send-keys or "
+    "paste-buffer would interleave with the typing of whoever is attached. "
+    "Sending keystrokes is permitted only into detached sessions.\n"
+    "If the keystrokes carry a message for another agent-seat, send the message "
+    "with the SendMessage tool instead; the ListAgents tool lists the seats' "
+    "addresses.\n"
+    "If SendMessage cannot reach the seat, tell the user.\n"
+    "{show_line}\n"
+    "Otherwise, do not send the keystrokes: tell the user what you were trying "
+    "to do."
 )
 
 UNVERIFIED_REASON = (
     "Blocked: could not verify that tmux target '{target}' has no attached "
-    "client ({error}). Verify yourself with: {probe} — 0 means detached — "
-    "then re-run this command with CLAUDE_VERIFIED_DETACHED=1 prefixed. "
-    "Never inject keystrokes at a session someone may be typing in "
-    "(nedschorus#27)."
+    "client ({error}). Keystrokes sent into a session someone is typing in "
+    "interleave with that typing.\n"
+    "Check the target with: {check_command}\n"
+    "If it prints detached, run this command again at once with "
+    "CLAUDE_VERIFIED_DETACHED=1 prefixed.\n"
+    "If it prints anything else, do not send the keystrokes.\n"
+    "If the keystrokes carry a message for another agent-seat, send the message "
+    "with the SendMessage tool instead.\n"
+    "{show_line}\n"
+    "Otherwise, tell the user what you were trying to do."
+)
+
+NESTED_SSH_REASON = (
+    "Blocked: tmux target '{target}' is reached through more than one ssh hop, "
+    "and this guard cannot check through more than one hop that the session "
+    "has no attached client. Keystrokes sent into a session someone is typing "
+    "in interleave with that typing.\n"
+    "If the keystrokes carry a message for another agent-seat, send the message "
+    "with the SendMessage tool instead.\n"
+    "If one ssh hop from here reaches the machine that runs the session, send "
+    "the keystrokes through that one hop, so this guard can check the target.\n"
+    "{show_line}\n"
+    "Otherwise, tell the user what you were trying to do."
 )
 
 UNRESOLVED_TARGET_REASON = (
-    "Blocked: tmux target '{target}' contains an unexpanded variable or "
-    "substitution placeholder, so this guard cannot verify the real target "
-    "is detached — probing the literal text would misjudge it. Inline the "
-    "literal session name, or verify detachment yourself with: {probe} — 0 "
-    "means detached — then re-run with CLAUDE_VERIFIED_DETACHED=1 prefixed "
-    "(rule: nedschorus#27)."
+    "Blocked: tmux target '{target}' holds an unexpanded variable (a shell "
+    "variable or command substitution) or an xargs or parallel replacement "
+    "string ({{}}), so this guard cannot check that the real session is "
+    "detached.\n"
+    "If the target is a shell variable or command substitution, find the "
+    "session's name where it is set (echo it), write the name into the command "
+    "in place of the variable, and run the command again.\n"
+    "If the target is xargs' or parallel's {{}}, list the sessions first, then "
+    "send to each by name, one command per session."
 )
 
 NO_TARGET_REASON = (
-    "Blocked: this send-keys/paste-buffer names no -t target, so the "
-    "keystrokes would land in tmux's current session — possibly the very "
-    "one the user is attached to — and cannot be verified detached. Name "
-    "the session with -t, or use "
-    f"{OPENER} / the nedschorus#37 inbox instead (rule: nedschorus#27)."
+    "Blocked: this send-keys or paste-buffer names no -t target, so the "
+    "keystrokes would go to tmux's current session, which may be the session "
+    "the user is typing in.\n"
+    "If the keystrokes are meant for a detached session, name that session with "
+    "-t and run the command again.\n"
+    "If the keystrokes carry a message for another agent-seat, send the message "
+    "with the SendMessage tool instead; the ListAgents tool lists the seats' "
+    "addresses.\n"
+    "{show_line}\n"
+    "Otherwise, do not send the keystrokes: tell the user what you were trying "
+    "to do."
 )
+
+# The check mode is run by an agent, not by the harness, so it can wait longer than the hook.
+CHECK_MODE_FLAG = "--is-target-detached"
+CHECK_MODE_PROBE_BUDGET_SECONDS = 60.0
+CHECK_MODE_PER_PROBE_TIMEOUT_SECONDS = 30.0
+CHECK_MODE_EXIT_DETACHED = 0
+CHECK_MODE_EXIT_ATTACHED = 1
+CHECK_MODE_EXIT_COULD_NOT_VERIFY = 2
+
+
+def show_the_user_line(platform=None):
+    platform = sys.platform if platform is None else platform
+    if platform == "darwin":
+        return SHOW_THE_USER_ON_MAC_LINE
+    return SHOW_THE_USER_ELSEWHERE_LINE
 
 
 class GuardRun:
     """Shared probe budget, cache, and recursion depth for one guard invocation."""
 
-    def __init__(self, runner, clock):
+    def __init__(self, runner, clock, budget_seconds=PROBE_BUDGET_SECONDS,
+                 per_probe_timeout_seconds=PER_PROBE_TIMEOUT_SECONDS):
         self.runner = runner
         self.clock = clock
-        self.deadline = clock() + PROBE_BUDGET_SECONDS
+        self.budget_seconds = budget_seconds
+        self.per_probe_timeout_seconds = per_probe_timeout_seconds
+        self.deadline = clock() + budget_seconds
         self.probe_cache = {}
         self.depth = 0
 
@@ -633,26 +695,17 @@ def probe_argv(target, server_flags, ssh_context):
             + list(carried) + [host, remote])
 
 
-def probe_recipe(target, server_flags, ssh_context):
-    """Return a by-hand verification command for the target’s possible servers."""
-    def one_probe(flags):
-        flags_text = "".join(" %s" % part for part in flags)
-        if ssh_context is None or ssh_context[0] == NESTED_SSH_HOST:
-            return ('tmux%s display-message -p -t "%s" \'#{session_attached}\''
-                    % (flags_text, target))
+def check_command(target, server_flags, ssh_context):
+    """Return the command line that runs this guard's own probe in its check mode."""
+    words = ["python3", "scripts/synthetic-keystroke-guard-hook.py", CHECK_MODE_FLAG, target]
+    if server_flags:
+        words += ["--tmux-server-flag", server_flags[0], server_flags[1]]
+    if ssh_context is not None:
         host, carried = ssh_context
-        ssh_words = ["ssh"] + list(carried) + [host]
-        return ("%s 'tmux%s display-message -p -t \"%s\" \"#{session_attached}\"'"
-                % (" ".join(ssh_words), flags_text, target))
-
-    recipe = one_probe(server_flags)
-    if not server_flags:
-        per_seat_flags = per_seat_server_flags_for_target(target)
-        if per_seat_flags:
-            recipe += (" (finding no server? seats run per-seat tmux servers"
-                       " — probe the seat's own socket: %s)"
-                       % one_probe(per_seat_flags))
-    return recipe
+        words += ["--ssh-host", host]
+        for index in range(0, len(carried) - 1, 2):
+            words += ["--ssh-option", carried[index], carried[index + 1]]
+    return " ".join(shlex.quote(word) for word in words)
 
 
 def run_attachment_probe(target, server_flags, ssh_context, guard):
@@ -662,11 +715,11 @@ def run_attachment_probe(target, server_flags, ssh_context, guard):
         return ("unverifiable",
                 "probe budget exhausted (%.0fs) — the hook must answer "
                 "before its own timeout, which would fail open"
-                % PROBE_BUDGET_SECONDS)
+                % guard.budget_seconds)
     argv = probe_argv(target, server_flags, ssh_context)
     try:
         completed = guard.runner(argv, capture_output=True, text=True,
-                                 timeout=min(PER_PROBE_TIMEOUT_SECONDS, remaining))
+                                 timeout=min(guard.per_probe_timeout_seconds, remaining))
     except Exception as error:
         return ("unverifiable", str(error))
     if completed.returncode != 0:
@@ -782,20 +835,22 @@ def analyze_simple_command(words, ssh_context, verified, guard):
     server_flags = extract_tmux_server_flags(after[:verb_index])
     targets = extract_tmux_targets(after[verb_index + 1:])
     if not targets:
-        return NO_TARGET_REASON
+        return NO_TARGET_REASON.format(show_line=show_the_user_line())
     for target in targets:
         # Probing expansions or xargs placeholders literally would report unknown and allow a possibly attached target.
         if "$" in target or "`" in target or "{}" in target:
-            return UNRESOLVED_TARGET_REASON.format(
-                target=target, probe=probe_recipe(target, server_flags, ssh_context))
+            return UNRESOLVED_TARGET_REASON.format(target=target)
         attached, error = query_session_attached(target, server_flags,
                                                  ssh_context, guard)
+        if attached is None and ssh_context is not None and ssh_context[0] == NESTED_SSH_HOST:
+            return NESTED_SSH_REASON.format(target=target, show_line=show_the_user_line())
         if attached is None:
             return UNVERIFIED_REASON.format(
                 target=target, error=error,
-                probe=probe_recipe(target, server_flags, ssh_context))
+                check_command=check_command(target, server_flags, ssh_context),
+                show_line=show_the_user_line())
         if attached > 0:
-            return ATTACHED_REASON.format(target=target)
+            return ATTACHED_REASON.format(target=target, show_line=show_the_user_line())
     return None
 
 
@@ -834,6 +889,60 @@ def deny(reason):
     }}))
 
 
+def parse_check_mode_arguments(arguments):
+    """Return (target, server_flags, ssh_context) from the check mode's arguments."""
+    target = arguments[0]
+    server_flags = []
+    host = None
+    carried = []
+    index = 1
+    while index < len(arguments):
+        word = arguments[index]
+        if word == "--tmux-server-flag" and index + 2 < len(arguments) \
+                and arguments[index + 1] in ("-L", "-S"):
+            server_flags = [arguments[index + 1], arguments[index + 2]]
+            index += 3
+        elif word == "--ssh-host" and index + 1 < len(arguments):
+            host = arguments[index + 1]
+            index += 2
+        elif word == "--ssh-option" and index + 2 < len(arguments) \
+                and arguments[index + 1] in SSH_CARRIED_OPTIONS:
+            carried += [arguments[index + 1], arguments[index + 2]]
+            index += 3
+        else:
+            raise ValueError("unrecognised argument %r" % word)
+    ssh_context = (host, tuple(carried)) if host is not None else None
+    return target, server_flags, ssh_context
+
+
+def run_check_mode(arguments, runner=subprocess.run, clock=time.monotonic, out=sys.stdout):
+    """Print detached, attached, or could not verify for one tmux target, and exit to match."""
+    if not arguments:
+        print("could not verify: %s names no tmux target" % CHECK_MODE_FLAG, file=out)
+        return CHECK_MODE_EXIT_COULD_NOT_VERIFY
+    try:
+        target, server_flags, ssh_context = parse_check_mode_arguments(arguments)
+    except ValueError as error:
+        print("could not verify: %s" % error, file=out)
+        return CHECK_MODE_EXIT_COULD_NOT_VERIFY
+    guard = GuardRun(runner, clock, CHECK_MODE_PROBE_BUDGET_SECONDS,
+                     CHECK_MODE_PER_PROBE_TIMEOUT_SECONDS)
+    attached, error = query_session_attached(target, server_flags, ssh_context, guard)
+    if attached is None:
+        print("could not verify: %s" % error, file=out)
+        return CHECK_MODE_EXIT_COULD_NOT_VERIFY
+    if attached > 0:
+        print("attached", file=out)
+        return CHECK_MODE_EXIT_ATTACHED
+    if error:
+        # query_session_attached reads a session no server knows as 0; only a counted 0 is detached.
+        print("could not verify: no tmux server reported the session's attached "
+              "clients, so the session may not exist (%s)" % error, file=out)
+        return CHECK_MODE_EXIT_COULD_NOT_VERIFY
+    print("detached", file=out)
+    return CHECK_MODE_EXIT_DETACHED
+
+
 def main(stdin=sys.stdin, runner=subprocess.run, clock=time.monotonic):
     try:
         payload = json.load(stdin)
@@ -852,4 +961,6 @@ def main(stdin=sys.stdin, runner=subprocess.run, clock=time.monotonic):
 
 
 if __name__ == "__main__":
+    if sys.argv[1:2] == [CHECK_MODE_FLAG]:
+        sys.exit(run_check_mode(sys.argv[2:]))
     sys.exit(main())

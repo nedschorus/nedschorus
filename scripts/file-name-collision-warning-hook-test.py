@@ -172,9 +172,9 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     # three arrived as one physical line, which substring assertions could
     # not see, so the count is pinned here and the lines are read by index.
     warning_lines = warning.split("\n")
-    check("the warning arrives as three lines, one instruction to a line",
-          len(warning_lines) == 3, repr(warning))
-    padded_warning_lines = warning_lines + ["", "", ""]
+    check("the warning arrives as five lines, one instruction to a line",
+          len(warning_lines) == 5, repr(warning))
+    padded_warning_lines = warning_lines + ["", "", "", "", ""]
     check("line 1 is the fact, and it names both paths",
           padded_warning_lines[0].startswith("file-name-collision-warning: "
                                              "you wrote"),
@@ -183,12 +183,28 @@ with tempfile.TemporaryDirectory() as temporary_directory:
           padded_warning_lines[1] == "If you are moving the file, delete "
           "scripts/cold-read-grid.py in this change.",
           repr(padded_warning_lines[1]))
-    check("line 3 points at CLAUDE.md's naming rule instead of restating it",
-          padded_warning_lines[2].startswith(
-              "If both files are meant to exist, rename the one you just "
-              "wrote by CLAUDE.md's naming rule")
-          and "3 or 4 parts" not in warning and "three or four" not in warning,
+    check("line 1 states the rule the warning enforces",
+          padded_warning_lines[0].endswith(
+              "A basename, other than SKILL.md, README.md and .gitkeep, belongs to one "
+              "tracked file, so the file can be cited by its basename."),
+          repr(padded_warning_lines[0]))
+    check("line 3 tells a draft's writer to end its name -draft and keep the tracked file",
+          padded_warning_lines[2] == (
+              "If the file you wrote is a draft of a new version of "
+              "scripts/cold-read-grid.py, rename the file you wrote so its name ends "
+              "-draft before the extension, or at the end of a name that has none; tell "
+              "whoever expects the old path the new one; and leave "
+              "scripts/cold-read-grid.py as it is."),
           repr(padded_warning_lines[2]))
+    check("line 4 points at CLAUDE.md's naming rule instead of restating it",
+          padded_warning_lines[3].startswith(
+              "If both files are meant to exist and the file you wrote is not a draft, "
+              "rename the file you wrote by CLAUDE.md's naming rule")
+          and "3 or 4 parts" not in warning and "three or four" not in warning,
+          repr(padded_warning_lines[3]))
+    check("line 5 tells an agent that wrote the file by mistake to delete it",
+          padded_warning_lines[4] == "If you wrote the file by mistake, delete the file you wrote.",
+          repr(padded_warning_lines[4]))
 
     # --- silence, each for its own reason --------------------------------
     fresh = write_file(repository, "scripts/nothing-shares-this-name.py")
@@ -466,6 +482,17 @@ else:
           f"over {len(tracked_names)} names: " + "; ".join(
               f"{name}: {', '.join(paths)}"
               for name, paths in sorted(collisions.items())))
+
+several = HOOK_MODULE.collision_warning_line(
+    PurePath("docs/new/shared-name.md"), ["docs/a/shared-name.md", "docs/b/shared-name.md"])
+several_lines = several.split("\n")
+check("with several matches, the draft line names 'one of those files'",
+      len(several_lines) == 5 and several_lines[2].startswith(
+          "If the file you wrote is a draft of a new version of one of those files, ")
+      and several_lines[2].endswith("and leave one of those files as it is."), repr(several))
+check("with several matches, the move line names the file you moved from",
+      several_lines[1] == "If you are moving the file, delete the file you moved from in this change.",
+      repr(several))
 
 print()
 if failures:

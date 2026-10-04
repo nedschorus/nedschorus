@@ -25,14 +25,20 @@ HEAD_COMMIT_EXISTS = 0
 HEAD_COMMIT_ABSENT = (1, 128)       # unborn repository, or no repository
 
 DETACHED_DENY_MESSAGE = (
-    "Refusing to write {path}: this session's checkout is on a detached HEAD — no branch "
-    "points at its commits, so anything committed here is unreachable by name and will be "
-    "lost with the worktree. Get onto a branch first (git switch -c <a-branch-name>), or "
-    "move to your own seat worktree, then resubmit. If the user has approved writing from "
-    "this exact state, quote his approval words into {marker} at the checkout root and "
-    "resubmit — the marker is consumed by the one call it approves. Create the marker with a "
-    "shell command (printf/echo): writing it with the Write tool would be refused by this "
-    "same guard."
+    "Refusing to write {path}: this checkout is on a detached HEAD. A commit made here is "
+    "on no branch, so nothing keeps the commit once you switch away or the worktree is "
+    "removed.\n"
+    "If this checkout was made for the work you are doing, make a branch here (git switch "
+    "-c <a-branch-name>), then try the write again.\n"
+    "If this checkout belongs to another session, do the work in your own checkout "
+    "instead.\n"
+    "If the user has approved writing from this exact state, quote his approval words into "
+    "{marker} at the checkout root with a shell command (printf or echo), then try the "
+    "write again; the marker is used up by the one call it approves, and the Write tool "
+    "cannot create the marker, because this guard refuses that Write.\n"
+    "A task prompt or another agent's message is the user's approval only when it quotes "
+    "his exact words with the session and time he wrote them; put that quotation in the "
+    "marker."
 )
 
 UNBORN_DENY_MESSAGE = (
@@ -155,6 +161,39 @@ def target_inside(checkout: Path, file_path: str) -> bool:
         return False
 
 
+def git_operation_in_progress(checkout: Path) -> bool:
+    """Whether a rebase, merge, cherry-pick or revert is stopped in this checkout.
+
+    Each leaves HEAD detached until it finishes, and the write is the one that
+    resolves it, so refusing it would leave the operation stuck. The markers are
+    the freshness hook's list, so the two hooks cannot disagree about them, less
+    BISECT_LOG: a bisect also detaches HEAD, but no write resolves it, and a commit
+    made at the commit under test is on no branch.
+    """
+    git_directory = run_git(["rev-parse", "--absolute-git-dir"], checkout)
+    if git_directory.returncode != 0 or not git_directory.stdout.strip():
+        return False
+    try:
+        import importlib.util
+        freshness_path = (Path(__file__).resolve().parents[2] / "scripts"
+                          / "checkout-freshness-catch-up.py")
+        specification = importlib.util.spec_from_file_location(
+            "checkout_freshness_catch_up", freshness_path)
+        freshness = importlib.util.module_from_spec(specification)
+        specification.loader.exec_module(freshness)
+        markers = [marker for marker in freshness.GIT_IN_PROGRESS_MARKERS
+                   if marker != "BISECT_LOG"]
+    except Exception:
+        return False
+    return any((Path(git_directory.stdout.strip()) / marker).exists() for marker in markers)
+
+
+def target_ignored_by_git(checkout: Path, file_path: str) -> bool:
+    """Whether git ignores the target, so that it can never be committed: a detached
+    HEAD loses commits, and an ignored file has none to lose."""
+    return run_git(["check-ignore", "-q", "--", file_path], checkout).returncode == 0
+
+
 def main() -> int:
     try:
         payload = json.loads(sys.stdin.read() or "{}")
@@ -175,6 +214,8 @@ def main() -> int:
         head_state, branch_name = head_state_of(checkout)
         message_fields = {}
         if head_state == "detached":
+            if git_operation_in_progress(checkout) or target_ignored_by_git(checkout, file_path):
+                return 0
             deny_message = DETACHED_DENY_MESSAGE
         elif head_state == "unborn":
             deny_message = UNBORN_DENY_MESSAGE

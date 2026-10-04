@@ -82,17 +82,27 @@ def tracked_paths_sharing_name(relative_path: PurePath, checkout: Path):
             tracked, relative_path, checkout))
 
 
+COLLISION_WARNING_TEMPLATE = (
+    "file-name-collision-warning: you wrote {path}; the name {name} is already {already}. "
+    "A basename, other than SKILL.md, README.md and .gitkeep, belongs to one tracked file, "
+    "so the file can be cited by its basename.\n"
+    "If you are moving the file, delete {moved_from} in this change.\n"
+    "If the file you wrote is a draft of a new version of {draft_of}, rename the file you "
+    "wrote so its name ends -draft before the extension, or at the end of a name that has "
+    "none; tell whoever expects the old path the new one; and leave {draft_of} as it is.\n"
+    "If both files are meant to exist and the file you wrote is not a draft, rename the file "
+    "you wrote by CLAUDE.md's naming rule, and update what you have already written to point "
+    "at the new name.\n"
+    "If you wrote the file by mistake, delete the file you wrote."
+)
+
+
 def collision_warning_line(relative_path: PurePath, others) -> str:
     """Return the collision warning and instructions shown to the agent."""
-    already = ", ".join(others)
-    moved_from = others[0] if len(others) == 1 else "the file you moved from"
-    return (
-        f"file-name-collision-warning: you wrote {relative_path}; "
-        f"the name {relative_path.name} is already {already}.\n"
-        f"If you are moving the file, delete {moved_from} in this change.\n"
-        f"If both files are meant to exist, rename the one you just wrote by "
-        f"CLAUDE.md's naming rule, and update what you have already written "
-        f"to point at the new name.")
+    return COLLISION_WARNING_TEMPLATE.format(
+        path=relative_path, name=relative_path.name, already=", ".join(others),
+        moved_from=others[0] if len(others) == 1 else "the file you moved from",
+        draft_of=others[0] if len(others) == 1 else "one of those files")
 
 
 def main() -> int:
