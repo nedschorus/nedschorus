@@ -211,6 +211,77 @@ with tempfile.TemporaryDirectory(prefix="pre-reboot-saver-test-") as scratch_nam
           result.returncode == 1 and "could not copy to fakehost:" in result.stdout
           and "stub refused" in result.stdout, result.stdout)
 
+    # --- a gone worktree, a broken one, a nested repository, no diff -----
+    # Worktrees are handled in path order, so the gone and broken ones come
+    # before the dirty one: a loop that stopped at either would not save it.
+    clone_two = scratch / "clone-two-parent"
+    clone_two.mkdir()
+    clone_two = make_clone(clone_two)
+    tmp_two = scratch / "tmp-two"
+    gone = add_worktree(clone_two, tmp_two / "aaa-gone", "gone-branch")
+    subprocess.run(["rm", "-rf", str(gone)], check=True)
+    broken = add_worktree(clone_two, tmp_two / "aab-broken", "broken-branch")
+    (broken / ".git").write_text(f"gitdir: {scratch / 'no-such-gitdir'}\n")
+    untracked_only = add_worktree(clone_two, tmp_two / "-home-nedlern-agents-gamma" / "wt-untracked",
+                                  "untracked-branch")
+    nested = untracked_only / "nested"
+    nested.mkdir()
+    git("init", "-q", cwd=nested)
+    (nested / "inner.txt").write_text("nested work\n")
+    (untracked_only / "loose.txt").write_text("loose\n")
+    store_two = scratch / "store-two"
+    result = run_saver(clone_two, str(store_two), [tmp_two])
+    output = result.stdout
+    check("a registered worktree whose directory is gone is reported GONE and the run goes on",
+          f"GONE     {gone}" in output and f"SAVED    {untracked_only}" in output, output)
+    check("a worktree where git fails is FAILED naming git, and the run goes on to the next",
+          f"FAILED   {broken}: git status --porcelain" in output
+          and f"SAVED    {untracked_only}" in output and "Traceback" not in result.stderr,
+          output + result.stderr)
+    check("a worktree where git fails makes the run exit 1",
+          result.returncode == 1 and "SUMMARY: 1 saved, 0 clean, 1 failed" in output, output)
+    gamma_saves = saves_under(store_two / "gamma")
+    gamma_dir = next(gamma_saves[0].iterdir()) if gamma_saves else scratch / "missing"
+    gamma_manifest = (json.loads((gamma_dir / "manifest.json").read_text())
+                      if (gamma_dir / "manifest.json").exists() else {})
+    check("an untracked-only save writes no changes.diff and its manifest says so",
+          not (gamma_dir / "changes.diff").exists() and gamma_manifest.get("diff_written") is False
+          and [entry["name"] for entry in gamma_manifest.get("saved", [])] == ["untracked.tar"],
+          str(gamma_manifest) + str(list(gamma_dir.iterdir()) if gamma_dir.exists() else ""))
+    gamma_members = []
+    if (gamma_dir / "untracked.tar").exists():
+        with tarfile.open(gamma_dir / "untracked.tar") as archive:
+            gamma_members = archive.getnames()
+    check("an untracked nested repository is in the tar whole, its .git included",
+          "nested/inner.txt" in gamma_members and "nested/.git/HEAD" in gamma_members
+          and "loose.txt" in gamma_members, str(gamma_members))
+    check("the manifest lists the nested repository",
+          gamma_manifest.get("nested_repositories") == ["nested"], str(gamma_manifest))
+    restore_two = scratch / "restore-two"
+    git("worktree", "add", "-q", "--detach", str(restore_two), gamma_manifest.get("head", "HEAD"),
+        cwd=clone_two)
+    extracted = subprocess.run(["tar", "-xf", str(gamma_dir / "untracked.tar")], cwd=restore_two,
+                               capture_output=True, text=True)
+    check("the untracked-only save comes back with tar alone, nested repository included",
+          extracted.returncode == 0 and (restore_two / "nested" / "inner.txt").is_file()
+          and (restore_two / "nested" / "inner.txt").read_text() == "nested work\n"
+          and (restore_two / "loose.txt").exists(), extracted.stderr)
+
+    # --- which destination is local --------------------------------------
+    saver_spec = importlib.util.spec_from_file_location("pre_reboot_saver", SAVER)
+    saver = importlib.util.module_from_spec(saver_spec)
+    saver_spec.loader.exec_module(saver)
+    default = saver.DEFAULT_DESTINATION
+    store_path = default.split(":", 1)[1]
+    check("on ned-box the default destination is a local copy",
+          saver.copy_host_and_store(default, "ned-box") == (None, store_path)
+          and saver.copy_host_and_store(default, "ned-box.local") == (None, store_path))
+    check("elsewhere the default destination goes over ssh to ned-box",
+          saver.copy_host_and_store(default, "Edwards-MacBook-Air") == ("nedlern@ned-box", store_path))
+    check("on ned-box a destination given by hand is used as given",
+          saver.copy_host_and_store("otherhost:/srv/store", "ned-box") == ("otherhost", "/srv/store")
+          and saver.copy_host_and_store("/local/store", "ned-box") == (None, "/local/store"))
+
     # --- invocation and help ---------------------------------------------
     result = run_saver(scratch / "not-a-clone", str(store), [tmp_root])
     check("a clone that cannot be read exits 2 naming it",
