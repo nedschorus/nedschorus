@@ -100,9 +100,9 @@ the question at 20:16:59Z and then answered the checkout-freshness Stop hook
 13 seconds later; the caller got "No action needed on my part ..." with exit
 0, so its fallback ladder never fired. So the run no longer loads this
 project's settings (--setting-sources user, the flag PR #417 gave the
-cold-read cells for the same leak), and a reply that names no issue and is
-neither of the two boundary replies fails the ask instead of being passed
-back.
+cold-read cells for the same leak), and a reply that names no issue, has no
+`verdict: unrelated` line, and is neither of the two boundary replies fails
+the ask instead of being passed back.
 
 Post-check (design step 4): every pointer ghi-info returns is checked
 against the just-refreshed mirror by this script, never taken on the
@@ -205,6 +205,10 @@ TRANSCRIPT_SIZE_THRESHOLD_BYTES = 5_000_000
 CONTEXT_USED_PERCENTAGE_THRESHOLD = 40.0
 
 POINTER_PATTERN = re.compile(r"#(\d+)")
+# The one verdict that names no issue. A line of its own, as the draft-body
+# request asks, so prose that only mentions the verdict does not pass.
+VERDICT_UNRELATED_LINE_PATTERN = re.compile(
+    r"^[ \t]*verdict:[ \t]*unrelated[ \t]*$", re.IGNORECASE | re.MULTILINE)
 
 COLD_START_PROMPT_TEMPLATE = """You are ghi-info: this project's knowledge agent over its GitHub-issue corpus. Other agents send you one request at a time; you answer it from the corpus you hold in context and stop. You are the judgment layer — every mechanical fact (fetching, counting, verifying) is script work done for you before a request reaches you.
 
@@ -331,19 +335,22 @@ def reply_answers_the_question(text: str) -> bool:
     """Whether a reply is an answer at all, rather than something else the
     session said.
 
-    A reading list names issues, and the two passthrough replies are fixed
-    strings; anything with neither is not an answer this caller can use. The
+    A reading list names issues, the two passthrough replies are fixed
+    strings, and a draft-body request's "nothing covers this" is a
+    `verdict: unrelated` line; anything with none of these is not an answer
+    this caller can use. The
     case that earned this check (2026-09-17): the run's last message was
     "No action needed on my part -- this session hasn't touched any scripts
     or tests", a reply to a Stop hook, and the ask returned it with exit 0,
     so the caller's fallback ladder never fired.
 
-    A true answer that names no issue -- "nothing covers this" in those words
-    -- is refused by this check too, and that costs one trip down the
+    A true answer to a question that names no issue -- "nothing covers this"
+    in those words -- is refused by this check too, and that costs one trip down the
     fallback ladder, which never blocks a write. Silently passing a
     non-answer costs a write made against no knowledge at all.
     """
-    return bool(POINTER_PATTERN.search(text)) or is_passthrough_reply(text)
+    return (bool(POINTER_PATTERN.search(text)) or is_passthrough_reply(text)
+            or bool(VERDICT_UNRELATED_LINE_PATTERN.search(text)))
 
 
 def find_unexpected_closed_pointers(reply_text: str, cache: dict, include_closed: bool):
@@ -801,9 +808,11 @@ def _ask_within_lock(question, include_closed, seat_dir, repo, projects_root,
         save_state(state_path, state)
 
     if not reply_answers_the_question(reply_text):
-        return None, ("ghi-info's reply names no issue and is not a "
-                      "not-about-issues or ask-user-about-ruling: reply, so "
-                      f"it is not an answer to this question: {reply_text[:200]!r}")
+        return None, ("ghi-info's reply names no issue, has no `verdict: "
+                      "unrelated` line, and is not a not-about-issues or "
+                      "ask-user-about-ruling: reply, so "
+                      "it is not an answer to this question. The reply began: "
+                      f"{reply_text[:200]!r}")
 
     return reply_text, None
 

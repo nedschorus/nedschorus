@@ -883,6 +883,39 @@ with tempfile.TemporaryDirectory() as temporary:
               "No action needed on my part — this session hasn't touched any "
               "scripts or tests; I only read the GHI mirror to answer requests."))
 
+    # A draft-body request's "nothing covers this" names no issue; its verdict
+    # line is what makes it an answer. Both replies below are ghi-info's own.
+    unrelated_with_reasons = (
+        "No open or closed issue in the mirror mentions "
+        "`scripts/pull-request-review-plan.py`, a `--repository`/subdirectory-"
+        "vs-top-level defect in its `git diff`/`git ls-tree` pathspecs, or "
+        "resolving a program's repository argument via `git rev-parse "
+        "--show-toplevel`. Grepped both issues-open.md and issues-closed.md "
+        "for all of those terms — no matches anywhere.\n\nverdict: unrelated")
+    check("a verdict: unrelated line is an answer, with reasons above it or alone",
+          ghi_ask.reply_answers_the_question(unrelated_with_reasons)
+          and ghi_ask.reply_answers_the_question("verdict: unrelated")
+          and ghi_ask.reply_answers_the_question("Verdict: Unrelated  "))
+    check("a reply that only mentions the verdict is not an answer",
+          not ghi_ask.reply_answers_the_question(
+              "I would reply verdict: unrelated, but I have not read the draft.")
+          and not ghi_ask.reply_answers_the_question(
+              "I have not read the draft.\nOtherwise I would reply verdict: unrelated")
+          and not ghi_ask.reply_answers_the_question("verdict: unrelated to memory")
+          and not ghi_ask.reply_answers_the_question("verdict:"))
+
+    seat_unrelated = root / "seat-unrelated-reply"
+    seat_unrelated.mkdir()
+    ghi_ask.save_state(seat_unrelated / ghi_ask.STATE_FILE_NAME,
+                       {"session_id": "sess-U", "closes_since_birth": 0, "recent_matches": []})
+    fake_refresh_queue([([], {}, None)])
+    fake_claude_queue([({"session_id": "sess-U", "result": unrelated_with_reasons}, None)])
+    answer, error = ghi_ask.ask("Does an open issue already cover this ground?",
+                                False, seat_unrelated, "x/y")
+    check("a verdict: unrelated reply is returned, not failed",
+          error is None and answer is not None
+          and answer.splitlines()[-1] == "verdict: unrelated", (answer, error))
+
     seat_hook = root / "seat-hook-reply"
     seat_hook.mkdir()
     ghi_ask.save_state(seat_hook / ghi_ask.STATE_FILE_NAME,
