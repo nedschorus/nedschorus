@@ -19,6 +19,7 @@ import io
 import json
 import os
 import plistlib
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -429,7 +430,7 @@ with tempfile.TemporaryDirectory() as temporary:
           exit_code == 1
           and "FAILED: `crontab -` exited 0, but `crontab -l` reads back 0 line(s) where 3 were "
               "written" in errors
-          and "Run `crontab -l` to see what the crontab now holds" in errors
+          and "Put the backup back, check it with `crontab -l`, and run this again." in errors
           and "installed:" not in printed and "replaced:" not in printed,
           (exit_code, printed, errors))
     stub = MachineStub(crontab=as_installed_today)
@@ -454,6 +455,126 @@ with tempfile.TemporaryDirectory() as temporary:
           and "FAILED: `crontab -` exited 0, but the crontab could not be read back to confirm "
               "the write: " in errors and "Permission denied" in errors
           and "installed:" not in printed, (exit_code, printed, errors))
+
+    # --- cron: the backup taken before each write -------------------------
+    box_backups = NED_BOX[1] / ".local" / "state" / "claude" / "scheduled-jobs-crontab-backups"
+
+    def backups_in(directory):
+        return sorted(directory.glob("crontab-before-write-*.txt")) if directory.is_dir() else []
+
+    def fresh_backup_directory():
+        for backup in backups_in(box_backups):
+            backup.unlink()
+
+    fresh_backup_directory()
+    original = f"{NED_BOX_FOREIGN_COMMENT}\n".encode()
+    stub = MachineStub(crontab=original)
+    stub.crontab_write_installs_empty_crontab = True
+    exit_code, printed, errors = run_main(["--install"] + TWO_JOBS, NED_BOX, stub)
+    saved = backups_in(box_backups)
+    check("before a write the crontab as read is saved, byte for byte, to one backup file "
+          "under the home directory's .local/state/claude/scheduled-jobs-crontab-backups",
+          len(saved) == 1 and saved[0].read_bytes() == original, (saved, printed, errors))
+    check("a write that reads back empty names the backup and the command that restores it",
+          exit_code == 1 and saved
+          and f"saved at {saved[0]}; to put it back, run `crontab - < {saved[0]}`." in errors,
+          (exit_code, errors))
+
+    fresh_backup_directory()
+    stub = MachineStub(crontab=original)
+    stub.exit_codes["crontab-write"] = 1
+    exit_code, printed, errors = run_main(["--install"] + TWO_JOBS, NED_BOX, stub)
+    saved = backups_in(box_backups)
+    check("a write that exits nonzero names the backup and the command that restores it",
+          exit_code == 1 and len(saved) == 1
+          and f"to put it back, run `crontab - < {saved[0]}`." in errors, (exit_code, errors))
+
+    fresh_backup_directory()
+    stub = MachineStub(crontab=original)
+    exit_code, printed, errors = run_main(["--install"] + TWO_JOBS, NED_BOX, stub)
+    saved = backups_in(box_backups)
+    check("a write that holds prints the backup's path and its restore command on one line",
+          exit_code == 0 and len(saved) == 1 and saved[0].read_bytes() == original
+          and f"crontab backup: {saved[0]} holds the crontab as it was before this write; "
+              f"`crontab - < {saved[0]}` puts it back.\n" in printed, (exit_code, printed))
+    exit_code, printed, errors = run_main(["--install"] + TWO_JOBS, NED_BOX, stub)
+    check("a crontab that needs no change is not written and takes no backup",
+          exit_code == 0 and len(backups_in(box_backups)) == 1
+          and "crontab backup:" not in printed, (exit_code, printed, backups_in(box_backups)))
+
+    fresh_backup_directory()
+    stub = MachineStub(crontab=original)
+    def unreadable_after_backed_up_write(command, stdout=None, stderr=None, input=None):
+        if command == ["crontab", "-l"] and stub.crontab_writes:
+            stub.crontab_list_failure = (1, b"crontab: tmp/tmp.456: Permission denied\n")
+        return real_stub_call(stub, command, stdout=stdout, stderr=stderr, input=input)
+    exit_code, printed, errors = run_main(["--install"] + TWO_JOBS, NED_BOX,
+                                          unreadable_after_backed_up_write)
+    saved = backups_in(box_backups)
+    check("a write that cannot be read back names the backup and the command that restores it",
+          exit_code == 1 and len(saved) == 1
+          and f"to put it back, run `crontab - < {saved[0]}`." in errors, (exit_code, errors))
+
+    fresh_backup_directory()
+    stub = MachineStub(crontab=original)
+    run_main(["--install"] + TWO_JOBS, NED_BOX, stub)
+    run_main(["--remove", "--job", "daily-full-test-run-of-main"], NED_BOX, stub)
+    saved = backups_in(box_backups)
+    check("two writes within one second each keep their own backup",
+          len(saved) == 2 and saved[0].read_bytes() == original
+          and saved[1].read_bytes() != original, [backup.name for backup in saved])
+
+    fresh_backup_directory()
+    stub = MachineStub(crontab=as_installed_today)
+    exit_code, printed, errors = run_main(["--remove", "--job", "daily-full-test-run-of-main"],
+                                          NED_BOX, stub)
+    saved = backups_in(box_backups)
+    check("--remove backs up the crontab before its write",
+          exit_code == 0 and len(saved) == 1 and saved[0].read_bytes() == as_installed_today
+          and "crontab backup:" in printed, (exit_code, printed, saved))
+
+    fresh_backup_directory()
+    stub = MachineStub(crontab=f"{BOX_MIRROR}\n{BOX_DAILY}\n{NED_BOX_FOREIGN_COMMENT}\n".encode())
+    stub.exit_codes["crontab-write"] = 1
+    stray_line = BOX_DAILY.replace("daily-full-test-run-of-main.py", "retired-backup-case.py")
+    stub.crontab = f"{stray_line}\n".encode()
+    exit_code, printed, errors = run_main(["--remove-not-in-table"], NED_BOX, stub)
+    saved = backups_in(box_backups)
+    check("--remove-not-in-table backs up the crontab before its write, and a failed write "
+          "names that backup",
+          exit_code == 1 and len(saved) == 1 and saved[0].read_bytes() == stub.crontab
+          and f"`crontab - < {saved[0]}`" in errors, (exit_code, errors, saved))
+
+    fresh_backup_directory()
+    box_backups.mkdir(parents=True, exist_ok=True)
+    for index in range(12):
+        (box_backups / f"crontab-before-write-20200101T0000{index:02d}.000000Z.txt").write_bytes(b"old\n")
+    stub = MachineStub(crontab=original)
+    exit_code, printed, errors = run_main(["--install"] + TWO_JOBS, NED_BOX, stub)
+    saved = backups_in(box_backups)
+    check("only the newest ten backups are kept, the new one among them",
+          exit_code == 0 and len(saved) == 10
+          and saved[-1].read_bytes() == original
+          and saved[0].name == "crontab-before-write-20200101T000003.000000Z.txt",
+          [backup.name for backup in saved])
+    fresh_backup_directory()
+
+    if box_backups.is_dir():
+        shutil.rmtree(box_backups)
+    box_backups.parent.mkdir(parents=True, exist_ok=True)
+    box_backups.write_text("a file where the backup directory goes\n")
+    stub = MachineStub(crontab=original)
+    try:
+        exit_code, printed, errors = run_main(["--install"] + TWO_JOBS, NED_BOX, stub)
+    except Exception as escaped:
+        exit_code, printed, errors = None, "", f"escaped: {escaped!r}"
+    check("a backup that cannot be saved is FAILED, exit 1, and the crontab is not written",
+          exit_code == 1 and stub.crontab_writes == [] and stub.crontab == original
+          and "FAILED: the crontab could not be backed up before the write: " in errors
+          and "the crontab was not written" in errors
+          and f"Make {box_backups} writable, and run this again." in errors
+          and "installed:" not in printed, (exit_code, printed, errors))
+    box_backups.unlink()
 
     # --- cron: check ------------------------------------------------------
     stub = MachineStub(crontab=f"{NED_BOX_FOREIGN_COMMENT}\n{differing_daily}\n".encode())
