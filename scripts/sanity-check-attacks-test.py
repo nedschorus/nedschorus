@@ -1382,6 +1382,7 @@ def main():
             "# Design\n\nThe `widget-frobnicator` runs nightly.\n", encoding="utf-8")
         git(repo, "add", "-A")
         git(repo, "commit", "-qm", "the design")
+        git(repo, "update-ref", "refs/remotes/origin/main", "HEAD")
         return repo
 
     def runner_over(repo, base):
@@ -1554,6 +1555,56 @@ def main():
     check("a LEAK-WARNING names the line number and text it matched",
           "line 2: Off-limits: the widget-frobnicator design." in buffer.getvalue(),
           f"output was {buffer.getvalue()!r}")
+
+    with tempfile.TemporaryDirectory() as scratch:
+        base = pathlib.Path(scratch)
+        repo = scratch_repository_with_design(base)
+        target = repo / "docs/design.md"
+        target.write_text(
+            "`widget-frobnicator` `shared-vocabulary` `literal.name` "
+            "`branch-only-name` `binary-known-name`\n", encoding="utf-8")
+        (repo / "known.txt").write_text(
+            "prefixSHARED-VOCABULARYsuffix literalXname\n", encoding="utf-8")
+        (repo / "known.bin").write_bytes(b"\x00BINARY-KNOWN-NAME\x00")
+        git(repo, "add", "-A")
+        git(repo, "commit", "-qm", "main vocabulary")
+        git(repo, "update-ref", "refs/remotes/origin/main", "HEAD")
+        (repo / "known.txt").write_text("branch-only-name\n", encoding="utf-8")
+        git(repo, "add", "-A")
+        git(repo, "commit", "-qm", "branch vocabulary")
+        names = runner_leak.filter_names_known_on_main(
+            runner_leak.coined_names(target), "docs/design.md", repo)
+        buffer = io.StringIO()
+        with contextlib.redirect_stdout(buffer):
+            runner_leak.leak_scan(names, target.read_text(encoding="utf-8"), "request")
+        output = buffer.getvalue()
+        check("names elsewhere on main are not warned on, ignoring case and boundaries",
+              "shared-vocabulary" not in names and "binary-known-name" not in names
+              and "design name `shared-vocabulary`" not in output
+              and "design name `binary-known-name`" not in output, output)
+        check("a name found only in the design on main is warned on",
+              "LEAK-WARNING: design name `widget-frobnicator`" in output, output)
+        check("main vocabulary uses fixed strings and main rather than branch files",
+              {"literal.name", "branch-only-name"} <= names, str(names))
+        check("a git grep with no matches keeps every candidate",
+              runner_leak.filter_names_known_on_main(
+                  {"absent-candidate-name"}, "docs/design.md", repo)
+              == {"absent-candidate-name"})
+
+        git(repo, "update-ref", "-d", "refs/remotes/origin/main")
+        driven = runner_over(repo, base)
+        request = base / "request.md"
+        request.write_text("widget-frobnicator\n", encoding="utf-8")
+        launched = []
+        driven.run_claude = lambda *args, **kwargs: launched.append("claude")
+        code, out, err = drive_main(driven, [
+            "--target", "docs/design.md", "--attack", "fresh-eyes",
+            "--runtime", "claude", "--problem-statement", str(request)])
+        check("a failed main query stops the run nonzero with a message before launch",
+              code == 2 and "git grep of origin/main failed" in err
+              and not launched and "LEAK-WARNING" not in out
+              and not driven.RECORDS_ROOT.exists(),
+              f"exit {code}, stdout {out!r}, stderr {err!r}")
 
     # Case 34: `--runtime` reruns one runtime; the other's cells do not launch.
     # A rerun used to repeat both. The target is a skill, and every skill's

@@ -18,7 +18,10 @@ fresh context:
   off-limits it strayed into (self-reported), and the runner scans what the
   requester sends — the problem statement, and the instruction files the
   CLIs inject on their own (conventional paths, not a proven enumeration) —
-  for the design's coined names, printing a LEAK-WARNING per hit. The
+  for candidate names from the design that occur nowhere in tracked files on
+  `origin/main` outside the design itself, printing a LEAK-WARNING per hit.
+  The main-branch query is case-insensitive and fixed-string; a failed query
+  stops the run with a nonzero exit. The
   agent returns a five-section report — sketch, hard parts, late
   discoveries, assumptions, what it consulted — and triage compares the
   original and the fresh design on their merits: a substantive difference
@@ -167,9 +170,8 @@ Running a sanity-check, and reading its output:
   or the web.
 - Fresh-eyes runs print `LEAK-WARNING` lines — the requester-input scan
   described above, one per line a coined name appears on, naming the line's
-  number and text. Expect hits on every run: the off-limits list must name
-  the design's paths to forbid them, and those paths are coined names; the
-  line shows whether a hit is that list.
+  number and text. The off-limits list can match design paths that occur
+  nowhere else on main; the line shows whether a hit is that list.
 - Every review agent may reach the internet to check facts, and every one may
   write: claude agents carry web tools plus Write, codex agents run under a
   permission profile that writes where workspace-write did, with network on,
@@ -479,8 +481,7 @@ ATTACK_REPORT_REQUIRED_PHRASES = {
 
 
 # Hyphenations that are ordinary English or repo-wide convention, not names a
-# design coined — the coined-name scan skips them. Anything else that hits is
-# printed; triage judges false positives (the scan reports, never gates).
+# design coined — the candidate scan skips them before checking main.
 GENERIC_HYPHENATED_WORDS = {
     "read-only", "zero-context", "one-line", "built-in", "fine-grained",
     "high-level", "low-level", "long-running", "machine-readable",
@@ -539,7 +540,7 @@ def prompt_body(attack: str) -> str:
 
 
 def coined_names(target_path: pathlib.Path) -> set:
-    """The design's coined names: backticked spans plus multi-part invented
+    """The design's candidate names: backticked spans plus multi-part invented
     names (hyphenated tokens), minus ordinary-English hyphenations."""
     text = target_path.read_text(encoding="utf-8")
     names = set()
@@ -559,6 +560,30 @@ def coined_names(target_path: pathlib.Path) -> set:
     return names
 
 
+def filter_names_known_on_main(names: set, target: str,
+                               checkout: pathlib.Path) -> set:
+    """Keep candidates absent from main outside the design's own file."""
+    if not names:
+        return set()
+    try:
+        result = subprocess.run(
+            ["git", "grep", "-a", "-i", "-F", "-h", "-f", "-", "origin/main",
+             "--", ".", f":(top,literal,exclude){target}"],
+            cwd=checkout, input="\n".join(sorted(names)) + "\n",
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            check=False)
+    except OSError as error:
+        print(f"Sanity-check stopped: git grep of origin/main failed: {error}",
+              file=sys.stderr)
+        raise SystemExit(2)
+    if result.returncode not in (0, 1):
+        print(f"Sanity-check stopped: git grep of origin/main failed "
+              f"(exit {result.returncode}): {result.stderr.strip()}", file=sys.stderr)
+        raise SystemExit(2)
+    known_text = result.stdout.lower()
+    return {name for name in names if name.lower() not in known_text}
+
+
 LEAK_WARNING_LINE_CHARACTERS = 160
 
 
@@ -568,8 +593,8 @@ def leak_scan(design_names: set, text: str, where: str) -> None:
     confirm that part of the design — the requester weighs it at triage.
 
     Each warning names the line it matched, number and text, because the
-    request's off-limits list must name the design's own paths, so every run
-    has expected hits, and warnings naming only the file would leave telling
+    request's off-limits list must name the design's own paths, so a run
+    can have expected hits, and warnings naming only the file would leave telling
     those from a real leak to a search of the file by hand."""
     lines = text.splitlines()
     for name in sorted(design_names):
@@ -1971,6 +1996,7 @@ def run_cells_in_review_copy(args, target_path: pathlib.Path, run_log: RunOutput
 
         if args.problem_statement and any(a == "fresh-eyes" for a, _ in cells):
             design_names = coined_names(checkout / args.target)
+            design_names = filter_names_known_on_main(design_names, args.target, checkout)
             leak_scan(design_names, args.problem_statement.read_text(encoding="utf-8"),
                       f"the problem statement ({args.problem_statement})")
             for path in injected_instruction_files(checkout):
