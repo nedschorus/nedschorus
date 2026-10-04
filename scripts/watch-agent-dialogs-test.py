@@ -264,6 +264,39 @@ def run_unit_cases():
                      user_text("y")])
     check("only the first matching record after an interrupt is the re-send",
           lines.count("alpha USER: y") == 2, str(lines))
+    lines = emitted([queued_message("y"), interrupt_notice(),
+                     user_text("<task-notification>done</task-notification>"),
+                     user_text("y")])
+    check("an injected record between does not end the wait for a re-send",
+          lines.count("alpha USER: y") == 1, str(lines))
+
+    # A transcript replaced on disk is read again from byte 0 as a new file, with no re-send pending.
+    with tempfile.TemporaryDirectory() as scratch:
+        seat_path = Path(scratch) / "agents" / "alpha"
+        seat_path.mkdir(parents=True)
+        projects_root = Path(scratch) / "projects"
+        project = watcher_module.project_directory_for_seat(seat_path, projects_root)
+        project.mkdir(parents=True)
+        transcript = write_transcript(
+            project, "12121212-1212-1212-1212-121212121212.jsonl",
+            [queued_message("y"), interrupt_notice()])
+        follower = watcher_module.SeatFollower(seat_path, projects_root, 250)
+        emitted_lines = []
+        saved_emit = watcher_module.emit
+        watcher_module.emit = emitted_lines.append
+        try:
+            follower.rescan(at_startup=True, from_start=True)
+            follower.poll()
+            replacement = transcript.with_name("replacement.tmp")
+            replacement.write_text(json.dumps(user_text("y")) + "\n")
+            os.replace(replacement, transcript)
+            follower.poll()
+        finally:
+            watcher_module.emit = saved_emit
+            follower._close()
+        check("a replaced transcript's first message is not taken for a re-send",
+              emitted_lines.count("alpha USER: y") == 2, str(emitted_lines))
+
     lines = emitted([queued_message("   ")])
     check("a queued message with no text emits nothing", lines == [], str(lines))
 

@@ -130,17 +130,19 @@ def event_lines(seat_name, raw_record, snippet_chars, resend_state=None):
             if not isinstance(text, str):
                 continue
             stripped = text.strip()
-            if stripped.startswith("[Request interrupted"):
+            interrupt_notice = stripped.startswith("[Request interrupted")
+            if interrupt_notice:
                 resend_state["interrupted"] = True
             elif (resend_state.get("interrupted")
                     and stripped == resend_state.get("queued_text")):
                 resend_state.pop("queued_text", None)
                 continue
-            else:
-                resend_state.pop("queued_text", None)
             # Injected monitor notifications must be skipped to prevent self-watch feedback.
             if not stripped or stripped.startswith("<") or stripped.startswith("[SYSTEM"):
                 continue
+            # Only a real user line ends the wait for a re-send; an injected record between does not.
+            if not interrupt_notice:
+                resend_state.pop("queued_text", None)
             yield f"{seat_name} USER: {one_line_snippet(text, snippet_chars)}"
 
 
@@ -251,7 +253,7 @@ class SeatFollower:
         self.pending = b""
         # Resuming at a saved offset must also resume the re-send state, or a re-send after the switch prints twice.
         self.resend_state = (self.followed_resend_states.get(path, {})
-                             if resume_offset is not None and not start_at_end else {})
+                             if resume_offset is not None else {})
 
     def _close(self):
         if self.transcript_path is not None:
