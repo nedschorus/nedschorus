@@ -1193,8 +1193,41 @@ def run_seat_name_and_directory_from_the_handoff_supervisor_cases(workspace: Pat
               f"{sorted(item.name for item in unmatched_handoffs.iterdir())} {unmatched.stderr}")
 
 
+def run_written_by_session_field_cases(workspace: Path):
+    """The writer and the supervisor must agree on the field naming the writing session.
+
+    The supervisor reads written-by-session to pick whose dialog to carry
+    over, and falls back to the session it launched when the field is missing
+    or "unknown". A rename on either side, or of the environment variable the
+    writer reads, therefore breaks nothing loudly: the successor silently gets
+    another session's conversation.
+    """
+    workspace = workspace / "written-by-session"
+    workspace.mkdir()
+    session_id = "5b1e0c7a-3d42-4c8e-9f60-2a7d1e4b8c93"
+    completed = run_writer(workspace, "check the session field",
+                           environment_overrides={"CLAUDE_CODE_SESSION_ID": session_id})
+    handoff_path = workspace / "tester-handoff.md"
+    fields = (writer.supervisor.parse_handoff_file(handoff_path)
+              if handoff_path.exists() else {})
+    check("the handoff names its writing session under the field the supervisor reads",
+          fields.get(writer.supervisor.WRITTEN_BY_SESSION_FIELD) == session_id,
+          f"exit {completed.returncode}; fields {fields}; output {(completed.stdout + completed.stderr)[-400:]}")
+
+    # The harness side of the same contract: the variable the writer reads must
+    # be the one Claude Code actually sets for a running session.
+    if os.environ.get("CLAUDECODE") == "1":
+        check("a running Claude Code session sets CLAUDE_CODE_SESSION_ID, the variable the writer reads",
+              bool(os.environ.get("CLAUDE_CODE_SESSION_ID")),
+              "CLAUDECODE=1 but CLAUDE_CODE_SESSION_ID is unset or empty")
+    else:
+        print("SKIP  a running Claude Code session sets CLAUDE_CODE_SESSION_ID: "
+              "this run is not inside a Claude Code session")
+
+
 with tempfile.TemporaryDirectory() as temporary_directory:
     run_collapse_cases()
+    run_written_by_session_field_cases(Path(temporary_directory))
     run_multi_line_next_step_cases(Path(temporary_directory))
     run_counter_cases(Path(temporary_directory))
     run_invocation_cases(Path(temporary_directory))
