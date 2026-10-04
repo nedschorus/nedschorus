@@ -136,6 +136,8 @@ def event_lines(seat_name, raw_record, snippet_chars, resend_state=None):
                     and stripped == resend_state.get("queued_text")):
                 resend_state.pop("queued_text", None)
                 continue
+            else:
+                resend_state.pop("queued_text", None)
             # Injected monitor notifications must be skipped to prevent self-watch feedback.
             if not stripped or stripped.startswith("<") or stripped.startswith("[SYSTEM"):
                 continue
@@ -159,6 +161,7 @@ class SeatFollower:
         self.followed_offsets = {}  # Offsets survive _close so switching back to a live transcript does not replay its history.
         self.last_followed_path = None
         self.resend_state = {}
+        self.followed_resend_states = {}
 
     def newest_candidate(self):
         try:
@@ -246,11 +249,14 @@ class SeatFollower:
             self.offset = 0
         self.followed_offsets[path] = self.offset
         self.pending = b""
-        self.resend_state = {}
+        # Resuming at a saved offset must also resume the re-send state, or a re-send after the switch prints twice.
+        self.resend_state = (self.followed_resend_states.get(path, {})
+                             if resume_offset is not None and not start_at_end else {})
 
     def _close(self):
         if self.transcript_path is not None:
             self.followed_offsets[self.transcript_path] = self.offset
+            self.followed_resend_states[self.transcript_path] = self.resend_state
         if self.handle is not None:
             self.handle.close()
         self.handle = None

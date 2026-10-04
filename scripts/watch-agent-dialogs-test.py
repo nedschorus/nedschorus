@@ -255,6 +255,15 @@ def run_unit_cases():
                      interrupt_notice(), user_text("y")])
     check("a re-send is matched only before the agent answers the queued message",
           lines.count("alpha USER: y") == 2, str(lines))
+    lines = emitted([queued_message("y"), interrupt_notice(),
+                     user_text("new request"), interrupt_notice(), user_text("y")])
+    check("a typed message between ends the wait for a queued message's re-send",
+          lines.count("alpha USER: y") == 2
+          and "alpha USER: new request" in lines, str(lines))
+    lines = emitted([queued_message("y"), interrupt_notice(), user_text("y"),
+                     user_text("y")])
+    check("only the first matching record after an interrupt is the re-send",
+          lines.count("alpha USER: y") == 2, str(lines))
     lines = emitted([queued_message("   ")])
     check("a queued message with no text emits nothing", lines == [], str(lines))
 
@@ -498,7 +507,8 @@ def run_all_cases():
         mtime_step = time.time()
         file_x = write_transcript(
             gamma_project, "ffffffff-ffff-ffff-ffff-ffffffffffff.jsonl",
-            [assistant_text("ALT-X-LINE-1")], mtime=mtime_step)
+            [assistant_text("ALT-X-LINE-1"), queued_message("ALT-X-QUEUED"),
+             interrupt_notice()], mtime=mtime_step)
         file_y = write_transcript(
             gamma_project, "99999999-9999-9999-9999-999999999999.jsonl",
             [assistant_text("ALT-Y-LINE-1")], mtime=mtime_step - 100)
@@ -513,6 +523,7 @@ def run_all_cases():
         watcher.wait_for("gamma AGENT: ALT-Y-LINE-2")
 
         mtime_step += 10
+        append_record(file_x, user_text("ALT-X-QUEUED"), mtime=mtime_step)
         append_record(file_x, assistant_text("ALT-X-LINE-2"), mtime=mtime_step)
         watcher.wait_for("gamma AGENT: ALT-X-LINE-2")
 
@@ -532,6 +543,8 @@ def run_all_cases():
               len(agent_lines) == len(set(agent_lines))
               and all(everything.count(marker) == 1 for marker in markers),
               everything)
+        check("alternating transcripts: a re-send after switching back shows once",
+              everything.count("gamma USER: ALT-X-QUEUED") == 1, everything)
         check("alternating transcripts: the WATCH switch line fires both ways",
               "gamma WATCH: switched to 99999999-9999-9999-9999-999999999999.jsonl"
               in lines
