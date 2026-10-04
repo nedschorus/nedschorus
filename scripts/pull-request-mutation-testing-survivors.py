@@ -15,9 +15,14 @@ is tested with every suite whose recorded inputs read that file (the
 recordings scripts/run-all-test-suites.py keeps), plus the file's sibling
 `<name>-test.py` or `<name>-test.sh` when there is one.
 
-Exit codes: 0 every mutant was killed, 1 a mutant survived or was not run,
-or a changed file has no suite, 2 could not run (cosmic-ray missing, a git step failed, the
-worktree could not be made, or a suite fails on the unmutated head).
+A renamed file is mutated under its new name. A mutant cosmic-ray could not
+judge, because its worker raised or its suites could not be launched, is
+printed as ERRORED and counts against the run like a survivor.
+
+Exit codes: 0 every mutant was killed, 1 a mutant survived, errored or was
+not run, or a changed file has no suite, 2 could not run (cosmic-ray missing,
+a git step failed, the worktree could not be made, or a suite fails or cannot
+be launched on the unmutated head).
 """
 
 import argparse
@@ -91,22 +96,25 @@ def cosmic_ray_tool_paths(venv):
     return found
 
 
-def head_and_base_of_pull_request(number, checkout):
+def head_and_base_of_pull_request(number, checkout, environment):
     """Return (head commit, base ref) of a pull request, fetching both."""
     view = json.loads(run_or_raise(
         ["gh", "pr", "view", str(number), "--json", "headRefOid,baseRefName"],
-        checkout, what=f"gh pr view {number}"))
+        checkout, environment, what=f"gh pr view {number}"))
     head, base_branch = view["headRefOid"], view["baseRefName"]
     run_or_raise(["git", "fetch", "--quiet", "origin", base_branch, head],
-                 checkout, what=f"git fetch origin {base_branch} {head}")
+                 checkout, environment,
+                 what=f"git fetch origin {base_branch} {head}")
     return head, f"origin/{base_branch}"
 
 
-def changed_python_files_to_mutate(checkout, merge_base, head):
-    """Changed or added Python files at head, suites excluded."""
+def changed_python_files_to_mutate(checkout, merge_base, head, environment):
+    """Changed, added or renamed Python files at head, by their head names, suites excluded."""
+    # R keeps a renamed-and-changed file, which --name-only lists by its new
+    # name, the name cr-filter-git's own rename-detecting diff uses.
     listed = run_or_raise(
-        ["git", "diff", "--name-only", "--diff-filter=AM", merge_base, head,
-         "--", "*.py"], checkout, what="git diff --name-only")
+        ["git", "diff", "--name-only", "--diff-filter=AMR", merge_base, head,
+         "--", "*.py"], checkout, environment, what="git diff --name-only")
     return [path for path in listed.splitlines()
             if path and not path.endswith("-test.py")]
 
@@ -152,11 +160,30 @@ def cosmic_ray_config_text(module_path, test_command, merge_base,
         f"branch = {json.dumps(merge_base)}\n")
 
 
+OUTCOME_KEYS = ("killed", "survived", "errored", "no mutation", "skipped",
+                "not run")
+
+# cosmic-ray reports a worker that raised as exception/incompetent, and a test
+# command it could not launch as normal/incompetent: errors of the run, not
+# properties of the mutant. A no-test worker found nothing to mutate.
+WORKER_OUTCOMES_THAT_ERRORED = ("exception", "abnormal")
+
+
+def mutant_description(item, result):
+    mutation = item["mutations"][0]
+    return {
+        "module_path": mutation["module_path"],
+        "line": mutation["start_pos"][0],
+        "operator": mutation["operator_name"],
+        "diff": result.get("diff") or "",
+    }
+
+
 def outcomes_from_dump(dump_text):
-    """Return (counts, survivors) from `cosmic-ray dump` output."""
-    counts = {"killed": 0, "survived": 0, "incompetent": 0, "skipped": 0,
-              "not run": 0}
+    """Return (counts, survivors, errored) from `cosmic-ray dump` output."""
+    counts = dict.fromkeys(OUTCOME_KEYS, 0)
     survivors = []
+    errored = []
     for line in dump_text.splitlines():
         if not line.strip():
             continue
@@ -164,42 +191,57 @@ def outcomes_from_dump(dump_text):
         if result is None:
             counts["not run"] += 1
             continue
-        if result.get("worker_outcome") == "skipped":
+        worker_outcome = result.get("worker_outcome")
+        test_outcome = result.get("test_outcome")
+        if worker_outcome == "skipped":
             counts["skipped"] += 1
-            continue
-        outcome = result.get("test_outcome")
-        if outcome == "survived":
+        elif worker_outcome == "no-test":
+            counts["no mutation"] += 1
+        elif (worker_outcome not in WORKER_OUTCOMES_THAT_ERRORED
+              and test_outcome == "survived"):
             counts["survived"] += 1
-            mutation = item["mutations"][0]
-            survivors.append({
-                "module_path": mutation["module_path"],
-                "line": mutation["start_pos"][0],
-                "operator": mutation["operator_name"],
-                "diff": result.get("diff") or "",
-            })
-        elif outcome == "killed":
+            survivors.append(mutant_description(item, result))
+        elif (worker_outcome not in WORKER_OUTCOMES_THAT_ERRORED
+              and test_outcome == "killed"):
             counts["killed"] += 1
         else:
-            counts["incompetent"] += 1
-    return counts, survivors
+            counts["errored"] += 1
+            errored.append(mutant_description(item, result))
+    return counts, survivors, errored
 
 
 def mutation_test_one_file(path, suites, worktree, scratch, tools, merge_base,
                            arguments, environment):
-    """Run cosmic-ray on one file's changed lines; return (counts, survivors)."""
+    """Run cosmic-ray on one file's changed lines; return (counts, survivors, errored)."""
     name = path.replace("/", "__")
     config = scratch / f"{name}.toml"
     session = scratch / f"{name}.sqlite"
+    baseline_session = scratch / f"{name}.baseline.sqlite"
     config.write_text(cosmic_ray_config_text(
         path, test_command_for(suites, arguments.python), merge_base,
         arguments.mutant_timeout_seconds))
     cosmic_ray = tools["cosmic-ray"]
-    baseline = run([cosmic_ray, "baseline", str(config)], worktree, environment)
+    baseline = run([cosmic_ray, "baseline", "--session-file",
+                    str(baseline_session), str(config)], worktree, environment)
     if baseline.returncode != 0:
         raise CouldNotRun(
             f"{PROGRAM}: not run — the suites for {path} fail on the unmutated "
             f"head, so no mutant can be judged: "
             f"{' '.join(suites)}\n{(baseline.stderr or baseline.stdout).strip()}")
+    # cosmic-ray's baseline exits 0 unless the suites failed, so a suite it
+    # could not launch at all passes it; only a survived baseline means they ran.
+    baseline_results = [json.loads(line) for line in run_or_raise(
+        [cosmic_ray, "dump", str(baseline_session)], worktree, environment,
+        what=f"cosmic-ray dump of the baseline for {path}").splitlines()
+        if line.strip()]
+    if not any(result and result.get("test_outcome") == "survived"
+               for _, result in baseline_results):
+        raise CouldNotRun(
+            f"{PROGRAM}: not run — the suites for {path} could not be run on "
+            f"the unmutated head, so no mutant can be judged: "
+            f"{' '.join(suites)}\n"
+            + "\n".join((result or {}).get("output") or ""
+                        for _, result in baseline_results).strip())
     run_or_raise([cosmic_ray, "init", str(config), str(session)], worktree,
                  environment, what=f"cosmic-ray init for {path}")
     run_or_raise([tools["cr-filter-git"], "--config", str(config), str(session)],
@@ -211,8 +253,9 @@ def mutation_test_one_file(path, suites, worktree, scratch, tools, merge_base,
         what=f"cosmic-ray dump for {path}"))
 
 
-def remove_worktree(checkout, worktree):
-    removed = run(["git", "worktree", "remove", "--force", str(worktree)], checkout)
+def remove_worktree(checkout, worktree, environment):
+    removed = run(["git", "worktree", "remove", "--force", str(worktree)], checkout,
+                  environment)
     if removed.returncode != 0 and worktree.exists():
         print(f"{PROGRAM}: could not remove the scratch worktree {worktree}: "
               f"{removed.stderr.strip()}\n"
@@ -250,34 +293,38 @@ def main(argv=None):
     arguments = parse_arguments(argv)
     checkout = Path(arguments.checkout).resolve()
     runner = load_test_suite_runner()
+    # An inherited GIT_DIR or GIT_WORK_TREE would point every git command at another repository.
+    environment = runner.environment_without_git_redirecting_variables()
     try:
         tools = cosmic_ray_tool_paths(arguments.cosmic_ray_venv)
         if arguments.pull_request is not None:
-            head, base = head_and_base_of_pull_request(arguments.pull_request, checkout)
+            head, base = head_and_base_of_pull_request(arguments.pull_request,
+                                                       checkout, environment)
         else:
             head, base = arguments.head, arguments.base
         head = run_or_raise(["git", "rev-parse", "--verify", f"{head}^{{commit}}"],
-                            checkout, what=f"git rev-parse {head}").strip()
+                            checkout, environment,
+                            what=f"git rev-parse {head}").strip()
         merge_base = run_or_raise(["git", "merge-base", head, base], checkout,
+                                  environment,
                                   what=f"git merge-base {head} {base}").strip()
-        files = changed_python_files_to_mutate(checkout, merge_base, head)
+        files = changed_python_files_to_mutate(checkout, merge_base, head,
+                                               environment)
         recordings_directory = runner.recordings_directory_for(
             arguments.recorded_inputs_directory
             or runner.DEFAULT_RECORDED_INPUTS_DIRECTORY, checkout)
         suites_at_head = [path for path in run_or_raise(
             ["git", "ls-tree", "-r", "--name-only", head], checkout,
-            what="git ls-tree").splitlines()
+            environment, what="git ls-tree").splitlines()
             if path.endswith(("-test.py", "-test.sh"))]
-        environment = runner.environment_without_git_redirecting_variables()
 
-        totals = {"killed": 0, "survived": 0, "incompetent": 0, "skipped": 0,
-                  "not run": 0}
+        totals = dict.fromkeys(OUTCOME_KEYS, 0)
         untested = []
         with tempfile.TemporaryDirectory(prefix=f"{PROGRAM}-") as scratch_name:
             scratch = Path(scratch_name)
             worktree = scratch / "worktree"
             run_or_raise(["git", "worktree", "add", "--detach", str(worktree), head],
-                         checkout, what=f"git worktree add at {head}")
+                         checkout, environment, what=f"git worktree add at {head}")
             try:
                 for path in files:
                     suites = suites_for_file(path, suites_at_head,
@@ -288,29 +335,31 @@ def main(argv=None):
                               f"has no sibling suite, so its changed lines are untested")
                         continue
                     print(f"MUTATING  {path} with {', '.join(suites)}", flush=True)
-                    counts, survivors = mutation_test_one_file(
+                    counts, survivors, errored = mutation_test_one_file(
                         path, suites, worktree, scratch, tools, merge_base,
                         arguments, environment)
                     for key in totals:
                         totals[key] += counts[key]
-                    for survivor in survivors:
-                        print(f"SURVIVED  {survivor['module_path']}:{survivor['line']} "
-                              f"{survivor['operator']}")
-                        for diff_line in survivor["diff"].splitlines():
-                            print(f"    {diff_line}")
+                    for label, mutants in (("SURVIVED", survivors),
+                                           ("ERRORED ", errored)):
+                        for mutant in mutants:
+                            print(f"{label}  {mutant['module_path']}:{mutant['line']} "
+                                  f"{mutant['operator']}")
+                            for diff_line in mutant["diff"].splitlines():
+                                print(f"    {diff_line}")
             finally:
-                remove_worktree(checkout, worktree)
+                remove_worktree(checkout, worktree, environment)
     except CouldNotRun as failure:
         print(str(failure), file=sys.stderr)
         return EXIT_COULD_NOT_RUN
 
-    tested = totals["killed"] + totals["survived"] + totals["incompetent"]
+    tested = totals["killed"] + totals["survived"] + totals["errored"]
     print(f"SUMMARY: {tested} mutants on changed lines of {len(files) - len(untested)} "
           f"file(s): {totals['killed']} killed, {totals['survived']} survived, "
-          f"{totals['incompetent']} incompetent, {totals['not run']} not run; "
+          f"{totals['errored']} errored, {totals['not run']} not run; "
           f"{len(untested)} changed file(s) "
           f"with no suite; head {head[:12]}, merge base {merge_base[:12]}")
-    if totals["survived"] or totals["not run"] or untested:
+    if totals["survived"] or totals["errored"] or totals["not run"] or untested:
         return EXIT_SURVIVORS_OR_UNTESTED_FILES
     return EXIT_EVERY_MUTANT_KILLED
 

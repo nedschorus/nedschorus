@@ -45,7 +45,10 @@ if tool == "cr-filter-git":
     sys.exit(plan.get("filter_exit", 0))
 command = arguments[0]
 if command == "baseline":
-    (control / "config.toml").write_text(pathlib.Path(arguments[1]).read_text())
+    (control / "config.toml").write_text(pathlib.Path(arguments[-1]).read_text())
+    if "--session-file" in arguments:
+        session = arguments[arguments.index("--session-file") + 1]
+        pathlib.Path(session).write_text("baseline")
     sys.exit(plan.get("baseline_exit", 0))
 if command == "init":
     pathlib.Path(arguments[2]).write_text("session")
@@ -53,7 +56,13 @@ if command == "init":
 if command == "exec":
     sys.exit(plan.get("exec_exit", 0))
 if command == "dump":
-    for line in plan.get("dump", []):
+    if pathlib.Path(arguments[1]).read_text() == "baseline":
+        lines = plan.get("baseline_dump", [[{{"job_id": "baseline", "mutations": []}},
+                                             {{"worker_outcome": "normal", "output": "",
+                                              "test_outcome": "survived", "diff": None}}]])
+    else:
+        lines = plan.get("dump", [])
+    for line in lines:
         print(json.dumps(line))
     sys.exit(0)
 sys.exit(9)
@@ -127,11 +136,13 @@ def calls(control):
             (control / "calls.log").read_text().splitlines() if line]
 
 
-def run_script(repository, control, *flags, path_override=None):
+def run_script(repository, control, *flags, path_override=None,
+               extra_environment=None):
     environment = dict(os.environ)
     environment[CONTROL_DIRECTORY_VARIABLE] = str(control)
     if path_override is not None:
         environment["PATH"] = path_override
+    environment.update(extra_environment or {})
     return subprocess.run(
         [sys.executable, str(SCRIPT), "--checkout", str(repository),
          "--recorded-inputs-directory", str(control / "recordings"), *flags],
@@ -201,10 +212,10 @@ def run_cases():
               and "[cosmic-ray.filters.git-filter]" in config, config)
         check("the config uses the local distributor and the given timeout",
               'name = "local"' in config and "timeout = 45.0" in config, config)
-        check("cosmic-ray runs baseline, init, cr-filter-git, exec and dump, in order",
+        check("cosmic-ray runs baseline, its dump, init, cr-filter-git, exec and dump, in order",
               [c["tool"] if c["tool"] == "cr-filter-git" else c["arguments"][0]
                for c in recorded]
-              == ["baseline", "init", "cr-filter-git", "exec", "dump"],
+              == ["baseline", "dump", "init", "cr-filter-git", "exec", "dump"],
               json.dumps(recorded))
         check("cosmic-ray runs in a worktree at the head, not in the checkout",
               recorded and all(c["head"] == head and Path(c["cwd"]).resolve()
@@ -217,12 +228,14 @@ def run_cases():
               "SURVIVED  scripts/thing.py:2 core/ReplaceBinaryOperator_Add_Mul" in out, out)
         check("a survivor's diff is printed under it, indented",
               "    +    return x * x" in out, out)
-        check("killed and incompetent mutants are not printed as survivors",
+        check("killed and errored mutants are not printed as survivors",
               out.count("SURVIVED") == 1, out)
-        check("the summary counts killed, survived and incompetent, leaving out "
+        check("an incompetent mutant is printed as ERRORED with its file, line and operator",
+              "ERRORED   scripts/thing.py:2 core/NumberReplacer" in out, out)
+        check("the summary counts killed, survived and errored, leaving out "
               "skipped and unrun mutants",
               "SUMMARY: 3 mutants on changed lines of 1 file(s): 1 killed, 1 survived, "
-              "1 incompetent, 1 not run; 0 changed file(s) with no suite" in out, out)
+              "1 errored, 1 not run; 0 changed file(s) with no suite" in out, out)
         check("the worktree is removed after a run",
               len(worktrees_of(repository)) == 1
               and not Path(recorded[0]["cwd"]).exists(), worktrees_of(repository))
@@ -249,6 +262,128 @@ def run_cases():
         check("a mutant that was never run makes the exit 1, though none survived",
               completed.returncode == 1 and "1 not run" in completed.stdout,
               f"rc={completed.returncode} out={completed.stdout}")
+
+    # ------------------------------------------------------------------
+    # A survivor alone makes the exit 1; errored mutants make it 1; a
+    # no-test result, where cosmic-ray found nothing to mutate, does not.
+    # ------------------------------------------------------------------
+    for case_name, dump, wanted_exit, wanted_text in [
+        ("a survivor alone makes the exit 1",
+         [[work_item("scripts/thing.py", 2, "core/ReplaceBinaryOperator_Add_Mul", "a"),
+           result("survived", diff=SURVIVOR_DIFF)]],
+         1, "1 survived"),
+        ("a mutant whose worker raised is ERRORED and makes the exit 1",
+         [[work_item("scripts/thing.py", 2, "core/NumberReplacer", "a"),
+           result("incompetent", worker_outcome="exception")],
+          [work_item("scripts/thing.py", 2, "core/NumberReplacer", "b"),
+           result("killed")]],
+         1, "1 errored"),
+        ("a mutant whose suites could not be launched is ERRORED and makes the exit 1",
+         [[work_item("scripts/thing.py", 2, "core/NumberReplacer", "a"),
+           result("incompetent")]],
+         1, "1 errored"),
+        ("a worker that raised is ERRORED even with a killed test outcome",
+         [[work_item("scripts/thing.py", 2, "core/NumberReplacer", "a"),
+           result("killed", worker_outcome="exception")]],
+         1, "1 errored"),
+        ("a worker that ended abnormally is ERRORED, not SURVIVED, with a survived test outcome",
+         [[work_item("scripts/thing.py", 2, "core/NumberReplacer", "a"),
+           result("survived", worker_outcome="abnormal")]],
+         1, "0 survived, 1 errored"),
+        ("a worker that ended abnormally is ERRORED even with a killed test outcome",
+         [[work_item("scripts/thing.py", 2, "core/NumberReplacer", "a"),
+           result("killed", worker_outcome="abnormal")]],
+         1, "1 errored"),
+        ("a no-test result beside a killed mutant leaves the exit 0",
+         [[work_item("scripts/thing.py", 2, "core/NumberReplacer", "a"), result("killed")],
+          [work_item("scripts/thing.py", 1, "core/AddNot", "b"),
+           result(None, worker_outcome="no-test")]],
+         0, "1 killed, 0 survived, 0 errored, 0 not run"),
+    ]:
+        with tempfile.TemporaryDirectory() as scratch_name:
+            repository, base, head = scratch_repository(scratch_name, HEAD_FILES)
+            venv, control = fake_venv(scratch_name, {"dump": dump})
+            completed = run_script(repository, control, "--head", head, "--base", base,
+                                   "--cosmic-ray-venv", str(venv))
+            check(case_name,
+                  completed.returncode == wanted_exit and wanted_text in completed.stdout,
+                  f"rc={completed.returncode} out={completed.stdout} err={completed.stderr}")
+
+    # ------------------------------------------------------------------
+    # A baseline cosmic-ray passes although its suites never launched:
+    # exit 2, nothing mutated.
+    # ------------------------------------------------------------------
+    with tempfile.TemporaryDirectory() as scratch_name:
+        repository, base, head = scratch_repository(scratch_name, HEAD_FILES)
+        venv, control = fake_venv(scratch_name, {"baseline_dump": [
+            [{"job_id": "baseline", "mutations": []},
+             {"worker_outcome": "normal", "output": "FileNotFoundError: sh",
+              "test_outcome": "incompetent", "diff": None}]]})
+        completed = run_script(repository, control, "--head", head, "--base", base,
+                               "--cosmic-ray-venv", str(venv))
+        recorded = calls(control)
+        check("a baseline whose suites could not be launched exits 2 and quotes why",
+              completed.returncode == 2
+              and "could not be run on the unmutated head" in completed.stderr
+              and "FileNotFoundError: sh" in completed.stderr,
+              f"rc={completed.returncode} err={completed.stderr}")
+        check("after a baseline whose suites could not be launched no mutant is run",
+              [c["arguments"][0] for c in recorded] == ["baseline", "dump"],
+              json.dumps(recorded))
+
+    # ------------------------------------------------------------------
+    # A renamed-and-changed file is mutated under its new name.
+    # ------------------------------------------------------------------
+    with tempfile.TemporaryDirectory() as scratch_name:
+        repository = Path(scratch_name) / "repository"
+        repository.mkdir()
+        git(repository, "init", "-q", "-b", "main")
+        git(repository, "config", "user.email", "test@example.invalid")
+        git(repository, "config", "user.name", "mutation survivors test")
+        old_text = "".join(f"VALUE_{n} = {n}\n" for n in range(20))
+        (repository / "scripts").mkdir()
+        (repository / "scripts" / "old_name.py").write_text(old_text)
+        git(repository, "add", "-A")
+        git(repository, "commit", "-q", "-m", "base")
+        base = git(repository, "rev-parse", "HEAD")
+        git(repository, "mv", "scripts/old_name.py", "scripts/thing.py")
+        (repository / "scripts" / "thing.py").write_text(
+            old_text.replace("VALUE_3 = 3", "VALUE_3 = 33"))
+        (repository / "scripts" / "thing-test.py").write_text("import sys\nsys.exit(0)\n")
+        git(repository, "add", "-A")
+        git(repository, "commit", "-q", "-m", "head")
+        head = git(repository, "rev-parse", "HEAD")
+        status = git(repository, "diff", "--name-status", base, head)
+        venv, control = fake_venv(scratch_name, {"dump": [
+            [work_item("scripts/thing.py", 4, "core/NumberReplacer", "a"), result("killed")]]})
+        completed = run_script(repository, control, "--head", head, "--base", base,
+                               "--cosmic-ray-venv", str(venv))
+        config = (control / "config.toml").read_text() if (control / "config.toml").exists() else ""
+        check("a renamed-and-changed file is mutated under its new name",
+              any(line.startswith("R") and line.endswith("\tscripts/thing.py")
+                  for line in status.splitlines())
+              and "MUTATING  scripts/thing.py" in completed.stdout
+              and 'module-path = "scripts/thing.py"' in config
+              and completed.returncode == 0,
+              f"status={status!r} rc={completed.returncode} out={completed.stdout}")
+
+    # ------------------------------------------------------------------
+    # An inherited GIT_DIR does not point the git commands at another
+    # repository.
+    # ------------------------------------------------------------------
+    with tempfile.TemporaryDirectory() as scratch_name:
+        repository, base, head = scratch_repository(scratch_name, HEAD_FILES)
+        other = Path(scratch_name) / "other"
+        other.mkdir()
+        git(other, "init", "-q", "-b", "main")
+        venv, control = fake_venv(scratch_name, {"dump": [
+            [work_item("scripts/thing.py", 2, "core/NumberReplacer", "a"), result("killed")]]})
+        completed = run_script(repository, control, "--head", head, "--base", base,
+                               "--cosmic-ray-venv", str(venv),
+                               extra_environment={"GIT_DIR": str(other / ".git")})
+        check("an inherited GIT_DIR naming another repository does not redirect the run",
+              completed.returncode == 0 and "MUTATING  scripts/thing.py" in completed.stdout,
+              f"rc={completed.returncode} out={completed.stdout} err={completed.stderr}")
 
     # ------------------------------------------------------------------
     # Suites chosen from the suite runner's recordings.
