@@ -610,19 +610,25 @@ echo hello
     (root / "docs" / "moving-angle-target.md").write_text(
         "# the target\n\n" + "An unrelated paragraph, carrying no citation.\n\n" * 12,
         encoding="utf-8")
+    (root / "docs" / "moving-angle-image.png").write_bytes(b"png")
     (root / "docs" / "cites-in-angle-brackets.md").write_text(
-        "The design is [the target](<moving-angle-target.md>) and stands.\n",
+        "The design is [the target](<moving-angle-target.md>) and stands.\n"
+        "The diagram is [the image](<moving-angle-image.png>) beside it.\n",
         encoding="utf-8")
     git(root, "add", "-A")
     git(root, "commit", "-qm", "add a target and a document citing it in angle brackets")
     angle_link_base = git(root, "rev-parse", "HEAD").stdout.strip()
     (root / "nc-systems").mkdir(parents=True, exist_ok=True)
     git(root, "mv", "docs/moving-angle-target.md", "nc-systems/moving-angle-target.md")
+    git(root, "mv", "docs/moving-angle-image.png", "nc-systems/moving-angle-image.png")
     git(root, "commit", "-qm", "move the target, sweeping no citation")
     code, out, err = run_check(root, angle_link_base)
     check("an angle-bracket markdown link to a moved file is reported",
           code == 1 and "docs/cites-in-angle-brackets.md:1: cites docs/moving-angle-target.md"
           in out, f"{code} {out!r} {err!r}")
+    check("an angle-bracket markdown link to a moved file with any extension is reported",
+          "docs/cites-in-angle-brackets.md:2: cites docs/moving-angle-image.png" in out,
+          f"{code} {out!r} {err!r}")
 
     # --- BACKWARD: a backticked citation inside a non-Markdown file ------
     # Not a pin for a fix but a pin against the rework narrowing: the literal

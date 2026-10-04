@@ -15,7 +15,7 @@ Checks, per file type:
         - markdown link targets resolve (external schemes skipped; a target
           that is only a `<placeholder>` skipped; a target written in angle
           brackets, `[x](<docs/file.md>)`, checked as the path inside them
-          when that path ends in a known extension; a link target keeps any
+          when that path has a "/" or a file extension; a link target keeps any
           line-number suffix, because a link written `file.md:120` is a
           broken link)
         - YYYY-MM-DD tokens are real calendar dates
@@ -69,10 +69,11 @@ PLACEHOLDER_SPAN = re.compile(r"<(?![!?])[^\s<>](?:[^<>]*[^\s<>])?>")
 
 
 def unwrap_angle_link_target(target: str) -> str:
-    """Unwrap angle-bracket file paths while leaving template placeholders intact."""
+    """Unwrap an angle-bracket target that names a file, by a "/" or an extension;
+    leave a one-word placeholder such as <URL> wrapped."""
     inner = target[1:-1]
-    if (PLACEHOLDER_SPAN.fullmatch(target)
-            and inner.split("#", 1)[0].endswith(PATH_EXTENSIONS)):
+    path = inner.split("#", 1)[0]
+    if PLACEHOLDER_SPAN.fullmatch(target) and ("/" in path or Path(path).suffix):
         return inner
     return target
 
