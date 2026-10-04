@@ -67,6 +67,18 @@ def user_text(content):
     return {"type": "user", "message": {"role": "user", "content": content}}
 
 
+# The shape the harness writes for a message the user types mid-turn: no user record.
+def queued_message(prompt, origin_kind="human"):
+    return {"type": "attachment",
+            "attachment": {"type": "queued_command", "prompt": prompt,
+                           "commandMode": "prompt",
+                           "origin": {"kind": origin_kind}}}
+
+
+def interrupt_notice():
+    return user_text([{"type": "text", "text": "[Request interrupted by user]"}])
+
+
 def write_transcript(project_directory, name, records, mtime=None):
     project_directory.mkdir(parents=True, exist_ok=True)
     path = project_directory / name
@@ -225,6 +237,28 @@ def run_unit_cases():
           str(false_alarms(["rm -f x", "gh pr view 12", "git -C /x status"])))
 
 
+    # ------------------------------------------------------------------
+    # Messages typed mid-turn, through event_lines with one transcript's state.
+    # ------------------------------------------------------------------
+    def emitted(records):
+        state = {}
+        return [line for record in records
+                for line in watcher_module.event_lines(
+                    "alpha", json.dumps(record).encode(), 250, state)]
+
+    lines = emitted([queued_message("y"), assistant_text("Item 2?"),
+                     user_text("y")])
+    check("the same words typed again after the agent answered show twice",
+          lines == ["alpha USER: y", "alpha AGENT: Item 2?", "alpha USER: y"],
+          str(lines))
+    lines = emitted([queued_message("y"), assistant_text("Item 2?"),
+                     interrupt_notice(), user_text("y")])
+    check("a re-send is matched only before the agent answers the queued message",
+          lines.count("alpha USER: y") == 2, str(lines))
+    lines = emitted([queued_message("   ")])
+    check("a queued message with no text emits nothing", lines == [], str(lines))
+
+
 def run_bad_invocation_cases(agents_root, projects_root):
     """--poll-seconds/--rescan-seconds must be > 0, --snippet-chars >= 1:
     one stderr line, exit 2. Fixture roots are passed so a future reorder
@@ -306,6 +340,13 @@ def run_all_cases():
              "message": {"role": "assistant",
                          "content": [{"type": "text",
                                       "text": "API Error: overloaded"}]}},
+            queued_message("QUEUED-ONLY-WORDS"),
+            assistant_text("answering the queued message"),
+            queued_message("QUEUED-TYPED-WORDS"),
+            interrupt_notice(),
+            user_text("QUEUED-TYPED-WORDS"),
+            queued_message("<cross-session-message>PEER-QUEUED-NEVER-SHOWN"
+                           "</cross-session-message>", origin_kind="peer"),
             "this line is not json {{{",
             assistant_text(long_text),
             assistant_text(many_newlines),
@@ -354,6 +395,12 @@ def run_all_cases():
               and "indented wrapper" not in everything, everything)
         check("user text starting with '[SYSTEM' is skipped",
               "a monitor line, skipped" not in everything, everything)
+        check("a message typed mid-turn becomes a USER line",
+              "alpha USER: QUEUED-ONLY-WORDS" in lines, everything)
+        check("a queued message re-sent after an interrupt shows once",
+              lines.count("alpha USER: QUEUED-TYPED-WORDS") == 1, everything)
+        check("a queued message whose origin is not human is skipped",
+              "PEER-QUEUED-NEVER-SHOWN" not in everything, everything)
         check("isApiErrorMessage becomes API-ERROR and nothing else",
               "alpha API-ERROR" in lines and "API Error: overloaded" not in everything,
               everything)
