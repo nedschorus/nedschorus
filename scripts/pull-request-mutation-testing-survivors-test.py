@@ -10,7 +10,10 @@ whose cosmic-ray and cr-filter-git record every call and behave as the
 case's plan file says.
 """
 
+import contextlib
+import fcntl
 import importlib.util
+import io
 import json
 import os
 import subprocess
@@ -30,7 +33,7 @@ SCRIPT = Path(__file__).with_name("pull-request-mutation-testing-survivors.py")
 CONTROL_DIRECTORY_VARIABLE = "PULL_REQUEST_MUTATION_TESTING_SURVIVORS_TEST_CONTROL_DIR"
 
 FAKE_COSMIC_RAY_SOURCE = f'''#!/usr/bin/env python3
-import json, os, pathlib, subprocess, sys
+import fcntl, json, os, pathlib, subprocess, sys
 
 control = pathlib.Path(os.environ["{CONTROL_DIRECTORY_VARIABLE}"])
 plan = json.loads((control / "plan.json").read_text())
@@ -38,9 +41,19 @@ tool = pathlib.Path(sys.argv[0]).name
 arguments = sys.argv[1:]
 head = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True,
                       text=True).stdout.strip()
+# Whether the machine lock was free at this call: a non-blocking flock that succeeds.
+lock_free = None
+if (control / "machine.lock").exists():
+    with open(control / "machine.lock", "a") as lock_probe:
+        try:
+            fcntl.flock(lock_probe.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            lock_free = True
+        except OSError:
+            lock_free = False
 with (control / "calls.log").open("a") as log:
     log.write(json.dumps({{"tool": tool, "arguments": arguments,
-                          "cwd": os.getcwd(), "head": head}}) + "\\n")
+                          "cwd": os.getcwd(), "head": head,
+                          "lock_free": lock_free}}) + "\\n")
 if tool == "cr-filter-git":
     sys.exit(plan.get("filter_exit", 0))
 command = arguments[0]
@@ -143,9 +156,11 @@ def run_script(repository, control, *flags, path_override=None,
     if path_override is not None:
         environment["PATH"] = path_override
     environment.update(extra_environment or {})
+    # Never the real machine lock: the suite runner holds that one while this file runs.
     return subprocess.run(
         [sys.executable, str(SCRIPT), "--checkout", str(repository),
-         "--recorded-inputs-directory", str(control / "recordings"), *flags],
+         "--recorded-inputs-directory", str(control / "recordings"),
+         "--lock-file", str(control / "machine.lock"), *flags],
         capture_output=True, text=True, check=False, env=environment, timeout=120)
 
 
@@ -513,6 +528,122 @@ def run_cases():
               completed.returncode == 2 and "git worktree add" in completed.stderr
               and "SUMMARY" not in completed.stdout,
               f"rc={completed.returncode} out={completed.stdout} err={completed.stderr}")
+
+    # ------------------------------------------------------------------
+    # The machine lock: held through every cosmic-ray call, refused at
+    # once when another process holds it, released when the run ends.
+    # ------------------------------------------------------------------
+    with tempfile.TemporaryDirectory() as scratch_name:
+        repository, base, head = scratch_repository(scratch_name, HEAD_FILES)
+        venv, control = fake_venv(scratch_name, {"dump": [
+            [work_item("scripts/thing.py", 2, "core/NumberReplacer", "a"), result("killed")]]})
+        completed = run_script(repository, control, "--head", head, "--base", base,
+                               "--cosmic-ray-venv", str(venv))
+        recorded = calls(control)
+        check("the machine lock is held through every cosmic-ray call, baseline to exec",
+              completed.returncode == 0 and len(recorded) >= 6
+              and all(call["lock_free"] is False for call in recorded),
+              f"rc={completed.returncode} calls={recorded} err={completed.stderr}")
+        check("the lock file names the run that held it",
+              f"checkout {repository.resolve()}" in (control / "machine.lock").read_text(),
+              (control / "machine.lock").read_text())
+
+    with tempfile.TemporaryDirectory() as scratch_name:
+        repository, base, head = scratch_repository(scratch_name, HEAD_FILES)
+        venv, control = fake_venv(scratch_name, {"dump": [
+            [work_item("scripts/thing.py", 2, "core/NumberReplacer", "a"), result("killed")]]})
+        with open(control / "machine.lock", "a+") as held:
+            held.write("pid 1, checkout a flock the caller started\n")
+            held.flush()
+            fcntl.flock(held.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            completed = run_script(repository, control, "--head", head, "--base", base,
+                                   "--cosmic-ray-venv", str(venv))
+        check("a held lock exits 3 at once, naming the lock and its recorded holder",
+              completed.returncode == 3
+              and str(control / "machine.lock") in completed.stderr
+              and "a flock the caller started" in completed.stderr,
+              f"rc={completed.returncode} err={completed.stderr}")
+        check("a held lock tells a caller under flock to run the script without flock",
+              "If you started this script under flock on that lock" in completed.stderr
+              and "run this script without flock" in completed.stderr,
+              completed.stderr)
+        check("a held lock runs no cosmic-ray and makes no worktree",
+              calls(control) == [] and len(worktrees_of(repository)) == 1,
+              f"calls={calls(control)} worktrees={worktrees_of(repository)}")
+
+    # A suite run killed while holding the lock leaves its traces for the next
+    # holder to remove; when that holder is this script, it must remove them.
+    with tempfile.TemporaryDirectory() as scratch_name:
+        repository, base, head = scratch_repository(scratch_name, HEAD_FILES)
+        venv, control = fake_venv(scratch_name, {"dump": [
+            [work_item("scripts/thing.py", 2, "core/NumberReplacer", "a"), result("killed")]]})
+        killed_run_logs = Path(scratch_name) / "killed-suite-run-logs"
+        left_trace = killed_run_logs / "recorded-inputs" / "some-suite-test.py.strace"
+        left_trace.mkdir(parents=True)
+        (left_trace / "trace.123").write_text("openat(...)\n")
+        kept_log = killed_run_logs / "some-suite-test.py.log"
+        kept_log.write_text("PASS\n")
+        (control / "machine.lock").write_text(
+            f"pid 99999, checkout /elsewhere, started 2026-10-04T00:00:00Z, "
+            f"logs in {killed_run_logs}\n")
+        completed = run_script(repository, control, "--head", head, "--base", base,
+                               "--cosmic-ray-venv", str(venv))
+        check("taking the lock removes the traces a killed suite run left, as the runner would",
+              completed.returncode == 0 and not left_trace.exists(),
+              f"rc={completed.returncode} trace_left={left_trace.exists()} err={completed.stderr}")
+        check("and removes only the traces, not the killed run's logs",
+              kept_log.exists(), f"log_kept={kept_log.exists()}")
+
+    # In this process, so the lock's release is seen before the process exits.
+    with tempfile.TemporaryDirectory() as scratch_name:
+        repository, base, head = scratch_repository(scratch_name, HEAD_FILES)
+        venv, control = fake_venv(scratch_name, {"dump": [
+            [work_item("scripts/thing.py", 2, "core/NumberReplacer", "a"), result("killed")]]})
+        spec = importlib.util.spec_from_file_location(
+            "pull_request_mutation_testing_survivors", str(SCRIPT))
+        survivors_module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(survivors_module)
+        released = {}
+        free_at_worktree_removal = {}
+        remove_worktree = survivors_module.remove_worktree
+
+        def remove_worktree_noting_the_lock(checkout, worktree, environment):
+            with open(control / "machine.lock", "a") as probe:
+                try:
+                    fcntl.flock(probe.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    free_at_worktree_removal[label] = True
+                except OSError:
+                    free_at_worktree_removal[label] = False
+            remove_worktree(checkout, worktree, environment)
+
+        survivors_module.remove_worktree = remove_worktree_noting_the_lock
+        for label, plan_exit in (("after a run", 0), ("after a failed step", 7)):
+            (control / "plan.json").write_text(json.dumps({
+                "exec_exit": plan_exit,
+                "dump": [[work_item("scripts/thing.py", 2, "core/NumberReplacer", "a"),
+                          result("killed")]]}))
+            os.environ[CONTROL_DIRECTORY_VARIABLE] = str(control)
+            try:
+                with contextlib.redirect_stdout(io.StringIO()), \
+                        contextlib.redirect_stderr(io.StringIO()):
+                    survivors_module.main([
+                        "--checkout", str(repository),
+                        "--recorded-inputs-directory", str(control / "recordings"),
+                        "--lock-file", str(control / "machine.lock"),
+                        "--head", head, "--base", base, "--cosmic-ray-venv", str(venv)])
+            finally:
+                del os.environ[CONTROL_DIRECTORY_VARIABLE]
+            with open(control / "machine.lock", "a") as probe:
+                try:
+                    fcntl.flock(probe.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    released[label] = True
+                except OSError:
+                    released[label] = False
+        check("the machine lock is released when the run ends, and after a failed step",
+              released == {"after a run": True, "after a failed step": True}, released)
+        check("the machine lock is released before the worktree is removed",
+              free_at_worktree_removal == {"after a run": True, "after a failed step": True},
+              free_at_worktree_removal)
 
     # ------------------------------------------------------------------
     # Bad invocations.

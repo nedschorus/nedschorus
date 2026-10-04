@@ -6,6 +6,7 @@ Usage:
   scripts/pull-request-mutation-testing-survivors.py --head COMMIT --base COMMIT
       [--checkout DIR] [--cosmic-ray-venv DIR] [--python INTERPRETER]
       [--recorded-inputs-directory DIR] [--mutant-timeout-seconds S]
+      [--lock-file PATH]
 
 The head is checked out in a detached scratch worktree, because cosmic-ray
 edits each mutant into the file on disk; the worktree is removed afterwards,
@@ -15,6 +16,14 @@ is tested with every suite whose recorded inputs read that file (the
 recordings scripts/run-all-test-suites.py keeps), plus the file's sibling
 `<name>-test.py` or `<name>-test.sh` when there is one.
 
+While cosmic-ray runs, the script holds the lock scripts/run-all-test-suites.py
+takes (--lock-file, default ~/.claude/.run-all-test-suites.lock), because each
+mutant is a test run and two test runs on one machine disturb each other. It
+takes the lock without waiting: when another process holds it, the script
+exits 3 at once, before making the worktree. Do not run the script under
+`flock` on that lock; the script takes the lock itself, so the flock would be
+the holder it refuses on.
+
 A renamed file is mutated under its new name. A mutant cosmic-ray could not
 judge, because its worker raised or its suites could not be launched, is
 printed as ERRORED and counts against the run like a survivor.
@@ -22,7 +31,8 @@ printed as ERRORED and counts against the run like a survivor.
 Exit codes: 0 every mutant was killed, 1 a mutant survived, errored or was
 not run, or a changed file has no suite, 2 could not run (cosmic-ray missing,
 a git step failed, the worktree could not be made, or a suite fails or cannot
-be launched on the unmutated head).
+be launched on the unmutated head), 3 not run because another process holds
+the lock.
 """
 
 import argparse
@@ -40,6 +50,7 @@ PROGRAM = "pull-request-mutation-testing-survivors"
 EXIT_EVERY_MUTANT_KILLED = 0
 EXIT_SURVIVORS_OR_UNTESTED_FILES = 1
 EXIT_COULD_NOT_RUN = 2
+EXIT_LOCKED = 3
 
 COSMIC_RAY_TOOLS = ("cosmic-ray", "cr-filter-git")
 DEFAULT_MUTANT_TIMEOUT_SECONDS = 300.0
@@ -278,6 +289,9 @@ def parse_arguments(argv):
                         help="the interpreter that runs each Python suite; default, this one")
     parser.add_argument("--recorded-inputs-directory", default=None,
                         help="where the suite runner keeps recorded inputs; default, the runner's")
+    parser.add_argument("--lock-file", default=None,
+                        help="the lock that keeps test runs on one machine apart; "
+                             "default, the suite runner's")
     parser.add_argument("--mutant-timeout-seconds", type=float,
                         default=DEFAULT_MUTANT_TIMEOUT_SECONDS,
                         help=f"how long one mutant's suites may run (default {DEFAULT_MUTANT_TIMEOUT_SECONDS:g})")
@@ -320,33 +334,51 @@ def main(argv=None):
 
         totals = dict.fromkeys(OUTCOME_KEYS, 0)
         untested = []
+        lock_file = Path(arguments.lock_file or runner.DEFAULT_LOCK_FILE).expanduser()
+        lock_handle, holder, previous_holder = runner.take_machine_lock(lock_file, checkout)
+        if lock_handle is None:
+            print(f"{PROGRAM}: not run — another process holds {lock_file}, the lock "
+                  f"that keeps test runs on one machine apart. Its last recorded "
+                  f"holder: {holder}.\n"
+                  f"If you started this script under flock on that lock, that flock "
+                  f"is the holder: run this script without flock, since it takes "
+                  f"the lock itself.\n"
+                  f"Otherwise, run this again after the run holding the lock has "
+                  f"finished.", file=sys.stderr)
+            return EXIT_LOCKED
+        # Taking the lock overwrites the holder's log directory, so a killed suite
+        # run's traces are removed here or never.
+        runner.remove_traces_the_last_lock_holder_left(previous_holder)
         with tempfile.TemporaryDirectory(prefix=f"{PROGRAM}-") as scratch_name:
             scratch = Path(scratch_name)
             worktree = scratch / "worktree"
-            run_or_raise(["git", "worktree", "add", "--detach", str(worktree), head],
-                         checkout, environment, what=f"git worktree add at {head}")
             try:
-                for path in files:
-                    suites = suites_for_file(path, suites_at_head,
-                                             recordings_directory, runner)
-                    if not suites:
-                        untested.append(path)
-                        print(f"NO SUITE  {path}: no recorded suite reads it and it "
-                              f"has no sibling suite, so its changed lines are untested")
-                        continue
-                    print(f"MUTATING  {path} with {', '.join(suites)}", flush=True)
-                    counts, survivors, errored = mutation_test_one_file(
-                        path, suites, worktree, scratch, tools, merge_base,
-                        arguments, environment)
-                    for key in totals:
-                        totals[key] += counts[key]
-                    for label, mutants in (("SURVIVED", survivors),
-                                           ("ERRORED ", errored)):
-                        for mutant in mutants:
-                            print(f"{label}  {mutant['module_path']}:{mutant['line']} "
-                                  f"{mutant['operator']}")
-                            for diff_line in mutant["diff"].splitlines():
-                                print(f"    {diff_line}")
+                # Released before the worktree is removed: removing it is not a test run.
+                with lock_handle:
+                    run_or_raise(["git", "worktree", "add", "--detach", str(worktree),
+                                  head], checkout, environment,
+                                 what=f"git worktree add at {head}")
+                    for path in files:
+                        suites = suites_for_file(path, suites_at_head,
+                                                 recordings_directory, runner)
+                        if not suites:
+                            untested.append(path)
+                            print(f"NO SUITE  {path}: no recorded suite reads it and it "
+                                  f"has no sibling suite, so its changed lines are untested")
+                            continue
+                        print(f"MUTATING  {path} with {', '.join(suites)}", flush=True)
+                        counts, survivors, errored = mutation_test_one_file(
+                            path, suites, worktree, scratch, tools, merge_base,
+                            arguments, environment)
+                        for key in totals:
+                            totals[key] += counts[key]
+                        for label, mutants in (("SURVIVED", survivors),
+                                               ("ERRORED ", errored)):
+                            for mutant in mutants:
+                                print(f"{label}  {mutant['module_path']}:{mutant['line']} "
+                                      f"{mutant['operator']}")
+                                for diff_line in mutant["diff"].splitlines():
+                                    print(f"    {diff_line}")
             finally:
                 remove_worktree(checkout, worktree, environment)
     except CouldNotRun as failure:
