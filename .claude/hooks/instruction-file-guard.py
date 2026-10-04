@@ -6,7 +6,13 @@ CLAUDE_PROJECT_DIR from another checkout. Protecting .claude also protects
 the hook wiring. Transcripts share the protected auto-memory directory.
 
 This hook sees Edit, Write and NotebookEdit calls, not writes through shell
-commands or other programs."""
+commands or other programs.
+
+The refusals tell the agent to create the marker with the Write tool, because
+Claude Code's auto-mode classifier can refuse a shell command that writes the
+marker. In the machine's reference checkout, session-location-write-guard.py
+refuses the Write of the marker and the edit itself, so the refusals send the
+agent to its own worktree."""
 
 import json
 import os
@@ -56,7 +62,11 @@ REUSABLE_PROMPT_DENY_MESSAGE = (
     "user's walk. State the proposed change to the user and walk it with him. If he has "
     "already approved this exact change, quote his exact approval words into {marker} at "
     "the root of your session's own checkout, then resubmit your write or edit — the marker "
-    "is consumed by the one call it approves. If the prompt is a one-off, write it outside "
+    "is consumed by the one call it approves. Create {marker} with the Write tool, not a "
+    "shell command. If this session sits in the machine's reference checkout, another "
+    "guard refuses that Write and the edit itself: make the change from your own "
+    "worktree, and put {marker} at that worktree's root. If the prompt is a one-off, "
+    "write it outside "
     "the checkout, in your scratchpad. If it is a draft for his walk, write it in a queue "
     "directory or docs/drafts/."
 ) + ROUTE_AROUND_LINES
@@ -66,6 +76,10 @@ REVIEWED_DOCUMENT_DENY_MESSAGE = (
     "If he has approved this exact change, quote his exact approval words into {marker} at "
     "the root of your session's own checkout, then resubmit; the marker is used up by the "
     "one call it approves.\n"
+    "Create {marker} with the Write tool, not a shell command.\n"
+    "If this session sits in the machine's reference checkout, another guard refuses that "
+    "Write and the edit itself: make the change from your own worktree, and put {marker} "
+    "at that worktree's root.\n"
     "If he has not, show him the change and wait for his answer; if you are a subagent, "
     "report the change to the agent that dispatched you instead.\n"
     "If this is a first draft, write it in docs/drafts/ or in a queue directory such as "
@@ -79,7 +93,10 @@ DENY_MESSAGE = (
     "change to the user and walk it with him. If he has already approved this exact "
     "change, quote his exact approval words into {marker} at the root of your session's "
     "own checkout, then resubmit your write or edit — the marker is consumed by the one "
-    "call it approves."
+    "call it approves. Create {marker} with the Write tool, not a shell command. If this "
+    "session sits in the machine's reference checkout, another guard refuses that Write "
+    "and the edit itself: make the change from your own worktree, and put {marker} at "
+    "that worktree's root."
 ) + ROUTE_AROUND_LINES
 
 

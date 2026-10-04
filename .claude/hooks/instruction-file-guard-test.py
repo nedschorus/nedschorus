@@ -31,6 +31,10 @@ _git_environment_fixture_spec.loader.exec_module(_git_environment_fixture)
 _git_environment_fixture.remove_git_redirecting_environment_variables_from_this_process()
 
 SCRIPT_PATH = Path(__file__).with_name("instruction-file-guard.py")
+REFERENCE_CHECKOUT_LINE = (
+    "If this session sits in the machine's reference checkout, another guard refuses that "
+    "Write and the edit itself: make the change from your own worktree, and put "
+    ".walk-approved at that worktree's root.")
 
 failures = []
 
@@ -81,6 +85,11 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     check("editing CLAUDE.md is blocked", result.returncode == 2, str(result.returncode))
     check("the block teaches the walk path", "get the user's approval" in result.stderr, result.stderr)
     check("the block names the override marker", ".walk-approved" in result.stderr, result.stderr)
+    check("the block says to create the marker with the Write tool",
+          "Create .walk-approved with the Write tool, not a shell command." in result.stderr,
+          result.stderr)
+    check("the block sends a session in the reference checkout to its own worktree",
+          REFERENCE_CHECKOUT_LINE in " ".join(result.stderr.split()), result.stderr)
     check("a stale marker in $CLAUDE_PROJECT_DIR does not authorize (forked-session regression)",
           decoy_marker.exists())
 
@@ -152,6 +161,11 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     check("the block says it is a reusable prompt", "reusable prompt" in result.stderr, result.stderr)
     check("the block sends a one-off prompt to the scratchpad", "scratchpad" in result.stderr,
           result.stderr)
+    check("the reusable-prompt block says to create the marker with the Write tool",
+          "Create .walk-approved with the Write tool, not a shell command." in result.stderr,
+          result.stderr)
+    check("the reusable-prompt block sends a session in the reference checkout to its own worktree",
+          REFERENCE_CHECKOUT_LINE in " ".join(result.stderr.split()), result.stderr)
     result = run_hook(decoy, workspace, str(workspace / "docs" / "agents" / "seat-first-prompt.md"))
     check("a first prompt in docs/agents/ is blocked", result.returncode == 2)
     skills = workspace / "nc-systems" / "skills" / "cold-read"
@@ -222,6 +236,11 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     check("the block says the user reviews every change here",
           "reviews every change" in result.stderr, result.stderr)
     check("the block names the marker", ".walk-approved" in result.stderr, result.stderr)
+    check("the reviewed-document block says, on its own line, to create the marker with the Write tool",
+          "Create .walk-approved with the Write tool, not a shell command."
+          in result.stderr.splitlines(), result.stderr)
+    check("the reviewed-document block says, on its own line, to use its own worktree from the reference checkout",
+          REFERENCE_CHECKOUT_LINE in result.stderr.splitlines(), result.stderr)
     check("the block sends a first draft to a draft place",
           "docs/drafts/" in result.stderr and "docs/nedschorus-wiki/queue/" in result.stderr,
           result.stderr)
@@ -230,7 +249,7 @@ with tempfile.TemporaryDirectory() as temporary_directory:
           "report the change to the agent that dispatched you instead."
           in result.stderr.splitlines(), result.stderr)
     check("the block is one instruction per line, the three route-around lines included",
-          len(result.stderr.strip().splitlines()) == 7, result.stderr)
+          len(result.stderr.strip().splitlines()) == 9, result.stderr)
     draft_places = [
         ("a draft in docs/agents/queue/", workspace / "docs" / "agents" / "queue" / "x.md"),
         ("a draft in docs/nedschorus-wiki/queue/", workspace / "docs" / "nedschorus-wiki" / "queue" / "x.md"),
