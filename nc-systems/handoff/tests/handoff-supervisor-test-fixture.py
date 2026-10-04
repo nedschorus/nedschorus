@@ -80,7 +80,7 @@ if hasattr(supervisor, "daily_overview_refresh_reminder_mark"):
 
 # The agent-binary update cases take the machine-wide update lock, so the lock
 # is pointed into a directory of this process's own: a suite run must neither
-# wait on this machine's real updates nor delay them.
+# skip because a real update holds the lock nor make a real update skip.
 update_lock_sandbox = tempfile.TemporaryDirectory()
 supervisor.agent_binary_update_under_lock.AGENT_BINARY_UPDATE_LOCK_PATH = str(
     Path(update_lock_sandbox.name) / "agent-binary-update.lock")

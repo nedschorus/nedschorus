@@ -51,7 +51,6 @@ import shutil
 import subprocess
 import sys
 import tempfile
-import threading
 import time
 from pathlib import Path
 
@@ -122,14 +121,9 @@ class LaunchHarness:
                    'printf \'%s\\n\' "$@" > "$LCU_TEST_DIR/ssh-argv.txt"\n'
                    'exit 0\n')
         write_stub(self.stubs, "timeout", "exit 0\n")
-        # The helper really runs `claude update`, so claude is stubbed: each
-        # update records whether the release marker of a lock held by the
-        # test (LCU_RELEASE_MARKER) existed yet when it ran.
         write_stub(self.stubs, "claude",
                    '[ "${1:-}" = "update" ] || exit 0\n'
-                   'if [ -e "${LCU_RELEASE_MARKER:-/nonexistent}" ]; '
-                   'then echo after-release; else echo before-release; fi '
-                   '>> "$LCU_TEST_DIR/claude-updates.txt"\n')
+                   'echo update >> "$LCU_TEST_DIR/claude-updates.txt"\n')
         write_stub(self.stubs, "git", "exit 0\n")
         # The remote side asks whether the box's own seat restart is still
         # running; "inactive" is the answer on a box that has been up a while,
@@ -206,7 +200,6 @@ class LaunchHarness:
             "SHELL": str(self.stubs / "record-shell"),
             "LCU_TEST_DIR": str(self.captures),
             "LCU_UNIT_STATE": self.unit_state,
-            "LCU_RELEASE_MARKER": str(self.release_marker),
         }
         # Box-side, as on the real box: the update limit is read from the
         # box shell's environment, not carried from this Mac.
@@ -223,10 +216,6 @@ class LaunchHarness:
     unit_state = "inactive"
     update_timeout_seconds = None
     ambient_gh_token = None
-
-    @property
-    def release_marker(self):
-        return self.captures.parent / "update-lock-released"
 
     def update_lock_path(self):
         return self.home / ".local" / "state" / "claude" / "agent-binary-update.lock"
@@ -378,34 +367,16 @@ def argv_value(argv, flag):
 
 
 class AnotherUpdateHoldsTheLock:
-    """Hold the machine's update lock from this test, as another update would,
-    releasing it after release_after_seconds (None: held until the block ends).
-    The release marker is written BEFORE the lock is released, so an update
-    that ran only after taking the lock always sees it."""
-
-    def __init__(self, lock_path: Path, release_marker: Path,
-                 release_after_seconds=None):
-        self.lock_path = lock_path
-        self.release_marker = release_marker
-        self.release_after_seconds = release_after_seconds
-        self.timer = None
-
-    def release(self):
-        self.release_marker.write_text("released", encoding="utf-8")
-        fcntl.flock(self.lock_file, fcntl.LOCK_UN)
+    def __init__(self, lock_path):
+        self.lock_path = Path(lock_path)
 
     def __enter__(self):
         self.lock_path.parent.mkdir(parents=True, exist_ok=True)
         self.lock_file = open(self.lock_path, "a")
         fcntl.flock(self.lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        if self.release_after_seconds is not None:
-            self.timer = threading.Timer(self.release_after_seconds, self.release)
-            self.timer.start()
         return self
 
     def __exit__(self, *exception):
-        if self.timer is not None:
-            self.timer.join()
         self.lock_file.close()
 
 
@@ -943,43 +914,18 @@ def main() -> int:
               (result["replay"].returncode,
                result["supervisor_environment"].get("GH_TOKEN")))
 
-        # 18. The box-side update runs under the machine-wide lock
-        # (user-approved 2026-09-22): an update that finds another holding
-        # the lock waits for it, then runs; one held past the limit is
-        # skipped with one line, and the seat is still prepared. The lock is
-        # held from this process on the sandbox HOME's lock file, the file
-        # the box-side helper resolves there.
-        harness = LaunchHarness(root / "update-lock-wait")
-        harness.update_timeout_seconds = 30
-        with AnotherUpdateHoldsTheLock(harness.update_lock_path(),
-                                       harness.release_marker,
-                                       release_after_seconds=1.5):
-            result = harness.run(["seat-u", "--no-attach"])
-        check("update lock (box): an update started while another holds the "
-              "lock waits, then runs",
-              harness.claude_updates() == ["after-release"],
-              (harness.claude_updates(), result["replay"].stderr[:400]))
-        check("update lock (box): the waiting update says it is waiting",
-              "launch-claude-ubuntu: waiting for another update on this "
-              "machine to finish" in result["replay"].stderr,
-              result["replay"].stderr[:400])
-        check("update lock (box): the seat is prepared after the wait",
-              result["replay"].returncode == 0 and harness.prepare_ran(),
-              (result["replay"].returncode, result["replay"].stderr[:300]))
-
         harness = LaunchHarness(root / "update-lock-bound")
-        harness.update_timeout_seconds = 1
-        with AnotherUpdateHoldsTheLock(harness.update_lock_path(),
-                                       harness.release_marker):
+        harness.write_seat_token("ubuntu-claude", "test-token")
+        harness.update_timeout_seconds = 30
+        with AnotherUpdateHoldsTheLock(harness.update_lock_path()):
             started = time.monotonic()
             result = harness.run(["seat-v", "--no-attach"])
             elapsed = time.monotonic() - started
-        check("update lock (box): a lock held past the limit skips this update",
+        check("update lock (box): a held lock skips this update immediately",
               harness.claude_updates() == [], harness.claude_updates())
-        check("update lock (box): the skip is reported in one line naming the limit",
-              "launch-claude-ubuntu: another update on this machine was still "
-              "running after 1s; skipping this update and launching on the "
-              "installed version" in result["replay"].stderr,
+        check("update lock (box): the skip is reported in exactly one line",
+              "Another claude update is running; this launch uses the claude already installed.\n"
+              == result["replay"].stderr,
               result["replay"].stderr[:400])
         check("update lock (box): the seat is still prepared, without hanging",
               result["replay"].returncode == 0 and harness.prepare_ran()

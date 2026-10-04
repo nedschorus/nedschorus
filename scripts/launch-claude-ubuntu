@@ -311,24 +311,15 @@ fi
 # preparation with `&&` — a non-zero update would take the home directory,
 # the worktree and the seat with it.
 #
-# The update runs under the machine-wide lock in
-# scripts/agent-binary-update-under-lock.py, box-side, which the box's
-# supervisors take too, so no two updates on the box overlap (user-approved
-# 2026-09-22): a login restart otherwise starts one supervisor's update
-# about 6 s after the last. That file owns the timeout as well, replacing
-# GNU timeout here, and says why: kept outside it, timeout would kill the
-# Python holding the lock and orphan a still-running update. One budget
-# covers waiting for the lock and running the update together.
+# The helper, not GNU timeout, owns the timeout: killing the helper from
+# outside would release its lock before the update stops. The box's
+# supervisors take the same lock through the same helper.
 #
 # The launcher writes no warning of its own: `claude update` prints its own
 # diagnosis whenever it runs to completion, and the warning removed on
 # 2026-08-31 could not see the failure that actually happened. The twin
-# carries that case in full. The helper reports only what it causes,
-# prefixed with this launcher's name: an update it killed at the limit, a
-# wait for the lock, and an update it skipped because the lock stayed held
-# past the limit. The limit is 120 seconds, raised from 45 (user-ruled
-# 2026-08-31), because a slow but WORKING update killed at the limit leaves
-# the box silently on its old version; the limit bounds a hung update rather
+# carries that case in full. A slow but working update killed at the
+# limit leaves the box silently on its old version; the limit bounds a hung update rather
 # than racing a real download. A limit of 0 skips the update.
 #
 # The brace group with `|| true` is one && operand that always succeeds, so
