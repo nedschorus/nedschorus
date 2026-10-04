@@ -1585,8 +1585,9 @@ def main(argv=None) -> int:
         print(
             "handoff-supervisor: startup stopped because the agent-seat was not started "
             "by a launcher that pins its task list; CLAUDE_CODE_TASK_LIST_ID is unset or empty.\n"
-            "On macOS, start the agent-seat with scripts/launch-claude-mac.\n"
-            "On Ubuntu, start the agent-seat with scripts/launch-claude-ubuntu.",
+            "For an agent-seat on the Mac, start it on the Mac with scripts/launch-claude-mac.\n"
+            "For an agent-seat on ned-box, start it on the Mac with scripts/launch-claude-ubuntu, "
+            "which reaches ned-box over ssh.",
             file=sys.stderr,
         )
         return 2
