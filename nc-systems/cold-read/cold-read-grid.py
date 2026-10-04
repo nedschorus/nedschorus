@@ -403,6 +403,7 @@ def start_attempt(command: list, report_path: pathlib.Path, attempt: int,
         try:
             process = subprocess.Popen(  # pylint: disable=consider-using-with
                 command, stdout=err, stderr=err, stdin=subprocess.DEVNULL,
+                start_new_session=True,
             )
         except OSError as error:
             err.write(f"cold-read-grid: could not start {command[0]}: {error}\n")
@@ -490,53 +491,22 @@ def announce_agent_binary_down(cells_by_runtime: dict, outcome: RunOutcome) -> N
               f"{len(absences)} reports absent", flush=True)
 
 
-def process_parents() -> dict:
-    """Return {pid: parent pid}, or an empty mapping if ps fails."""
-    try:
-        completed = subprocess.run(["ps", "-A", "-o", "pid=", "-o", "ppid="],
-                                   capture_output=True, text=True, check=False)
-    except OSError:
-        return {}
-    parents = {}
-    for line in completed.stdout.splitlines():
-        fields = line.split()
-        if len(fields) == 2 and fields[0].isdigit() and fields[1].isdigit():
-            parents[int(fields[0])] = int(fields[1])
-    return parents
-
-
 def stop_process_tree(process: subprocess.Popen, grace_seconds: float = 5.0) -> None:
-    """Stop a launcher and its descendants."""
-    # Freeze top-down before collecting descendants; killing the launcher first orphans them.
-    frozen = []
-    tried = set()
-    frontier = [process.pid]
-    while frontier:
-        for pid in frontier:
-            tried.add(pid)
-            try:
-                os.kill(pid, signal.SIGSTOP)
-            except (ProcessLookupError, PermissionError):
-                continue
-            frozen.append(pid)
-        # Track attempted stops too; retrying an un-stoppable process would loop forever.
-        frontier = [pid for pid, parent in process_parents().items()
-                    if parent in frozen and pid not in tried]
-    for signal_number in (signal.SIGTERM, signal.SIGCONT):
-        for pid in frozen:
-            try:
-                os.kill(pid, signal_number)
-            except (ProcessLookupError, PermissionError):
-                pass
+    """Stop a cell's process group and reap its launcher."""
+    # macOS answers EPERM, not ESRCH, for a group whose members have all exited.
+    try:
+        os.killpg(process.pid, signal.SIGTERM)
+    except (ProcessLookupError, PermissionError):
+        pass
     try:
         process.wait(timeout=grace_seconds)
     except subprocess.TimeoutExpired:
         pass
-    for pid in frozen:
-        try:
-            os.kill(pid, signal.SIGKILL)
-        except (ProcessLookupError, PermissionError):
-            pass
+    # Children may remain in the group after the launcher exits.
+    try:
+        os.killpg(process.pid, signal.SIGKILL)
+    except (ProcessLookupError, PermissionError):
+        pass
     process.wait()
 
 

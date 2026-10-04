@@ -140,6 +140,7 @@ import sys
 import tempfile
 import time
 from pathlib import Path
+from unittest import mock
 
 # This suite sits in nc-systems/cold-read/tests/; the programs it tests are
 # one directory up.
@@ -1175,12 +1176,45 @@ with tempfile.TemporaryDirectory() as scratch:
     # sits together in the store's listing, and accepts what that form
     # bought: same-stem documents in different directories read on one day
     # become -2 of each other, and the count says nothing about which draft
-    # each read was. The grid is loaded in-process for the name function
-    # alone, which is handed its clock; nothing runs.
+    # each read was. The name function is handed its clock.
     grid_spec = importlib.util.spec_from_file_location(
         "cold_read_grid_under_test", SYSTEM_DIRECTORY / "cold-read-grid.py")
     grid_module = importlib.util.module_from_spec(grid_spec)
     grid_spec.loader.exec_module(grid_module)
+    attempt = grid_module.start_attempt(
+        [sys.executable, "-c", "import time; time.sleep(120)"],
+        scratch / "report.md", 1, scratch / "cell.stderr.log")
+    try:
+        check("a cell launches in its own process group and session",
+              attempt.process is not None
+              and os.getpgid(attempt.process.pid) == attempt.process.pid
+              and os.getsid(attempt.process.pid) == attempt.process.pid)
+    finally:
+        if attempt.process is not None:
+            grid_module.stop_process_tree(attempt.process, grace_seconds=0.1)
+    check("stopping a cell reaps its launcher", attempt.process.returncode is not None)
+
+    for result in (0, subprocess.TimeoutExpired("cell", 5.0)):
+        with mock.patch.object(grid_module.os, "killpg") as killed:
+            process = mock.Mock(pid=12345)
+            process.wait.side_effect = [result, 0]
+            grid_module.stop_process_tree(process)
+            check("group termination escalates even when the launcher exits",
+                  killed.call_args_list == [
+                      mock.call(process.pid, grid_module.signal.SIGTERM),
+                      mock.call(process.pid, grid_module.signal.SIGKILL)]
+                  and process.wait.call_args_list == [mock.call(timeout=5.0), mock.call()])
+    process.wait.side_effect = None
+    process.wait.reset_mock()
+    with mock.patch.object(grid_module.os, "killpg", side_effect=ProcessLookupError):
+        grid_module.stop_process_tree(process)
+        check("an already absent group still reaps its launcher", process.wait.called)
+    process.wait.reset_mock()
+    # macOS answers a group whose members have all exited with EPERM.
+    with mock.patch.object(grid_module.os, "killpg", side_effect=PermissionError):
+        grid_module.stop_process_tree(process)
+        check("a group with no live member left still reaps its launcher", process.wait.called)
+
     clock_at_1042 = datetime.datetime(2026, 9, 16, 10, 42)
 
     # Every run in this suite overrides the poll, so no run shows the default.
