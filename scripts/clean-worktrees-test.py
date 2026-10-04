@@ -192,6 +192,23 @@ with tempfile.TemporaryDirectory() as scratch:
     git(unlanded_wt, "add", "-A")
     git(unlanded_wt, "commit", "-m", "unlanded work")
     outside_wt = add_worktree("outside-wt", where=scratch)
+    # Junk listed before real files, junk nested below the top, and an
+    # untracked directory, which git collapses into one entry.
+    mixed_wt = add_worktree("mixed-wt")
+    (mixed_wt / ".DS_Store").write_text("junk", encoding="utf-8")
+    (mixed_wt / "scratch-state").mkdir()
+    (mixed_wt / "scratch-state" / "kept-a.md").write_text("a\n", encoding="utf-8")
+    (mixed_wt / "scratch-state" / "deep").mkdir()
+    (mixed_wt / "scratch-state" / "deep" / "kept-b.md").write_text("b\n", encoding="utf-8")
+    (mixed_wt / "sub" / "__pycache__").mkdir(parents=True)
+    (mixed_wt / "sub" / "__pycache__" / "x.pyc").write_text("junk", encoding="utf-8")
+    (mixed_wt / "sub" / ".DS_Store").write_text("junk", encoding="utf-8")
+    (mixed_wt / "sub" / "real.txt").write_text("r\n", encoding="utf-8")
+    (mixed_wt / "newdir" / "inner").mkdir(parents=True)
+    (mixed_wt / "newdir" / "one.txt").write_text("1\n", encoding="utf-8")
+    (mixed_wt / "newdir" / "inner" / "two.txt").write_text("2\n", encoding="utf-8")
+    # A staged rename: git -z prints the old path as a second field.
+    git(mixed_wt, "mv", "README.md", "moved-readme.md")
     many_files_wt = add_worktree("many-files-wt")
     for number in range(12):
         (many_files_wt / f"note-{number:02d}.txt").write_text("n\n", encoding="utf-8")
@@ -243,7 +260,19 @@ with tempfile.TemporaryDirectory() as scratch:
               and "discards 1 uncommitted, untracked or ignored file(s): uncommitted.txt"
               in report, report)
         check("a landed, vacant worktree with ignored files is done, the files named",
-              "ignored-wt: done" in report and "scratch-state/" in report, report)
+              "ignored-wt: done" in report and "scratch-state/ledger.md" in report, report)
+        mixed_line = next((line for line in report.splitlines()
+                           if line.startswith("mixed-wt:")), "")
+        check("every file under an untracked or ignored directory is named on its own, "
+              "and junk at any depth is not",
+              "discards 6 " in mixed_line
+              and all(name in mixed_line for name in (
+                  "scratch-state/kept-a.md", "scratch-state/deep/kept-b.md",
+                  "sub/real.txt", "newdir/one.txt", "newdir/inner/two.txt",
+                  "moved-readme.md"))
+              and "README.md," not in mixed_line and "DME.md" not in mixed_line
+              and ".DS_Store" not in mixed_line and "__pycache__" not in mixed_line,
+              mixed_line)
         check("regenerable junk is not named among the discarded files",
               ".DS_Store" not in report and "__pycache__" not in report, report)
         many_line = next((line for line in report.splitlines()
@@ -427,20 +456,20 @@ with tempfile.TemporaryDirectory() as scratch:
         branches = git(checkout, "branch", "--list", "done-wt-branch")
         check("--remove deletes the reaped worktree's merged branch",
               branches.strip() == "", branches)
-        check("--remove names the files it discards before removing the worktree",
-              "dirty-wt: discarding 1 uncommitted, untracked or ignored file(s): uncommitted.txt"
-              in removal.stdout
-              and -1 < removal.stdout.find("dirty-wt: discarding")
-              < removal.stdout.find("dirty-wt: removed"), removal.stdout)
+        check("--remove names the files it discarded, after the removal succeeded",
+              "dirty-wt: discarded with it 1 uncommitted, untracked or ignored file(s): "
+              "uncommitted.txt" in removal.stdout
+              and -1 < removal.stdout.find("dirty-wt: removed")
+              < removal.stdout.find("dirty-wt: discarded with it"), removal.stdout)
         check("--remove removes a landed, vacant worktree with an untracked file",
               not dirty_wt.exists()
               and git(checkout, "branch", "--list", "dirty-wt-branch").strip() == "",
               removal.stdout)
         check("--remove removes a landed, vacant worktree with ignored files",
-              not ignored_wt.exists() and "ignored-wt: discarding" in removal.stdout,
+              not ignored_wt.exists() and "ignored-wt: discarded with it" in removal.stdout,
               removal.stdout)
         check("--remove prints no discard line for a worktree holding only junk",
-              "done-wt: discarding" not in removal.stdout, removal.stdout)
+              "done-wt: discarded" not in removal.stdout, removal.stdout)
         check("--remove keeps every not-done worktree",
               unlanded_wt.exists() and outside_wt.exists()
               and detached_unlanded_wt.exists()
@@ -449,7 +478,8 @@ with tempfile.TemporaryDirectory() as scratch:
               removal.stdout)
         check("a locked worktree is not removed, though it is done and holds files",
               (locked_wt / "locked-untracked.txt").exists()
-              and "locked-wt: removal FAILED" in removal.stdout, removal.stdout)
+              and "locked-wt: removal FAILED" in removal.stdout
+              and "locked-wt: discarded" not in removal.stdout, removal.stdout)
         check("--remove exits 1 when a removal failed", removal.returncode == 1,
               str(removal.returncode))
         git(checkout, "worktree", "unlock", str(locked_wt))

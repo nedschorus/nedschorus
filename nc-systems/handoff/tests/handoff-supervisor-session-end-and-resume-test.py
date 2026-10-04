@@ -462,9 +462,24 @@ def run_handoff_worktree_cleanup_cases_without_git_redirection(workspace: Path):
           "and names the files a removal discarded",
           report == ("worktree cleanup: 2 finished worktree(s) removed, "
                      "3 branch ref(s) with nothing beyond main deleted; "
-                     "1 removed with uncommitted, untracked or ignored files: "
-                     "unfinished-worktree: discarding 1 uncommitted, untracked or ignored file(s): notes.txt"),
+                     "1 of the removed held uncommitted, untracked or ignored files: "
+                     "unfinished-worktree: discarded with it 1 uncommitted, untracked "
+                     "or ignored file(s): notes.txt"),
           report)
+
+    # A done worktree that fails to remove keeps its files, and the summary
+    # must not say they were discarded.
+    locked = home / ".claude" / "worktrees" / "locked-worktree"
+    git_in(["worktree", "add", "--quiet", "-b", "locked-branch", str(locked)], home)
+    (locked / "held.txt").write_text("held\n", encoding="utf-8")
+    git_in(["worktree", "lock", "--reason", "fixture", str(locked)], home)
+    locked_report = supervisor.remove_finished_worktrees_at_handoff(home)
+    git_in(["worktree", "unlock", str(locked)], home)
+    check("WORKTREE CLEANUP: a worktree whose removal fails is reported failed, "
+          "not as having discarded its files",
+          (locked / "held.txt").exists() and "1 failed" in locked_report
+          and "held uncommitted" not in locked_report and "0 finished worktree(s) removed"
+          in locked_report, locked_report)
 
     # With GIT_DIR naming another repository, the cleanup still acts on the
     # seat's own, and leaves the other alone.

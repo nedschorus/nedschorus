@@ -1055,12 +1055,12 @@ def summarize_worktree_cleanup_output(lines) -> str:
     unchecked = [line for line in lines
                  if ": kept — " in line
                  and ("(lsof)" in line or "lsof is not installed" in line)]
-    discarding = [line for line in lines if ": discarding " in line]
+    discarded = [line for line in lines if ": discarded with it " in line]
     report = (f"worktree cleanup: {removed} finished worktree(s) removed, "
               f"{deleted} branch ref(s) with nothing beyond main deleted")
-    if discarding:
-        report += (f"; {len(discarding)} removed with uncommitted, untracked or ignored files: "
-                   + "; ".join(discarding))
+    if discarded:
+        report += (f"; {len(discarded)} of the removed held uncommitted, untracked or "
+                   f"ignored files: " + "; ".join(discarded))
     if failed:
         report += f"; {len(failed)} failed: " + "; ".join(failed)
     if refused:
