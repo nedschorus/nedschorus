@@ -96,7 +96,8 @@ def hits_in_edit(checker, root: Path, relative_path: str, tool_input: dict):
         return []
     if not git_would_track(root, relative_path):
         return []
-    return checker.find_style_guide_word_hits_in_markdown(new_string, checker.APPLIES_TO_FILES)
+    return checker.find_style_guide_word_hits_in_markdown(
+        new_string, checker.APPLIES_TO_FILES, text_starts_document=False)
 
 
 def words_around(text: str, offset: int, form: str) -> str:

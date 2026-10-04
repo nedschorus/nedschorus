@@ -308,6 +308,12 @@ INDENTED_CODE_CASES = {
     "an indented line inside a paragraph is prose": ("prose\n    about the seat\n", ["seat"]),
     "prose after a list, then an indented code block":
         ("- a\n\nthe seat\n\n    code seat\n", ["seat"]),
+    "a four-space paragraph after a two-space continuation of a list item is prose":
+        ("- item\n\n  continuation\n\n    about the seat\n", ["seat"]),
+    "a lazy continuation keeps the list item open":
+        ("- item\nlazy line\n\n    about the seat\n", ["seat"]),
+    "a list marker inside an indented code block is code, and a fence there opens nothing":
+        ("    ~~~\n    - walk\n    ~~~\n\nThe seat is free.\n", ["seat"]),
 }
 for case_name, (text, expected) in INDENTED_CODE_CASES.items():
     forms = file_hit_forms(text)
@@ -487,6 +493,15 @@ with tempfile.TemporaryDirectory() as temporary_directory:
                                    "code block\nthe seat in code\n"))
     check("text added inside a fence the file already holds is flagged, the accepted cost",
           [form for form, _ in edit_hits(result, "docs/committed.md")] == ["seat"],
+          result.stdout + result.stderr)
+
+    # The piece may continue a list item the file holds above it, so an indented
+    # line in an Edit's new_string is prose, never an indented code block.
+    result = run_hook(edit_payload(checkout, committed_file, "x",
+                                   "    The record is deleted once the work lands.\n\n"
+                                   "    A second paragraph about the seat.\n"))
+    check("an Edit whose new_string starts indented is searched as prose",
+          [form for form, _ in edit_hits(result, "docs/committed.md")] == ["lands", "seat"],
           result.stdout + result.stderr)
 
     result = run_hook(edit_payload(checkout, committed_file, "x", "One walk.",

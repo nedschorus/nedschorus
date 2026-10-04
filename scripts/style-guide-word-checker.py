@@ -216,8 +216,14 @@ def is_inside_exempt_form(line: str, start: int, end: int, exempt_pattern: Patte
 
 def find_style_guide_word_hits_in_markdown(
         text: str, applies_to: str,
-        line_numbers: Optional[AbstractSet[int]] = None) -> List[StyleGuideWordHit]:
-    """Return applicable hits in source order, optionally restricted to selected lines."""
+        line_numbers: Optional[AbstractSet[int]] = None,
+        text_starts_document: bool = True) -> List[StyleGuideWordHit]:
+    """Return applicable hits in source order, optionally restricted to selected lines.
+
+    Pass text_starts_document=False for a piece cut from the middle of a file: an
+    indented line there may continue a list item the piece does not show, so no
+    indented code block is recognised and indented lines are searched as prose.
+    """
     # Read all lines for fence and span state even when only selected lines are searched.
     words, word_pattern, exempt_pattern_by_word, entry_by_form = COMPILED_SCOPES[applies_to]
     hits = []
@@ -235,14 +241,21 @@ def find_style_guide_word_hits_in_markdown(
         this_line_start = line_start
         line_start += len(raw_line) + 1
         line_blank = not line.strip()
-        if open_fence is None and not line_blank:
+        if open_fence is None and not line_blank and text_starts_document:
             indented = INDENTED_LINE_PATTERN.match(line) is not None
-            if LIST_ITEM_LINE_PATTERN.match(line):
-                inside_list = True
-            elif not indented:
-                inside_list = False
+            # Decided before the list check: a line inside an indented code block that
+            # looks like a list item is code, and must not start a list.
             inside_indented_code = indented and not inside_list and (
                 previous_line_blank or inside_indented_code)
+            if inside_indented_code:
+                pass
+            elif LIST_ITEM_LINE_PATTERN.match(line):
+                inside_list = True
+            elif previous_line_blank and not line[0].isspace():
+                # Only an unindented line after a blank ends the item: any indented line
+                # continues it, and an unindented line straight after one is a lazy
+                # continuation of the item's paragraph.
+                inside_list = False
         previous_line_blank = line_blank
         if inside_indented_code and not line_blank:
             open_code_span_run = None
