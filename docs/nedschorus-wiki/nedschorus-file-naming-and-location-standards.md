@@ -46,6 +46,10 @@ A file in a queue directory is named as it will be at its home, apart from the i
 - **Program, in Python or shell**
   - **Location:** `nc-systems/<system-name>/` for a system's own; `nc-systems/general-tools/` for one that belongs to no system
   - **Naming:** `<multi-part-name>.py` or `<multi-part-name>.sh`; a launcher people type as a command, such as `launch-claude-mac`, has no extension
+- **Prose a program reads as its data**: a fixed file whose content a program parses, such as the style guide's word table; a prompt, agent-instructions and a GHI-MD keep their own entries above
+  - **Location:** where the agents who should read it look: `docs/nedschorus-wiki/` when every agent should read it; otherwise the `docs/` directory of the system whose program reads it, or `nc-systems/general-tools/docs/` when that program belongs to no one system
+  - **Naming:** by that location's rule
+  - **Pairing:** each program that reads the file names the file in one constant, and the file names, before its data, each program that reads it
 - **Draft of a kind that has no queue**
   - **Location:** `docs/drafts/`
   - **Naming:** `<subject>-draft.md`; a version frozen for reviewers is `<subject>-candidate.md`. Candidates move to the log-store's `seats/<seat name>/` once the work they served has landed on main. 
