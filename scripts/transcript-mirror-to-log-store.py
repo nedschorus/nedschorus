@@ -63,6 +63,20 @@ hourly log held no exit-23 run and no line from openrsync in 461 runs
 (measured 2026-09-30), so there is no sample to tell the two apart by their
 text.
 
+WHEN IT LAST COMPLETED A PASS, SEEN FROM NED-BOX. A run in which every
+source mirrored ends by writing the UTC time that pass started, as one line
+like `2026-10-03T23:40:12Z`, to MIRROR_PASS_STAMP_FILE_NAME in the store beside
+that machine's projects/ and handoffs/, writing a `.partial` file and renaming
+it over the stamp. The start time, not the end, so that every transcript
+written before the stamp's time is in the copy. A run with any FAILED source
+leaves the stamp alone, so its time is the last pass that reached the store
+whole; so does a run that found neither source directory, because it copied
+nothing and a fresh stamp would make a mirror reading the wrong home look
+current. A stamp that cannot be written is itself a FAILED line and exit 1, on
+either machine. The backup search on ned-box reads
+the Mac's stamp to say how far behind its copy may be, which the lock file
+below cannot tell it, because that file is on the Mac.
+
 WHEN IT LAST RAN. The log cannot say: a healthy quiet run appends nothing.
 Every run rewrites the lock file, `~/.claude/.transcript-mirror.lock`
 (LOCK_FILE_NAME, opened for writing), as it starts, so its mtime is when
@@ -112,9 +126,11 @@ import fcntl
 import functools
 import os
 import pathlib
+import shlex
 import socket
 import subprocess
 import sys
+import time
 
 PROGRAM = "transcript-mirror-to-log-store"
 
@@ -139,6 +155,8 @@ RSYNC_IO_TIMEOUT_SECONDS = "300"
 RSYNC_EXIT_VANISHED_GNU = 24
 RSYNC_EXIT_VANISHED_OPENRSYNC = 23
 LOCK_FILE_NAME = ".transcript-mirror.lock"
+# The backup search on ned-box reads this file beside the Mac copy's projects/.
+MIRROR_PASS_STAMP_FILE_NAME = "last-complete-mirror-pass-utc.txt"
 
 EXIT_MIRRORED = 0
 EXIT_FAILED = 1
@@ -251,6 +269,34 @@ def mirror_one(host, machine_path: pathlib.PurePosixPath, name: str, source: pat
     return EXIT_MIRRORED
 
 
+def write_mirror_pass_stamp(host, machine_path: pathlib.PurePosixPath,
+                            pass_started_at: time.struct_time) -> int:
+    """Record in the store the UTC start time of a pass in which every source mirrored."""
+    # Write then rename, so a reader never sees a half-written time.
+    stamp_text = time.strftime("%Y-%m-%dT%H:%M:%SZ", pass_started_at) + "\n"
+    stamp = machine_path / MIRROR_PASS_STAMP_FILE_NAME
+    partial = machine_path / (MIRROR_PASS_STAMP_FILE_NAME + ".partial")
+    if host is None:
+        try:
+            pathlib.Path(machine_path).mkdir(parents=True, exist_ok=True)
+            pathlib.Path(partial).write_text(stamp_text)
+            os.replace(partial, stamp)
+        except OSError as error:
+            print(f"FAILED: pass-time stamp — could not write {stamp} ({error})")
+            return EXIT_FAILED
+        return EXIT_MIRRORED
+    completed = subprocess.run(
+        SSH_COMMAND + [host, f"mkdir -p -- {shlex.quote(str(machine_path))} && "
+                             f"printf %s {shlex.quote(stamp_text)} > {shlex.quote(str(partial))} && "
+                             f"mv -f -- {shlex.quote(str(partial))} {shlex.quote(str(stamp))}"],
+        capture_output=True, text=True, check=False)
+    if completed.returncode != 0:
+        print(f"FAILED: pass-time stamp — could not write {host}:{stamp} (exit {completed.returncode})")
+        sys.stderr.write(completed.stderr)
+        return EXIT_FAILED
+    return EXIT_MIRRORED
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(
         description="Mirror this machine's Claude Code transcripts and handoffs into the log-store.")
@@ -268,8 +314,12 @@ def main(argv=None) -> int:
                 print(f"{PROGRAM}: another run holds {lock_path}; leaving it to finish")
             return EXIT_LOCKED
         host, machine_path = destination_for_this_machine()
+        pass_started_at = time.gmtime()
         outcomes = [mirror_one(host, machine_path, name, home / relative, failures_only)
                     for name, relative in SOURCES]
+        any_source_found = any((home / relative).is_dir() for _, relative in SOURCES)
+        if EXIT_FAILED not in outcomes and any_source_found:
+            outcomes.append(write_mirror_pass_stamp(host, machine_path, pass_started_at))
     return EXIT_FAILED if EXIT_FAILED in outcomes else EXIT_MIRRORED
 
 

@@ -222,13 +222,19 @@ are the Mac's and stay UNAVAILABLE there (measured on ned-box 2026-09-30:
 "Could NOT search: local snapshots, time machine").
 
 What the copy cannot hold is a Mac transcript written after its last mirror
-pass, and nothing on the box records when that pass was: `rsync -a` keeps
-each file's time from the Mac. So the line after the search says when the
+pass. Two lines after the search date the copy. The first says when the
 copy's newest transcript was last written on the Mac, measured from the copy
-itself, never an assumed schedule, and says that anything newer is not in it.
-A Mac that is asleep or off writes no transcripts, so its copy stays complete
-however old that time is; a Mac that is awake but whose mirror has stopped is
-the case that line exists to expose.
+itself, never an assumed schedule: `rsync -a` keeps each file's time from the
+Mac, so this dates the newest transcript, not the pass. The second reads the
+stamp the mirror writes beside the copy's projects/ at the end of every pass
+in which every source reached the store, MAC_MIRROR_PASS_STAMP_FILE_NAME, and
+says when that pass started, so every transcript written before that time is
+in the copy, or says plainly that the stamp is missing or holds no
+time, so the pass time is not known. A Mac that is asleep or off writes no
+transcripts, so its copy stays complete however old either time is; a Mac
+that is awake but whose mirror has stopped shows as a stamp that falls behind
+while sessions run, which is the case these lines exist to expose. Neither
+line changes the surface's status.
 --box-ssh-host and --skip box keep their meaning: the first names the box only
 for the Mac's ssh, and the second still leaves Timeshift out.
 
@@ -301,6 +307,7 @@ because counting them told a wrapper "found" for a path that never existed.
 from __future__ import annotations
 
 import argparse
+import calendar
 import importlib.util
 import os
 import re
@@ -338,6 +345,9 @@ DEFAULT_TRANSCRIPTS_DIR = "~/.claude/projects"
 DEFAULT_LOG_STORE_ROOT = "/home/nedlern/nedschorus-logs"
 # Keep this path aligned with transcript-mirror-to-log-store.py's destination.
 MAC_TRANSCRIPTS_COPY_UNDER_LOG_STORE = ("transcripts", "mac", "projects")
+# Keep this name aligned with transcript-mirror-to-log-store.py's MIRROR_PASS_STAMP_FILE_NAME.
+MAC_MIRROR_PASS_STAMP_FILE_NAME = "last-complete-mirror-pass-utc.txt"
+MAC_MIRROR_PASS_STAMP_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
 LOG_STORE_HITS_SHOWN = 10
 
 # Limit mounts because each costs seconds; git usually narrows the date first.
@@ -1152,7 +1162,25 @@ def _search_mac_transcripts_copy(wanted, copy_dir, runner, lines, recovery):
     lines.append("the copy's newest transcript was last written on the Mac at %s UTC, %s before this search; "
                  "a Mac transcript written after the copy's last mirror pass is not in it"
                  % (time.strftime("%Y-%m-%d %H:%M", time.gmtime(newest)), _age_in_words(time.time() - newest)))
+    lines.append(_mac_mirror_pass_line(copy_dir.parent / MAC_MIRROR_PASS_STAMP_FILE_NAME))
     return status
+
+
+def _mac_mirror_pass_line(stamp_path):
+    """Return the line saying when the Mac's mirror last completed a pass, from its stamp."""
+    unknown = "so when the Mac's mirror last completed a pass is not known on ned-box"
+    try:
+        text = stamp_path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return "the Mac's mirror has left no pass-time stamp at %s, %s" % (stamp_path, unknown)
+    except (OSError, UnicodeDecodeError) as error:
+        return "the Mac's mirror pass-time stamp at %s could not be read (%s), %s" % (stamp_path, error, unknown)
+    try:
+        passed = calendar.timegm(time.strptime(text.strip(), MAC_MIRROR_PASS_STAMP_FORMAT))
+    except ValueError:
+        return "the Mac's mirror pass-time stamp at %s holds no time (%r), %s" % (stamp_path, text[:80], unknown)
+    return ("the Mac's mirror last completed a pass that started at %s UTC, %s before this search, by its stamp at %s"
+            % (time.strftime("%Y-%m-%d %H:%M", time.gmtime(passed)), _age_in_words(time.time() - passed), stamp_path))
 
 
 def _newest_transcript_write(copy_dir):
