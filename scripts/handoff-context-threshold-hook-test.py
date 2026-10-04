@@ -30,6 +30,7 @@ import importlib.util
 import io
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -60,6 +61,16 @@ def check(case_name, condition, detail=""):
     else:
         print(f"FAIL  {case_name}: {detail}")
         failures.append(case_name)
+
+
+HANDOFF_INSTRUCTION_PATTERN = re.compile(
+    r"This session has used \d+% of its context window, which has reached the "
+    r"reincarnation threshold\. Run the /handoff skill now\.")
+
+
+def is_handoff_instruction(stderr):
+    """The hook's whole message is the handoff instruction, the share filled in."""
+    return HANDOFF_INSTRUCTION_PATTERN.fullmatch(stderr.strip()) is not None
 
 
 def run_hook(stdin_payload, extra_arguments=(), extra_environment=None):
@@ -661,7 +672,10 @@ with tempfile.TemporaryDirectory() as workspace:
         # The message says to run the skill and nothing else: the skill carries the
         # procedure, and a second copy here went stale twice in one day.
         check("hook says only to run the skill",
-              result.stderr.strip() == "Run the handoff skill now.", result.stderr[:160])
+              is_handoff_instruction(result.stderr), result.stderr[:160])
+        check("hook gives the context share that reached the threshold",
+              result.stderr.strip().startswith("This session has used ")
+              and "% of its context window" in result.stderr, result.stderr[:160])
 
         result = run_hook({"session_id": PROBE_SESSION_ID, "transcript_path": str(loud)})
         check("hook fires only once per session", result.returncode == 0, f"code {result.returncode}")
@@ -717,7 +731,7 @@ with tempfile.TemporaryDirectory() as workspace:
               result.returncode == 2 and "handoff deferred" in result.stderr,
               f"code {result.returncode}, stderr {result.stderr[:200]}")
         check("the deferral does not tell the agent to run the skill",
-              "Run the handoff skill now." not in result.stderr, result.stderr[:200])
+              "Run the /handoff skill now." not in result.stderr, result.stderr[:200])
         check("the deferral counts subagents and not monitors",
               "1 subagent(s) run" in result.stderr, result.stderr[:200])
         check("the deferral says how full the context is",
@@ -750,7 +764,7 @@ with tempfile.TemporaryDirectory() as workspace:
         result = run_hook({"session_id": DEFERRAL_PROBE_SESSION_ID,
                            "transcript_path": str(finished)})
         check("the same session fires once its subagent has finished",
-              result.returncode == 2 and result.stderr.strip() == "Run the handoff skill now.",
+              result.returncode == 2 and is_handoff_instruction(result.stderr),
               f"code {result.returncode}, stderr {result.stderr[:200]}")
         check("firing after a deferral writes the fired marker",
               deferral_marker_file.exists(), str(deferral_marker_file))
@@ -772,7 +786,7 @@ with tempfile.TemporaryDirectory() as workspace:
         result = run_hook({"session_id": CEILING_PROBE_SESSION_ID,
                            "transcript_path": str(past_ceiling)})
         check("above the ceiling the handoff fires with a subagent still running",
-              result.returncode == 2 and result.stderr.strip() == "Run the handoff skill now.",
+              result.returncode == 2 and is_handoff_instruction(result.stderr),
               f"code {result.returncode}, stderr {result.stderr[:200]}")
         check("firing above the ceiling writes the fired marker",
               ceiling_marker_file.exists(), str(ceiling_marker_file))
@@ -783,7 +797,7 @@ with tempfile.TemporaryDirectory() as workspace:
                            "transcript_path": str(running)},
                           ("--ceiling-used-percentage", "50"))
         check("a lowered ceiling fires at a share that would otherwise defer",
-              result.returncode == 2 and result.stderr.strip() == "Run the handoff skill now.",
+              result.returncode == 2 and is_handoff_instruction(result.stderr),
               f"code {result.returncode}, stderr {result.stderr[:200]}")
         ceiling_marker_file.unlink(missing_ok=True)
         ceiling_deferred_marker_file.unlink(missing_ok=True)
@@ -805,7 +819,7 @@ with tempfile.TemporaryDirectory() as workspace:
               "unknown" in result.stderr and "subagent(s) run" not in result.stderr,
               result.stderr[:250])
         check("a truncated spawn record does not tell the agent to hand off",
-              "Run the handoff skill now." not in result.stderr, result.stderr[:200])
+              "Run the /handoff skill now." not in result.stderr, result.stderr[:200])
         check("an unknown-count deferral writes the deferral marker, not the fired one",
               unknown_deferred_marker_file.exists() and not unknown_marker_file.exists(),
               f"deferred={unknown_deferred_marker_file.exists()} "
@@ -837,7 +851,7 @@ with tempfile.TemporaryDirectory() as workspace:
              "transcript_path": str(past_ceiling)},
             scan_replacement=scan_that_cannot_read)
         check("above the ceiling an unknown count still fires the handoff",
-              code == 2 and stderr.strip() == "Run the handoff skill now.",
+              code == 2 and is_handoff_instruction(stderr),
               f"code {code}, stderr {stderr[:200]}")
         unknown_marker_file.unlink(missing_ok=True)
         unknown_deferred_marker_file.unlink(missing_ok=True)
@@ -921,7 +935,7 @@ with tempfile.TemporaryDirectory() as workspace:
             result = run_hook({"session_id": BACKGROUND_PROBE_SESSION_ID,
                                "transcript_path": str(grid_done)})
             check("the same session fires once its background task has finished",
-                  result.returncode == 2 and result.stderr.strip() == "Run the handoff skill now.",
+                  result.returncode == 2 and is_handoff_instruction(result.stderr),
                   f"code {result.returncode}, stderr {result.stderr[:200]}")
             background_marker_file.unlink(missing_ok=True)
             background_deferred_marker_file.unlink(missing_ok=True)
@@ -929,7 +943,7 @@ with tempfile.TemporaryDirectory() as workspace:
             result = run_hook({"session_id": BACKGROUND_PROBE_SESSION_ID,
                                "transcript_path": str(grid_old)})
             check("a background task older than the wait does not hold the handoff",
-                  result.returncode == 2 and result.stderr.strip() == "Run the handoff skill now.",
+                  result.returncode == 2 and is_handoff_instruction(result.stderr),
                   f"code {result.returncode}, stderr {result.stderr[:200]}")
             check("an outlived wait writes no deferral marker",
                   not background_deferred_marker_file.exists(),
@@ -950,7 +964,7 @@ with tempfile.TemporaryDirectory() as workspace:
             result = run_hook({"session_id": BACKGROUND_PROBE_SESSION_ID,
                                "transcript_path": str(grid_old)})
             check("a session that deferred fires once its background task outlives the wait",
-                  result.returncode == 2 and result.stderr.strip() == "Run the handoff skill now."
+                  result.returncode == 2 and is_handoff_instruction(result.stderr)
                   and background_marker_file.exists(),
                   f"code {result.returncode}, stderr {result.stderr[:200]}")
             background_marker_file.unlink(missing_ok=True)
@@ -960,7 +974,7 @@ with tempfile.TemporaryDirectory() as workspace:
                                "transcript_path": str(grid_young)},
                               ("--background-task-wait-minutes", "5"))
             check("the wait is configurable: a five-minute wait fires on a ten-minute-old task",
-                  result.returncode == 2 and result.stderr.strip() == "Run the handoff skill now.",
+                  result.returncode == 2 and is_handoff_instruction(result.stderr),
                   f"code {result.returncode}, stderr {result.stderr[:200]}")
             background_marker_file.unlink(missing_ok=True)
             background_deferred_marker_file.unlink(missing_ok=True)
@@ -968,7 +982,7 @@ with tempfile.TemporaryDirectory() as workspace:
             result = run_hook({"session_id": BACKGROUND_PROBE_SESSION_ID,
                                "transcript_path": str(grid_past_ceiling)})
             check("above the ceiling the handoff fires with a background task still running",
-                  result.returncode == 2 and result.stderr.strip() == "Run the handoff skill now.",
+                  result.returncode == 2 and is_handoff_instruction(result.stderr),
                   f"code {result.returncode}, stderr {result.stderr[:200]}")
             background_marker_file.unlink(missing_ok=True)
             background_deferred_marker_file.unlink(missing_ok=True)
