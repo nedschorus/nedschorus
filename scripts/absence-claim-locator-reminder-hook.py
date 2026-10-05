@@ -60,6 +60,9 @@ from pathlib import Path
 
 SKILL_NAME = "locate-before-saying-a-file-is-missing"
 LOCATOR_PROGRAM_NAME = "locate-file-copies-across-machines.py"
+# A person ("human"), another session or a subagent handing back ("peer"), and
+# a parent session writing to its subagent ("coordinator"): the agent answers each.
+TURN_STARTING_ORIGIN_KINDS = ("human", "peer", "coordinator")
 LOG_STORE_HOSTNAME = "ned-box"
 LOG_STORE_FILE_ON_NED_BOX = Path(
     "/home/nedlern/nedschorus-logs/seats/ned-box-helper/"
@@ -198,11 +201,14 @@ def absence_claim_matches(text):
 def is_human_or_parent_message(record):
     if record.get("type") != "user":
         return False
-    # A loaded skill's text and a background task's notification arrive as user
-    # records inside the turn that caused them; neither starts a new turn.
-    if record.get("isMeta"):
+    # Claude Code marks peer messages, subagent hand-backs and a parent's
+    # messages isMeta too, so the origin kind decides before isMeta does.
+    origin_kind = (record.get("origin") or {}).get("kind")
+    if origin_kind == "task-notification":
         return False
-    if (record.get("origin") or {}).get("kind") == "task-notification":
+    if origin_kind not in TURN_STARTING_ORIGIN_KINDS and record.get("isMeta"):
+        # A loaded skill's text, a system reminder or hook feedback, written
+        # inside the turn that caused it.
         return False
     content = record.get("message", {}).get("content")
     if isinstance(content, str):

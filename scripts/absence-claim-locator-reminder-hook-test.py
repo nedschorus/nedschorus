@@ -77,9 +77,45 @@ class Case:
     def skill_loaded(self, skill_name):
         # The record shape Claude Code writes when a skill loads: a user text
         # record marked isMeta, after the Skill call's tool_result.
-        self.records.append({"type": "user", "isMeta": True, "message": {
+        self.records.append({"type": "user", "isMeta": True,
+                             "sourceToolUseID": f"toolu_{Case.counter}", "message": {
             "role": "user", "content": [{"type": "text", "text":
                 f"Base directory for this skill: /x/.claude/skills/{skill_name}\n\n# {skill_name}"}]}})
+        return self
+
+    def peer_message(self, text):
+        # The record shape Claude Code writes for another session's message.
+        self.records.append({"type": "user", "isMeta": True,
+                             "origin": {"kind": "peer", "from": "uds:/run/user/1000/cc-socks/1.sock",
+                                        "name": "merge-lane-2-29", "fromMode": "bypass"},
+                             "message": {"role": "user", "content":
+                                 "Another Claude session sent a message:\n"
+                                 f"<cross-session-message from-name=\"merge-lane-2-29\">{text}"
+                                 "</cross-session-message>"}})
+        return self
+
+    def subagent_handback(self, text):
+        # The record shape Claude Code writes for a subagent's hand-back.
+        self.records.append({"type": "user", "isMeta": True,
+                             "origin": {"kind": "peer", "from": "ac7f5e8a3f4b83c37",
+                                        "senderTaskId": "ac7f5e8a3f4b83c37", "handback": True,
+                                        "body": f"[Subagent hand-back] {text}"},
+                             "message": {"role": "user", "content":
+                                 "Another Claude session sent a message:\n"
+                                 f"<agent-message from=\"ac7f5e8a3f4b83c37\">\n[Subagent hand-back] {text}"
+                                 "\n</agent-message>"}})
+        return self
+
+    def coordinator_message(self, text):
+        self.records.append({"type": "user", "isMeta": True, "isSidechain": True,
+                             "origin": {"kind": "coordinator"},
+                             "message": {"role": "user", "content":
+                                 f"The coordinator sent a message while you were working:\n{text}"}})
+        return self
+
+    def system_reminder(self):
+        self.records.append({"type": "user", "isMeta": True, "message": {"role": "user", "content":
+            "<system-reminder>\nThe task tools haven't been used recently.\n</system-reminder>"}})
         return self
 
     def task_notification(self):
@@ -257,6 +293,28 @@ case = (Case().user("Where are the transcripts?")
 result = case.run()
 check("the locator ran before a background task's notification: still silent",
       result.stdout == "", result.stdout)
+
+case = (Case().user("Where are the transcripts?")
+        .tool_use("Bash", {"command": "python3 scripts/locate-file-copies-across-machines.py 21dc3d71.jsonl"})
+        .assistant_text("Waiting on the search.")
+        .system_reminder()
+        .assistant_text(B01_CLAIM).write())
+result = case.run()
+check("the locator ran before a system reminder: still silent",
+      result.stdout == "", result.stdout)
+
+for case_name, add_message in (
+        ("another seat's message", lambda case: case.peer_message("Where is the PR 637 log?")),
+        ("a subagent's hand-back", lambda case: case.subagent_handback("The search is done.")),
+        ("a parent session's message", lambda case: case.coordinator_message("And the other ones?"))):
+    case = (Case().user("Where are the transcripts?")
+            .tool_use("Bash", {"command": "python3 scripts/locate-file-copies-across-machines.py x.jsonl"})
+            .assistant_text("It found nothing for x.jsonl."))
+    add_message(case)
+    case.assistant_text(B01_CLAIM).write()
+    result = case.run()
+    check(f"the locator ran before {case_name}, which starts a turn: reminded",
+          blocked_reason(result) == REMINDER_FOR_B01, result.stdout)
 
 case = (Case().user("Where are the transcripts?")
         .tool_use("Bash", {"command": "python3 scripts/locate-file-copies-across-machines.py x.jsonl"})
