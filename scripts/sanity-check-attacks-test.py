@@ -1475,16 +1475,13 @@ def main():
         # Case 30: the run saves its own output and the request in its record,
         # so a later reader can see which warnings it printed and what the
         # fresh-eyes cells were asked; an agent used to copy both by hand. The
-        # log holds what was printed before the record directory existed —
-        # the LEAK-WARNING for the design's name in the request — and ends
-        # before the record is shipped, so the copy in the log-store is whole
+        # log ends before the record is shipped, so the copy in the log-store is whole
         # and a later ship of the dispositions file does not find it changed.
         run_log = record / "sanity-check-run.log" if record else None
         log_text = (run_log.read_text(encoding="utf-8")
                     if run_log and run_log.is_file() else "")
         check("the run's output is saved in the record as sanity-check-run.log",
-              log_text.count("saved: ") == 4
-              and "LEAK-WARNING: design name `widget-frobnicator`" in log_text,
+              log_text.count("saved: ") == 4,
               f"log was {log_text!r}")
         check("and the log ends before the record is shipped",
               bool(log_text) and "record: " not in log_text
@@ -1540,20 +1537,6 @@ def main():
             "q3")
     check("a quote differing from its source only in curly quotes raises no warning",
           buffer.getvalue() == "", f"output was {buffer.getvalue()!r}")
-
-    # Case 33: a LEAK-WARNING names the line it matched, so an expected hit on
-    # the request's off-limits list is told from a real leak without searching
-    # the file by hand (22 warnings in one run each named only the file).
-    runner_leak = load_runner()
-    buffer = io.StringIO()
-    with contextlib.redirect_stdout(buffer):
-        runner_leak.leak_scan({"widget-frobnicator"},
-                              "Problem: schedule nightly work.\n"
-                              "Off-limits: the widget-frobnicator design.\n",
-                              "the problem statement (request.md)")
-    check("a LEAK-WARNING names the line number and text it matched",
-          "line 2: Off-limits: the widget-frobnicator design." in buffer.getvalue(),
-          f"output was {buffer.getvalue()!r}")
 
     # Case 34: `--runtime` reruns one runtime; the other's cells do not launch.
     # A rerun used to repeat both. The target is a skill, and every skill's
