@@ -15,6 +15,7 @@ touch a real tmux session is expressed against a name no seat uses.
 Run: python3 scripts/resupervise-seat-test.py
 """
 
+import fcntl
 import json
 import os
 import shlex
@@ -326,13 +327,22 @@ def run_end_to_end_case(workspace: Path):
     # 30-s-limited lsof and tmux calls, and a session that ended first reads as
     # the script's kill failing (measured 2026-09-24 with both slowed 29 s: a
     # `sleep 120` pane was gone when kill-session ran at 145 s). Not a read of
-    # stdin to EOF: a pane's stdin is its tty, which never closes.
+    # stdin to EOF: a pane's stdin is its tty, which never closes. Not this
+    # suite's pid either: the default server can run outside the suite's PID
+    # namespace, where that number names another process or none. The pane
+    # waits on a lock this suite holds, which the kernel frees when it exits.
+    alive_lock_path = workspace / "suite-alive.lock"
+    alive_lock = open(alive_lock_path, "w")
+    fcntl.flock(alive_lock, fcntl.LOCK_EX)
+    wait_for_suite = ("import fcntl, sys; fcntl.flock(open(sys.argv[1]), fcntl.LOCK_SH)")
     created = subprocess.run(
         ["tmux", "-L", "default", "new-session", "-d", "-s", session,
-         "-c", str(workspace), f"while kill -0 {os.getpid()} 2>/dev/null; do sleep 1; done"],
+         "-c", str(workspace),
+         shlex.join([sys.executable, "-c", wait_for_suite, str(alive_lock_path)])],
         capture_output=True, text=True, check=False,
     )
     if created.returncode != 0:
+        alive_lock.close()
         print(f"SKIP  end-to-end: could not create a tmux session ({created.stderr.strip()})")
         return
 
@@ -358,6 +368,7 @@ def run_end_to_end_case(workspace: Path):
     finally:
         subprocess.run(["tmux", "-L", "default", "kill-session", "-t", f"={session}"],
                        capture_output=True, check=False)
+        alive_lock.close()
 
 
 def run_per_seat_server_end_to_end_case(workspace: Path):

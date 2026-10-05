@@ -30,6 +30,14 @@ _git_environment_fixture_spec.loader.exec_module(_git_environment_fixture)
 _git_environment_fixture.remove_git_redirecting_environment_variables_from_this_process()
 
 SCRIPT = Path(__file__).with_name("pull-request-mutation-testing-survivors.py")
+
+
+def load_test_suite_runner():
+    spec = importlib.util.spec_from_file_location(
+        "run_all_test_suites", Path(__file__).with_name("run-all-test-suites.py"))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 CONTROL_DIRECTORY_VARIABLE = "PULL_REQUEST_MUTATION_TESTING_SURVIVORS_TEST_CONTROL_DIR"
 
 FAKE_COSMIC_RAY_SOURCE = f'''#!/usr/bin/env python3
@@ -150,8 +158,9 @@ def calls(control):
 
 
 def run_script(repository, control, *flags, path_override=None,
-               extra_environment=None):
-    environment = dict(os.environ)
+               extra_environment=None, dropped_variables=()):
+    environment = {name: value for name, value in os.environ.items()
+                   if name not in dropped_variables}
     environment[CONTROL_DIRECTORY_VARIABLE] = str(control)
     if path_override is not None:
         environment["PATH"] = path_override
@@ -218,10 +227,13 @@ def run_cases():
               f"rc={completed.returncode} out={out} err={completed.stderr}")
         check("the config names the changed file as the module path",
               'module-path = "scripts/thing.py"' in config, config)
+        sandbox_prefix, _ = load_test_suite_runner().signal_sandbox()
+        launch = " ".join([*sandbox_prefix, "/usr/bin/python3", "-u", "scripts/thing-test.py"])
         check("the config's test command runs the sibling suite through sh -c, "
-              "because cosmic-ray runs it without a shell",
-              "test-command = \"sh -c '/usr/bin/python3 -u scripts/thing-test.py'\"" in config,
-              config)
+              "because cosmic-ray runs it without a shell, inside the signal sandbox "
+              "when this machine has one",
+              f"test-command = \"sh -c '{launch}'\"" in config,
+              (launch, config))
         check("the config sets the git filter's branch to the merge base, not the base's tip",
               f'branch = "{base}"' in config
               and "[cosmic-ray.filters.git-filter]" in config, config)
@@ -720,6 +732,67 @@ def run_cases():
         check("the machine lock is released before the worktree is removed",
               free_at_worktree_removal == {"after a run": True, "after a failed step": True},
               free_at_worktree_removal)
+
+    # ------------------------------------------------------------------
+    # The signal sandbox, driven through a fake bwrap on PATH. The variable
+    # that marks a run already inside the sandbox is dropped, since this
+    # file itself runs inside the suite runner's sandbox.
+    # ------------------------------------------------------------------
+    if sys.platform.startswith("linux"):
+        inside_variable = load_test_suite_runner().SIGNAL_SANDBOX_INSIDE_VARIABLE
+        with tempfile.TemporaryDirectory() as scratch_name:
+            repository, base, head = scratch_repository(scratch_name, HEAD_FILES)
+            venv, control = fake_venv(scratch_name, {"dump": []})
+            fake_bin = Path(scratch_name) / "bin"
+            fake_bin.mkdir()
+            (fake_bin / "bwrap").write_text(
+                "#!/bin/sh\necho 'bwrap: No permissions to create a new namespace' >&2\nexit 1\n")
+            (fake_bin / "bwrap").chmod(0o755)
+            completed = run_script(repository, control, "--head", head, "--base", base,
+                                   "--cosmic-ray-venv", str(venv),
+                                   path_override=f"{fake_bin}{os.pathsep}{os.environ['PATH']}",
+                                   dropped_variables=(inside_variable,))
+            check("a bwrap that fails to start: exit 2, naming the sandbox and what bwrap printed",
+                  completed.returncode == 2
+                  and "the signal sandbox could not start" in completed.stderr
+                  and "No permissions" in completed.stderr,
+                  f"rc={completed.returncode} out={completed.stdout} err={completed.stderr}")
+            check("a bwrap that fails to start: no lock taken, no worktree made, no cosmic-ray run",
+                  not (control / "machine.lock").exists()
+                  and len(worktrees_of(repository)) == 1 and calls(control) == [],
+                  f"{worktrees_of(repository)} {json.dumps(calls(control))}")
+
+        # A suite the runner lists as unable to work inside the sandbox runs
+        # without the prefix in each mutant's test command, and the run says so.
+        outside_suite = "scripts/mac-window-opened-for-ned-box-forced-command-test.py"
+        with tempfile.TemporaryDirectory() as scratch_name:
+            repository, base, head = scratch_repository(scratch_name, {
+                "scripts/mac-window-opened-for-ned-box-forced-command.py":
+                    "def double(x):\n    return x + x\n",
+                outside_suite: "import sys\nsys.exit(0)\n"})
+            venv, control = fake_venv(scratch_name, {"dump": []})
+            fake_bin = Path(scratch_name) / "bin"
+            fake_bin.mkdir()
+            (fake_bin / "bwrap").write_text("#!/bin/sh\nexit 0\n")
+            (fake_bin / "bwrap").chmod(0o755)
+            completed = run_script(repository, control, "--head", head, "--base", base,
+                                   "--cosmic-ray-venv", str(venv),
+                                   path_override=f"{fake_bin}{os.pathsep}{os.environ['PATH']}",
+                                   dropped_variables=(inside_variable,))
+            config = ((control / "config.toml").read_text()
+                      if (control / "config.toml").exists() else "")
+            check("with the sandbox on, the run says each suite runs in its own PID namespace",
+                  f"each suite runs in its own PID namespace: {fake_bin / 'bwrap'}"
+                  in completed.stdout, f"rc={completed.returncode} out={completed.stdout}")
+            check("a suite listed to run outside the sandbox is named in a NO SANDBOX line",
+                  f"NO SANDBOX  {outside_suite} runs WITHOUT the signal sandbox"
+                  in completed.stdout, f"rc={completed.returncode} out={completed.stdout}")
+            check("a suite listed to run outside the sandbox runs without the prefix in "
+                  "the mutant's test command",
+                  outside_suite in config and str(fake_bin / "bwrap") not in config,
+                  config)
+    else:
+        print("SKIP  the signal sandbox cases: bwrap is used only on Linux")
 
     # ------------------------------------------------------------------
     # Bad invocations.

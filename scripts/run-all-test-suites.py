@@ -57,6 +57,23 @@ checkout's top directory, stdin closed,
 stdout and stderr together into its own log file. A suite that starts
 `python3` itself gets whatever PATH finds, not --python.
 
+EACH SUITE RUNS IN A SIGNAL SANDBOX on Linux: `bwrap --dev-bind / /
+--unshare-pid --die-with-parent --proc /proc`, so the suite and everything it
+starts sit in a PID namespace of their own. The file system and network are
+unchanged, and the suite runs as the same user, so a signal a suite sends can
+reach only the processes it started, never the agent-seats that run as the
+same account. bwrap also gives the suite a user namespace of its own, in which
+every file owned by another user, root included, shows as owned by nobody: a
+check of a file's owner, such as ssh's check of its config files, fails there. bwrap is
+tried once before any suite runs; when it is on PATH but cannot start, the
+run stops with exit 2 rather than run the suites unconfined. Without bwrap,
+or on macOS, the suites run unconfined and the report says so. A run started
+inside the sandbox, such as one a suite of this program starts, does not
+start another: bwrap cannot start inside bwrap, and its suites are already
+confined. The suites listed in SUITES_RUN_OUTSIDE_THE_SIGNAL_SANDBOX cannot
+work inside it and run unconfined, each named in the report with the reason.
+A suite bwrap reports as exiting 128+N is reported as killed by signal N.
+
 THE ENVIRONMENT EACH SUITE IS LAUNCHED WITH is this program's own, less the
 variables that redirect where git reads and writes. They are stripped
 because 21 suites on main build a scratch repository with `git init` and
@@ -404,6 +421,28 @@ GIT_REDIRECTING_ENVIRONMENT_VARIABLES = (
     "GIT_ALTERNATE_OBJECT_DIRECTORIES",
     "GIT_COMMON_DIR",
 )
+
+# Suites run as the same account as every agent-seat, so a stray kill(-1) or
+# killpg from a suite reaches all of them. In its own PID namespace a suite can
+# signal only the processes it started. Children of bwrap cannot start bwrap
+# again (Ubuntu's AppArmor profile denies them capabilities), so a run inside
+# the sandbox, such as a suite that tests this program, runs its suites as they
+# are: they are already inside.
+SIGNAL_SANDBOX_BWRAP_ARGUMENTS = (
+    "--dev-bind", "/", "/", "--unshare-pid", "--die-with-parent", "--proc", "/proc")
+SIGNAL_SANDBOX_INSIDE_VARIABLE = "RUN_ALL_TEST_SUITES_INSIDE_SIGNAL_SANDBOX"
+SIGNAL_SANDBOX_START_TIMEOUT_SECONDS = 60
+SIGNAL_NUMBER_LIMIT = 64
+# Suites that cannot work inside the sandbox run outside it, each named in the report.
+SUITES_RUN_OUTSIDE_THE_SIGNAL_SANDBOX = {
+    "nc-systems/cold-read/tests/cold-read-agy-cell-test.py":
+        "it starts the agy cell's own bwrap, which cannot start inside bwrap",
+    "nc-systems/cold-read/tests/cold-read-fast-read-test.py":
+        "it starts the agy cell's own bwrap, which cannot start inside bwrap",
+    "scripts/mac-window-opened-for-ned-box-forced-command-test.py":
+        "it runs the real ssh, which refuses its root-owned config files because "
+        "inside the sandbox's user namespace they show as owned by nobody",
+}
 
 DEFAULT_LOCK_FILE = Path.home() / ".claude" / ".run-all-test-suites.lock"
 REPORT_FILE_NAME = "report.txt"
@@ -912,7 +951,66 @@ def is_shell_test_suite(suite):
     return suite.endswith(SHELL_TEST_SUITE_PATHSPEC[1:])
 
 
-def run_one_suite(top, interpreter, suite, log_dir, recorder=None):
+class SignalSandboxCouldNotStart(Exception):
+    """bwrap is installed but could not start; the message says what it printed."""
+
+
+def signal_sandbox(platform=None, environment=None, which=shutil.which,
+                   runner=subprocess.run):
+    """Return (prefix, None) to put before a suite's command, or ((), why) when it runs unconfined.
+
+    Raises SignalSandboxCouldNotStart when bwrap is on PATH but fails to start,
+    since running unconfined then would hide a broken sandbox.
+    """
+    platform = sys.platform if platform is None else platform
+    environment = os.environ if environment is None else environment
+    if environment.get(SIGNAL_SANDBOX_INSIDE_VARIABLE):
+        return (), None
+    if not platform.startswith("linux"):
+        return (), (f"{platform} has no PID namespaces and no signal sandbox "
+                    f"is built for it yet")
+    bwrap = which("bwrap")
+    if bwrap is None:
+        return (), "bwrap is not on PATH (Ubuntu: sudo apt install bubblewrap)"
+    prefix = (bwrap, *SIGNAL_SANDBOX_BWRAP_ARGUMENTS,
+              "--setenv", SIGNAL_SANDBOX_INSIDE_VARIABLE, "1")
+    try:
+        trial = runner([*prefix, "true"], stdin=subprocess.DEVNULL, capture_output=True,
+                       text=True, timeout=SIGNAL_SANDBOX_START_TIMEOUT_SECONDS, check=False)
+    except (OSError, subprocess.TimeoutExpired) as error:
+        raise SignalSandboxCouldNotStart(f"{' '.join(prefix)} true: {error}") from error
+    if trial.returncode != 0:
+        raise SignalSandboxCouldNotStart(
+            f"{' '.join(prefix)} true exited {trial.returncode}: "
+            f"{(trial.stderr or trial.stdout).strip()}")
+    return prefix, None
+
+
+def signal_sandbox_refusal(error, program=PROGRAM):
+    """The text a program prints when bwrap is installed but cannot start."""
+    return (f"{program}: not run — the signal sandbox could not start: {error}\n"
+            f"Each suite runs inside bwrap so that a stray signal cannot reach the "
+            f"agent-seats running as the same account.\n"
+            f"If this run is itself inside a bwrap sandbox (for example a Codex "
+            f"sandbox), run it from an ordinary shell instead.\n"
+            f"If this run is inside such a sandbox and you cannot leave it, tell "
+            f"the user the suites were not run and why, and ask the user to run "
+            f"the same command from an ordinary shell on this machine.\n"
+            f"If this run is not inside another sandbox, check that "
+            f"`bwrap {' '.join(SIGNAL_SANDBOX_BWRAP_ARGUMENTS)} true` "
+            f"works on this machine, and report what it prints to the user.")
+
+
+def signal_sandbox_line(prefix, unconfined_because):
+    if prefix:
+        return f"each suite runs in its own PID namespace: {' '.join(prefix)}"
+    if unconfined_because:
+        return (f"suites run WITHOUT the signal sandbox, so a stray signal can reach "
+                f"any process of this account: {unconfined_because}")
+    return "suites run inside the signal sandbox this run was started in"
+
+
+def run_one_suite(top, interpreter, suite, log_dir, recorder=None, sandbox_prefix=()):
     log_file = log_path_for(log_dir, suite)
     environment = environment_without_git_redirecting_variables()
     command = ["sh", suite] if is_shell_test_suite(suite) else [interpreter, "-u", suite]
@@ -932,14 +1030,21 @@ def run_one_suite(top, interpreter, suite, log_dir, recorder=None):
             command = [strace, "-f", "-ff", "--seccomp-bpf", "-z", "-qq", "-y", "-s", "4096",
                        "-e", "trace=%file", "-e", "signal=none",
                        "-o", str(strace_dir / "trace"), *command]
+    if suite in SUITES_RUN_OUTSIDE_THE_SIGNAL_SANDBOX:
+        sandbox_prefix = ()
+    command = [*sandbox_prefix, *command]
     started = time.monotonic()
     with open(log_file, "wb") as log:
         completed = subprocess.run(command, cwd=str(top), env=environment,
                                    stdin=subprocess.DEVNULL, stdout=log,
                                    stderr=subprocess.STDOUT, check=False)
+    exit_code = completed.returncode
+    # bwrap exits 128+N when the suite is killed by signal N; report it as the signal, as unsandboxed runs do.
+    if sandbox_prefix and 128 < exit_code <= 128 + SIGNAL_NUMBER_LIMIT:
+        exit_code = -(exit_code - 128)
     return {
         "suite": suite,
-        "exit": completed.returncode,
+        "exit": exit_code,
         "seconds": time.monotonic() - started,
         "log": log_file,
         "skips": skipped_case_lines(log_file),
@@ -1397,6 +1502,11 @@ def main(argv=None):
     except CouldNotRun as refusal:
         print(refusal, file=sys.stderr)
         return EXIT_COULD_NOT_RUN
+    try:
+        sandbox_prefix, unconfined_because = signal_sandbox()
+    except SignalSandboxCouldNotStart as error:
+        print(signal_sandbox_refusal(error), file=sys.stderr)
+        return EXIT_COULD_NOT_RUN
 
     lock_handle, holder, previous_holder = take_machine_lock(Path(arguments.lock_file), top)
     if lock_handle is None:
@@ -1441,6 +1551,12 @@ def main(argv=None):
         report.line(f"inputs recorded by {PYTHON_INPUT_RECORDER_METHOD}"
                     + (f" and {STRACE_INPUT_RECORDER_METHOD} ({strace})" if strace else "")
                     + f", kept in {recordings_dir}")
+        report.line(signal_sandbox_line(sandbox_prefix, unconfined_because))
+        if sandbox_prefix:
+            for suite in chosen:
+                if suite in SUITES_RUN_OUTSIDE_THE_SIGNAL_SANDBOX:
+                    report.line(f"{suite} runs WITHOUT the signal sandbox: "
+                                f"{SUITES_RUN_OUTSIDE_THE_SIGNAL_SANDBOX[suite]}")
         if traces_removed:
             report.line(f"removed {len(traces_removed)} strace directories the run before "
                         f"this one left in {traces_removed[0].parent}")
@@ -1450,8 +1566,10 @@ def main(argv=None):
 
         def run_and_record(suite):
             if is_shell_test_suite(suite):
-                return run_one_suite(top, interpreter, suite, log_dir)
-            result = run_one_suite(top, interpreter, suite, log_dir, recorder)
+                return run_one_suite(top, interpreter, suite, log_dir,
+                                     sandbox_prefix=sandbox_prefix)
+            result = run_one_suite(top, interpreter, suite, log_dir, recorder,
+                                   sandbox_prefix=sandbox_prefix)
             try:
                 save_recording(recordings_dir, recording_of(
                     top, suite, result, recording_dir, files, commit, strace is not None))
