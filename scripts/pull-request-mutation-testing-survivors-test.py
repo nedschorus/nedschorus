@@ -326,6 +326,12 @@ def run_cases():
            {"worker_outcome": "normal", "output": "FAIL: case timeout handling\n",
             "test_outcome": "killed", "diff": None}]],
          0, "1 killed, 0 survived, 0 errored"),
+        # Sorts after "timeout", so only an exact comparison keeps it killed.
+        ("a killed mutant whose output is longer than the timeout record is still killed",
+         [[work_item("scripts/thing.py", 2, "core/NumberReplacer", "a"),
+           {"worker_outcome": "normal", "output": "timeout\n",
+            "test_outcome": "killed", "diff": None}]],
+         0, "1 killed, 0 survived, 0 errored"),
         ("a no-test result beside a killed mutant leaves the exit 0",
          [[work_item("scripts/thing.py", 2, "core/NumberReplacer", "a"), result("killed")],
           [work_item("scripts/thing.py", 1, "core/AddNot", "b"),
