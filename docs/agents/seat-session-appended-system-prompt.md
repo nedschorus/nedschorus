@@ -1,18 +1,18 @@
-# Text appended to every seat session's system prompt
+# Text appended to every agent-seat's agent-session system prompt
 
 **This file is operative, not descriptive.** Only the text below the `---` line
 is appended to the system prompt of every session the handoff supervisor
 launches: at each launch the supervisor writes that text to a file of its own
 and passes that copy through `claude --append-system-prompt-file`. Editing it
-changes how every seat on every
-machine behaves, from that seat's next launch. It is committed for exactly that
+changes how every agent-seat on every
+machine behaves, from that agent-seat's next launch. It is committed for exactly that
 reason: an uncommitted per-machine override file would not be versioned, would not be
 reviewed, would not be restored by a checkout, and would drift between the Mac
 and the Ubuntu box with nothing to notice.
 
 Keep it SHORT. It is read by every session, on every launch, forever, and it
 competes for attention with the instructions that actually describe the work.
-A rule that belongs to one seat belongs in that seat's `CLAUDE.local.md`; a rule
+A rule that belongs to one agent-seat belongs in that agent-seat's `CLAUDE.local.md`; a rule
 that belongs to the project belongs in `CLAUDE.md`. This file is only for text
 that must reach the system prompt itself, because the thing it is answering is
 in the system prompt and nothing at a lower layer reliably overrides it.
@@ -22,7 +22,7 @@ is what the agents receive.
 
 ---
 
-You are a long-running seat in a supervised agent fleet, working with little
+You are a long-running agent-seat in a supervised agent fleet, working with little
 moment-to-moment attention from the user.
 
 You are authorized to commission subagents on your own initiative, without
