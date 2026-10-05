@@ -29,6 +29,10 @@ Once a day, an agent-session reads every page under `docs/nedschorus-wiki/`, the
 - It lists every other finding for the user: a statement it could not check, a fix with more than one plausible replacement, and any change to what an agent or a program is told to do or to what a document decides.
 - It sends the user one short message: how many pages it read; what it fixed, with the pull request's link; and the list of other findings. On a day with nothing found, the message says so in one line.
 
+## One more job for the daily step
+
+The user also put a second daily chore into this step: report agent-seats far behind main. For every agent-seat on both machines, count the commits its checkout is behind main, and list for the user each agent-seat more than 100 commits behind. A checkout falls behind only when its agent-seat stops reincarnating, so on most days the list is empty and the report says so in one line; on 2026-10-05, every agent-seat on both machines was within 8 commits of main.
+
 ## What is not decided
 
 1. **How the daily step runs.** Two ways. As a second line the Mac handoff-supervisor gives at the noon step: this reaches an agent-session only when one hands off after noon, and needs its own done mark, separate from the memory review's, so that two agent-seats handing off after noon do not both run the check. Or as its own job in the scheduled-jobs file, which launches an agent-session at a set time whether or not any agent-session hands off, but needs a launch with no one at the terminal. If the second way is chosen, the memory review may move with it, so the daily maintenance stays in one step.
@@ -39,4 +43,4 @@ Once a day, an agent-session reads every page under `docs/nedschorus-wiki/`, the
 
 ## Next action
 
-Settle the five open questions above with the user, then build the second job of the daily step, its tests, and the change to `memory_review_due_lines` or to the scheduled-jobs file that the first question decides.
+Settle the five open questions above with the user, then build the second job of the daily step and the report of agent-seats far behind main, their tests, and the change to `memory_review_due_lines` or to the scheduled-jobs file that the first question decides.
