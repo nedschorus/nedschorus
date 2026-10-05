@@ -1,13 +1,13 @@
 ---
-status: ruled — produced at the close of the git/worktree rules walk
+status: ruled — produced at the close of the git/worktree rules approval-walk
   (2026-08-17/18); every rule disposition below was user-ruled item by
   item (the State-at-close candidates are recorded, not ruled).
   Streamlined 2026-08-20 on the user's ruling: mechanism prose removed in
   favor of script citations; the full original text is this file's git
   history.
-scope: fleet-wide — both machines, every seat, and the two agent runtimes,
+scope: fleet-wide — both machines, every agent-seat, and the two agent runtimes,
   Claude Code and Codex
-supersedes: the uncommitted walk minutes named under Provenance, which are
+supersedes: the uncommitted walk-minutes named under Provenance, which are
   deleted once this document is verified on main
 ---
 
@@ -15,7 +15,7 @@ supersedes: the uncommitted walk minutes named under Provenance, which are
 
 The ruled working model for how this project's agent fleet uses git: which
 directory a session works in, whose directories it may touch, how work
-reaches main, how landed changes reach running seats, and what makes most
+reaches main, how landed changes reach running agent-seats, and what makes most
 damage recoverable when noticed in time. The dispositions and dates below
 are the user's rulings. Where a ruling shipped code, the pull request is
 named; where it deliberately built nothing, the reason and the revisit
@@ -61,7 +61,7 @@ passing review.
   merges one atomic topic branch, and
   the merge-lane agent-seat reviews and merges every PR (deputization, recorded
   at R13, is the ruled exception). Recorded in CLAUDE.md's PR-process paragraph.
-  The earlier form — commits accumulating on a seat branch, cherry-picked
+  The earlier form — commits accumulating on a seat-branch, cherry-picked
   onto a fresh branch later — was retired 2026-08-28 after a three-commit
   topic written on a Tuesday took until Friday to reach main, every
   cherry-pick re-resolving conflicts against a head that had moved.
@@ -76,9 +76,9 @@ passing review.
 
 ## Scope
 
-Rules about git, worktrees, sessions, seats, and machines, plus the
+Rules about git, worktrees, agent-sessions, agent-seats, and machines, plus the
 enforcement programs that implement them. Deliberately excluded: workflow
-governance content (the cold read's cells, ghi-write's routing, walk conduct),
+governance content (the cold read's cells, ghi-write's routing, approval-walk conduct),
 prose-quality rules, and communication conventions. Coverage is bounded by
 the sweep that built the inventory — the agent-seats' briefs
 (`docs/agents/*-instructions.md`), `nc-systems/handoff/handoff-design.md`,
@@ -160,15 +160,15 @@ These govern every row below.
   consequences already drawn from them.
 - **Rules are delivered at their trigger moment, not held in memory**
   (R28, re-ruled 2026-08-17): refusal text teaches at denial; boot reports
-  teach when someone looks; the seat first-prompt teaches at birth.
+  teach when someone looks; the agent-seat first-prompt teaches at birth.
   CLAUDE.md's rules section shrinking is the health signal — rules leave
   when mechanized; rationale lives in design documents like this one.
 
 ## The rules
 
-Status vocabulary: **BUILT** marks code the walk shipped, with its pull
+Status vocabulary: **BUILT** marks code the approval-walk shipped, with its pull
 request named. **built-live** marks a mechanism already running before the
-walk began.
+approval-walk began.
 
 ### Q1 — Which directory am I in?
 
@@ -209,7 +209,7 @@ Edit/Write/NotebookEdit; exception lane via `.location-write-approved`.
 Scope, corrected 2026-08-19: the detached-HEAD test governs writes into
 the session's *own* checkout; a write landing in the reference checkout is
 R6+R7's block, which applies to any session however its HEAD is set.
-Writes into another seat's home stay unbuilt (R6). The adjacent
+Writes into another agent-seat's agent-home stay unbuilt (R6). The adjacent
 *starting-stale* block was ruled **not built**: launch-time sync plus the
 catch-up hook (R15) shrink exposure to one turn, and the motivating
 incident was a stale *read*, which no write-guard sees. Revisit trigger: a real incident traced to
@@ -234,18 +234,18 @@ visibility.
 condition: a write *landing* in the reference checkout from a session
 seated elsewhere is refused, same marker lane. Scoped to the demonstrated
 class — all four recorded cross-checkout incidents targeted the reference.
-The four, so the evidence outlives the walk papers: on 2026-08-14 a
+The four, so the evidence outlives the approval-walk papers: on 2026-08-14 a
 session seated in its own worktree edited twelve documents and staged 235
 deletions in the reference checkout; cold-read records were later written
-into it; a git branch was created in it, twice; and on 2026-08-15 a walk's
-minutes were written into it. Zero incidents targeted another seat's
+into it; a git branch was created in it, twice; and on 2026-08-15 an approval-walk's
+minutes were written into it. Zero incidents targeted another agent-seat's
 home or a scratch worktree. Writes into
-*another seat's* home are recorded-unbuilt with an incident as the build
+*another agent-seat's* agent-home are recorded-unbuilt with an incident as the build
 trigger; a session's own scratch worktrees are deliberately untouched.
 Block outranked detect-and-reverse because the undo is imperfect exactly
 where damage is worst: a cross-checkout write over uncommitted work is
 unrecoverable by git. R7 (the reference is a reference, never a bench)
-rides this mechanism; the merge-lane seat's legitimate conflict edits pass
+rides this mechanism; the merge-lane agent-seat's legitimate conflict edits pass
 through the marker lane.
 
 **R8. One live session per directory — waits on detection; build
@@ -253,7 +253,7 @@ nothing.** No detector yet meets the bar: it must classify attached
 viewers, forked sessions, and background sessions correctly from each
 session's own state.
 
-**R9. One name = one seat; a handoff refuses a foreign claim — built-live
+**R9. One name = one agent-seat; a handoff refuses a foreign claim — built-live
 (PR [handoff: the agent name defaults to the seat's directory, and a foreign claim is refused](https://github.com/nedschorus/nedschorus/pull/72), merged 2026-08-17).**
 `nc-systems/handoff/handoff-write-and-check-supervisor.py`: handoffs stamp
 `written-in:`; a writer whose directory differs is refused; `--claim`
@@ -263,7 +263,7 @@ eleven seconds apart, first lost unread. Residuals: handoffs written before PR
 [handoff: the agent name defaults to the seat's directory, and a foreign claim is refused](https://github.com/nedschorus/nedschorus/pull/72)
 carry no stamp; directory basenames are not globally unique across machines
 (machine-suffixed names deferred — rider 5 in
-`nedlern@ned-box:/home/nedlern/nedschorus-logs/seats/cold-read-research/45-session-seat-and-isolation-riders-retired-from-issues-queue-2026-10-02.md`). A seat's
+`nedlern@ned-box:/home/nedlern/nedschorus-logs/seats/cold-read-research/45-session-seat-and-isolation-riders-retired-from-issues-queue-2026-10-02.md`). An agent-seat's
 *first* handoff is written by its provisioner from elsewhere, the guard
 correctly refuses, and `--claim` is the sanctioned path.
 
@@ -275,7 +275,7 @@ reusable prompts, and the files the user reviews block on write; approval quoted
 named and ruled unguarded** (2026-08-17): every recorded bypass was
 accidental, not adversarial. Build trigger: an actually observed
 shell-route bypass. A periodic drift sweep was rejected: it
-false-positives on seats legitimately carrying approved-but-unmerged
+false-positives on agent-seats legitimately carrying approved-but-unmerged
 changes. Codex's instruction file — `AGENTS.md` at the repository root,
 added 2026-08-20 — is not in this guard's list: a known fact, not a
 decision, and consistent with the reviewer rule that landed alongside it
@@ -318,7 +318,7 @@ the gate stays dormant for daily work.
 activates.** Lives in CLAUDE.md's PR-process paragraph and
 `docs/agents/seat-first-prompt.md` § Reaching main. **Deputization** is
 the PR process's recorded exception (ruled 2026-08-18, PR [CLAUDE.md lane text: deputization recorded as the interim lane's exception](https://github.com/nedschorus/nedschorus/pull/93)): the user may
-instruct a specific seat, in that seat's own session, to merge a specific
+instruct a specific agent-seat, in that agent-seat's own session, to merge a specific
 PR; relayed words are hearsay and are refused — exercised before it was
 recorded (a relayed instruction refused 2026-08-16; the user then deputized
 directly for PR [handoff: the agent name defaults to the seat's directory, and a foreign claim is refused](https://github.com/nedschorus/nedschorus/pull/72)'s merge).
@@ -331,23 +331,23 @@ backstop; these are defaults, not guarantees — branch protection covers
 main only. Push discipline as a whole becomes the gatekeeper's at
 activation: a push is a shell operation no file-write hook sees.
 
-### Q4 — How does a change reach a running seat, and what keeps seats alive?
+### Q4 — How does a change reach a running agent-seat, and what keeps agent-seats alive?
 
-**R15. A landed change reaches every running seat — BUILT (PR [checkout freshness: mid-session catch-up Stop hook, status-line display, reference-checkout pull](https://github.com/nedschorus/nedschorus/pull/87), merged
+**R15. A landed change reaches every running agent-seat — BUILT (PR [checkout freshness: mid-session catch-up Stop hook, status-line display, reference-checkout pull](https://github.com/nedschorus/nedschorus/pull/87), merged
 2026-08-17; delivery ruling PR [catch-up: the abort-failed state alone is delivered to the agent as a forced turn](https://github.com/nedschorus/nedschorus/pull/90)).**
 `scripts/checkout-freshness-catch-up.py` is the delivery; the status
 line's `⇣N` shows the lag; the launchers freshen the reference checkout
 at boot; the supervisor's launch-time sync remains the floor. Coverage
-stated exactly: delivery happens at turn boundaries when the seat is
-clean and conflict-free — a
-seat that lags says so on its status line rather than silently. **Who
+stated exactly: delivery happens at turn boundaries when the agent-seat is
+clean and conflict-free — an
+agent-seat that lags says so on its status line rather than silently. **Who
 hears it** (ruled 2026-08-17): exactly one state forces an agent turn — a
 conflict whose cleanup failed, leaving the tree mid-merge; routine events
 stay display-plus-stamp. **Known structural finding, candidate fix
 unruled:** the atomic-PR lane reliably produces add/add conflicts on files
 a cherry-picked topic *created*. Manual remedy: `git status` to list,
 `git checkout --theirs <file>` to take main's canonical version, `git
-add`, commit. The candidate launch-reset of fully-merged seat branches
+add`, commit. The candidate launch-reset of fully-merged seat-branches
 stays unruled (cherry-picks break ancestry, so the predicate needs care).
 
 **R16. Binary updates at launch, never in background — built-live
@@ -355,9 +355,9 @@ stays unruled (cherry-picks break ancestry, so the predicate needs care).
 warn-and-proceed on failure; their guarantee is that *they* never swap it
 under a live session. **Since 2026-09-22 the handoff-supervisor updates too**,
 before every session it launches — which covers the handoff restart, crash
-recovery and the login restart, the three paths that reach a seat without
-passing a launcher. It was added because a seat restarted by handoff passed
-no update moment at all, so a long-lived seat drifted: both machines sat on
+recovery and the login restart, the three paths that reach an agent-seat without
+passing a launcher. It was added because an agent-seat restarted by handoff passed
+no update moment at all, so a long-lived agent-seat drifted: both machines sat on
 2.1.278 with 2.1.280 published when the user asked why (user-ruled
 2026-09-22). The box's `DISABLE_AUTOUPDATER=1` flag was
 removed 2026-08-17 (dated backup beside it) when issue [Claude auto-update purges the running version under live fleet sessions — updates need a drain-or-retain policy](https://github.com/nedschorus/nedschorus/issues/62)'s auto-update
@@ -366,7 +366,7 @@ The same flag returned 2026-08-22 for a different, still-valid reason:
 with launch as the update moment, the background updater adds nothing
 but its mid-session "update available" banner, which the user ruled
 clutter. It now lives in the checked-in `.claude/settings.json` env
-block, reaching every seat's worktree on both machines; the docs state
+block, reaching every agent-seat's worktree on both machines; the docs state
 it stops only the background check, leaving the launchers' explicit
 `claude update` working. The launch-time version check that was queued
 here closed 2026-08-22 without building a version check — State at
@@ -387,10 +387,10 @@ launcher — the failure is recorded in a stamp file and nothing reads it
 launchers that call it). How each launcher wires freshening to launch is
 the launchers' own business; read the scripts, not this paragraph.
 
-**R18. Seat hosts are provisioned to survive disconnects — checklist
+**R18. Agent-seat hosts are provisioned to survive disconnects — checklist
 ruled (2026-08-17).** Per host: (1) on systemd hosts, `loginctl
 enable-linger <agent-user>`, verified by an actual multi-minute gap, not
-by reading the flag (the Mac has no linger equivalent; its seats ride the
+by reading the flag (the Mac has no linger equivalent; its agent-seats ride the
 desktop session); (2) a restore-one-file snapshot verification (done for
 the box 2026-08-17; not yet for the Mac); (3) the host's snapshot cadence
 per R19; (4) `lsof` present, for R21's vacancy check. Linger covers
@@ -403,7 +403,7 @@ through this list.
 (installed 2026-08-18, first tick verified), joining the auto-pruned
 hourly ring — a ruled trade of ring depth for cadence, raisable at the
 user's keyboard. Undo: delete the cron file. Applied by the git-infra
-seat on the user's direct in-session instruction — `/etc/cron.d` is
+agent-seat on the user's direct in-session instruction — `/etc/cron.d` is
 outside R11's guarded class. The Mac stays at OS-default hourly: no
 recorded Mac-side loss. What it buys, honestly: minutes-cadence never
 reaches the seconds class (R9's guard closed that class).
@@ -457,8 +457,8 @@ temp area clears, and `git worktree prune` is manual. The
 `clean-worktrees.py` report carries one line naming dead registrations and
 the prune command — report only; the prune stays deliberate.
 
-**R26. New MDs land in approved homes — ruled-unbuilt (issue [MD-placement guidance as symmetric pre-tool remind hooks on both runtimes (boss-directed design, build deferred)](https://github.com/nedschorus/nedschorus/issues/11)).** A
-PreToolUse *remind* hook on MD writes outside the approved homes, symmetric
+**R26. New MDs land in canonical locations — ruled-unbuilt (issue [MD-placement guidance as symmetric pre-tool remind hooks on both runtimes (boss-directed design, build deferred)](https://github.com/nedschorus/nedschorus/issues/11)).** A
+PreToolUse *remind* hook on MD writes outside the canonical locations, symmetric
 across both agent runtimes, one shared config — the repository root
 `README.md` § "Where things live" becomes the single-source path list at
 build time (known gap: it lacks `docs/agents/`). Remind, not block: MD
@@ -483,18 +483,18 @@ rulings; listed here to keep the numbering complete.
 |---|---|---|---|
 | R1 | Guards resolve roots correctly | — (foundation) | fixed, PR [guards: markers resolve from the session's own checkout, and the backup override lane is removed](https://github.com/nedschorus/nedschorus/pull/86); registration residue closed won't-fix 2026-08-22 (attempts recorded in PR [guard and catch-up review fixes: item 1 of the working model's build queue](https://github.com/nedschorus/nedschorus/pull/103)) |
 | R2 | Session states its git context | — (composition of R3/R5/R6) | satisfied by composition |
-| R3 | Detached/reference seat refuses writes | block | built, PR [session-location write guard: no file writes from a detached HEAD or the reference checkout](https://github.com/nedschorus/nedschorus/pull/88) |
+| R3 | Detached/reference agent-seat refuses writes | block | built, PR [session-location write guard: no file writes from a detached HEAD or the reference checkout](https://github.com/nedschorus/nedschorus/pull/88) |
 | R4 | Stale base | — | absorbed by R15's catch-up |
 | R5 | Status line shows branch | default | kept; separators fixed, PR [status line: the │ separators become two plain spaces](https://github.com/nedschorus/nedschorus/pull/89) |
 | R6+R7 | No writes into the reference | block | built, PR [session-location guard: writes landing in the reference checkout are refused from any seat](https://github.com/nedschorus/nedschorus/pull/91) |
 | R8 | One live session per directory | — | waits on detection; build nothing |
-| R9 | One name = one seat | default + block | built-live, PR [handoff: the agent name defaults to the seat's directory, and a foreign claim is refused](https://github.com/nedschorus/nedschorus/pull/72) |
+| R9 | One name = one agent-seat | default + block | built-live, PR [handoff: the agent name defaults to the seat's directory, and a foreign claim is refused](https://github.com/nedschorus/nedschorus/pull/72) |
 | R10 | Instruction files must be approved-by-walk | block | built-live; shell gap ruled unguarded |
 | R11 | Backups read-only to agents | block (no lane) | built-live; lane removed |
 | R12 | Agents never push to main | impossible (account tier) + text (agent tier) | partial; required reviews live 2026-08-20; C2 pending |
 | R13 | PR process + deputization | text (process) | built-live; deputization in CLAUDE.md, PR [CLAUDE.md lane text: deputization recorded as the interim lane's exception](https://github.com/nedschorus/nedschorus/pull/93) |
 | R14 | One branch, one writer | default | satisfied by defaults; push check retired |
-| R15 | Landed changes reach running seats | default + block (attention) | built, PRs [checkout freshness: mid-session catch-up Stop hook, status-line display, reference-checkout pull](https://github.com/nedschorus/nedschorus/pull/87)/PR [catch-up: the abort-failed state alone is delivered to the agent as a forced turn](https://github.com/nedschorus/nedschorus/pull/90) |
+| R15 | Landed changes reach running agent-seats | default + block (attention) | built, PRs [checkout freshness: mid-session catch-up Stop hook, status-line display, reference-checkout pull](https://github.com/nedschorus/nedschorus/pull/87)/PR [catch-up: the abort-failed state alone is delivered to the agent as a forced turn](https://github.com/nedschorus/nedschorus/pull/90) |
 | R16 | Binary updates at launch only | default | built-live; version check closed 2026-08-22, PR [Launcher update banner removed: background auto-update off fleet-wide, launch stays the one update moment](https://github.com/nedschorus/nedschorus/pull/135) — banner off via settings env |
 | R17 | Machinery self-updates at safe points | text (principle) | two open: Mac launcher runs the invoking checkout's supervisor; freshening failures are silent |
 | R18 | Hosts survive disconnects | default | checklist ruled; box done |
@@ -505,7 +505,7 @@ rulings; listed here to keep the numbering complete.
 | R23 | Scratch lives in the scratchpad | default | satisfied by runtime default |
 | R24 | Surveys fetch before concluding | text | encode into R22's cleanup script when built |
 | R25 | Dead registrations surfaced | remind (report) | built, PR [clean-worktrees: one report line names dead registrations and the prune command (R25)](https://github.com/nedschorus/nedschorus/pull/112) |
-| R26 | New MDs land in approved homes | remind | ruled-unbuilt, issue [MD-placement guidance as symmetric pre-tool remind hooks on both runtimes (boss-directed design, build deferred)](https://github.com/nedschorus/nedschorus/issues/11) |
+| R26 | New MDs land in canonical locations | remind | ruled-unbuilt, issue [MD-placement guidance as symmetric pre-tool remind hooks on both runtimes (boss-directed design, build deferred)](https://github.com/nedschorus/nedschorus/issues/11) |
 | R27 | On-machine records stay uncommitted | default | built-live |
 | R28 | Rules delivered at trigger | principle | governs all rows |
 
@@ -548,22 +548,22 @@ pull request.
    `claude update`.) See R16 for the mechanism's history.
 
 Recorded candidates, unruled — an incident or a user pick is the trigger:
-the supervisor launch-reset of fully-merged seat branches (R15); R24's
+the supervisor launch-reset of fully-merged seat-branches (R15); R24's
 logic encoded into R22's future cleanup script; R8's session detector;
-machine-suffixed seat names (rider 5); other-seat-home write blocking
+machine-suffixed agent-seat names (rider 5); other-seat-home write blocking
 (R6's recorded-unbuilt half).
 
 ## Provenance
 
-Produced at the close of the git/worktree rules walk (fifteen items,
-2026-08-17/18, git-infra seat, the user ruling item by item). The walk
+Produced at the close of the git/worktree rules approval-walk (fifteen items,
+2026-08-17/18, git-infra agent-seat, the user ruling item by item). The approval-walk
 shipped the six PRs from PR [guards: markers resolve from the session's own checkout, and the backup override lane is removed](https://github.com/nedschorus/nedschorus/pull/86) through PR [session-location guard: writes landing in the reference checkout are refused from any seat](https://github.com/nedschorus/nedschorus/pull/91), and PR [CLAUDE.md lane text: deputization recorded as the interim lane's exception](https://github.com/nedschorus/nedschorus/pull/93) and closed issue [Worktree file hygiene: classify untracked files so junk is ignored rather than accumulating in search results](https://github.com/nedschorus/nedschorus/issues/50). Its working papers —
 `walk-ledgers/2026-08-17-git-worktree-rules-inventory.md` and
 `walk-ledgers/2026-08-16-agent-worktree-git-coalesce-shape.md` — were
 kept on one machine and gitignored, deleted once this document was verified on
 main; everything they decided is restated here. This document depends,
 deliberately, on three documents, each canonical for its own subject —
-the gatekeeper design, the seat model, and the AI-native development architecture
+the gatekeeper design, the agent-seat model, and the AI-native development architecture
 (`docs/nedschorus-wiki/nedschorus-ai-native-software-development-objective.md`).
 
 Streamlined 2026-08-20 on the user's ruling, after the document's
