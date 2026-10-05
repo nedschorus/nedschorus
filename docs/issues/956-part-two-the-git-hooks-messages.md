@@ -1,6 +1,10 @@
+---
+issue: "[Every refusal and warning a program hands an agent says why and what to do instead](https://github.com/nedschorus/nedschorus/issues/956)"
+---
+
 # Part two: the messages of the git hooks that run at commit and push
 
-This document is part two of GHI [Every refusal and warning a program hands an agent says why and what to do instead](https://github.com/nedschorus/nedschorus/issues/956). The GHI's GHI-MD, `docs/issues/956-every-refusal-and-warning-a-program-hands-an.md`, is part one, and its section "Later parts" lists the five parts after it, this one first. This part covers the messages of the git hooks that run when an agent commits or pushes. It shows each message that leaves the agent a question open, as the agent sees the message, and proposes the exact words to replace it, with the code changes the new words need. The user approved every proposed text and code change below in the approval-walk 956-part-two-the-git-hooks-messages-2026-10-04, whose minutes are in the log-store. The next action is one pull request, cut from main, that builds them with their test cases.
+This document is part two of GHI [Every refusal and warning a program hands an agent says why and what to do instead](https://github.com/nedschorus/nedschorus/issues/956). The GHI's GHI-MD, `docs/issues/956-every-refusal-and-warning-a-program-hands-an.md`, is part one, and its section "Later parts" lists the five parts after it, this one first. This part covers the messages of the git hooks that run when an agent commits or pushes. It shows each message that leaves the agent a question open, as the agent sees the message, and proposes the exact words to replace it, with the code changes the new words need. The user approved every proposed text and code change below in the approval-walk 956-part-two-the-git-hooks-messages-2026-10-04, whose minutes are at `nedlern@ned-box:/home/nedlern/nedschorus-logs/walk/956-part-two-the-git-hooks-messages-2026-10-04-minutes.md`. Part two is built: see "Outcome" at the end.
 
 ## What a reader needs first
 
@@ -8,14 +12,14 @@ This document is part two of GHI [Every refusal and warning a program hands an a
 
 **The hooks.** The directory holds four hooks:
 
-- `pre-commit` refuses a commit made inside an agent-session when the commit's author or committer email address is one of the user's three addresses or the `unconfigured-agent` address. A commit made outside an agent-session is not checked. Git runs `pre-commit` for `git commit`, including `--amend`; `git rebase` and `git cherry-pick` run neither; `--no-verify` skips both.
+- `pre-commit` refuses a commit made inside an agent-session when the commit's author or committer email address is one of the user's three addresses or the `unconfigured-agent` address. A commit made outside an agent-session is not checked. Git runs `pre-commit` for `git commit`, including `--amend`; `git rebase` and `git cherry-pick` run neither `pre-commit` nor `pre-merge-commit`; `--no-verify` skips both of those hooks.
 - `pre-merge-commit` runs `pre-commit`'s check for a merge commit made by `git merge`, and prints the same refusal.
 - `prepare-commit-msg` adds a trailer naming the agent-session that made the commit: `Claude-Session: https://claude.ai/code/<id>` when the agent-session has a claude.ai link, otherwise `Claude-Session-Id: <id>`. It adds nothing outside an agent-session, and leaves a message that holds only comment lines untouched. Git runs it for every commit, including each commit a rebase, a cherry-pick or a merge makes.
 - `pre-push` runs `scripts/git-client-side-hooks-pre-push-conflict-check.py`, called the pre-push conflict check below. That program runs `scripts/branch-conflict-check.py` on each branch the push sends to the remote named origin, except main and except a deletion, and refuses the push when a branch conflicts with origin/main. A push of main, of a tag, of a deletion, or to another remote is never checked, and `git push --no-verify` skips the hook.
 
 A git hook's message is what the hook prints to stderr. An agent that runs `git commit` or `git push` through Bash sees the message in the command's output, among git's own lines.
 
-**Failing open.** A pre-push hook that exits nonzero stops the push, and a prepare-commit-msg hook that exits nonzero stops the commit. Both hooks run for every agent-seat on the machine, so both are written to exit 0 when their own work fails, as long as the hook itself starts: a failure in a hook must not stop every agent's work. CLAUDE.md's rule for a failure is that the program "prints what failed and exits nonzero"; these two hooks keep the first half and deliberately break the second, so the message is the only place the failure shows. Each message in this part reports such a failure: a conflict check that did not happen, or a trailer that may not have been added.
+**Failing open.** A pre-push hook that exits nonzero stops the push, and a prepare-commit-msg hook that exits nonzero stops the commit. Both hooks run for every agent-seat on the machine, so both are written to exit 0 when their own work fails, as long as the hook itself starts: a failure in a hook must not stop every agent's work. CLAUDE.md's rule for a failure is that the program "prints what failed and exits nonzero"; these two hooks keep the first half and deliberately break the second, so the message is the only place the failure shows. Messages 2 to 9 report such a failure: a conflict check that did not happen, or a trailer that may not have been added. Messages 10 and 11 are refusals, which stop the commit or the push.
 
 **The four questions.** As in part one, a message is complete when the message says:
 
@@ -38,7 +42,7 @@ So each proposed text names the branches that were not checked and the reason, g
 
 ## Code the new texts need
 
-The texts below name each unchecked branch and its commit. Two programs print them, and only one knows the branches today:
+The texts below name each unchecked branch and its commit. The programs that print them are the shell part and the Python program of the pre-push hook, and only the Python program knows the branches today; the third item below is the trailer hook:
 
 - `scripts/git-client-side-hooks/pre-push`, the shell part, prints messages 2 and 3 without reading what git hands the hook: the remote's name, and one line per ref the push sends. The proposal has it read those lines first, keep the branches the pre-push conflict check would check (remote origin, a ref under `refs/heads/` other than main, not a deletion), print nothing when there are none, and then pass the same lines on to the pre-push conflict check: it reads them once into a shell variable and writes the variable to the check's standard input. The shell part stays POSIX sh, because a hook whose interpreter is missing stops every push. The two programs' rules for which branches count must agree, so `scripts/git-client-side-hooks-pre-push-test.py` gains cases that push main, a tag, a deletion, and to another remote, and asserts that both programs ignore each.
 - `scripts/git-client-side-hooks-pre-push-conflict-check.py` already knows each branch and commit in messages 4, 5, 6 and 9. For message 7 it names the branches when it had read them before the error, and otherwise says so: the variable holding the pushed lines starts empty, and the error handler checks whether it was filled.
@@ -300,3 +304,7 @@ First see what the conflict is with: if main has already replaced this branch's 
 ## Tests
 
 `scripts/git-client-side-hooks-pre-push-test.py` asserts parts of today's messages 1, 2, 3, 4, 6 and 9; the case for message 1 is removed with the message, and `scripts/git-client-side-hooks-prepare-commit-msg-test.py` asserts message 8, `scripts/git-client-side-hooks-pre-commit-test.py` asserts message 10, and `scripts/branch-conflict-check-test.py` asserts message 11. The pull request changes those cases with the texts, and adds cases for what no case covers today: message 5, message 7 in both forms, the branch and commit each message names, the trailer message 8 names, and the shell part's branch filter, as "Code the new texts need" says.
+
+## Outcome
+
+Part two shipped as PR [The git hooks' messages say which branches went unchecked, why, and what to do](https://github.com/nedschorus/nedschorus/pull/1074), merged to main on 2026-10-05 as commit [4483efb6](https://github.com/nedschorus/nedschorus/commit/4483efb6). It builds messages 2 to 11 as approved, removes message 1 with its python3 check, and adds the shell part's branch filter, with test cases for each. The review left one question open, not a defect: if the pre-push conflict check raised an error after checking some branches, message 7 would say that no branch was checked; the review found no code path that does so. The next action on GHI 956 is part three, as the GHI-MD's "Later parts" lists.
