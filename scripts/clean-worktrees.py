@@ -341,6 +341,8 @@ def remove_worktree(worktree, branch, repo, discarded):
 
 
 def main(argv=None):
+    # The daily job writes to a log without -u; a run killed mid-removal must still show what it announced.
+    sys.stdout.reconfigure(line_buffering=True)
     arguments = sys.argv[1:] if argv is None else list(argv)
     repo = REPO_ROOT
     if "--repo" in arguments:

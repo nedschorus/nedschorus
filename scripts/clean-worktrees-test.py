@@ -767,6 +767,76 @@ with tempfile.TemporaryDirectory() as scratch:
           and git(checkout, "branch", "--list", "worktree-agent-aaaaaaaaaaaaaaaa3").strip() == "",
           removal.stdout)
 
+
+# --- A run killed mid-removal has already shown what it announced ---------
+# The daily job runs the cleaner without -u, writing to a log. A git that
+# hangs on the second removal stands in for a run killed partway; every
+# line printed before the hang must be readable while the run is alive.
+with tempfile.TemporaryDirectory() as scratch:
+    scratch = Path(scratch)
+    checkout = scratch / "checkout"
+    origin = scratch / "origin.git"
+    checkout.mkdir()
+    git(checkout, "init", "-b", "main")
+    git(checkout, "config", "user.email", "test@test.invalid")
+    git(checkout, "config", "user.name", "clean-worktrees test")
+    (checkout / "README.md").write_text("# scratch\n", encoding="utf-8")
+    git(checkout, "add", "-A")
+    git(checkout, "commit", "-m", "seed")
+    subprocess.run(["git", "init", "--bare", str(origin)], capture_output=True, check=True)
+    git(checkout, "remote", "add", "origin", str(origin))
+    git(checkout, "push", "-u", "origin", "main")
+    managed = checkout / ".claude" / "worktrees"
+    managed.mkdir(parents=True)
+    for name in ("flush-first-wt", "flush-second-wt"):
+        path = managed / name
+        git(checkout, "worktree", "add", "-b", f"{name}-branch", str(path), "origin/main")
+        (path / f"{name}.txt").write_text("held\n", encoding="utf-8")
+
+    stub_directory = scratch / "hanging-git"
+    stub_directory.mkdir()
+    counter = scratch / "removal-count"
+    (stub_directory / "git").write_text(
+        "#!/bin/sh\n"
+        'case " $* " in *" worktree remove "*)\n'
+        f'  echo x >> "{counter}"\n'
+        f'  if [ "$(wc -l < "{counter}")" -ge 2 ]; then exec sleep 60; fi ;;\n'
+        "esac\n"
+        f'exec {shutil.which("git")} "$@"\n', encoding="utf-8")
+    (stub_directory / "git").chmod(0o755)
+    environment = dict(os.environ)
+    environment["PATH"] = f"{stub_directory}{os.pathsep}{environment.get('PATH', '')}"
+    environment.pop("PYTHONUNBUFFERED", None)
+    hanging = subprocess.Popen(
+        [sys.executable, str(CLEAN_SCRIPT), "--repo", str(checkout), "--remove"],
+        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, env=environment,
+        start_new_session=True,
+    )
+    seen = []
+    import selectors
+    selector = selectors.DefaultSelector()
+    selector.register(hanging.stdout, selectors.EVENT_READ)
+    deadline = time.monotonic() + 60
+    while time.monotonic() < deadline and not (
+            sum(": removing it will discard " in line for line in seen) == 2
+            and sum(": discarded with it " in line for line in seen) == 1):
+        if not selector.select(timeout=1):
+            continue
+        line = hanging.stdout.readline()
+        if not line:
+            break
+        seen.append(line.rstrip("\n"))
+    os.killpg(hanging.pid, 9)
+    hanging.wait()
+    confirmed = [line for line in seen if ": discarded with it " in line]
+    announced = [line for line in seen if ": removing it will discard " in line]
+    check("a run stopped mid-removal has already shown the first removal, confirmed",
+          len(confirmed) == 1 and any(": removed" in line for line in seen), "\n".join(seen))
+    check("a run stopped mid-removal has already shown what the stopped removal announced",
+          len(announced) == 2
+          and confirmed[0].partition(":")[0] != announced[-1].partition(":")[0]
+          if confirmed and announced else False, "\n".join(seen))
+
 print()
 if failures:
     print(f"{len(failures)} case(s) failed: {', '.join(failures)}")

@@ -480,11 +480,13 @@ def run_handoff_worktree_cleanup_cases_without_git_redirection(workspace: Path):
           (locked / "held.txt").exists() and "1 failed" in locked_report
           and "held uncommitted" not in locked_report and "0 finished worktree(s) removed"
           in locked_report, locked_report)
-    check("WORKTREE CLEANUP: a worktree whose removal fails has its files named as "
-          "possibly gone",
-          "1 removal(s) started but not confirmed, so these files may be partly gone: "
-          "locked-worktree: removing it will discard 1 uncommitted, untracked or ignored "
-          "file(s): held.txt" in locked_report, locked_report)
+    check("WORKTREE CLEANUP: a worktree whose removal fails is named once, among the "
+          "failures, with the files it had announced",
+          "1 failed: locked-worktree: removal FAILED" in locked_report
+          and "(it had announced: 1 uncommitted, untracked or ignored file(s): held.txt; "
+          "those files may be partly gone)" in locked_report
+          and "started but not confirmed" not in locked_report
+          and locked_report.count("locked-worktree") == 1, locked_report)
 
     # A cleaner stopped by the handoff's timeout partway through a removal
     # leaves the announcement and no confirmation.

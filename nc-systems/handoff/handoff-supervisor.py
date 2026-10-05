@@ -1056,9 +1056,18 @@ def summarize_worktree_cleanup_output(lines) -> str:
                  if ": kept — " in line
                  and ("(lsof)" in line or "lsof is not installed" in line)]
     discarded = [line for line in lines if ": discarded with it " in line]
-    confirmed = {line.partition(": discarded with it ")[0] for line in discarded}
-    unconfirmed = [line for line in lines if ": removing it will discard " in line
-                   and line.partition(": removing it will discard ")[0] not in confirmed]
+    announced = {line.partition(": removing it will discard ")[0]:
+                 line.partition(": removing it will discard ")[2]
+                 for line in lines if ": removing it will discard " in line}
+    # Each worktree lands in one bucket: confirmed, failed (with what it announced), or unconfirmed.
+    settled = ({line.partition(": discarded with it ")[0] for line in discarded}
+               | {line.partition(": removal FAILED")[0] for line in failed})
+    unconfirmed = [f"{name}: removing it will discard {files}"
+                   for name, files in announced.items() if name not in settled]
+    failed = [line + (f" (it had announced: {announced[line.partition(': removal FAILED')[0]]}; "
+                      f"those files may be partly gone)"
+                      if line.partition(": removal FAILED")[0] in announced else "")
+              for line in failed]
     report = (f"worktree cleanup: {removed} finished worktree(s) removed, "
               f"{deleted} branch ref(s) with nothing beyond main deleted")
     if discarded:
