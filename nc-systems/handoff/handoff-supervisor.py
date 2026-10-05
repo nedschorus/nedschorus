@@ -189,7 +189,7 @@ BRANCH_STATE_INSTRUCTION = (
     "branch from origin/main. If this seat has "
     "open pull requests, check their state with `gh`: merge-lane-2 reviews "
     "and merges them; when one has a review with findings, dispatch a forked "
-    "subagent to fix it — never extend a head you've already announced. When "
+    "subagent to fix it — never extend a head you've already pushed. When "
     "one conflicts with main, clear the conflict with the hand-merge that "
     "scripts/branch-conflict-check.py describes."
 )
