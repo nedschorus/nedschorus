@@ -86,6 +86,14 @@ def orphaned_branch_refs_named(output):
     return []
 
 
+def files_named_on(line):
+    """The file names after the last "file(s): " on a line, the "and N more" tail left off."""
+    if "file(s): " not in line:
+        return []
+    named = line.rsplit("file(s): ", 1)[1].rsplit(" and ", 1)[0]
+    return named.split(", ")
+
+
 def check(case_name, condition, detail=""):
     if condition:
         print(f"PASS  {case_name}")
@@ -136,6 +144,23 @@ def run_clean_without_lsof(repo, stub_directory, *flags):
     (stub_directory / "git").symlink_to(shutil.which("git"))
     environment = dict(os.environ)
     environment["PATH"] = str(stub_directory)
+    return subprocess.run(
+        [sys.executable, str(CLEAN_SCRIPT), "--repo", str(repo), *flags],
+        capture_output=True, text=True, check=False, env=environment,
+    )
+
+
+def run_clean_with_git_status_killed(repo, stub_directory, *flags):
+    """Run the reaper with a git that kills itself with a signal on `git status`."""
+    stub_directory.mkdir(parents=True, exist_ok=True)
+    stub = stub_directory / "git"
+    stub.write_text(
+        "#!/bin/sh\n"
+        'case " $* " in *" status "*) kill -9 $$ ;; esac\n'
+        f'exec {shutil.which("git")} "$@"\n', encoding="utf-8")
+    stub.chmod(0o755)
+    environment = dict(os.environ)
+    environment["PATH"] = f"{stub_directory}{os.pathsep}{environment.get('PATH', '')}"
     return subprocess.run(
         [sys.executable, str(CLEAN_SCRIPT), "--repo", str(repo), *flags],
         capture_output=True, text=True, check=False, env=environment,
@@ -209,8 +234,19 @@ with tempfile.TemporaryDirectory() as scratch:
     (mixed_wt / "newdir" / "inner" / "two.txt").write_text("2\n", encoding="utf-8")
     # A staged rename: git -z prints the old path as a second field.
     git(mixed_wt, "mv", "README.md", "moved-readme.md")
+    # A rename in the worktree column (mv, then git add -N), and file names
+    # one and two characters long, the shortest entries git prints.
+    renamed_wt = add_worktree("renamed-wt")
+    (renamed_wt / "README.md").rename(renamed_wt / "worktree-moved.md")
+    git(renamed_wt, "add", "-N", "worktree-moved.md")
+    (renamed_wt / "a").write_text("1\n", encoding="utf-8")
+    (renamed_wt / "ab").write_text("2\n", encoding="utf-8")
+    # Exactly at the ten-name cap, and one past it.
+    ten_files_wt = add_worktree("ten-files-wt")
+    for number in range(10):
+        (ten_files_wt / f"note-{number:02d}.txt").write_text("n\n", encoding="utf-8")
     many_files_wt = add_worktree("many-files-wt")
-    for number in range(12):
+    for number in range(11):
         (many_files_wt / f"note-{number:02d}.txt").write_text("n\n", encoding="utf-8")
     detached_landed_wt = managed / "detached-landed-wt"
     git(checkout, "worktree", "add", "--detach", str(detached_landed_wt), "origin/main")
@@ -275,12 +311,30 @@ with tempfile.TemporaryDirectory() as scratch:
               mixed_line)
         check("regenerable junk is not named among the discarded files",
               ".DS_Store" not in report and "__pycache__" not in report, report)
+        renamed_line = next((line for line in report.splitlines()
+                             if line.startswith("renamed-wt:")), "")
+        check("a rename in the worktree column names the new path once, and its old path not at all",
+              "discards 3 " in renamed_line
+              and sorted(files_named_on(renamed_line)) == ["a", "ab", "worktree-moved.md"],
+              renamed_line)
+        check("one- and two-character file names are named",
+              "a" in files_named_on(renamed_line) and "ab" in files_named_on(renamed_line),
+              renamed_line)
+        check("a rename in the index column names the new path once, and its old path not at all",
+              "moved-readme.md" in files_named_on(mixed_line)
+              and "README.md" not in files_named_on(mixed_line)
+              and len(files_named_on(mixed_line)) == 6, mixed_line)
         many_line = next((line for line in report.splitlines()
                           if line.startswith("many-files-wt:")), "")
-        check("at most ten discarded files are named, with a count of the rest",
-              "discards 12 " in many_line and "note-09.txt" in many_line
-              and "note-10.txt" not in many_line and "and 2 more" in many_line,
+        check("past ten files, ten are named and the rest are counted",
+              "discards 11 " in many_line and "note-09.txt" in many_line
+              and "note-10.txt" not in many_line and many_line.endswith(" and 1 more"),
               many_line)
+        ten_line = next((line for line in report.splitlines()
+                         if line.startswith("ten-files-wt:")), "")
+        check("exactly ten files are all named, with no count of the rest",
+              "discards 10 " in ten_line and ten_line.endswith("note-09.txt")
+              and " more" not in ten_line, ten_line)
         check("a detached worktree at origin/main is judged landed",
               "detached-landed-wt: done" in report, report)
         check("a detached worktree with a commit beyond origin/main is kept",
@@ -395,6 +449,14 @@ with tempfile.TemporaryDirectory() as scratch:
               and timed_out_classification[0] is False,
               f"{timed_out_reason} {timed_out_classification}")
 
+        killed_status_removal = run_clean_with_git_status_killed(
+            checkout, scratch / "git-status-killed", "--remove")
+        check("--remove with git status killed by a signal removes nothing, and says why",
+              dirty_wt.exists() and done_wt.exists()
+              and ": removed" not in killed_status_removal.stdout
+              and "dirty-wt: kept — git cannot list its files" in killed_status_removal.stdout,
+              killed_status_removal.stdout + killed_status_removal.stderr)
+
         git(checkout, "update-ref", "-d", "refs/remotes/origin/main")
         try:
             no_main_removal = run_clean(checkout, "--remove")
@@ -456,6 +518,11 @@ with tempfile.TemporaryDirectory() as scratch:
         branches = git(checkout, "branch", "--list", "done-wt-branch")
         check("--remove deletes the reaped worktree's merged branch",
               branches.strip() == "", branches)
+        check("--remove names the files before the removal, as files it will discard",
+              "dirty-wt: removing it will discard 1 uncommitted, untracked or ignored "
+              "file(s): uncommitted.txt" in removal.stdout
+              and -1 < removal.stdout.find("dirty-wt: removing it will discard")
+              < removal.stdout.find("dirty-wt: removed"), removal.stdout)
         check("--remove names the files it discarded, after the removal succeeded",
               "dirty-wt: discarded with it 1 uncommitted, untracked or ignored file(s): "
               "uncommitted.txt" in removal.stdout
@@ -480,6 +547,9 @@ with tempfile.TemporaryDirectory() as scratch:
               (locked_wt / "locked-untracked.txt").exists()
               and "locked-wt: removal FAILED" in removal.stdout
               and "locked-wt: discarded" not in removal.stdout, removal.stdout)
+        check("a removal that fails still named its files beforehand",
+              "locked-wt: removing it will discard 1 uncommitted, untracked or ignored "
+              "file(s): locked-untracked.txt" in removal.stdout, removal.stdout)
         check("--remove exits 1 when a removal failed", removal.returncode == 1,
               str(removal.returncode))
         git(checkout, "worktree", "unlock", str(locked_wt))

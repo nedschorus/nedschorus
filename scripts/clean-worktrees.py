@@ -30,8 +30,10 @@ mechanical checks all pass:
 Uncommitted, untracked and ignored files do NOT keep a done worktree: they
 are removed with it. The files are listed after the other checks, each file
 inside an untracked or ignored directory named on its own; the report names
-them, and after each successful removal --remove prints one line naming the
-files discarded with it, so a loss is visible in its output. Regenerable junk
+them, and --remove names them twice: before each removal, as files it will
+discard, and after a removal succeeds, as files discarded with it. A removal
+that fails or is stopped partway has named its files beforehand, so a loss
+is visible in the output either way. Regenerable junk
 (.DS_Store, __pycache__, at any depth) is not listed. If git cannot list a
 worktree's files, the worktree is kept.
 
@@ -264,17 +266,13 @@ def files_a_removal_discards(worktree):
                      "--untracked-files=all")
     if status.returncode != 0:
         return None, status.stderr.strip()[:80]
-    entries = status.stdout.split("\0")
+    fields = iter([field for field in status.stdout.split("\0") if field])
     paths = []
-    index = 0
-    while index < len(entries):
-        entry = entries[index]
-        index += 1
-        if len(entry) < 4:
-            continue
+    for entry in fields:
         code, path = entry[:2], entry[3:]
-        if code[0] in "RC":
-            index += 1
+        # A rename or copy, in the index column or the worktree column, carries its old path as the next field.
+        if "R" in code or "C" in code:
+            next(fields, None)
         paths.append(path)
     return [path for path in paths if not is_disposable_junk(path)], None
 
@@ -319,6 +317,10 @@ def classify(worktree, branch, main_checkout):
 
 def remove_worktree(worktree, branch, repo, discarded):
     """Remove a done worktree and its merged branch; return success."""
+    # Named before the removal too: a removal that fails or is killed partway may already have deleted some.
+    if discarded:
+        print(f"{worktree.name}: removing it will discard {len(discarded)} uncommitted, "
+              f"untracked or ignored file(s): {discarded_files_text(discarded)}")
     # A single --force removes untracked and modified files but still refuses a locked worktree.
     removal = run_git(repo, "worktree", "remove", "--force", str(worktree))
     if removal.returncode != 0:

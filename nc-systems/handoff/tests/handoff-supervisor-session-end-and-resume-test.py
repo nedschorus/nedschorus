@@ -480,6 +480,32 @@ def run_handoff_worktree_cleanup_cases_without_git_redirection(workspace: Path):
           (locked / "held.txt").exists() and "1 failed" in locked_report
           and "held uncommitted" not in locked_report and "0 finished worktree(s) removed"
           in locked_report, locked_report)
+    check("WORKTREE CLEANUP: a worktree whose removal fails has its files named as "
+          "possibly gone",
+          "1 removal(s) started but not confirmed, so these files may be partly gone: "
+          "locked-worktree: removing it will discard 1 uncommitted, untracked or ignored "
+          "file(s): held.txt" in locked_report, locked_report)
+
+    # A cleaner stopped by the handoff's timeout partway through a removal
+    # leaves the announcement and no confirmation.
+    stopped_summary = supervisor.summarize_worktree_cleanup_output([
+        "first-wt: removing it will discard 1 uncommitted, untracked or ignored file(s): one.txt",
+        "first-wt: removed, branch first-branch deleted",
+        "first-wt: discarded with it 1 uncommitted, untracked or ignored file(s): one.txt",
+        "second-wt: removing it will discard 2 uncommitted, untracked or ignored file(s): "
+        "two.txt, three.txt",
+    ])
+    check("WORKTREE CLEANUP: a removal stopped partway is named as possibly gone, "
+          "and only a confirmed removal is counted as a discard",
+          stopped_summary == (
+              "worktree cleanup: 1 finished worktree(s) removed, "
+              "1 branch ref(s) with nothing beyond main deleted; "
+              "1 of the removed held uncommitted, untracked or ignored files: "
+              "first-wt: discarded with it 1 uncommitted, untracked or ignored file(s): one.txt; "
+              "1 removal(s) started but not confirmed, so these files may be partly gone: "
+              "second-wt: removing it will discard 2 uncommitted, untracked or ignored "
+              "file(s): two.txt, three.txt"),
+          stopped_summary)
 
     # With GIT_DIR naming another repository, the cleanup still acts on the
     # seat's own, and leaves the other alone.
