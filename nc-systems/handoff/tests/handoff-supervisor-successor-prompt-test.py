@@ -2043,14 +2043,20 @@ def run_overview_refresh_due_prompt_cases(workspace: Path):
 # The memory-review-due instruction, word for word. A template: the mark
 # command's path and the stores' paths are filled in.
 EXPECTED_MEMORY_REVIEW_DUE_INSTRUCTION_TEMPLATE = (
-    " — Run `python3 {mark_script} started` first. Then walk the user through "
-    "every entry of both memory stores, {mac_memory_store} on the Mac and "
-    "ned-box's at {ned_box_memory_store_mac_mount} (when that path does not "
-    "open, {ned_box_memory_store} over ssh), one entry at a time with the "
-    "/walk-me-through skill, asking him for each whether to keep it, move it "
-    "into CLAUDE.md or a skill, or delete it; write or delete nothing in "
-    "either store without his approval. When the walk closes, run "
-    "`python3 {mark_script} done`."
+    " — Run `python3 {mark_script} started` first. Then put every entry of "
+    "both memory stores, {mac_memory_store} on the Mac and ned-box's at "
+    "{ned_box_memory_store_mac_mount} (when that path does not open, "
+    "{ned_box_memory_store} over ssh, and run this review's shell commands "
+    "there over ssh too), to the user in an approval-walk with the "
+    "/walk-me-through skill, one entry per item; entries with little at stake "
+    "may be shown together, as the skill allows. In each item, show the "
+    "entry's text and recommend what it should become: a fix to an "
+    "instruction file now, which is best; a task on your task list; a GitHub "
+    "issue filed with /ghi-write; or nothing, when the entry is stale. Carry "
+    "out the user's ruling, then delete the entry's file and remove its line "
+    "from that store's MEMORY.md index, both with shell commands. Do not edit "
+    "an entry: the instruction-file guard refuses every Edit or Write into a "
+    "memory store. When the walk closes, run `python3 {mark_script} done`."
 )
 
 # ned-box's store as the Mac opens it through the Samba mount of ned-box's
@@ -2077,12 +2083,18 @@ def expected_memory_review_due_line(mac_store, ned_box_store, mac_entries,
     return (
         f"memory review due: the Mac's memory store holds {mac_entries} and "
         f"ned-box's holds {ned_box_entries}, {since} — Run `python3 {mark} started` "
-        "first. Then walk the user through every entry of both memory stores, "
+        "first. Then put every entry of both memory stores, "
         f"{mac_store}/ on the Mac and ned-box's at {NED_BOX_MEMORY_STORE_MAC_MOUNT_PATH}/ "
-        f"(when that path does not open, nedlern@ned-box:{ned_box_store}/ over ssh), "
-        "one entry at a time with the /walk-me-through skill, asking him for each whether to "
-        "keep it, move it into CLAUDE.md or a skill, or delete it; write or delete "
-        "nothing in either store without his approval. When the walk closes, run "
+        f"(when that path does not open, nedlern@ned-box:{ned_box_store}/ over ssh, "
+        "and run this review's shell commands there over ssh too), to the user in an "
+        "approval-walk with the /walk-me-through skill, one entry per item; entries with "
+        "little at stake may be shown together, as the skill allows. In each item, show "
+        "the entry's text and recommend what it should become: a fix to an instruction "
+        "file now, which is best; a task on your task list; a GitHub issue filed with "
+        "/ghi-write; or nothing, when the entry is stale. Carry out the user's ruling, "
+        "then delete the entry's file and remove its line from that store's MEMORY.md "
+        "index, both with shell commands. Do not edit an entry: the instruction-file "
+        "guard refuses every Edit or Write into a memory store. When the walk closes, run "
         f"`python3 {mark} done`.")
 
 

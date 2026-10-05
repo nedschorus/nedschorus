@@ -135,7 +135,11 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     check("a .walk-approved marker does not let a memory write through", result.returncode == 2,
           str(result.returncode))
     check("a refused memory write leaves the marker unspent", session_marker.exists())
-    session_marker.unlink()
+    session_marker.unlink(missing_ok=True)
+
+    # Only a memory directory under .claude is Claude Code's memory store.
+    result = run_hook(decoy, workspace, str(workspace / "notes" / "projects" / "-a-project" / "memory" / "fact.md"))
+    check("a projects/<p>/memory/ path outside .claude passes", result.returncode == 0, result.stderr)
 
     result = run_hook(decoy, workspace, str(workspace / ".claude" / "jobs.json"))
     check("a file merely named jobs.json under .claude/ is still protected",
