@@ -70,6 +70,10 @@ fi
 # --no-divider: the file is a bare commit message, never a patch, so a "---"
 # line in its body is text, not the start of a diff to stamp above.
 git interpret-trailers --in-place --no-divider --if-exists addIfDifferent \
-    --trailer "$session_trailer" "$1" ||
-    echo "prepare-commit-msg: could not add the session trailer; add it by hand" >&2
+    --trailer "$session_trailer" "$1" || {
+    echo "prepare-commit-msg: git interpret-trailers failed, so the trailer \"$session_trailer\" may be missing from this commit's message; the trailer is how a reviewer finds the agent-session that made a commit. git's error is just above this line." >&2
+    echo "If this commit was made by a rebase, merge or cherry-pick, leave the commits as they are, and tell the user this message once the operation is done." >&2
+    echo "Otherwise, if git log -1 shows the commit you just made, that commit is not pushed, and its message lacks the trailer, add it with: git commit --amend --only --no-edit --trailer \"$session_trailer\"" >&2
+    echo "If that amend fails, or the commit is already pushed, leave the commit as it is and tell the user this whole message." >&2
+}
 exit 0
