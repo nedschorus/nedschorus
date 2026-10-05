@@ -93,7 +93,7 @@ import re
 import subprocess
 import sys
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 
 _supervisor_spec = importlib.util.spec_from_file_location(
@@ -110,11 +110,20 @@ _recovery_spec = importlib.util.spec_from_file_location(
 recovery = importlib.util.module_from_spec(_recovery_spec)
 _recovery_spec.loader.exec_module(recovery)
 
-# Independent supervisor cycles can differ by a full heartbeat interval.
-LIVE_SET_WINDOW_SECONDS = 2 * supervisor.HEARTBEAT_INTERVAL_SECONDS
-RUN_LOG_FILE_NAME = "restart-live-seats-at-login-log.txt"
-# Boot instants are recomputed from clocks NTP can correct; match within a few seconds.
-BOOT_MATCH_TOLERANCE_SECONDS = 5
+_records_reader_spec = importlib.util.spec_from_file_location(
+    "agent_seat_state_records_reader", Path(__file__).resolve().parent.parent
+    / "nc-systems" / "handoff" / "agent-seat-state-records-reader.py"
+)
+records_reader = importlib.util.module_from_spec(_records_reader_spec)
+_records_reader_spec.loader.exec_module(records_reader)
+LIVE_SET_WINDOW_SECONDS = records_reader.LIVE_SET_WINDOW_SECONDS
+RUN_LOG_FILE_NAME = records_reader.RUN_LOG_FILE_NAME
+BOOT_MATCH_TOLERANCE_SECONDS = records_reader.BOOT_MATCH_TOLERANCE_SECONDS
+describe_gap = records_reader.describe_gap
+read_supervisor_heartbeat = records_reader.read_supervisor_heartbeat
+read_earlier_run_for_this_boot = records_reader.read_earlier_run_for_this_boot
+read_stop_of_run_log_line = records_reader.read_stop_of_run_log_line
+select_seats_live_at_the_stop = records_reader.select_seats_live_at_the_stop
 
 
 def parse_darwin_kern_boottime(text: str) -> datetime:
@@ -140,86 +149,6 @@ def machine_boot_time() -> datetime:
 
 def current_time() -> datetime:
     return datetime.now(timezone.utc)
-
-
-def describe_gap(gap: timedelta) -> str:
-    seconds = gap.total_seconds()
-    for unit, size in (("d", 86400), ("h", 3600), ("m", 60)):
-        if seconds >= size:
-            return f"{seconds / size:.0f}{unit}"
-    return f"{seconds:.0f}s"
-
-
-def read_supervisor_heartbeat(state_path: Path, now: datetime):
-    """Return (stamp, empty string), or (None, failure reason)."""
-    try:
-        state = json.loads(state_path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
-        return None, f"not readable as JSON: {error.__class__.__name__}"
-    stamped = state.get("last_poll_at") if isinstance(state, dict) else None
-    if not stamped:
-        return None, "it carries no last_poll_at"
-    try:
-        stamp = datetime.fromisoformat(stamped)
-    except (TypeError, ValueError):
-        return None, f"last_poll_at {stamped!r} does not parse"
-    if stamp.tzinfo is None:
-        return None, f"last_poll_at {stamped!r} carries no timezone"
-    # A running supervisor may stamp just after now was sampled.
-    if (stamp - now).total_seconds() > LIVE_SET_WINDOW_SECONDS:
-        return None, f"last_poll_at {stamped} is in the future"
-    return stamp, ""
-
-
-def read_earlier_run_for_this_boot(handoff_directory: Path, boot_at: datetime):
-    """Return (recorded stop, whether an earlier run exists for this boot)."""
-    # The first readable line wins: restarted seats overwrite the original heartbeats.
-    # A recorded null stop differs from no earlier run; unreadable logs must not block restart.
-    try:
-        lines = (handoff_directory / RUN_LOG_FILE_NAME).read_text(
-            encoding="utf-8").splitlines()
-    except (OSError, UnicodeDecodeError):
-        return None, False
-    for line in lines:
-        try:
-            entry = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if not isinstance(entry, dict):
-            continue
-        recorded_boot = entry.get("boot_at")
-        if not isinstance(recorded_boot, str):
-            continue
-        try:
-            boot_of_line = datetime.fromisoformat(recorded_boot)
-        except ValueError:
-            continue
-        if boot_of_line.tzinfo is None:
-            continue
-        if abs((boot_of_line - boot_at).total_seconds()) > BOOT_MATCH_TOLERANCE_SECONDS:
-            continue
-        stop_of_line, readable = read_stop_of_run_log_line(entry)
-        if not readable:
-            continue
-        return stop_of_line, True
-    return None, False
-
-
-def read_stop_of_run_log_line(entry: dict):
-    """Return (stop, whether the line is readable)."""
-    # A null stop is deliberate; a corrupt stop makes the whole line unreadable.
-    if "stop_at" not in entry:
-        return None, False
-    recorded_stop = entry["stop_at"]
-    if recorded_stop is None:
-        return None, True
-    if not isinstance(recorded_stop, str):
-        return None, False
-    try:
-        stop_of_line = datetime.fromisoformat(recorded_stop)
-    except ValueError:
-        return None, False
-    return (None, False) if stop_of_line.tzinfo is None else (stop_of_line, True)
 
 
 def append_selection_to_run_log(handoff_directory: Path, boot_at: datetime,
@@ -250,54 +179,6 @@ def append_selection_to_run_log(handoff_directory: Path, boot_at: datetime,
               file=sys.stderr)
         return False
     return True
-
-
-def select_seats_live_at_the_stop(handoff_directory: Path, boot_at: datetime,
-                                  now: datetime, recorded_stop=None):
-    """Return (anchor, per-seat decisions, whether the anchor is the stop)."""
-    if not handoff_directory.is_dir():
-        return None, [], False
-    readings = []
-    for state_path in supervisor.supervisor_state_paths(handoff_directory):
-        seat = supervisor.agent_name_from_supervisor_file(state_path)
-        stamp, problem = read_supervisor_heartbeat(state_path, now)
-        written_at = datetime.fromtimestamp(state_path.stat().st_mtime, timezone.utc)
-        heartbeat_at = stamp if stamp is not None else written_at
-        since_boot = heartbeat_at >= boot_at or written_at >= boot_at
-        readings.append((seat, heartbeat_at, written_at, since_boot, problem))
-
-    anchor = recorded_stop if recorded_stop is not None else max(
-        (heartbeat_at for _, heartbeat_at, _, _, _ in readings
-         if heartbeat_at < boot_at), default=None)
-    # Post-boot writes can erase the true stop’s heartbeats; only a recorded stop remains trustworthy.
-    restart_already_ran = (recorded_stop is None
-                           and any(since_boot for _, _, _, since_boot, _ in readings))
-    # Do not persist a degraded anchor as the stop for later runs.
-    anchor_is_the_stop = anchor is not None and not restart_already_ran
-
-    decisions = []
-    for seat, heartbeat_at, written_at, since_boot, problem in readings:
-        stands_in = (f"its heartbeat cannot be read ({problem}), so the file's last "
-                     "write stands in for it; ") if problem else ""
-        if since_boot:
-            last_written = max(heartbeat_at, written_at)
-            verdict, reason = "stamped-since-boot", (
-                f"written {last_written.isoformat(timespec='seconds')}, since boot: "
-                "a supervisor has run for it since then")
-        elif (anchor - heartbeat_at).total_seconds() > LIVE_SET_WINDOW_SECONDS:
-            verdict, reason = "not-running-at-the-stop", (
-                f"last heartbeat {describe_gap(anchor - heartbeat_at)} before the stop")
-        elif restart_already_ran:
-            verdict, reason = "offer", (
-                "the newest heartbeat left from before boot, but seats have been "
-                "written since boot, so it may not be the stop: offer restart, "
-                "park, or finished")
-        else:
-            verdict, reason = "restart", (
-                f"last heartbeat {describe_gap(anchor - heartbeat_at)} before the "
-                f"stop, which was {describe_gap(boot_at - anchor)} before boot")
-        decisions.append((seat, verdict, stands_in + reason))
-    return anchor, decisions, anchor_is_the_stop
 
 
 BOX_LAUNCHER_PATH = Path(__file__).with_name("launch-claude-ubuntu")
