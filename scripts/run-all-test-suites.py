@@ -270,8 +270,14 @@ per suite: worktrees come and go and every one of a clone's worktrees, and
 every clone, shares the same paths, so a recording made in one serves them
 all. Every run replaces the recordings of the suites it ran, a failed or
 killed run's included, so the last recording always says how the suite's
-last run ended; the daily full run refreshes them all. A recording that
-cannot be saved removes the earlier one.
+last run ended; the daily full run refreshes them all. Each recording is
+written to a temporary file of its own and renamed into place under a short
+lock held per suite, so runs in two checkouts saving one suite at once never
+mix their contents, and a reader sees one whole recording. A run reads each
+recording once, when it starts, and both selection and starting order use
+what it read. A recording that cannot be saved removes the earlier one,
+unless another run saved a newer one since this run read it; that one
+records its own run's inputs, so it is kept.
 
 SELECTION, with --only-suites-whose-recorded-inputs-changed-since COMMIT.
 Two explicit allowlists set aside git calls that read no file of the
@@ -326,7 +332,9 @@ suite runs when one of them is this program (it holds the recorder), under
 .claude/hooks/, or .claude/settings.json. Otherwise a suite runs when: it
 has no recording on this machine, or one made by an older version of this
 program; its recorded run did not exit 0, since a run that failed or was
-killed recorded only what it read before it stopped; the suite file itself
+killed recorded only what it read before it stopped; its recorded run
+skipped cases, since the cases skipped recorded nothing, and a skip can be
+a run disturbed by another; the suite file itself
 differs; a file it read differs; a path it looked for was added or deleted;
 an entry was added to or deleted from a directory it listed, a new
 subdirectory's name included; a file was added or deleted and it ran git on
@@ -374,9 +382,8 @@ with os.stat or os.access directly; a directory a program other than Python
 lists (strace's view of a directory opened is left out, because the import
 system opens every directory on the path); on the Mac, what a shell script
 a suite runs reads or sources; an ignored file; anything outside the checkout (a
-tool upgrade, leftover machine state). A run that exits 0 after skipping
-cases records only what the cases that ran read. The daily full run covers
-all of these.
+tool upgrade, leftover machine state). The daily full run covers all of
+these.
 
 EXIT. 0 when every suite exited 0; 1 when any suite failed; 2 when the run
 could not start (not a checkout's top directory, no suites listed, git or
@@ -387,6 +394,7 @@ holds the lock.
 import argparse
 import codecs
 import concurrent.futures
+import contextlib
 import datetime
 import fcntl
 import functools
@@ -451,7 +459,7 @@ SUITES_RUN_AT_ONCE_WHEN_CORE_COUNT_UNKNOWN = 4
 DEFAULT_RECORDED_INPUTS_DIRECTORY = (
     Path.home() / ".cache" / "nedschorus-test-suite-recorded-inputs")
 # Bump when the recording format changes so older recordings trigger a fresh run.
-RECORDED_INPUTS_FORMAT_VERSION = 4
+RECORDED_INPUTS_FORMAT_VERSION = 5
 RECORDED_INPUTS_LOG_VARIABLE = "RUN_ALL_TEST_SUITES_RECORDED_INPUTS_LOG"
 RECORDED_INPUTS_CHECKOUT_VARIABLE = "RUN_ALL_TEST_SUITES_RECORDED_INPUTS_CHECKOUT"
 # Nested runs put multiple recorders on PYTHONPATH; skip all when chaining sitecustomize.
@@ -1240,25 +1248,76 @@ def recording_file_for(recordings_dir, suite):
     return recordings_dir / (suite.replace("/", "__") + ".json")
 
 
+@contextlib.contextmanager
+def recording_publication_lock(recordings_dir, suite):
+    """Hold a suite's publication lock, so a rename into place and a check-then-remove never interleave."""
+    recordings_dir.mkdir(parents=True, exist_ok=True)
+    with open(recording_file_for(recordings_dir, suite).with_suffix(".json.lock"), "a") as handle:
+        fcntl.flock(handle, fcntl.LOCK_EX)
+        yield
+
+
 def save_recording(recordings_dir, recording):
     recordings_dir.mkdir(parents=True, exist_ok=True)
     target = recording_file_for(recordings_dir, recording["suite"])
-    temporary = target.with_suffix(".json.tmp")
-    temporary.write_text(json.dumps(recording, indent=1, sort_keys=True) + "\n")
-    temporary.replace(target)
+    # A temporary file of its own: runs in other checkouts may save this suite at the same time.
+    descriptor, temporary = tempfile.mkstemp(dir=recordings_dir, prefix=target.name + ".",
+                                             suffix=".tmp")
+    try:
+        with os.fdopen(descriptor, "w") as written:
+            written.write(json.dumps(recording, indent=1, sort_keys=True) + "\n")
+        with recording_publication_lock(recordings_dir, recording["suite"]):
+            os.replace(temporary, target)
+    except BaseException:
+        try:
+            os.unlink(temporary)
+        except OSError:
+            pass
+        raise
+
+
+def recording_file_identity(status):
+    return (status.st_dev, status.st_ino, status.st_mtime_ns, status.st_size)
+
+
+def load_recording_and_identity(recordings_dir, suite):
+    """(recording or None, identity of the file read or None) from one open of the file."""
+    try:
+        with open(recording_file_for(recordings_dir, suite), "rb") as stored:
+            identity = recording_file_identity(os.fstat(stored.fileno()))
+            content = stored.read()
+    except OSError:
+        return None, None
+    try:
+        return json.loads(content), identity
+    except ValueError:
+        return None, identity
 
 
 def load_recording(recordings_dir, suite):
-    try:
-        return json.loads(recording_file_for(recordings_dir, suite).read_text())
-    except (OSError, ValueError):
-        return None
+    return load_recording_and_identity(recordings_dir, suite)[0]
 
 
-def suites_longest_recorded_first(suites, recordings_dir):
+def remove_recording_if_unchanged(recordings_dir, suite, identity_read):
+    """Remove the suite's recording if it is still the file this run read.
+
+    Returns "removed", or "kept" when another run saved a newer recording since."""
+    target = recording_file_for(recordings_dir, suite)
+    with recording_publication_lock(recordings_dir, suite):
+        try:
+            identity_now = recording_file_identity(os.stat(target))
+        except FileNotFoundError:
+            return "removed"
+        if identity_now != identity_read:
+            return "kept"
+        target.unlink()
+        return "removed"
+
+
+def suites_longest_recorded_first(suites, recordings):
     """Return the suites in starting order: no usable duration first, then longest first."""
     def starting_order(suite):
-        recording = load_recording(recordings_dir, suite)
+        recording = recordings.get(suite)
         # A run that did not pass may have stopped early, so its seconds may understate the suite.
         if not isinstance(recording, dict) or recording.get("exit") != 0:
             return (0, 0.0)
@@ -1342,6 +1401,13 @@ def selection_reason(suite, recording, checkout, commit):
         return True, ("its last recorded run did not pass: "
                       + (describe_exit(exit_code) if isinstance(exit_code, int)
                          else "no exit code recorded"))
+    skipped = recording.get("skipped_cases")
+    counted = isinstance(skipped, int) and not isinstance(skipped, bool)
+    if not counted or skipped != 0:
+        # A skipped case's reads were never recorded, and a skip can hide a run disturbed by another.
+        return True, ("its last recorded run skipped "
+                      + (f"{skipped} case(s)" if counted else "an unrecorded number of cases")
+                      + ", so it recorded only what the cases that ran read")
     if suite in differ:
         return True, "the suite itself differs"
     reads, looked_for = recording["reads"], recording["looked_for"]
@@ -1415,7 +1481,7 @@ def selection_reason(suite, recording, checkout, commit):
     return False, reason
 
 
-def suites_selected_since(top, suites, recordings_dir, commit):
+def suites_selected_since(top, suites, recordings, commit):
     """[(suite, selected, why)] for every suite, in order."""
     differ = files_that_differ_since(top, commit)
     everything = [path for path in sorted(differ)
@@ -1424,9 +1490,9 @@ def suites_selected_since(top, suites, recordings_dir, commit):
     if everything:
         return [(suite, True, f"{everything[0]} differs, and every suite runs under it")
                 for suite in suites]
-    recordings = {suite: load_recording(recordings_dir, suite) for suite in suites}
-    checkout = CheckoutComparedWithCommit(top, commit, differ, recordings.values())
-    return [(suite, *selection_reason(suite, recordings[suite], checkout, commit))
+    recorded = [recordings.get(suite) for suite in suites]
+    checkout = CheckoutComparedWithCommit(top, commit, differ, recorded)
+    return [(suite, *selection_reason(suite, recordings.get(suite), checkout, commit))
             for suite in suites]
 
 
@@ -1524,10 +1590,16 @@ def main(argv=None):
         traces_removed = remove_traces_the_last_lock_holder_left(previous_holder)
         commit, state = commit_and_state(top)
         recordings_dir = recordings_directory_for(arguments.recorded_inputs_directory, top)
+        # Each recording is read once, so selection and starting order see the same one
+        # even while runs in other checkouts save it.
+        recordings, identities_read = {}, {}
+        for suite in suites:
+            recordings[suite], identities_read[suite] = load_recording_and_identity(
+                recordings_dir, suite)
         try:
             files = checkout_files(top)
             if changed_since is not None:
-                selection = suites_selected_since(top, suites, recordings_dir, changed_since)
+                selection = suites_selected_since(top, suites, recordings, changed_since)
             else:
                 selection = [(suite, True, "every suite runs without "
                               "--only-suites-whose-recorded-inputs-changed-since")
@@ -1536,7 +1608,7 @@ def main(argv=None):
             print(refusal, file=sys.stderr)
             return EXIT_COULD_NOT_RUN
         chosen = suites_longest_recorded_first(
-            [suite for suite, selected, _ in selection if selected], recordings_dir)
+            [suite for suite, selected, _ in selection if selected], recordings)
         jobs = suites_run_at_once(arguments.jobs, len(chosen), os.cpu_count())
         strace = strace_usable()
         recording_dir = log_dir / "recorded-inputs"
@@ -1574,19 +1646,27 @@ def main(argv=None):
                 save_recording(recordings_dir, recording_of(
                     top, suite, result, recording_dir, files, commit, strace is not None))
             except OSError as error:
-                # A failed save must not leave the previous run's recording usable.
+                # A failed save must not leave the previous run's recording usable; one
+                # another run saved meanwhile records that run's own inputs, so it stays.
                 earlier = recording_file_for(recordings_dir, suite)
                 try:
-                    earlier.unlink(missing_ok=True)
+                    outcome = remove_recording_if_unchanged(
+                        recordings_dir, suite, identities_read.get(suite))
                 except OSError as removal_error:
                     report.line(f"inputs of {suite} not recorded: {error}. Its earlier "
                                 f"recording could not be removed either: {removal_error}. "
                                 f"Delete {earlier} before the next run with "
                                 f"--only-suites-whose-recorded-inputs-changed-since.")
                 else:
-                    report.line(f"inputs of {suite} not recorded: {error}. Its earlier "
-                                f"recording is removed, so the next run with "
-                                f"--only-suites-whose-recorded-inputs-changed-since selects it.")
+                    if outcome == "kept":
+                        report.line(f"inputs of {suite} not recorded: {error}. The recording "
+                                    f"another run saved while this one ran is kept, since it "
+                                    f"records that run's own inputs.")
+                    else:
+                        report.line(f"inputs of {suite} not recorded: {error}. Its earlier "
+                                    f"recording is removed, so the next run with "
+                                    f"--only-suites-whose-recorded-inputs-changed-since "
+                                    f"selects it.")
             # Raw strace logs can occupy hundreds of megabytes per suite.
             shutil.rmtree(recording_paths_for(recording_dir, suite)[1], ignore_errors=True)
             return result

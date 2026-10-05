@@ -29,6 +29,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 
 # Before anything runs git: a run started with GIT_DIR set, or with another
 # variable that redirects git, must still build this suite's scratch
@@ -984,23 +985,421 @@ with tempfile.TemporaryDirectory() as scratch:
           ran(root) == ["runs-git-show-test.py"] and result.returncode == 1,
           (ran(root), result.stdout))
 
-# A recording that could not be saved.
+# --- Saving recordings while runs in other checkouts save them too -----------
+# A sitecustomize.py on the program's PYTHONPATH holds each run at a barrier
+# after its recording is written and before it is published: at the suite's
+# publication lock, or at the rename where no lock is taken. The case then
+# releases the runs one at a time, or makes one fail to publish.
+BARRIER_VARIABLE = "RUN_ALL_TEST_SUITES_TEST_BARRIER"
+STORE_VARIABLE = "RUN_ALL_TEST_SUITES_TEST_STORE"
+WRITER_VARIABLE = "RUN_ALL_TEST_SUITES_TEST_WRITER"
+SHARED_TEMPORARY_VARIABLE = "RUN_ALL_TEST_SUITES_TEST_SHARED_TEMPORARY"
+# Only the case that publishes during another run's check sets this; a case without it
+# would otherwise wait out the hold's deadline.
+HOLD_CHECK_VARIABLE = "RUN_ALL_TEST_SUITES_TEST_HOLD_CHECK"
+PUBLICATION_BARRIER_SITECUSTOMIZE = f'''import os, time, pathlib
+if os.environ.get("{BARRIER_VARIABLE}"):
+    import fcntl, tempfile
+    _here = pathlib.Path(os.environ["{BARRIER_VARIABLE}"])
+    _store = os.environ["{STORE_VARIABLE}"]
+    _name = os.environ["{WRITER_VARIABLE}"]
+    _real_replace, _real_flock, _real_mkstemp = os.replace, fcntl.flock, tempfile.mkstemp
+    _state = {{}}
+
+    def _barrier_once():
+        if "go" in _state:
+            return
+        (_here / f"written-{{_name}}").touch()
+        go = _here / f"go-{{_name}}"
+        deadline = time.monotonic() + 60
+        while not go.exists():
+            if time.monotonic() > deadline:
+                raise OSError("the case never released this run's barrier")
+            time.sleep(0.01)
+        _state["go"] = go.read_text().strip()
+
+    def _flock(handle, operation):
+        if str(getattr(handle, "name", "")).startswith(_store) \\
+                and str(handle.name).endswith(".json.lock"):
+            _barrier_once()
+        return _real_flock(handle, operation)
+
+    def _replace(source, destination, *rest, **keywords):
+        if str(destination).startswith(_store) and str(destination).endswith(".json"):
+            _barrier_once()
+            if _state["go"] == "fail" and "failed" not in _state:
+                _state["failed"] = True
+                raise OSError(5, "a publication failure the case injected")
+            answer = _real_replace(source, destination, *rest, **keywords)
+            (_here / f"renamed-{{_name}}").touch()
+            return answer
+        return _real_replace(source, destination, *rest, **keywords)
+
+    _real_stat = os.stat
+
+    def _stat(path, *rest, **keywords):
+        # After its injected failure, hold the run inside its check of the recording.
+        if os.environ.get("{HOLD_CHECK_VARIABLE}") and _state.get("failed") \\
+                and "checked" not in _state \\
+                and str(path).startswith(_store) and str(path).endswith(".json"):
+            _state["checked"] = True
+            (_here / f"checking-{{_name}}").touch()
+            release = _here / f"go-check-{{_name}}"
+            deadline = time.monotonic() + 60
+            while not release.exists() and time.monotonic() < deadline:
+                time.sleep(0.01)
+        return _real_stat(path, *rest, **keywords)
+
+    def _mkstemp(suffix=None, prefix=None, dir=None, text=False):
+        if os.environ.get("{SHARED_TEMPORARY_VARIABLE}") and dir is not None \\
+                and str(dir).startswith(_store):
+            path = os.path.join(str(dir), (prefix or "") + "shared" + (suffix or ""))
+            return os.open(path, os.O_RDWR | os.O_CREAT | os.O_TRUNC, 0o600), path
+        return _real_mkstemp(suffix, prefix, dir, text)
+
+    fcntl.flock, os.replace, tempfile.mkstemp, os.stat = _flock, _replace, _mkstemp, _stat
+'''
+READS_DATA = "assert pathlib.Path('data.txt').read_text()\n"
+
+
+def publication_barrier(root):
+    """A directory holding the barrier's sitecustomize.py, and its marker directory."""
+    shadow = root / "barrier-sitecustomize"
+    shadow.mkdir()
+    (shadow / "sitecustomize.py").write_text(PUBLICATION_BARRIER_SITECUSTOMIZE)
+    markers = root / "barrier"
+    markers.mkdir()
+    return shadow, markers
+
+
+def start_writer(root, checkout, name, store, shadow, markers, shared_temporary=False,
+                 hold_check=False):
+    """A run of the program in `checkout`, saving into `store`, held at the barrier as `name`."""
+    environment = dict(os.environ)
+    environment.update({
+        RAN_FILE_VARIABLE: str(root / f"ran-{name}.txt"), RENDEZVOUS_WAIT_VARIABLE: "20",
+        "PYTHONPATH": str(shadow), BARRIER_VARIABLE: str(markers),
+        STORE_VARIABLE: str(store), WRITER_VARIABLE: name})
+    if shared_temporary:
+        environment[SHARED_TEMPORARY_VARIABLE] = "1"
+    if hold_check:
+        environment[HOLD_CHECK_VARIABLE] = "1"
+    command = [sys.executable, str(PROGRAM), "--checkout", str(checkout),
+               "--log-dir", str(root / f"logs-{name}"),
+               "--lock-file", str(root / f"run-{name}.lock"),
+               "--recorded-inputs-directory", str(store)]
+    return subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                            text=True, env=environment, stdin=subprocess.DEVNULL)
+
+
+def wait_for(path, seconds=60):
+    deadline = time.monotonic() + seconds
+    while not path.exists():
+        if time.monotonic() > deadline:
+            return False
+        time.sleep(0.01)
+    return True
+
+
+READER = f'''import importlib.util, json, pathlib, sys, time
+spec = importlib.util.spec_from_file_location("runner", {str(PROGRAM)!r})
+runner = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(runner)
+store, stop, out = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2]), sys.argv[3]
+seen = []
+while not stop.exists():
+    directories = list(store.glob("*/"))
+    if not directories:
+        seen.append("absent")
+    for directory in directories:
+        target = runner.recording_file_for(directory, "a-test.py")
+        try:
+            text = target.read_text()
+        except OSError:
+            seen.append("absent")
+            continue
+        try:
+            seen.append(json.loads(text).get("commit", "no commit"))
+        except ValueError:
+            seen.append("INCOMPLETE")
+    time.sleep(0.001)
+pathlib.Path(out).write_text(json.dumps(seen))
+'''
+
+
+def two_branch_checkouts(root):
+    """root/repo on its first branch and root/other on a second, which changes data.txt."""
+    repo = make_repo(root, {"a-test.py": READS_DATA})
+    first = commit_files(repo, {"data.txt": "first branch\n"}, "data")
+    git(repo, "worktree", "add", "-q", "-b", "second", str(root / "other"))
+    second = commit_files(root / "other", {"data.txt": "second branch\n"}, "change data")
+    return repo, first, root / "other", second
+
+
+def solo_recording(root, checkout, name):
+    """The recording one run alone in `checkout` saves, in a store of its own."""
+    store = root / f"solo-store-{name}"
+    environment = dict(os.environ)
+    environment.update({RAN_FILE_VARIABLE: str(root / f"ran-solo-{name}.txt"),
+                        RENDEZVOUS_WAIT_VARIABLE: "20"})
+    subprocess.run([sys.executable, str(PROGRAM), "--checkout", str(checkout),
+                    "--log-dir", str(root / f"logs-solo-{name}"),
+                    "--lock-file", str(root / f"run-solo-{name}.lock"),
+                    "--recorded-inputs-directory", str(store)],
+                   capture_output=True, text=True, env=environment,
+                   stdin=subprocess.DEVNULL, check=False)
+    found = list(store.glob("*/a-test.py.json"))
+    return json.loads(found[0].read_text()) if found else {}
+
+
+def published(store):
+    found = list(store.glob("*/a-test.py.json"))
+    try:
+        return json.loads(found[0].read_text()) if found else {}
+    except ValueError:
+        return {"commit": "INCOMPLETE"}
+
+
+def leftover_temporaries(store):
+    return sorted(path.name for path in store.glob("*/*.tmp"))
+
+
+def overlap_publishing_in_turn(shared_temporary, prefill):
+    """Two runs on two branches save one suite at once; returns what each step saw."""
+    with tempfile.TemporaryDirectory() as scratch:
+        root = pathlib.Path(scratch)
+        repo, first, other, second = two_branch_checkouts(root)
+        solo = {"first": solo_recording(root, repo, "first"),
+                "second": solo_recording(root, other, "second")}
+        store = root / "shared-store"
+        if prefill:
+            subprocess.run([sys.executable, str(PROGRAM), "--checkout", str(other),
+                            "--log-dir", str(root / "logs-prefill"),
+                            "--lock-file", str(root / "run-prefill.lock"),
+                            "--recorded-inputs-directory", str(store)],
+                           capture_output=True, text=True, check=False,
+                           env={**os.environ, RAN_FILE_VARIABLE: str(root / "ran-prefill.txt"),
+                                RENDEZVOUS_WAIT_VARIABLE: "20"}, stdin=subprocess.DEVNULL)
+        shadow, markers = publication_barrier(root)
+        stop, seen_file = root / "stop-reading", root / "seen.json"
+        reader = subprocess.Popen([sys.executable, "-c", READER, str(store), str(stop),
+                                   str(seen_file)])
+        writers = {name: start_writer(root, checkout, name, store, shadow, markers,
+                                      shared_temporary)
+                   for name, checkout in (("first", repo), ("second", other))}
+        seen = {"both held": all(wait_for(markers / f"written-{name}") for name in writers)}
+        seen["temporaries while held"] = leftover_temporaries(store)
+        (markers / "go-first").write_text("go")
+        wait_for(markers / "renamed-first", 30)
+        seen["after first"] = published(store)
+        (markers / "go-second").write_text("go")
+        wait_for(markers / "renamed-second", 30)
+        seen["after second"] = published(store)
+        seen["exits"] = {name: writer.wait(timeout=120) for name, writer in writers.items()}
+        seen["outputs"] = {name: writer.stdout.read() for name, writer in writers.items()}
+        stop.touch()
+        reader.wait(timeout=60)
+        seen["reads"] = json.loads(seen_file.read_text()) if seen_file.exists() else []
+        seen["commits"] = {"first": first, "second": second}
+        seen["solo"] = solo
+        seen["leftover"] = leftover_temporaries(store)
+        return seen
+
+
+def overlap_second_fails_after_first_publishes(prefill):
+    """The first run publishes, then the second fails to publish; returns what was left."""
+    with tempfile.TemporaryDirectory() as scratch:
+        root = pathlib.Path(scratch)
+        repo, first, other, second = two_branch_checkouts(root)
+        store = root / "shared-store"
+        if prefill:
+            subprocess.run([sys.executable, str(PROGRAM), "--checkout", str(repo),
+                            "--log-dir", str(root / "logs-prefill"),
+                            "--lock-file", str(root / "run-prefill.lock"),
+                            "--recorded-inputs-directory", str(store)],
+                           capture_output=True, text=True, check=False,
+                           env={**os.environ, RAN_FILE_VARIABLE: str(root / "ran-prefill.txt"),
+                                RENDEZVOUS_WAIT_VARIABLE: "20"}, stdin=subprocess.DEVNULL)
+        shadow, markers = publication_barrier(root)
+        writers = {name: start_writer(root, checkout, name, store, shadow, markers)
+                   for name, checkout in (("first", repo), ("second", other))}
+        held = all(wait_for(markers / f"written-{name}") for name in writers)
+        (markers / "go-first").write_text("go")
+        wait_for(markers / "renamed-first", 30)
+        (markers / "go-second").write_text("fail")
+        failed_at = time.monotonic()
+        exits = {name: writer.wait(timeout=120) for name, writer in writers.items()}
+        after_failure = time.monotonic() - failed_at
+        outputs = {name: writer.stdout.read() for name, writer in writers.items()}
+        return {"held": held, "exits": exits, "outputs": outputs, "commits": (first, second),
+                "left": published(store), "leftover": leftover_temporaries(store),
+                "after failure": after_failure,
+                "checking": (markers / "checking-second").exists()}
+
+
+def overlap_first_publishes_while_second_checks():
+    """The second run fails and is held inside its check of the earlier recording; the first
+    run is then released to publish. Returns what was left once both finished."""
+    with tempfile.TemporaryDirectory() as scratch:
+        root = pathlib.Path(scratch)
+        repo, first, other, second = two_branch_checkouts(root)
+        store = root / "shared-store"
+        subprocess.run([sys.executable, str(PROGRAM), "--checkout", str(other),
+                        "--log-dir", str(root / "logs-prefill"),
+                        "--lock-file", str(root / "run-prefill.lock"),
+                        "--recorded-inputs-directory", str(store)],
+                       capture_output=True, text=True, check=False,
+                       env={**os.environ, RAN_FILE_VARIABLE: str(root / "ran-prefill.txt"),
+                            RENDEZVOUS_WAIT_VARIABLE: "20"}, stdin=subprocess.DEVNULL)
+        shadow, markers = publication_barrier(root)
+        writers = {name: start_writer(root, checkout, name, store, shadow, markers,
+                                      hold_check=(name == "second"))
+                   for name, checkout in (("first", repo), ("second", other))}
+        held = all(wait_for(markers / f"written-{name}") for name in writers)
+        (markers / "go-second").write_text("fail")
+        checking = wait_for(markers / "checking-second", 30)
+        (markers / "go-first").write_text("go")
+        published_during_check = wait_for(markers / "renamed-first", 3)
+        (markers / "go-check-second").touch()
+        exits = {name: writer.wait(timeout=120) for name, writer in writers.items()}
+        outputs = {name: writer.stdout.read() for name, writer in writers.items()}
+        return {"held": held, "checking": checking,
+                "published during check": published_during_check, "exits": exits,
+                "outputs": outputs, "first": first, "left": published(store)}
+
+
+during_check = overlap_first_publishes_while_second_checks()
+check("a run publishing while another checks whether to remove the suite's recording waits "
+      "for that check to finish",
+      during_check["held"] and during_check["checking"]
+      and not during_check["published during check"], during_check)
+check("so the recording it then publishes survives the other run's failed save",
+      during_check["left"].get("commit") == during_check["first"]
+      and during_check["exits"] == {"first": 0, "second": 0}, during_check)
+
+for prefill in (False, True):
+    store_was = "a store already holding the suite's recording" if prefill else "an empty store"
+    seen = overlap_publishing_in_turn(shared_temporary=False, prefill=prefill)
+    commits = seen["commits"]
+    check(f"two runs on two branches, saving one suite into {store_was}, are both held "
+          f"after writing and before publishing, each with a temporary file of its own",
+          seen["both held"] and len(seen["temporaries while held"]) == 2, seen)
+    check(f"with {store_was}, the first run released publishes its own run's recording",
+          seen["after first"].get("commit") == commits["first"], seen["after first"])
+    check(f"with {store_was}, the second run released publishes its own run's recording",
+          seen["after second"].get("commit") == commits["second"], seen["after second"])
+    check(f"with {store_was}, both runs pass and leave no temporary file",
+          seen["exits"] == {"first": 0, "second": 0} and seen["leftover"] == [],
+          (seen["exits"], seen["leftover"], seen["outputs"]))
+    allowed = {"absent", commits["first"], commits["second"]}
+    check(f"with {store_was}, a reader polling throughout sees only whole recordings, "
+          f"each from one run",
+          len(seen["reads"]) > 50 and set(seen["reads"]) <= allowed,
+          (len(seen["reads"]), sorted(set(seen["reads"]) - allowed)))
+    check(f"with {store_was}, each run's published recording reads the same files as a "
+          f"run alone on its branch",
+          seen["after first"].get("reads", {}).keys() == seen["solo"]["first"].get("reads", {}).keys()
+          and seen["after second"].get("reads", {}).keys()
+          == seen["solo"]["second"].get("reads", {}).keys()
+          and "data.txt" in seen["solo"]["first"].get("reads", {}),
+          (seen["after first"].get("reads"), seen["solo"]["first"].get("reads")))
+    left = overlap_second_fails_after_first_publishes(prefill)
+    check(f"with {store_was}, when the second run fails to publish after the first has "
+          f"published, the first run's recording survives",
+          left["held"] and left["left"].get("commit") == left["commits"][0]
+          and left["leftover"] == [], left)
+    check(f"with {store_was}, the second run's failed save is not held in its check, so it "
+          f"finishes promptly",
+          not left["checking"] and left["after failure"] < 30,
+          (left["checking"], left["after failure"]))
+    check(f"with {store_was}, the second run's report says the recording another run saved "
+          f"is kept",
+          any(line.startswith("inputs of a-test.py not recorded: ")
+              and "another run saved while this one ran is kept" in line
+              for line in lines(left["outputs"]["second"])), left["outputs"]["second"])
+
+# The control: runs that share one temporary file name, and so publish each
+# other's recordings or lose one, must fail the checks above. Which run writes
+# the shared file last is a race, so the control asks only that some check fail.
+control = overlap_publishing_in_turn(shared_temporary=True, prefill=False)
+control_passes = (len(control["temporaries while held"]) == 2
+                  and control["after first"].get("commit") == control["commits"]["first"]
+                  and control["after second"].get("commit") == control["commits"]["second"])
+check("control: when the runs share one temporary file, the checks above fail",
+      not control_passes,
+      (control["temporaries while held"], control["after first"].get("commit"),
+       control["after second"].get("commit"), control["commits"]))
+
+# A recording that could not be saved, with no other run saving it.
 with tempfile.TemporaryDirectory() as scratch:
     root = pathlib.Path(scratch)
     repo = make_repo(root, {"a-test.py": PASSES})
     base = head(repo)
     run(root)
     stored = next((root / "recordings").glob("*/a-test.py.json"))
-    stored.with_suffix(".json.tmp").mkdir()
-    result = run(root)
+    shadow, markers = publication_barrier(root)
+    (markers / "go-alone").write_text("fail")
+    started = time.monotonic()
+    result = run(root, environment_extra={
+        "PYTHONPATH": str(shadow), BARRIER_VARIABLE: str(markers),
+        STORE_VARIABLE: str(root / "recordings"), WRITER_VARIABLE: "alone"})
+    check("a failed save with no other run is not held in its check",
+          not (markers / "checking-alone").exists() and time.monotonic() - started < 30,
+          ((markers / "checking-alone").exists(), time.monotonic() - started))
     check("when a recording cannot be saved, the report says the earlier one is removed",
           any(line.startswith("inputs of a-test.py not recorded: ")
               and "Its earlier recording is removed" in line
               for line in lines(result.stdout)) and not stored.exists(),
           (result.stdout, stored.exists()))
+    check("and the run leaves no temporary file behind",
+          leftover_temporaries(root / "recordings") == [],
+          leftover_temporaries(root / "recordings"))
     result = select_since(root, base)
     check("so the next selective run selects the suite",
           ran(root) == ["a-test.py"], (ran(root), result.stdout))
+
+# A first recording that could not be saved: there is nothing earlier to remove.
+with tempfile.TemporaryDirectory() as scratch:
+    root = pathlib.Path(scratch)
+    repo = make_repo(root, {"a-test.py": PASSES})
+    shadow, markers = publication_barrier(root)
+    (markers / "go-alone").write_text("fail")
+    started = time.monotonic()
+    result = run(root, environment_extra={
+        "PYTHONPATH": str(shadow), BARRIER_VARIABLE: str(markers),
+        STORE_VARIABLE: str(root / "recordings"), WRITER_VARIABLE: "alone"})
+    check("a failed first save with no other run is not held in its check",
+          not (markers / "checking-alone").exists() and time.monotonic() - started < 30,
+          ((markers / "checking-alone").exists(), time.monotonic() - started))
+    check("when a suite's first recording cannot be saved, the report does not claim "
+          "another run saved one",
+          any(line.startswith("inputs of a-test.py not recorded: ")
+              and "Its earlier recording is removed" in line
+              for line in lines(result.stdout))
+          and not list((root / "recordings").glob("*/a-test.py.json")), result.stdout)
+
+# A recorded run that skipped cases recorded nothing for them.
+with tempfile.TemporaryDirectory() as scratch:
+    root = pathlib.Path(scratch)
+    repo = make_repo(root, {"skips-one-test.py": "print('SKIP  a case this fixture skips')\n",
+                            "passes-test.py": PASSES})
+    base = head(repo)
+    run(root)
+    result = select_since(root, base)
+    check("a suite whose recorded run skipped cases is selected again, and says why",
+          ran(root) == ["skips-one-test.py"]
+          and "SELECTED skips-one-test.py: its last recorded run skipped 1 case(s), so it "
+              "recorded only what the cases that ran read" in lines(result.stdout),
+          (ran(root), result.stdout))
+    stored = next((root / "recordings").glob("*/skips-one-test.py.json"))
+    recorded = json.loads(stored.read_text())
+    recorded.pop("skipped_cases")
+    stored.write_text(json.dumps(recorded))
+    result = select_since(root, base)
+    check("and so is one whose recording does not say how many cases it skipped",
+          "SELECTED skips-one-test.py: its last recorded run skipped an unrecorded number "
+          "of cases, so it recorded only what the cases that ran read" in lines(result.stdout),
+          result.stdout)
 
 # A run killed by SIGKILL leaves its suites' strace directories behind.
 with tempfile.TemporaryDirectory() as scratch:
@@ -1259,15 +1658,15 @@ with tempfile.TemporaryDirectory() as scratch:
     run(root)
     stored = next((root / "recordings").glob("*/a-test.py.json"))
     recorded = json.loads(stored.read_text())
-    recorded["format"] = 3
+    recorded["format"] = 4
     recorded.pop("seconds", None)
     stored.write_text(json.dumps(recorded))
     result = select_since(root, base)
-    check("a format 3 recording, which kept no seconds, selects its suite once so it is "
-          "recorded afresh in format 4",
+    check("a format 4 recording, saved before runs in two checkouts could save it safely, "
+          "selects its suite once so it is recorded afresh in format 5",
           result.returncode == 0 and ran(root) == ["a-test.py"]
           and "SELECTED a-test.py: its recording was made by an older version of this program"
-          in lines(result.stdout) and recording(root, "a-test.py").get("format") == 4
+          in lines(result.stdout) and recording(root, "a-test.py").get("format") == 5
           and isinstance(recording(root, "a-test.py").get("seconds"), float),
           (ran(root), result.stdout))
 
