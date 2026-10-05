@@ -994,6 +994,9 @@ BARRIER_VARIABLE = "RUN_ALL_TEST_SUITES_TEST_BARRIER"
 STORE_VARIABLE = "RUN_ALL_TEST_SUITES_TEST_STORE"
 WRITER_VARIABLE = "RUN_ALL_TEST_SUITES_TEST_WRITER"
 SHARED_TEMPORARY_VARIABLE = "RUN_ALL_TEST_SUITES_TEST_SHARED_TEMPORARY"
+# Only the case that publishes during another run's check sets this; a case without it
+# would otherwise wait out the hold's deadline.
+HOLD_CHECK_VARIABLE = "RUN_ALL_TEST_SUITES_TEST_HOLD_CHECK"
 PUBLICATION_BARRIER_SITECUSTOMIZE = f'''import os, time, pathlib
 if os.environ.get("{BARRIER_VARIABLE}"):
     import fcntl, tempfile
@@ -1036,7 +1039,8 @@ if os.environ.get("{BARRIER_VARIABLE}"):
 
     def _stat(path, *rest, **keywords):
         # After its injected failure, hold the run inside its check of the recording.
-        if _state.get("failed") and "checked" not in _state \\
+        if os.environ.get("{HOLD_CHECK_VARIABLE}") and _state.get("failed") \\
+                and "checked" not in _state \\
                 and str(path).startswith(_store) and str(path).endswith(".json"):
             _state["checked"] = True
             (_here / f"checking-{{_name}}").touch()
@@ -1068,7 +1072,8 @@ def publication_barrier(root):
     return shadow, markers
 
 
-def start_writer(root, checkout, name, store, shadow, markers, shared_temporary=False):
+def start_writer(root, checkout, name, store, shadow, markers, shared_temporary=False,
+                 hold_check=False):
     """A run of the program in `checkout`, saving into `store`, held at the barrier as `name`."""
     environment = dict(os.environ)
     environment.update({
@@ -1077,6 +1082,8 @@ def start_writer(root, checkout, name, store, shadow, markers, shared_temporary=
         STORE_VARIABLE: str(store), WRITER_VARIABLE: name})
     if shared_temporary:
         environment[SHARED_TEMPORARY_VARIABLE] = "1"
+    if hold_check:
+        environment[HOLD_CHECK_VARIABLE] = "1"
     command = [sys.executable, str(PROGRAM), "--checkout", str(checkout),
                "--log-dir", str(root / f"logs-{name}"),
                "--lock-file", str(root / f"run-{name}.lock"),
@@ -1220,10 +1227,14 @@ def overlap_second_fails_after_first_publishes(prefill):
         (markers / "go-first").write_text("go")
         wait_for(markers / "renamed-first", 30)
         (markers / "go-second").write_text("fail")
+        failed_at = time.monotonic()
         exits = {name: writer.wait(timeout=120) for name, writer in writers.items()}
+        after_failure = time.monotonic() - failed_at
         outputs = {name: writer.stdout.read() for name, writer in writers.items()}
         return {"held": held, "exits": exits, "outputs": outputs, "commits": (first, second),
-                "left": published(store), "leftover": leftover_temporaries(store)}
+                "left": published(store), "leftover": leftover_temporaries(store),
+                "after failure": after_failure,
+                "checking": (markers / "checking-second").exists()}
 
 
 def overlap_first_publishes_while_second_checks():
@@ -1241,7 +1252,8 @@ def overlap_first_publishes_while_second_checks():
                        env={**os.environ, RAN_FILE_VARIABLE: str(root / "ran-prefill.txt"),
                             RENDEZVOUS_WAIT_VARIABLE: "20"}, stdin=subprocess.DEVNULL)
         shadow, markers = publication_barrier(root)
-        writers = {name: start_writer(root, checkout, name, store, shadow, markers)
+        writers = {name: start_writer(root, checkout, name, store, shadow, markers,
+                                      hold_check=(name == "second"))
                    for name, checkout in (("first", repo), ("second", other))}
         held = all(wait_for(markers / f"written-{name}") for name in writers)
         (markers / "go-second").write_text("fail")
@@ -1296,6 +1308,10 @@ for prefill in (False, True):
           f"published, the first run's recording survives",
           left["held"] and left["left"].get("commit") == left["commits"][0]
           and left["leftover"] == [], left)
+    check(f"with {store_was}, the second run's failed save is not held in its check, so it "
+          f"finishes promptly",
+          not left["checking"] and left["after failure"] < 30,
+          (left["checking"], left["after failure"]))
     check(f"with {store_was}, the second run's report says the recording another run saved "
           f"is kept",
           any(line.startswith("inputs of a-test.py not recorded: ")
@@ -1323,9 +1339,13 @@ with tempfile.TemporaryDirectory() as scratch:
     stored = next((root / "recordings").glob("*/a-test.py.json"))
     shadow, markers = publication_barrier(root)
     (markers / "go-alone").write_text("fail")
+    started = time.monotonic()
     result = run(root, environment_extra={
         "PYTHONPATH": str(shadow), BARRIER_VARIABLE: str(markers),
         STORE_VARIABLE: str(root / "recordings"), WRITER_VARIABLE: "alone"})
+    check("a failed save with no other run is not held in its check",
+          not (markers / "checking-alone").exists() and time.monotonic() - started < 30,
+          ((markers / "checking-alone").exists(), time.monotonic() - started))
     check("when a recording cannot be saved, the report says the earlier one is removed",
           any(line.startswith("inputs of a-test.py not recorded: ")
               and "Its earlier recording is removed" in line
@@ -1344,9 +1364,13 @@ with tempfile.TemporaryDirectory() as scratch:
     repo = make_repo(root, {"a-test.py": PASSES})
     shadow, markers = publication_barrier(root)
     (markers / "go-alone").write_text("fail")
+    started = time.monotonic()
     result = run(root, environment_extra={
         "PYTHONPATH": str(shadow), BARRIER_VARIABLE: str(markers),
         STORE_VARIABLE: str(root / "recordings"), WRITER_VARIABLE: "alone"})
+    check("a failed first save with no other run is not held in its check",
+          not (markers / "checking-alone").exists() and time.monotonic() - started < 30,
+          ((markers / "checking-alone").exists(), time.monotonic() - started))
     check("when a suite's first recording cannot be saved, the report does not claim "
           "another run saved one",
           any(line.startswith("inputs of a-test.py not recorded: ")
