@@ -55,7 +55,8 @@ def case(name, condition):
 
 
 def fake_runner(*, resolves=True, base_resolves=None, head_resolves=None,
-                merge_tree_status=0, merge_tree_output="", gh_results=None, log=None,
+                merge_tree_status=0, merge_tree_output="", deleting_log=None,
+                gh_results=None, log=None,
                 fetch_status=0, gh_head=RESOLVED_HEAD, gh_head_status=0,
                 full_refs=None, gh_base="main", gh_base_status=0):
     """A runner that answers git and gh without touching either.
@@ -101,6 +102,9 @@ def fake_runner(*, resolves=True, base_resolves=None, head_resolves=None,
             return 0, RESOLVED_BASE if is_base else RESOLVED_HEAD
         if command[:2] == ["git", "merge-tree"]:
             return merge_tree_status, merge_tree_output
+        if command[:2] == ["git", "log"] and "--diff-filter=D" in command \
+                and deleting_log is not None:
+            return deleting_log
         if command[:2] == ["git", "log"]:
             subject = COMMIT_SUBJECTS.get(command[-1])
             return (0, subject) if subject else (128, "")
@@ -902,6 +906,53 @@ case("the deleting commit is looked up only among commits the branch lacks",
      ["git", "log", "-1", "--format=%H", "--diff-filter=D",
       "%s..%s" % (RESOLVED_HEAD, RESOLVED_BASE), "--", "gone"] in log)
 
+# git log exits 0 and prints nothing when no commit in the range deleted the
+# path: that is "not found" too, never a commit with no hash.
+status, lines = run(fake_runner(
+    merge_tree_status=1, deleting_log=(0, ""),
+    merge_tree_output=merge_tree_z(("1", "gone"), ("3", "gone"))))
+case("a deleting-commit lookup that exits 0 with no output is not found",
+     status == CHECK.EXIT_CONFLICT and len(lines) > 1
+     and lines[1] == "DELETED ON origin/main: gone, by a commit this run "
+                     "could not find"
+     and FIND_DELETING_COMMIT in lines)
+
+
+# merge-tree -z output for a branch that renamed old.py to new.py, which the
+# base deleted, beside a directory/file conflict at x: stages under new.py and
+# x~main, and message records naming each file's own path second.
+RENAME_DELETE_AND_DIRFILE = "\0".join([
+    "e" * 40,
+    "100644 %s 1\tnew.py" % ("f" * 40),
+    "100644 %s 3\tnew.py" % ("f" * 40),
+    "100644 %s 2\tx~main" % ("f" * 40),
+    "",
+    "2", "new.py", "old.py", "CONFLICT (rename/delete)",
+    "CONFLICT (rename/delete): old.py renamed to new.py in HEAD, but deleted "
+    "in main.\n",
+    "1", "new.py", "CONFLICT (modify/delete)",
+    "CONFLICT (modify/delete): new.py deleted in main and modified in HEAD.\n",
+    "2", "x~main", "x", "CONFLICT (file/directory)",
+    "CONFLICT (file/directory): directory in the way of x from main; moving "
+    "it to x~main instead.\n",
+    "",
+])
+log = []
+status, lines = run(fake_runner(merge_tree_status=1, log=log,
+                                merge_tree_output=RENAME_DELETE_AND_DIRFILE))
+case("a file the branch renamed and the base deleted is named by its own "
+     "path, and so is a file moved aside by a directory", lines[1:3] == [
+         "DELETED ON origin/main: old.py, by a commit this run could not find",
+         "ALSO CONFLICTS: x",
+     ])
+case("the deleting commit of a renamed file is looked up under its own path",
+     any(c[:2] == ["git", "log"] and c[-1] == "old.py" for c in log)
+     and not any(c[:2] == ["git", "log"] and c[-1] == "new.py" for c in log))
+case("the -z message parser maps each staged path to the file's own path",
+     hasattr(CHECK, "original_paths")
+     and CHECK.original_paths(RENAME_DELETE_AND_DIRFILE)
+     == {"new.py": "old.py", "x~main": "x"})
+
 # GitHub says MERGEABLE where git finds the deletion: git's conflict stands,
 # and the deletion still decides what the agent is told.
 status, lines = run(fake_runner(
@@ -1003,6 +1054,10 @@ def real_repository_cases(root):
     git_in(origin, "init", "-q", "-b", "main")
     commit_in(origin, "f", "one\ntwo\n", "base")
     commit_in(origin, "d", "doomed\n", "base adds the file main will delete")
+    # Five lines, so a one-line edit keeps the rename similar enough for git
+    # to pair the branch's renamed file with main's deletion.
+    commit_in(origin, "old.py", "l1\nl2\nl3\nl4\nl5\n",
+              "base adds the file the branch renames")
     git_in(root, "clone", "-q", str(origin), str(work))
     git_in(work, "checkout", "-q", "-b", "clean-topic")
     clean_head = commit_in(work, "g", "new file\n", "clean topic")
@@ -1010,6 +1065,10 @@ def real_repository_cases(root):
     conflict_head = commit_in(work, "f", "one\ntwo, topic\n", "conflict topic")
     git_in(work, "checkout", "-q", "-b", "deleted-topic", "main")
     deleted_head = commit_in(work, "d", "doomed, topic\n", "deleted topic")
+    git_in(work, "checkout", "-q", "-b", "renamed-topic", "main")
+    git_in(work, "mv", "old.py", "new.py")
+    renamed_head = commit_in(work, "new.py", "l1\nl2, topic\nl3\nl4\nl5\n",
+                             "renamed topic")
     git_in(work, "checkout", "-q", "-b", "deleted-and-conflict-topic", "main")
     commit_in(work, "d", "doomed, topic\n", "deleted topic, part one")
     mixed_head = commit_in(work, "f", "one\ntwo, topic\n",
@@ -1020,10 +1079,15 @@ def real_repository_cases(root):
     git_in(work, "checkout", "-q", "main")
     # main moves after the clone, so work's origin/main is stale until fetched.
     main_head = commit_in(origin, "f", "one\ntwo, main\n", "main moves")
+    git_in(origin, "rm", "-q", "old.py")
+    git_in(origin, "commit", "-q", "-m", "main deletes old.py")
+    renamed_deleting_label = real_label(git_in(origin, "rev-parse", "HEAD"),
+                                        "main deletes old.py")
     git_in(origin, "rm", "-q", "d")
     git_in(origin, "commit", "-q", "-m", "main deletes d")
     deleting_head = git_in(origin, "rev-parse", "HEAD")
     deleted_label = real_label(deleted_head, "deleted topic")
+    renamed_label = real_label(renamed_head, "renamed topic")
     mixed_label = real_label(mixed_head, "deleted topic, part two")
     deleting_label = real_label(deleting_head, "main deletes d")
     clean_label = real_label(clean_head, "clean topic")
@@ -1061,6 +1125,19 @@ def real_repository_cases(root):
              "VERDICT: CONFLICT -- %s conflicts with origin/main, and "
              "origin/main deleted 1 file(s) the branch changes." % deleted_label,
              "DELETED ON origin/main: d, by %s" % deleting_label,
+             DO_NOT_MERGE_DELETED, CLOSE_NAMING_DELETION, CARRY_WHAT_MAIN_LACKS,
+         ])
+
+    # The branch renamed old.py to new.py and main deleted old.py: merge-tree
+    # stages the conflict under new.py, but the file main deleted is old.py,
+    # and the deleting commit is found under that name.
+    status, lines, _ = run_here("--head", "renamed-topic")
+    case("real: a file the branch renamed and main deleted is named by its "
+         "old path, with the deleting commit", status == CHECK.EXIT_CONFLICT
+         and lines == [
+             "VERDICT: CONFLICT -- %s conflicts with origin/main, and "
+             "origin/main deleted 1 file(s) the branch changes." % renamed_label,
+             "DELETED ON origin/main: old.py, by %s" % renamed_deleting_label,
              DO_NOT_MERGE_DELETED, CLOSE_NAMING_DELETION, CARRY_WHAT_MAIN_LACKS,
          ])
 

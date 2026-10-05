@@ -85,6 +85,37 @@ def conflicted_paths(merge_tree_output):
     return stages
 
 
+# merge-tree records these two kinds under a path that is not the file's own:
+# the branch's new name for a renamed file, or "<file>~<side>" for a file moved
+# aside by a directory. Their message record names that path first and the
+# file's own path second.
+CONFLICTS_STAGED_UNDER_ANOTHER_PATH = ("CONFLICT (rename/delete)",
+                                       "CONFLICT (file/directory)")
+
+
+def original_paths(merge_tree_output):
+    """Return {staged path: the file's own path} from merge-tree's -z messages."""
+    # After the empty field, each message is "<count>", that many paths, the
+    # conflict kind, and the message text.
+    fields = merge_tree_output.split("\0")
+    try:
+        index = fields.index("", 1) + 1
+    except ValueError:
+        return {}
+    originals = {}
+    while index < len(fields) and fields[index]:
+        try:
+            count = int(fields[index])
+        except ValueError:
+            break
+        paths = fields[index + 1:index + 1 + count]
+        kind = fields[index + 1 + count] if index + 1 + count < len(fields) else ""
+        if kind in CONFLICTS_STAGED_UNDER_ANOTHER_PATH and len(paths) == 2:
+            originals[paths[0]] = paths[1]
+        index += count + 3
+    return originals
+
+
 def paths_deleted_on_base(stages):
     """Return the conflicted paths the base deleted and the head still has."""
     # The base is merge-tree's first side, so stage 2 is the base's version and
@@ -101,15 +132,18 @@ def deleting_commit(path, base_hash, head_hash, runner=run):
     return out if status == 0 and out else None
 
 
-def deleted_on_base_lines(head_hash, base, base_hash, stages, deleted, runner=run):
+def deleted_on_base_lines(head_hash, base, base_hash, stages, deleted,
+                          originals=None, runner=run):
     """Return the VERDICT lines for a conflict where the base deleted files the branch changes."""
+    originals = originals or {}
     lines = [
         "VERDICT: CONFLICT -- %s conflicts with %s, and %s deleted %d file(s) "
         "the branch changes." % (commit_label(head_hash, runner), base, base,
                                  len(deleted)),
     ]
     unnamed = False
-    for path in deleted:
+    for staged in deleted:
+        path = originals.get(staged, staged)
         commit = deleting_commit(path, base_hash, head_hash, runner)
         if commit is None:
             unnamed = True
@@ -120,7 +154,7 @@ def deleted_on_base_lines(head_hash, base, base_hash, stages, deleted, runner=ru
                          % (base, path, commit_label(commit, runner)))
     others = [path for path in stages if path not in deleted]
     for path in others:
-        lines.append("ALSO CONFLICTS: %s" % path)
+        lines.append("ALSO CONFLICTS: %s" % originals.get(path, path))
     lines.append(
         "Do not merge %s into the branch: %s removed the file(s) above, so a "
         "hand-merge would either bring a removed file back or drop the "
@@ -338,7 +372,8 @@ def check(head, base, pull_request=None, runner=run, sleep=time.sleep,
         deleted = paths_deleted_on_base(stages)
         if deleted:
             lines[0:0] = deleted_on_base_lines(
-                head_hash, base, base_hash, stages, deleted, runner)
+                head_hash, base, base_hash, stages, deleted,
+                original_paths(merge_output), runner)
             return EXIT_CONFLICT, lines
 
     if conflict:
