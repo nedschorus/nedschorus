@@ -38,7 +38,9 @@ real nedlern tree — which does not exist on this box in any case.
 Prints one line per case and exits non-zero if any case fails.
 """
 
+import contextlib
 import importlib.util
+import io
 import json
 import os
 import re
@@ -48,6 +50,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import types
 from pathlib import Path
 
 # Before anything runs git: a run started with GIT_DIR set, or with another
@@ -141,6 +144,96 @@ def run_gatekeeper(arguments, state_home):
         payload = {"outcome": "UNPARSEABLE", "stdout": completed.stdout,
                    "stderr": completed.stderr}
     return completed.returncode, payload
+
+
+GATEKEEPER_SOURCE = SCRIPT_PATH.read_text(encoding="utf-8")
+PID_ONE_REFUSAL_LINE = "    if pid < 2:\n        return\n"
+
+
+class SignalRecordingOs:
+    """The os module, except that kill, killpg and getpgid are recorded and never performed.
+
+    pid 1 answers as init does for an ordinary account: it exists, it leads its
+    own group, and signalling it is not permitted. Every other pid is absent.
+    """
+
+    def __init__(self):
+        self.calls = []
+
+    def __getattr__(self, name):
+        return getattr(os, name)
+
+    def kill(self, pid, signal_number):
+        self.calls.append(("kill", pid, signal_number))
+        if pid == 1:
+            raise PermissionError(1, "Operation not permitted")
+        raise ProcessLookupError(3, "No such process")
+
+    def killpg(self, process_group, signal_number):
+        self.calls.append(("killpg", process_group, signal_number))
+        raise PermissionError(1, "Operation not permitted")
+
+    def getpgid(self, pid):
+        self.calls.append(("getpgid", pid, None))
+        return pid
+
+
+def cancel_with_signals_recorded(source, digest, work, state_home):
+    """Run `cancel` in this process from the given gatekeeper source, with its signals recorded.
+
+    Returns the exit code, the JSON payload and the recorded kill, killpg and
+    getpgid calls.
+    """
+    module = types.ModuleType("main_gatekeeper_with_signals_recorded")
+    module.__file__ = str(SCRIPT_PATH)
+    exec(compile(source, str(SCRIPT_PATH), "exec"), module.__dict__)
+    recorder = SignalRecordingOs()
+    module.os = recorder
+    saved_environment = {name: os.environ.get(name)
+                         for name in ("XDG_STATE_HOME", "CLAUDE_CODE_SESSION_ID")}
+    os.environ["XDG_STATE_HOME"] = str(state_home)
+    os.environ.pop("CLAUDE_CODE_SESSION_ID", None)
+    printed = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(printed):
+            code = module.main(["cancel", digest, "--repo", str(work)])
+    finally:
+        for name, value in saved_environment.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
+    return code, load_payload(printed.getvalue()), recorder.calls
+
+
+def signals_toward_init(calls):
+    """The recorded calls that would signal pid 1, every process, or a group at or below 1."""
+    return [call for call in calls
+            if (call[0] == "killpg" and call[1] <= 1)
+            or (call[0] == "kill" and call[1] <= 1 and call[2] != 0)]
+
+
+PAIRED_OVERLAP_BARRIER_DIRECTORY = os.environ.get(
+    "MAIN_GATEKEEPER_TEST_PAIRED_OVERLAP_BARRIER_DIRECTORY")
+PAIRED_OVERLAP_PARTICIPANTS = int(os.environ.get(
+    "MAIN_GATEKEEPER_TEST_PAIRED_OVERLAP_PARTICIPANTS", "0") or 0)
+
+
+def wait_at_paired_overlap_barrier():
+    """Hold until every copy started by the paired-overlap test reaches this point.
+
+    A solo run sets neither variable and passes straight through, so the case
+    list stays identical with and without the barrier. A barrier that is never
+    met is a failed case.
+    """
+    if not PAIRED_OVERLAP_BARRIER_DIRECTORY or PAIRED_OVERLAP_PARTICIPANTS < 2:
+        return
+    barrier = Path(PAIRED_OVERLAP_BARRIER_DIRECTORY)
+    (barrier / f"arrived-{os.getpid()}").write_text("", encoding="utf-8")
+    if not wait_for(lambda: len(list(barrier.glob("arrived-*")))
+                    >= PAIRED_OVERLAP_PARTICIPANTS, seconds=300):
+        check("every paired copy reaches the pid-1 cancel case together", False,
+              sorted(path.name for path in barrier.glob("arrived-*")))
 
 
 def make_fixture(root: Path, name: str):
@@ -731,48 +824,56 @@ with tempfile.TemporaryDirectory() as workspace_name:
     check("the push that won the race is on main",
           git(["show", "main:README.md"], remote).stdout == "seed\nwins the race\n")
 
-    # Cancel truthfulness, second half (ruled 2026-08-12): a worker cancel
-    # cannot stop yields cancel-failed, the fifth outcome, and keeps its
-    # workspace. Nothing confirmed the kill before that ruling — both killpg
-    # calls swallow every error and worker_state reads permission-denied as
-    # alive — so a worker this user cannot signal produced a false "cancelled"
-    # after fifteen seconds of trying. The pid 1 fixture's original premise —
-    # "alive, foreign, and unsignalable" — was false on Linux and macOS both:
-    # getpgid(1) succeeds on each, signal_worker took the group branch, and
-    # killpg(1) resolves to kill(-1) in glibc and Apple libc (POSIX leaves
-    # pgrp <= 1 undefined) — the broadcast to every process this account may
-    # signal. This very case swept the whole ned-box fleet twice on 2026-08-17
-    # (nedschorus#62) before signal_worker learned to refuse pids below 2;
-    # that Mac runs stayed green is not platform safety and must not be read
-    # as any.
-    # The fixture stays pid 1 deliberately: it is now the regression case for
-    # that refusal, and the suite surviving this case is itself the check.
-    # Still skipped where pid 1 is signalable (running as root).
+    # A worker cancel cannot stop yields cancel-failed and keeps its workspace.
+    # The worker is pid 1, the case that must be refused: killpg(1) becomes
+    # kill(-1) in glibc and Apple libc, a signal to every process this account
+    # may signal. Cancel runs in this process with its kill, killpg and getpgid
+    # recorded instead of performed, so no mutant of the refusal can reach a
+    # real process.
+    wait_at_paired_overlap_barrier()
+    unstoppable_digest = "8" * 64
+    unstoppable = state_home / "nedschorus-gatekeeper" / unstoppable_digest
+    unstoppable.mkdir(parents=True)
+    (unstoppable / "request.json").write_text("{}", encoding="utf-8")
+    (unstoppable / "worker.pid").write_text(
+        f"1 {gatekeeper.process_start_time(1)}", encoding="utf-8")
+    code, payload, signal_calls = cancel_with_signals_recorded(
+        GATEKEEPER_SOURCE, unstoppable_digest, work, state_home)
+    check("cancel answers cancel-failed when it cannot stop the worker",
+          payload.get("outcome") == "cancel-failed", payload)
+    check("cancel-failed exits 1", code == 1, code)
+    check("cancel-failed names the worker it could not stop",
+          "1" in payload.get("facts", ""), payload)
+    check("cancel-failed leaves the workspace in place, never swept",
+          unstoppable.is_dir(), payload)
+    check("cancel's liveness probe of pid 1 went through the recorder",
+          ("kill", 1, 0) in signal_calls, signal_calls)
+    check("cancel sends no signal toward pid 1 or a group at or below 1",
+          not signals_toward_init(signal_calls), signal_calls)
+
+    # Control: with the pid-1 refusal mutated away, the same case must catch
+    # the signal, and a canary process must survive, because nothing is sent.
+    mutated_source = GATEKEEPER_SOURCE.replace(
+        PID_ONE_REFUSAL_LINE, PID_ONE_REFUSAL_LINE.replace("pid < 2", "pid < 1"))
+    check("control: the pid-1 refusal mutation applies exactly once",
+          GATEKEEPER_SOURCE.count(PID_ONE_REFUSAL_LINE) == 1
+          and mutated_source != GATEKEEPER_SOURCE)
+    shutil.rmtree(unstoppable)
+    unstoppable.mkdir(parents=True)
+    (unstoppable / "request.json").write_text("{}", encoding="utf-8")
+    (unstoppable / "worker.pid").write_text(
+        f"1 {gatekeeper.process_start_time(1)}", encoding="utf-8")
+    canary = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(300)"])
     try:
-        os.kill(1, 0)
-        init_is_unsignalable = False
-    except PermissionError:
-        init_is_unsignalable = True
-    except OSError:
-        init_is_unsignalable = False
-    if init_is_unsignalable and os.geteuid() != 0:
-        unstoppable_digest = "8" * 64
-        unstoppable = state_home / "nedschorus-gatekeeper" / unstoppable_digest
-        unstoppable.mkdir(parents=True)
-        (unstoppable / "request.json").write_text("{}", encoding="utf-8")
-        (unstoppable / "worker.pid").write_text(
-            f"1 {gatekeeper.process_start_time(1)}", encoding="utf-8")
-        code, payload = run_gatekeeper(
-            ["cancel", unstoppable_digest, "--repo", str(work)], state_home)
-        check("cancel answers cancel-failed when it cannot stop the worker",
-              payload.get("outcome") == "cancel-failed", payload)
-        check("cancel-failed exits 1", code == 1, code)
-        check("cancel-failed names the worker it could not stop",
-              "1" in payload.get("facts", ""), payload)
-        check("cancel-failed leaves the workspace in place, never swept",
-              unstoppable.is_dir(), payload)
-    else:
-        print("SKIP  cancel-failed: pid 1 is signalable from this account")
+        _code, _payload, mutated_calls = cancel_with_signals_recorded(
+            mutated_source, unstoppable_digest, work, state_home)
+        check("control: a gatekeeper that no longer refuses pid 1 is caught "
+              "signalling it", bool(signals_toward_init(mutated_calls)), mutated_calls)
+        check("control: the canary process survives the mutated gatekeeper",
+              canary.poll() is None, canary.poll())
+    finally:
+        canary.kill()
+        canary.wait(timeout=10)
 
     # T7: the abandoned state, and cancel's fourth branch.
     fake_digest = "f" * 64
