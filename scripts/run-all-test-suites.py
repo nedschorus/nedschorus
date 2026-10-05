@@ -153,10 +153,10 @@ checks that each one does. That is nedschorus#639's "Next action" item 2.
 
 SKIPPED CASES are reported from text, because no exit code carries them: a
 suite that skips a case still exits 0. Measured 2026-09-21: no suite uses
-unittest's skip machinery, and the four that can skip
+unittest's skip machinery, and the three that can skip
 (scripts/resupervise-seat-test.py, scripts/recover-crashed-seats-test.py,
-scripts/clean-worktrees-test.py, nc-systems/main-gatekeeper/tests/
-main-gatekeeper-test.py) print a line opening `SKIP` followed by a space.
+scripts/clean-worktrees-test.py) print a line opening `SKIP` followed by
+a space.
 Every such line in a suite's output is counted and printed. resupervise-seat
 prints its skips and then "all cases passed", which is how a run that
 dropped its end-to-end cases used to read as a full pass. A skip never

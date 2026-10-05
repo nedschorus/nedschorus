@@ -73,7 +73,7 @@ FILES_AWAITING_THE_COMMENT_TRIM = {
     "nc-systems/handoff/tests/handoff-supervisor-session-launch-and-seat-lock-test.py": 19,
     "nc-systems/handoff/tests/handoff-supervisor-successor-prompt-test.py": 82,
     "nc-systems/handoff/tests/handoff-write-and-check-supervisor-test.py": 39,
-    "nc-systems/main-gatekeeper/tests/main-gatekeeper-test.py": 62,
+    "nc-systems/main-gatekeeper/tests/main-gatekeeper-test.py": 58,
     "nc-systems/skills/explain/tests/explain-reply-cold-read-fast-read-test.py": 3,
     "scripts/backup-health-check-test.py": 1,
     "scripts/backup-health-check.py": 2,
