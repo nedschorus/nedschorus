@@ -563,7 +563,7 @@ def run_launch_and_retention_cases(workspace: Path, recent: str):
               "branch from origin/main. If this seat has "
               "open pull requests, check their state with `gh`: merge-lane-2 reviews "
               "and merges them; when one has a review with findings, dispatch a forked "
-              "subagent to fix it \u2014 never extend a head you've already announced. When one conflicts with main, clear the conflict with the hand-merge that scripts/branch-conflict-check.py describes."),
+              "subagent to fix it \u2014 never extend a head you've already pushed. When one conflicts with main, clear the conflict with the hand-merge that scripts/branch-conflict-check.py describes."),
           repr(supervisor.BRANCH_STATE_INSTRUCTION))
     # This fixture passes no roster and its verbatim block is not
     # unterminated, so the branch-state segment ends the preamble and only the
@@ -585,7 +585,7 @@ def run_launch_and_retention_cases(workspace: Path, recent: str):
               "from origin/main. If this seat has "
               "open pull requests, check their state with `gh`: merge-lane-2 reviews "
               "and merges them; when one has a review with findings, dispatch a "
-              "forked subagent to fix it — never extend a head you've already announced. When one conflicts with main, clear the conflict with the hand-merge that scripts/branch-conflict-check.py describes.",
+              "forked subagent to fix it — never extend a head you've already pushed. When one conflicts with main, clear the conflict with the hand-merge that scripts/branch-conflict-check.py describes.",
               expected_rest_after_the_branch_state_line),
           "rest after the pinned line: "
           + repr(synced_prompt.split("branch-conflict-check.py describes.", 1)[-1])
@@ -611,7 +611,7 @@ def run_launch_and_retention_cases(workspace: Path, recent: str):
               "start new work on a branch from origin/main. If this seat has open "
               "pull requests, check their state with `gh`: merge-lane-2 reviews and "
               "merges them; when one has a review with findings, dispatch a forked "
-              "subagent to fix it — never extend a head you've already announced. When one conflicts with main, clear the conflict with the hand-merge that scripts/branch-conflict-check.py describes."),
+              "subagent to fix it — never extend a head you've already pushed. When one conflicts with main, clear the conflict with the hand-merge that scripts/branch-conflict-check.py describes."),
           repr(boot_recovery_prompt))
     # The branch-state half of that instruction, pinned as its own exact line
     # (user-ruled 2026-09-16, "y", item 1 of nedschorus#418, verbatim). It
@@ -1879,7 +1879,7 @@ def run_overview_refresh_due_prompt_cases(workspace: Path):
         "from origin/main. If this seat has "
         "open pull requests, check their state with `gh`: merge-lane-2 reviews "
         "and merges them; when one has a review with findings, dispatch a "
-        "forked subagent to fix it — never extend a head you've already announced. When one conflicts with main, clear the conflict with the hand-merge that scripts/branch-conflict-check.py describes.")
+        "forked subagent to fix it — never extend a head you've already pushed. When one conflicts with main, clear the conflict with the hand-merge that scripts/branch-conflict-check.py describes.")
     fields = {"written-at": "2026-09-28T17:20:00Z", "next-step": "finish the supervisor"}
     try:
         prompt = supervisor.build_ignition_prompt(
@@ -1971,8 +1971,8 @@ def run_overview_refresh_due_prompt_cases(workspace: Path):
     launched = record_path.read_text(encoding="utf-8") if record_path.is_file() else ""
     check("an ignited successor's prompt carries the overview-refresh-due line after "
           "the branch-state instruction",
-          expected in launched and "already announced." in launched
-          and launched.index("already announced.") < launched.index(expected),
+          expected in launched and "already pushed." in launched
+          and launched.index("already pushed.") < launched.index(expected),
           f"{result.returncode} {launched[-900:]!r} {result.stdout[-600:]}")
     check("the supervisor prints the overview-refresh-due line on its console",
           f"handoff-supervisor: {expected}" in result.stdout, result.stdout[-900:])
@@ -2332,7 +2332,7 @@ def run_memory_review_due_prompt_cases(workspace: Path):
         "from origin/main. If this seat has "
         "open pull requests, check their state with `gh`: merge-lane-2 reviews "
         "and merges them; when one has a review with findings, dispatch a "
-        "forked subagent to fix it — never extend a head you've already announced. When one conflicts with main, clear the conflict with the hand-merge that scripts/branch-conflict-check.py describes.")
+        "forked subagent to fix it — never extend a head you've already pushed. When one conflicts with main, clear the conflict with the hand-merge that scripts/branch-conflict-check.py describes.")
     fields = {"written-at": "2026-09-30T19:20:00Z", "next-step": "finish the review"}
     try:
         prompt = supervisor.build_ignition_prompt(
@@ -2488,7 +2488,7 @@ def run_boot_ignition_case(workspace: Path):
           "on a branch from origin/main. If this seat has open pull requests, "
           "check their state with `gh`: merge-lane-2 reviews and merges them; "
           "when one has a review with findings, dispatch a forked subagent to "
-          "fix it — never extend a head you've already announced. When one conflicts with main, clear the conflict with the hand-merge that scripts/branch-conflict-check.py describes."
+          "fix it — never extend a head you've already pushed. When one conflicts with main, clear the conflict with the hand-merge that scripts/branch-conflict-check.py describes."
           in launched,
           launched[:700])
     state = supervisor.read_supervisor_state(handoff_directory / "bootignite-supervisor-state.json")
