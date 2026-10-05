@@ -1,6 +1,6 @@
 ---
 name: locate-before-saying-a-file-is-missing
-description: Use before telling anyone that a file, record, transcript, approval or other stored artifact does not exist, is gone, or cannot be found. Runs the locator that searches both machines, the log-store, transcripts and backups.
+description: Use before telling anyone that a file, record, transcript, approval or other stored artifact does not exist, is gone, or cannot be found. Runs the locator that searches both machines, the log-store, and backups, including transcripts in backups.
 ---
 
 # Locate before saying a file is missing
