@@ -45,6 +45,7 @@ import json
 import os
 import re
 import shutil
+import signal
 import socket
 import subprocess
 import sys
@@ -874,6 +875,14 @@ with tempfile.TemporaryDirectory() as workspace_name:
     finally:
         canary.kill()
         canary.wait(timeout=10)
+    # The control above exercises only killpg(1) and kill(1, 0); each other shape is checked here as data.
+    for shape in (("kill", -1, signal.SIGTERM), ("kill", 1, signal.SIGTERM),
+                  ("killpg", 1, signal.SIGTERM), ("killpg", 0, signal.SIGKILL)):
+        check(f"the signal check catches {shape[0]}({shape[1]}, {shape[2].name})",
+              signals_toward_init([shape]) == [shape], shape)
+    for shape in (("kill", 1, 0), ("kill", 4242, signal.SIGTERM), ("killpg", 4242, signal.SIGTERM)):
+        check(f"the signal check lets {shape[0]}({shape[1]}, {shape[2]}) through",
+              signals_toward_init([shape]) == [], shape)
 
     # T7: the abandoned state, and cancel's fourth branch.
     fake_digest = "f" * 64
