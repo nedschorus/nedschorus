@@ -10,7 +10,9 @@ work.
 Refusal cases run against a scratch handoff directory. The proceed path is
 exercised with --dry-run and with a stub launcher, never by killing a real seat:
 the suite runs on a machine whose own agents are live, so any case that could
-touch a real tmux session is expressed against a name no seat uses.
+touch a real tmux session is expressed against a name no seat uses, on tmux
+servers in a namespace private to this run, so two copies running at once
+cannot share a session.
 
 Run: python3 scripts/resupervise-seat-test.py
 """
@@ -23,6 +25,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 RESUPERVISE_SCRIPT = Path(__file__).with_name("resupervise-seat.py")
@@ -31,6 +34,65 @@ SUPERVISOR_SCRIPT = (RESUPERVISE_SCRIPT.resolve().parent.parent
                      / "nc-systems" / "handoff" / "handoff-supervisor.py")
 
 failures = []
+
+# Set by isolate_tmux_for_this_run(): an empty config file every server this suite starts reads.
+PRIVATE_TMUX_CONFIG = None
+
+OVERLAP_BARRIER_DIRECTORY_VARIABLE = "RESUPERVISE_SEAT_TEST_OVERLAP_BARRIER_DIRECTORY"
+OVERLAP_PEER_COUNT_VARIABLE = "RESUPERVISE_SEAT_TEST_OVERLAP_PEER_COUNT"
+OVERLAP_EXIT_AT_BARRIER_VARIABLE = "RESUPERVISE_SEAT_TEST_OVERLAP_EXIT_AT_BARRIER"
+OVERLAP_BARRIER_TIMEOUT_SECONDS = 60
+
+
+def isolate_tmux_for_this_run() -> Path:
+    """Give every tmux call in this run, the script's included, a private server namespace.
+
+    tmux places the socket for `-L <name>` under $TMUX_TMPDIR, so a fresh
+    TMUX_TMPDIR keeps the logical `default` and per-seat server names the
+    script under test probes, while two copies of this suite never share a
+    server or a session. $TMUX is cleared so nothing resolves to a surrounding
+    seat's server. /tmp is used where it exists because a socket path longer
+    than about 104 bytes is refused, and macOS's per-user temp directory alone
+    takes about 50 of them.
+    """
+    global PRIVATE_TMUX_CONFIG
+    base = "/tmp" if os.path.isdir("/tmp") else tempfile.gettempdir()
+    namespace = Path(tempfile.mkdtemp(prefix="resupervise-tmux-", dir=base))
+    os.environ["TMUX_TMPDIR"] = str(namespace)
+    os.environ.pop("TMUX", None)
+    os.environ.pop("TMUX_PANE", None)
+    PRIVATE_TMUX_CONFIG = namespace / "empty-tmux.conf"
+    PRIVATE_TMUX_CONFIG.write_text("", encoding="utf-8")
+    return namespace
+
+
+def end_private_tmux_namespace(namespace: Path):
+    """Kill every server in this run's own namespace, by socket path, then remove it."""
+    socket_directory = namespace / f"tmux-{os.getuid()}"
+    if socket_directory.is_dir() and shutil.which("tmux") is not None:
+        for socket in socket_directory.iterdir():
+            subprocess.run(["tmux", "-S", str(socket), "kill-server"],
+                           capture_output=True, check=False)
+    shutil.rmtree(namespace, ignore_errors=True)
+
+
+def overlap_barrier(point: str):
+    """Hold here until every overlapping copy reaches the same point; a no-op in an ordinary run.
+
+    The paired-overlap test sets these variables so two copies hold their tmux
+    sessions at the same moment, which is when the copies used to collide.
+    """
+    directory = os.environ.get(OVERLAP_BARRIER_DIRECTORY_VARIABLE)
+    if not directory:
+        return
+    peers = int(os.environ.get(OVERLAP_PEER_COUNT_VARIABLE, "2"))
+    Path(directory, f"{point}-arrived-{os.getpid()}").touch()
+    deadline = time.monotonic() + OVERLAP_BARRIER_TIMEOUT_SECONDS
+    while len(list(Path(directory).glob(f"{point}-arrived-*"))) < peers and time.monotonic() < deadline:
+        time.sleep(0.05)
+    Path(directory, f"{point}-released-{os.getpid()}").touch()
+    if os.environ.get(OVERLAP_EXIT_AT_BARRIER_VARIABLE) == point:
+        os._exit(9)
 
 
 def check(case_name, condition, detail=""):
@@ -336,14 +398,16 @@ def run_end_to_end_case(workspace: Path):
     fcntl.flock(alive_lock, fcntl.LOCK_EX)
     wait_for_suite = ("import fcntl, sys; fcntl.flock(open(sys.argv[1]), fcntl.LOCK_SH)")
     created = subprocess.run(
-        ["tmux", "-L", "default", "new-session", "-d", "-s", session,
+        ["tmux", "-f", str(PRIVATE_TMUX_CONFIG), "-L", "default", "new-session", "-d", "-s", session,
          "-c", str(workspace),
          shlex.join([sys.executable, "-c", wait_for_suite, str(alive_lock_path)])],
         capture_output=True, text=True, check=False,
     )
+    overlap_barrier("default-server-session-held")
+    # tmux is installed, so a session that cannot be made is a failure: a skip here once hid every check below.
     if created.returncode != 0:
         alive_lock.close()
-        print(f"SKIP  end-to-end: could not create a tmux session ({created.stderr.strip()})")
+        check("end-to-end: the suite's tmux session is created", False, created.stderr.strip())
         return
 
     try:
@@ -403,13 +467,14 @@ def run_per_seat_server_end_to_end_case(workspace: Path):
     # given in run_end_to_end_case: a fixed `sleep 120` expired before the
     # script's kill-session when its lsof and tmux calls were slow.
     created = subprocess.run(
-        ["tmux", "-L", session, "new-session", "-d", "-s", session,
+        ["tmux", "-f", str(PRIVATE_TMUX_CONFIG), "-L", session, "new-session", "-d", "-s", session,
          "-c", str(workspace), f"while kill -0 {os.getpid()} 2>/dev/null; do sleep 1; done"],
         capture_output=True, text=True, check=False,
     )
+    overlap_barrier("per-seat-server-session-held")
     if created.returncode != 0:
-        print(f"SKIP  per-seat end-to-end: could not create a per-seat tmux session "
-              f"({created.stderr.strip()})")
+        check("per-seat end-to-end: the suite's per-seat tmux session is created",
+              False, created.stderr.strip())
         return
 
     try:
@@ -703,6 +768,15 @@ def run_ubuntu_launcher_hook_case():
 
 
 def main() -> int:
+    tmux_namespace = isolate_tmux_for_this_run()
+    print(f"tmux namespace for this run: {tmux_namespace}", flush=True)
+    try:
+        return run_all_cases()
+    finally:
+        end_private_tmux_namespace(tmux_namespace)
+
+
+def run_all_cases() -> int:
     with tempfile.TemporaryDirectory(prefix="resupervise-seat-test-") as scratch:
         workspace = Path(scratch)
         run_no_handoff_cases(workspace)
