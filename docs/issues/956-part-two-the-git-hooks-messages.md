@@ -40,7 +40,7 @@ So each proposed text names the branches that were not checked and the reason, g
 
 The texts below name each unchecked branch and its commit. Two programs print them, and only one knows the branches today:
 
-- `scripts/git-client-side-hooks/pre-push`, the shell part, prints messages 1, 2 and 3 without reading what git hands the hook: the remote's name, and one line per ref the push sends. The proposal has it read those lines first, keep the branches the pre-push conflict check would check (remote origin, a ref under `refs/heads/` other than main, not a deletion), print nothing when there are none, and then pass the same lines on to the pre-push conflict check: it reads them once into a shell variable and writes the variable to the check's standard input. The shell part stays POSIX sh, because a hook whose interpreter is missing stops every push. The two programs' rules for which branches count must agree, so `scripts/git-client-side-hooks-pre-push-test.py` gains cases that push main, a tag, a deletion, and to another remote, and asserts that both programs ignore each.
+- `scripts/git-client-side-hooks/pre-push`, the shell part, prints messages 2 and 3 without reading what git hands the hook: the remote's name, and one line per ref the push sends. The proposal has it read those lines first, keep the branches the pre-push conflict check would check (remote origin, a ref under `refs/heads/` other than main, not a deletion), print nothing when there are none, and then pass the same lines on to the pre-push conflict check: it reads them once into a shell variable and writes the variable to the check's standard input. The shell part stays POSIX sh, because a hook whose interpreter is missing stops every push. The two programs' rules for which branches count must agree, so `scripts/git-client-side-hooks-pre-push-test.py` gains cases that push main, a tag, a deletion, and to another remote, and asserts that both programs ignore each.
 - `scripts/git-client-side-hooks-pre-push-conflict-check.py` already knows each branch and commit in messages 4, 5, 6 and 9. For message 7 it names the branches when it had read them before the error, and otherwise says so: the variable holding the pushed lines starts empty, and the error handler checks whether it was filled.
 - `scripts/git-client-side-hooks/prepare-commit-msg` fills `{trailer}` in message 8 from the trailer it already builds.
 
@@ -58,26 +58,9 @@ and `{tell_user_line}` is:
 Tell the user this whole message, including any error printed just above it: the next push on this machine may go unchecked the same way.
 ```
 
-### 1. python3 is not on PATH
+### 1. python3 is not on PATH: removed
 
-**When an agent sees this.** An agent runs `git push` in a shell whose PATH has no `python3`.
-
-**What the agent is told today** (`scripts/git-client-side-hooks/pre-push:31`):
-
-```
-pre-push: the conflict check did not run (no python3 on PATH); the push goes ahead unchecked.
-```
-
-**What the agent cannot tell from the text.** Which branches went unchecked, what to do, and whether to tell anyone. The command to run by hand needs python3 too.
-
-**Proposed text.**
-
-```
-pre-push: the pre-push conflict check did not run, because this shell's PATH has no python3, so no branch in this push was checked for conflicts with origin/main: {branches}.
-Run the commands below from a shell whose PATH has python3.
-{unchecked_lines}
-{tell_user_line}
-```
+`scripts/git-client-side-hooks/pre-push:30-34` checks for python3 and prints its own message when python3 is missing. python3 is on PATH on both machines, also in a bare `sh` with no environment (`/usr/bin/python3`). The proposal removes that check and its message. If python3 is ever missing, the next line, `python3 "$conflict_check"`, fails with exit status 127, the shell prints "python3: not found", and message 3 reports the failure.
 
 ### 2. The pre-push conflict check is missing
 
@@ -308,4 +291,4 @@ CLAUDE.md puts a step before the merge: "First see what the conflict is with. If
 
 ## Tests
 
-`scripts/git-client-side-hooks-pre-push-test.py` asserts parts of today's messages 1, 2, 3, 4, 6 and 9, and `scripts/git-client-side-hooks-prepare-commit-msg-test.py` asserts message 8, and `scripts/git-client-side-hooks-pre-commit-test.py` asserts message 10. The pull request changes those cases with the texts, and adds cases for what no case covers today: message 5, message 7 in both forms, the branch and commit each message names, the trailer message 8 names, and the shell part's branch filter, as "Code the new texts need" says.
+`scripts/git-client-side-hooks-pre-push-test.py` asserts parts of today's messages 1, 2, 3, 4, 6 and 9; the case for message 1 is removed with the message, and `scripts/git-client-side-hooks-prepare-commit-msg-test.py` asserts message 8, and `scripts/git-client-side-hooks-pre-commit-test.py` asserts message 10. The pull request changes those cases with the texts, and adds cases for what no case covers today: message 5, message 7 in both forms, the branch and commit each message names, the trailer message 8 names, and the shell part's branch filter, as "Code the new texts need" says.
