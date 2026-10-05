@@ -419,13 +419,19 @@ def run_handoff_worktree_cleanup_cases_without_git_redirection(workspace: Path):
     git_in(["commit", "--quiet", "-m", "seed"], home)
     git_in(["push", "--quiet", "origin", "main"], home)
     git_in(["fetch", "--quiet", "origin"], home)
-    # One finished worktree (clean, landed, vacant), one holding uncommitted
-    # work, and one branch with no worktree and nothing beyond main.
+    # One finished worktree, one landed and vacant but holding an untracked
+    # file, one with a commit beyond main, and one branch with no worktree
+    # and nothing beyond main.
     finished = home / ".claude" / "worktrees" / "finished-worktree"
     git_in(["worktree", "add", "--quiet", "-b", "finished-branch", str(finished)], home)
     unfinished = home / ".claude" / "worktrees" / "unfinished-worktree"
     git_in(["worktree", "add", "--quiet", "-b", "unfinished-branch", str(unfinished)], home)
     (unfinished / "notes.txt").write_text("uncommitted\n", encoding="utf-8")
+    unlanded = home / ".claude" / "worktrees" / "unlanded-worktree"
+    git_in(["worktree", "add", "--quiet", "-b", "unlanded-branch", str(unlanded)], home)
+    (unlanded / "work.txt").write_text("work\n", encoding="utf-8")
+    git_in(["add", "-A"], unlanded)
+    git_in(["commit", "--quiet", "-m", "unlanded work"], unlanded)
     git_in(["branch", "orphaned-branch"], home)
     # An Agent-tool subagent's worktree, clean and landed, made a moment ago:
     # its subagent runs inside its parent claude process, so no process has
@@ -442,19 +448,64 @@ def run_handoff_worktree_cleanup_cases_without_git_redirection(workspace: Path):
     check("WORKTREE CLEANUP: a finished worktree and its branch are removed",
           not finished.exists() and "finished-branch" not in branches,
           f"{report} {branches}")
-    check("WORKTREE CLEANUP: a worktree holding uncommitted work is kept",
-          (unfinished / "notes.txt").exists() and "unfinished-branch" in branches,
+    check("WORKTREE CLEANUP: a landed, vacant worktree holding an untracked file is removed",
+          not unfinished.exists() and "unfinished-branch" not in branches,
           f"{report} {branches}")
+    check("WORKTREE CLEANUP: a worktree with a commit beyond main is kept",
+          unlanded.exists() and "unlanded-branch" in branches, f"{report} {branches}")
     check("WORKTREE CLEANUP: a branch with no worktree and nothing beyond main is deleted",
           "orphaned-branch" not in branches, f"{report} {branches}")
     check("WORKTREE CLEANUP: a live Agent-tool subagent's clean, landed worktree is kept",
           live_subagent.exists() and "worktree-agent-0123456789abcdef0" in branches,
           f"{report} {branches}")
     check("WORKTREE CLEANUP: the report counts what was removed and every branch deleted, "
-          "the one deleted with its worktree included",
-          report == ("worktree cleanup: 1 finished worktree(s) removed, "
-                     "2 branch ref(s) with nothing beyond main deleted"),
+          "and names the files a removal discarded",
+          report == ("worktree cleanup: 2 finished worktree(s) removed, "
+                     "3 branch ref(s) with nothing beyond main deleted; "
+                     "1 of the removed held uncommitted, untracked or ignored files: "
+                     "unfinished-worktree: discarded with it 1 uncommitted, untracked "
+                     "or ignored file(s): notes.txt"),
           report)
+
+    # A done worktree that fails to remove keeps its files, and the summary
+    # must not say they were discarded.
+    locked = home / ".claude" / "worktrees" / "locked-worktree"
+    git_in(["worktree", "add", "--quiet", "-b", "locked-branch", str(locked)], home)
+    (locked / "held.txt").write_text("held\n", encoding="utf-8")
+    git_in(["worktree", "lock", "--reason", "fixture", str(locked)], home)
+    locked_report = supervisor.remove_finished_worktrees_at_handoff(home)
+    git_in(["worktree", "unlock", str(locked)], home)
+    check("WORKTREE CLEANUP: a worktree whose removal fails is reported failed, "
+          "not as having discarded its files",
+          (locked / "held.txt").exists() and "1 failed" in locked_report
+          and "held uncommitted" not in locked_report and "0 finished worktree(s) removed"
+          in locked_report, locked_report)
+    check("WORKTREE CLEANUP: a worktree whose removal fails has its files named as "
+          "possibly gone",
+          "1 removal(s) started but not confirmed, so these files may be partly gone: "
+          "locked-worktree: removing it will discard 1 uncommitted, untracked or ignored "
+          "file(s): held.txt" in locked_report, locked_report)
+
+    # A cleaner stopped by the handoff's timeout partway through a removal
+    # leaves the announcement and no confirmation.
+    stopped_summary = supervisor.summarize_worktree_cleanup_output([
+        "first-wt: removing it will discard 1 uncommitted, untracked or ignored file(s): one.txt",
+        "first-wt: removed, branch first-branch deleted",
+        "first-wt: discarded with it 1 uncommitted, untracked or ignored file(s): one.txt",
+        "second-wt: removing it will discard 2 uncommitted, untracked or ignored file(s): "
+        "two.txt, three.txt",
+    ])
+    check("WORKTREE CLEANUP: a removal stopped partway is named as possibly gone, "
+          "and only a confirmed removal is counted as a discard",
+          stopped_summary == (
+              "worktree cleanup: 1 finished worktree(s) removed, "
+              "1 branch ref(s) with nothing beyond main deleted; "
+              "1 of the removed held uncommitted, untracked or ignored files: "
+              "first-wt: discarded with it 1 uncommitted, untracked or ignored file(s): one.txt; "
+              "1 removal(s) started but not confirmed, so these files may be partly gone: "
+              "second-wt: removing it will discard 2 uncommitted, untracked or ignored "
+              "file(s): two.txt, three.txt"),
+          stopped_summary)
 
     # With GIT_DIR naming another repository, the cleanup still acts on the
     # seat's own, and leaves the other alone.

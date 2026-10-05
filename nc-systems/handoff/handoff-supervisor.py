@@ -1055,8 +1055,18 @@ def summarize_worktree_cleanup_output(lines) -> str:
     unchecked = [line for line in lines
                  if ": kept — " in line
                  and ("(lsof)" in line or "lsof is not installed" in line)]
+    discarded = [line for line in lines if ": discarded with it " in line]
+    confirmed = {line.partition(": discarded with it ")[0] for line in discarded}
+    unconfirmed = [line for line in lines if ": removing it will discard " in line
+                   and line.partition(": removing it will discard ")[0] not in confirmed]
     report = (f"worktree cleanup: {removed} finished worktree(s) removed, "
               f"{deleted} branch ref(s) with nothing beyond main deleted")
+    if discarded:
+        report += (f"; {len(discarded)} of the removed held uncommitted, untracked or "
+                   f"ignored files: " + "; ".join(discarded))
+    if unconfirmed:
+        report += (f"; {len(unconfirmed)} removal(s) started but not confirmed, so these "
+                   f"files may be partly gone: " + "; ".join(unconfirmed))
     if failed:
         report += f"; {len(failed)} failed: " + "; ".join(failed)
     if refused:

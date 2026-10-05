@@ -329,7 +329,7 @@ if ! git -C "$AGENT_DIRECTORY" rev-parse --show-toplevel >/dev/null 2>&1; then
 fi
 
 # Boot-time worktree report: finished session worktrees pile up invisibly,
-# so each launch names any that are done (clean, landed, vacant) and the
+# so each launch names any that are done (landed and vacant) and the
 # command that removes them. Report only — removal stays a deliberate,
 # separate call — and a report problem never blocks a launch.
 python3 "$SCRIPT_DIRECTORY/clean-worktrees.py" --only-done || true

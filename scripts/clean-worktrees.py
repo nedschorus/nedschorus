@@ -2,27 +2,22 @@
 """Report or remove finished session worktrees under .claude/worktrees/.
 
 Session worktrees pile up invisibly: every Claude session gets one, sessions
-end, and nothing reaps them. A worktree is DONE — removable losing nothing —
-only when three mechanical checks all pass:
+end, and nothing reaps them. A worktree is DONE — removable — when these
+mechanical checks all pass:
 
-  1. clean    - no uncommitted, untracked, or ignored files (`git status
-                --porcelain --ignored` is empty). Ignored files count as dirt
-                on purpose: uncommitted state like walk minutes or an
-                identity file must never be reaped with its worktree. The one
-                exception is regenerable junk every worktree accumulates —
-                .DS_Store and __pycache__ — which counts as nothing (git
-                worktree remove tolerates it, verified).
-  2. landed   - no commits beyond origin/main (`git log origin/main..HEAD`
-                is empty), so everything the worktree's branch carries is
-                already on main. origin/main is read as fetched; a stale ref
-                only errs toward keeping.
-  3. vacant   - no live process has its working directory inside the
+  1. landed   - no commits beyond origin/main (`git log origin/main..HEAD`
+                is empty, and git exits 0), so everything the worktree's
+                branch carries is already on main. origin/main is read as
+                fetched; a stale ref only errs toward keeping. If
+                origin/main is missing or git cannot compare, the worktree
+                is kept and the reason says so.
+  2. vacant   - no live process has its working directory inside the
                 worktree (lsof). Vacancy must be proven, never assumed: if
-                lsof is missing, cannot be run, exits nonzero, or reports no
-                working directories at all, the worktree is kept and the
-                reason says the check could not be trusted — it does not
-                claim a process that was never seen.
-  4. quiet    - for a worktree the Agent tool made for a subagent
+                lsof is missing, cannot be run, times out, exits nonzero, or
+                reports no working directories at all, the worktree is kept
+                and the reason says the check could not be trusted — it does
+                not claim a process that was never seen.
+  3. quiet    - for a worktree the Agent tool made for a subagent
                 (`agent-<id>`), neither the subagent's transcript nor the
                 worktree itself was written in the last
                 AGENT_WORKTREE_QUIET_SECONDS. The vacancy check cannot see
@@ -31,6 +26,16 @@ only when three mechanical checks all pass:
                 short-lived shell of each Bash call sits in the worktree. The
                 subagent's transcript, written on every message, is the one
                 trace of it that lives outside a process.
+
+Uncommitted, untracked and ignored files do NOT keep a done worktree: they
+are removed with it. The files are listed after the other checks, each file
+inside an untracked or ignored directory named on its own; the report names
+them, and --remove names them twice: before each removal, as files it will
+discard, and after a removal succeeds, as files discarded with it. A removal
+that fails or is stopped partway has named its files beforehand, so a loss
+is visible in the output either way. Regenerable junk
+(.DS_Store, __pycache__, at any depth) is not listed. If git cannot list a
+worktree's files, the worktree is kept.
 
 Anything that fails a check is KEPT, with the failing reason. Worktrees
 outside <repo>/.claude/worktrees/ — agent seat homes, manual checkouts — are
@@ -62,11 +67,12 @@ Modes:
                when there are any; nothing otherwise (the launchers run this
                at boot, so a reapable worktree, an orphaned branch ref or a
                dead registration is named at the moment someone is looking)
-  --remove     re-check and remove the done worktrees; each removal also
-               deletes the worktree's fully-merged branch (git branch -d,
-               which refuses anything unmerged). Never --force. Orphaned
-               branch refs are deleted the same way, and a refusal there is
-               a failure rather than a silence.
+  --remove     check each worktree and, when it is done, remove it at once;
+               each removal also deletes the worktree's fully-merged branch
+               (git branch -d, which refuses anything unmerged). Removal is
+               `git worktree remove --force`, which removes untracked and
+               modified files and still refuses a locked worktree. Orphaned branch refs are deleted the same way, and
+               a refusal there is a failure rather than a silence.
 
 SCHEDULED. --remove runs once a day on both machines, from the reference
 clone, so worktrees that sessions and subagents leave behind do not pile up
@@ -97,8 +103,10 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
-# Only known regenerable ignored files are disposable; other ignored files may hold uncommitted state.
+# Regenerable junk is left out of the list of files a removal discards.
 DISPOSABLE_JUNK_BASENAMES = (".DS_Store", "__pycache__")
+
+DISCARDED_FILES_NAMED_AT_MOST = 10
 
 # lsof scans all processes and can be slow under load; a timeout must keep worktrees.
 VACANCY_CHECK_TIMEOUT_SECONDS = 120
@@ -246,45 +254,75 @@ def agent_worktree_quiet_keep_reason(worktree, now=None):
     return None
 
 
+def is_disposable_junk(relative_path):
+    return any(part in DISPOSABLE_JUNK_BASENAMES for part in Path(relative_path).parts)
+
+
+def files_a_removal_discards(worktree):
+    """Return (paths, None) for every uncommitted, untracked or ignored file, junk left out,
+    or (None, git's error) when git cannot list them."""
+    # --untracked-files=all with --ignored names each file; without it git names only a directory.
+    status = run_git(worktree, "status", "--porcelain", "-z", "--ignored",
+                     "--untracked-files=all")
+    if status.returncode != 0:
+        return None, status.stderr.strip()[:80]
+    fields = iter([field for field in status.stdout.split("\0") if field])
+    paths = []
+    for entry in fields:
+        code, path = entry[:2], entry[3:]
+        # A rename or copy, in the index column or the worktree column, carries its old path as the next field.
+        if "R" in code or "C" in code:
+            next(fields, None)
+        paths.append(path)
+    return [path for path in paths if not is_disposable_junk(path)], None
+
+
+def discarded_files_text(paths):
+    named = ", ".join(paths[:DISCARDED_FILES_NAMED_AT_MOST])
+    more = len(paths) - DISCARDED_FILES_NAMED_AT_MOST
+    return named + (f" and {more} more" if more > 0 else "")
+
+
 def classify(worktree, branch, main_checkout):
-    """Return (done, reason) for a worktree."""
+    """Return (done, reason, discarded paths) for a worktree."""
     managed_area = (main_checkout / ".claude" / "worktrees").resolve()
     if managed_area not in worktree.resolve().parents:
-        return False, "outside the managed area (.claude/worktrees/) — its owner decides its lifecycle"
-
-    status = run_git(worktree, "status", "--porcelain", "--ignored")
-    if status.returncode != 0:
-        return False, "git cannot read it (" + status.stderr.strip()[:80] + ")"
-    dirt = [
-        line for line in status.stdout.splitlines()
-        if not (line.startswith("!!") and
-                line[2:].strip().rstrip("/").rsplit("/", 1)[-1]
-                in DISPOSABLE_JUNK_BASENAMES)
-    ]
-    if dirt:
-        return False, f"{len(dirt)} uncommitted, untracked, or ignored file(s)"
+        return False, "outside the managed area (.claude/worktrees/) — its owner decides its lifecycle", []
 
     unlanded = run_git(worktree, "log", "--oneline", "origin/main..HEAD")
     if unlanded.returncode != 0:
-        return False, "cannot compare against origin/main (" + unlanded.stderr.strip()[:80] + ")"
+        return False, "cannot compare against origin/main (" + unlanded.stderr.strip()[:80] + ")", []
     if unlanded.stdout.strip():
         commits = len(unlanded.stdout.splitlines())
-        return False, f"{commits} commit(s) not on origin/main"
+        return False, f"{commits} commit(s) not on origin/main", []
 
     keep_reason = worktree_vacancy_keep_reason(worktree)
     if keep_reason is not None:
-        return False, keep_reason
+        return False, keep_reason, []
 
     keep_reason = agent_worktree_quiet_keep_reason(worktree)
     if keep_reason is not None:
-        return False, keep_reason
+        return False, keep_reason, []
 
-    return True, "clean, landed, and vacant"
+    # Listed last, after the slow vacancy check, so the list is as close to the removal as it can be.
+    discarded, listing_error = files_a_removal_discards(worktree)
+    if discarded is None:
+        return False, f"git cannot list its files ({listing_error})", []
+    if discarded:
+        return True, (f"landed and vacant; removing it discards {len(discarded)} "
+                      f"uncommitted, untracked or ignored file(s): "
+                      f"{discarded_files_text(discarded)}"), discarded
+    return True, "landed and vacant", []
 
 
-def remove_worktree(worktree, branch, repo):
+def remove_worktree(worktree, branch, repo, discarded):
     """Remove a done worktree and its merged branch; return success."""
-    removal = run_git(repo, "worktree", "remove", str(worktree))
+    # Named before the removal too: a removal that fails or is killed partway may already have deleted some.
+    if discarded:
+        print(f"{worktree.name}: removing it will discard {len(discarded)} uncommitted, "
+              f"untracked or ignored file(s): {discarded_files_text(discarded)}")
+    # A single --force removes untracked and modified files but still refuses a locked worktree.
+    removal = run_git(repo, "worktree", "remove", "--force", str(worktree))
     if removal.returncode != 0:
         print(f"{worktree.name}: removal FAILED — {removal.stderr.strip()[:120]}")
         return False
@@ -296,6 +334,9 @@ def remove_worktree(worktree, branch, repo):
         else:
             line += f", branch {branch} left in place (git branch -d refused)"
     print(line)
+    if discarded:
+        print(f"{worktree.name}: discarded with it {len(discarded)} uncommitted, untracked "
+              f"or ignored file(s): {discarded_files_text(discarded)}")
     return True
 
 
@@ -324,9 +365,9 @@ def main(argv=None):
 
     failures = 0
     for worktree, branch in list_worktrees(repo, main_checkout):
-        done, reason = classify(worktree, branch, main_checkout)
+        done, reason, discarded = classify(worktree, branch, main_checkout)
         if remove:
-            if done and not remove_worktree(worktree, branch, repo):
+            if done and not remove_worktree(worktree, branch, repo, discarded):
                 failures += 1
             elif not done:
                 print(f"{worktree.name}: kept — {reason}")
