@@ -13,12 +13,9 @@ fresh context:
   design. The agent is instructed not to read the existing design,
   its implementation, or its records, but may research the best approach
   independently — this repository, the internet, reputable repositories on
-  GitHub. Isolation is instructed, not enforced, and checked, best-effort, two ways:
-  the agent's report lists everything it consulted and discloses anything
-  off-limits it strayed into (self-reported), and the runner scans what the
-  requester sends — the problem statement, and the instruction files the
-  CLIs inject on their own (conventional paths, not a proven enumeration) —
-  for the design's coined names, printing a LEAK-WARNING per hit. The
+  GitHub. Isolation is instructed, not enforced, and checked by the agent's
+  own report, which lists everything it consulted and discloses anything
+  off-limits it strayed into. The
   agent returns a five-section report — sketch, hard parts, late
   discoveries, assumptions, what it consulted — and triage compares the
   original and the fresh design on their merits: a substantive difference
@@ -165,11 +162,6 @@ Running a sanity-check, and reading its output:
   none prints `WARNING: <audit>-<runtime> quote found in no tracked file: ...` — triage
   information, never a gate; a quote may legitimately come from git history
   or the web.
-- Fresh-eyes runs print `LEAK-WARNING` lines — the requester-input scan
-  described above, one per line a coined name appears on, naming the line's
-  number and text. Expect hits on every run: the off-limits list must name
-  the design's paths to forbid them, and those paths are coined names; the
-  line shows whether a hit is that list.
 - Every review agent may reach the internet to check facts, and every one may
   write: claude agents carry web tools plus Write, codex agents run under a
   permission profile that writes where workspace-write did, with network on,
@@ -478,20 +470,6 @@ ATTACK_REPORT_REQUIRED_PHRASES = {
 }
 
 
-# Hyphenations that are ordinary English or repo-wide convention, not names a
-# design coined — the coined-name scan skips them. Anything else that hits is
-# printed; triage judges false positives (the scan reports, never gates).
-GENERIC_HYPHENATED_WORDS = {
-    "read-only", "zero-context", "one-line", "built-in", "fine-grained",
-    "high-level", "low-level", "long-running", "machine-readable",
-    "human-readable", "re-run", "so-called", "non-empty", "well-designed",
-    "open-ended", "side-effect", "side-effects", "trade-off", "trade-offs",
-    "one-off", "end-to-end", "up-to-date", "auto-filled", "auto-posted",
-    "hand-made", "judgment-written", "long-lived", "near-perfect",
-    "per-commit", "what-and-why", "work-in-progress",
-}
-
-
 def prompt_body(attack: str) -> str:
     """The prompt below the file's body marker, its scratch placeholder intact.
 
@@ -538,68 +516,6 @@ def prompt_body(attack: str) -> str:
     return body
 
 
-def coined_names(target_path: pathlib.Path) -> set:
-    """The design's coined names: backticked spans plus multi-part invented
-    names (hyphenated tokens), minus ordinary-English hyphenations."""
-    text = target_path.read_text(encoding="utf-8")
-    names = set()
-    for span in re.findall(r"`([^`\n]+)`", text):
-        span = span.strip()
-        # A plain lowercase word is vocabulary, not coinage: the project's
-        # naming rule makes invented names multi-part, so single words
-        # (`main`, `none`, `status`) only produce scan noise.
-        # Bare punctuation (`---`) is markdown, not a coinage.
-        if (len(span) >= 3 and " " not in span and not span.isdigit()
-                and any(ch.isalnum() for ch in span)
-                and not (span.isalpha() and span.islower())):
-            names.add(span)
-    for token in re.findall(r"[A-Za-z]\w*(?:-\w+)+", text):
-        if token.lower() not in GENERIC_HYPHENATED_WORDS:
-            names.add(token)
-    return names
-
-
-LEAK_WARNING_LINE_CHARACTERS = 160
-
-
-def leak_scan(design_names: set, text: str, where: str) -> None:
-    """Print a LEAK-WARNING per line of text a design name appears on. Report,
-    never gate: a leaked name means the sketch can no longer independently
-    confirm that part of the design — the requester weighs it at triage.
-
-    Each warning names the line it matched, number and text, because the
-    request's off-limits list must name the design's own paths, so every run
-    has expected hits, and warnings naming only the file would leave telling
-    those from a real leak to a search of the file by hand."""
-    lines = text.splitlines()
-    for name in sorted(design_names):
-        pattern = re.compile(rf"(?<![\w-]){re.escape(name)}(?![\w-])", re.IGNORECASE)
-        for number, line in enumerate(lines, start=1):
-            if pattern.search(line):
-                print(f"LEAK-WARNING: design name `{name}` appears in {where}, "
-                      f"line {number}: {line.strip()[:LEAK_WARNING_LINE_CHARACTERS]}",
-                      flush=True)
-
-
-def injected_instruction_files(checkout: pathlib.Path = None) -> list:
-    """Instruction files the cell CLIs load on their own — a leak channel: an
-    injected project CLAUDE.md can carry the design's thesis to a cell that is
-    meant not to know it. Conventional paths, not a verified
-    enumeration; the report scan is the catch-all behind this. The project's
-    files are the ones in `checkout`, the review copy the cells run in."""
-    home = pathlib.Path.home()
-    checkout = checkout or REPO_ROOT
-    candidates = [
-        checkout / "CLAUDE.md",
-        checkout / "CLAUDE.local.md",
-        checkout / "AGENTS.md",
-        home / ".claude" / "CLAUDE.md",
-        home / ".claude" / "CLAUDE.local.md",
-        home / ".codex" / "AGENTS.md",
-    ]
-    return [path for path in candidates if path.is_file()]
-
-
 def assemble_prompt(attack: str, target: str, context: list,
                     problem_statement: pathlib.Path,
                     scratch_directory: str) -> str:
@@ -633,8 +549,8 @@ def run_claude(prompt: str, checkout: pathlib.Path = None) -> tuple:
     # Runs in `checkout`, the review copy, so every path the cell resolves is
     # the reviewed commit's (see review_copy_of_commit).
     # Every cell may check facts on the internet; isolation and write
-    # discipline are instructed in the prompts and checked (leak scan;
-    # worktree check), never enforced here. Write is in the tool set because
+    # discipline are instructed in the prompts and checked (the agent's own
+    # report; worktree check), never enforced here. Write is in the tool set because
     # the prompt names a sanctioned scratch directory for notes and drafts.
     # Withholding it would not be the protection it looks like — a claude cell
     # can write to the worktree with no write tool at all, which is why
@@ -1435,7 +1351,7 @@ class RunOutputCopiedToRecordLog:
     agent having to remember to copy it there.
 
     It stands in for sys.stdout from the start of a run. What is printed
-    before the record directory exists — the SKIPPED and LEAK-WARNING lines —
+    before the record directory exists — the SKIPPED lines —
     is held and written when `attach` names the file. `detach` closes the file
     before the record is shipped, so the copy in the log-store is the whole
     log and the add-only shipper finds it unchanged when the dispositions file
@@ -1968,14 +1884,6 @@ def run_cells_in_review_copy(args, target_path: pathlib.Path, run_log: RunOutput
             print(f"Fix what git names, then rerun this command: {error}",
                   file=sys.stderr)
             return 2
-
-        if args.problem_statement and any(a == "fresh-eyes" for a, _ in cells):
-            design_names = coined_names(checkout / args.target)
-            leak_scan(design_names, args.problem_statement.read_text(encoding="utf-8"),
-                      f"the problem statement ({args.problem_statement})")
-            for path in injected_instruction_files(checkout):
-                leak_scan(design_names, path.read_text(encoding="utf-8"),
-                          f"an injected instruction file ({path})")
 
         # Claimed only after validation and only when an agent will launch: a
         # refused startup or an all-skipped run must not burn a -N suffix.
