@@ -4596,11 +4596,13 @@ with tempfile.TemporaryDirectory() as temporary:
     # And every verdict assess_seat can return is accounted for: worded by the
     # composer, reported without asking, or the ask verdict itself, which the
     # prediction cannot give because it reads the session as closed. Read from
-    # assess_seat's own returns, so a verdict added there without a place here
-    # fails this case rather than reaching the composer's refusal at a terminal.
+    # assess_seat's own returns, and those of the waiting-handoff rule it returns
+    # unchanged, so a verdict added there without a place here fails this case
+    # rather than reaching the composer's refusal at a terminal.
     import inspect
     import re
-    assess_seat_source = inspect.getsource(recovery.assess_seat)
+    assess_seat_source = (inspect.getsource(recovery.assess_seat)
+                          + inspect.getsource(recovery.records_reader.waiting_handoff_verdict))
     verdicts_assess_seat_returns = set(
         re.findall(r'return\s*\(?\s*"([a-z-]+)"', assess_seat_source))
     if "return ASK_TO_CLOSE_THE_LEFTOVER_IDLE_SHELL_VERDICT" in assess_seat_source:

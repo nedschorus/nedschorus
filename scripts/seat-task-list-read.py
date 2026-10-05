@@ -6,6 +6,7 @@ reported unread without failing the run. A requested store that cannot be
 read is a failure, not an empty task list."""
 
 import argparse
+import importlib.util
 import io
 import json
 import os
@@ -16,6 +17,12 @@ import tarfile
 import tempfile
 from collections import namedtuple
 from pathlib import Path
+
+_records_reader_spec = importlib.util.spec_from_file_location(
+    "agent_seat_state_records_reader", Path(__file__).resolve().parent.parent
+    / "nc-systems" / "handoff" / "agent-seat-state-records-reader.py")
+records_reader = importlib.util.module_from_spec(_records_reader_spec)
+_records_reader_spec.loader.exec_module(records_reader)
 
 DEFAULT_STORE = Path.home() / ".claude" / "tasks"
 STORE_UNDER_HOME = Path(".claude") / "tasks"
@@ -208,14 +215,7 @@ def task_lists_or_refuse(locations, machines_read):
     raise SystemExit(f"No task lists on the machines read: {shown}.")
 
 
-def seat_of(list_id):
-    """Return the seat name from a list ID, leaving unfamiliar IDs whole."""
-    name = list_id
-    if name.startswith("nedschorus-"):
-        name = name[len("nedschorus-"):]
-    if name.endswith("-tasks"):
-        name = name[: -len("-tasks")]
-    return name or list_id
+seat_of = records_reader.seat_of
 
 
 def where_shown(location):

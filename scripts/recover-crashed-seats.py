@@ -173,6 +173,12 @@ _supervisor_spec = importlib.util.spec_from_file_location(
 supervisor = importlib.util.module_from_spec(_supervisor_spec)
 _supervisor_spec.loader.exec_module(supervisor)
 
+_records_reader_spec = importlib.util.spec_from_file_location(
+    "agent_seat_state_records_reader",
+    SUPERVISOR_SCRIPT.with_name("agent-seat-state-records-reader.py"))
+records_reader = importlib.util.module_from_spec(_records_reader_spec)
+_records_reader_spec.loader.exec_module(records_reader)
+
 _watcher_spec = importlib.util.spec_from_file_location(
     "watch_agent_dialogs", Path(__file__).with_name("watch-agent-dialogs.py")
 )
@@ -737,30 +743,9 @@ def assess_seat(name: str, agents_root: Path, handoff_directory: Path,
     if occupied:
         return "refuse", occupancy_detail
 
-    handoff_path = supervisor.handoff_file_path(handoff_directory, name)
-    if handoff_path.is_file():
-        fields = supervisor.parse_handoff_file(handoff_path)
-        counter = supervisor.counter_from(fields)
-        state = supervisor.read_supervisor_state(state_path)
-        consumed = state.get("consumed_counter")
-        if counter is None:
-            # The supervisor cannot consume a handoff without a valid counter; resuming would discard its request.
-            return "refuse", (
-                f"a handoff exists at {handoff_path} but its restart-counter is "
-                "missing or unreadable, so no supervisor would ever consume it. "
-                "Read it: if it is real, fix its restart-counter and relaunch "
-                "plain; if it is scrap, delete it and rerun this recovery"
-            )
-        if consumed is None or counter > consumed:
-            dont_restart = fields.get("dont-restart")
-            if dont_restart:
-                # Leave the handoff unconsumed so a by-hand launch still asks the supervisor’s restart question.
-                return "seat-asked-to-be-consulted", (counter, dont_restart)
-            return "defer-to-boot-ignition", (
-                f"an unconsumed handoff waits (counter {counter}, consumed "
-                f"{consumed}) — plain relaunch is correct; the supervisor's "
-                "boot-ignition consumes it"
-            )
+    waiting_handoff = records_reader.waiting_handoff_verdict(handoff_directory, name, state_path)
+    if waiting_handoff is not None:
+        return waiting_handoff
 
     session_id, found = newest_real_transcript(
         harness_project_directory(seat_directory, projects_root))
