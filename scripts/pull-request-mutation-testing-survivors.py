@@ -25,8 +25,10 @@ exits 3 at once, before making the worktree. Do not run the script under
 the holder it refuses on.
 
 A renamed file is mutated under its new name. A mutant cosmic-ray could not
-judge, because its worker raised or its suites could not be launched, is
-printed as ERRORED and counts against the run like a survivor.
+judge, because its worker raised, its suites could not be launched, or its
+suites ran past --mutant-timeout-seconds, is printed as ERRORED and counts
+against the run like a survivor. cosmic-ray itself reports a timeout as a
+kill; this script does not.
 
 Exit codes: 0 every mutant was killed, 1 a mutant survived, errored or was
 not run, or a changed file has no suite, 2 could not run (cosmic-ray missing,
@@ -179,14 +181,19 @@ OUTCOME_KEYS = ("killed", "survived", "errored", "no mutation", "skipped",
 # properties of the mutant. A no-test worker found nothing to mutate.
 WORKER_OUTCOMES_THAT_ERRORED = ("exception", "abnormal")
 
+# cosmic-ray reports suites that ran past the timeout as killed, with exactly
+# this output: a slow run, not a test that failed under the mutant.
+TIMED_OUT_OUTPUT = "timeout"
 
-def mutant_description(item, result):
+
+def mutant_description(item, result, reason=""):
     mutation = item["mutations"][0]
     return {
         "module_path": mutation["module_path"],
         "line": mutation["start_pos"][0],
         "operator": mutation["operator_name"],
         "diff": result.get("diff") or "",
+        "reason": reason,
     }
 
 
@@ -212,6 +219,11 @@ def outcomes_from_dump(dump_text):
               and test_outcome == "survived"):
             counts["survived"] += 1
             survivors.append(mutant_description(item, result))
+        elif (worker_outcome not in WORKER_OUTCOMES_THAT_ERRORED
+              and test_outcome == "killed"
+              and result.get("output") == TIMED_OUT_OUTPUT):
+            counts["errored"] += 1
+            errored.append(mutant_description(item, result, reason="timeout"))
         elif (worker_outcome not in WORKER_OUTCOMES_THAT_ERRORED
               and test_outcome == "killed"):
             counts["killed"] += 1
@@ -387,8 +399,12 @@ def main(argv=None):
                         for label, mutants in (("SURVIVED", survivors),
                                                ("ERRORED ", errored)):
                             for mutant in mutants:
+                                reason = (f" ({mutant['reason']}: the suites ran past "
+                                          "--mutant-timeout-seconds, so this mutant was "
+                                          "not judged; rerun when the machine is quieter)"
+                                          if mutant["reason"] else "")
                                 print(f"{label}  {mutant['module_path']}:{mutant['line']} "
-                                      f"{mutant['operator']}")
+                                      f"{mutant['operator']}{reason}")
                                 for diff_line in mutant["diff"].splitlines():
                                     print(f"    {diff_line}")
             finally:
