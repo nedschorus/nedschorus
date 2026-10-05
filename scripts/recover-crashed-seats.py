@@ -82,7 +82,8 @@ What it does, per seat:
 
 Degraded mode (user-directed 2026-08-21, recorded on #120): --ignite-fallback
 skips the resume and launches fresh with a first prompt pointing at the
-newest dialog extract in the handoff directory — the same read-and-continue
+newest dialog extract in the handoff directory, passing the supervisor
+--first-prompt-file-wins-over-crashed-transcript so it does not resume anyway — the same read-and-continue
 shape build_ignition_prompt composes at every reincarnation. Use it when a resume
 fails or a transcript is too large to be worth replaying; the threshold
 judgment stays with the operator in v1. It is also the automatic path when
@@ -203,6 +204,8 @@ substantive_turn_count = worth_resuming.substantive_turn_count
 newest_real_transcript = worth_resuming.newest_real_transcript
 # Do not skip a handoff successor: its parent is already retired.
 # Keep the marker short enough to match both timestamp forms stored in transcripts.
+# Without it the supervisor resumes the crashed transcript and drops the ignition prompt.
+IGNITION_FROM_DIALOG_EXTRACT_SUPERVISOR_ARGUMENTS = "--first-prompt-file-wins-over-crashed-transcript"
 REINCARNATION_OPENER_MARKER = "the dialog from the session you are continuing"
 # Anchor the opener to avoid matching its text quoted in a hand-written brief.
 REINCARNATION_OPENER_PATTERN = re.compile(
@@ -1130,9 +1133,11 @@ def recover_seat(name: str, agents_root: Path, handoff_directory: Path,
     )
     prompt_path = handoff_directory / f"{name}-recovery-ignition-prompt.md"
     if dry_run:
-        return f"{name}: would launch fresh igniting from {extract.name}{would_open('', prompt_path)}"
+        return (f"{name}: would launch fresh igniting from {extract.name}"
+                f"{would_open(IGNITION_FROM_DIALOG_EXTRACT_SUPERVISOR_ARGUMENTS, prompt_path)}")
     prompt_path.write_text(prompt, encoding="utf-8")
-    exit_code = launch(name, seat_directory, handoff_directory, "",
+    exit_code = launch(name, seat_directory, handoff_directory,
+                       IGNITION_FROM_DIALOG_EXTRACT_SUPERVISOR_ARGUMENTS,
                        first_prompt_file=prompt_path)
     if exit_code != 0:
         return f"{name}: LAUNCH FAILED (exit {exit_code}) — the seat is still down"

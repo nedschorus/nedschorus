@@ -876,8 +876,10 @@ with tempfile.TemporaryDirectory() as temporary:
         "the dialog extract", encoding="utf-8")
     capture_launches(workspace)
     report = workspace.recover(ignite_fallback=True)
-    check("--ignite-fallback launches fresh reading the newest extract",
-          workspace.launches and workspace.launches[0][1] == ""
+    check("--ignite-fallback launches fresh reading the newest extract, telling the "
+          "supervisor its first prompt wins over the crashed transcript",
+          workspace.launches
+          and workspace.launches[0][1] == recovery.IGNITION_FROM_DIALOG_EXTRACT_SUPERVISOR_ARGUMENTS
           and workspace.launches[0][2] is not None
           and "igniting from seat-a-dialog-0007.md" in report,
           (report, workspace.launches))
@@ -1667,7 +1669,7 @@ with tempfile.TemporaryDirectory() as temporary:
                                        workspace.handoffs, workspace.projects,
                                        False, True, open_iterm_window=True)
         check("WINDOW: --ignite-fallback opens the window fresh, reading the extract",
-              window_launches[-1][1] == ""
+              window_launches[-1][1] == recovery.IGNITION_FROM_DIALOG_EXTRACT_SUPERVISOR_ARGUMENTS
               and window_launches[-1][2] is not None
               and window_launches[-1][2].name == f"{workspace.name}-recovery-ignition-prompt.md"
               and "iTerm window" in report and not detached_launches,

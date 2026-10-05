@@ -526,8 +526,10 @@ python3 '$SUPERVISOR' --agent '$AGENT_NAME' --cd '$QUOTED_AGENT_DIRECTORY'"
 
 # A first-prompt file is for the founding boot. The supervisor ignores it when a
 # handoff is waiting, or when a seat with no recorded exit has a transcript worth
-# resuming. The supervisor reads the file itself, so its content never rides
-# through shell quoting.
+# resuming, unless the caller also passes
+# --first-prompt-file-wins-over-crashed-transcript in
+# LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS. The supervisor reads the file
+# itself, so its content never rides through shell quoting.
 if [ -n "$FIRST_PROMPT_FILE" ]; then
     SUPERVISOR_COMMAND="$SUPERVISOR_COMMAND --first-prompt-file '$(escape_single_quotes "$FIRST_PROMPT_FILE")'"
 fi

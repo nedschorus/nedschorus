@@ -276,8 +276,9 @@ python3 \$HOME/Projects/nedschorus/nc-systems/handoff/handoff-supervisor.py \
 
 # A first-prompt file (box-side path) is for the founding boot. The supervisor
 # ignores it when a handoff is waiting, or when a seat with no recorded exit has
-# a transcript worth resuming, so a relaunch that repeats it is safe. The
-# supervisor reads the file itself, so its content never rides through shell quoting.
+# a transcript worth resuming, unless the caller also passes
+# --first-prompt-file-wins-over-crashed-transcript in
+# LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS. The supervisor reads the file itself, so its content never rides through shell quoting.
 if [ -n "$FIRST_PROMPT_FILE" ]; then
     SUPERVISOR_COMMAND="$SUPERVISOR_COMMAND --first-prompt-file '$(escape_remote_double_quote_context "$(escape_single_quotes "$FIRST_PROMPT_FILE")")'"
 fi
