@@ -76,12 +76,12 @@ GATE COULD NOT RUN: expected-head-sha is 8 characters, not 40: 0d55173b
 
 ```
 GATE COULD NOT RUN: expected-head-sha is not a full 40-character hex sha: {value}
-Pass the head commit's full hash in lower case, as gh pr view {pr} --json headRefOid prints it, then run the gate again.
+Pass the head commit's full hash in lower case, as gh pr view {pr} --json headRefOid --jq .headRefOid prints it, then run the gate again.
 ```
 
 ```
 GATE COULD NOT RUN: expected-head-sha is {length} characters, not 40: {value}
-Pass the head commit's full hash in lower case, as gh pr view {pr} --json headRefOid prints it, then run the gate again.
+Pass the head commit's full hash in lower case, as gh pr view {pr} --json headRefOid --jq .headRefOid prints it, then run the gate again.
 ```
 
 #### 4. reviewed-since is not a time in GitHub's form
@@ -446,7 +446,7 @@ GATE REFUSED (#1074): 1 NEW review(s) since 2026-10-05T15:58:12Z -- read them be
 GATE REFUSED (#{pr}): {count} inline comment(s) posted or edited since {since} -- read them before merging
 Read everything posted or edited since {since}: the inline comments, the issue comments and the reviews.
 If any raises a finding, do not merge until the finding is fixed, or answered with a reason that shows it does not hold; a fix moves the head commit, which then needs its own approving review.
-When nothing is left open, post a review as the merge account saying what you read, check that nothing was posted between your reading and that review, then run the gate again with the review's submitted_at as reviewed-since.
+When nothing is left open, post a review as the merge account saying what you read, check that nothing was posted between your reading and that review; if something was, read it and repeat from the first line. Then run the gate again with the review's submitted_at as reviewed-since.
 ```
 
 The other two take the same three lines after their own first line.
