@@ -196,6 +196,159 @@ check("through the real opener's dry run, the AppleScript runs ssh back to ned-b
       result.returncode == 0 and "open-iterm-window-running-command ssh -t -- nedlern@ned-box tmux attach -t merge-lane-2" in result.stdout,
       result.stdout + result.stderr)
 
+result, opened, log = run_program("open-in-typora tmux")
+check("an open-in-typora request opens no window", opened is None, opened)
+check("a window request that is refused names the open-in-typora form too",
+      "To open a file in Typora instead, run on ned-box: scripts/open-file-in-typora-on-mac-from-ned-box.py" in run_program("open-windowx tmux")[0].stderr)
+
+
+def typora_refusal_of(request, ned_box_home="/home/nedlern"):
+    try:
+        forced_command.typora_path_on_ned_box(request, ned_box_home)
+    except forced_command.RequestRefused as refusal:
+        return str(refusal)
+    return None
+
+
+for request in ["open-in-typora /home/nedlern/nedschorus-logs/walk/a-minutes.md",
+                "open-in-typora /home/nedlern/a.md",
+                "open-in-typora /home/nedlern/Projects/nedschorus/docs/x_y.z,v=1@2+3%4:5.md"]:
+    check(f"typora accepted: {request!r}", typora_refusal_of(request) is None, typora_refusal_of(request))
+
+TYPORA_REFUSED = {
+    "no SSH_ORIGINAL_COMMAND": (None, "interactive shell"),
+    "another verb": ("open-window /home/nedlern/a.md", "does not start with the verb 'open-in-typora'"),
+    "the verb alone": ("open-in-typora", "exactly one path"),
+    "an empty path": ("open-in-typora ", "names no path"),
+    "two paths": ("open-in-typora /home/nedlern/a.md /home/nedlern/b.md", "exactly one path"),
+    "a path with a space": ("open-in-typora /home/nedlern/a b.md", "exactly one path"),
+    "a relative path": ("open-in-typora a.md", "not under /home/nedlern/"),
+    "a path outside the home": ("open-in-typora /etc/passwd", "not under /home/nedlern/"),
+    "a home that only starts like the home": ("open-in-typora /home/nedlernx/a.md", "not under /home/nedlern/"),
+    "the home itself": ("open-in-typora /home/nedlern", "not under /home/nedlern/"),
+    "a '..' component": ("open-in-typora /home/nedlern/../../etc/passwd", "'..' component"),
+    "a '..' deeper in": ("open-in-typora /home/nedlern/a/../../b.md", "'..' component"),
+    "a '.' component": ("open-in-typora /home/nedlern/./a.md", "'..' component"),
+    "an empty component": ("open-in-typora /home/nedlern//a.md", "'..' component"),
+    "a trailing slash": ("open-in-typora /home/nedlern/docs/", "'..' component"),
+    "a NUL": ("open-in-typora /home/nedlern/a\x00.md", "outside letters, digits"),
+    "a newline": ("open-in-typora /home/nedlern/a\n.md", "outside letters, digits"),
+    "a semicolon": ("open-in-typora /home/nedlern/a;b.md", "outside letters, digits"),
+    "a quote": ("open-in-typora /home/nedlern/a'b.md", "outside letters, digits"),
+    "an overlong path": ("open-in-typora /home/nedlern/" + "a" * forced_command.MAXIMUM_PATH_LENGTH, "over the limit of"),
+}
+for case_name, (request, expected) in TYPORA_REFUSED.items():
+    reason = typora_refusal_of(request)
+    check(f"typora refused: {case_name}", reason is not None and expected in reason, reason)
+
+for length, accepted in ((forced_command.MAXIMUM_PATH_LENGTH - 1, True), (forced_command.MAXIMUM_PATH_LENGTH, True),
+                         (forced_command.MAXIMUM_PATH_LENGTH + 1, False)):
+    path = "/home/nedlern/" + "a" * (length - len("/home/nedlern/"))
+    reason = typora_refusal_of(f"open-in-typora {path}")
+    check(f"typora: a path of {length} characters is {'accepted' if accepted else 'refused'}",
+          (reason is None) if accepted else (reason is not None and "over the limit of" in reason), reason)
+check("typora: the path limit is 1024 characters", forced_command.MAXIMUM_PATH_LENGTH == 1024, forced_command.MAXIMUM_PATH_LENGTH)
+
+
+def writable_mount_point():
+    """A real mount point this test may write inside, and the directory to write in."""
+    for mount, writable_inside in (("/dev/shm", "/dev/shm"), ("/System/Volumes/Data", "/System/Volumes/Data/private/tmp")):
+        if os.path.ismount(mount) and os.access(writable_inside, os.W_OK):
+            return mount, writable_inside
+    return None, None
+
+
+def run_typora(request, home, mount, open_body=None, log_unwritable=False):
+    scratch = Path(tempfile.mkdtemp(prefix="mac-typora-test-"))
+    if log_unwritable:
+        (scratch / ".claude").write_text("a regular file where the log's directory belongs\n")
+    record = scratch / "open-arguments.json"
+    stub = scratch / "open-stub"
+    stub.write_text("#!/bin/sh\n" + (open_body or f"""python3 -c 'import json,sys; json.dump(sys.argv[1:], open("{record}","w"))' "$@"\n"""))
+    stub.chmod(0o755)
+    environment = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": str(scratch), "SSH_ORIGINAL_COMMAND": request,
+                   "NEDSCHORUS_MAC_OPEN_PROGRAM": str(stub), "NEDSCHORUS_NED_BOX_HOME": home,
+                   "NEDSCHORUS_MAC_NED_BOX_HOME_MOUNT": mount,
+                   "NEDSCHORUS_MAC_WINDOW_OPENER": str(scratch / "no-window-opener-must-run")}
+    result = subprocess.run([sys.executable, str(PROGRAM_PATH)], capture_output=True, text=True, env=environment)
+    opened = json.loads(record.read_text()) if record.exists() else None
+    log_path = scratch / ".claude" / "mac-window-opened-for-ned-box.log"
+    log = log_path.read_text() if log_path.is_file() else ""
+    shutil.rmtree(scratch)
+    return result, opened, log
+
+
+mount, writable_inside = writable_mount_point()
+if mount is None:
+    print("SKIP  open-in-typora end-to-end cases: no writable mount point (/dev/shm or /System/Volumes/Data) on this machine")
+else:
+    # ned-box's home and the Mac's mount are both the same real mount point, so a
+    # path maps onto itself and the mount check sees a real mount.
+    files = Path(tempfile.mkdtemp(prefix="mac-typora-files-", dir=writable_inside))
+    document = files / "notes.md"
+    document.write_text("# notes\n")
+    (files / "folder").mkdir()
+    (files / "escape.md").symlink_to("/etc/hosts")
+    (files / "inside-link.md").symlink_to(document)
+    # The unmounted stand-in holds the same file, so only the mount check can refuse it.
+    not_mounted = Path(tempfile.mkdtemp(prefix="mac-typora-not-mounted-"))
+    (not_mounted / document.relative_to(mount)).parent.mkdir(parents=True)
+    (not_mounted / document.relative_to(mount)).write_text("# notes\n")
+
+    result, opened, log = run_typora(f"open-in-typora {document}", mount, mount)
+    check("typora: an accepted file exits 0", result.returncode == 0, result.stderr)
+    check("typora: open gets an argument list naming Typora and the mapped file",
+          opened == ["-a", "Typora", str(document)], opened)
+    check("typora: an accepted file says what was opened",
+          f"opened {document} in Typora on the Mac" in result.stdout, result.stdout)
+    check("typora: an accepted file is logged before it opens",
+          f" accepted 'open-in-typora {document}'" in log and log.index(" accepted ") < log.index(" opened "), log)
+
+    # ned-box's home and the Mac's mount differ here, and the file exists only under
+    # the mount, so the file is found only if the path is mapped onto the mount.
+    stand_in_home = "/nedbox-home-stand-in-that-does-not-exist"
+    relative = document.relative_to(mount)
+    result, opened, log = run_typora(f"open-in-typora {stand_in_home}/{relative}", stand_in_home, mount)
+    check("typora: a ned-box path is mapped onto the Mac's mount, and open gets the mapped path",
+          result.returncode == 0 and opened == ["-a", "Typora", str(document)], (result.returncode, opened, result.stderr))
+
+    result, opened, log = run_typora(f"open-in-typora {document}", mount, mount, open_body="kill -9 $$\n")
+    check("typora: an open killed by a signal is reported as failed, not opened",
+          result.returncode == 1 and "open exited -9" in result.stderr and "opened " not in result.stdout,
+          (result.returncode, result.stdout, result.stderr))
+    check("typora: an open killed by a signal is logged as failed", "open-failed--9" in log, log)
+
+    result, opened, log = run_typora(f"open-in-typora {files / 'inside-link.md'}", mount, mount)
+    check("typora: a link that stays inside the mount is opened", result.returncode == 0 and opened is not None, result.stderr)
+
+    for case_name, request, mount_used, expected in [
+        ("a missing file", f"open-in-typora {files / 'absent.md'}", mount, "there is no"),
+        ("a folder", f"open-in-typora {files / 'folder'}", mount, "is not a file"),
+        ("a link leading outside the mount", f"open-in-typora {files / 'escape.md'}", mount, "leads outside"),
+        ("an unmounted mount", f"open-in-typora {document}", str(not_mounted), "the Mac's mount of ned-box's home, is not mounted"),
+        ("a '..' path", f"open-in-typora {mount}/../etc/passwd", mount, "'..' component"),
+        ("two paths", f"open-in-typora {document} {document}", mount, "exactly one path"),
+    ]:
+        result, opened, log = run_typora(request, mount, mount_used)
+        check(f"typora: {case_name} opens nothing", opened is None, opened)
+        check(f"typora: {case_name} exits 2 and says why", result.returncode == 2 and expected in result.stderr
+              and "Typora was not opened, because" in result.stderr, (result.returncode, result.stderr))
+        check(f"typora: {case_name} is logged as refused", " refused " in log, log)
+
+    result, opened, log = run_typora(f"open-in-typora {document}", mount, mount,
+                                     open_body="echo 'Unable to find application named Typora' >&2; exit 1\n")
+    check("typora: an open that fails exits 1 with open's own error and the Typora hint",
+          result.returncode == 1 and "Unable to find application named Typora" in result.stderr
+          and "Typora is not installed" in result.stderr and "Whatever the error, tell the user" in result.stderr, result.stderr)
+    check("typora: an open that fails is logged", "open-failed-1" in log, log)
+
+    result, opened, log = run_typora(f"open-in-typora {document}", mount, mount, log_unwritable=True)
+    check("typora: a request that cannot be logged opens nothing and exits 3",
+          opened is None and result.returncode == 3 and "none opens unlogged" in result.stderr, (result.returncode, result.stderr))
+
+    shutil.rmtree(files)
+    shutil.rmtree(not_mounted)
+
 print()
 if failures:
     print(f"{len(failures)} case(s) failed")

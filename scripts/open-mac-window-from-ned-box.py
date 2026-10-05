@@ -59,15 +59,42 @@ def ssh_command(request, destination, ssh_program="ssh"):
             "-o", "ConnectTimeout=10", "--", destination, request]
 
 
-def explain_connection_failure(stderr, destination):
+def explain_connection_failure(stderr, destination, program=PROGRAM, not_done="no window was opened",
+                               fallback="the command you wanted shown, so he can run it himself"):
     if "Permission denied" in stderr:
-        return [f"{PROGRAM}: the Mac refused the key {MAC_SIDE_ACTION_KEY}, so no window was opened.",
+        return [f"{program}: the Mac refused the key {MAC_SIDE_ACTION_KEY}, so {not_done}.",
                 "The Mac's ~/.ssh/authorized_keys does not admit this key yet: tell the user, who adds the line the helper's pull request gives."]
     if "Host key verification failed" in stderr:
-        return [f"{PROGRAM}: this machine does not know the Mac's host key, so ssh stopped before connecting and no window was opened.",
+        return [f"{program}: this machine does not know the Mac's host key, so ssh stopped before connecting and {not_done}.",
                 f"Tell the user; the one-time fix, run on ned-box, is: ssh-keyscan -t ed25519 {destination.split('@')[-1]} >> ~/.ssh/known_hosts"]
-    return [f"{PROGRAM}: could not reach the Mac at {destination}, so no window was opened: {stderr.strip() or 'ssh exited 255'}.",
-            "Tell the user what this says, and the command you wanted shown, so he can run it himself."]
+    return [f"{program}: could not reach the Mac at {destination}, so {not_done}: {stderr.strip() or 'ssh exited 255'}.",
+            f"Tell the user what this says, and {fallback}."]
+
+
+def send_request_to_mac(request, forced_command, program=PROGRAM, not_done="no window was opened",
+                        fallback="the command you wanted shown, so he can run it himself",
+                        may_not_have_happened="the window may not have opened",
+                        timeout_fallback="the command you wanted shown"):
+    """Send one checked request to the Mac's forced command; return this program's exit status."""
+    destination = os.environ.get("NEDSCHORUS_MAC_SSH_DESTINATION") or DEFAULT_MAC_SSH_DESTINATION
+    ssh_program = os.environ.get("NEDSCHORUS_SSH_PROGRAM") or "ssh"
+    timeout_seconds = float(os.environ.get("NEDSCHORUS_MAC_SSH_TIMEOUT_SECONDS") or SSH_TIMEOUT_SECONDS)
+    try:
+        result = subprocess.run(ssh_command(request, destination, ssh_program), capture_output=True, text=True,
+                                timeout=timeout_seconds)
+    except subprocess.TimeoutExpired:
+        print(f"{program}: ssh to the Mac at {destination} did not finish within {timeout_seconds:g} seconds, so {may_not_have_happened}.", file=sys.stderr)
+        print(f"Tell the user {timeout_fallback}.", file=sys.stderr)
+        return EXIT_NOT_OPENED
+    if result.returncode == SSH_EXIT_CONNECTION_FAILED:
+        for line in explain_connection_failure(result.stderr, destination, program, not_done, fallback):
+            print(line, file=sys.stderr)
+        return EXIT_NOT_OPENED
+    sys.stdout.write(result.stdout)
+    sys.stderr.write(result.stderr)
+    if result.returncode == forced_command.EXIT_REFUSED:
+        return EXIT_USAGE_OR_REFUSED
+    return EXIT_OPENED if result.returncode == 0 else EXIT_NOT_OPENED
 
 
 def main(arguments):
@@ -83,25 +110,7 @@ def main(arguments):
         print("Each word must be made of letters, digits and _ . / : = @ % + , - and the first may not start with '-'.", file=sys.stderr)
         print("If the command needs shell syntax or quoted words, put it in a script on ned-box and pass that script's path.", file=sys.stderr)
         return EXIT_USAGE_OR_REFUSED
-    destination = os.environ.get("NEDSCHORUS_MAC_SSH_DESTINATION") or DEFAULT_MAC_SSH_DESTINATION
-    ssh_program = os.environ.get("NEDSCHORUS_SSH_PROGRAM") or "ssh"
-    timeout_seconds = float(os.environ.get("NEDSCHORUS_MAC_SSH_TIMEOUT_SECONDS") or SSH_TIMEOUT_SECONDS)
-    try:
-        result = subprocess.run(ssh_command(request, destination, ssh_program), capture_output=True, text=True,
-                                timeout=timeout_seconds)
-    except subprocess.TimeoutExpired:
-        print(f"{PROGRAM}: ssh to the Mac at {destination} did not finish within {timeout_seconds:g} seconds, so the window may not have opened.", file=sys.stderr)
-        print("Tell the user the command you wanted shown.", file=sys.stderr)
-        return EXIT_NOT_OPENED
-    if result.returncode == SSH_EXIT_CONNECTION_FAILED:
-        for line in explain_connection_failure(result.stderr, destination):
-            print(line, file=sys.stderr)
-        return EXIT_NOT_OPENED
-    sys.stdout.write(result.stdout)
-    sys.stderr.write(result.stderr)
-    if result.returncode == forced_command.EXIT_REFUSED:
-        return EXIT_USAGE_OR_REFUSED
-    return EXIT_OPENED if result.returncode == 0 else EXIT_NOT_OPENED
+    return send_request_to_mac(request, forced_command)
 
 
 if __name__ == "__main__":
