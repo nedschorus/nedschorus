@@ -10,7 +10,7 @@ This document is part three of GHI [Every refusal and warning a program hands an
 
 **The accounts.** `mac-claude` is the GitHub account the Mac's agent-seats use: it opens their pull requests and posts the independent reviews merge-lane-2 commissions. GitHub refuses an approval from a pull request's author, so on a pull request mac-claude opened, the merge account approves, and on a pull request the merge account opened, mac-claude approves.
 
-**Who reads its messages.** merge-lane-2 runs the gate through its wrapper, the merge chain on ned-box (`walk-ledgers/merge-lane-review-gate-merge-chain.sh`, which `scripts/merge-gate-test.py` names; merge-lane-2 has an open task to move it into the repository). The wrapper passes the pull request number, the full head commit and reviewed-since. It runs the gate again, at most 8 times 5 seconds apart, while the gate's output contains "mergeStateStatus is UNKNOWN", and stops on every other nonzero exit status. When the gate passes, the wrapper takes the line after "MERGE WITH THIS EXACT COMMAND:" and requires it to be exactly the merge command; merge-lane-2 then runs that command. `scripts/merge-gate-test.py` also runs the gate, against a test double for `gh`, and asserts phrases of its messages. Those two texts the wrapper matches, "mergeStateStatus is UNKNOWN" and the line "MERGE WITH THIS EXACT COMMAND:" with the command line after it, stay exactly as they are.
+**Who reads its messages.** merge-lane-2 runs the gate through the merge seat's wrapper, a script that is not yet in the repository; merge-lane-2 has an open task to move it there. The wrapper exports the merge account's token as `GH_TOKEN` and passes the pull request number, the full head commit and reviewed-since. It runs the gate again, at most 8 times 5 seconds apart, while the gate's output contains "mergeStateStatus is UNKNOWN", and stops on every other nonzero exit status. When the gate passes, the wrapper takes the line after "MERGE WITH THIS EXACT COMMAND:", requires it to be exactly the merge command, and runs it with the same `GH_TOKEN`, so the merge runs as the merge account. `scripts/merge-gate-test.py` also runs the gate, against a test double for `gh`, and asserts phrases of its messages. Those two texts the wrapper matches, "mergeStateStatus is UNKNOWN" and the line "MERGE WITH THIS EXACT COMMAND:" with the command line after it, stay exactly as they are.
 
 **What the gate prints.** Today every failure is one line on stderr, with one of two prefixes, and the exit status matches the prefix:
 
@@ -453,12 +453,20 @@ The other two take the same three lines after their own first line.
 
 ### The pass
 
-**Today** (`scripts/merge-gate.sh:258`, `:261` and `:262`), on stdout, exit status 0; left exactly as it is, because the wrapper reads the last two lines:
+**Today** (`scripts/merge-gate.sh:258`, `:261` and `:262`), on stdout, exit status 0:
 
 ```
 gate passed (#1074): approved commit 0d55173b2c4e8a9f1b6d3e7a5c9f2b4d8e1a6c3f by mac-claude at 2026-10-05T15:58:12Z, APPROVED, CLEAN, no new channel activity since 2026-10-05T15:58:12Z
 MERGE WITH THIS EXACT COMMAND:
   gh pr merge 1074 --repo nedschorus/nedschorus --merge --delete-branch --match-head-commit 0d55173b2c4e8a9f1b6d3e7a5c9f2b4d8e1a6c3f
+```
+
+**What the reader cannot tell from the text.** That the merge command must run as the merge account. The gate exports the token only inside its own process; the merge seat's wrapper exports it too, so its merges run as `ned-review-merge`, but an agent that ran the printed command in another shell would merge as `gh`'s stored account there.
+
+**Proposed text.** The three lines stay exactly as they are, because the wrapper reads the last two; one line is added after them:
+
+```
+Run that command with GH_TOKEN set to the merge account's token, {token_file}, so the merge runs as ned-review-merge.
 ```
 
 ## Code the new texts need
@@ -468,7 +476,9 @@ MERGE WITH THIS EXACT COMMAND:
 - The four reads of the pull request's state at `:170-173` are checked, and a failure calls `cannot()` with message 28.
 - The reviewed-since check at `:152-155` also runs `jq` with `fromdateiso8601` on the value, so a value of the right shape that is no real time is refused there as message 4.
 - Message 1 fills `{count}` from `$#`; message 18 builds its link from `approval_id`; message 23 chooses its lines by `reviewDecision`; message 24 chooses its line by `mergeStateStatus`.
-- No other exit status changes, and the pass lines and the line "mergeStateStatus is {merge_state}" do not change.
+- The pass gains one line after the merge command, filling `{token_file}` from `$TOKEN_FILE`.
+- `:251` reads every review's `submitted_at` with `fromdateiso8601` without the `submitted_at != null` filter `:197` and `:229` apply; the filter is added there. A pending review has no `submitted_at`, and without the filter it would stop the gate with message 13.
+- No other exit status changes, and the three pass lines and the line "mergeStateStatus is {merge_state}" do not change.
 
 ## Tests
 
@@ -478,8 +488,3 @@ MERGE WITH THIS EXACT COMMAND:
 - changes the cases for messages 9 to 12 from asserting a refusal, exit status 1, to asserting that the gate could not run, exit status 2;
 - adds cases for message 1's count, message 28, a reviewed-since that is no real time, both forms of message 23 for which a capture exists, and the `UNKNOWN`, `DIRTY` and `BLOCKED` lines of message 24, which have captures; `BEHIND` has none, and the suite's rule is that no fixture is typed, so `BEHIND` gets no case;
 - updates the source text its mutations quote, so each mutation still finds its target: `TOKEN_BLOCK`, which the mutation "the token read with export's status" replaces, and the two read checks the mutations "without the inline comment channel's read check" and "without the issue comment channel's read check" quote, which change from `fail` to `cannot`.
-
-## Found while reading, outside this part
-
-- `scripts/merge-gate.sh:251` reads every review's `submitted_at` with `fromdateiso8601`, without the `submitted_at != null` filter `:197` and `:229` apply. A pending review, which has no `submitted_at`, would make the gate stop with message 13. No case of it is on record; it is put to merge-lane-2 and the user rather than fixed here.
-- The gate exports the merge account's token only inside its own process. The merge command it prints runs in merge-lane-2's shell, as `gh`'s stored account there, unless merge-lane-2 sets the token itself. This is put to merge-lane-2.
