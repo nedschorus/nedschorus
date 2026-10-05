@@ -58,6 +58,10 @@ The handoff overview was refreshed by hand before this step exists, in PR [Hando
 - GHI [built-in-process-planned documents: design docs convert to a pointer map of built / in process / planned, with a skill that verifies and updates them](https://github.com/nedschorus/nedschorus/issues/219) — its 2026-08-29 update-at-landing ruling is this step's predecessor; item 7 retires the BIPP document it proposed.
 - GHI [Queue drain procedure — the review process that empties the wiki queue, the pair queue, nc-queue, docs/drafts and the draft-label issue queue](https://github.com/nedschorus/nedschorus/issues/24) — the precedent for a report at reincarnation (the handoff scrub step reports each queue's depth).
 
+## The daily reminder turned down; a refresh agent deferred, 2026-10-03
+
+The staleness check of item 5 is built: `nc-systems/handoff/handoff-supervisor.py` tells the first agent-seat that restarts each day that an overview is due, and that agent-seat, busy with its own job, lets the refresh wait. On 2026-10-03 at about 23:00Z the user turned that reminder down: "no - this is a stupid design - we should build the refresh agent" (item 5 of the approval-walk whose minutes are `nedlern@ned-box:/home/nedlern/nedschorus-logs/walk/handoff-system-overview-refresh-2026-10-03-minutes.md`). So the Next action's "builds the supervisor's staleness check" is done and turned down. He deferred the refresh agent to later maintenance work; nothing is built before he takes it up. Its design, this issue's supporting document `docs/issues/670-system-overview-refresh-agent-design.md`, runs one fresh agent per due system on ned-box after main passes its nightly full test run, refreshes the overview only, not the design or the build-slice plan, and deletes the reminder.
+
 ## Next action
 
 Settle the draft definition and the pinned line's format with the user, then build: the fleet seat builds the supervisor's staleness check; the refresh itself is built as a skill a subagent runs over one system and one commit range. Add the glossary entry in the pull request that makes the step exist.
