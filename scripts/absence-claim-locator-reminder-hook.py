@@ -198,6 +198,12 @@ def absence_claim_matches(text):
 def is_human_or_parent_message(record):
     if record.get("type") != "user":
         return False
+    # A loaded skill's text and a background task's notification arrive as user
+    # records inside the turn that caused them; neither starts a new turn.
+    if record.get("isMeta"):
+        return False
+    if (record.get("origin") or {}).get("kind") == "task-notification":
+        return False
     content = record.get("message", {}).get("content")
     if isinstance(content, str):
         return True
@@ -292,8 +298,6 @@ def run(stdin_text, environment, home, now):
         return None
     if event == "SubagentStop":
         transcript_path = payload.get("agent_transcript_path")
-        if not transcript_path:
-            return None
     else:
         transcript_path = payload.get("transcript_path")
     if not transcript_path:

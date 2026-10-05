@@ -74,6 +74,21 @@ class Case:
         self.records.append({"type": "user", "message": {"role": "user", "content": text}})
         return self
 
+    def skill_loaded(self, skill_name):
+        # The record shape Claude Code writes when a skill loads: a user text
+        # record marked isMeta, after the Skill call's tool_result.
+        self.records.append({"type": "user", "isMeta": True, "message": {
+            "role": "user", "content": [{"type": "text", "text":
+                f"Base directory for this skill: /x/.claude/skills/{skill_name}\n\n# {skill_name}"}]}})
+        return self
+
+    def task_notification(self):
+        self.records.append({"type": "user", "origin": {"kind": "task-notification",
+                                                        "producer": "session-task"},
+                             "message": {"role": "user", "content":
+                                 "<task-notification>\n<status>completed</status>\n</task-notification>"}})
+        return self
+
     def assistant_text(self, text, message_id=None):
         Case.counter += 1
         self.records.append({"type": "assistant", "message": {
@@ -219,9 +234,29 @@ check("locator ran this turn: logged as locator_ran",
 
 case = (Case().user("Where are the transcripts?")
         .tool_use("Skill", {"skill": "locate-before-saying-a-file-is-missing"})
+        .skill_loaded("locate-before-saying-a-file-is-missing")
         .assistant_text(B01_CLAIM).write())
 result = case.run()
-check("the skill invoked this turn: silent", result.stdout == "", result.stdout)
+check("the skill invoked this turn, its loaded text in the transcript: silent",
+      result.stdout == "", result.stdout)
+
+case = (Case().user("Where are the transcripts?")
+        .tool_use("Bash", {"command": "python3 scripts/locate-file-copies-across-machines.py 21dc3d71.jsonl"})
+        .tool_use("Skill", {"skill": "pull-request-review-write"})
+        .skill_loaded("pull-request-review-write")
+        .assistant_text(B01_CLAIM).write())
+result = case.run()
+check("the locator ran, then another skill loaded: still silent",
+      result.stdout == "", result.stdout)
+
+case = (Case().user("Where are the transcripts?")
+        .tool_use("Bash", {"command": "python3 scripts/locate-file-copies-across-machines.py 21dc3d71.jsonl"})
+        .assistant_text("Waiting on the search.")
+        .task_notification()
+        .assistant_text(B01_CLAIM).write())
+result = case.run()
+check("the locator ran before a background task's notification: still silent",
+      result.stdout == "", result.stdout)
 
 case = (Case().user("Where are the transcripts?")
         .tool_use("Bash", {"command": "python3 scripts/locate-file-copies-across-machines.py x.jsonl"})
