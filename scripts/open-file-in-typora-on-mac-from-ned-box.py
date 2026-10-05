@@ -63,12 +63,14 @@ def main(arguments):
         print(f"{PROGRAM}: no request was sent, because {refusal}.", file=sys.stderr)
         print(f"The Mac sees only files under {ned_box_home}/: copy the file there and open the copy.", file=sys.stderr)
         return window_sender.EXIT_USAGE_OR_REFUSED
+    # The user opens the file on the Mac, so he is given the Mac's path to it.
+    mac_path = os.path.join(forced_command.MAC_MOUNT_OF_NED_BOX_HOME, resolved[len(ned_box_home.rstrip("/")) + 1:])
     return window_sender.send_request_to_mac(
         request, forced_command, program=PROGRAM,
         not_done="Typora was not opened",
-        fallback=f"the file you wanted shown, {resolved}, so he can open it himself",
+        fallback=f"the file you wanted shown, which is {mac_path} on the Mac, so he can open it himself",
         may_not_have_happened="Typora may not have opened the file",
-        timeout_fallback=f"the file you wanted shown, {resolved}")
+        timeout_fallback=f"what this says, and the file you wanted shown, which is {mac_path} on the Mac, so he can check whether it opened")
 
 
 if __name__ == "__main__":

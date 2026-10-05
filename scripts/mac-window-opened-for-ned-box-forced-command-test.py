@@ -241,6 +241,14 @@ for case_name, (request, expected) in TYPORA_REFUSED.items():
     reason = typora_refusal_of(request)
     check(f"typora refused: {case_name}", reason is not None and expected in reason, reason)
 
+for length, accepted in ((forced_command.MAXIMUM_PATH_LENGTH - 1, True), (forced_command.MAXIMUM_PATH_LENGTH, True),
+                         (forced_command.MAXIMUM_PATH_LENGTH + 1, False)):
+    path = "/home/nedlern/" + "a" * (length - len("/home/nedlern/"))
+    reason = typora_refusal_of(f"open-in-typora {path}")
+    check(f"typora: a path of {length} characters is {'accepted' if accepted else 'refused'}",
+          (reason is None) if accepted else (reason is not None and "over the limit of" in reason), reason)
+check("typora: the path limit is 1024 characters", forced_command.MAXIMUM_PATH_LENGTH == 1024, forced_command.MAXIMUM_PATH_LENGTH)
+
 
 def writable_mount_point():
     """A real mount point this test may write inside, and the directory to write in."""
@@ -295,6 +303,20 @@ else:
           f"opened {document} in Typora on the Mac" in result.stdout, result.stdout)
     check("typora: an accepted file is logged before it opens",
           f" accepted 'open-in-typora {document}'" in log and log.index(" accepted ") < log.index(" opened "), log)
+
+    # ned-box's home and the Mac's mount differ here, and the file exists only under
+    # the mount, so the file is found only if the path is mapped onto the mount.
+    stand_in_home = "/nedbox-home-stand-in-that-does-not-exist"
+    relative = document.relative_to(mount)
+    result, opened, log = run_typora(f"open-in-typora {stand_in_home}/{relative}", stand_in_home, mount)
+    check("typora: a ned-box path is mapped onto the Mac's mount, and open gets the mapped path",
+          result.returncode == 0 and opened == ["-a", "Typora", str(document)], (result.returncode, opened, result.stderr))
+
+    result, opened, log = run_typora(f"open-in-typora {document}", mount, mount, open_body="kill -9 $$\n")
+    check("typora: an open killed by a signal is reported as failed, not opened",
+          result.returncode == 1 and "open exited -9" in result.stderr and "opened " not in result.stdout,
+          (result.returncode, result.stdout, result.stderr))
+    check("typora: an open killed by a signal is logged as failed", "open-failed--9" in log, log)
 
     result, opened, log = run_typora(f"open-in-typora {files / 'inside-link.md'}", mount, mount)
     check("typora: a link that stays inside the mount is opened", result.returncode == 0 and opened is not None, result.stderr)

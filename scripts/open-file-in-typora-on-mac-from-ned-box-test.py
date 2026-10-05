@@ -104,9 +104,9 @@ check("a refused key says Typora was not opened, and that the Mac does not admit
       result.returncode == 1 and "so Typora was not opened" in result.stderr and "does not admit this key yet" in result.stderr, result.stderr)
 
 result, sent, _ = run_caller([str(document)], home, ssh_body="echo 'ssh: connect to host 10.0.1.23 port 22: Operation timed out' >&2; exit 255")
-check("an unreachable Mac says so, with ssh's own error and the file to tell the user about",
+check("an unreachable Mac says so, with ssh's own error and the file's path on the Mac to tell the user",
       result.returncode == 1 and "could not reach the Mac" in result.stderr and "Operation timed out" in result.stderr
-      and str(document) in result.stderr, result.stderr)
+      and f"which is /Volumes/nedhome/{document.relative_to(home)} on the Mac" in result.stderr, result.stderr)
 
 result, sent, _ = run_caller([str(document)], home, ssh_body="echo 'refused for a reason' >&2; exit 2")
 check("a refusal from the Mac exits 2 and passes the Mac's reason on", result.returncode == 2 and "refused for a reason" in result.stderr, result)
@@ -116,7 +116,9 @@ check("a Mac-side failure exits 1 and passes the Mac's error on", result.returnc
 
 result, sent, _ = run_caller([str(document)], home, ssh_body="sleep 5", timeout_seconds=0.5)
 check("an ssh that does not finish in time exits 1 and says Typora may not have opened the file",
-      result.returncode == 1 and "so Typora may not have opened the file" in result.stderr, (result.returncode, result.stderr))
+      result.returncode == 1 and "so Typora may not have opened the file" in result.stderr
+      and f"which is /Volumes/nedhome/{document.relative_to(home)} on the Mac, so he can check whether it opened" in result.stderr,
+      (result.returncode, result.stderr))
 
 mount = None
 for candidate, writable_inside in (("/dev/shm", "/dev/shm"), ("/System/Volumes/Data", "/System/Volumes/Data/private/tmp")):
