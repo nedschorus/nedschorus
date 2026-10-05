@@ -7,10 +7,13 @@ Usage:
                                                 [--lock-file PATH]
 
   <suite>      the suite's path relative to the checkout's top directory,
-               such as scripts/run-all-test-suites-test.py
-  --mutant     a patch `git apply` can apply in the checkout; it is applied to
-               the files it names, the suite runs, and those files are put back
-               byte for byte, whatever happens to the suite
+               such as scripts/run-all-test-suites-test.py, or an absolute
+               path inside the checkout
+  --mutant     a patch `git apply` can apply in the checkout; the suite runs
+               once without it, which must pass, then the patch is applied to
+               the files it names, the suite runs again, and those files are
+               put back byte for byte with their mode and modification time,
+               whatever happens to the suite
   --checkout   the checkout's top directory; default the current directory
   --python     the interpreter for a Python suite; default this one
   --lock-file  default ~/.claude/.run-all-test-suites.lock, the lock
@@ -24,7 +27,9 @@ inside the sandbox confirms that process 1 there is bwrap; if it is not, the
 suite is not run. This program never runs a suite unconfined: without bwrap, on
 a platform other than Linux, or for a suite listed in
 SUITES_RUN_OUTSIDE_THE_SIGNAL_SANDBOX, it refuses. Started inside a sandbox
-already, it runs the suite there, after the same check.
+already, it runs the suite there, after the same check, and when the suite
+ends or the run is interrupted it kills every process the suite left behind,
+as the end of the sandbox's PID namespace does otherwise.
 
 The patch may only change files that already exist; a patch that creates,
 deletes or renames a file is refused, because putting the files back is then
@@ -33,10 +38,12 @@ more than restoring their bytes.
 The last line printed is the verdict:
   VERDICT: suite passed            exit 0
   VERDICT: suite failed (...)      exit 1
-  VERDICT: mutant killed (...)     exit 0   the suite failed with the mutant in
+  VERDICT: mutant killed (...)     exit 0   the suite passed without the mutant
+                                            and failed with it in
   VERDICT: mutant survived         exit 1   the suite passed with the mutant in
-  VERDICT: not run (...)           exit 2   nothing was run, or the run could
-                                            not be trusted
+  VERDICT: not run (...)           exit 2   nothing was run, the run could not
+                                            be trusted, or the suite failed
+                                            without the mutant
   VERDICT: not run (lock held)     exit 3   another test run holds the lock
   VERDICT: RESTORE FAILED (...)    exit 4   a mutated file could not be put
                                             back; the message names its copy
@@ -45,6 +52,7 @@ Run: python3 scripts/run-suite-in-signal-sandbox.py scripts/a-test.py --mutant /
 """
 
 import argparse
+import ctypes
 import importlib.util
 import os
 import shutil
@@ -52,6 +60,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+from dataclasses import dataclass
 from pathlib import Path
 
 PROGRAM = "run-suite-in-signal-sandbox"
@@ -59,7 +68,8 @@ SCRIPTS_DIR = Path(__file__).resolve().parent
 INSIDE_CHECK_OPTION = "--inside-signal-sandbox-check-pid-one-then-exec"
 PID_ONE_COMMAND_FILE = Path("/proc/1/comm")
 PID_ONE_PROOF = "process 1 is bwrap"
-SIGNALS_HELD_DURING_RESTORE = {signal.SIGTERM, signal.SIGHUP, signal.SIGINT}
+INTERRUPTING_SIGNALS = (signal.SIGTERM, signal.SIGHUP, signal.SIGINT)
+PR_SET_CHILD_SUBREAPER = 36
 
 EXIT_PASSED_OR_KILLED = 0
 EXIT_FAILED_OR_SURVIVED = 1
@@ -88,14 +98,34 @@ class RestoreFailed(Exception):
 
 
 class Terminated(BaseException):
-    """SIGTERM or SIGHUP arrived; raised so the mutated files are still put back."""
+    """SIGTERM, SIGHUP or SIGINT arrived; raised so the mutated files are still put back."""
+
+
+@dataclass
+class KeptOriginal:
+    data: bytes
+    mode: int
+    times_ns: tuple
+
+
+def note_later_interruption(signal_number, frame):
+    pass
 
 
 def raise_terminated(signal_number, frame):
+    # A second signal must not abort the restore the first one started.
+    for interrupting in INTERRUPTING_SIGNALS:
+        signal.signal(interrupting, note_later_interruption)
     raise Terminated(signal.Signals(signal_number).name)
 
 
-def pid_one_is_bwrap(command_file=PID_ONE_COMMAND_FILE):
+def install_interruption_handlers():
+    for interrupting in INTERRUPTING_SIGNALS:
+        signal.signal(interrupting, raise_terminated)
+
+
+def pid_one_is_bwrap(command_file=None):
+    command_file = PID_ONE_COMMAND_FILE if command_file is None else command_file
     try:
         return command_file.read_text().strip() == "bwrap"
     except OSError:
@@ -137,25 +167,36 @@ def files_the_patch_changes(top, patch):
 
 
 def keep_originals(top, paths, keep_dir):
-    """Copy each file's bytes into keep_dir and return {path: bytes}."""
+    """Copy each file's bytes into keep_dir and return {path: KeptOriginal}."""
     originals = {}
     for relative in paths:
-        data = (top / relative).read_bytes()
+        target = top / relative
+        status = target.stat()
+        data = target.read_bytes()
         kept = keep_dir / relative
         kept.parent.mkdir(parents=True, exist_ok=True)
         kept.write_bytes(data)
-        originals[relative] = data
+        originals[relative] = KeptOriginal(data, status.st_mode & 0o7777,
+                                           (status.st_atime_ns, status.st_mtime_ns))
     return originals
 
 
 def restore_originals(top, originals, keep_dir):
     """Write each original back and read it back; raise RestoreFailed naming any that differ."""
     # A signal arriving half-way through would leave some files mutated.
-    blocked = signal.pthread_sigmask(signal.SIG_BLOCK, SIGNALS_HELD_DURING_RESTORE)
+    failed = []
+    blocked = signal.pthread_sigmask(signal.SIG_BLOCK, INTERRUPTING_SIGNALS)
     try:
         failed = write_back(top, originals)
     finally:
-        signal.pthread_sigmask(signal.SIG_SETMASK, blocked)
+        try:
+            signal.pthread_sigmask(signal.SIG_SETMASK, blocked)
+        except (Terminated, KeyboardInterrupt) as interruption:
+            if failed:
+                raise RestoreFailed(
+                    f"{', '.join(failed)}; the original of each is kept under {keep_dir} "
+                    f"(the run was also interrupted: {interruption})") from interruption
+            raise
     if failed:
         raise RestoreFailed(
             f"{', '.join(failed)}; the original of each is kept under {keep_dir}")
@@ -163,15 +204,37 @@ def restore_originals(top, originals, keep_dir):
 
 def write_back(top, originals):
     failed = []
-    for relative, data in originals.items():
+    for relative, original in originals.items():
         target = top / relative
         try:
-            target.write_bytes(data)
-            if target.read_bytes() != data:
+            target.write_bytes(original.data)
+            os.chmod(target, original.mode)
+            os.utime(target, ns=original.times_ns)
+            remove_cached_bytecode(target)
+            status = target.stat()
+            if target.read_bytes() != original.data:
                 failed.append(f"{relative} (read back differs)")
+            elif status.st_mode & 0o7777 != original.mode:
+                failed.append(f"{relative} (mode {oct(status.st_mode & 0o7777)}, "
+                              f"was {oct(original.mode)})")
         except OSError as error:
             failed.append(f"{relative} ({error})")
     return failed
+
+
+def remove_cached_bytecode(source):
+    """Delete the bytecode cached beside a source file the mutant changes.
+
+    A process that does not inherit PYTHONPYCACHEPREFIX, such as a child started
+    with `python3 -I`, reads and writes bytecode beside the source. The mutant
+    has the original's size, so bytecode written within the same second passes
+    Python's size-and-seconds staleness check: the original's would run during
+    the mutant run, and the mutant's after the restore.
+    """
+    if source.suffix != ".py":
+        return
+    for cached in (source.parent / "__pycache__").glob(f"{source.stem}.*.pyc"):
+        cached.unlink(missing_ok=True)
 
 
 def suite_command(top, suite, interpreter):
@@ -180,13 +243,66 @@ def suite_command(top, suite, interpreter):
     return [interpreter, "-u", suite]
 
 
+def become_child_subreaper():
+    """Make orphaned descendants of this process its children, so they can all be found."""
+    libc = ctypes.CDLL(None, use_errno=True)
+    if libc.prctl(PR_SET_CHILD_SUBREAPER, 1, 0, 0, 0) != 0:
+        raise NotRun(f"prctl(PR_SET_CHILD_SUBREAPER) failed: "
+                     f"{os.strerror(ctypes.get_errno())}")
+
+
+def children_of(parent_pid):
+    """Return {pid: state} of the processes whose parent is parent_pid."""
+    children = {}
+    for entry in Path("/proc").iterdir():
+        if not entry.name.isdigit():
+            continue
+        try:
+            stat = (entry / "stat").read_text()
+        except OSError:
+            continue
+        # The command name in parentheses may hold spaces; the fields after it do not.
+        fields = stat[stat.rindex(")") + 2:].split()
+        if int(fields[1]) == parent_pid:
+            children[int(entry.name)] = fields[0]
+    return children
+
+
+def stop_descendants():
+    """SIGKILL and reap every process descended from this one, orphans included.
+
+    Only direct children are signalled: an unreaped child's process id cannot be
+    reused, so no other process is hit. A killed child's own children become
+    children of this process, the subreaper, and are killed in the next round.
+    """
+    for _ in range(1000):
+        children = children_of(os.getpid())
+        if not children:
+            return
+        for pid, state in children.items():
+            if state != "Z":
+                try:
+                    os.kill(pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+        for pid in children:
+            try:
+                os.waitpid(pid, 0)
+            except ChildProcessError:
+                pass
+    raise NotRun("processes the suite started could not all be stopped")
+
+
 def run_suite_confined(top, suite, interpreter, sandbox_prefix, proof_file, bytecode_dir=None):
     """Run the suite inside the sandbox; return its exit code, or raise NotRun if unproven.
 
-    With bytecode_dir, Python reads and writes bytecode only there. The restored
-    file has the mutant's size, and a write within the same second gives it the
-    same mtime, so bytecode cached beside it would pass Python's staleness check
-    and run the mutant after the restore, or the original during the mutant run.
+    With bytecode_dir, Python started with this environment reads and writes
+    bytecode only there, so a mutant run neither runs nor caches bytecode beside
+    the sources. A child that drops the environment, such as `python3 -I`, still
+    caches beside them; the restore deletes that bytecode.
+
+    However the suite ends, every process it left is killed before this returns:
+    inside a sandbox that this program did not start, nothing else would.
     """
     command = [*sandbox_prefix, sys.executable, str(Path(__file__).resolve()),
                INSIDE_CHECK_OPTION, str(proof_file), "--",
@@ -194,12 +310,21 @@ def run_suite_confined(top, suite, interpreter, sandbox_prefix, proof_file, byte
     environment = runner.environment_without_git_redirecting_variables()
     if bytecode_dir is not None:
         environment["PYTHONPYCACHEPREFIX"] = str(bytecode_dir)
-    completed = subprocess.run(command, cwd=str(top), env=environment,
-                               stdin=subprocess.DEVNULL, check=False)
+    # A proof left by an earlier run must not vouch for this one.
+    proof_file.write_text("")
+    process = subprocess.Popen(command, cwd=str(top), env=environment,
+                               stdin=subprocess.DEVNULL)
+    try:
+        process.wait()
+    finally:
+        if process.returncode is None:
+            process.kill()
+            process.wait()
+        stop_descendants()
     if proof_file.read_text().strip() != PID_ONE_PROOF:
         raise NotRun(f"the check inside the sandbox did not confirm process 1 is bwrap "
-                     f"(exit {completed.returncode}), so the suite was not started")
-    exit_code = completed.returncode
+                     f"(exit {process.returncode}), so the suite was not started")
+    exit_code = process.returncode
     if sandbox_prefix and 128 < exit_code <= 128 + runner.SIGNAL_NUMBER_LIMIT:
         exit_code = -(exit_code - 128)
     return exit_code
@@ -237,7 +362,7 @@ def run(arguments, platform):
         interpreter, _ = runner.interpreter_and_version(arguments.python)
     except runner.CouldNotRun as error:
         raise NotRun(str(error).split("\n")[0]) from error
-    suite = arguments.suite
+    suite = suite_relative_to_top(arguments.suite, top)
     if not (top / suite).is_file():
         raise NotRun(f"{suite} is not a file in {top}; pass the suite's path relative to "
                      f"the checkout's top directory")
@@ -254,25 +379,37 @@ def run(arguments, platform):
     if unconfined_because:
         raise NotRun(f"no signal sandbox: {unconfined_because}")
 
-    lock_handle, holder, _ = runner.take_machine_lock(Path(arguments.lock_file), top)
+    lock_handle, holder, previous_holder = runner.take_machine_lock(
+        Path(arguments.lock_file), top)
     if lock_handle is None:
         return (f"VERDICT: not run (lock held) — {arguments.lock_file} is held by {holder}; "
                 f"run again when that run has finished"), EXIT_LOCKED
     try:
+        # Taking the lock overwrote the description a killed run left; clean up after it
+        # here, as the run of scripts/run-all-test-suites.py that would have read it does.
+        runner.remove_traces_the_last_lock_holder_left(previous_holder)
+        become_child_subreaper()
         with tempfile.TemporaryDirectory(prefix=f"{PROGRAM}-") as work_name:
             work = Path(work_name)
             proof_file = work / "pid-one-proof"
-            proof_file.write_text("")
             if patch is None:
                 code = run_suite_confined(top, suite, interpreter, sandbox_prefix, proof_file)
                 return verdict(code, mutant=False)
             paths = files_the_patch_changes(top, patch)
+            baseline = run_suite_confined(top, suite, interpreter, sandbox_prefix, proof_file)
+            if baseline != 0:
+                raise NotRun(f"the suite fails without the mutant ({runner.describe_exit(baseline)}), "
+                             f"so a failure with the mutant in would not show the mutant "
+                             f"was caught; the mutant was not applied")
+            print(f"{PROGRAM}: the suite passes without the mutant", flush=True)
             keep_dir = Path(tempfile.mkdtemp(prefix=f"{PROGRAM}-originals-"))
             originals = keep_originals(top, paths, keep_dir)
             try:
                 applied = runner.git(top, "apply", str(patch))
                 if applied.returncode != 0:
                     raise NotRun(f"git apply failed: {applied.stderr.strip()}")
+                for relative in paths:
+                    remove_cached_bytecode(top / relative)
                 print(f"{PROGRAM}: mutant applied to {', '.join(paths)}; originals kept "
                       f"under {keep_dir}", flush=True)
                 code = run_suite_confined(top, suite, interpreter, sandbox_prefix, proof_file,
@@ -286,13 +423,26 @@ def run(arguments, platform):
         lock_handle.close()
 
 
+def suite_relative_to_top(given, top):
+    """Return the suite's path relative to top, normalized, so `./` spellings match lists."""
+    path = Path(given)
+    if path.is_absolute():
+        try:
+            path = path.resolve().relative_to(top)
+        except ValueError as error:
+            raise NotRun(f"{given} is not inside the checkout {top}") from error
+    normalized = os.path.normpath(path.as_posix())
+    if normalized == ".." or normalized.startswith("../"):
+        raise NotRun(f"{given} is not inside the checkout {top}")
+    return normalized
+
+
 def main(argv=None, platform=None):
     argv = sys.argv[1:] if argv is None else argv
     if argv[:1] == [INSIDE_CHECK_OPTION]:
         return inside_check_then_exec(argv[1], argv[3:])
     arguments = parse_arguments(argv)
-    signal.signal(signal.SIGTERM, raise_terminated)
-    signal.signal(signal.SIGHUP, raise_terminated)
+    install_interruption_handlers()
     try:
         line, code = run(arguments, sys.platform if platform is None else platform)
     except NotRun as error:

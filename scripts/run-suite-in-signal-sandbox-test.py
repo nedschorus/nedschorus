@@ -14,12 +14,15 @@ import contextlib
 import fcntl
 import io
 import importlib.util
+import marshal
+import py_compile
 import os
 import pathlib
 import signal
 import subprocess
 import sys
 import tempfile
+import time
 
 # Before anything runs git, so the scratch repository is built where this suite says.
 _git_environment_fixture_spec = importlib.util.spec_from_file_location(
@@ -64,11 +67,26 @@ PID_ONE_SUITE_SOURCE = (
     "import pathlib, os\n"
     "print('pid one:', pathlib.Path('/proc/1/comm').read_text().strip())\n"
     "print('inside variable:', os.environ.get('RUN_ALL_TEST_SUITES_INSIDE_SIGNAL_SANDBOX'))\n")
-# Runs long enough for the case to terminate the program while the mutant is in.
+# Passes at once without the mutant; with it, runs long enough for the case to
+# terminate the program while the mutant is in.
 TERMINATES_THE_PROGRAM_SUITE_SOURCE = (
-    "import time\n"
+    "import sys, time\n"
+    "sys.path.insert(0, '.')\n"
+    "import doubling\n"
+    "if doubling.unused() == 1:\n"
+    "    sys.exit(0)\n"
     "print('suite started', flush=True)\n"
     "time.sleep(60)\n")
+# A child started with -I drops PYTHONPYCACHEPREFIX and caches bytecode beside the source.
+CHILD_DROPS_ENVIRONMENT_SUITE_SOURCE = (
+    "import subprocess, sys\n"
+    "answer = subprocess.run([sys.executable, '-I', '-c', "
+    "'import sys; sys.path.insert(0, \".\"); import doubling; print(doubling.unused())'], "
+    "capture_output=True, text=True).stdout.strip()\n"
+    "if answer != '1':\n"
+    "    print('FAIL: unused() answered', answer)\n"
+    "    sys.exit(1)\n")
+FAILS_WITHOUT_ANY_MUTANT_SUITE_SOURCE = "import missing_dependency_module\n"
 
 
 def scratch_checkout(scratch):
@@ -78,6 +96,10 @@ def scratch_checkout(scratch):
     (repository / "doubling-test.py").write_text(SUITE_SOURCE)
     (repository / "pid-one-test.py").write_text(PID_ONE_SUITE_SOURCE)
     (repository / "terminates-test.py").write_text(TERMINATES_THE_PROGRAM_SUITE_SOURCE)
+    (repository / "child-drops-environment-test.py").write_text(
+        CHILD_DROPS_ENVIRONMENT_SUITE_SOURCE)
+    (repository / "fails-without-mutant-test.py").write_text(
+        FAILS_WITHOUT_ANY_MUTANT_SUITE_SOURCE)
     (repository / "fails-test.sh").write_text("echo failing; exit 7\n")
     (repository / ".gitignore").write_text("__pycache__/\n")
     for git_arguments in (["init", "-q"], ["add", "-A"],
@@ -114,6 +136,24 @@ def unchanged(repository):
     return (repository / "doubling.py").read_bytes() == MODULE_SOURCE.encode() and \
         subprocess.run(["git", "-C", str(repository), "status", "--porcelain"],
                        capture_output=True, text=True, check=True).stdout == ""
+
+
+def kept(repository, data, path="doubling.py"):
+    """A KeptOriginal of data with the file's current mode and times."""
+    status = (repository / path).stat()
+    return program.KeptOriginal(data, status.st_mode & 0o7777,
+                                (status.st_atime_ns, status.st_mtime_ns))
+
+
+def cached_bytecode_of_mutant(repository):
+    """Return the cached bytecode files beside doubling.py whose unused() returns 2."""
+    found = []
+    for cached in (repository / "__pycache__").glob("doubling.*.pyc"):
+        code = marshal.loads(cached.read_bytes()[16:])
+        for constant in code.co_consts:
+            if getattr(constant, "co_name", None) == "unused" and 2 in constant.co_consts:
+                found.append(cached.name)
+    return found
 
 
 def bwrap_usable():
@@ -179,6 +219,68 @@ with tempfile.TemporaryDirectory() as scratch_name:
               completed.returncode == program.EXIT_NOT_RUN and proof.read_text() == ""
               and not ran_marker.exists(), (completed.returncode, completed.stderr))
 
+    # The inside check with process 1 not bwrap and the inside variable leaked in: the
+    # suite must not start. Run in a child process, because a passing check execs.
+    (scratch / "proof-leaked").write_text("")
+    leaked_marker = scratch / "ran-with-leaked-variable"
+    completed = subprocess.run(
+        [sys.executable, "-c",
+         "import importlib.util, pathlib, sys\n"
+         f"spec = importlib.util.spec_from_file_location('p', {str(PROGRAM_PATH)!r})\n"
+         "program = importlib.util.module_from_spec(spec)\n"
+         "spec.loader.exec_module(program)\n"
+         f"program.PID_ONE_COMMAND_FILE = pathlib.Path({str(scratch / 'init-comm')!r})\n"
+         "sys.exit(program.main(sys.argv[1:]))\n",
+         program.INSIDE_CHECK_OPTION, str(scratch / "proof-leaked"), "--",
+         "touch", str(leaked_marker)],
+        capture_output=True, text=True, check=False,
+        env={**os.environ, "RUN_ALL_TEST_SUITES_INSIDE_SIGNAL_SANDBOX": "1"})
+    check("with the inside variable leaked in but process 1 not bwrap, the inside check "
+          "refuses: no proof, the command not started",
+          completed.returncode == program.EXIT_NOT_RUN
+          and (scratch / "proof-leaked").read_text() == "" and not leaked_marker.exists()
+          and "not bwrap" in completed.stderr, (completed.returncode, completed.stderr))
+
+# --- Interruption handling ------------------------------------------------------
+
+program.install_interruption_handlers()
+try:
+    try:
+        os.kill(os.getpid(), signal.SIGTERM)
+        first_raised = False
+    except program.Terminated:
+        first_raised = True
+    try:
+        os.kill(os.getpid(), signal.SIGTERM)
+        os.kill(os.getpid(), signal.SIGHUP)
+        second_raised = False
+    except program.Terminated:
+        second_raised = True
+finally:
+    signal.signal(signal.SIGTERM, signal.SIG_DFL)
+    signal.signal(signal.SIGHUP, signal.SIG_DFL)
+    signal.signal(signal.SIGINT, signal.default_int_handler)
+check("the first SIGTERM raises Terminated and a later one does not, so it cannot abort "
+      "the restore the first one started", first_raised and not second_raised,
+      (first_raised, second_raised))
+
+# --- Suite paths ----------------------------------------------------------------
+
+with tempfile.TemporaryDirectory() as scratch_name:
+    top = pathlib.Path(scratch_name).resolve()
+    check("a ./ spelling of a suite is normalized to its path from the top",
+          program.suite_relative_to_top("./scripts/a-test.py", top) == "scripts/a-test.py")
+    check("an absolute path inside the checkout becomes its path from the top",
+          program.suite_relative_to_top(str(top / "scripts" / "a-test.py"), top)
+          == "scripts/a-test.py")
+    for outside in ("../a-test.py", "/elsewhere/a-test.py"):
+        try:
+            program.suite_relative_to_top(outside, top)
+            refused = False
+        except program.NotRun:
+            refused = True
+        check(f"a suite path outside the checkout is refused: {outside}", refused)
+
 # --- Refusals that run nothing ------------------------------------------------
 
 with tempfile.TemporaryDirectory() as scratch_name:
@@ -201,6 +303,7 @@ with tempfile.TemporaryDirectory() as scratch_name:
             program.runner.signal_sandbox = original_sandbox
             signal.signal(signal.SIGTERM, signal.SIG_DFL)
             signal.signal(signal.SIGHUP, signal.SIG_DFL)
+            signal.signal(signal.SIGINT, signal.default_int_handler)
         return code, output.getvalue(), ran
 
     code, output, ran = main_with_nothing_run("darwin")
@@ -230,6 +333,15 @@ with tempfile.TemporaryDirectory() as scratch_name:
     else:
         check("when the check inside the sandbox refuses, the run is NotRun and the suite "
               "never starts", False, "no exception")
+    proof.write_text(program.PID_ONE_PROOF + "\n")
+    try:
+        program.run_suite_confined(repository, "marks-test.py", sys.executable,
+                                   ("env", "RUN_ALL_TEST_SUITES_INSIDE_SIGNAL_SANDBOX="), proof)
+        stale_proof_refused = False
+    except program.NotRun:
+        stale_proof_refused = True
+    check("a proof an earlier run left does not vouch for a run whose check refuses",
+          stale_proof_refused and not ran_marker.exists())
     marker_suite.unlink()
 
     outside_suite = next(iter(program.runner.SUITES_RUN_OUTSIDE_THE_SIGNAL_SANDBOX))
@@ -237,6 +349,10 @@ with tempfile.TemporaryDirectory() as scratch_name:
     (repository / outside_suite).write_text("print('ran')\n")
     completed, last = run_program(scratch, repository, outside_suite)
     check("a suite listed to run outside the sandbox is refused, exit 2",
+          completed.returncode == 2 and "cannot run inside the signal sandbox" in last,
+          (completed.returncode, last))
+    completed, last = run_program(scratch, repository, "./" + outside_suite)
+    check("a suite listed to run outside the sandbox is refused when spelled with ./, exit 2",
           completed.returncode == 2 and "cannot run inside the signal sandbox" in last,
           (completed.returncode, last))
 
@@ -293,6 +409,59 @@ else:
               (completed.returncode, completed.stdout))
         check("after a surviving mutant, the mutated file is back byte for byte",
               unchanged(repository), (repository / "doubling.py").read_text())
+
+        # A suite that fails without the mutant cannot show that the mutant was caught.
+        completed, last = run_program(scratch, repository, "fails-without-mutant-test.py",
+                                      "--mutant", str(surviving))
+        check("a suite that fails without the mutant is 'not run', exit 2, the mutant not applied",
+              completed.returncode == 2 and "fails without the mutant" in last
+              and "mutant applied" not in completed.stdout and unchanged(repository),
+              (completed.returncode, completed.stdout))
+
+        # A child that drops the environment reads and writes bytecode beside the source.
+        # Bytecode of the original written in the mutant's second would run during the
+        # mutant run; an unchecked hash-based .pyc stands in for it, since Python runs one
+        # whatever the source holds.
+        py_compile.compile(str(repository / "doubling.py"),
+                           cfile=str(repository / "__pycache__" /
+                                     f"doubling.{sys.implementation.cache_tag}.pyc"),
+                           invalidation_mode=py_compile.PycInvalidationMode.UNCHECKED_HASH)
+        completed, last = run_program(scratch, repository, "child-drops-environment-test.py",
+                                      "--mutant", str(surviving))
+        fresh_import = subprocess.run(
+            [sys.executable, "-I", "-c",
+             "import sys; sys.path.insert(0, '.'); import doubling; print(doubling.unused())"],
+            cwd=str(repository), capture_output=True, text=True, check=False)
+        check("after a mutant run whose suite's child cached bytecode beside the source, no "
+              "bytecode of the mutant is left and a fresh import runs the original",
+              completed.returncode == 0 and last.startswith("VERDICT: mutant killed")
+              and cached_bytecode_of_mutant(repository) == []
+              and fresh_import.stdout.strip() == "1" and unchanged(repository),
+              (completed.returncode, completed.stdout, cached_bytecode_of_mutant(repository),
+               fresh_import.stdout))
+        # With the original's write long past, the child caches the mutant's bytecode.
+        os.utime(repository / "doubling.py", ns=(1_000_000_000_000_000_000,
+                                                 1_000_000_000_000_000_000))
+        completed, last = run_program(scratch, repository, "child-drops-environment-test.py",
+                                      "--mutant", str(surviving))
+        check("after a mutant run whose suite's child cached the mutant's bytecode beside the "
+              "source, that bytecode is deleted",
+              completed.returncode == 0 and last.startswith("VERDICT: mutant killed")
+              and cached_bytecode_of_mutant(repository) == [] and unchanged(repository),
+              (completed.returncode, completed.stdout, cached_bytecode_of_mutant(repository)))
+
+        # Mode and modification time come back with the bytes.
+        os.chmod(repository / "doubling.py", 0o600)
+        os.utime(repository / "doubling.py", ns=(1_000_000_000_000_000_000,
+                                                 1_000_000_000_000_000_000))
+        completed, last = run_program(scratch, repository, "doubling-test.py",
+                                      "--mutant", str(killing))
+        status = (repository / "doubling.py").stat()
+        check("after a mutant run, the file's mode and modification time are back too",
+              completed.returncode == 0 and status.st_mode & 0o7777 == 0o600
+              and status.st_mtime_ns == 1_000_000_000_000_000_000 and unchanged(repository),
+              (completed.returncode, oct(status.st_mode), status.st_mtime_ns))
+        os.chmod(repository / "doubling.py", 0o644)
 
         # A mutant whose file has uncommitted edits: those edits come back too.
         edited = MODULE_SOURCE + "# uncommitted edit\n"
@@ -351,6 +520,48 @@ else:
               process.returncode == 2 and "interrupted" in last and unchanged(repository),
               (process.returncode, stdout, stderr, (repository / "doubling.py").read_text()))
 
+        # --- An interrupted run leaves no process of the suite running ---------
+        heartbeat = scratch / "heartbeat"
+        (repository / "heartbeat-child.py").write_text(
+            "import sys, time\n"
+            "while True:\n"
+            "    with open(sys.argv[1], 'w') as beat:\n"
+            "        beat.write(repr(time.time()))\n"
+            "    time.sleep(0.1)\n")
+        (repository / "spawns-test.py").write_text(
+            "import os, subprocess, sys, time\n"
+            f"heartbeat = {str(heartbeat)!r}\n"
+            "subprocess.Popen([sys.executable, 'heartbeat-child.py', heartbeat],\n"
+            "                 start_new_session=True)\n"
+            "while not os.path.exists(heartbeat):\n"
+            "    time.sleep(0.05)\n"
+            "print('suite started', flush=True)\n"
+            "time.sleep(60)\n")
+        process = subprocess.Popen(
+            [sys.executable, str(PROGRAM_PATH), "spawns-test.py", "--checkout", str(repository),
+             "--lock-file", str(scratch / "run.lock")],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+            stdin=subprocess.DEVNULL)
+        for output_line in process.stdout:
+            if "suite started" in output_line:
+                process.send_signal(signal.SIGTERM)
+                break
+        try:
+            # A process left running keeps the output pipe open, and this waits for it.
+            process.communicate(timeout=30)
+            exited = True
+        except subprocess.TimeoutExpired:
+            process.kill()
+            exited = False
+        time.sleep(0.5)
+        beat_after_exit = heartbeat.read_text()
+        time.sleep(1.0)
+        check("terminated, the program leaves no process the suite started running, even one "
+              "in a session of its own", exited and heartbeat.read_text() == beat_after_exit
+              and process.returncode == 2, (exited, process.returncode, beat_after_exit))
+        (repository / "spawns-test.py").unlink()
+        (repository / "heartbeat-child.py").unlink()
+
         # --- Restore failure is reported, not hidden --------------------------
         keep = scratch / "keep"
         keep.mkdir()
@@ -358,7 +569,7 @@ else:
         original_write_back = program.write_back
         program.write_back = lambda top, originals: ["doubling.py (read back differs)"]
         try:
-            program.restore_originals(repository, {"doubling.py": MODULE_SOURCE.encode()}, keep)
+            program.restore_originals(repository, {"doubling.py": kept(repository, MODULE_SOURCE.encode())}, keep)
         except program.RestoreFailed as error:
             check("a file that does not read back as its original is RestoreFailed naming "
                   "the file and where its original is kept",
@@ -368,20 +579,33 @@ else:
                   "the file and where its original is kept", False, "no exception")
         finally:
             program.write_back = original_write_back
-        failed = program.write_back(repository, {"doubling.py": MODULE_SOURCE.encode()})
+        failed = program.write_back(repository,
+                                    {"doubling.py": kept(repository, MODULE_SOURCE.encode())})
         check("write_back puts the bytes back and reports nothing when they read back",
               failed == [] and unchanged(repository), failed)
-        failed = program.write_back(repository, {"no-dir/x.py": b"x"})
+        failed = program.write_back(repository, {"no-dir/x.py": program.KeptOriginal(
+            b"x", 0o644, (0, 0))})
         check("write_back reports a file it cannot write", failed and "no-dir/x.py" in failed[0],
               failed)
         original_read_bytes = pathlib.Path.read_bytes
+        doubling_kept = kept(repository, MODULE_SOURCE.encode())
         pathlib.Path.read_bytes = lambda self: b"something else"
         try:
-            failed = program.write_back(repository, {"doubling.py": MODULE_SOURCE.encode()})
+            failed = program.write_back(repository, {"doubling.py": doubling_kept})
         finally:
             pathlib.Path.read_bytes = original_read_bytes
         check("write_back reports a file that does not read back as written",
               failed == ["doubling.py (read back differs)"], failed)
+
+        original_chmod = program.os.chmod
+        program.os.chmod = lambda *arguments, **options: None
+        try:
+            failed = program.write_back(repository, {"doubling.py": program.KeptOriginal(
+                MODULE_SOURCE.encode(), 0o600, (0, 0))})
+        finally:
+            program.os.chmod = original_chmod
+        check("write_back reports a file whose mode does not read back as the original's",
+              len(failed) == 1 and "doubling.py (mode" in failed[0], failed)
 
         # SIGTERM during the restore waits until every file is written.
         written = []
@@ -395,15 +619,44 @@ else:
         program.write_back = write_back_terminated_half_way
         signal.signal(signal.SIGTERM, program.raise_terminated)
         try:
-            program.restore_originals(repository, {"doubling.py": MODULE_SOURCE.encode()}, keep)
+            program.restore_originals(repository,
+                                      {"doubling.py": kept(repository, MODULE_SOURCE.encode())},
+                                      keep)
             terminated = False
         except program.Terminated:
             terminated = True
         finally:
             program.write_back = original_write_back
-            signal.signal(signal.SIGTERM, signal.SIG_DFL)
+            for restored in program.INTERRUPTING_SIGNALS:
+                signal.signal(restored, signal.SIG_DFL)
+            signal.signal(signal.SIGINT, signal.default_int_handler)
         check("a SIGTERM that arrives during the restore takes effect only after every file "
               "is written", terminated and written == ["all files"], (terminated, written))
+
+        # A restore that fails while a SIGTERM is pending is reported as a failed restore.
+        def write_back_fails_and_terminated(top, originals):
+            os.kill(os.getpid(), signal.SIGTERM)
+            return ["doubling.py (read back differs)"]
+
+        program.write_back = write_back_fails_and_terminated
+        signal.signal(signal.SIGTERM, program.raise_terminated)
+        try:
+            program.restore_originals(repository,
+                                      {"doubling.py": kept(repository, MODULE_SOURCE.encode())},
+                                      keep)
+            outcome = "no exception"
+        except program.RestoreFailed as error:
+            outcome = f"RestoreFailed: {error}"
+        except program.Terminated as error:
+            outcome = f"Terminated: {error}"
+        finally:
+            program.write_back = original_write_back
+            for restored in program.INTERRUPTING_SIGNALS:
+                signal.signal(restored, signal.SIG_DFL)
+            signal.signal(signal.SIGINT, signal.default_int_handler)
+        check("a restore that fails while a SIGTERM is pending is RestoreFailed, not an "
+              "interruption", outcome.startswith("RestoreFailed") and "doubling.py" in outcome
+              and "SIGTERM" in outcome, outcome)
 
         # --- The lock ---------------------------------------------------------
         lock_path = scratch / "run.lock"
@@ -418,6 +671,17 @@ else:
               completed.returncode == 3 and "lock held" in last and "checkout elsewhere" in last
               and "all cases passed" not in completed.stdout and unchanged(repository),
               (completed.returncode, completed.stdout))
+
+        # A killed run of scripts/run-all-test-suites.py named its logs in the lock file;
+        # taking the lock overwrites that, so this program removes the traces it left.
+        left_trace = scratch / "killed-run-logs" / "recorded-inputs" / "a-test.py.strace"
+        left_trace.mkdir(parents=True)
+        lock_path.write_text(f"pid 1, checkout elsewhere, started then, logs in "
+                             f"{scratch / 'killed-run-logs'}\n")
+        completed, last = run_program(scratch, repository, "doubling-test.py")
+        check("the strace directories a killed run named in the lock file are removed",
+              completed.returncode == 0 and not left_trace.exists(),
+              (completed.returncode, last, left_trace.exists()))
 
 print()
 print(f"{cases_run} cases run")
