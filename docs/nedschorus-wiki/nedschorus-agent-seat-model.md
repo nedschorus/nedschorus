@@ -68,7 +68,7 @@ The launcher creates the agent-seat's worktree on its own branch **before the se
 
 ## What separate branches do and do not protect
 
-Each agent-seat's worktree holds one branch at a time, its own seat branch or a topic branch cut from main, and git refuses to check one branch out in two worktrees. That keeps two agent-seats off one branch and nothing more: it is a check rather than a guarantee, since `git worktree add --force` overrides it and a separate clone is invisible to it, and two agent-seats editing the same file on different branches meet at the merge.
+Each agent-seat's worktree holds one branch at a time, its own seat-branch or a topic branch cut from main, and git refuses to check one branch out in two worktrees. That keeps two agent-seats off one branch and nothing more: it is a check rather than a guarantee, since `git worktree add --force` overrides it and a separate clone is invisible to it, and two agent-seats editing the same file on different branches meet at the merge.
 
 It protects nothing outside git. `~/.claude/handoffs/` and the tmux socket (`tmux -L <seat>`, one server per agent-seat since 2026-08-21, so one server crash takes down one agent-seat) are per-machine state keyed by the agent-seat's name. Two agent-seats using the same name would collide in that directory and in cross-session addressing, which is why one name means one agent-seat across both machines.
 

@@ -1,9 +1,9 @@
-# Notes on using the Codex and Gemini (Antigravity) agents from a seat
+# Notes on using the Codex and Gemini (Antigravity) agents from an agent-seat
 
-Written 2026-09-04 by the cold-read-research seat after a day of running both as
+Written 2026-09-04 by the cold-read-research agent-seat after a day of running both as
 cold-read cells. Every item here was measured, not read from docs, unless it
 says otherwise. The measurements it cites are in the record
-`nedlern@ned-box:/home/nedlern/nedschorus-logs/cold-read-records/2026-09-03-cold-read-tier-roster-campaign/`. Claude Code is not covered: it is the runtime the seats run in.
+`nedlern@ned-box:/home/nedlern/nedschorus-logs/cold-read-records/2026-09-03-cold-read-tier-roster-campaign/`. Claude Code is not covered: it is the runtime the agent-seats run in.
 
 The one rule that saved the most time: **when a runtime's behaviour is not
 obvious, ask the runtime itself, with permissions granted, before reading its
@@ -19,7 +19,7 @@ is a symlink into `node_modules/@openai/codex`. `brew upgrade codex` fails
 ("Cask 'codex' is not installed") even though a brew formula exists. Use
 `codex update` (it runs `npm install -g @openai/codex`). Check with
 `codex --version`. No live `codex exec` should be running when you update; the
-binary is shared by every seat on the machine.
+binary is shared by every agent-seat on the machine.
 
 **Model ids.** The CLI does not list models on the command line. The list it
 knows is cached at `~/.codex/models_cache.json`, refreshed on each run; read the
@@ -111,7 +111,7 @@ running experiments on itself, so read the shipped guide first.
 `gpt-5.6-terra` at low effort in a quarter of the time, at better precision
 on a design. `gemini-3.8-flash-high` takes about 200 seconds. Neither found a
 defect no other cell found, so Gemini is a speed cell for interactive use,
-not a seat in the full set.
+not a cold-read-cell in the cold-read-full-run.
 
 ## Running a one-off prompt as a cold-read cell
 
@@ -131,12 +131,12 @@ agy direct).
 
 - A shared scratchpad directory with a generic script name (`build_clusters.py`)
   let one agent run another's script. Name scratch files with the target and
-  the seat.
+  the agent-seat.
 - Two runners writing one `manifest.json` drop each other's entries; run one at
   a time and regenerate the manifest from the records afterwards.
 - The Claude account limit resets on a clock; a rerun pass should sleep until
   the reset, then skip records that exist.
-- `/login` in a seat's terminal kills that seat's in-flight subagents with an
+- `/login` in an agent-seat's terminal kills that agent-seat's in-flight subagents with an
   auth error, and the background `claude -p` cells with them; the OAuth token
   also expired overnight once and hung a cell for six hours. Anything long
   should be relaunchable with skip-existing.
