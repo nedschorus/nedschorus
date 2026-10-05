@@ -420,11 +420,11 @@ per design-first.
 
 ### Q5 — What piles up, and who sweeps it?
 
-**R21. Session worktrees are reaped when clean, landed, and vacant —
+**R21. A session worktree is removed once its branch is merged into main and no running program is working inside it, whatever files it still holds; the cleaner names each file it discards —
 built-live (PR [clean-worktrees: mechanical reaper for finished session worktrees, reporting at every seat launch](https://github.com/nedschorus/nedschorus/pull/73)); vacancy made provable (PR [worktree reaper: prove vacancy before reaping, instead of assuming it](https://github.com/nedschorus/nedschorus/pull/100), merged 2026-08-19).**
 `scripts/clean-worktrees.py`: anything failing or ambiguous is kept with
-its reason; the launcher runs only the safe subset at boot; removal is a
-separate deliberate call, never automatic. The posture it set,
+its reason; the launcher runs only the safe subset at boot; removal runs
+daily at 06:30 as `clean-worktrees.py --remove`. The posture it set,
 reused across this model: mechanical predicates, ambiguity keeps, report
 before remove. PR [worktree reaper: prove vacancy before reaping, instead of assuming it](https://github.com/nedschorus/nedschorus/pull/100) closed the gap where an untrustworthy vacancy
 answer read as vacant: vacancy is now proven by a usable answer or the
