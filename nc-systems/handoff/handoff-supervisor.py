@@ -1507,10 +1507,10 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
                   f"resuming this seat's last transcript {by_hand_session_id} "
                   "rather than starting it empty")
             if settings.first_prompt:
-                print("handoff-supervisor: ignoring --first-prompt-file, because this seat "
-                      "already has a transcript worth resuming; --first-prompt-file is only "
-                      "for a seat with none, unless --first-prompt-file-wins-over-crashed-transcript "
-                      "is also given")
+                print("handoff-supervisor: ignoring the first prompt from --first-prompt or "
+                      "--first-prompt-file, because this seat already has a transcript worth "
+                      "resuming; a first prompt is used only for a seat with no transcript worth "
+                      "resuming, unless --first-prompt-file-wins-over-crashed-transcript is also given")
             session_id = by_hand_session_id
             next_launch_resumes_the_session = True
             prompt = RESUME_PROMPT_WHEN_A_SESSION_ENDED_WITHOUT_A_HANDOFF

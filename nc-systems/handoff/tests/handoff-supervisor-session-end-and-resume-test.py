@@ -1167,8 +1167,8 @@ def run_by_hand_resume_cases(workspace: Path):
           (session_id, resume, crashed.stem))
     check("FIRST PROMPT: and the resumed session gets the resume prompt, not the founding brief",
           prompt == supervisor.RESUME_PROMPT_WHEN_A_SESSION_ENDED_WITHOUT_A_HANDOFF, prompt)
-    check("FIRST PROMPT: the supervisor says it ignored --first-prompt-file",
-          "ignoring --first-prompt-file" in printed, printed[-400:])
+    check("FIRST PROMPT: the supervisor says it ignored the first prompt",
+          "ignoring the first prompt" in printed, printed[-400:])
 
     settings = settings_for("first-prompt-nothing-worth-resuming")
     settings.first_prompt = founding_prompt
@@ -1176,7 +1176,7 @@ def run_by_hand_resume_cases(workspace: Path):
     (session_id, prompt, resume), printed = launch_once_printing(settings, empty_projects)
     check("FIRST PROMPT: a seat with nothing worth resuming starts fresh on its first prompt",
           resume is not True and prompt == founding_prompt
-          and "ignoring --first-prompt-file" not in printed,
+          and "ignoring the first prompt" not in printed,
           (session_id, prompt, resume))
 
     settings = settings_for("first-prompt-recorded-exit")
@@ -1198,7 +1198,7 @@ def run_by_hand_resume_cases(workspace: Path):
     (session_id, prompt, resume), printed = launch_once_printing(settings, projects)
     check("FIRST PROMPT: a waiting handoff still wins over the transcript and the first prompt",
           resume is not True and session_id != crashed.stem
-          and "ignoring --first-prompt-file" not in printed,
+          and "ignoring the first prompt" not in printed,
           (session_id, resume))
 
     # recover-crashed-seats.py --ignite-fallback chose not to resume: its ignition
@@ -1262,6 +1262,27 @@ def run_by_hand_resume_cases(workspace: Path):
     check("IGNITION control: without the flag the same launch resumes the transcript",
           exit_code == 0 and session_id == crashed.stem and resume is True,
           (exit_code, session_id, resume, printed[-400:]))
+
+    # The flag means nothing without a prompt file to win with; refused before any launch,
+    # or the seat would resume its transcript as though the flag were not there.
+    refusal_directory = directory / "ignite-flag-without-file"
+    refusal_directory.mkdir(parents=True, exist_ok=True)
+    refusal_stderr = io.StringIO()
+    refusal_exit_code = None
+    try:
+        with contextlib.redirect_stderr(refusal_stderr):
+            exit_code, (session_id, prompt, resume), printed = run_main_once(
+                ["--agent", "byhandigniteflagonly", "--cd", str(workspace),
+                 "--agent-command", sys.executable, "--handoff-dir", str(refusal_directory),
+                 recovery.IGNITION_FROM_DIALOG_EXTRACT_SUPERVISOR_ARGUMENTS])
+        refusal_exit_code = exit_code
+    except SystemExit as refused:
+        refusal_exit_code = refused.code
+        session_id = None
+    check("IGNITION: the flag without --first-prompt-file is refused before any launch",
+          refusal_exit_code == 2 and session_id is None
+          and "needs --first-prompt-file" in refusal_stderr.getvalue(),
+          (refusal_exit_code, session_id, refusal_stderr.getvalue()[-300:]))
 
     # 5. --resume-session-id, the flag scripts/recover-crashed-seats.py and the
     # login-time restart pass. No case ran it through the loop until the

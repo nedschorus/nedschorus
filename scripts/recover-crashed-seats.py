@@ -202,10 +202,10 @@ SYNTHETIC_ASSISTANT_MODEL = worth_resuming.SYNTHETIC_ASSISTANT_MODEL
 first_user_turn_text = worth_resuming.first_user_turn_text
 substantive_turn_count = worth_resuming.substantive_turn_count
 newest_real_transcript = worth_resuming.newest_real_transcript
-# Do not skip a handoff successor: its parent is already retired.
-# Keep the marker short enough to match both timestamp forms stored in transcripts.
 # Without it the supervisor resumes the crashed transcript and drops the ignition prompt.
 IGNITION_FROM_DIALOG_EXTRACT_SUPERVISOR_ARGUMENTS = "--first-prompt-file-wins-over-crashed-transcript"
+# Do not skip a handoff successor: its parent is already retired.
+# Keep the marker short enough to match both timestamp forms stored in transcripts.
 REINCARNATION_OPENER_MARKER = "the dialog from the session you are continuing"
 # Anchor the opener to avoid matching its text quoted in a hand-written brief.
 REINCARNATION_OPENER_PATTERN = re.compile(
