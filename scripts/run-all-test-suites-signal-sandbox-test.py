@@ -161,6 +161,95 @@ with tempfile.TemporaryDirectory() as scratch_name:
     else:
         print("SKIP  the broken-bwrap refusal: bwrap is used only on Linux")
 
+# --- What a run's report says about the sandbox -------------------------------
+
+
+def scratch_checkout(scratch, suites):
+    """A git checkout holding the given suites, each printing that it ran."""
+    repository = scratch / "repo"
+    for suite in suites:
+        (repository / suite).parent.mkdir(parents=True, exist_ok=True)
+        (repository / suite).write_text("print('ran')\n")
+    for git_arguments in (["init", "-q"], ["add", "-A"],
+                          ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "a"]):
+        subprocess.run(["git", "-C", str(repository), *git_arguments],
+                       capture_output=True, check=True)
+    return repository
+
+
+def run_runner(scratch, repository, path):
+    environment = {name: value for name, value in os.environ.items()
+                   if name != runner.SIGNAL_SANDBOX_INSIDE_VARIABLE}
+    environment["PATH"] = path
+    completed = subprocess.run(
+        [sys.executable, str(RUNNER_PATH), "--checkout", str(repository),
+         "--log-dir", str(scratch / "logs"),
+         "--lock-file", str(scratch / "run.lock"),
+         "--recorded-inputs-directory", str(scratch / "recordings")],
+        capture_output=True, text=True, env=environment, stdin=subprocess.DEVNULL, check=False)
+    report_file = scratch / "logs" / runner.REPORT_FILE_NAME
+    report = report_file.read_text() if report_file.exists() else ""
+    return completed, report
+
+
+OUTSIDE_SUITE = "scripts/mac-window-opened-for-ned-box-forced-command-test.py"
+
+if sys.platform.startswith("linux"):
+    with tempfile.TemporaryDirectory() as scratch_name:
+        scratch = pathlib.Path(scratch_name)
+        # Every command on PATH but bwrap, so the run finds git and sh and no sandbox.
+        path_without_bwrap = scratch / "bin"
+        path_without_bwrap.mkdir()
+        for directory in os.environ.get("PATH", "").split(os.pathsep):
+            if not directory or not os.path.isdir(directory):
+                continue
+            for entry in os.scandir(directory):
+                target = path_without_bwrap / entry.name
+                if entry.name != "bwrap" and not os.path.lexists(target):
+                    target.symlink_to(entry.path)
+        repository = scratch_checkout(scratch, ["a-test.py"])
+        completed, report = run_runner(scratch, repository, str(path_without_bwrap))
+        without = "suites run WITHOUT the signal sandbox"
+        check("without bwrap, the run's output and report.txt say the suites ran without "
+              "the sandbox, and why",
+              completed.returncode == 0
+              and all(without in text and "bwrap is not on PATH" in text
+                      for text in (completed.stdout, report)),
+              (completed.returncode, completed.stdout[-600:], report[-600:]))
+        check("without bwrap, nothing in the report claims the suites were confined",
+              "PID namespace" not in report, report[-600:])
+
+    with tempfile.TemporaryDirectory() as scratch_name:
+        scratch = pathlib.Path(scratch_name)
+        fake_bin = scratch / "bin"
+        fake_bin.mkdir()
+        # Stands in for a working bwrap: skips the sandbox's own arguments, runs the suite.
+        (fake_bin / "bwrap").write_text(
+            "#!/bin/sh\n"
+            "while [ $# -gt 0 ]; do\n"
+            "  case \"$1\" in\n"
+            "    --dev-bind|--setenv) shift 3 ;;\n"
+            "    --proc) shift 2 ;;\n"
+            "    --unshare-pid|--die-with-parent) shift ;;\n"
+            "    *) break ;;\n"
+            "  esac\n"
+            "done\n"
+            "exec \"$@\"\n")
+        (fake_bin / "bwrap").chmod(0o755)
+        repository = scratch_checkout(scratch, ["a-test.py", OUTSIDE_SUITE])
+        completed, report = run_runner(
+            scratch, repository, f"{fake_bin}{os.pathsep}{os.environ.get('PATH', '')}")
+        check("with the sandbox on, report.txt says each suite runs in its own PID namespace",
+              completed.returncode == 0
+              and f"each suite runs in its own PID namespace: {fake_bin / 'bwrap'}" in report,
+              (completed.returncode, report[-600:]))
+        check("with the sandbox on, report.txt names a suite that runs outside it, and why",
+              f"{OUTSIDE_SUITE} runs WITHOUT the signal sandbox: "
+              f"{runner.SUITES_RUN_OUTSIDE_THE_SIGNAL_SANDBOX[OUTSIDE_SUITE]}" in report,
+              report[-600:])
+else:
+    print("SKIP  the report's sandbox lines: bwrap is used only on Linux")
+
 # --- The mutation script's test command --------------------------------------
 
 command = mutation.test_command_for(["a-test.py"], "/usr/bin/python3",

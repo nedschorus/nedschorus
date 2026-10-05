@@ -59,9 +59,12 @@ stdout and stderr together into its own log file. A suite that starts
 
 EACH SUITE RUNS IN A SIGNAL SANDBOX on Linux: `bwrap --dev-bind / /
 --unshare-pid --die-with-parent --proc /proc`, so the suite and everything it
-starts sit in a PID namespace of their own. The file system, network and
-user are unchanged, but a signal a suite sends can reach only the processes
-it started, never the agent-seats that run as the same account. bwrap is
+starts sit in a PID namespace of their own. The file system and network are
+unchanged, and the suite runs as the same user, so a signal a suite sends can
+reach only the processes it started, never the agent-seats that run as the
+same account. bwrap also gives the suite a user namespace of its own, in which
+every file owned by another user, root included, shows as owned by nobody: a
+check of a file's owner, such as ssh's check of its config files, fails there. bwrap is
 tried once before any suite runs; when it is on PATH but cannot start, the
 run stops with exit 2 rather than run the suites unconfined. Without bwrap,
 or on macOS, the suites run unconfined and the report says so. A run started
@@ -990,6 +993,9 @@ def signal_sandbox_refusal(error, program=PROGRAM):
             f"agent-seats running as the same account.\n"
             f"If this run is itself inside a bwrap sandbox (for example a Codex "
             f"sandbox), run it from an ordinary shell instead.\n"
+            f"If you cannot leave that sandbox, tell the user the suites were not "
+            f"run and why, and ask the user to run the same command from an "
+            f"ordinary shell on this machine.\n"
             f"Otherwise, check that `bwrap {' '.join(SIGNAL_SANDBOX_BWRAP_ARGUMENTS)} true` "
             f"works on this machine, and report what it prints to the user.")
 
