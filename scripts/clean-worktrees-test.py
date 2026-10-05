@@ -45,6 +45,7 @@ Run: python3 scripts/clean-worktrees-test.py
 
 import importlib.util
 import os
+import select
 import shutil
 import subprocess
 import sys
@@ -165,6 +166,29 @@ def run_clean_with_git_status_killed(repo, stub_directory, *flags):
         [sys.executable, str(CLEAN_SCRIPT), "--repo", str(repo), *flags],
         capture_output=True, text=True, check=False, env=environment,
     )
+
+
+def read_lines_until(process, enough, deadline_seconds):
+    """Read a child's stdout lines until enough(lines) holds, the pipe closes, or the
+    deadline passes; return the lines.
+
+    Reads raw bytes from the pipe's file descriptor and splits lines here. A text
+    wrapper's readline() can pull several lines into its own buffer and return one,
+    leaving the rest where select() cannot see them."""
+    lines, pending = [], b""
+    deadline = time.monotonic() + deadline_seconds
+    descriptor = process.stdout.fileno()
+    while not enough(lines) and time.monotonic() < deadline:
+        ready, _, _ = select.select([descriptor], [], [], 1)
+        if not ready:
+            continue
+        chunk = os.read(descriptor, 65536)
+        if not chunk:
+            break
+        pending += chunk
+        *complete, pending = pending.split(b"\n")
+        lines.extend(line.decode("utf-8", "replace") for line in complete)
+    return lines
 
 
 def load_clean_worktrees_module():
@@ -766,6 +790,79 @@ with tempfile.TemporaryDirectory() as scratch:
           not quiet.exists()
           and git(checkout, "branch", "--list", "worktree-agent-aaaaaaaaaaaaaaaa3").strip() == "",
           removal.stdout)
+
+
+# --- A run killed mid-removal has already shown what it announced ---------
+# The daily job runs the cleaner without -u, writing to a log. A git that
+# hangs on the second removal stands in for a run killed partway; every
+# line printed before the hang must be readable while the run is alive.
+with tempfile.TemporaryDirectory() as scratch:
+    scratch = Path(scratch)
+    checkout = scratch / "checkout"
+    origin = scratch / "origin.git"
+    checkout.mkdir()
+    git(checkout, "init", "-b", "main")
+    git(checkout, "config", "user.email", "test@test.invalid")
+    git(checkout, "config", "user.name", "clean-worktrees test")
+    (checkout / "README.md").write_text("# scratch\n", encoding="utf-8")
+    git(checkout, "add", "-A")
+    git(checkout, "commit", "-m", "seed")
+    subprocess.run(["git", "init", "--bare", str(origin)], capture_output=True, check=True)
+    git(checkout, "remote", "add", "origin", str(origin))
+    git(checkout, "push", "-u", "origin", "main")
+    managed = checkout / ".claude" / "worktrees"
+    managed.mkdir(parents=True)
+    for name in ("flush-first-wt", "flush-second-wt"):
+        path = managed / name
+        git(checkout, "worktree", "add", "-b", f"{name}-branch", str(path), "origin/main")
+        (path / f"{name}.txt").write_text("held\n", encoding="utf-8")
+
+    stub_directory = scratch / "hanging-git"
+    stub_directory.mkdir()
+    counter = scratch / "removal-count"
+    (stub_directory / "git").write_text(
+        "#!/bin/sh\n"
+        'case " $* " in *" worktree remove "*)\n'
+        f'  echo x >> "{counter}"\n'
+        f'  if [ "$(wc -l < "{counter}")" -ge 2 ]; then exec sleep 60; fi ;;\n'
+        "esac\n"
+        f'exec {shutil.which("git")} "$@"\n', encoding="utf-8")
+    (stub_directory / "git").chmod(0o755)
+    environment = dict(os.environ)
+    environment["PATH"] = f"{stub_directory}{os.pathsep}{environment.get('PATH', '')}"
+    environment.pop("PYTHONUNBUFFERED", None)
+    hanging = subprocess.Popen(
+        [sys.executable, str(CLEAN_SCRIPT), "--repo", str(checkout), "--remove"],
+        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, env=environment,
+        start_new_session=True,
+    )
+    seen = read_lines_until(
+        hanging,
+        lambda lines: (sum(": removing it will discard " in line for line in lines) == 2
+                       and sum(": discarded with it " in line for line in lines) == 1),
+        60)
+    os.killpg(hanging.pid, 9)
+    hanging.wait()
+    burst = subprocess.Popen(
+        [sys.executable, "-c",
+         "import sys, time\n"
+         "sys.stdout.write('one\\ntwo\\nthree\\nfour\\n'); sys.stdout.flush()\n"
+         "time.sleep(30)\n"],
+        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, start_new_session=True)
+    time.sleep(1)
+    burst_lines = read_lines_until(burst, lambda lines: len(lines) == 4, 5)
+    os.killpg(burst.pid, 9)
+    burst.wait()
+    check("the reader returns every line a child wrote in one burst, while it is alive",
+          burst_lines == ["one", "two", "three", "four"], str(burst_lines))
+    confirmed = [line for line in seen if ": discarded with it " in line]
+    announced = [line for line in seen if ": removing it will discard " in line]
+    check("a run stopped mid-removal has already shown the first removal, confirmed",
+          len(confirmed) == 1 and any(": removed" in line for line in seen), "\n".join(seen))
+    check("a run stopped mid-removal has already shown what the stopped removal announced",
+          len(announced) == 2
+          and confirmed[0].partition(":")[0] != announced[-1].partition(":")[0]
+          if confirmed and announced else False, "\n".join(seen))
 
 print()
 if failures:
