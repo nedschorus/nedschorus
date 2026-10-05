@@ -24,6 +24,11 @@ exits 3 at once, before making the worktree. Do not run the script under
 `flock` on that lock; the script takes the lock itself, so the flock would be
 the holder it refuses on.
 
+Each mutant's suites run in the signal sandbox scripts/run-all-test-suites.py
+uses, so a mutant that aims a signal at the wrong process can reach only the
+suite's own processes; when bwrap is on PATH but cannot start, the script
+exits 2.
+
 A renamed file is mutated under its new name. A mutant cosmic-ray could not
 judge, because its worker raised, its suites could not be launched, or its
 suites ran past --mutant-timeout-seconds, is printed as ERRORED and counts
@@ -147,11 +152,13 @@ def suites_for_file(path, suites_at_head, recordings_directory, runner):
     return chosen
 
 
-def test_command_for(suites, interpreter):
+def test_command_for(suites, interpreter, sandbox_prefix=(), suites_outside_sandbox=()):
     # The same launch the suite runner uses, so a suite judged by its exit code here is judged the same way there.
+    # A mutant can aim a signal anywhere, so each suite runs inside the runner's signal sandbox.
     chain = " && ".join(
-        f"sh {shlex.quote(suite)}" if suite.endswith("-test.sh")
-        else f"{shlex.quote(interpreter)} -u {shlex.quote(suite)}"
+        shlex.join([*(() if suite in suites_outside_sandbox else sandbox_prefix),
+                    *(["sh", suite] if suite.endswith("-test.sh")
+                      else [interpreter, "-u", suite])])
         for suite in suites)
     # cosmic-ray splits the command with shlex and runs it without a shell, so && needs sh -c.
     return f"sh -c {shlex.quote(chain)}"
@@ -234,14 +241,16 @@ def outcomes_from_dump(dump_text):
 
 
 def mutation_test_one_file(path, suites, worktree, scratch, tools, merge_base,
-                           arguments, environment):
+                           arguments, environment, sandbox_prefix=(),
+                           suites_outside_sandbox=()):
     """Run cosmic-ray on one file's changed lines; return (counts, survivors, errored)."""
     name = path.replace("/", "__")
     config = scratch / f"{name}.toml"
     session = scratch / f"{name}.sqlite"
     baseline_session = scratch / f"{name}.baseline.sqlite"
     config.write_text(cosmic_ray_config_text(
-        path, test_command_for(suites, arguments.python), merge_base,
+        path, test_command_for(suites, arguments.python, sandbox_prefix,
+                               suites_outside_sandbox), merge_base,
         arguments.mutant_timeout_seconds))
     cosmic_ray = tools["cosmic-ray"]
     baseline = run([cosmic_ray, "baseline", "--session-file",
@@ -356,6 +365,12 @@ def main(argv=None):
             environment, what="git ls-tree").splitlines()
             if path.endswith(("-test.py", "-test.sh"))]
 
+        try:
+            sandbox_prefix, unconfined_because = runner.signal_sandbox()
+        except runner.SignalSandboxCouldNotStart as error:
+            raise CouldNotRun(runner.signal_sandbox_refusal(error, PROGRAM)) from error
+        print(runner.signal_sandbox_line(sandbox_prefix, unconfined_because), flush=True)
+
         totals = dict.fromkeys(OUTCOME_KEYS, 0)
         untested = []
         lock_file = Path(arguments.lock_file or runner.DEFAULT_LOCK_FILE).expanduser()
@@ -391,9 +406,14 @@ def main(argv=None):
                                   f"has no sibling suite, so its changed lines are untested")
                             continue
                         print(f"MUTATING  {path} with {', '.join(suites)}", flush=True)
+                        outside = runner.SUITES_RUN_OUTSIDE_THE_SIGNAL_SANDBOX
+                        for suite in suites:
+                            if sandbox_prefix and suite in outside:
+                                print(f"NO SANDBOX  {suite} runs WITHOUT the signal "
+                                      f"sandbox: {outside[suite]}", flush=True)
                         counts, survivors, errored = mutation_test_one_file(
                             path, suites, worktree, scratch, tools, merge_base,
-                            arguments, environment)
+                            arguments, environment, sandbox_prefix, outside)
                         for key in totals:
                             totals[key] += counts[key]
                         for label, mutants in (("SURVIVED", survivors),

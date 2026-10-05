@@ -30,6 +30,14 @@ _git_environment_fixture_spec.loader.exec_module(_git_environment_fixture)
 _git_environment_fixture.remove_git_redirecting_environment_variables_from_this_process()
 
 SCRIPT = Path(__file__).with_name("pull-request-mutation-testing-survivors.py")
+
+
+def load_test_suite_runner():
+    spec = importlib.util.spec_from_file_location(
+        "run_all_test_suites", Path(__file__).with_name("run-all-test-suites.py"))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 CONTROL_DIRECTORY_VARIABLE = "PULL_REQUEST_MUTATION_TESTING_SURVIVORS_TEST_CONTROL_DIR"
 
 FAKE_COSMIC_RAY_SOURCE = f'''#!/usr/bin/env python3
@@ -218,10 +226,13 @@ def run_cases():
               f"rc={completed.returncode} out={out} err={completed.stderr}")
         check("the config names the changed file as the module path",
               'module-path = "scripts/thing.py"' in config, config)
+        sandbox_prefix, _ = load_test_suite_runner().signal_sandbox()
+        launch = " ".join([*sandbox_prefix, "/usr/bin/python3", "-u", "scripts/thing-test.py"])
         check("the config's test command runs the sibling suite through sh -c, "
-              "because cosmic-ray runs it without a shell",
-              "test-command = \"sh -c '/usr/bin/python3 -u scripts/thing-test.py'\"" in config,
-              config)
+              "because cosmic-ray runs it without a shell, inside the signal sandbox "
+              "when this machine has one",
+              f"test-command = \"sh -c '{launch}'\"" in config,
+              (launch, config))
         check("the config sets the git filter's branch to the merge base, not the base's tip",
               f'branch = "{base}"' in config
               and "[cosmic-ray.filters.git-filter]" in config, config)
