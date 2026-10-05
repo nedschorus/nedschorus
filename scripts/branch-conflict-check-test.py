@@ -401,6 +401,9 @@ case("UNRESOLVED head text is one instruction per line", lines == [
 status, lines = run(fake_runner(merge_tree_status=1))
 case("CONFLICT text is one instruction per line, naming the commit", lines == [
     "VERDICT: CONFLICT -- %s conflicts with origin/main." % HEAD_LABEL,
+    "First see what the conflict is with: if main has already replaced "
+    "this branch's work, do not merge; close the pull request and carry "
+    "what main still lacks on a new topic branch cut from current main.",
     "Merge origin/main into the branch by hand, with the frozen head as "
     "first parent.",
     "Resolve the conflict and change nothing else in the merge.",
@@ -431,9 +434,9 @@ status, lines = run(
     fake_runner(merge_tree_status=0, gh_results=[(0, "CONFLICTING")]),
     pull_request=353, reads=3)
 case("the CONFLICT block stays contiguous ahead of GitHub's lines",
-     len(lines) >= 5
-     and lines[3] == "Before pushing, rerun the test suites for what the merge "
-                     "touched." and lines[4].startswith("GITHUB:"))
+     len(lines) >= 6
+     and lines[4] == "Before pushing, rerun the test suites for what the merge "
+                     "touched." and lines[5].startswith("GITHUB:"))
 
 # A commit git cannot read the subject of -- GitHub's pushed head, never
 # fetched -- is named by its hash alone; the run's verdict is unchanged.
@@ -572,6 +575,9 @@ def clean_block(base="origin/main", label=HEAD_LABEL):
 def conflict_block(base="origin/main", label=HEAD_LABEL):
     return [
         "VERDICT: CONFLICT -- %s conflicts with %s." % (label, base),
+        "First see what the conflict is with: if main has already replaced "
+        "this branch's work, do not merge; close the pull request and carry "
+        "what main still lacks on a new topic branch cut from current main.",
         "Merge %s into the branch by hand, with the frozen head as first "
         "parent." % base,
         "Resolve the conflict and change nothing else in the merge.",

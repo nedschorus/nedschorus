@@ -119,9 +119,13 @@ class ThrowawayRepository:
 REFUSAL_FIRST_INSTRUCTION = "Commit under this seat's own name, not as "
 
 # The whole refusal, line for line, with the refused identity as {identity}.
-# Every line is an instruction, or an instruction under a stated condition;
-# the reasons live in the hook's header (CLAUDE.md, user-ruled 2026-09-18).
+# The first line says what was refused and why; every other line is an
+# instruction, or an instruction under a stated condition.
 EXPECTED_REFUSAL_LINES = [
+    "pre-commit: this commit is refused, because its author or committer is"
+    " {identity}: an agent's commit must not carry the user's own address,"
+    " which a pushed commit publishes, or the unconfigured-agent address, which"
+    " marks an agent-session started without its launcher.",
     "Commit under this seat's own name, not as {identity}.",
     "If this session is a seat, relaunch it with launch-claude-mac or"
     " launch-claude-ubuntu, then commit again.",
@@ -133,7 +137,9 @@ EXPECTED_REFUSAL_LINES = [
     " add --reset-author to that same command.",
     "If you are amending a commit the user wrote, leave it and make a new"
     " commit on top instead.",
-    "Do not change user.name or user.email in git config.",
+    "Do not change user.name or user.email in git config: every worktree of"
+    " the clone shares that config, so the change would rename every"
+    " agent-seat's commits.",
     "If the user is committing by hand, commit from a terminal outside the"
     " Claude session, adding -c user.name=<name> -c user.email=<address> after"
     " git if the clone's identity is unconfigured-agent.",
@@ -368,21 +374,22 @@ def run_cases(scratch: Path):
     check("the refusal says to commit on top when amending a commit the user wrote",
           "If you are amending a commit the user wrote, leave it and make a new"
           " commit on top instead." in completed.stderr, completed.stderr)
-    # Every refusal line opens as an instruction ("Commit", "Do not") or as the
-    # condition an instruction applies under ("If"), never as a status line.
+    # The first line says what was refused; every later line opens as an
+    # instruction ("Commit", "Do not") or as the condition an instruction
+    # applies under ("If").
     refusal_lines = [line for line in completed.stderr.splitlines() if line.strip()]
-    check("every refusal line is an instruction",
-          bool(refusal_lines) and all(
-              line.startswith(("Commit ", "If ", "Do not "))
-              for line in refusal_lines),
+    check("the refusal opens by saying the commit is refused",
+          bool(refusal_lines)
+          and refusal_lines[0].startswith("pre-commit: this commit is refused, because "),
           refusal_lines)
-    # A line can open as an instruction and still carry a reason after it
-    # (the old "Do not change user.name or user.email in git config: every
-    # seat on this machine shares that file."), which the line-start check
-    # above cannot see: mutation M4 in merge-lane-2's review 5298511609
-    # restored exactly that and passed. So the refusal is pinned line for
-    # line; a reason added anywhere changes a line and fails here.
-    check("the refusal is exactly its instruction lines, nothing appended",
+    check("every later refusal line is an instruction",
+          len(refusal_lines) > 1 and all(
+              line.startswith(("Commit ", "If ", "Do not "))
+              for line in refusal_lines[1:]),
+          refusal_lines)
+    # The line-start checks cannot see a wording change inside a line, so the
+    # refusal is pinned line for line.
+    check("the refusal is exactly its lines, nothing appended",
           refusal_lines == [line.format(identity="Edward Lerner <junk@lerner1.com>")
                             for line in EXPECTED_REFUSAL_LINES],
           refusal_lines)

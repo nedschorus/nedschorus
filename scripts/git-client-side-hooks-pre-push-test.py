@@ -48,6 +48,10 @@ FAKE_CHECK_LOG_VARIABLE = "PRE_PUSH_TEST_FAKE_CHECK_LOG"
 SESSION_VARIABLE = "CLAUDE_CODE_BRIDGE_SESSION_ID"
 LOCAL_SESSION_VARIABLE = "CLAUDE_CODE_SESSION_ID"
 FAKE_SESSION = "session_0FakePrePushTestSessionAAAA"
+# The hook is POSIX sh; ned-box's /bin/sh is dash, so the hook is run under
+# both where both exist.
+SHELLS_FOR_THE_HOOK = [shell for shell in ("/bin/sh", "/bin/dash")
+                       if os.path.exists(shell)]
 
 OUTER_PUSH_TIMEOUT_SECONDS = 30
 # A hanging fake check sleeps this long. Longer than the outer timeout, so a
@@ -59,6 +63,26 @@ HANGING_CASE_WALL_CLOCK_LIMIT_SECONDS = 15
 
 REFUSAL_HEADER = "pre-push: branch %s conflicts with origin/main; this push is refused."
 CLOSING_INSTRUCTION = "Once the merge is committed, push again."
+# The hooks' own texts, copied here rather than imported, so a change to a
+# text fails a case.
+TELL_USER_LINE = ("Tell the user this whole message, including any error printed "
+                  "just above it: the next push on this machine may go unchecked "
+                  "the same way.")
+RERUN_VERDICT_LINE = ("If that run also prints no VERDICT line, tell the user this "
+                      "whole message and what that run printed.")
+NO_BRANCH_CHECKED = ("so no branch in this push was checked for conflicts with "
+                     "origin/main: %s.")
+SHORT_COMMIT_LENGTH = 12
+
+
+def hand_check_line(branch, commit):
+    return ("Check %s by hand from your worktree: python3 "
+            "scripts/branch-conflict-check.py --head %s"
+            % (branch, commit[:SHORT_COMMIT_LENGTH]))
+
+
+def branch_entry(branch, commit):
+    return "%s (%s)" % (branch, commit[:SHORT_COMMIT_LENGTH])
 
 failures = []
 
@@ -400,6 +424,78 @@ def run_unit_cases():
     check("the refusal status is not 1, which any crash also exits with",
           runner.EXIT_REFUSE_PUSH not in (0, 1, 2), repr(runner.EXIT_REFUSE_PUSH))
 
+    # Message 7, an error the Python file catches, in both of its forms.
+    import io
+    error = RuntimeError("boom")
+    stream = io.StringIO()
+    runner.report_unexpected_error(stream, error, ["origin", "url"], pushed)
+    check("an error after the pushed refs were read names each unchecked branch",
+          stream.getvalue().splitlines() == [
+              "pre-push: the pre-push conflict check failed with RuntimeError: boom, "
+              + NO_BRANCH_CHECKED % ", ".join(
+                  [branch_entry("topic", sha), branch_entry("renamed-on-push", other)]),
+              hand_check_line("topic", sha),
+              hand_check_line("renamed-on-push", other),
+              TELL_USER_LINE],
+          stream.getvalue())
+    stream = io.StringIO()
+    runner.report_unexpected_error(stream, error, ["origin", "url"], None)
+    check("an error before the pushed refs were read says no branch was checked",
+          stream.getvalue().splitlines() == [
+              "pre-push: the pre-push conflict check failed with RuntimeError: boom "
+              "before reading which branches this push sends, so no branch in this "
+              "push was checked for conflicts with origin/main.",
+              "For each branch this push sends to origin, other than main, run from "
+              "your worktree: python3 scripts/branch-conflict-check.py --head "
+              "<branch name>",
+              TELL_USER_LINE],
+          stream.getvalue())
+    stream = io.StringIO()
+    runner.report_unexpected_error(stream, error, ["backup", "url"], pushed)
+    check("an error on a push to another remote names no branch, since none is checked",
+          stream.getvalue() == "", stream.getvalue())
+
+    # The shell part filters the pushed refs the same way: the same push, given
+    # straight to the hook with the Python file missing, names exactly the
+    # branches branches_to_check returns above, under sh and under dash.
+    layout_parent = Path(tempfile.mkdtemp(prefix="pre-push-shell-filter-"))
+    try:
+        hooks = make_layout(layout_parent, "filter", conflict_check=None,
+                            include_runner=False)
+        expected_first_line_end = NO_BRANCH_CHECKED % ", ".join(
+            [branch_entry("topic", sha), branch_entry("renamed-on-push", other)])
+        for shell in SHELLS_FOR_THE_HOOK:
+            def run_hook(remote, refs_text):
+                return subprocess.run(
+                    [shell, str(hooks / "pre-push"), remote, "url"],
+                    input=refs_text, capture_output=True, text=True, timeout=30)
+            completed = run_hook("origin", pushed)
+            lines = completed.stderr.splitlines()
+            check("%s: the shell part names the branches branches_to_check keeps"
+                  % shell,
+                  completed.returncode == 0 and bool(lines)
+                  and lines[0].endswith(expected_first_line_end)
+                  and lines[1:] == [hand_check_line("topic", sha),
+                                    hand_check_line("renamed-on-push", other),
+                                    TELL_USER_LINE],
+                  completed.stderr)
+            for label, refs_text in (
+                    ("main", "refs/heads/main %s refs/heads/main %s\n" % (sha, other)),
+                    ("a tag", "refs/tags/v1 %s refs/tags/v1 %s\n" % (sha, zeros)),
+                    ("a deletion", "(delete) %s refs/heads/gone %s\n" % (zeros, sha))):
+                completed = run_hook("origin", refs_text)
+                check("%s: the shell part says nothing for a push of %s"
+                      % (shell, label),
+                      completed.returncode == 0 and completed.stderr == "",
+                      completed.stderr)
+            completed = run_hook("backup", pushed)
+            check("%s: the shell part says nothing for a push to another remote"
+                  % shell,
+                  completed.returncode == 0 and completed.stderr == "",
+                  completed.stderr)
+    finally:
+        shutil.rmtree(layout_parent, ignore_errors=True)
+
 
 # --- Push cases ------------------------------------------------------------
 
@@ -564,20 +660,57 @@ def run_push_cases(scratch):
     missing = make_layout(scratch, "layout-check-missing", conflict_check=None)
     failing = Scenario(scratch, "check-missing", missing)
     outcome = failing.push("origin", "conflicting")
+    conflicting_commit = failing.head("conflicting")
     check("check missing: the push goes through", went_through(outcome),
           outcome.describe())
-    check("check missing: and says the check is missing",
-          "branch-conflict-check.py is missing" in outcome.stderr, outcome.describe())
+    check("check missing: and says the check is missing, naming the branch",
+          "branch-conflict-check.py is missing, "
+          + NO_BRANCH_CHECKED % branch_entry("conflicting", conflicting_commit)
+          in outcome.stderr, outcome.describe())
+    check("check missing: and gives the hand check and tells the user",
+          hand_check_line("conflicting", conflicting_commit) + "\n" + TELL_USER_LINE
+          in outcome.stderr, outcome.describe())
 
-    failing_check_case("check-crashes", FAKE_CHECK_CRASHES,
-                       "exited 1 without a VERDICT: CONFLICT line")
-    outcome = failing_check_case("check-no-answer", FAKE_CHECK_NO_ANSWER,
-                                 "gave no answer for branch conflicting")
+    def gave_no_verdict(label, outcome, reason):
+        lines = outcome.stderr.splitlines()
+        start = ("pre-push: branch conflicting was not checked for conflicts with "
+                 "origin/main, because scripts/branch-conflict-check.py gave no "
+                 "verdict: %s" % reason)
+        index = next((i for i, line in enumerate(lines) if line.startswith(start)), None)
+        check("%s: says which branch went unchecked and why" % label,
+              index is not None, outcome.describe())
+        if index is not None:
+            check("%s: then the hand check and the line telling the user" % label,
+                  len(lines) > index + 2
+                  and lines[index + 1].startswith(
+                      "Check conflicting by hand from your worktree: python3 "
+                      "scripts/branch-conflict-check.py --head ")
+                  and lines[index + 2] == TELL_USER_LINE,
+                  outcome.describe())
+
+    outcome = failing_check_case("check-crashes", FAKE_CHECK_CRASHES,
+                                 "exited 1 without a VERDICT: CONFLICT line")
+    gave_no_verdict("check-crashes", outcome,
+                    "it exited 1 without a VERDICT: CONFLICT line")
+    outcome = failing_check_case(
+        "check-no-answer", FAKE_CHECK_NO_ANSWER,
+        "pre-push: branch conflicting was not checked for conflicts with "
+        "origin/main, because scripts/branch-conflict-check.py could not decide; "
+        "its report follows.")
     check("check-no-answer: and passes on the check's own lines",
           "UNFETCHED: fake no-answer line from the check." in outcome.stderr,
           outcome.describe())
-    failing_check_case("check-unexpected-status", FAKE_CHECK_UNEXPECTED_STATUS,
-                       "it exited 7")
+    no_answer_lines = outcome.stderr.splitlines()
+    follow = next((i for i, line in enumerate(no_answer_lines) if line.startswith(
+        "Follow the report, then check conflicting again by hand from your "
+        "worktree: python3 scripts/branch-conflict-check.py --head ")), None)
+    check("check-no-answer: and ends with the rerun and when to tell the user",
+          follow is not None
+          and no_answer_lines[follow + 1:follow + 2] == [RERUN_VERDICT_LINE],
+          outcome.describe())
+    outcome = failing_check_case("check-unexpected-status", FAKE_CHECK_UNEXPECTED_STATUS,
+                                 "it exited 7")
+    gave_no_verdict("check-unexpected-status", outcome, "it exited 7")
     failing_check_case("check-conflict-text-exit-zero",
                        FAKE_CHECK_CONFLICT_TEXT_EXIT_ZERO, "", silent=True)
 
@@ -585,11 +718,45 @@ def run_push_cases(scratch):
                           ("check-hangs-with-child", FAKE_CHECK_HANGS_WITH_CHILD),
                           ("check-ignores-sigterm", FAKE_CHECK_IGNORES_SIGTERM),
                           ("check-records-sigterm", FAKE_CHECK_RECORDS_SIGTERM)):
-        outcome = failing_check_case(label, source, "had not finished when the 1-second budget ran out",
-                                     budget=HANGING_CHECK_BUDGET_SECONDS)
+        outcome = failing_check_case(
+            label, source,
+            "pre-push: branch conflicting was not checked for conflicts with "
+            "origin/main, because scripts/branch-conflict-check.py had not finished "
+            "when the 1-second time budget ran out, and was stopped.",
+            budget=HANGING_CHECK_BUDGET_SECONDS)
+        check("%s: and says to check by hand, telling the user only if that fails too"
+              % label,
+              ("\n" + RERUN_VERDICT_LINE + "\n") in ("\n" + outcome.stderr)
+              and TELL_USER_LINE not in outcome.stderr,
+              outcome.describe())
         check("%s: and the push is not held for long" % label,
               outcome.seconds < HANGING_CASE_WALL_CLOCK_LIMIT_SECONDS,
               "%.1f seconds" % outcome.seconds)
+
+    # Message 5: the first branch's hang spends the budget, so the second
+    # branch never gets its turn.
+    hooks = make_layout(scratch, "layout-budget-spent", conflict_check=FAKE_CHECK_HANGS)
+    spent = Scenario(scratch, "budget-spent", hooks)
+    spent.extra_environment[TIME_BUDGET_VARIABLE] = HANGING_CHECK_BUDGET_SECONDS
+    outcome = spent.push("origin", "clean", "clean-second")
+    check("budget spent: the push goes through", went_through(outcome),
+          outcome.describe())
+    lines = outcome.stderr.splitlines()
+    turnless = [branch for branch in ("clean", "clean-second")
+                if "pre-push: branch %s was not checked for conflicts with origin/main, "
+                   "because the earlier branches in this push used up the 1-second "
+                   "time budget." % branch in lines]
+    check("budget spent: one branch is named as never getting its turn",
+          len(turnless) == 1, outcome.describe())
+    if len(turnless) == 1:
+        branch = turnless[0]
+        line = ("pre-push: branch %s was not checked for conflicts with origin/main, "
+                "because the earlier branches in this push used up the 1-second "
+                "time budget." % branch)
+        index = lines.index(line)
+        check("budget spent: followed by that branch's hand check, by its commit",
+              lines[index + 1:index + 2] == [hand_check_line(branch, spent.head(branch))],
+              outcome.describe())
 
     log = scratch / "check-hangs-with-child-fake-check-log.txt"
     child_pid_file = Path(str(log) + ".child-pid")
@@ -632,8 +799,10 @@ def run_push_cases(scratch):
     outcome = failing.push("origin", "conflicting")
     check("no python3 on PATH: the push goes through", went_through(outcome),
           outcome.describe())
-    check("no python3 on PATH: and says so", "no python3 on PATH" in outcome.stderr,
-          outcome.describe())
+    check("no python3 on PATH: reported as the check exiting 127, naming the branch",
+          "pre-push: the pre-push conflict check exited with status 127, "
+          + NO_BRANCH_CHECKED % branch_entry("conflicting", failing.head("conflicting"))
+          in outcome.stderr, outcome.describe())
 
     hooks = make_layout(scratch, "layout-runner-broken",
                         conflict_check=FAKE_CHECK_ALWAYS_CONFLICT,
@@ -642,8 +811,13 @@ def run_push_cases(scratch):
     outcome = failing.push("origin", "conflicting")
     check("the Python file fails to run: the push goes through",
           went_through(outcome), outcome.describe())
-    check("the Python file fails to run: and says the check failed",
-          "the conflict check failed (exit 1)" in outcome.stderr, outcome.describe())
+    check("the Python file fails to run: and says the check exited 1, naming the branch",
+          "pre-push: the pre-push conflict check exited with status 1, "
+          + NO_BRANCH_CHECKED % branch_entry("conflicting", failing.head("conflicting"))
+          in outcome.stderr, outcome.describe())
+    check("the Python file fails to run: then the hand check and the line telling the user",
+          hand_check_line("conflicting", failing.head("conflicting")) + "\n"
+          + TELL_USER_LINE in outcome.stderr, outcome.describe())
 
     hooks = make_layout(scratch, "layout-runner-missing",
                         conflict_check=FAKE_CHECK_ALWAYS_CONFLICT, include_runner=False)
@@ -651,9 +825,10 @@ def run_push_cases(scratch):
     outcome = failing.push("origin", "conflicting")
     check("the Python file is missing: the push goes through",
           went_through(outcome), outcome.describe())
-    check("the Python file is missing: and says so",
-          "git-client-side-hooks-pre-push-conflict-check.py is missing" in outcome.stderr,
-          outcome.describe())
+    check("the Python file is missing: and says so, naming the branch",
+          "git-client-side-hooks-pre-push-conflict-check.py is missing, "
+          + NO_BRANCH_CHECKED % branch_entry("conflicting", failing.head("conflicting"))
+          in outcome.stderr, outcome.describe())
 
     # --- The hook directory's other hook still works -----------------------
 

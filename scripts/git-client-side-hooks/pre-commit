@@ -98,11 +98,11 @@
 # measured 2026-09-24: a variable exported in one call read back unset in the
 # next).
 #
-# The refusal printed below gives one instruction per line, each with the
-# condition it applies under, and cites no ruling and no date; the reasons for
-# those instructions are in this header. The refused identity is named inside the
-# first instruction because the agent needs it to see which variable or flag
-# put the user's address or the tripwire on this commit.
+# The refusal printed below opens with what was refused and why, then gives
+# one instruction per line, each with the condition it applies under, and
+# cites no ruling and no date. The refused identity is named in the first two
+# lines because the agent needs it to see which variable or flag put the
+# user's address or the tripwire on this commit.
 
 if [ -z "${CLAUDE_CODE_SESSION_ID:-}" ] && [ -z "${CLAUDE_CODE_BRIDGE_SESSION_ID:-}" ]; then
     exit 0
@@ -122,11 +122,12 @@ done
 
 [ -z "$refused_identity" ] && exit 0
 
+echo "pre-commit: this commit is refused, because its author or committer is $refused_identity: an agent's commit must not carry the user's own address, which a pushed commit publishes, or the unconfigured-agent address, which marks an agent-session started without its launcher." >&2
 echo "Commit under this seat's own name, not as $refused_identity." >&2
 echo "If this session is a seat, relaunch it with launch-claude-mac or launch-claude-ubuntu, then commit again." >&2
 echo "If you cannot relaunch, set the identity in the same command as the commit: GIT_AUTHOR_NAME=<seat> GIT_AUTHOR_EMAIL=<seat>@nedschorus.invalid GIT_COMMITTER_NAME=<seat> GIT_COMMITTER_EMAIL=<seat>@nedschorus.invalid git commit ..." >&2
 echo "If you are amending a commit made under the user's address by mistake, add --reset-author to that same command." >&2
 echo "If you are amending a commit the user wrote, leave it and make a new commit on top instead." >&2
-echo "Do not change user.name or user.email in git config." >&2
+echo "Do not change user.name or user.email in git config: every worktree of the clone shares that config, so the change would rename every agent-seat's commits." >&2
 echo "If the user is committing by hand, commit from a terminal outside the Claude session, adding -c user.name=<name> -c user.email=<address> after git if the clone's identity is unconfigured-agent." >&2
 exit 1
