@@ -1,6 +1,6 @@
 # Part two: the messages of the git hooks that run at commit and push
 
-This document is part two of GHI [Every refusal and warning a program hands an agent says why and what to do instead](https://github.com/nedschorus/nedschorus/issues/956). The GHI's GHI-MD, `docs/issues/956-every-refusal-and-warning-a-program-hands-an.md`, is part one, and its section "Later parts" lists the five parts after it, this one first. This part covers the messages of the git hooks that run when an agent commits or pushes. It shows each message that leaves the agent a question open, as the agent sees the message, and proposes the exact words to replace it, with the code changes the new words need. None of the proposed wording is built. The next action is one approval-walk with the user over the proposed texts and code changes, then one pull request, cut from main, that builds what the user approves, with its test cases.
+This document is part two of GHI [Every refusal and warning a program hands an agent says why and what to do instead](https://github.com/nedschorus/nedschorus/issues/956). The GHI's GHI-MD, `docs/issues/956-every-refusal-and-warning-a-program-hands-an.md`, is part one, and its section "Later parts" lists the five parts after it, this one first. This part covers the messages of the git hooks that run when an agent commits or pushes. It shows each message that leaves the agent a question open, as the agent sees the message, and proposes the exact words to replace it, with the code changes the new words need. The user approved every proposed text and code change below in the approval-walk 956-part-two-the-git-hooks-messages-2026-10-04, whose minutes are in the log-store. The next action is one pull request, cut from main, that builds them with their test cases.
 
 ## What a reader needs first
 
@@ -272,9 +272,11 @@ Do not change user.name or user.email in git config: every worktree of the clone
 If the user is committing by hand, commit from a terminal outside the Claude session, adding -c user.name=<name> -c user.email=<address> after git if the clone's identity is unconfigured-agent.
 ```
 
-## A question for the user: the conflict refusal
+### 11. The conflict refusal
 
-Two of the six cold-read reviewers found a gap in a message this part otherwise leaves as it is: the refusal of a push whose branch conflicts with origin/main. Its instructions come from `scripts/branch-conflict-check.py:265-272`:
+**When an agent sees this.** A pushed branch conflicts with origin/main, and main has not deleted any file the branch changes. `scripts/branch-conflict-check.py` handles the deleted-file case with a refusal of its own, which tells the agent to close the pull request and carry the work forward.
+
+**What the agent is told today** (`scripts/branch-conflict-check.py`, the plain conflict verdict):
 
 ```
 VERDICT: CONFLICT -- <commit> conflicts with origin/main.
@@ -283,12 +285,18 @@ Resolve the conflict and change nothing else in the merge.
 Before pushing, rerun the test suites for what the merge touched.
 ```
 
-CLAUDE.md puts a step before the merge: "First see what the conflict is with. If main has deleted or replaced what the branch changes, do not merge: close the pull request with a comment naming the commit or pull request on main that replaced the work, and carry what main still lacks on a new topic branch cut from current main." The refusal omits that step. Part one's audit counted this message complete, and the program that prints it is one any agent also runs by hand. The choices are to add it to this part as message 11, to give it to a later part, or to leave it. The recommendation is to add it here, because pre-push prints it and the same pull request already changes the lines around it; its proposed text would then be put to the user in this part's approval-walk.
+**What the agent cannot tell from the text.** CLAUDE.md's first step: see what the conflict is with. When main has replaced the branch's work without deleting the file, for example by rewriting the same function another way, a hand-merge is the wrong action.
+
+**Proposed text.** One line is added after the verdict line, before the merge line; the other lines are unchanged:
+
+```
+First see what the conflict is with: if main has already replaced this branch's work, do not merge; close the pull request and carry what main still lacks on a new topic branch cut from current main.
+```
 
 ## Messages left as they are
 
-- The pre-push conflict check's closing line after a conflict, "Once the merge is committed, push again.", follows the conflict report above and depends on the question above.
+- The pre-push conflict check's closing line after a conflict, "Once the merge is committed, push again.", follows the conflict report and applies to the hand-merge case.
 
 ## Tests
 
-`scripts/git-client-side-hooks-pre-push-test.py` asserts parts of today's messages 1, 2, 3, 4, 6 and 9; the case for message 1 is removed with the message, and `scripts/git-client-side-hooks-prepare-commit-msg-test.py` asserts message 8, and `scripts/git-client-side-hooks-pre-commit-test.py` asserts message 10. The pull request changes those cases with the texts, and adds cases for what no case covers today: message 5, message 7 in both forms, the branch and commit each message names, the trailer message 8 names, and the shell part's branch filter, as "Code the new texts need" says.
+`scripts/git-client-side-hooks-pre-push-test.py` asserts parts of today's messages 1, 2, 3, 4, 6 and 9; the case for message 1 is removed with the message, and `scripts/git-client-side-hooks-prepare-commit-msg-test.py` asserts message 8, `scripts/git-client-side-hooks-pre-commit-test.py` asserts message 10, and `scripts/branch-conflict-check-test.py` asserts message 11. The pull request changes those cases with the texts, and adds cases for what no case covers today: message 5, message 7 in both forms, the branch and commit each message names, the trailer message 8 names, and the shell part's branch filter, as "Code the new texts need" says.
