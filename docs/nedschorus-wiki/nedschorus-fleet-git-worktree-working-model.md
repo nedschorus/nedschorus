@@ -339,7 +339,7 @@ activation: a push is a shell operation no file-write hook sees.
 line's `⇣N` shows the lag; the launchers freshen the reference checkout
 at boot; the supervisor's launch-time sync remains the floor. Coverage
 stated exactly: delivery happens at turn boundaries when the agent-seat is
-clean and conflict-free — a
+clean and conflict-free — an
 agent-seat that lags says so on its status line rather than silently. **Who
 hears it** (ruled 2026-08-17): exactly one state forces an agent turn — a
 conflict whose cleanup failed, leaving the tree mid-merge; routine events
