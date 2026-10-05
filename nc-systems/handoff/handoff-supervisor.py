@@ -1493,7 +1493,8 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
             session_id = successor_session_id
 
     # An exit record means a supervised stop; without one, resume the crashed context instead of starting empty.
-    if (not settings.first_prompt and not settings.resume_session_id
+    # A first prompt does not exempt a seat: relaunch commands keep their --first-prompt-file long after the founding boot.
+    if (not settings.resume_session_id
             and adopted is None and ignition_plan is None
             and agent_exit_record_from_supervisor_state(state) is None):
         by_hand_session_id, by_hand_detail = worth_resuming.newest_real_transcript(
@@ -1502,6 +1503,10 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
             print("handoff-supervisor: no waiting handoff and no recorded exit — "
                   f"resuming this seat's last transcript {by_hand_session_id} "
                   "rather than starting it empty")
+            if settings.first_prompt:
+                print("handoff-supervisor: ignoring the first prompt, because this seat "
+                      "already has a transcript worth resuming; the first prompt is only "
+                      "for a seat with none")
             session_id = by_hand_session_id
             next_launch_resumes_the_session = True
             prompt = RESUME_PROMPT_WHEN_A_SESSION_ENDED_WITHOUT_A_HANDOFF

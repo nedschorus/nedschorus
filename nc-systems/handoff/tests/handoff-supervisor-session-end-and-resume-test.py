@@ -1138,6 +1138,68 @@ def run_by_hand_resume_cases(workspace: Path):
           resume is not True and session_id != crashed.stem,
           (session_id, resume))
 
+    # 4a. A relaunch command that still carries the founding --first-prompt-file
+    # must not shadow a crashed seat's transcript: the first prompt is for a seat
+    # with nothing worth resuming.
+    def launch_once_printing(settings, project_directory):
+        launched, console = [], io.StringIO()
+
+        def launch(agent_command, session_id, working_directory, prompt, **kwargs):
+            launched.append((session_id, prompt, kwargs.get("resume")))
+            return StubLaunchedSession(0)
+
+        with supervisor_names_replaced(
+                launch_agent_session=launch,
+                project_directory_for_working_directory=lambda _: project_directory,
+                sync_working_branch_with_main=no_branch_sync), \
+                contextlib.redirect_stdout(console):
+            supervisor.supervise_sessions(settings)
+        return (launched[0] if launched else (None, None, None)), console.getvalue()
+
+    founding_prompt = "You are the seat. This is your founding brief."
+    settings = settings_for("first-prompt-with-real-transcript")
+    settings.first_prompt = founding_prompt
+    supervisor.write_supervisor_state(settings.state_path, {"generation": 1})
+    (session_id, prompt, resume), printed = launch_once_printing(settings, projects)
+    check("FIRST PROMPT: a seat with a real transcript resumes it despite a first-prompt file",
+          session_id == crashed.stem and resume is True,
+          (session_id, resume, crashed.stem))
+    check("FIRST PROMPT: and the resumed session gets the resume prompt, not the founding brief",
+          prompt == supervisor.RESUME_PROMPT_WHEN_A_SESSION_ENDED_WITHOUT_A_HANDOFF, prompt)
+    check("FIRST PROMPT: the supervisor says it ignored the first prompt",
+          "ignoring the first prompt" in printed, printed[-400:])
+
+    settings = settings_for("first-prompt-nothing-worth-resuming")
+    settings.first_prompt = founding_prompt
+    supervisor.write_supervisor_state(settings.state_path, {"generation": 1})
+    (session_id, prompt, resume), printed = launch_once_printing(settings, empty_projects)
+    check("FIRST PROMPT: a seat with nothing worth resuming starts fresh on its first prompt",
+          resume is not True and prompt == founding_prompt
+          and "ignoring the first prompt" not in printed,
+          (session_id, prompt, resume))
+
+    settings = settings_for("first-prompt-recorded-exit")
+    settings.first_prompt = founding_prompt
+    supervisor.write_supervisor_state(settings.state_path, {
+        "generation": 1,
+        supervisor.AGENT_EXIT_CODE_STATE_KEY: 0,
+        supervisor.AGENT_EXIT_RECORDED_AT_STATE_KEY: "2026-01-01T00:00:00+00:00"})
+    (session_id, prompt, resume), printed = launch_once_printing(settings, projects)
+    check("FIRST PROMPT: a seat with a recorded exit starts fresh on its first prompt",
+          resume is not True and session_id != crashed.stem and prompt == founding_prompt,
+          (session_id, prompt, resume))
+
+    settings = settings_for("first-prompt-waiting-handoff")
+    settings.first_prompt = founding_prompt
+    supervisor.write_supervisor_state(settings.state_path, {"generation": 1})
+    settings.handoff_path.write_text(
+        "# Handoff\nrestart-counter: 4\nnext-step: carry on\n", encoding="utf-8")
+    (session_id, prompt, resume), printed = launch_once_printing(settings, projects)
+    check("FIRST PROMPT: a waiting handoff still wins over the transcript and the first prompt",
+          resume is not True and session_id != crashed.stem
+          and "ignoring the first prompt" not in printed,
+          (session_id, resume))
+
     # 5. --resume-session-id, the flag scripts/recover-crashed-seats.py and the
     # login-time restart pass. No case ran it through the loop until the
     # 2026-09-21 ruling renamed the flag it sets, so this one holds the path
