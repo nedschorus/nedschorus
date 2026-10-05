@@ -67,3 +67,4 @@ A term used by one system alone is defined in that system's glossary, not here. 
 - **test-design** — the document, written from a design and its design-contract, listing one requirement per promise a test must observe, each with the coverage-type of the test that will cover it. Defined in the design-to-main glossary.
 - **user-block** — a refusal only the user's approval clears. The agent carries it out, by quoting his exact words into the marker the refusal names, which the one approved call consumes. The guards under `.claude/hooks/` work this way; the marker is looked for at the root of the session's own checkout, not the worktree holding the file being written.
 - **user-ruling** — a decision by the user, recorded where it applies in the form (user-ruled YYYY-MM-DD).
+- **work-snapshot** — a git commit, kept under `refs/work-snapshots/` and never on a branch, that copies one worktree's uncommitted changes so they survive a crash.
