@@ -55,7 +55,8 @@ def case(name, condition):
 
 
 def fake_runner(*, resolves=True, base_resolves=None, head_resolves=None,
-                merge_tree_status=0, gh_results=None, log=None,
+                merge_tree_status=0, merge_tree_output="", deleting_log=None,
+                gh_results=None, log=None,
                 fetch_status=0, gh_head=RESOLVED_HEAD, gh_head_status=0,
                 full_refs=None, gh_base="main", gh_base_status=0):
     """A runner that answers git and gh without touching either.
@@ -100,7 +101,10 @@ def fake_runner(*, resolves=True, base_resolves=None, head_resolves=None,
                 return 1, ""
             return 0, RESOLVED_BASE if is_base else RESOLVED_HEAD
         if command[:2] == ["git", "merge-tree"]:
-            return merge_tree_status, ""
+            return merge_tree_status, merge_tree_output
+        if command[:2] == ["git", "log"] and "--diff-filter=D" in command \
+                and deleting_log is not None:
+            return deleting_log
         if command[:2] == ["git", "log"]:
             subject = COMMIT_SUBJECTS.get(command[-1])
             return (0, subject) if subject else (128, "")
@@ -838,6 +842,139 @@ for git_name, merge_status, git_exit in GIT_ANSWERS:
              GITHUB_DECIDES not in lines and NOT_ONE_TO_ATTEMPT not in lines)
 
 
+# --- a file the base deleted, through the fake git ----------------------------
+# merge-tree -z output: the tree hash, then one "<mode> <object> <stage>\t<path>"
+# field per conflicted stage, then an empty field and the messages.
+def merge_tree_z(*entries):
+    fields = ["e" * 40] + ["100644 %s %s\t%s" % ("f" * 40, stage, path)
+                           for stage, path in entries]
+    return "\0".join(fields + ["", "1", entries[0][1], "CONFLICT (x)", "message", ""])
+
+
+# The program's lines for a file origin/main deleted, copied from
+# deleted_on_base_lines(), not recomputed by calling it.
+DO_NOT_MERGE_DELETED = (
+    "Do not merge origin/main into the branch: origin/main removed the file(s) "
+    "above, so a hand-merge would either bring a removed file back or drop the "
+    "branch's change to it.")
+FIND_DELETING_COMMIT = (
+    "If a deleting commit is not named above, find it with git log "
+    "--diff-filter=D origin/main -- <file>.")
+CLOSE_NAMING_DELETION = (
+    "If the branch has a pull request, close it with a comment naming the "
+    "commit that deleted each file.")
+CARRY_WHAT_MAIN_LACKS = (
+    "If origin/main still lacks any of the branch's work, including what its "
+    "change to each deleted file was for, carry that work on a new topic "
+    "branch cut from current origin/main, in a new pull request that names the "
+    "closed one.")
+REAPPLY_ALSO_CONFLICTS = (
+    "On the new topic branch, start each ALSO CONFLICTS file from "
+    "origin/main's version and reapply the branch's change to it by hand.")
+
+
+# The head deleted a file the base changed: stages 1 and 2, no 3. That is the
+# branch's own removal, an ordinary hand-merge, not the close-and-carry case.
+status, lines = run(fake_runner(
+    merge_tree_status=1, merge_tree_output=merge_tree_z(("1", "x"), ("2", "x"))))
+case("a file the head deleted is an ordinary hand-merge",
+     status == CHECK.EXIT_CONFLICT and lines == conflict_block())
+
+# A path with only the head's version has no ancestor, so main never had it to
+# delete: an ordinary hand-merge too.
+status, lines = run(fake_runner(
+    merge_tree_status=1, merge_tree_output=merge_tree_z(("3", "new"))))
+case("a path with only the head's version is an ordinary hand-merge",
+     status == CHECK.EXIT_CONFLICT and lines == conflict_block())
+
+# The base deleted the file, but the deleting commit cannot be found: the file
+# is still named, and the agent is told how to find the commit.
+log = []
+status, lines = run(fake_runner(
+    merge_tree_status=1, log=log,
+    merge_tree_output=merge_tree_z(("1", "gone"), ("3", "gone"))))
+case("a file the base deleted exits 1", status == CHECK.EXIT_CONFLICT)
+case("a file the base deleted, its commit not found, is still named, with "
+     "how to find the commit", lines == [
+         "VERDICT: CONFLICT -- %s conflicts with origin/main, and origin/main "
+         "deleted 1 file(s) the branch changes." % HEAD_LABEL,
+         "DELETED ON origin/main: gone, by a commit this run could not find",
+         DO_NOT_MERGE_DELETED, FIND_DELETING_COMMIT, CLOSE_NAMING_DELETION,
+         CARRY_WHAT_MAIN_LACKS,
+     ])
+case("the deleting commit is looked up only among commits the branch lacks",
+     ["git", "log", "-1", "--format=%H", "--diff-filter=D",
+      "%s..%s" % (RESOLVED_HEAD, RESOLVED_BASE), "--", "gone"] in log)
+
+# git log exits 0 and prints nothing when no commit in the range deleted the
+# path: that is "not found" too, never a commit with no hash.
+status, lines = run(fake_runner(
+    merge_tree_status=1, deleting_log=(0, ""),
+    merge_tree_output=merge_tree_z(("1", "gone"), ("3", "gone"))))
+case("a deleting-commit lookup that exits 0 with no output is not found",
+     status == CHECK.EXIT_CONFLICT and len(lines) > 1
+     and lines[1] == "DELETED ON origin/main: gone, by a commit this run "
+                     "could not find"
+     and FIND_DELETING_COMMIT in lines)
+
+
+# merge-tree -z output for a branch that renamed old.py to new.py, which the
+# base deleted, beside a directory/file conflict at x: stages under new.py and
+# x~main, and message records naming each file's own path second.
+RENAME_DELETE_AND_DIRFILE = "\0".join([
+    "e" * 40,
+    "100644 %s 1\tnew.py" % ("f" * 40),
+    "100644 %s 3\tnew.py" % ("f" * 40),
+    "100644 %s 2\tx~main" % ("f" * 40),
+    "",
+    "2", "new.py", "old.py", "CONFLICT (rename/delete)",
+    "CONFLICT (rename/delete): old.py renamed to new.py in HEAD, but deleted "
+    "in main.\n",
+    "1", "new.py", "CONFLICT (modify/delete)",
+    "CONFLICT (modify/delete): new.py deleted in main and modified in HEAD.\n",
+    "2", "x~main", "x", "CONFLICT (file/directory)",
+    "CONFLICT (file/directory): directory in the way of x from main; moving "
+    "it to x~main instead.\n",
+    "",
+])
+log = []
+status, lines = run(fake_runner(merge_tree_status=1, log=log,
+                                merge_tree_output=RENAME_DELETE_AND_DIRFILE))
+case("a file the branch renamed and the base deleted is named by its own "
+     "path, and so is a file moved aside by a directory", lines[1:3] == [
+         "DELETED ON origin/main: old.py, by a commit this run could not find",
+         "ALSO CONFLICTS: x",
+     ])
+case("the deleting commit of a renamed file is looked up under its own path",
+     any(c[:2] == ["git", "log"] and c[-1] == "old.py" for c in log)
+     and not any(c[:2] == ["git", "log"] and c[-1] == "new.py" for c in log))
+case("the -z message parser keeps each two-path message's kind and other path",
+     hasattr(CHECK, "two_path_messages")
+     and CHECK.two_path_messages(RENAME_DELETE_AND_DIRFILE)
+     == {"new.py": ("CONFLICT (rename/delete)", "old.py"),
+         "x~main": ("CONFLICT (file/directory)", "x")})
+
+# GitHub says MERGEABLE where git finds the deletion: git's conflict stands,
+# and the deletion still decides what the agent is told.
+status, lines = run(fake_runner(
+    merge_tree_status=1, gh_results=[(0, "MERGEABLE")],
+    merge_tree_output=merge_tree_z(("1", "gone"), ("3", "gone"))),
+    pull_request=605)
+case("a file the base deleted, GitHub MERGEABLE: still exits 1 and still "
+     "closes and carries forward", status == CHECK.EXIT_CONFLICT
+     and bool(lines) and "DELETED ON origin/main: gone" in lines[1]
+     and lines[-2:] == [github_line("MERGEABLE", 1), NOT_ONE_TO_ATTEMPT])
+
+# The parser stops at the empty field, so nothing in the messages after it is
+# read as a conflicted stage, even a field shaped like one.
+case("the -z parser reads stages up to the empty field and no further",
+     hasattr(CHECK, "conflicted_paths")
+     and CHECK.conflicted_paths(
+         merge_tree_z(("1", "a"), ("3", "a"), ("2", "b"))
+         + "100644 %s 3\tafter-the-messages\0" % ("f" * 40))
+     == {"a": {"1", "3"}, "b": {"2"}})
+
+
 # --- the program itself, run against real repositories -----------------------
 # Everything above drives check() through a fake git. These cases run the
 # program as a command, the way agents and hooks run it, against throwaway
@@ -917,17 +1054,71 @@ def real_repository_cases(root):
     origin.mkdir()
     git_in(origin, "init", "-q", "-b", "main")
     commit_in(origin, "f", "one\ntwo\n", "base")
+    commit_in(origin, "d", "doomed\n", "base adds the file main will delete")
+    # Five lines, so a one-line edit keeps the rename similar enough for git
+    # to pair the branch's renamed file with main's deletion.
+    commit_in(origin, "old.py", "l1\nl2\nl3\nl4\nl5\n",
+              "base adds the file the branch renames")
+    # Files main will rename: one the branch deletes, and a directory whole,
+    # with distinct contents so git pairs each rename unambiguously.
+    commit_in(origin, "moved.py", "m1\nm2\nm3\nm4\nm5\n",
+              "base adds the file main renames")
+    for n in range(3):
+        (origin / "dir1").mkdir(exist_ok=True)
+        commit_in(origin, "dir1/f%d" % n,
+                  "".join("file %d line %d\n" % (n, i) for i in range(8)),
+                  "base adds dir1/f%d" % n)
     git_in(root, "clone", "-q", str(origin), str(work))
     git_in(work, "checkout", "-q", "-b", "clean-topic")
     clean_head = commit_in(work, "g", "new file\n", "clean topic")
     git_in(work, "checkout", "-q", "-b", "conflict-topic", "main")
     conflict_head = commit_in(work, "f", "one\ntwo, topic\n", "conflict topic")
+    git_in(work, "checkout", "-q", "-b", "deleted-topic", "main")
+    deleted_head = commit_in(work, "d", "doomed, topic\n", "deleted topic")
+    git_in(work, "checkout", "-q", "-b", "renamed-topic", "main")
+    git_in(work, "mv", "old.py", "new.py")
+    renamed_head = commit_in(work, "new.py", "l1\nl2, topic\nl3\nl4\nl5\n",
+                             "renamed topic")
+    # main renames moved.py, which this branch deletes; main also deletes d,
+    # which this branch changes.
+    git_in(work, "checkout", "-q", "-b", "main-renamed-topic", "main")
+    git_in(work, "rm", "-q", "moved.py")
+    main_renamed_head = commit_in(work, "d", "doomed, topic\n",
+                                  "main-renamed topic")
+    # main renames dir1 to dir2, and this branch adds a file in dir1; main also
+    # deletes d, which this branch changes.
+    git_in(work, "checkout", "-q", "-b", "directory-rename-topic", "main")
+    (work / "dir1" / "new").write_text("brand new\n")
+    git_in(work, "add", "dir1/new")
+    directory_rename_head = commit_in(work, "d", "doomed, topic\n",
+                                      "directory-rename topic")
+    git_in(work, "checkout", "-q", "-b", "deleted-and-conflict-topic", "main")
+    commit_in(work, "d", "doomed, topic\n", "deleted topic, part one")
+    mixed_head = commit_in(work, "f", "one\ntwo, topic\n",
+                           "deleted topic, part two")
     git_in(work, "checkout", "-q", "--orphan", "unrelated-topic")
     git_in(work, "rm", "-q", "-r", "-f", ".")
     commit_in(work, "h", "unrelated\n", "unrelated history")
     git_in(work, "checkout", "-q", "main")
     # main moves after the clone, so work's origin/main is stale until fetched.
     main_head = commit_in(origin, "f", "one\ntwo, main\n", "main moves")
+    git_in(origin, "mv", "moved.py", "moved-on-main.py")
+    git_in(origin, "mv", "dir1", "dir2")
+    git_in(origin, "commit", "-q", "-m", "main renames moved.py and dir1")
+    git_in(origin, "rm", "-q", "old.py")
+    git_in(origin, "commit", "-q", "-m", "main deletes old.py")
+    renamed_deleting_label = real_label(git_in(origin, "rev-parse", "HEAD"),
+                                        "main deletes old.py")
+    git_in(origin, "rm", "-q", "d")
+    git_in(origin, "commit", "-q", "-m", "main deletes d")
+    deleting_head = git_in(origin, "rev-parse", "HEAD")
+    deleted_label = real_label(deleted_head, "deleted topic")
+    renamed_label = real_label(renamed_head, "renamed topic")
+    main_renamed_label = real_label(main_renamed_head, "main-renamed topic")
+    directory_rename_label = real_label(directory_rename_head,
+                                        "directory-rename topic")
+    mixed_label = real_label(mixed_head, "deleted topic, part two")
+    deleting_label = real_label(deleting_head, "main deletes d")
     clean_label = real_label(clean_head, "clean topic")
     conflict_label = real_label(conflict_head, "conflict topic")
     main_label = real_label(main_head, "main moves")
@@ -952,6 +1143,77 @@ def real_repository_cases(root):
     case("real: a clean branch exits 0 with the one CLEAN line",
          status == CHECK.EXIT_NO_CONFLICT
          and lines == clean_block(label=clean_label))
+
+    # main deleted a file the branch changes: a hand-merge cannot resolve that,
+    # so the program sends the agent to close and carry forward instead.
+    status, lines, _ = run_here("--head", "deleted-topic")
+    case("real: a file main deleted and the branch changed exits 1",
+         status == CHECK.EXIT_CONFLICT)
+    case("real: a file main deleted gets close-and-carry-forward, not a "
+         "hand-merge", lines == [
+             "VERDICT: CONFLICT -- %s conflicts with origin/main, and "
+             "origin/main deleted 1 file(s) the branch changes." % deleted_label,
+             "DELETED ON origin/main: d, by %s" % deleting_label,
+             DO_NOT_MERGE_DELETED, CLOSE_NAMING_DELETION, CARRY_WHAT_MAIN_LACKS,
+         ])
+
+    # The branch renamed old.py to new.py and main deleted old.py: merge-tree
+    # stages the conflict under new.py, but the file main deleted is old.py,
+    # and the deleting commit is found under that name.
+    status, lines, _ = run_here("--head", "renamed-topic")
+    case("real: a file the branch renamed and main deleted is named by its "
+         "old path, with the deleting commit", status == CHECK.EXIT_CONFLICT
+         and lines == [
+             "VERDICT: CONFLICT -- %s conflicts with origin/main, and "
+             "origin/main deleted 1 file(s) the branch changes." % renamed_label,
+             "DELETED ON origin/main: old.py, by %s" % renamed_deleting_label,
+             DO_NOT_MERGE_DELETED, CLOSE_NAMING_DELETION, CARRY_WHAT_MAIN_LACKS,
+         ])
+
+    # The other direction: main renamed moved.py and the branch deleted it.
+    # That conflict is listed under main's new name, the one the agent will
+    # find on main, not the old name main no longer has.
+    status, lines, _ = run_here("--head", "main-renamed-topic")
+    case("real: a file main renamed and the branch deleted is listed under "
+         "main's new name", status == CHECK.EXIT_CONFLICT and lines == [
+             "VERDICT: CONFLICT -- %s conflicts with origin/main, and "
+             "origin/main deleted 1 file(s) the branch changes."
+             % main_renamed_label,
+             "DELETED ON origin/main: d, by %s" % deleting_label,
+             "ALSO CONFLICTS: moved-on-main.py",
+             DO_NOT_MERGE_DELETED, CLOSE_NAMING_DELETION, CARRY_WHAT_MAIN_LACKS,
+             REAPPLY_ALSO_CONFLICTS,
+         ])
+
+    # main renamed dir1 to dir2 and the branch added dir1/new: git stages the
+    # new file at dir2/new and only suggests that location, so it is listed
+    # where it is staged.
+    status, lines, _ = run_here("--head", "directory-rename-topic")
+    case("real: a file added in a directory main renamed is listed where git "
+         "staged it", status == CHECK.EXIT_CONFLICT and lines == [
+             "VERDICT: CONFLICT -- %s conflicts with origin/main, and "
+             "origin/main deleted 1 file(s) the branch changes."
+             % directory_rename_label,
+             "DELETED ON origin/main: d, by %s" % deleting_label,
+             "ALSO CONFLICTS: dir2/new",
+             DO_NOT_MERGE_DELETED, CLOSE_NAMING_DELETION, CARRY_WHAT_MAIN_LACKS,
+             REAPPLY_ALSO_CONFLICTS,
+         ])
+
+    # Both kinds at once: the deletion decides, and the ordinary conflict is
+    # named so the new topic branch reapplies that change too.
+    status, lines, _ = run_here("--head", "deleted-and-conflict-topic")
+    case("real: a deleted file plus an ordinary conflict exits 1",
+         status == CHECK.EXIT_CONFLICT)
+    case("real: a deleted file plus an ordinary conflict still closes and "
+         "carries forward, naming the other file", lines == [
+             "VERDICT: CONFLICT -- %s conflicts with origin/main, and "
+             "origin/main deleted 1 file(s) the branch changes." % mixed_label,
+             "DELETED ON origin/main: d, by %s" % deleting_label,
+             "ALSO CONFLICTS: f",
+             DO_NOT_MERGE_DELETED, CLOSE_NAMING_DELETION, CARRY_WHAT_MAIN_LACKS,
+             REAPPLY_ALSO_CONFLICTS,
+         ])
 
     # The trap: merge-tree exits 1 for a hash it cannot resolve, the same as a
     # conflict. The program must say UNRESOLVED, exit 2, and never CONFLICT.
