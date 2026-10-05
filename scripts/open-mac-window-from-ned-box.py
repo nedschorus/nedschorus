@@ -3,7 +3,8 @@
 
 Usage, on ned-box: scripts/open-mac-window-from-ned-box.py <word> [<word> ...]
 
-for example `scripts/open-mac-window-from-ned-box.py tmux attach -t merge-lane-2`.
+for example `scripts/open-mac-window-from-ned-box.py tmux -L merge-lane-2 attach -t merge-lane-2`,
+which attaches to that agent-seat on its own tmux server.
 The Mac opens a window running `ssh -t -- nedlern@ned-box <word> ...`, so the
 user sees the command's output on his own screen.
 
