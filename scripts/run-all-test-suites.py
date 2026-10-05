@@ -993,10 +993,11 @@ def signal_sandbox_refusal(error, program=PROGRAM):
             f"agent-seats running as the same account.\n"
             f"If this run is itself inside a bwrap sandbox (for example a Codex "
             f"sandbox), run it from an ordinary shell instead.\n"
-            f"If you cannot leave that sandbox, tell the user the suites were not "
-            f"run and why, and ask the user to run the same command from an "
-            f"ordinary shell on this machine.\n"
-            f"Otherwise, check that `bwrap {' '.join(SIGNAL_SANDBOX_BWRAP_ARGUMENTS)} true` "
+            f"If this run is inside such a sandbox and you cannot leave it, tell "
+            f"the user the suites were not run and why, and ask the user to run "
+            f"the same command from an ordinary shell on this machine.\n"
+            f"If this run is not inside another sandbox, check that "
+            f"`bwrap {' '.join(SIGNAL_SANDBOX_BWRAP_ARGUMENTS)} true` "
             f"works on this machine, and report what it prints to the user.")
 
 
