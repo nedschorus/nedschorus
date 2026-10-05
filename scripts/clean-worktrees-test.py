@@ -45,6 +45,7 @@ Run: python3 scripts/clean-worktrees-test.py
 
 import importlib.util
 import os
+import select
 import shutil
 import subprocess
 import sys
@@ -165,6 +166,29 @@ def run_clean_with_git_status_killed(repo, stub_directory, *flags):
         [sys.executable, str(CLEAN_SCRIPT), "--repo", str(repo), *flags],
         capture_output=True, text=True, check=False, env=environment,
     )
+
+
+def read_lines_until(process, enough, deadline_seconds):
+    """Read a child's stdout lines until enough(lines) holds, the pipe closes, or the
+    deadline passes; return the lines.
+
+    Reads raw bytes from the pipe's file descriptor and splits lines here. A text
+    wrapper's readline() can pull several lines into its own buffer and return one,
+    leaving the rest where select() cannot see them."""
+    lines, pending = [], b""
+    deadline = time.monotonic() + deadline_seconds
+    descriptor = process.stdout.fileno()
+    while not enough(lines) and time.monotonic() < deadline:
+        ready, _, _ = select.select([descriptor], [], [], 1)
+        if not ready:
+            continue
+        chunk = os.read(descriptor, 65536)
+        if not chunk:
+            break
+        pending += chunk
+        *complete, pending = pending.split(b"\n")
+        lines.extend(line.decode("utf-8", "replace") for line in complete)
+    return lines
 
 
 def load_clean_worktrees_module():
@@ -809,25 +833,28 @@ with tempfile.TemporaryDirectory() as scratch:
     environment.pop("PYTHONUNBUFFERED", None)
     hanging = subprocess.Popen(
         [sys.executable, str(CLEAN_SCRIPT), "--repo", str(checkout), "--remove"],
-        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, env=environment,
+        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, env=environment,
         start_new_session=True,
     )
-    seen = []
-    import selectors
-    selector = selectors.DefaultSelector()
-    selector.register(hanging.stdout, selectors.EVENT_READ)
-    deadline = time.monotonic() + 60
-    while time.monotonic() < deadline and not (
-            sum(": removing it will discard " in line for line in seen) == 2
-            and sum(": discarded with it " in line for line in seen) == 1):
-        if not selector.select(timeout=1):
-            continue
-        line = hanging.stdout.readline()
-        if not line:
-            break
-        seen.append(line.rstrip("\n"))
+    seen = read_lines_until(
+        hanging,
+        lambda lines: (sum(": removing it will discard " in line for line in lines) == 2
+                       and sum(": discarded with it " in line for line in lines) == 1),
+        60)
     os.killpg(hanging.pid, 9)
     hanging.wait()
+    burst = subprocess.Popen(
+        [sys.executable, "-c",
+         "import sys, time\n"
+         "sys.stdout.write('one\\ntwo\\nthree\\nfour\\n'); sys.stdout.flush()\n"
+         "time.sleep(30)\n"],
+        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, start_new_session=True)
+    time.sleep(1)
+    burst_lines = read_lines_until(burst, lambda lines: len(lines) == 4, 5)
+    os.killpg(burst.pid, 9)
+    burst.wait()
+    check("the reader returns every line a child wrote in one burst, while it is alive",
+          burst_lines == ["one", "two", "three", "four"], str(burst_lines))
     confirmed = [line for line in seen if ": discarded with it " in line]
     announced = [line for line in seen if ": removing it will discard " in line]
     check("a run stopped mid-removal has already shown the first removal, confirmed",
