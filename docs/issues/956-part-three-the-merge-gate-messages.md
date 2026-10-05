@@ -463,7 +463,7 @@ MERGE WITH THIS EXACT COMMAND:
 
 **What the reader cannot tell from the text.** That the merge command must run as the merge account. The gate exports the token only inside its own process; the merge seat's wrapper exports it too, so its merges run as `ned-review-merge`, but an agent that ran the printed command in another shell would merge as `gh`'s stored account there.
 
-**Proposed text.** The three lines stay exactly as they are, because the wrapper reads the last two; one line is added after them:
+**Proposed text.** The three lines stay exactly as they are, because the wrapper finds the line "MERGE WITH THIS EXACT COMMAND:" and takes the line after it as the command; one line is added after them:
 
 ```
 Run that command with GH_TOKEN set to the merge account's token, {token_file}, so the merge runs as ned-review-merge.
