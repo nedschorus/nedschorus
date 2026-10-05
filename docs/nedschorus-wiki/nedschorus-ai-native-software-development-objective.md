@@ -2,9 +2,9 @@
 
 **Status.** Two different things in this file have two different standings, and a reader needs to know which is which.
 
-The *substance* of the standing decisions below was approved by the user in a walk held on 2026-09-03 and 2026-09-04. That walk's record is its minutes, which are kept in the log-store rather than on main (user-ruled 2026-09-08) at `nedlern@ned-box:/home/nedlern/nedschorus-logs/walk/2026-09-03-ai-native-architecture-overview-decisions-minutes.md`, and which are named for the day it opened and carries both days' rulings, quoting his words where the wording was his and summarising where it was not.
+The *substance* of the standing decisions below was approved by the user in an approval-walk held on 2026-09-03 and 2026-09-04. That approval-walk's record is its minutes, which are kept in the log-store rather than on main (user-ruled 2026-09-08) at `nedlern@ned-box:/home/nedlern/nedschorus-logs/walk/2026-09-03-ai-native-architecture-overview-decisions-minutes.md`, and which are named for the day it opened and carries both days' rulings, quoting his words where the wording was his and summarising where it was not.
 
-The *wording* of this file is a draft. Nobody has yet read it as a stranger would, and the user has not read it whole. It sits in `docs/nedschorus-wiki/queue/` for that reason, and drains to `docs/nedschorus-wiki/` when both are done. So: treat a standing decision's substance as settled, and treat any sentence here, including the decisions' own phrasing, as text that may still be wrong.
+The *wording* of this file is pending approval. Nobody has yet read it as a stranger would, and the user has not read it whole. It sits in `docs/nedschorus-wiki/queue/` for that reason, and is promoted to `docs/nedschorus-wiki/` when both are done. So: treat a standing decision's substance as settled, and treat any sentence here, including the decisions' own phrasing, as text that may still be wrong.
 
 **What this document is.** The project's objective, not its plan. It is not maintained to match reality; reality is measured against it, and a gap between them is a fact about the project rather than a defect in this file. The detail behind each subject lives in [the notes](../cross-project/nedschorus-ai-native-software-development-notes.md), which are explanatory, possibly wrong, and not prescriptive. Every subject here appears there in the same order, where there is detail to carry.
 
@@ -134,7 +134,7 @@ These are the present architectural decisions established by the human direction
 
 ## Project organization
 
-The existing Nedschorus placement rule remains useful: GitHub Issues carry walkable state, Markdown carries substantive reasoning, and queues hold material whose disposition is undecided. The workflow store adds machine execution state; it does not replace those human-readable homes.
+The existing Nedschorus placement rule remains useful: GitHub Issues carry walkable state, Markdown carries substantive reasoning, and queues hold material whose disposition is undecided. The workflow store adds machine execution state; it does not replace those human-readable canonical locations.
 
 | Place | Holds |
 | --- | --- |
@@ -150,7 +150,7 @@ The existing Nedschorus placement rule remains useful: GitHub Issues carry walka
 | Workflow store | Leases, attempts, dependency edges, policy manifests, pending questions, idempotency keys, and materialized execution state |
 | Evidence store | Large logs, traces, test evidence, screenshots, and deployment evidence referenced by stable identifiers |
 
-Every output is either current at its named home or in a named queue with a drain. A queue item is reviewed by the human and then promoted, edited in place, demoted to supporting evidence, or dropped with a recorded reason.
+Every output is either current at its canonical location or in a named queue with a queue-drain. A queue item is reviewed by the human and then promoted, edited in place, demoted to supporting evidence, or dropped with a recorded reason.
 
 A substantial work item uses a GHI-MD: the issue carries current state and the Markdown file carries the detail needed by an independent reader. Clarifications edit the current body rather than stacking corrective comments; comments record genuinely new events. When an issue closes, its working document follows the repository's established archive, promotion, or deletion rule.
 
