@@ -477,7 +477,6 @@ Run that command with GH_TOKEN set to the merge account's token, {token_file}, s
 - The reviewed-since check at `:152-155` also runs `jq` with `fromdateiso8601` on the value, so a value of the right shape that is no real time is refused there as message 4.
 - Message 1 fills `{count}` from `$#`; message 18 builds its link from `approval_id`; message 23 chooses its lines by `reviewDecision`; message 24 chooses its line by `mergeStateStatus`.
 - The pass gains one line after the merge command, filling `{token_file}` from `$TOKEN_FILE`.
-- `:251` reads every review's `submitted_at` with `fromdateiso8601` without the `submitted_at != null` filter `:197` and `:229` apply; the filter is added there. A pending review has no `submitted_at`, and without the filter it would stop the gate with message 13.
 - No other exit status changes, and the three pass lines and the line "mergeStateStatus is {merge_state}" do not change.
 
 ## Tests
