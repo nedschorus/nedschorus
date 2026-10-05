@@ -26,15 +26,15 @@ dates inside these templates are examples; put the real ones in their place.
 **An identifier with a name but no link of its own: ID-type and name.**
 - A task: `task #244, "<subject>"`.
 - An approval-walk item: `item 4 of 10 of the "<walk name>" walk — "<item
-  heading>"`. Always name the walk; two walks can be live at once. Link the
-  walk's document when you can.
+  heading>"`. Always name the approval-walk; two approval-walks can be live at once. Link the
+  walk-document when you can.
 - A finding: `finding 3 of "<which report>" — "<one-line summary>"`, the report
   linked when you can.
 - A table row: `row 19 of "<which table>" — "<the row's own text>"`.
 - A user-ruling: what was ruled, then `ruled 2026-09-15 at "<which walk or
-  file>"`, linked when that walk or file has a link.
-- A seat or a session, with its ID-type: "the merge-lane-backlog seat",
-  "session merge-lane-backlog-24 of the merge-lane-backlog seat", never the bare
+  file>"`, linked when that approval-walk or file has a link.
+- An agent-seat or an agent-session, with its ID-type: "the merge-lane-backlog agent-seat",
+  "agent-session merge-lane-backlog-24 of the merge-lane-backlog agent-seat", never the bare
   name.
 
 **An identifier with no title of its own: make its ID-type plain.**
