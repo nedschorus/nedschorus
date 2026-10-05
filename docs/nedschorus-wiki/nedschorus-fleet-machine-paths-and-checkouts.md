@@ -13,7 +13,7 @@ The user-level instruction file on the box (`/home/nedlern/.claude/CLAUDE.md`) c
 
 The user works at a **Mac**. Agent sessions run on **`ned-box`**, an Ubuntu machine on the same LAN, reached as `ssh nedlern@ned-box`. Each machine has its own clone of nedschorus, its own Claude credentials, and its own agent state. Nothing but git branches crosses between them, and only when pushed — worktrees, handoff files, locks, and credentials are per-machine and never travel.
 
-The box is the default home for agent work: more memory, CPU and bandwidth, and it does not compete with the machine the user is sitting at. The Mac runs agents only when the work needs to be where the user is — its browser session, its keychain, its GUI, or files that exist only there. The Mac is also where merge-lane runs: branch protection admits only `NedLern`, so merges to `main` happen from the Mac.
+The box is the default home for agent work: more memory, CPU and bandwidth, and it does not compete with the machine the user is sitting at. The Mac runs agents only when the work needs to be where the user is — its browser session, its keychain, its GUI, or files that exist only there. Merges to `main` happen on ned-box, at the agent-seat merge-lane-2, which merges as `ned-review-merge`; branch protection lets only `ned-review-merge` and `nedlern` push to `main`.
 
 ## Three kinds of checkout, one repository
 
@@ -74,4 +74,4 @@ Both launchers are attach-or-create: running a name that is already up attaches 
 
 **Does not cross:** worktrees and their directories, agent homes, handoff files, supervisor locks, tmux sessions, Claude credentials (each machine authenticates separately), and anything uncommitted. A pull on one machine tells the other nothing.
 
-**A consequence worth remembering:** pulling the main checkout does not update agent homes or task worktrees, because each sits on its own branch. After a merge to `main`, the main checkout needs its own pull, and any long-lived agent branch needs `main` merged into it before that agent sees the change.
+**A consequence worth remembering:** pulling the main checkout does not update agent homes or task worktrees, because each sits on its own branch. After a merge to `main`, the main checkout needs its own pull. `main` is merged into a long-lived agent branch only by a hand-merge, to clear a conflict; an agent sees the change because the handoff-supervisor fast-forwards a clean seat-branch at launch, `scripts/checkout-freshness-catch-up.py` rebases a never-pushed branch onto `main` at each turn boundary, and new work starts on a topic branch cut from current `main`.
