@@ -524,8 +524,12 @@ export CLAUDE_CODE_ENABLE_TODO_TOOLS=1; \
 export GIT_AUTHOR_NAME='$AGENT_NAME' GIT_AUTHOR_EMAIL='$AGENT_NAME@nedschorus.invalid' GIT_COMMITTER_NAME='$AGENT_NAME' GIT_COMMITTER_EMAIL='$AGENT_NAME@nedschorus.invalid'; \
 python3 '$SUPERVISOR' --agent '$AGENT_NAME' --cd '$QUOTED_AGENT_DIRECTORY'"
 
-# A first-prompt file seeds only the FIRST session. The supervisor reads the
-# file itself, so its content never rides through shell quoting.
+# A first-prompt file is for the founding boot. The supervisor ignores it when a
+# handoff is waiting, or when a seat with no recorded exit has a transcript worth
+# resuming, unless the caller also passes
+# --first-prompt-file-wins-over-crashed-transcript in
+# LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS. The supervisor reads the file
+# itself, so its content never rides through shell quoting.
 if [ -n "$FIRST_PROMPT_FILE" ]; then
     SUPERVISOR_COMMAND="$SUPERVISOR_COMMAND --first-prompt-file '$(escape_single_quotes "$FIRST_PROMPT_FILE")'"
 fi

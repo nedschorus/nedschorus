@@ -274,10 +274,11 @@ export GIT_AUTHOR_NAME='$AGENT_NAME' GIT_AUTHOR_EMAIL='$AGENT_NAME@nedschorus.in
 python3 \$HOME/Projects/nedschorus/nc-systems/handoff/handoff-supervisor.py \
 --agent '$AGENT_NAME' --cd '$AGENT_DIRECTORY_SUPERVISOR'"
 
-# A first-prompt file (box-side path) seeds only the FIRST session — used for
-# the founding boot, where the committed handoff is the prompt. The supervisor
-# reads the file itself, so its content never rides through shell quoting.
-# After the first reincarnation the ordinary initial agent instructions take over.
+# A first-prompt file (box-side path) is for the founding boot. The supervisor
+# ignores it when a handoff is waiting, or when a seat with no recorded exit has
+# a transcript worth resuming, unless the caller also passes
+# --first-prompt-file-wins-over-crashed-transcript in
+# LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS. The supervisor reads the file itself, so its content never rides through shell quoting.
 if [ -n "$FIRST_PROMPT_FILE" ]; then
     SUPERVISOR_COMMAND="$SUPERVISOR_COMMAND --first-prompt-file '$(escape_remote_double_quote_context "$(escape_single_quotes "$FIRST_PROMPT_FILE")")'"
 fi

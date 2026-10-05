@@ -20,6 +20,7 @@ import importlib.util
 import io
 import json
 import os
+import shlex
 import signal
 import subprocess
 import sys
@@ -1139,6 +1140,151 @@ def run_by_hand_resume_cases(workspace: Path):
     check("BY HAND: a waiting handoff still wins, and is not resumed over",
           resume is not True and session_id != crashed.stem,
           (session_id, resume))
+
+    # 4a. A relaunch command that still carries the founding --first-prompt-file
+    # must not shadow a crashed seat's transcript: the first prompt is for a seat
+    # with nothing worth resuming.
+    def launch_once_printing(settings, project_directory):
+        launched, console = [], io.StringIO()
+
+        def launch(agent_command, session_id, working_directory, prompt, **kwargs):
+            launched.append((session_id, prompt, kwargs.get("resume")))
+            return StubLaunchedSession(0)
+
+        with supervisor_names_replaced(
+                launch_agent_session=launch,
+                project_directory_for_working_directory=lambda _: project_directory,
+                sync_working_branch_with_main=no_branch_sync), \
+                contextlib.redirect_stdout(console):
+            supervisor.supervise_sessions(settings)
+        return (launched[0] if launched else (None, None, None)), console.getvalue()
+
+    founding_prompt = "You are the seat. This is your founding brief."
+    settings = settings_for("first-prompt-with-real-transcript")
+    settings.first_prompt = founding_prompt
+    supervisor.write_supervisor_state(settings.state_path, {"generation": 1})
+    (session_id, prompt, resume), printed = launch_once_printing(settings, projects)
+    check("FIRST PROMPT: a seat with a real transcript resumes it despite a first-prompt file",
+          session_id == crashed.stem and resume is True,
+          (session_id, resume, crashed.stem))
+    check("FIRST PROMPT: and the resumed session gets the resume prompt, not the founding brief",
+          prompt == supervisor.RESUME_PROMPT_WHEN_A_SESSION_ENDED_WITHOUT_A_HANDOFF, prompt)
+    check("FIRST PROMPT: the supervisor says it ignored the first prompt",
+          "ignoring the first prompt" in printed, printed[-400:])
+
+    settings = settings_for("first-prompt-nothing-worth-resuming")
+    settings.first_prompt = founding_prompt
+    supervisor.write_supervisor_state(settings.state_path, {"generation": 1})
+    (session_id, prompt, resume), printed = launch_once_printing(settings, empty_projects)
+    check("FIRST PROMPT: a seat with nothing worth resuming starts fresh on its first prompt",
+          resume is not True and prompt == founding_prompt
+          and "ignoring the first prompt" not in printed,
+          (session_id, prompt, resume))
+
+    settings = settings_for("first-prompt-recorded-exit")
+    settings.first_prompt = founding_prompt
+    supervisor.write_supervisor_state(settings.state_path, {
+        "generation": 1,
+        supervisor.AGENT_EXIT_CODE_STATE_KEY: 0,
+        supervisor.AGENT_EXIT_RECORDED_AT_STATE_KEY: "2026-01-01T00:00:00+00:00"})
+    (session_id, prompt, resume), printed = launch_once_printing(settings, projects)
+    check("FIRST PROMPT: a seat with a recorded exit starts fresh on its first prompt",
+          resume is not True and session_id != crashed.stem and prompt == founding_prompt,
+          (session_id, prompt, resume))
+
+    settings = settings_for("first-prompt-waiting-handoff")
+    settings.first_prompt = founding_prompt
+    supervisor.write_supervisor_state(settings.state_path, {"generation": 1})
+    settings.handoff_path.write_text(
+        "# Handoff\nrestart-counter: 4\nnext-step: carry on\n", encoding="utf-8")
+    (session_id, prompt, resume), printed = launch_once_printing(settings, projects)
+    check("FIRST PROMPT: a waiting handoff still wins over the transcript and the first prompt",
+          resume is not True and session_id != crashed.stem
+          and "ignoring the first prompt" not in printed,
+          (session_id, resume))
+
+    # recover-crashed-seats.py --ignite-fallback chose not to resume: its ignition
+    # prompt must win over the crashed transcript. Run through main() with the
+    # supervisor arguments the recovery composes, so a flag the recovery stops
+    # passing, or the supervisor stops honouring, turns this case red.
+    recovery_spec = importlib.util.spec_from_file_location(
+        "recover_crashed_seats_for_ignition_case",
+        Path(__file__).resolve().parents[3] / "scripts" / "recover-crashed-seats.py")
+    recovery = importlib.util.module_from_spec(recovery_spec)
+    recovery_spec.loader.exec_module(recovery)
+
+    def run_main_once(argv):
+        launched, console = [], io.StringIO()
+
+        def launch(agent_command, session_id, working_directory, prompt, **kwargs):
+            launched.append((session_id, prompt, kwargs.get("resume")))
+            return StubLaunchedSession(0)
+
+        saved_task_list_id = os.environ.get("CLAUDE_CODE_TASK_LIST_ID")
+        os.environ["CLAUDE_CODE_TASK_LIST_ID"] = "ignition-case-task-list"
+        try:
+            with supervisor_names_replaced(
+                    launch_agent_session=launch,
+                    project_directory_for_working_directory=lambda _: projects,
+                    sync_working_branch_with_main=no_branch_sync), \
+                    contextlib.redirect_stdout(console):
+                exit_code = supervisor.main(argv)
+        finally:
+            if saved_task_list_id is None:
+                os.environ.pop("CLAUDE_CODE_TASK_LIST_ID", None)
+            else:
+                os.environ["CLAUDE_CODE_TASK_LIST_ID"] = saved_task_list_id
+        return exit_code, (launched[0] if launched else (None, None, None)), console.getvalue()
+
+    ignition_directory = directory / "ignite-fallback"
+    ignition_directory.mkdir(parents=True, exist_ok=True)
+    ignition_prompt_path = ignition_directory / "byhandignite-recovery-ignition-prompt.md"
+    ignition_prompt_path.write_text("Read the dialog extract and continue.", encoding="utf-8")
+    ignition_argv = (
+        ["--agent", "byhandignite", "--cd", str(workspace),
+         "--agent-command", sys.executable]
+        + shlex.split(recovery.compose_supervisor_arguments_for_seat_launch(
+            ignition_directory, recovery.IGNITION_FROM_DIALOG_EXTRACT_SUPERVISOR_ARGUMENTS))
+        + ["--first-prompt-file", str(ignition_prompt_path)])
+    exit_code, (session_id, prompt, resume), printed = run_main_once(ignition_argv)
+    check("IGNITION: --ignite-fallback's arguments start fresh on its ignition prompt "
+          "despite a crashed transcript",
+          exit_code == 0 and resume is not True and session_id != crashed.stem
+          and prompt == "Read the dialog extract and continue.",
+          (exit_code, session_id, prompt, resume, printed[-400:]))
+
+    # Control: the same launch without the recovery's flag resumes the transcript,
+    # so the case above is the flag's doing.
+    control_directory = directory / "ignite-fallback-control"
+    control_directory.mkdir(parents=True, exist_ok=True)
+    exit_code, (session_id, prompt, resume), printed = run_main_once(
+        ["--agent", "byhandignitecontrol", "--cd", str(workspace),
+         "--agent-command", sys.executable, "--handoff-dir", str(control_directory),
+         "--first-prompt-file", str(ignition_prompt_path)])
+    check("IGNITION control: without the flag the same launch resumes the transcript",
+          exit_code == 0 and session_id == crashed.stem and resume is True,
+          (exit_code, session_id, resume, printed[-400:]))
+
+    # The flag means nothing without a prompt file to win with; refused before any launch,
+    # or the seat would resume its transcript as though the flag were not there.
+    refusal_directory = directory / "ignite-flag-without-file"
+    refusal_directory.mkdir(parents=True, exist_ok=True)
+    refusal_stderr = io.StringIO()
+    refusal_exit_code = None
+    try:
+        with contextlib.redirect_stderr(refusal_stderr):
+            exit_code, (session_id, prompt, resume), printed = run_main_once(
+                ["--agent", "byhandigniteflagonly", "--cd", str(workspace),
+                 "--agent-command", sys.executable, "--handoff-dir", str(refusal_directory),
+                 recovery.IGNITION_FROM_DIALOG_EXTRACT_SUPERVISOR_ARGUMENTS])
+        refusal_exit_code = exit_code
+    except SystemExit as refused:
+        refusal_exit_code = refused.code
+        session_id = None
+    check("IGNITION: the flag without --first-prompt-file is refused before any launch",
+          refusal_exit_code == 2 and session_id is None
+          and "needs --first-prompt-file" in refusal_stderr.getvalue(),
+          (refusal_exit_code, session_id, refusal_stderr.getvalue()[-300:]))
 
     # 5. --resume-session-id, the flag scripts/recover-crashed-seats.py and the
     # login-time restart pass. No case ran it through the loop until the

@@ -1361,6 +1361,8 @@ class SupervisorSettings:
     handoff_directory: Path
     agent_command: str
     first_prompt: str
+    # A recovery that chose not to resume says so; a repeated founding --first-prompt-file must not.
+    first_prompt_wins_over_crashed_transcript: bool = False
     # The caller must check for an unconsumed handoff before resuming, because resume skips boot-ignition.
     resume_session_id: str = ""
     appended_system_prompt_file: str = ""
@@ -1502,7 +1504,9 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
             session_id = successor_session_id
 
     # An exit record means a supervised stop; without one, resume the crashed context instead of starting empty.
-    if (not settings.first_prompt and not settings.resume_session_id
+    # A first prompt does not exempt a seat: relaunch commands keep their --first-prompt-file long after the founding boot.
+    if (not settings.resume_session_id
+            and not settings.first_prompt_wins_over_crashed_transcript
             and adopted is None and ignition_plan is None
             and agent_exit_record_from_supervisor_state(state) is None):
         by_hand_session_id, by_hand_detail = worth_resuming.newest_real_transcript(
@@ -1511,6 +1515,11 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
             print("handoff-supervisor: no waiting handoff and no recorded exit — "
                   f"resuming this seat's last transcript {by_hand_session_id} "
                   "rather than starting it empty")
+            if settings.first_prompt:
+                print("handoff-supervisor: ignoring the first prompt from --first-prompt or "
+                      "--first-prompt-file, because this seat already has a transcript worth "
+                      "resuming; a first prompt is used only for a seat with no transcript worth "
+                      "resuming, unless --first-prompt-file-wins-over-crashed-transcript is also given")
             session_id = by_hand_session_id
             next_launch_resumes_the_session = True
             prompt = RESUME_PROMPT_WHEN_A_SESSION_ENDED_WITHOUT_A_HANDOFF
@@ -1695,6 +1704,13 @@ def main(argv=None) -> int:
              "flag chooses the transcript over any waiting handoff",
     )
     parser.add_argument(
+        "--first-prompt-file-wins-over-crashed-transcript", action="store_true",
+        help="start fresh on --first-prompt-file even when this seat has a crashed "
+             "transcript worth resuming; for a recovery that chose not to resume, such as "
+             "recover-crashed-seats.py --ignite-fallback. Without it, a crashed transcript "
+             "wins over --first-prompt-file",
+    )
+    parser.add_argument(
         "--adopt-session-id", default="",
         help="watch an already-running session with this id instead of launching one",
     )
@@ -1739,6 +1755,8 @@ def main(argv=None) -> int:
             )
             return 2
 
+    if arguments.first_prompt_file_wins_over_crashed_transcript and not arguments.first_prompt_file:
+        parser.error("--first-prompt-file-wins-over-crashed-transcript needs --first-prompt-file")
     if arguments.first_prompt_file:
         prompt_path = Path(arguments.first_prompt_file).expanduser()
         if not prompt_path.is_file():
@@ -1773,6 +1791,8 @@ def main(argv=None) -> int:
         agent_update_timeout_seconds=arguments.agent_update_timeout_seconds,
         first_prompt=arguments.first_prompt,
         resume_session_id=arguments.resume_session_id,
+        first_prompt_wins_over_crashed_transcript=(
+            arguments.first_prompt_file_wins_over_crashed_transcript),
         appended_system_prompt_file=appended_system_prompt_file,
         adopted_session=adopted,
     )
