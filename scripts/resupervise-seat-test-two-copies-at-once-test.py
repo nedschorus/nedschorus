@@ -23,6 +23,9 @@ GIT_REDIRECTING_VARIABLES = ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_
                              "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_COMMON_DIR")
 BARRIER_POINTS = ("default-server-session-held", "per-seat-server-session-held")
 COPY_TIMEOUT_SECONDS = 300
+COLLECTOR_STAND_IN_DEADLINE_SECONDS = 10
+# More than any pipe buffer, so a copy writing it to an unread pipe would block.
+COLLECTOR_STAND_IN_OUTPUT_BYTES = 1024 * 1024
 
 failures = []
 
@@ -42,14 +45,51 @@ def copy_environment(**extra):
     return environment
 
 
-def start_copy(**extra):
-    return subprocess.Popen([sys.executable, "-B", str(SUITE)], env=copy_environment(**extra),
-                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+class Copy:
+    """A started process, the file its output goes to, and the temp directory it was given."""
+
+    def __init__(self, process, output_path, temp_directory):
+        self.process = process
+        self.output_path = output_path
+        self.temp_directory = temp_directory
 
 
-def finish(process):
-    output, _ = process.communicate(timeout=COPY_TIMEOUT_SECONDS)
-    return process.returncode, output
+def start_command(command, scratch, label, **extra):
+    """Start a command whose output goes to its own file, so no copy can block on an unread pipe.
+
+    Its TMPDIR is its own directory under the scratch, so whatever the copy leaves
+    behind when it dies stays where the parent can remove it.
+    """
+    temp_directory = scratch / f"{label}-tmp"
+    temp_directory.mkdir()
+    output_path = scratch / f"{label}.out"
+    with open(output_path, "w", encoding="utf-8") as output_file:
+        process = subprocess.Popen(command, env=copy_environment(TMPDIR=str(temp_directory), **extra),
+                                   stdout=output_file, stderr=subprocess.STDOUT)
+    return Copy(process, output_path, temp_directory)
+
+
+def start_copy(scratch, label, **extra):
+    return start_command([sys.executable, "-B", str(SUITE)], scratch, label, **extra)
+
+
+def finish(copy, timeout=COPY_TIMEOUT_SECONDS):
+    try:
+        copy.process.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        copy.process.kill()
+        copy.process.wait()
+        raise
+    return copy.process.returncode, copy.output_path.read_text(encoding="utf-8", errors="replace")
+
+
+def finish_all(copies, timeout=COPY_TIMEOUT_SECONDS):
+    """Wait for every copy; each writes to its own file, so the order of waiting cannot stall one."""
+    return [finish(copy, timeout) for copy in copies]
+
+
+def leftover_workspaces(copy):
+    return sorted(str(path) for path in copy.temp_directory.glob("resupervise-seat-test-*"))
 
 
 def case_results(returncode, output):
@@ -110,12 +150,13 @@ def run_comparison_control_case(solo_output):
           differences_from_solo(solo, solo) == [], str(differences_from_solo(solo, solo)))
 
 
-def run_two_copies_case(solo, barrier_directory):
+def run_two_copies_case(solo, scratch, barrier_directory):
     """Two copies hold their default-server and per-seat sessions at the same moment; each matches solo."""
     environment = {"RESUPERVISE_SEAT_TEST_OVERLAP_BARRIER_DIRECTORY": str(barrier_directory),
                    "RESUPERVISE_SEAT_TEST_OVERLAP_PEER_COUNT": "2"}
-    first, second = start_copy(**environment), start_copy(**environment)
-    results = [case_results(*finish(first)), case_results(*finish(second))]
+    first = start_copy(scratch, "two-copies-first", **environment)
+    second = start_copy(scratch, "two-copies-second", **environment)
+    results = [case_results(*outcome) for outcome in finish_all([first, second])]
     for point in BARRIER_POINTS:
         arrivals = list(barrier_directory.glob(f"{point}-arrived-*"))
         releases = list(barrier_directory.glob(f"{point}-released-*"))
@@ -139,25 +180,75 @@ def run_two_copies_case(solo, barrier_directory):
           f"{results[0]['namespace']} and {results[1]['namespace']}")
     leftovers = [copy["namespace"] for copy in results if copy["namespace"] and Path(copy["namespace"]).exists()]
     check("each copy removed its own tmux namespace when it finished", not leftovers, f"left: {leftovers}")
+    workspaces = leftover_workspaces(first) + leftover_workspaces(second)
+    check("each copy removed its own workspace when it finished", not workspaces, f"left: {workspaces}")
 
 
-def run_copy_killed_at_barrier_case(solo, barrier_directory):
+def run_copy_killed_at_barrier_case(solo, scratch, barrier_directory):
     """A copy that dies while holding its per-seat server session takes nothing from the other copy.
 
     It dies at the last barrier so the surviving copy never waits for a peer that is gone.
     """
     environment = {"RESUPERVISE_SEAT_TEST_OVERLAP_BARRIER_DIRECTORY": str(barrier_directory),
                    "RESUPERVISE_SEAT_TEST_OVERLAP_PEER_COUNT": "2"}
-    dying = start_copy(**environment, RESUPERVISE_SEAT_TEST_OVERLAP_EXIT_AT_BARRIER=BARRIER_POINTS[-1])
-    surviving = start_copy(**environment)
-    dying_exit, dying_output = finish(dying)
-    surviving_results = case_results(*finish(surviving))
+    dying = start_copy(scratch, "copy-killed-dying", **environment,
+                       RESUPERVISE_SEAT_TEST_OVERLAP_EXIT_AT_BARRIER=BARRIER_POINTS[-1])
+    surviving = start_copy(scratch, "copy-killed-surviving", **environment)
+    (dying_exit, dying_output), surviving_outcome = finish_all([dying, surviving])
+    surviving_results = case_results(*surviving_outcome)
     dying_results = case_results(dying_exit, dying_output)
     remove_leftover_namespace(dying_results["namespace"])
+    abandoned = leftover_workspaces(dying)
+    check("the dying copy's abandoned workspace is in its own temp directory, where it can be removed",
+          len(abandoned) == 1, f"found: {abandoned}")
+    # The dying copy exits without running its own cleanup, so its workspace is removed here.
+    shutil.rmtree(dying.temp_directory, ignore_errors=True)
     check("the copy told to die at the barrier did die there", dying_exit == 9, f"exit {dying_exit}")
+    workspaces = leftover_workspaces(surviving) + (
+        [str(dying.temp_directory)] if dying.temp_directory.exists() else [])
+    check("no workspace of either copy is left after a copy died at the barrier",
+          not workspaces, f"left: {workspaces}")
     differences = differences_from_solo(solo, surviving_results)
     check("the surviving copy still has the solo run's cases and verdict",
           differences == [], "; ".join(differences))
+
+
+def run_collector_does_not_stall_case(scratch):
+    """A copy that writes much before the barrier cannot stall the copy waiting for it.
+
+    The first stand-in waits for a marker the second creates only after writing
+    more than a pipe buffer holds. Collected from pipes, one after the other,
+    the second blocks on its full pipe and the first times out.
+    """
+    marker = scratch / "collector-stand-in-marker"
+    waiter = (f"import os, sys, time\n"
+              f"deadline = time.monotonic() + {COLLECTOR_STAND_IN_DEADLINE_SECONDS}\n"
+              f"while not os.path.exists({str(marker)!r}):\n"
+              f"    if time.monotonic() > deadline:\n"
+              f"        print('the marker never appeared'); sys.exit(1)\n"
+              f"    time.sleep(0.05)\n"
+              f"print('waiter saw the marker')\n")
+    writer = (f"import sys\n"
+              f"sys.stdout.write('x' * {COLLECTOR_STAND_IN_OUTPUT_BYTES}); sys.stdout.flush()\n"
+              f"open({str(marker)!r}, 'w').close()\n")
+    waiting = start_command([sys.executable, "-c", waiter], scratch, "collector-waiter")
+    writing = start_command([sys.executable, "-c", writer], scratch, "collector-writer")
+    try:
+        outcomes = finish_all([waiting, writing], timeout=2 * COLLECTOR_STAND_IN_DEADLINE_SECONDS)
+    except subprocess.TimeoutExpired as stalled:
+        for copy in (waiting, writing):
+            if copy.process.poll() is None:
+                copy.process.kill()
+                copy.process.wait()
+        check("a copy writing more than a pipe buffer before the barrier does not stall the other",
+              False, f"collection timed out: {stalled}")
+        return
+    check("a copy writing more than a pipe buffer before the barrier does not stall the other",
+          outcomes[0][0] == 0 and "waiter saw the marker" in outcomes[0][1],
+          f"waiter exit {outcomes[0][0]}: {outcomes[0][1][-200:]}")
+    check("a copy's full output reaches its file",
+          outcomes[1][0] == 0 and len(outcomes[1][1]) == COLLECTOR_STAND_IN_OUTPUT_BYTES,
+          f"writer exit {outcomes[1][0]}, {len(outcomes[1][1])} bytes")
 
 
 def run_creation_failure_case(scratch):
@@ -173,7 +264,8 @@ def run_creation_failure_case(scratch):
         "done\n"
         f'exec "{real_tmux}" "$@"\n', encoding="utf-8")
     fake_tmux.chmod(0o755)
-    returncode, output = finish(start_copy(PATH=f"{fake_bin}{os.pathsep}{os.environ.get('PATH', '')}"))
+    returncode, output = finish(start_copy(scratch, "creation-failure",
+                                           PATH=f"{fake_bin}{os.pathsep}{os.environ.get('PATH', '')}"))
     results = case_results(returncode, output)
     check("a forced tmux creation failure makes the suite exit nonzero", returncode != 0,
           f"exit {returncode}")
@@ -189,7 +281,7 @@ def main() -> int:
         return 0
     with tempfile.TemporaryDirectory(prefix="resupervise-two-copies-") as scratch_name:
         scratch = Path(scratch_name)
-        solo_exit, solo_output = finish(start_copy())
+        solo_exit, solo_output = finish(start_copy(scratch, "solo"))
         solo = case_results(solo_exit, solo_output)
         check("the solo run passes with no FAIL and no SKIP",
               solo_exit == 0 and not solo["FAIL"] and not solo["SKIP"] and solo["PASS"],
@@ -198,12 +290,13 @@ def main() -> int:
             print(f"\n{len(failures)} case(s) failed: {', '.join(failures)}")
             return 1
         run_comparison_control_case(solo_output)
+        run_collector_does_not_stall_case(scratch)
         first_barriers = scratch / "barriers-two-copies"
         first_barriers.mkdir()
-        run_two_copies_case(solo, first_barriers)
+        run_two_copies_case(solo, scratch, first_barriers)
         second_barriers = scratch / "barriers-copy-killed"
         second_barriers.mkdir()
-        run_copy_killed_at_barrier_case(solo, second_barriers)
+        run_copy_killed_at_barrier_case(solo, scratch, second_barriers)
         run_creation_failure_case(scratch)
 
     print()
