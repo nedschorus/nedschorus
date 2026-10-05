@@ -948,10 +948,11 @@ case("a file the branch renamed and the base deleted is named by its own "
 case("the deleting commit of a renamed file is looked up under its own path",
      any(c[:2] == ["git", "log"] and c[-1] == "old.py" for c in log)
      and not any(c[:2] == ["git", "log"] and c[-1] == "new.py" for c in log))
-case("the -z message parser maps each staged path to the file's own path",
-     hasattr(CHECK, "original_paths")
-     and CHECK.original_paths(RENAME_DELETE_AND_DIRFILE)
-     == {"new.py": "old.py", "x~main": "x"})
+case("the -z message parser keeps each two-path message's kind and other path",
+     hasattr(CHECK, "two_path_messages")
+     and CHECK.two_path_messages(RENAME_DELETE_AND_DIRFILE)
+     == {"new.py": ("CONFLICT (rename/delete)", "old.py"),
+         "x~main": ("CONFLICT (file/directory)", "x")})
 
 # GitHub says MERGEABLE where git finds the deletion: git's conflict stands,
 # and the deletion still decides what the agent is told.
@@ -1058,6 +1059,15 @@ def real_repository_cases(root):
     # to pair the branch's renamed file with main's deletion.
     commit_in(origin, "old.py", "l1\nl2\nl3\nl4\nl5\n",
               "base adds the file the branch renames")
+    # Files main will rename: one the branch deletes, and a directory whole,
+    # with distinct contents so git pairs each rename unambiguously.
+    commit_in(origin, "moved.py", "m1\nm2\nm3\nm4\nm5\n",
+              "base adds the file main renames")
+    for n in range(3):
+        (origin / "dir1").mkdir(exist_ok=True)
+        commit_in(origin, "dir1/f%d" % n,
+                  "".join("file %d line %d\n" % (n, i) for i in range(8)),
+                  "base adds dir1/f%d" % n)
     git_in(root, "clone", "-q", str(origin), str(work))
     git_in(work, "checkout", "-q", "-b", "clean-topic")
     clean_head = commit_in(work, "g", "new file\n", "clean topic")
@@ -1069,6 +1079,19 @@ def real_repository_cases(root):
     git_in(work, "mv", "old.py", "new.py")
     renamed_head = commit_in(work, "new.py", "l1\nl2, topic\nl3\nl4\nl5\n",
                              "renamed topic")
+    # main renames moved.py, which this branch deletes; main also deletes d,
+    # which this branch changes.
+    git_in(work, "checkout", "-q", "-b", "main-renamed-topic", "main")
+    git_in(work, "rm", "-q", "moved.py")
+    main_renamed_head = commit_in(work, "d", "doomed, topic\n",
+                                  "main-renamed topic")
+    # main renames dir1 to dir2, and this branch adds a file in dir1; main also
+    # deletes d, which this branch changes.
+    git_in(work, "checkout", "-q", "-b", "directory-rename-topic", "main")
+    (work / "dir1" / "new").write_text("brand new\n")
+    git_in(work, "add", "dir1/new")
+    directory_rename_head = commit_in(work, "d", "doomed, topic\n",
+                                      "directory-rename topic")
     git_in(work, "checkout", "-q", "-b", "deleted-and-conflict-topic", "main")
     commit_in(work, "d", "doomed, topic\n", "deleted topic, part one")
     mixed_head = commit_in(work, "f", "one\ntwo, topic\n",
@@ -1079,6 +1102,9 @@ def real_repository_cases(root):
     git_in(work, "checkout", "-q", "main")
     # main moves after the clone, so work's origin/main is stale until fetched.
     main_head = commit_in(origin, "f", "one\ntwo, main\n", "main moves")
+    git_in(origin, "mv", "moved.py", "moved-on-main.py")
+    git_in(origin, "mv", "dir1", "dir2")
+    git_in(origin, "commit", "-q", "-m", "main renames moved.py and dir1")
     git_in(origin, "rm", "-q", "old.py")
     git_in(origin, "commit", "-q", "-m", "main deletes old.py")
     renamed_deleting_label = real_label(git_in(origin, "rev-parse", "HEAD"),
@@ -1088,6 +1114,9 @@ def real_repository_cases(root):
     deleting_head = git_in(origin, "rev-parse", "HEAD")
     deleted_label = real_label(deleted_head, "deleted topic")
     renamed_label = real_label(renamed_head, "renamed topic")
+    main_renamed_label = real_label(main_renamed_head, "main-renamed topic")
+    directory_rename_label = real_label(directory_rename_head,
+                                        "directory-rename topic")
     mixed_label = real_label(mixed_head, "deleted topic, part two")
     deleting_label = real_label(deleting_head, "main deletes d")
     clean_label = real_label(clean_head, "clean topic")
@@ -1139,6 +1168,36 @@ def real_repository_cases(root):
              "origin/main deleted 1 file(s) the branch changes." % renamed_label,
              "DELETED ON origin/main: old.py, by %s" % renamed_deleting_label,
              DO_NOT_MERGE_DELETED, CLOSE_NAMING_DELETION, CARRY_WHAT_MAIN_LACKS,
+         ])
+
+    # The other direction: main renamed moved.py and the branch deleted it.
+    # That conflict is listed under main's new name, the one the agent will
+    # find on main, not the old name main no longer has.
+    status, lines, _ = run_here("--head", "main-renamed-topic")
+    case("real: a file main renamed and the branch deleted is listed under "
+         "main's new name", status == CHECK.EXIT_CONFLICT and lines == [
+             "VERDICT: CONFLICT -- %s conflicts with origin/main, and "
+             "origin/main deleted 1 file(s) the branch changes."
+             % main_renamed_label,
+             "DELETED ON origin/main: d, by %s" % deleting_label,
+             "ALSO CONFLICTS: moved-on-main.py",
+             DO_NOT_MERGE_DELETED, CLOSE_NAMING_DELETION, CARRY_WHAT_MAIN_LACKS,
+             REAPPLY_ALSO_CONFLICTS,
+         ])
+
+    # main renamed dir1 to dir2 and the branch added dir1/new: git stages the
+    # new file at dir2/new and only suggests that location, so it is listed
+    # where it is staged.
+    status, lines, _ = run_here("--head", "directory-rename-topic")
+    case("real: a file added in a directory main renamed is listed where git "
+         "staged it", status == CHECK.EXIT_CONFLICT and lines == [
+             "VERDICT: CONFLICT -- %s conflicts with origin/main, and "
+             "origin/main deleted 1 file(s) the branch changes."
+             % directory_rename_label,
+             "DELETED ON origin/main: d, by %s" % deleting_label,
+             "ALSO CONFLICTS: dir2/new",
+             DO_NOT_MERGE_DELETED, CLOSE_NAMING_DELETION, CARRY_WHAT_MAIN_LACKS,
+             REAPPLY_ALSO_CONFLICTS,
          ])
 
     # Both kinds at once: the deletion decides, and the ordinary conflict is
