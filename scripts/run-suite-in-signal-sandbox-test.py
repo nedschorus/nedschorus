@@ -286,7 +286,7 @@ with tempfile.TemporaryDirectory() as scratch_name:
 with tempfile.TemporaryDirectory() as scratch_name:
     scratch = pathlib.Path(scratch_name)
     repository = scratch_checkout(scratch)
-    def main_with_nothing_run(platform, sandbox=None):
+    def main_with_nothing_run(platform, sandbox=None, mutant=None):
         """Run main in this process with the suite run replaced; return (exit, output, runs)."""
         ran = []
         original_run, original_sandbox = program.run_suite_confined, program.runner.signal_sandbox
@@ -297,7 +297,9 @@ with tempfile.TemporaryDirectory() as scratch_name:
         try:
             with contextlib.redirect_stdout(output):
                 code = program.main(["doubling-test.py", "--checkout", str(repository),
-                                     "--lock-file", str(scratch / "run.lock")], platform=platform)
+                                     "--lock-file", str(scratch / "run.lock")]
+                                    + (["--mutant", mutant] if mutant else []),
+                                    platform=platform)
         finally:
             program.run_suite_confined = original_run
             program.runner.signal_sandbox = original_sandbox
@@ -316,33 +318,37 @@ with tempfile.TemporaryDirectory() as scratch_name:
           code == program.EXIT_NOT_RUN and ran == [] and "bwrap is not on PATH" in output,
           (code, output, ran))
 
-    # A sandbox in which the inside check refuses: the suite must not start, and the
-    # program must not report the suite's verdict.
-    proof = scratch / "proof"
-    proof.write_text("")
-    marker_suite = repository / "marks-test.py"
-    ran_marker = scratch / "marker-suite-ran"
-    marker_suite.write_text(f"open({str(ran_marker)!r}, 'w').write('ran')\n")
-    try:
-        program.run_suite_confined(repository, "marks-test.py", sys.executable,
-                                   ("env", "RUN_ALL_TEST_SUITES_INSIDE_SIGNAL_SANDBOX="), proof)
-    except program.NotRun as error:
-        check("when the check inside the sandbox refuses, the run is NotRun and the suite "
-              "never starts", not ran_marker.exists() and "did not confirm" in str(error),
-              str(error))
+    if not sys.platform.startswith("linux"):
+        print("SKIP  the cases that run the inside check through run_suite_confined: "
+              "it stops the suite's leftover processes through /proc, which only Linux has")
     else:
-        check("when the check inside the sandbox refuses, the run is NotRun and the suite "
-              "never starts", False, "no exception")
-    proof.write_text(program.PID_ONE_PROOF + "\n")
-    try:
-        program.run_suite_confined(repository, "marks-test.py", sys.executable,
-                                   ("env", "RUN_ALL_TEST_SUITES_INSIDE_SIGNAL_SANDBOX="), proof)
-        stale_proof_refused = False
-    except program.NotRun:
-        stale_proof_refused = True
-    check("a proof an earlier run left does not vouch for a run whose check refuses",
-          stale_proof_refused and not ran_marker.exists())
-    marker_suite.unlink()
+        # A sandbox in which the inside check refuses: the suite must not start, and the
+        # program must not report the suite's verdict.
+        proof = scratch / "proof"
+        proof.write_text("")
+        marker_suite = repository / "marks-test.py"
+        ran_marker = scratch / "marker-suite-ran"
+        marker_suite.write_text(f"open({str(ran_marker)!r}, 'w').write('ran')\n")
+        try:
+            program.run_suite_confined(repository, "marks-test.py", sys.executable,
+                                       ("env", "RUN_ALL_TEST_SUITES_INSIDE_SIGNAL_SANDBOX="), proof)
+        except program.NotRun as error:
+            check("when the check inside the sandbox refuses, the run is NotRun and the suite "
+                  "never starts", not ran_marker.exists() and "did not confirm" in str(error),
+                  str(error))
+        else:
+            check("when the check inside the sandbox refuses, the run is NotRun and the suite "
+                  "never starts", False, "no exception")
+        proof.write_text(program.PID_ONE_PROOF + "\n")
+        try:
+            program.run_suite_confined(repository, "marks-test.py", sys.executable,
+                                       ("env", "RUN_ALL_TEST_SUITES_INSIDE_SIGNAL_SANDBOX="), proof)
+            stale_proof_refused = False
+        except program.NotRun:
+            stale_proof_refused = True
+        check("a proof an earlier run left does not vouch for a run whose check refuses",
+              stale_proof_refused and not ran_marker.exists())
+        marker_suite.unlink()
 
     outside_suite = next(iter(program.runner.SUITES_RUN_OUTSIDE_THE_SIGNAL_SANDBOX))
     (repository / outside_suite).parent.mkdir(parents=True, exist_ok=True)
@@ -364,6 +370,11 @@ with tempfile.TemporaryDirectory() as scratch_name:
                                   str(scratch / "no-such.patch"))
     check("a mutant that is not a file is refused, exit 2",
           completed.returncode == 2 and "not a file" in last, last)
+
+    code, output, ran = main_with_nothing_run("darwin", mutant=str(scratch / "no-such.patch"))
+    check("on a platform other than Linux, a bad argument is named before the platform",
+          code == program.EXIT_NOT_RUN and ran == [] and "not a file" in output,
+          (code, output, ran))
 
 if not sys.platform.startswith("linux") or not bwrap_usable():
     print("SKIP  the cases that run a suite: no usable bwrap here")

@@ -355,8 +355,6 @@ def parse_arguments(argv):
 
 def run(arguments, platform):
     """Return (verdict line, exit code). Raises NotRun or RestoreFailed."""
-    if not platform.startswith("linux"):
-        raise NotRun(f"{platform} has no signal sandbox yet; this program runs only on Linux")
     try:
         top = runner.checkout_top_directory(arguments.checkout)
         interpreter, _ = runner.interpreter_and_version(arguments.python)
@@ -372,6 +370,8 @@ def run(arguments, platform):
     patch = Path(arguments.mutant).resolve() if arguments.mutant else None
     if patch is not None and not patch.is_file():
         raise NotRun(f"the mutant {arguments.mutant} is not a file")
+    if not platform.startswith("linux"):
+        raise NotRun(f"{platform} has no signal sandbox yet; this program runs only on Linux")
     try:
         sandbox_prefix, unconfined_because = runner.signal_sandbox(platform=platform)
     except runner.SignalSandboxCouldNotStart as error:

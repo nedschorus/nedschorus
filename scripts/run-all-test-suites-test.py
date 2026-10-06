@@ -1106,8 +1106,10 @@ spec = importlib.util.spec_from_file_location("runner", {str(PROGRAM)!r})
 runner = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(runner)
 store, stop, out = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2]), sys.argv[3]
+polling = pathlib.Path(sys.argv[4])
 seen = []
-while not stop.exists():
+while True:
+    stopping = stop.exists()
     directories = list(store.glob("*/"))
     if not directories:
         seen.append("absent")
@@ -1122,6 +1124,9 @@ while not stop.exists():
             seen.append(json.loads(text).get("commit", "no commit"))
         except ValueError:
             seen.append("INCOMPLETE")
+    polling.touch()
+    if stopping:
+        break
     time.sleep(0.001)
 pathlib.Path(out).write_text(json.dumps(seen))
 '''
@@ -1182,13 +1187,17 @@ def overlap_publishing_in_turn(shared_temporary, prefill):
                                 RENDEZVOUS_WAIT_VARIABLE: "20"}, stdin=subprocess.DEVNULL)
         shadow, markers = publication_barrier(root)
         stop, seen_file = root / "stop-reading", root / "seen.json"
+        reader_polling = root / "reader-polling"
         reader = subprocess.Popen([sys.executable, "-c", READER, str(store), str(stop),
-                                   str(seen_file)])
+                                   str(seen_file), str(reader_polling)])
         writers = {name: start_writer(root, checkout, name, store, shadow, markers,
                                       shared_temporary)
                    for name, checkout in (("first", repo), ("second", other))}
         seen = {"both held": all(wait_for(markers / f"written-{name}") for name in writers)}
         seen["temporaries while held"] = leftover_temporaries(store)
+        # Released only once the reader is polling, and the reader polls once more after
+        # the stop, so its reads span both publications however slowly it started.
+        seen["reader polling before release"] = wait_for(reader_polling, 60)
         (markers / "go-first").write_text("go")
         wait_for(markers / "renamed-first", 30)
         seen["after first"] = published(store)
@@ -1294,8 +1303,10 @@ for prefill in (False, True):
     allowed = {"absent", commits["first"], commits["second"]}
     check(f"with {store_was}, a reader polling throughout sees only whole recordings, "
           f"each from one run",
-          len(seen["reads"]) > 50 and set(seen["reads"]) <= allowed,
-          (len(seen["reads"]), sorted(set(seen["reads"]) - allowed)))
+          seen["reader polling before release"] and len(seen["reads"]) >= 2
+          and set(seen["reads"]) <= allowed,
+          (seen["reader polling before release"], len(seen["reads"]),
+           sorted(set(seen["reads"]) - allowed)))
     check(f"with {store_was}, each run's published recording reads the same files as a "
           f"run alone on its branch",
           seen["after first"].get("reads", {}).keys() == seen["solo"]["first"].get("reads", {}).keys()
