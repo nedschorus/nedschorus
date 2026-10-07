@@ -6,7 +6,8 @@ words and the date, the guidance it prints when too much or nothing matches,
 and how it reports a place it could not search.
 
 Every case runs the program against scratch directories named through
-LOCATE_USER_APPROVAL_PLAN_JSON. `gh` and `ssh` are stand-ins on PATH that log
+LOCATE_USER_APPROVAL_PLAN_JSON, with the variables that redirect git removed
+first. `gh` and `ssh` are stand-ins on PATH that log
 their arguments and answer as each case asks; nothing reaches GitHub or
 ned-box. `git` is the real one, on a scratch repository.
 
@@ -16,6 +17,7 @@ to test.
 Run: python3 scripts/locate-user-approval-by-question-subject-test.py   (exit 0 = all passed)
 """
 
+import importlib.util
 import json
 import os
 import pathlib
@@ -24,12 +26,20 @@ import sys
 import tempfile
 
 SCRIPTS_DIR = pathlib.Path(__file__).resolve().parent
+
+# Before anything runs git: a run started with GIT_DIR set, or with another
+# variable that redirects git, must still build this suite's scratch
+# repository where the suite says, not in the repository the variable names.
+_git_environment_fixture_spec = importlib.util.spec_from_file_location(
+    "git_redirecting_environment_removal_test_fixture",
+    SCRIPTS_DIR / "git-redirecting-environment-removal-test-fixture.py")
+_git_environment_fixture = importlib.util.module_from_spec(_git_environment_fixture_spec)
+_git_environment_fixture_spec.loader.exec_module(_git_environment_fixture)
+_git_environment_fixture.remove_git_redirecting_environment_variables_from_this_process()
+
 PROGRAM = pathlib.Path(
     os.environ.get("LOCATE_USER_APPROVAL_PROGRAM_UNDER_TEST")
     or SCRIPTS_DIR / "locate-user-approval-by-question-subject.py")
-GIT_REDIRECTING_VARIABLES = (
-    "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY",
-    "GIT_COMMON_DIR", "GIT_ALTERNATE_OBJECT_DIRECTORIES")
 
 STAND_IN_GH = """#!/usr/bin/env python3
 import json, os, sys
@@ -64,10 +74,7 @@ def check(case_name, condition, detail=""):
 
 
 def clean_environment():
-    environment = dict(os.environ)
-    for name in GIT_REDIRECTING_VARIABLES:
-        environment.pop(name, None)
-    return environment
+    return dict(os.environ)
 
 
 def git(cwd, *arguments):
