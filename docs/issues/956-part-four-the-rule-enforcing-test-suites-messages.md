@@ -25,10 +25,12 @@ This document is part four of GHI [Every refusal and warning a program hands an 
 
 **How a failure is printed.** Eight of the ten suites print each case through a `check()` function: `PASS  <case name>`, or `FAIL  <case name>: <detail>`, where the detail can run to several lines. The proposed texts change the detail and keep the case name. The two design-to-main suites use Python's `unittest`: a failed assertion prints the values it compared and then, after a colon, the assertion's own message, if it has one. A case inside a `subTest` also prints the subtest's values in its heading.
 
-**Files the instruction-file guard protects.** `.claude/hooks/instruction-file-guard.py` refuses an Edit or a Write of certain files unless `.walk-approved`, at the root of the agent-session's own checkout, holds an approval. It protects, among others, every file under `.claude/` except `.claude/worktrees/`, `.claude/jobs/` and `.claude/handoffs/`; `CLAUDE.md`; every `.md` file under `docs/agents/`, `docs/nedschorus-wiki/` and `nc-systems/skills/`; and every file whose name ends `-design.md`. Several fixes below land in such a file: `.claude/skills/walk-me-through/SKILL.md`, `.claude/settings.json`, `docs/nedschorus-wiki/nedschorus-glossary.md`, `docs/design-to-main/design-to-main-state-machine-design.md` and `CLAUDE.md`. CLAUDE.md gives two paths for such an edit: "In a file the instruction-file guard protects, fix an obvious error without asking the user first. An edit that changes what an agent or a program is told to do, or what a document decides, is not an obvious error: it goes to the user before you make it". For a fix in a protected file, the proposed texts end with this line, called the guarded-file line below, with `{file}` filled in:
+**Files the instruction-file guard protects.** `.claude/hooks/instruction-file-guard.py` refuses an Edit or a Write of certain files unless `.walk-approved`, at the root of the agent-session's own checkout, holds an approval. It protects, among others, every file under `.claude/` except `.claude/worktrees/`, `.claude/jobs/` and `.claude/handoffs/`; `CLAUDE.md`; every `.md` file under `docs/agents/`, `docs/nedschorus-wiki/` and `nc-systems/skills/`; and every file whose name ends `-design.md`. Several fixes below land in such a file: `.claude/skills/walk-me-through/SKILL.md`, `.claude/settings.json`, `docs/nedschorus-wiki/nedschorus-glossary.md`, `docs/design-to-main/design-to-main-state-machine-design.md` and `CLAUDE.md`. CLAUDE.md gives two paths for such an edit: "In a file the instruction-file guard protects, fix an obvious error without asking the user first. An edit that changes what an agent or a program is told to do, or what a document decides, is not an obvious error: it goes to the user before you make it". For a fix in a protected file, the proposed texts end with these three lines, called the guarded-file lines below, with `{file}` filled in:
 
 ```
-{file} is protected by the instruction-file guard: if the fix only corrects an obvious error as CLAUDE.md lists them, write "Obvious fix under CLAUDE.md's standing approval:" and what you are fixing into .walk-approved before the edit; otherwise ask the user to approve the change before you make it.
+{file} is protected by the instruction-file guard, which refuses an edit unless .walk-approved, at the root of your checkout, holds an approval for that one edit call.
+If the fix only corrects an obvious error as CLAUDE.md lists them: before each edit call, write "Obvious fix under CLAUDE.md's standing approval:" and what you are fixing into .walk-approved; if the edit then does not happen, delete that marker; and tell the user what you fixed in your next message to the user.
+Otherwise: ask the user to approve the change before you make it.
 ```
 
 **The four questions.** As in parts one and two, a message is complete when the message says:
@@ -47,7 +49,7 @@ Each proposed text keeps the case name and gives a new detail, in this order:
 - what was found, as today, with the file named in full where today's text gives only a basename;
 - one sentence saying the rule and why it holds, naming the file that writes the rule when one does;
 - one line per fix, each opening with the condition it applies under; the conditions of one message do not overlap, so exactly one line applies;
-- the guarded-file line, when a fix lands in a protected file.
+- the guarded-file lines, when a fix lands in a protected file.
 
 A rule can also break on main without the reader's change: the suite selection skips a suite whose recorded inputs a pull request did not change, so two pull requests that each pass can break a rule once both have merged. The reader can tell by listing what the branch changes against main, committed or not, with `git diff --name-status $(git merge-base HEAD origin/main)`. Question A below asks what the agent does then.
 
@@ -110,7 +112,9 @@ FAIL  the project glossary's paragraph listing the system glossaries is located:
 If your change reworded or removed that wording by mistake, put it back.
 If the new wording is meant to stay, set SYSTEM_GLOSSARY_PARAGRAPH_ANCHOR in {suite} to wording only the listing paragraph carries.
 If your change deleted the listing paragraph on purpose, put the question to the user before you go on: the suite needs a paragraph that lists the system glossaries.
-{page} is protected by the instruction-file guard: if the fix only corrects an obvious error as CLAUDE.md lists them, write "Obvious fix under CLAUDE.md's standing approval:" and what you are fixing into .walk-approved before the edit; otherwise ask the user to approve the change before you make it.
+{page} is protected by the instruction-file guard, which refuses an edit unless .walk-approved, at the root of your checkout, holds an approval for that one edit call.
+If the fix only corrects an obvious error as CLAUDE.md lists them: before each edit call, write "Obvious fix under CLAUDE.md's standing approval:" and what you are fixing into .walk-approved; if the edit then does not happen, delete that marker; and tell the user what you fixed in your next message to the user.
+Otherwise: ask the user to approve the change before you make it.
 ```
 
 ### 3. Several paragraphs carry the listing paragraph's wording
@@ -131,7 +135,9 @@ FAIL  the project glossary's paragraph listing the system glossaries is located:
 FAIL  the project glossary's paragraph listing the system glossaries is located: the paragraph could not be located: {count} paragraphs of {page} carry "{anchor}", the wording this suite finds the listing paragraph by, so it cannot tell which one lists the system glossaries.
 If your change copied that wording into another paragraph by mistake, reword the copy.
 If the wording is meant to appear in more than one paragraph, set SYSTEM_GLOSSARY_PARAGRAPH_ANCHOR in {suite} to wording only the listing paragraph carries.
-{page} is protected by the instruction-file guard: if the fix only corrects an obvious error as CLAUDE.md lists them, write "Obvious fix under CLAUDE.md's standing approval:" and what you are fixing into .walk-approved before the edit; otherwise ask the user to approve the change before you make it.
+{page} is protected by the instruction-file guard, which refuses an edit unless .walk-approved, at the root of your checkout, holds an approval for that one edit call.
+If the fix only corrects an obvious error as CLAUDE.md lists them: before each edit call, write "Obvious fix under CLAUDE.md's standing approval:" and what you are fixing into .walk-approved; if the edit then does not happen, delete that marker; and tell the user what you fixed in your next message to the user.
+Otherwise: ask the user to approve the change before you make it.
 ```
 
 ### 4. The project glossary names a glossary path git does not track
@@ -153,7 +159,9 @@ FAIL  every glossary path the project glossary names is one git tracks: named bu
 If a glossary named there was renamed, or its path is mistyped, correct the path in {page}.
 If a glossary named there was deleted, remove it from {page}.
 If a glossary named there is new and not yet committed, commit it.
-{page} is protected by the instruction-file guard: if the fix only corrects an obvious error as CLAUDE.md lists them, write "Obvious fix under CLAUDE.md's standing approval:" and what you are fixing into .walk-approved before the edit; otherwise ask the user to approve the change before you make it.
+{page} is protected by the instruction-file guard, which refuses an edit unless .walk-approved, at the root of your checkout, holds an approval for that one edit call.
+If the fix only corrects an obvious error as CLAUDE.md lists them: before each edit call, write "Obvious fix under CLAUDE.md's standing approval:" and what you are fixing into .walk-approved; if the edit then does not happen, delete that marker; and tell the user what you fixed in your next message to the user.
+Otherwise: ask the user to approve the change before you make it.
 ```
 
 ### 5. A program this suite watches is not where the suite reads
@@ -214,7 +222,9 @@ FAIL  the skill names the walk files' endings: found only [] in SKILL.md; the pa
 ```
 FAIL  the skill names the walk files' endings: found only {suffixes} in .claude/skills/walk-me-through/SKILL.md, which decides the endings of an approval-walk's files; this suite reads them from names written as <name>.md and <name>-<ending>.md, and needs at least four.
 If your change rewrote those names in the skill, write them again as <name>.md and <name>-<ending>.md.
-.claude/skills/walk-me-through/SKILL.md is protected by the instruction-file guard: if the fix only corrects an obvious error as CLAUDE.md lists them, write "Obvious fix under CLAUDE.md's standing approval:" and what you are fixing into .walk-approved before the edit; otherwise ask the user to approve the change before you make it.
+.claude/skills/walk-me-through/SKILL.md is protected by the instruction-file guard, which refuses an edit unless .walk-approved, at the root of your checkout, holds an approval for that one edit call.
+If the fix only corrects an obvious error as CLAUDE.md lists them: before each edit call, write "Obvious fix under CLAUDE.md's standing approval:" and what you are fixing into .walk-approved; if the edit then does not happen, delete that marker; and tell the user what you fixed in your next message to the user.
+Otherwise: ask the user to approve the change before you make it.
 ```
 
 ### 8. cold-read-fast-read.py builds a walk file ending the skill does not name
@@ -340,7 +350,9 @@ If your change renamed or removed the name on purpose, change the design to matc
 If the name is spelled as a string in another module of scripts/design-to-main/, add it to MACHINE_NAMES_DEFINED_OUTSIDE_THE_STATE_TABLES_MODULE in this suite with that module's file name.
 If the word is not a name of the state machine, add it with its reason to BACKTICKED_TOKENS_THAT_ARE_NOT_MACHINE_NAMES in this suite.
 If you cannot tell whether the design or the code is right, stop and ask the user which is.
-docs/design-to-main/design-to-main-state-machine-design.md is protected by the instruction-file guard: if the fix only corrects an obvious error as CLAUDE.md lists them, write "Obvious fix under CLAUDE.md's standing approval:" and what you are fixing into .walk-approved before the edit; otherwise ask the user to approve the change before you make it.
+docs/design-to-main/design-to-main-state-machine-design.md is protected by the instruction-file guard, which refuses an edit unless .walk-approved, at the root of your checkout, holds an approval for that one edit call.
+If the fix only corrects an obvious error as CLAUDE.md lists them: before each edit call, write "Obvious fix under CLAUDE.md's standing approval:" and what you are fixing into .walk-approved; if the edit then does not happen, delete that marker; and tell the user what you fixed in your next message to the user.
+Otherwise: ask the user to approve the change before you make it.
 ```
 
 **Question for the user, B: a name whose right spelling the agent cannot tell.** The suite holds a list, `KNOWN_MISMATCHES_AWAITING_A_RULING`, for names in the design that no code defines and that await the user's ruling; it is empty, and its comment says entries were placed there by the user's ruling, not to make the suite pass. The proposed last condition has the agent stop and ask the user. The alternative is to let the agent add the name to that list and tell the user, which makes the suite pass while the ruling is pending. Recommendation: stop and ask, as proposed, so that only the user puts a name on the list that awaits the user.
@@ -365,7 +377,9 @@ If your change removed the string by mistake, put it back.
 If your change renamed the string, give the entry the new name, and change the design's name to match.
 If your change moved the string to another module of scripts/design-to-main/, change the entry's file name.
 If the state machine no longer has that name, remove the entry, and remove the name from the design.
-docs/design-to-main/design-to-main-state-machine-design.md is protected by the instruction-file guard: if the fix only corrects an obvious error as CLAUDE.md lists them, write "Obvious fix under CLAUDE.md's standing approval:" and what you are fixing into .walk-approved before the edit; otherwise ask the user to approve the change before you make it.
+docs/design-to-main/design-to-main-state-machine-design.md is protected by the instruction-file guard, which refuses an edit unless .walk-approved, at the root of your checkout, holds an approval for that one edit call.
+If the fix only corrects an obvious error as CLAUDE.md lists them: before each edit call, write "Obvious fix under CLAUDE.md's standing approval:" and what you are fixing into .walk-approved; if the edit then does not happen, delete that marker; and tell the user what you fixed in your next message to the user.
+Otherwise: ask the user to approve the change before you make it.
 ```
 
 ### 15. A name on one of this suite's exception lists is now defined by the state tables
@@ -413,7 +427,9 @@ AssertionError: Lists differ: ["row 24: to-state 'test-design-writing', the To c
 section 3.2 of docs/design-to-main/design-to-main-state-machine-design.md and TRANSITION_TABLE in scripts/design-to-main/design-to-main-state-tables.py disagree on the rows listed above; both copies are edited by hand, section 3.2 deciding what a transition is and the code what it does.
 If your change edited one copy by mistake, undo that edit.
 If your change edited a copy on purpose, make the same change in the other copy, so that both say the same.
-docs/design-to-main/design-to-main-state-machine-design.md is protected by the instruction-file guard: if the fix only corrects an obvious error as CLAUDE.md lists them, write "Obvious fix under CLAUDE.md's standing approval:" and what you are fixing into .walk-approved before the edit; otherwise ask the user to approve the change before you make it.
+docs/design-to-main/design-to-main-state-machine-design.md is protected by the instruction-file guard, which refuses an edit unless .walk-approved, at the root of your checkout, holds an approval for that one edit call.
+If the fix only corrects an obvious error as CLAUDE.md lists them: before each edit call, write "Obvious fix under CLAUDE.md's standing approval:" and what you are fixing into .walk-approved; if the edit then does not happen, delete that marker; and tell the user what you fixed in your next message to the user.
+Otherwise: ask the user to approve the change before you make it.
 ```
 
 For `:344`, section 3.1's states and sub-states against `STATE_TABLE`:
@@ -453,7 +469,9 @@ no row of section 3.2 of docs/design-to-main/design-to-main-state-machine-design
 If your change reworded those cells by mistake, put the phrase back.
 If the new wording is meant to stay, change {where} in this suite to the new wording.
 If no row should use the phrase any more, remove it from {where}, with the code in this suite that reads it.
-docs/design-to-main/design-to-main-state-machine-design.md is protected by the instruction-file guard: if the fix only corrects an obvious error as CLAUDE.md lists them, write "Obvious fix under CLAUDE.md's standing approval:" and what you are fixing into .walk-approved before the edit; otherwise ask the user to approve the change before you make it.
+docs/design-to-main/design-to-main-state-machine-design.md is protected by the instruction-file guard, which refuses an edit unless .walk-approved, at the root of your checkout, holds an approval for that one edit call.
+If the fix only corrects an obvious error as CLAUDE.md lists them: before each edit call, write "Obvious fix under CLAUDE.md's standing approval:" and what you are fixing into .walk-approved; if the edit then does not happen, delete that marker; and tell the user what you fixed in your next message to the user.
+Otherwise: ask the user to approve the change before you make it.
 ```
 
 ### 18. The force-push guard is not registered exactly once
@@ -473,7 +491,9 @@ FAIL  the guard is wired exactly once as a PreToolUse Bash hook: []
 ```
 FAIL  the guard is wired exactly once as a PreToolUse Bash hook: found {entries}; .claude/settings.json must register scripts/force-push-with-open-pull-request-guard-hook.py exactly once, in the PreToolUse block whose matcher is Bash, so that the guard runs once before each Bash command.
 If your change removed, duplicated or moved that entry, put back exactly one entry in that block.
-.claude/settings.json is protected by the instruction-file guard: if the fix only corrects an obvious error as CLAUDE.md lists them, write "Obvious fix under CLAUDE.md's standing approval:" and what you are fixing into .walk-approved before the edit; otherwise ask the user to approve the change before you make it.
+.claude/settings.json is protected by the instruction-file guard, which refuses an edit unless .walk-approved, at the root of your checkout, holds an approval for that one edit call.
+If the fix only corrects an obvious error as CLAUDE.md lists them: before each edit call, write "Obvious fix under CLAUDE.md's standing approval:" and what you are fixing into .walk-approved; if the edit then does not happen, delete that marker; and tell the user what you fixed in your next message to the user.
+Otherwise: ask the user to approve the change before you make it.
 ```
 
 ### 19. The force-push guard's registered timeout is not above its budget
@@ -495,7 +515,9 @@ FAIL  the registered timeout exceeds the guard's probe budget: timeout {timeout}
 If the case above also failed, fix that first; this case reads the timeout from the entry that case looks for.
 If your change raised PROBE_BUDGET_SECONDS, lower it below the timeout, or ask the user to approve a higher timeout in .claude/settings.json.
 If your change lowered, removed or rewrote the timeout in .claude/settings.json, put back a number above the budget.
-.claude/settings.json is protected by the instruction-file guard: if the fix only corrects an obvious error as CLAUDE.md lists them, write "Obvious fix under CLAUDE.md's standing approval:" and what you are fixing into .walk-approved before the edit; otherwise ask the user to approve the change before you make it.
+.claude/settings.json is protected by the instruction-file guard, which refuses an edit unless .walk-approved, at the root of your checkout, holds an approval for that one edit call.
+If the fix only corrects an obvious error as CLAUDE.md lists them: before each edit call, write "Obvious fix under CLAUDE.md's standing approval:" and what you are fixing into .walk-approved; if the edit then does not happen, delete that marker; and tell the user what you fixed in your next message to the user.
+Otherwise: ask the user to approve the change before you make it.
 ```
 
 ## Messages left as they are
@@ -510,14 +532,16 @@ The audit counted these repository-rule messages complete, and the rereading agr
 
 The rows suite also raises `DesignTableMalformed` when section 3.1 or 3.2 of the design cannot be read as a table at all; neither the audit nor this rereading covers those messages, and a later reading does.
 
-**Question for the user, C: the review-scope copies.** `scripts/pr-reviewer-instructions-copies-test.py:169` fails when CLAUDE.md's review-scope bullet differs from `docs/agents/pr-reviewer-instructions.md`, and ends "The file is the rule's home; make CLAUDE.md's bullet its section again." Both files are protected by the instruction-file guard, and the message does not say so. Recommendation: add the guarded-file line, with `{file}` reading "CLAUDE.md".
+**Question for the user, C: the review-scope copies.** `scripts/pr-reviewer-instructions-copies-test.py:169` fails when CLAUDE.md's review-scope bullet differs from `docs/agents/pr-reviewer-instructions.md`, and ends "The file is the rule's home; make CLAUDE.md's bullet its section again." Both files are protected by the instruction-file guard, and the message does not say so. Recommendation: add the guarded-file lines, with `{file}` reading "CLAUDE.md".
 
 **Question for the user, D: the copy that does not say where the rule lives.** `scripts/pr-reviewer-instructions-copies-test.py:174` fails when CLAUDE.md does not name `docs/agents/pr-reviewer-instructions.md` and the suite beside its copy, and says only "the copy must say where the rule lives and what keeps the two identical". It states the rule but gives no instruction. Recommendation: bring it into this part, with this text:
 
 ```
 FAIL  CLAUDE.md names the file and this test beside its copy: CLAUDE.md's review-scope bullet must name docs/agents/pr-reviewer-instructions.md, where the rule lives, and scripts/pr-reviewer-instructions-copies-test.py, which keeps the two copies identical.
 If your change removed either name from that bullet, put it back.
-CLAUDE.md is protected by the instruction-file guard: if the fix only corrects an obvious error as CLAUDE.md lists them, write "Obvious fix under CLAUDE.md's standing approval:" and what you are fixing into .walk-approved before the edit; otherwise ask the user to approve the change before you make it.
+CLAUDE.md is protected by the instruction-file guard, which refuses an edit unless .walk-approved, at the root of your checkout, holds an approval for that one edit call.
+If the fix only corrects an obvious error as CLAUDE.md lists them: before each edit call, write "Obvious fix under CLAUDE.md's standing approval:" and what you are fixing into .walk-approved; if the edit then does not happen, delete that marker; and tell the user what you fixed in your next message to the user.
+Otherwise: ask the user to approve the change before you make it.
 ```
 
 ## Code the new texts need
@@ -525,7 +549,7 @@ CLAUDE.md is protected by the instruction-file guard: if the fix only corrects a
 - Each `check()` detail and each assertion message above changes as shown. Six `unittest` assertions that have no message today gain one: `scripts/design-to-main/tests/design-to-main-design-names-exist-in-state-tables-test.py:230`, `:234` and `:235`, and `scripts/design-to-main/tests/design-to-main-design-rows-pair-with-state-tables-test.py:340`, `:344` and `:349`. The three phrase assertions at `:361`, `:363` and `:365` change their message to section 17's.
 - The rows suite sets `maxDiff = None` on its class, so that section 16's message follows every disagreeing row: today `unittest` shortens a long list and can replace the comparison with "Diff is N characters long".
 - Section 1's second form keeps the error the suite raises, for both of its causes, and adds its two lines after it.
-- The guarded-file line and Question A's line, if approved, are each one constant in a module the ten suites import, so that their wording is written once.
+- The guarded-file lines and Question A's line, if approved, are each one constant in a new module, `scripts/repository-rule-test-failure-message-lines.py`, so that their wording is written once. The suites that print them load the module by its path with `importlib`, as `scripts/system-glossaries-listed-on-the-project-glossary-test.py` loads `scripts/git-redirecting-environment-removal-test-fixture.py`, because a hyphenated file name cannot be imported by name.
 
 ## Tests
 
