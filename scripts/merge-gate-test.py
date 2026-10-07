@@ -240,7 +240,8 @@ def base_routes(**state_fields):
 
 
 class Run:
-    def __init__(self, completed, calls):
+    def __init__(self, completed, calls, home=None):
+        self.home = home
         self.code = completed.returncode
         self.stdout = completed.stdout
         self.stderr = completed.stderr
@@ -252,7 +253,7 @@ class Run:
 
 
 def run_gate(gate, pr, expected, since, routes, token=TEST_TOKEN, path_override=None,
-             wrapper=None):
+             wrapper=None, arguments=None):
     case_dir = Path(tempfile.mkdtemp(dir=scratch))
     home = case_dir / "home"
     token_dir = home / ".config" / "nedschorus"
@@ -275,7 +276,8 @@ def run_gate(gate, pr, expected, since, routes, token=TEST_TOKEN, path_override=
         f"{stand_in_dir}{os.pathsep}{os.environ['PATH']}",
         MERGE_GATE_TEST_GH_ROUTES=str(routes_file),
         MERGE_GATE_TEST_GH_CALL_LOG=str(call_log))
-    arguments = [str(pr), expected, since]
+    if arguments is None:
+        arguments = [str(pr), expected, since]
     if wrapper:
         # The live chain's own line, with its relative path pointed at this gate.
         environment["GATE"] = str(gate)
@@ -287,7 +289,7 @@ def run_gate(gate, pr, expected, since, routes, token=TEST_TOKEN, path_override=
     completed = subprocess.run(command, capture_output=True, text=True, env=environment,
                                timeout=120)
     calls = [json.loads(line) for line in call_log.read_text().splitlines() if line]
-    return Run(completed, calls)
+    return Run(completed, calls, home)
 
 
 def reached_gh_honestly(run, pr):
@@ -310,6 +312,33 @@ def could_not_run_before_gh(run, *phrases):
     return run.code == 2 and stopped_before_gh(run) and all(p in run.stderr for p in phrases)
 
 
+def could_not_run_after_gh(run, pr, *phrases):
+    return (run.code == 2 and reached_gh_honestly(run, pr)
+            and all(phrase in run.stderr for phrase in phrases))
+
+
+# Lines the gate adds after a first line, shared by several messages.
+RERUN_ONCE_GH = "Run the gate again once; if it fails the same way, tell the user this message and gh's error."
+JQ_ERROR_ABOVE = "\nAny error jq printed is just above this line.\n"
+RERUN_ONCE_JQ = "Run the gate again once; if it fails the same way, tell the user this message and jq's error."
+TOKEN_LINES = (
+    "\nThe gate reads GitHub only as the merge account, ned-review-merge, and stops rather than "
+    "read as gh's stored account.\n",
+    "\nTell the user this message: only the user can restore the token.\n")
+NEW_ACTIVITY_LINES = (
+    "the inline comments, the issue comments and the reviews.\n",
+    "\nIf any raises a finding, do not merge until the finding is fixed, or answered with a reason "
+    "that shows it does not hold; a fix moves the head commit, which then needs its own approving review.\n",
+    "\nWhen nothing is left open, post a review as the merge account saying what you read, check that "
+    "nothing was posted between your reading and that review; if something was, read it and repeat "
+    "from the first line. Then run the gate again with the review's submitted_at as reviewed-since.\n")
+
+
+def full_hash_line(pr):
+    return (f"\nPass the head commit's full hash in lower case, as gh pr view {pr} --json headRefOid "
+            "--jq .headRefOid prints it, then run the gate again.\n")
+
+
 def passed_pinned_to(run, pr, sha):
     return (run.code == 0 and reached_gh_honestly(run, pr)
             and f"--match-head-commit {sha}" in run.stdout)
@@ -322,7 +351,17 @@ def passed_pinned_to(run, pr, sha):
 
 def case_a1_pass_control(gate):
     run = run_gate(gate, BASE_PR, BASE_HEAD, BASE_APPROVAL["submitted_at"], base_routes())
-    return passed_pinned_to(run, BASE_PR, BASE_APPROVAL["commit_id"]), run.summary()
+    sha = BASE_APPROVAL["commit_id"]
+    # The merge seat's wrapper takes the line after this one as the command, so
+    # both lines are asserted whole.
+    merge_lines = ("\nMERGE WITH THIS EXACT COMMAND:\n"
+                   f"  gh pr merge {BASE_PR} --repo nedschorus/nedschorus --merge --delete-branch "
+                   f"--match-head-commit {sha}\n")
+    token_line = ("Run that command with GH_TOKEN set to the merge account's token, "
+                  f"{run.home}/.config/nedschorus/ned-review-merge.token, so the merge runs as "
+                  "ned-review-merge.\n")
+    return (passed_pinned_to(run, BASE_PR, sha) and merge_lines + token_line in run.stdout,
+            run.summary())
 
 
 def case_live_chain_merge_account_only_approval(gate):
@@ -378,7 +417,7 @@ def case_687_since_at_the_approval_counts_the_merge_accounts_review(gate):
     later review is new activity, as every account's is (F5)."""
     pin = review(PR_687_REVIEWS, 5297823520)
     run = run_gate(gate, "687", pin["commit_id"], pin["submitted_at"], pr_687_routes())
-    return refused_with(run, "687", "1 NEW review(s)"), run.summary()
+    return refused_with(run, "687", "1 review(s) posted or edited since"), run.summary()
 
 
 def case_687_since_after_the_merge_accounts_review(gate):
@@ -437,7 +476,7 @@ def case_722_since_at_the_approval_counts_the_merge_accounts_inline_comments(gat
     after it, so its three comments keep their own time and are new."""
     pin = review(PR_722_REVIEWS, PR_722_PIN)
     run = run_gate(gate, "722", pin["commit_id"], pin["submitted_at"], pr_722_routes())
-    return refused_with(run, "722", "3 NEW inline comment(s)"), run.summary()
+    return refused_with(run, "722", "3 inline comment(s) posted or edited since"), run.summary()
 
 
 PYTORCH_114309_REVIEWS = "pytorch-pytorch-114309-reviews-channel-paginated.json"
@@ -480,7 +519,7 @@ def case_f6_pins_inline_comment_edited_after_since(gate):
     routes = pytorch_114309_at_the_pin_routes(
         {PYTORCH_114309_PIN_COMMENTS[-1]: {"updated_at": edited_at}})
     run = run_gate(gate, "114309", pin["commit_id"], pin["submitted_at"], routes)
-    return refused_with(run, "114309", "1 NEW inline comment(s)"), run.summary()
+    return refused_with(run, "114309", "1 inline comment(s) posted or edited since"), run.summary()
 
 
 def case_pytorch_114309_another_accounts_review_keeps_its_comments_time(gate):
@@ -490,7 +529,7 @@ def case_pytorch_114309_another_accounts_review_keeps_its_comments_time(gate):
     pin = review(PYTORCH_114309_REVIEWS, PYTORCH_114309_PIN)
     since = review(PYTORCH_114309_REVIEWS, 1765876183)["submitted_at"]
     run = run_gate(gate, "114309", pin["commit_id"], since, pytorch_114309_at_the_pin_routes())
-    return refused_with(run, "114309", "21 NEW inline comment(s)"), run.summary()
+    return refused_with(run, "114309", "21 inline comment(s) posted or edited since"), run.summary()
 
 
 def case_f2_since_at_another_accounts_later_review(gate):
@@ -514,14 +553,15 @@ def case_b1_inline_beyond_first_page(gate):
     routes = base_routes()
     routes.update(captured_channel_routes("inline", "pytorch-pytorch-114309-inline-channel"))
     run = run_gate(gate, BASE_PR, BASE_HEAD, "2023-12-05T02:47:43Z", routes)
-    return refused_with(run, BASE_PR, "24 NEW inline comment(s)"), run.summary()
+    return refused_with(run, BASE_PR, "24 inline comment(s) posted or edited since"), run.summary()
 
 
 def case_b1_issue_beyond_first_page(gate):
     routes = base_routes()
     routes.update(captured_channel_routes("issue", "pytorch-pytorch-114309-issue-channel"))
     run = run_gate(gate, BASE_PR, BASE_HEAD, "2023-12-13T22:18:59Z", routes)
-    return refused_with(run, BASE_PR, "21 NEW issue comment(s)"), run.summary()
+    return refused_with(run, BASE_PR, "21 issue comment(s) posted or edited since 2023-12-13T22:18:59Z -- read them before merging\n",
+                        *NEW_ACTIVITY_LINES), run.summary()
 
 
 def case_b1_reviews_beyond_first_page(gate):
@@ -534,7 +574,8 @@ def case_b1_reviews_beyond_first_page(gate):
     routes.update(QUIET_ISSUE)
     head = captured_value("pytorch-pytorch-114309-pr-view-state.json", "headRefOid")
     run = run_gate(gate, "114309", head, "2023-12-05T18:35:06Z", routes)
-    return refused_with(run, "114309", "20 NEW review(s)"), run.summary()
+    return refused_with(run, "114309", "20 review(s) posted or edited since 2023-12-05T18:35:06Z -- read them before merging\n",
+                        *NEW_ACTIVITY_LINES), run.summary()
 
 
 def case_b2_pin_beyond_first_page(gate):
@@ -558,14 +599,33 @@ def one_second_after(timestamp):
 
 
 def case_b3_since_after_the_approval(gate):
-    run = run_gate(gate, BASE_PR, BASE_HEAD, one_second_after(BASE_APPROVAL["submitted_at"]),
-                   base_routes())
-    return refused_with(run, BASE_PR, "is later than"), run.summary()
+    since = one_second_after(BASE_APPROVAL["submitted_at"])
+    bound = BASE_APPROVAL["submitted_at"]
+    run = run_gate(gate, BASE_PR, BASE_HEAD, since, base_routes())
+    return refused_with(
+        run, BASE_PR,
+        f"reviewed-since {since} is later than {bound}, the later of the pin and the merge "
+        "account's own latest review; the gate accepts a reviewed-since only up to a review that "
+        "records someone read the pull request.\n",
+        f"\nRun the gate again with a reviewed-since no later than {bound}.\n",
+        f"\nIf you have read the pull request after {bound}, post a review as the merge account "
+        "saying so, then run the gate again with that review's submitted_at.\n"), run.summary()
 
 
 def case_b4_since_with_an_offset(gate):
     run = run_gate(gate, BASE_PR, BASE_HEAD, "2026-09-23T03:36:54+01:00", base_routes())
-    return could_not_run_before_gh(run, "reviewed-since must be exactly"), run.summary()
+    return could_not_run_before_gh(
+        run, "reviewed-since must be a real time in exactly the form YYYY-MM-DDTHH:MM:SSZ, which "
+        "GitHub returns: 2026-09-23T03:36:54+01:00\n",
+        "\nPass the review's submitted_at exactly as GitHub returns it, then run the gate again.\n"
+    ), run.summary()
+
+
+def case_b4_since_of_the_right_shape_that_is_no_real_time(gate):
+    run = run_gate(gate, BASE_PR, BASE_HEAD, "2026-13-05T15:58:12Z", base_routes())
+    return could_not_run_before_gh(
+        run, "reviewed-since must be a real time in exactly the form YYYY-MM-DDTHH:MM:SSZ, which "
+        "GitHub returns: 2026-13-05T15:58:12Z\n"), run.summary()
 
 
 PR_636_REVIEWS = "nedschorus-nedschorus-636-reviews-channel-paginated.json"
@@ -583,7 +643,7 @@ def case_b6_merge_accounts_later_findings(gate):
     routes.update(QUIET_INLINE)
     routes.update(QUIET_ISSUE)
     run = run_gate(gate, "636", pin["commit_id"], since, routes)
-    return refused_with(run, "636", "1 NEW review(s)"), run.summary()
+    return refused_with(run, "636", "1 review(s) posted or edited since"), run.summary()
 
 
 CLI_14475_INLINE = "cli-cli-14475-inline-channel-paginated.json"
@@ -604,35 +664,58 @@ def case_b7_edited_comment(gate):
     since = channel_items(captured(CLI_14475_INLINE))[9]["created_at"]
     head = captured_value("cli-cli-14475-pr-view-state.json", "headRefOid")
     run = run_gate(gate, "14475", head, since, cli_14475_routes())
-    return refused_with(run, "14475", "6 NEW inline comment(s)"), run.summary()
+    return refused_with(run, "14475", "6 inline comment(s) posted or edited since"), run.summary()
 
 
 def case_c1_token_file_missing(gate):
     run = run_gate(gate, BASE_PR, BASE_HEAD, BASE_APPROVAL["submitted_at"], base_routes(),
                    token=None)
-    return could_not_run_before_gh(run, "could not read the merge account's token"), run.summary()
+    return could_not_run_before_gh(run, "could not read the merge account's token", *TOKEN_LINES), run.summary()
 
 
 def case_c2_token_file_empty(gate):
     run = run_gate(gate, BASE_PR, BASE_HEAD, BASE_APPROVAL["submitted_at"], base_routes(),
                    token="")
-    return could_not_run_before_gh(run, "is empty"), run.summary()
+    return could_not_run_before_gh(run, "is empty\n", *TOKEN_LINES), run.summary()
 
 
 def case_d1_jq_absent(gate):
     run = run_gate(gate, BASE_PR, BASE_HEAD, BASE_APPROVAL["submitted_at"], base_routes(),
                    path_override=lambda stand_in_dir: str(stand_in_dir))
-    return could_not_run_before_gh(run, "jq is not on PATH"), run.summary()
+    return could_not_run_before_gh(
+        run, "jq is not on PATH",
+        "\nIf jq is not installed on this machine, tell the user this message.\n"), run.summary()
+
+
+def case_d1_gh_absent(gate):
+    # A PATH holding jq alone: the gh stand-in is not on it.
+    jq_only = Path(tempfile.mkdtemp(dir=scratch))
+    (jq_only / "jq").symlink_to(shutil.which("jq"))
+    run = run_gate(gate, BASE_PR, BASE_HEAD, BASE_APPROVAL["submitted_at"], base_routes(),
+                   path_override=lambda stand_in_dir: str(jq_only))
+    return could_not_run_before_gh(
+        run, "GATE COULD NOT RUN: gh is not on PATH. Put gh on PATH, then rerun the gate.\n",
+        "\nIf gh is not installed on this machine, tell the user this message.\n"), run.summary()
+
+
+def case_d0_wrong_argument_count(gate):
+    run = run_gate(gate, BASE_PR, BASE_HEAD, BASE_APPROVAL["submitted_at"], base_routes(),
+                   arguments=[BASE_PR, BASE_HEAD])
+    return could_not_run_before_gh(
+        run, "GATE COULD NOT RUN: merge-gate.sh takes exactly three arguments and was given 2.\n",
+        "\nCall it as: scripts/merge-gate.sh <pull request number> <the head commit, all 40 "
+        "characters> <reviewed-since: the submitted_at of your latest review as the merge account, "
+        "or of the pin if that is later>\n"), run.summary()
 
 
 def case_d2_abbreviated_expected(gate):
     run = run_gate(gate, BASE_PR, BASE_HEAD[:8], BASE_APPROVAL["submitted_at"], base_routes())
-    return could_not_run_before_gh(run, "is 8 characters, not 40"), run.summary()
+    return could_not_run_before_gh(run, "is 8 characters, not 40", full_hash_line(BASE_PR)), run.summary()
 
 
 def case_d3_expected_not_hex(gate):
     run = run_gate(gate, BASE_PR, BASE_HEAD.upper(), BASE_APPROVAL["submitted_at"], base_routes())
-    return could_not_run_before_gh(run, "not a full 40-character hex sha"), run.summary()
+    return could_not_run_before_gh(run, "not a full 40-character hex sha", full_hash_line(BASE_PR)), run.summary()
 
 
 def case_e1_no_approval(gate):
@@ -643,13 +726,29 @@ def case_e1_no_approval(gate):
     head = captured_value("nedschorus-nedschorus-636-pr-view-state.json", "headRefOid")
     since = review(PR_636_REVIEWS, 5285920906)["submitted_at"]
     run = run_gate(gate, "636", head, since, routes)
-    return refused_with(run, "636", "no APPROVED review"), run.summary()
+    return refused_with(
+        run, "636",
+        "GATE REFUSED (#636): no APPROVED review found; the gate prints a merge command only for a "
+        "commit an approving review covers.\n",
+        "\nIf the head commit has not been reviewed yet, commission its review, and run the gate "
+        "again once the head commit is approved.\n",
+        "\nIf its review found a defect, do not merge until the defect is fixed and the new head "
+        "commit is approved.\n",
+        "\nIf its review found no defect, approve the head commit as an account other than the pull "
+        "request's author: the merge account, or mac-claude when the merge account opened the pull "
+        "request. Then run the gate again.\n"), run.summary()
 
 
 def case_e2_head_moved(gate):
     other = captured_value("nedschorus-nedschorus-636-pr-view-state.json", "headRefOid")
     run = run_gate(gate, BASE_PR, other, BASE_APPROVAL["submitted_at"], base_routes())
-    return refused_with(run, BASE_PR, "head moved", other, BASE_HEAD), run.summary()
+    return refused_with(
+        run, BASE_PR,
+        f"head moved: you passed {other}, and the head commit is now {BASE_HEAD}.\n",
+        f"\nIf an approving review covers {BASE_HEAD}, run the gate again with {BASE_HEAD} as the "
+        "expected head commit and a reviewed-since from after you read that review.\n",
+        f"\nOtherwise, have {BASE_HEAD} reviewed and approved, then run the gate again the same way.\n"
+    ), run.summary()
 
 
 def case_e3_approval_covers_another_commit(gate):
@@ -661,36 +760,83 @@ def case_e3_approval_covers_another_commit(gate):
     routes.update(QUIET_ISSUE)
     head = captured_value("nedschorus-nedschorus-636-pr-view-state.json", "headRefOid")
     run = run_gate(gate, "636", head, pin["submitted_at"], routes)
-    return refused_with(run, "636", f"the approval covers {pin['commit_id']}", head), run.summary()
+    return refused_with(
+        run, "636", f"the approval covers {pin['commit_id']} but the head commit is now {head}.\n",
+        f"\nHave {head} reviewed, and approved by an account other than the pull request's author, "
+        "then run the gate again.\n"), run.summary()
 
 
 def case_e4_draft(gate):
     draft = captured_value("cli-cli-14507-pr-view-state.json", "isDraft")
     run = run_gate(gate, BASE_PR, BASE_HEAD, BASE_APPROVAL["submitted_at"],
                    base_routes(isDraft=draft))
-    return draft is True and refused_with(run, BASE_PR, "is a draft"), run.summary()
+    return draft is True and refused_with(
+        run, BASE_PR,
+        "pull request is a draft pull request, which its author has marked as not ready to merge.\n",
+        "\nAsk the pull request's author whether it is ready, through the pull request's agent-seat "
+        "or on the pull request.\n",
+        "\nUntil the author marks it ready for review, do not merge it; then run the gate again.\n"
+    ), run.summary()
 
 
 def case_e5_review_decision_not_approved(gate):
     decision = captured_value("nedschorus-nedschorus-643-pr-view-state.json", "reviewDecision")
     run = run_gate(gate, BASE_PR, BASE_HEAD, BASE_APPROVAL["submitted_at"],
                    base_routes(reviewDecision=decision))
-    return refused_with(run, BASE_PR, f"reviewDecision is {decision}"), run.summary()
+    return decision == "CHANGES_REQUESTED" and refused_with(
+        run, BASE_PR,
+        f"reviewDecision is {decision}, not APPROVED, so GitHub does not count this pull request "
+        "as approved.\n",
+        "\nA review requesting changes still stands.\n",
+        "\nIf its findings have been fixed, or answered with a reason that shows they do not hold, "
+        "dismiss that review with a reason naming the fix or the answer, then run the gate again.\n",
+        "\nOtherwise, do not merge.\n"), run.summary()
 
 
-def case_e6_merge_state(gate, state_capture):
+def case_e5_review_decision_review_required(gate):
+    decision = captured_value("cli-cli-14507-pr-view-state.json", "reviewDecision")
+    run = run_gate(gate, BASE_PR, BASE_HEAD, BASE_APPROVAL["submitted_at"],
+                   base_routes(reviewDecision=decision))
+    return decision == "REVIEW_REQUIRED" and refused_with(
+        run, BASE_PR, f"reviewDecision is {decision}, not APPROVED",
+        "\nGitHub's rules on main require an approving review it has not counted: get one, then "
+        "run the gate again.\n"), run.summary()
+
+
+MERGE_STATE_LINES = {
+    "UNKNOWN": "UNKNOWN: GitHub has not computed it, or the pull request is already merged or "
+               "closed. If the pull request is open, run the gate again in a minute; if it still "
+               "reads UNKNOWN five minutes later, tell the user this message.",
+    "DIRTY": "DIRTY: the branch conflicts with main. Tell the pull request's author; the author "
+             "clears the conflict as CLAUDE.md says, and the new head commit then needs its own "
+             "approving review.",
+    "BLOCKED": "BLOCKED: a branch rule on main blocks the merge, such as a required check that "
+               "failed or is still running. Read the pull request's checks on GitHub: if one is "
+               "running, run the gate again when it finishes; if one failed, tell the pull "
+               "request's author; if you find no cause, tell the user this message.",
+}
+
+
+def merge_state_refused(run, merge_state):
+    # The first line stays whole: the merge seat's wrapper retries on its UNKNOWN form.
+    return refused_with(run, BASE_PR,
+                        f"GATE REFUSED (#{BASE_PR}): mergeStateStatus is {merge_state}\n",
+                        f"\n{MERGE_STATE_LINES[merge_state]}\n")
+
+
+def case_e6_merge_state(gate, state_capture, expected_value):
     merge_state = captured_value(state_capture, "mergeStateStatus")
     run = run_gate(gate, BASE_PR, BASE_HEAD, BASE_APPROVAL["submitted_at"],
                    base_routes(mergeStateStatus=merge_state))
-    return refused_with(run, BASE_PR, f"mergeStateStatus is {merge_state}"), run.summary()
+    return merge_state == expected_value and merge_state_refused(run, merge_state), run.summary()
 
 
 def case_e6_dirty(gate):
-    return case_e6_merge_state(gate, "nedschorus-nedschorus-600-pr-view-state.json")
+    return case_e6_merge_state(gate, "nedschorus-nedschorus-600-pr-view-state.json", "DIRTY")
 
 
 def case_e6_blocked(gate):
-    return case_e6_merge_state(gate, "nedschorus-nedschorus-643-pr-view-state.json")
+    return case_e6_merge_state(gate, "nedschorus-nedschorus-643-pr-view-state.json", "BLOCKED")
 
 
 def case_e6_unknown_as_captured(gate):
@@ -698,7 +844,7 @@ def case_e6_unknown_as_captured(gate):
     routes = base_routes()
     routes["state"] = {"stdout_file": str(captured("nedschorus-nedschorus-667-pr-view-state.json"))}
     run = run_gate(gate, BASE_PR, BASE_HEAD, BASE_APPROVAL["submitted_at"], routes)
-    return refused_with(run, BASE_PR, "mergeStateStatus is UNKNOWN"), run.summary()
+    return merge_state_refused(run, "UNKNOWN"), run.summary()
 
 
 def e7_run(gate):
@@ -710,14 +856,15 @@ def e7_run(gate):
 def case_e7_new_inline_comments(gate):
     # Every value as captured: two inline comments after the approval.
     run = e7_run(gate)
-    return refused_with(run, "14475", "NEW inline comment(s)"), run.summary()
+    return refused_with(run, "14475", "inline comment(s) posted or edited since",
+                        "\nRead everything posted or edited since ", *NEW_ACTIVITY_LINES), run.summary()
 
 
 def case_e10_stamped_exactly_since_is_not_new(gate):
     # Four of cli/cli 14475's inline comments were updated at the approval's own
     # second; counting them would make the refusal read 6, not 2.
     run = e7_run(gate)
-    return refused_with(run, "14475", "2 NEW inline comment(s)"), run.summary()
+    return refused_with(run, "14475", "2 inline comment(s) posted or edited since"), run.summary()
 
 
 def case_e9_gh_fails(gate):
@@ -729,7 +876,39 @@ def case_e9_gh_fails(gate):
                        "stderr": record["stderr"]}
     run = run_gate(gate, BASE_PR, BASE_HEAD, BASE_APPROVAL["submitted_at"], routes)
     return (record["exit_code"] != 0
-            and refused_with(run, BASE_PR, "could not read the review channel")), run.summary()
+            and could_not_run_after_gh(
+                run, BASE_PR,
+                f"GATE COULD NOT RUN: could not read the reviews of pull request {BASE_PR}; any "
+                "error gh printed is just above this line.\n", f"\n{RERUN_ONCE_GH}\n")), run.summary()
+
+
+def case_e9_state_read_fails(gate):
+    routes = base_routes()
+    not_found = captured("nedschorus-nedschorus-999999-reviews-channel-not-found.json")
+    record = capture_record_entry(not_found.name)
+    routes["state"] = {"stdout_file": str(not_found), "exit": record["exit_code"],
+                       "stderr": record["stderr"]}
+    run = run_gate(gate, BASE_PR, BASE_HEAD, BASE_APPROVAL["submitted_at"], routes)
+    return (record["exit_code"] != 0
+            and could_not_run_after_gh(
+                run, BASE_PR,
+                f"GATE COULD NOT RUN: could not read pull request {BASE_PR}'s state; any error gh "
+                "printed is just above this line.\n",
+                "\nIf gh's error says the pull request was not found, check the number you passed, "
+                "then run the gate again.\n",
+                "\nOtherwise run the gate again once; if it fails the same way, tell the user this "
+                "message and gh's error.\n")), run.summary()
+
+
+def case_e8_state_unparsable(gate):
+    # gh pr view exits 0 but prints what jq cannot read as the state: here a
+    # captured channel, a list, which has no field to read.
+    routes = base_routes()
+    routes["state"] = {"stdout_file": str(captured("nedschorus-nedschorus-665-inline-channel-paginated.json"))}
+    run = run_gate(gate, BASE_PR, BASE_HEAD, BASE_APPROVAL["submitted_at"], routes)
+    return could_not_run_after_gh(
+        run, BASE_PR, f"GATE COULD NOT RUN: could not parse pull request {BASE_PR}'s state\n",
+        JQ_ERROR_ABOVE, f"\n{RERUN_ONCE_JQ}\n"), run.summary()
 
 
 def comment_channel_failing_after_its_first_page(gate, channel, first_page_capture, reason):
@@ -743,19 +922,22 @@ def comment_channel_failing_after_its_first_page(gate, channel, first_page_captu
     routes[f"{channel}:paginated"] = {"stdout_file": str(captured(first_page_capture)),
                                       "exit": record["exit_code"], "stderr": record["stderr"]}
     run = run_gate(gate, BASE_PR, BASE_HEAD, BASE_APPROVAL["submitted_at"], routes)
-    return (record["exit_code"] != 0 and refused_with(run, BASE_PR, reason)), run.summary()
+    return (record["exit_code"] != 0
+            and could_not_run_after_gh(run, BASE_PR, reason, f"\n{RERUN_ONCE_GH}\n")), run.summary()
 
 
 def case_e9_inline_channel_fails_after_its_first_page(gate):
     return comment_channel_failing_after_its_first_page(
         gate, "inline", "pytorch-pytorch-114309-inline-channel-first-page-only.json",
-        "could not read the inline comment channel")
+        f"could not read the inline comments of pull request {BASE_PR}; any error gh printed is "
+        "just above this line.\n")
 
 
 def case_e9_issue_channel_fails_after_its_first_page(gate):
     return comment_channel_failing_after_its_first_page(
         gate, "issue", "pytorch-pytorch-114309-issue-channel-first-page-only.json",
-        "could not read the issue comment channel")
+        f"could not read the issue comments of pull request {BASE_PR}; any error gh printed is "
+        "just above this line.\n")
 
 
 def case_fa_chain_line_passes_a_pass(gate):
@@ -809,11 +991,15 @@ CASES = [
     ("B2 the approval at the head, beyond the first page, is the pin", case_b2_pin_beyond_first_page),
     ("B3 reviewed-since later than the approval refuses", case_b3_since_after_the_approval),
     ("B4 reviewed-since with an offset could not run, before gh", case_b4_since_with_an_offset),
+    ("B4 reviewed-since of the right shape that is no real time could not run, before gh",
+     case_b4_since_of_the_right_shape_that_is_no_real_time),
     ("B6 the merge account's later CHANGES_REQUESTED is new activity", case_b6_merge_accounts_later_findings),
     ("B7 a comment edited after reviewed-since is new activity", case_b7_edited_comment),
     ("C1 a missing token file could not run, before gh", case_c1_token_file_missing),
     ("C2 an empty token file could not run, before gh", case_c2_token_file_empty),
+    ("D0 the wrong number of arguments could not run, naming the count", case_d0_wrong_argument_count),
     ("D1 jq absent could not run, naming jq", case_d1_jq_absent),
+    ("D1 gh absent could not run, naming gh", case_d1_gh_absent),
     ("D2 an abbreviated expected sha could not run, naming its length", case_d2_abbreviated_expected),
     ("D3 an expected sha that is not lowercase hex could not run", case_d3_expected_not_hex),
     ("E1 no approving review refuses", case_e1_no_approval),
@@ -821,15 +1007,18 @@ CASES = [
     ("E3 an approval of another commit refuses, naming both", case_e3_approval_covers_another_commit),
     ("E4 a draft refuses", case_e4_draft),
     ("E5 reviewDecision CHANGES_REQUESTED refuses", case_e5_review_decision_not_approved),
+    ("E5 reviewDecision REVIEW_REQUIRED refuses", case_e5_review_decision_review_required),
     ("E6 mergeStateStatus DIRTY refuses", case_e6_dirty),
     ("E6 mergeStateStatus BLOCKED refuses", case_e6_blocked),
     ("E6 mergeStateStatus UNKNOWN, as a merged pull request reads, refuses", case_e6_unknown_as_captured),
     ("E7 inline comments after the approval refuse", case_e7_new_inline_comments),
     ("E10 a comment stamped exactly reviewed-since is not new", case_e10_stamped_exactly_since_is_not_new),
-    ("E9 gh failing on a channel read refuses", case_e9_gh_fails),
-    ("E9 the inline comment channel failing after its first page refuses",
+    ("E8 a pull request state jq cannot read could not run", case_e8_state_unparsable),
+    ("E9 gh failing on the pull request state read could not run", case_e9_state_read_fails),
+    ("E9 gh failing on a channel read could not run", case_e9_gh_fails),
+    ("E9 the inline comment channel failing after its first page could not run",
      case_e9_inline_channel_fails_after_its_first_page),
-    ("E9 the issue comment channel failing after its first page refuses",
+    ("E9 the issue comment channel failing after its first page could not run",
      case_e9_issue_channel_fails_after_its_first_page),
     ("F-a the chain's gate line exits 0 on a pass", case_fa_chain_line_passes_a_pass),
     ("F-a the chain's gate line stops on a refusal", case_fa_chain_line_stops_on_a_refusal),
@@ -866,9 +1055,14 @@ def check_every_fixture_has_a_capture_record():
 # is export's; the mutation puts that shape back in place of the whole block.
 TOKEN_BLOCK = (
     'token=$(cat "$TOKEN_FILE" 2>/dev/null)\n'
-    '[ $? -eq 0 ] || cannot "could not read the merge account\'s token at $TOKEN_FILE"\n'
-    '[ -n "$token" ] || cannot "the token file $TOKEN_FILE is empty"\n'
+    '[ $? -eq 0 ] || cannot "could not read the merge account\'s token at $TOKEN_FILE" '
+    '"$TOKEN_ONLY_MERGE_ACCOUNT" "$TOKEN_TELL_THE_USER"\n'
+    '[ -n "$token" ] || cannot "the token file $TOKEN_FILE is empty" '
+    '"$TOKEN_ONLY_MERGE_ACCOUNT" "$TOKEN_TELL_THE_USER"\n'
     'export GH_TOKEN="$token"\n')
+
+# The reviewed-since real-time check, which also refuses every value of the wrong shape.
+SINCE_REAL_TIME_CHECK = """jq -n --arg since "$SINCE" '$since | fromdateiso8601' >/dev/null 2>&1 || cannot"""
 
 MUTATIONS = [
     ("F1 without --paginate", [(" --paginate)", ")")],
@@ -878,8 +1072,35 @@ MUTATIONS = [
      [('[ "$since_ok" = "true" ] || fail', '[ "$since_ok" = "true" ] || true')],
      [case_b3_since_after_the_approval, case_687_since_after_the_merge_accounts_review]),
     ("F3 without the reviewed-since format check",
-     [('*) cannot "reviewed-since must be exactly', '*) : "reviewed-since must be exactly')],
+     [('*) cannot "$SINCE_FORM"', '*) : "$SINCE_FORM"'), (SINCE_REAL_TIME_CHECK, "true ||")],
      [case_b4_since_with_an_offset]),
+    ("without the reviewed-since real-time check", [(SINCE_REAL_TIME_CHECK, "true ||")],
+     [case_b4_since_of_the_right_shape_that_is_no_real_time]),
+    ("without the pull request state's parse checks",
+     [('<<<"$state")             || cannot', '<<<"$state")             || true'),
+      ('<<<"$state") || cannot', '<<<"$state") || true'),
+      ('<<<"$state")      || cannot', '<<<"$state")      || true'),
+      ('<<<"$state")                || cannot', '<<<"$state")                || true')],
+     [case_e8_state_unparsable]),
+    ("the pull request state's read failure refused, not could-not-run",
+     [('[ $? -eq 0 ] || cannot "could not read pull request $PR\'s state',
+       '[ $? -eq 0 ] || fail "could not read pull request $PR\'s state')],
+     [case_e9_state_read_fails]),
+    ("without the gh check", [("command -v gh >/dev/null 2>&1 ||", "true ||")],
+     [case_d1_gh_absent]),
+    ("without the argument count check", [("[ $# -eq 3 ] ||", "true ||")],
+     [case_d0_wrong_argument_count]),
+    ("the review-decision lines dropped",
+     [("  CHANGES_REQUESTED) fail", "  CHANGES_REQUESTED_DROPPED) fail"),
+      ("  REVIEW_REQUIRED) fail", "  REVIEW_REQUIRED_DROPPED) fail")],
+     [case_e5_review_decision_not_approved, case_e5_review_decision_review_required]),
+    ("the merge-state lines dropped",
+     [('  UNKNOWN) fail', '  UNKNOWN_DROPPED) fail'), ('  DIRTY) fail', '  DIRTY_DROPPED) fail'),
+      ('  BLOCKED) fail', '  BLOCKED_DROPPED) fail')],
+     [case_e6_unknown_as_captured, case_e6_dirty, case_e6_blocked]),
+    ("without the pass's GH_TOKEN line",
+     [('echo "Run that command with GH_TOKEN', ': "Run that command with GH_TOKEN')],
+     [case_a1_pass_control]),
     ("F2 bounded by the pin alone, without the merge account's own latest review",
      [("'[$approved] + [.[][] | select(.user.login == $merge_account and .submitted_at != null)",
        "'[$approved] + [.[][] | select(false)")],
@@ -892,12 +1113,12 @@ MUTATIONS = [
      [("select(.id != $approval_id and ", "select(")],
      [case_lane_662_since_taken_before_its_own_approval]),
     ("without the inline comment channel's read check",
-     [('[ $? -eq 0 ] || fail "could not read the inline comment channel"',
-       ': || fail "could not read the inline comment channel"')],
+     [('[ $? -eq 0 ] || cannot "could not read the inline comments',
+       ': || cannot "could not read the inline comments')],
      [case_e9_inline_channel_fails_after_its_first_page]),
     ("without the issue comment channel's read check",
-     [('[ $? -eq 0 ] || fail "could not read the issue comment channel"',
-       ': || fail "could not read the issue comment channel"')],
+     [('[ $? -eq 0 ] || cannot "could not read the issue comments',
+       ': || cannot "could not read the issue comments')],
      [case_e9_issue_channel_fails_after_its_first_page]),
     ("F4's merge-account filter re-added to the pin",
      [('select(.state == "APPROVED")',
