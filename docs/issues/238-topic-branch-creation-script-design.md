@@ -130,7 +130,7 @@ Refusals 6 through 8 follow the fetch, which does change repository state: remot
 
 - **Stacked work.** Work that builds on an unmerged topic must start at that topic, not at main. This script always uses `origin/main`, so that case is done by hand with `git checkout -b <name> <parent-topic>`. The pull request must then say which branch it is stacked on and which pull request must merge first; a machine-readable form for that is issue [pull-request skill: how a change reaches main — durable-file disposition, the description, and topic-branch creation](https://github.com/nedschorus/nedschorus/issues/236)'s to settle. No flag here — a flag invites use when the base should have been main.
 - **Committing, pushing, or opening a pull request.** One script, one job.
-- **Naming conventions.** `CLAUDE.md` requires explicit multi-part names, checked with glob for path names and grep for names in files, and a more explicit 3-or-4-part name where those return collisions. Whoever chooses the topic name applies that before calling this. The script enforces only git's own ref rules, which are mechanical (rows 3 and 5).
+- **Naming conventions.** `docs/nedschorus-wiki/nedschorus-how-to-choose-a-name-for-files-code-and-glossary-terms.md` says how a name is chosen and checked, and `CLAUDE.md` states it in brief. Whoever chooses the topic name applies that before calling this. The script enforces only git's own ref rules, which are mechanical (rows 3 and 5).
 
 ## Where it sits in the code-prompt-code structure
 
