@@ -1,6 +1,6 @@
 # How to choose a name for files, code and glossary terms
 
-This page says how to choose every name this project invents: file and directory names, script names, the names of functions, classes, constants and variables, branch names, and the terms the glossaries define, project-terms and system-terms alike. CLAUDE.md states the naming rule in brief and points here; where the two differ, this page governs.
+This page says how to choose every name this project invents: file and directory names, script names, the names of functions, classes, constants and states used from other files, branch names, and the terms the glossaries define, project-terms and system-terms alike. CLAUDE.md states the naming rule in brief and points here; where the two differ, this page governs.
 
 Two kinds of name are partly decided elsewhere, and this page fills in the rest:
 
@@ -9,21 +9,21 @@ Two kinds of name are partly decided elsewhere, and this page fills in the rest:
 
 ## Why names matter so much in this project
 
-Most readers of this project's names are agents that meet a name away from where it is defined. An agent finds a name in a `grep` result, in a list of files, in a hook's refusal, or in a message from another agent-seat, and decides from the name what to open or run next. A name that only makes sense to the agent that coined it costs every later reader a search. A misleading name costs more: in one study, readers misunderstood code with misleading names more often than code whose names meant nothing at all, and a study of code models found the same tendency on average (Avidan and Feitelson 2017; Wang et al.).
+Most readers of this project's names are agents that meet a name away from where it is defined. An agent finds a name in a `grep` result, in a list of files, in a hook's refusal, or in a message from another agent-seat, and decides from the name what to open or run next. A name that only makes sense to the agent that coined it costs every later reader a search.
 
-People rarely choose the same name for the same thing. Asked to name one thing, two people pick the same word less than one time in five (Furnas et al. 1987); in a study of 334 developers, the median chance that two of them chose the same identifier for the same variable was about one in fifteen (Feitelson et al. 2022). Those studies measured people, not agents, but agents in this project are just as able to coin a second name for something that already has one. When that happens, the vocabulary splits: a `grep` for one name misses the places that use the other, and two agents describe one thing in two ways. That is why Step 1 asks you to look for an existing name before you make one, and why the glossaries exist.
+Worse, without naming rules, agents often coin a second name for something that already has one. When that happens, the vocabulary splits: a `grep` for one name misses the places that use the other, and two agents describe one thing in two ways. That is why Step 1 asks you to look for an existing name before you make one, and why the glossaries exist.
 
 ## The naming criterion every name must meet
 
 A fresh-reader who meets the name can tell what it names.
 
-A fresh-reader here is a reader who has the name and the project's glossaries, and nothing else: not the file the name is defined in, not the agent-session in which it was coined, and not the agent that coined it. The glossaries are allowed because a project-term or a system-term is meant to be looked up: its hyphens tell the reader it is a term, and its glossary entry says what it means. So `log-store` and `agent-seat` meet the criterion, and so does a longer name built from such a term, such as `cold-read-record-ship.py`, which says it ships a cold-read-record.
+A fresh-reader here has the name, the glossaries, and what the glossaries reference, as a cold-read-cell has its document and what the document references; the fresh-reader does not have the file the name is defined in, or the agent-session in which the name was coined. The glossaries are allowed because a project-term or a system-term is meant to be looked up: its hyphens tell the reader it is a term, and its glossary entry says what it means. So `log-store` and `agent-seat` meet the criterion, and so does a longer name built from such a term, such as `cold-read-record-ship.py`, which says it ships a cold-read-record.
 
 "Tell what it names" means the reader can say what kind of thing it is and which one, well enough to pick the right file to open or the right program to run. It does not mean the reader can use the thing without reading its documentation.
 
 ### Who judges whether a name meets the criterion
 
-You cannot judge your own name, because you already know what it means. So for a name that will be used beyond the place it is defined, such as a file name, a script name, a function or class used from other files, or a branch name, ask a fresh subagent what it thinks the name means, giving it the name and nothing else. If its answer is wrong, or vague where your meaning is specific, add the words its answer lacked and ask again. A name used only inside one function needs no such check.
+You cannot judge your own name, because you already know what it means. So for a name that will be used beyond the place it is defined, such as a file name, a script name, a function or class used from other files, or a branch name, ask a fresh subagent what it thinks the name means, giving it the name and nothing else. If its answer is wrong, or vague where your meaning is specific, add the words its answer lacked and ask again. A name used only inside one file needs no such check.
 
 For a new project-term or system-term, the user rules on the name, as Step 5 says.
 
@@ -37,7 +37,7 @@ Look in three places, in this order:
 2. **The SDLC-terms.** When a standard term of software engineering or another computing field fits, such as worktree, pull request or test double, use it with its standard meaning, as an SDLC-term. `docs/nedschorus-wiki/nedschorus-sdlc-terms.md` lists the few this project relies on most; a standard term that is not on that list may still be used as it is.
 3. **The code and documents.** Search your checkout and main for words that describe the thing, not only for the name you have in mind, because the thing may already exist under a name you would not guess: run `git grep -i <word> origin/main` for each word, after `git fetch` (see Step 3 for what to do if the fetch fails).
 
-If an existing name fails the naming criterion, reuse it anyway, and say so to the user: renaming it is a separate change, and a second name for the same thing is worse than one weak name.
+If an existing name fails the naming criterion, reuse it anyway, but tell the user it should be renamed: renaming it is a separate change, and a second name for the same thing is worse than one weak name.
 
 ## Step 2: build the name from three questions
 
@@ -70,7 +70,7 @@ Put the system or skill first, then what it acts on or holds, then what it does 
 
 Three to nine words is normal for a name used beyond the place it is defined. Stop adding words when a fresh-reader can tell what the name names. Do not drop a word because every name around it shares that word: the name will also be met alone, in a search result or a message, where its neighbours are not there.
 
-This page sets no upper limit, and the research does not settle one. Some sources recommend two to four words, and one study of eight Java projects found that names of more than four words went with more reported defects (Butler et al., cited by Hilton and Hermans). Other studies found that longer, more descriptive names were understood faster than short ones (Hofmeister et al. 2019). This project's names are mostly met by agents with no context, which is the case the second group of studies measured, so this page favours the longer name.
+This page sets no upper limit: some studies favour names of two to four words, and others found that longer, more descriptive names were understood faster. This project's names are mostly read by agents with no context, so this page favours the longer name.
 
 ### Generic words are fine inside a longer name
 
@@ -118,29 +118,14 @@ A new term is coined only when no existing name and no SDLC-term fits, and it is
 - **A name that belongs to the whole project names no system.** `agent-seat` and `log-store` belong to no single system, and a general tool such as `scripts/branch-conflict-check.py` serves them all. Adding the project's name, as in `nedschorus-agent-seat`, would add a word that every such name shares. The wiki's `nedschorus-` prefix is a pattern set by the file naming standards, and the pattern governs there.
 - **An SDLC-term keeps its standard name.** `worktree`, `pull request` and `test double` mean the same thing to every programmer who knows them, and a reader who does not can look them up anywhere. A longer name of this project's own would hide that they are standard.
 - **What is set outside the project stays as it is set**, as the opening of this page says.
-- **A local name used only inside one small function** needs no system and no fresh subagent check. A loop index `i`, an exception `error`, or a file handle `f` has its definition and every use on the same screen, and a long name there only adds reading. When a function grows so long that a name's definition and its uses no longer fit on one screen, give the name full words.
+- **A name used only inside one file** is left to the writer: this page does not govern it. A loop index `i`, an exception `error`, or a constant only its own file reads is found by a reader who already has the file open.
 
 ## Checklist
 
 1. Did you look in the glossaries, the SDLC-terms and the code for an existing name for the thing, and reuse it if one exists?
-2. Did a fresh subagent, given only the name, say correctly what it names? (Not needed for a local name in one small function.)
+2. Did a fresh subagent, given only the name, say correctly what it names? (Not needed for a name used only inside one file.)
 3. Does the name say which system or skill, what it acts on or holds, and what it does or is, in that order, unless a case under "Where a rule above does not apply" covers it?
 4. Did the searches of your checkout, main and the open pull requests, with a pattern for every spelling, find no name it could be taken for?
 5. Does it tell the truth, with no history in it, and no abbreviation the glossary does not list or a programmer would have to decode?
 6. Does it use the same words in prose, file names and code?
 7. If it is a new project-term or system-term, has the user approved it, and is it in its glossary?
-
-## Sources
-
-The research behind this page, with the studies and style guides it draws on and the claims it could not verify: `nedlern@ned-box:/home/nedlern/nedschorus-logs/analysis/2026-10-05-naming-best-practice-research.md`.
-
-- Furnas, Landauer, Gomez and Dumais, "The vocabulary problem in human-system communication", Communications of the ACM, 1987.
-- Feitelson et al., "How Developers Choose Names", IEEE Transactions on Software Engineering, 2022: https://arxiv.org/pdf/2103.07487
-- Avidan and Feitelson, "Effects of Variable Names on Comprehension", ICPC 2017: https://www.cs.huji.ac.il/w~feit/papers/Names17ICPC.pdf
-- Wang et al., "How does naming affect LLMs on code analysis tasks?": https://arxiv.org/html/2307.12488v5
-- Hofmeister, Siegmund and Holt, "Shorter identifier names take longer to comprehend", Empirical Software Engineering, 2019: https://link.springer.com/article/10.1007/s10664-018-9621-x
-- Deissenböck and Pizka, "Concise and Consistent Naming": https://wwwbroy.in.tum.de/publ/papers/deissenboeck_pizka_identifier_naming.pdf
-- Hilton and Hermans, "Naming Guidelines for Professional Programmers", PPIG 2017, which also reports Butler et al.: https://ppig.org/files/2017-PPIG-28th-hilton.pdf
-- Microsoft Writing Style Guide, "Use technical terms carefully": https://learn.microsoft.com/en-us/style-guide/word-choice/use-technical-terms-carefully
-- Google Python Style Guide, section 3.16, Naming: https://google.github.io/styleguide/pyguide.html
-- Anthropic, "Writing effective tools for agents": https://www.anthropic.com/engineering/writing-tools-for-agents
