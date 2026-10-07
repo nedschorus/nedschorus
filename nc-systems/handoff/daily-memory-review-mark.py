@@ -30,7 +30,7 @@ NED_BOX_SSH_COMMAND = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10"]
 MAC_MEMORY_STORE_DIRECTORY = "/Users/el/.claude/projects/-Users-el-Projects-nedschorus/memory"
 NED_BOX_MEMORY_STORE_DIRECTORY = (
     "/home/nedlern/.claude/projects/-home-nedlern-Projects-nedschorus/memory")
-# Reviewers use the mount so file edits pass through the instruction-file guard.
+# Reviewers read and delete entries through the mount, falling back to ssh.
 # This reader uses ssh because a hung mount has no read timeout.
 NED_BOX_MEMORY_STORE_MAC_MOUNT_DIRECTORY = (
     "/Volumes/nedhome/.claude/projects/-home-nedlern-Projects-nedschorus/memory")

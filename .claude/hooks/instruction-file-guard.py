@@ -86,6 +86,20 @@ REVIEWED_DOCUMENT_DENY_MESSAGE = (
     "docs/issues/queue/, docs/agents/queue/ or docs/nedschorus-wiki/queue/ instead."
 ) + ROUTE_AROUND_LINES
 
+MEMORY_WRITE_DENY_MESSAGE = (
+    "Refusing to write {path}: it is in a Claude Code memory directory. Nothing makes a "
+    "later agent read a memory file at the moment it would matter, so what you meant to "
+    "save would sit there unread.\n"
+    "Instead, in your next message to the user, quote the text you meant to save, say you "
+    "think it is important, and recommend what it should become: a fix to an instruction "
+    "file now, which is best; a task on your task list; or a GitHub issue filed with "
+    "/ghi-write. Then ask the user what he wants done with it.\n"
+    "If you are a subagent, put all of this to the agent that dispatched you instead of to "
+    "the user.\n"
+    "No {marker} marker lets a write into a memory directory through, so do not write one "
+    "for this."
+)
+
 DENY_MESSAGE = (
     "Before modifying {path}, get the user's approval on your change: instruction files "
     "(CLAUDE.md, CLAUDE.local.md identity files, and .claude/ machinery) change only "
@@ -190,6 +204,16 @@ def is_protected(file_path: str) -> bool:
     return False
 
 
+def is_in_memory_directory(file_path: str) -> bool:
+    """Whether the target sits in a Claude Code memory directory, .claude/projects/<project>/memory/."""
+    parts = Path(file_path).resolve().parts
+    for index in range(len(parts) - 4):
+        if (parts[index] == PROTECTED_DIRECTORY and parts[index + 1] == "projects"
+                and parts[index + 3] == "memory"):
+            return True
+    return False
+
+
 def is_in_session_scratchpad(file_path: str, session_id) -> bool:
     """Whether the target sits in this session's own scratchpad, the per-session
     directory the harness makes under its temporary root, named <session id>/scratchpad.
@@ -225,6 +249,11 @@ def main() -> int:
         return 0
     if is_in_session_scratchpad(file_path, payload.get("session_id")):
         return 0
+    # Checked before the marker, which approves instruction edits but never a memory write.
+    if is_in_memory_directory(file_path):
+        print(MEMORY_WRITE_DENY_MESSAGE.format(path=file_path, marker=APPROVAL_MARKER_NAME),
+              file=sys.stderr)
+        return 2
     reusable_prompt = is_reusable_prompt(file_path)
     instruction_file = is_protected(file_path)
     reviewed_document = is_reviewed_document(file_path)

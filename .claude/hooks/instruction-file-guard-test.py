@@ -118,8 +118,28 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     result = run_hook(decoy, workspace, str(workspace / ".claude" / "worktrees" / "feature" / ".claude" / "settings.json"))
     check("a worktree's OWN .claude/ is still protected", result.returncode == 2)
 
-    result = run_hook(decoy, workspace, str(workspace / ".claude" / "projects" / "-a-project" / "memory" / "fact.md"))
+    memory_file = workspace / ".claude" / "projects" / "-a-project" / "memory" / "fact.md"
+    result = run_hook(decoy, workspace, str(memory_file))
     check("the auto-memory is still protected", result.returncode == 2)
+    check("a memory write gets the memory refusal, not the generic one",
+          "it is in a Claude Code memory directory" in result.stderr
+          and "get the user's approval" not in result.stderr, result.stderr)
+    check("the memory refusal says to put the text to the user and ask what to do with it",
+          "quote the text you meant to save" in result.stderr
+          and "ask the user what he wants done with it" in result.stderr, result.stderr)
+
+    # A marker approves instruction edits, never a memory write, and is left unspent.
+    session_marker = workspace / ".walk-approved"
+    session_marker.write_text("user approval for some other change\n", encoding="utf-8")
+    result = run_hook(decoy, workspace, str(memory_file))
+    check("a .walk-approved marker does not let a memory write through", result.returncode == 2,
+          str(result.returncode))
+    check("a refused memory write leaves the marker unspent", session_marker.exists())
+    session_marker.unlink(missing_ok=True)
+
+    # Only a memory directory under .claude is Claude Code's memory store.
+    result = run_hook(decoy, workspace, str(workspace / "notes" / "projects" / "-a-project" / "memory" / "fact.md"))
+    check("a projects/<p>/memory/ path outside .claude passes", result.returncode == 0, result.stderr)
 
     result = run_hook(decoy, workspace, str(workspace / ".claude" / "jobs.json"))
     check("a file merely named jobs.json under .claude/ is still protected",
