@@ -26,6 +26,7 @@ Usage:
 import hashlib
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -221,7 +222,10 @@ def tree_of_worktree_now(worktree):
     with tempfile.TemporaryDirectory(prefix="work-snapshot-index-") as scratch:
         scratch_index = Path(scratch, "index")
         if index.exists():
-            scratch_index.write_bytes(index.read_bytes())
+            # Keep the index's mtime: git trusts an entry's stat data only when the entry is
+            # older than the index file, so a fresh mtime would hide a same-size edit made in
+            # the second the index was written.
+            shutil.copy2(index, scratch_index)
         environment = dict(os.environ, GIT_INDEX_FILE=str(scratch_index))
         git_output(worktree, "add", "-A", environment=environment)
         return git_output(worktree, "write-tree", environment=environment)

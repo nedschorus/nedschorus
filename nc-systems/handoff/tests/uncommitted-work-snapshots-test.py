@@ -26,6 +26,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 from pathlib import Path
 
 SYSTEM_DIRECTORY = Path(__file__).resolve().parent.parent
@@ -132,9 +133,12 @@ def add_worktree(main, path, branch):
 class ClaudeStandIn:
     """A process named claude that runs the clone's hook once per run_hook call."""
 
+    started = 0
+
     def __init__(self, main, environment=None):
         self.main = main
-        self.inputs = SCRATCH / f"hook-inputs-{id(self)}"
+        ClaudeStandIn.started += 1
+        self.inputs = SCRATCH / f"hook-inputs-{ClaudeStandIn.started}"
         self.inputs.mkdir()
         self.count = 0
         self.process = subprocess.Popen(
@@ -230,6 +234,27 @@ def test_what_a_work_snapshot_holds():
           and git(worktree, "symbolic-ref", "--short", "HEAD") == "fork-branch",
           "the worktree's HEAD and branch are unchanged")
     claude.end()
+
+
+def test_same_size_edit_in_the_index_second():
+    name = ("a same-size edit made in the second the index was written is held when the "
+            "work-snapshot is built a second later")
+    main = new_clone()
+    for attempt in range(20):
+        worktree = add_worktree(main, main / ".claude" / "worktrees" / f"racy-{attempt}",
+                                f"racy-{attempt}")
+        (worktree / "tracked.txt").write_text("two\n")
+        index = Path(git(worktree, "rev-parse", "--path-format=absolute", "--git-path", "index"))
+        if int(os.stat(worktree / "tracked.txt").st_mtime) == int(os.stat(index).st_mtime):
+            break
+    else:
+        return skip(name, "no edit landed in the index's second in 20 tries")
+    # A copy of the index made in a later second, with a fresh mtime, would make git trust the
+    # entry's stat data, which this same-size, same-second edit leaves unchanged.
+    time.sleep(1.05)
+    snapshots.refresh_work_snapshot(worktree, "3-3", "seat", "")
+    ref = snapshots.work_snapshot_ref("3-3", worktree)
+    check(git(main, "show", f"{ref}:tracked.txt") == "two", name)
 
 
 def test_ref_names():
@@ -665,7 +690,8 @@ def test_the_2026_10_05_loss_replayed():
 
 def main():
     try:
-        for case in (test_what_a_work_snapshot_holds, test_ref_names,
+        for case in (test_what_a_work_snapshot_holds, test_same_size_edit_in_the_index_second,
+                     test_ref_names,
                      test_bash_commit_deletes_and_other_worktrees_follow,
                      test_overlapping_runs_end_on_the_final_state, test_operation_trailer,
                      test_hook_failure_is_reported, test_owner_liveness,
