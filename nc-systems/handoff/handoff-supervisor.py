@@ -1054,7 +1054,8 @@ def remove_finished_worktrees_at_handoff(
         return (f"worktree cleanup: clean-worktrees.py could not be run: "
                 f"{type(error).__name__}: {error}")
     report = summarize_worktree_cleanup_output(stdout.splitlines())
-    if cleaner.returncode != 0 and "FAILED" not in stdout:
+    if (cleaner.returncode != 0 and "FAILED" not in stdout
+            and "work-snapshot failure(s)" not in report):
         detail = stderr.strip().splitlines()[-1:] or ["no detail"]
         report += f"; clean-worktrees.py exited {cleaner.returncode}: {detail[0]}"
     return report
@@ -1090,6 +1091,13 @@ def summarize_worktree_cleanup_output(lines) -> str:
                  if ": kept — " in line
                  and ("(lsof)" in line or "lsof is not installed" in line)]
     discarded = [line for line in lines if ": discarded with it " in line]
+    snapshots_deleted = [line for line in lines
+                         if line.startswith("work-snapshot ") and ": deleted, first listed " in line]
+    snapshot_failures = [line for line in lines
+                         if line.startswith("work-snapshots: could not be listed")
+                         or (line.startswith("work-snapshot ")
+                             and (": deletion failed: " in line
+                                  or ": could not read its files: " in line))]
     announced = {line.partition(": removing it will discard ")[0]:
                  line.partition(": removing it will discard ")[2]
                  for line in lines if ": removing it will discard " in line}
@@ -1117,6 +1125,12 @@ def summarize_worktree_cleanup_output(lines) -> str:
     if unchecked:
         report += (f"; {len(unchecked)} worktree(s) kept because the vacancy check "
                    f"could not be run: " + unchecked[0].split(": kept — ", 1)[-1])
+    if snapshots_deleted:
+        report += (f"; {len(snapshots_deleted)} leftover work-snapshot(s) deleted: "
+                   + "; ".join(snapshots_deleted))
+    if snapshot_failures:
+        report += (f"; {len(snapshot_failures)} work-snapshot failure(s): "
+                   + "; ".join(snapshot_failures))
     return report
 
 

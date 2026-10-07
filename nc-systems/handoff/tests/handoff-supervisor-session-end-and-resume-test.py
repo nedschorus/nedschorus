@@ -510,6 +510,30 @@ def run_handoff_worktree_cleanup_cases_without_git_redirection(workspace: Path):
               "file(s): two.txt, three.txt"),
           stopped_summary)
 
+    snapshot_summary = supervisor.summarize_worktree_cleanup_output([
+        "work-snapshot refs/work-snapshots/k/a: deleted, first listed 2026-09-20 10:00 UTC "
+        "and not restored (agent-seat seat, worktree /w/a, files: A new.txt)",
+        "work-snapshot refs/work-snapshots/k/b: deletion failed: lock exists "
+        "(agent-seat seat, worktree /w/b, files: M x.txt)",
+        "work-snapshot refs/work-snapshots/k/c: kept — owner process gone, written 1 day(s) "
+        "ago, never listed in a first prompt (agent-seat seat, worktree /w/c, files: M y.txt)",
+    ])
+    check("WORKTREE CLEANUP: the summary names each leftover work-snapshot deleted and "
+          "each work-snapshot failure, and not one kept",
+          snapshot_summary.endswith(
+              "; 1 leftover work-snapshot(s) deleted: work-snapshot refs/work-snapshots/k/a: "
+              "deleted, first listed 2026-09-20 10:00 UTC and not restored (agent-seat seat, "
+              "worktree /w/a, files: A new.txt); 1 work-snapshot failure(s): work-snapshot "
+              "refs/work-snapshots/k/b: deletion failed: lock exists (agent-seat seat, "
+              "worktree /w/b, files: M x.txt)")
+          and "refs/work-snapshots/k/c" not in snapshot_summary
+          and "0 branch ref(s)" in snapshot_summary, snapshot_summary)
+    listing_failure = supervisor.summarize_worktree_cleanup_output([
+        "work-snapshots: could not be listed: WorkSnapshotError: git for-each-ref failed"])
+    check("WORKTREE CLEANUP: a failure to list work-snapshots reaches the summary",
+          "1 work-snapshot failure(s): work-snapshots: could not be listed" in listing_failure,
+          listing_failure)
+
     # With GIT_DIR naming another repository, the cleanup still acts on the
     # seat's own, and leaves the other alone.
     other = root / "other-repository"

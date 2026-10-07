@@ -28,11 +28,7 @@ import sys
 from pathlib import Path
 
 CLONE_ROOT = Path(__file__).resolve().parents[1]
-_module_spec = importlib.util.spec_from_file_location(
-    "uncommitted_work_snapshots",
-    CLONE_ROOT / "nc-systems" / "handoff" / "uncommitted-work-snapshots.py")
-snapshots = importlib.util.module_from_spec(_module_spec)
-_module_spec.loader.exec_module(snapshots)
+MODULE_PATH = CLONE_ROOT / "nc-systems" / "handoff" / "uncommitted-work-snapshots.py"
 
 FILE_EDITING_TOOLS = ("Edit", "Write", "NotebookEdit")
 
@@ -40,7 +36,18 @@ NOT_PROTECTED_MESSAGE = (
     "Your uncommitted work in {worktree} has no work-snapshot, so a crash "
     "before you commit can lose it: {reason}\n"
     "If the work matters, commit it soon.\n"
-    "If this repeats, tell the user what this message says.")
+    "If this message comes again after your next edit in the same worktree, "
+    "tell the user what it says.")
+
+
+def load_snapshots_module():
+    spec = importlib.util.spec_from_file_location("uncommitted_work_snapshots", MODULE_PATH)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+snapshots = None
 
 
 def edited_path(tool_input):
@@ -48,16 +55,27 @@ def edited_path(tool_input):
 
 
 def candidate_worktrees(payload, owner_key):
+    """(worktrees the call may have changed, messages for those that could not be found)"""
     tool_name = payload.get("tool_name", "")
     tool_input = payload.get("tool_input") or {}
     candidates = []
+    messages = []
+
+    def add_worktree_containing(path):
+        try:
+            candidates.append(snapshots.worktree_containing(path))
+        except Exception as error:
+            messages.append(NOT_PROTECTED_MESSAGE.format(
+                worktree=f"the worktree holding {path}",
+                reason=f"its worktree could not be found: {type(error).__name__}: {error}"))
+
     if tool_name in FILE_EDITING_TOOLS:
         path = edited_path(tool_input)
         if path:
-            candidates.append(snapshots.worktree_containing(path))
+            add_worktree_containing(path)
     elif tool_name == "Bash":
         if payload.get("cwd"):
-            candidates.append(snapshots.worktree_containing(payload["cwd"]))
+            add_worktree_containing(payload["cwd"])
         if owner_key:
             for snapshot in snapshots.all_work_snapshots(CLONE_ROOT):
                 if (snapshot["owner_key"] == owner_key
@@ -67,18 +85,17 @@ def candidate_worktrees(payload, owner_key):
     for worktree in candidates:
         if worktree is not None and worktree not in unique:
             unique.append(worktree)
-    return unique
+    return unique, messages
 
 
 def run(payload, start_process_id):
     """Messages for the agent; empty when every worktree is protected."""
-    messages = []
     try:
         clone = snapshots.common_git_directory(CLONE_ROOT)
         owner_process = snapshots.claude_owner_process_id(start_process_id)
         owner_key = (snapshots.owner_key_of_process(owner_process)
                      if owner_process is not None else None)
-        worktrees = candidate_worktrees(payload, owner_key)
+        worktrees, messages = candidate_worktrees(payload, owner_key)
     except Exception as error:
         return [NOT_PROTECTED_MESSAGE.format(
             worktree="the worktree this call changed",
@@ -104,6 +121,7 @@ def run(payload, start_process_id):
 
 
 def main():
+    global snapshots
     try:
         payload = json.loads(sys.stdin.read() or "{}")
     except json.JSONDecodeError as error:
@@ -111,6 +129,14 @@ def main():
         messages = [NOT_PROTECTED_MESSAGE.format(
             worktree="the worktree this call changed",
             reason=f"the hook's input was not JSON: {error}")]
+    if payload is not None:
+        try:
+            snapshots = load_snapshots_module()
+        except Exception as error:
+            payload = None
+            messages = [NOT_PROTECTED_MESSAGE.format(
+                worktree="the worktree this call changed",
+                reason=f"{MODULE_PATH} could not be loaded: {type(error).__name__}: {error}")]
     if payload is not None:
         messages = run(payload, os.getppid())
     if messages:

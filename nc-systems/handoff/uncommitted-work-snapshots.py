@@ -99,14 +99,27 @@ def linux_start_ticks(process_id, proc_root="/proc"):
     return linux_stat_fields_after_command(process_id, proc_root)[22 - 3]
 
 
+def run_ps(arguments):
+    return subprocess.run(["ps", *arguments], capture_output=True, text=True, check=False)
+
+
 def macos_start_seconds(process_id):
-    """The process's start as whole seconds since 1970, or None when it is gone."""
-    result = subprocess.run(["ps", "-o", "lstart=", "-p", str(process_id)],
-                            capture_output=True, text=True, check=False)
+    """The process's start as whole seconds since 1970, or None when it is gone.
+
+    Raises WorkSnapshotError when ps itself fails, so a failed lookup is never
+    taken for a dead owner.
+    """
+    arguments = ["-o", "lstart=", "-p", str(process_id)]
+    result = run_ps(arguments)
     started = " ".join(result.stdout.split())
-    if result.returncode != 0 or not started:
+    if result.returncode == 0 and started:
+        return str(int(time.mktime(time.strptime(started, "%a %b %d %H:%M:%S %Y"))))
+    # ps exits 1 with no output at all when no process has that id.
+    if result.returncode == 1 and not started and not result.stderr.strip():
         return None
-    return str(int(time.mktime(time.strptime(started, "%a %b %d %H:%M:%S %Y"))))
+    raise WorkSnapshotError(
+        f"ps {' '.join(arguments)} exited {result.returncode}: "
+        f"{result.stderr.strip() or 'no detail'}")
 
 
 def owner_key_of_process(process_id, proc_root="/proc", platform=sys.platform):
@@ -146,8 +159,7 @@ def process_command_name_and_parent(process_id, proc_root="/proc", platform=sys.
         name = Path(proc_root, str(process_id), "comm").read_text().strip()
         parent = int(linux_stat_fields_after_command(process_id, proc_root)[4 - 3])
         return name, parent
-    result = subprocess.run(["ps", "-o", "ppid=,comm=", "-p", str(process_id)],
-                            capture_output=True, text=True, check=False)
+    result = run_ps(["-o", "ppid=,comm=", "-p", str(process_id)])
     fields = result.stdout.strip().split(None, 1)
     if result.returncode != 0 or len(fields) != 2:
         raise WorkSnapshotError(f"ps could not read process {process_id}")
@@ -169,15 +181,23 @@ def claude_owner_process_id(start_process_id, proc_root="/proc", platform=sys.pl
 
 
 def worktree_containing(path):
-    """The resolved top of the git worktree holding path, or None outside any."""
+    """The resolved top of the git worktree holding path, or None outside any.
+
+    Raises WorkSnapshotError when git fails for another reason, so a worktree
+    that could not be found is reported rather than skipped.
+    """
     directory = Path(path)
     while not directory.is_dir():
         if directory.parent == directory:
             return None
         directory = directory.parent
     result = run_git(directory, "rev-parse", "--show-toplevel")
-    if result.returncode != 0 or not result.stdout.strip():
+    if result.returncode != 0 and "not a git repository" in result.stderr:
         return None
+    if result.returncode != 0 or not result.stdout.strip():
+        raise WorkSnapshotError(
+            f"git rev-parse --show-toplevel in {directory} exited {result.returncode}: "
+            f"{result.stderr.strip() or 'no output'}")
     return Path(result.stdout.strip()).resolve()
 
 
@@ -460,7 +480,7 @@ def first_prompt_text(repo, agent_seat, handoff_directory, now=None, is_alive=No
                              {snapshot["ref"] for snapshot in everything})
     except Exception as error:
         lines.append(f"(Their first listing could not be recorded ({type(error).__name__}: "
-                     f"{error}), so the cleaner counts them as never listed and keeps them.)")
+                     f"{error}), so scripts/clean-worktrees.py counts them as never listed and keeps them.)")
     return "\n".join(lines)
 
 

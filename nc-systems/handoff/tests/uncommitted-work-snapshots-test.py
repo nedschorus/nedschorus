@@ -98,7 +98,7 @@ CLAUDE_STAND_IN.write_text(
     "#!/bin/sh\n"
     "while read hook_input; do\n"
     "  \"$@\" < \"$hook_input\"\n"
-    "  echo hook-done\n"
+    "  echo \"hook-done $?\"\n"
     "done\n")
 CLAUDE_STAND_IN.chmod(0o755)
 
@@ -141,6 +141,7 @@ class ClaudeStandIn:
         self.inputs = SCRATCH / f"hook-inputs-{ClaudeStandIn.started}"
         self.inputs.mkdir()
         self.count = 0
+        self.last_exit = None
         self.process = subprocess.Popen(
             [str(CLAUDE_STAND_IN), sys.executable, str(main / HOOK_RELATIVE)],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True,
@@ -156,7 +157,10 @@ class ClaudeStandIn:
         output = []
         while True:
             line = self.process.stdout.readline()
-            if not line or line.strip() == "hook-done":
+            if line.startswith("hook-done"):
+                self.last_exit = int(line.split()[1])
+                break
+            if not line:
                 break
             output.append(line)
         text = "".join(output).strip()
@@ -370,9 +374,12 @@ def test_hook_failure_is_reported():
     message = claude.run_hook(edit(worktree / "tracked.txt"))
     check(message is not None and str(worktree) in message and "no work-snapshot" in message,
           name, message)
+    check(claude.last_exit == 0, "the hook exits 0 when it reports a failure",
+          claude.last_exit)
     check(claude.process.poll() is None, "the stand-in claude carried on after the failure")
     claude.end()
     hook = load(main / HOOK_RELATIVE, "hook_without_claude")
+    hook.snapshots = hook.load_snapshots_module()
     hook.snapshots.claude_owner_process_id = lambda start: None
     messages = hook.run(edit(worktree / "tracked.txt"), os.getpid())
     check(len(messages) == 1 and "no process named claude" in messages[0]
@@ -382,6 +389,101 @@ def test_hook_failure_is_reported():
     (worktree / "tracked.txt").write_text("one\n")
     check(hook.run(edit(worktree / "tracked.txt"), os.getpid()) == [],
           "with no claude parent and nothing uncommitted the hook says nothing")
+
+
+def test_other_repository_is_untouched():
+    name = "an edit or a Bash call in another repository writes no work-snapshot there"
+    if not CLAUDE_STAND_IN_WORKS:
+        return skip(name, "the claude stand-in is named after its shell on this platform")
+    main = new_clone()
+    other = SCRATCH / f"unrelated-repository-{clone_count[0]}"
+    git(SCRATCH, "init", "-q", str(other))
+    (other / "file.txt").write_text("one\n")
+    git(other, "add", "-A")
+    git(other, "commit", "-q", "-m", "base")
+    (other / "file.txt").write_text("two\n")
+    claude = ClaudeStandIn(main)
+    message = claude.run_hook(edit(other / "file.txt"))
+    claude.run_hook(bash(other))
+    claude.end()
+    other_refs = git(other, "for-each-ref", "--format=%(refname)",
+                     snapshots.WORK_SNAPSHOT_REF_PREFIX).split()
+    check(other_refs == [] and refs_of(main) == [] and message is None, name,
+          (other_refs, refs_of(main), message))
+
+
+def test_worktree_discovery_failure_is_reported():
+    name = "a worktree that git fails to find, for a reason other than no repository, is reported"
+    main = new_clone()
+    bare = SCRATCH / f"bare-{clone_count[0]}.git"
+    git(SCRATCH, "init", "-q", "--bare", str(bare))
+    try:
+        snapshots.worktree_containing(bare)
+        raised = False
+    except snapshots.WorkSnapshotError:
+        raised = True
+    check(raised, "worktree_containing raises when git fails inside a repository")
+    outside = SCRATCH / "outside-every-repository"
+    outside.mkdir(exist_ok=True)
+    check(snapshots.worktree_containing(outside) is None,
+          "worktree_containing gives None outside any repository")
+    hook = load(main / HOOK_RELATIVE, "hook_discovery_failure")
+    hook.snapshots = hook.load_snapshots_module()
+    worktrees, messages = hook.candidate_worktrees(edit(bare / "config"), None)
+    check(worktrees == [] and len(messages) == 1 and str(bare) in messages[0]
+          and "could not be found" in messages[0], name, (worktrees, messages))
+
+
+def test_module_load_failure_is_reported():
+    name = "a module that cannot be loaded is reported through additionalContext, exit 0"
+    main = new_clone()
+    (main / MODULE_RELATIVE).write_text("this is not python (\n")
+    result = subprocess.run([sys.executable, str(main / HOOK_RELATIVE)],
+                            input=json.dumps(edit(main / "tracked.txt")),
+                            capture_output=True, text=True)
+    try:
+        context = json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"]
+    except (ValueError, KeyError):
+        context = ""
+    check(result.returncode == 0 and "could not be loaded" in context
+          and "no work-snapshot" in context, name,
+          (result.returncode, result.stdout, result.stderr))
+
+
+class FakePs:
+    def __init__(self, returncode, stdout="", stderr=""):
+        self.returncode, self.stdout, self.stderr = returncode, stdout, stderr
+
+
+def test_macos_ps_failure_is_not_a_dead_owner():
+    real_run_ps = snapshots.run_ps
+    try:
+        snapshots.run_ps = lambda arguments: FakePs(1)
+        check(snapshots.macos_start_seconds(100) is None,
+              "ps exiting 1 with no output means the process is gone")
+        check(not snapshots.owner_process_is_alive("100-5", platform="darwin"),
+              "a gone macOS owner counts as dead")
+        for fake, why in ((FakePs(-9), "killed by a signal"),
+                          (FakePs(1, stderr="ps: illegal option"), "an error message"),
+                          (FakePs(2), "another exit code")):
+            snapshots.run_ps = lambda arguments, fake=fake: fake
+            try:
+                alive = snapshots.owner_process_is_alive("100-5", platform="darwin")
+                outcome = f"returned {alive}"
+            except snapshots.WorkSnapshotError:
+                outcome = "raised"
+            check(outcome == "raised",
+                  f"a ps failure ({why}) raises instead of counting the owner dead", outcome)
+    finally:
+        snapshots.run_ps = real_run_ps
+    if shutil.which("ps") is None:
+        return skip("ps on this machine reads a live and a gone process", "no ps here")
+    check(snapshots.macos_start_seconds(os.getpid()) is not None,
+          "ps on this machine gives a live process's start")
+    gone = subprocess.Popen([sys.executable, "-c", "pass"])
+    gone.wait()
+    check(snapshots.macos_start_seconds(gone.pid) is None,
+          "ps on this machine gives None for a process that is gone")
 
 
 # ---------------------------------------------------------------- owners
@@ -599,6 +701,11 @@ def test_restore_a_subset():
     (worktree / "new.txt").write_text("changed since\n")
     check(not snapshots.worktree_still_matches(main, ref),
           "matches says no once the worktree has changed")
+    (worktree / "new.txt").write_text("work\n")
+    git(worktree, "add", "-A")
+    git(worktree, "commit", "-q", "-m", "the same changes, committed")
+    check(not snapshots.worktree_still_matches(main, ref),
+          "matches says no once the changes are committed, though the tree is the same")
 
 
 # ---------------------------------------------------------------- cleaner
@@ -694,7 +801,10 @@ def main():
                      test_ref_names,
                      test_bash_commit_deletes_and_other_worktrees_follow,
                      test_overlapping_runs_end_on_the_final_state, test_operation_trailer,
-                     test_hook_failure_is_reported, test_owner_liveness,
+                     test_hook_failure_is_reported, test_other_repository_is_untouched,
+                     test_worktree_discovery_failure_is_reported,
+                     test_module_load_failure_is_reported, test_owner_liveness,
+                     test_macos_ps_failure_is_not_a_dead_owner,
                      test_live_and_dead_owners_listed, test_list_caps_and_failure,
                      test_supervisor_appends_the_list, test_restore_a_subset, test_cleaner,
                      test_the_2026_10_05_loss_replayed):
