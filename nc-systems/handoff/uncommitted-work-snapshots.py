@@ -335,8 +335,9 @@ def all_work_snapshots(repo):
     return snapshots
 
 
-def leftover_work_snapshots(repo, agent_seat=None, is_alive=owner_process_is_alive):
+def leftover_work_snapshots(repo, agent_seat=None, is_alive=None):
     """Work-snapshots whose owner process is gone, newest first."""
+    is_alive = is_alive or owner_process_is_alive
     return [snapshot for snapshot in all_work_snapshots(repo)
             if (agent_seat is None or snapshot["agent_seat"] == agent_seat)
             and not is_alive(snapshot["owner_key"])]
@@ -417,13 +418,17 @@ def record_first_listing(path, refs, now, existing_refs):
     os.replace(temporary, path)
 
 
-def first_prompt_text(repo, agent_seat, handoff_directory, now=None,
-                      is_alive=owner_process_is_alive):
+def first_prompt_text(repo, agent_seat, handoff_directory, now=None, is_alive=None):
     """The first prompt's paragraph on this agent-seat's leftover work-snapshots.
 
     Empty when there are none. A failure is stated, with the list command, so
     it cannot be mistaken for none.
     """
+    is_alive = is_alive or owner_process_is_alive
+    probe = run_git(repo, "rev-parse", "--git-dir")
+    if probe.returncode != 0 and "not a git repository" in probe.stderr:
+        # Work-snapshots live in a clone; a working directory outside any has none.
+        return ""
     try:
         everything = all_work_snapshots(repo)
         leftovers = [snapshot for snapshot in everything
@@ -468,13 +473,14 @@ def first_listing_times(handoff_directory):
 
 
 def clean_leftover_work_snapshots(repo, remove, only_due, handoff_directory, now=None,
-                                  is_alive=owner_process_is_alive, out=print):
+                                  is_alive=None, out=print):
     """Report leftovers, and with remove delete those listed and left long enough.
 
     Returns the number of failures. A live owner's work-snapshot is never
     touched or reported.
     """
     now = time.time() if now is None else now
+    is_alive = is_alive or owner_process_is_alive
     try:
         leftovers = leftover_work_snapshots(repo, is_alive=is_alive)
         listed = first_listing_times(handoff_directory)
