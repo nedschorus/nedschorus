@@ -21,7 +21,7 @@ The design is one shared module, `nc-systems/handoff/uncommitted-work-snapshots.
 
 1. A hook, `scripts/uncommitted-work-snapshot-hook.py`, that writes, refreshes and deletes work snapshots while agents work.
 2. `nc-systems/handoff/handoff-supervisor.py`, which lists leftover work snapshots, with restore steps, in the first prompt of every agent-session it starts.
-3. `scripts/clean-worktrees.py`, which deletes leftover work snapshots nobody restored within 30 days.
+3. `scripts/clean-worktrees.py`, which deletes a leftover work snapshot nobody restored within 10 days of its first listing in an agent-session's first prompt.
 
 ## 1. The hook: writing, refreshing and deleting work snapshots
 
@@ -62,6 +62,7 @@ The hook's wiring in `.claude/settings.json` changes only with the user's approv
 
 Every time `nc-systems/handoff/handoff-supervisor.py` starts an agent-session, whatever the reason (a crash resume, a session-handoff, a first start, or recovery by `scripts/recover-crashed-seats.py`), it adds to the first prompt the agent-seat's leftover work snapshots: those whose `Work-snapshot-agent-seat` trailer names this agent-seat and whose owner process is gone. A worktree's existence does not matter: a dead owner's work snapshot is listed whether its worktree survives or the cleaner removed it.
 
+- The first time the handoff-supervisor lists a work snapshot, it records the time in `~/.claude/handoffs/<seat>-work-snapshots-first-listed.json` on that machine, ref to time; the cleaner reads that file. A failure to write it is said in the first prompt, and that work snapshot then counts as never listed.
 - Each entry gives the ref, the worktree path and whether it exists, the branch, the time, the transcript path and whether that file exists, the operation if any, and up to ten changed files with a count of the rest.
 - At most 20 entries are listed, newest first, then a count of the rest and the command that lists them all: `python3 nc-systems/handoff/uncommitted-work-snapshots.py list --agent-seat <name>`.
 - When there are none, the prompt says nothing about work snapshots.
@@ -86,7 +87,7 @@ For each listed work snapshot:
 ## 4. The cleaner: removing what nobody restored
 
 `scripts/clean-worktrees.py --remove`, at its daily run and at every session-handoff, also handles work snapshots, after its worktree removals:
-- It deletes a work snapshot whose owner process is gone and whose author date is more than 30 days old, writing its ref, worktree path and changed files in its output, which the daily run appends to `~/.claude/daily-clean-worktrees.log` on that machine.
+- It deletes a work snapshot whose owner process is gone and which was first listed in an agent-session's first prompt more than 10 days ago, writing its ref, worktree path and changed files in its output, which the daily run appends to `~/.claude/daily-clean-worktrees.log` on that machine.
 - It reports every other work snapshot whose owner process is gone, with its age, including those whose agent-seat is `unknown`, which no agent-session's list shows.
 - Run without `--remove`, it only reports, and deletes nothing.
 - It never deletes a work snapshot whose owner process is alive.
@@ -115,10 +116,10 @@ Each machine has its own clone and its own work snapshots: on ned-box the clone 
 - An owner process still running keeps its work snapshots off the list; a dead one's are listed, whether or not the worktree exists; a reused process id with a different start counts as dead; a live owner still counts as alive after the system clock is stepped.
 - The list caps at 20 entries and ten files each, and a failure to build it is stated in the prompt.
 - Restoring a chosen subset of files, both in a surviving worktree and into a new worktree from `<ref>^`, gives a commit with exactly those modifications, new files and deletions.
-- The cleaner deletes a dead owner's work snapshot older than 30 days, naming it in its output, and keeps a younger one and a live owner's one.
+- The cleaner deletes a dead owner's work snapshot first listed more than 10 days ago, naming it in its output, and keeps one listed more recently, one never listed, and a live owner's one.
 - The 2026-10-05 loss replayed: a worktree on a branch with no commits of its own, two uncommitted files, the owner process killed, the cleaner run, which removes the worktree; the next agent-session's first prompt lists the work snapshot, and following the restore steps brings both files back as a commit.
 
 ## Decisions for the user
 
 1. The hook wiring in `.claude/settings.json`: after Edit, Write and NotebookEdit, and after Bash.
-2. The 30 days after which the cleaner deletes a work snapshot nobody restored.
+2. The 10 days after its first listing at which the cleaner deletes a work snapshot nobody restored. A work snapshot never listed, because its agent-seat has not started an agent-session since or its agent-seat is `unknown`, is kept and reported, so a paused agent-seat's work waits until the agent-seat runs again.
