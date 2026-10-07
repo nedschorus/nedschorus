@@ -1,6 +1,6 @@
 # File naming and location standards
 
-The naming and location convention for this project's files. Where internal or external systems dictate the name or location of files we follow those dictates. Our standards only cover this project's systems. Our CLAUDE.md has our general naming rules, which include file names. Our skills and scripts may specify their own file names and locations. This document complements, not replaces, those other methods and instructions. 
+The naming and location convention for this project's files. Where internal or external systems dictate the name or location of files we follow those dictates. Our standards only cover this project's systems. `docs/nedschorus-wiki/nedschorus-how-to-choose-a-name-for-files-code-and-glossary-terms.md` says how to choose the words of every name, file names included, and CLAUDE.md states it in brief; this page gives the patterns and locations for each kind of file. Our skills and scripts may specify their own file names and locations. This document complements, not replaces, those other methods and instructions. 
 
 ## Terms this page uses
 
