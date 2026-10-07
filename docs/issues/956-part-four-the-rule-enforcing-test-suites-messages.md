@@ -51,12 +51,12 @@ Each proposed text keeps the case name and gives a new detail, in this order:
 - one line per fix, each opening with the condition it applies under; the conditions of one message do not overlap, so exactly one line applies;
 - the guarded-file lines, when a fix lands in a protected file.
 
-A rule can also break on main without the reader's change: the suite selection skips a suite whose recorded inputs a pull request did not change, so two pull requests that each pass can break a rule once both have merged. The reader can tell by listing what the branch changes against main, committed or not, with `git diff --name-status $(git merge-base HEAD origin/main)`. Question A below asks what the agent does then.
+A rule can also break on main without the reader's change: the suite selection skips a suite whose recorded inputs a pull request did not change, so two pull requests that each pass can break a rule once both have merged. The reader can list what the branch changes against main, committed or not, with `git diff --name-status $(git merge-base HEAD origin/main)`; a failure that names none of those files may not come from the reader's change, though neither that list nor any other check can prove where it came from, because more than the branch can change. Question A below asks what the agent does then.
 
 **Question for the user, A: a rule broken on main, not by the agent's change.** When the files a failure names are not among the files the agent's change touches, the proposal adds one closing line to every message:
 
 ```
-If your change touched none of the files named above, the failure was already on main: tell the user this message, and leave the fix out of your own pull request.
+If your change touched none of the files named above, the failure may not come from your change: tell the user this message and what your change touched, and leave the fix out of your own pull request unless the user says otherwise.
 ```
 
 The fix then goes on its own topic branch, as CLAUDE.md requires of a change outside the topic. Recommendation: approve, so that an agent never folds an unrelated fix into its own pull request, and the user hears of a rule main broke.
