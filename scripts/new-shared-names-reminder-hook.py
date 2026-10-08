@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """After a write, edit or shell command, name the shared names the branch newly adds, once per agent-session."""
-# The hook never blocks: any failure leaves the agent's turn as it was.
+# The hook never blocks: any failure leaves the agent's turn as it was, apart from one line saying the check failed.
 
 import hashlib
 import importlib.util
@@ -9,12 +9,18 @@ import re
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 GIT_CALL_TIMEOUT_SECONDS = 10
+# Well under the 30-second timeout the hook is registered with: a large branch is scanned over several edits instead.
+HOOK_TIME_BUDGET_SECONDS = 8
 FILE_WRITING_TOOL_NAMES = frozenset({"Write", "Edit", "MultiEdit", "NotebookEdit"})
 SHELL_TOOL_NAME = "Bash"
-BRANCH_CREATION_PATTERN = re.compile(r"\bgit\s+(?:switch\s+(?:-c|--create)|checkout\s+-b)\s+([^\s;&|]+)")
+# git [-C dir | -c key=value | --flag]... checkout|switch [options]... -b|-B|-c|-C|--create|--force-create <name>
+BRANCH_CREATION_PATTERN = re.compile(
+    r"\bgit\s+(?:(?:-C|-c)\s+\S+\s+|--\S+\s+)*(?:checkout|switch)\s+(?:-[^\s]*\s+)*?"
+    r"(?:-b|-B|-c|-C|--create|--force-create)\s+([^\s;&|-][^\s;&|]*)")
 STATE_DIRECTORY = Path(tempfile.gettempdir()) / "new-shared-names-reminder-hook-state"
 SESSION_ID_SAFE_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
 LISTER_PATH = Path(__file__).resolve().parent / "new-shared-names-in-changed-files-list.py"
@@ -27,9 +33,22 @@ REMINDER_TEMPLATE = (
     "Send them, with one sentence on what each names, to the {agent} subagent, run in the "
     "background, and keep working.\n"
     "When it flags a name, rename it everywhere your branch uses it, in one commit.\n"
+    "If it flags a new project-term or system-term, put the new term to the user before you "
+    "use it.\n"
     "If a listed name is not one you chose, such as quoted text or an existing name written "
-    "differently, leave it.\n"
+    "differently, do not send it and do not rename it.\n"
     "How names are chosen: {page}."
+)
+PARTIAL_SCAN_LINE = (
+    "The check stopped after {scanned} of {total} changed files to stay within its time limit; "
+    "names in the other files are listed after a later edit."
+)
+FAILURE_TEMPLATE = (
+    "new-shared-names-reminder: the check for new shared names on this branch failed, so "
+    "no names are being listed: {error}\n"
+    "If the error names origin/main, run `git fetch`; the check runs again after your next "
+    "edit.\n"
+    "Until it works, check new names by hand against {page}."
 )
 
 
@@ -55,41 +74,66 @@ def state_path_for(session_id: str) -> Path:
     return STATE_DIRECTORY / f"{session_id}.json"
 
 
+def empty_state() -> dict:
+    return {"reported": [], "worktree_fingerprint": "", "file_cache": {}, "reported_failures": []}
+
+
 def read_state(session_id: str) -> dict:
     try:
         state = json.loads(state_path_for(session_id).read_text())
     except (OSError, ValueError):
-        return {"reported": [], "worktree_fingerprint": ""}
+        return empty_state()
     if not isinstance(state, dict):
-        return {"reported": [], "worktree_fingerprint": ""}
-    return state
+        return empty_state()
+    return dict(empty_state(), **state)
 
 
 def write_state(session_id: str, state: dict) -> None:
     try:
         STATE_DIRECTORY.mkdir(parents=True, exist_ok=True)
-        state_path_for(session_id).write_text(json.dumps(state))
+        temporary = state_path_for(session_id).with_suffix(".partial")
+        temporary.write_text(json.dumps(state))
+        temporary.replace(state_path_for(session_id))
     except OSError:
         pass
 
 
 def worktree_fingerprint(checkout: Path):
-    """Return a digest of HEAD and the uncommitted changes, or None when git cannot answer."""
+    """Return a digest of HEAD, the uncommitted changes and the untracked files, or None when git cannot answer."""
     head = git_output(["rev-parse", "HEAD"], checkout)
     status = git_output(["status", "--porcelain", "--untracked-files=all"], checkout)
     diff = git_output(["diff", "HEAD"], checkout)
-    if head is None or status is None or diff is None:
+    untracked = git_output(["ls-files", "--others", "--exclude-standard"], checkout)
+    if head is None or status is None or diff is None or untracked is None:
         return None
-    return hashlib.sha256((head + status + diff).encode()).hexdigest()
+    parts = [head, status, diff]
+    for path in untracked.splitlines():
+        try:
+            details = (checkout / path).stat()
+        except OSError:
+            continue
+        parts.append(f"{path}\0{details.st_size}\0{details.st_mtime_ns}")
+    return hashlib.sha256("\n".join(parts).encode()).hexdigest()
 
 
-def reminder_text(new_names) -> str:
+def reminder_text(new_names, result) -> str:
     lines = "\n".join(f"  {name} ({kind}{', in ' + path if path and path != name else ''})"
                       for path, kind, name in new_names)
-    return REMINDER_TEMPLATE.format(names=lines, agent=NAMING_FRESH_AGENT_NAME, page=NAMING_PAGE_PATH)
+    text = REMINDER_TEMPLATE.format(names=lines, agent=NAMING_FRESH_AGENT_NAME, page=NAMING_PAGE_PATH)
+    if not result.complete:
+        text += "\n" + PARTIAL_SCAN_LINE.format(scanned=result.files_scanned, total=result.files_total)
+    return text
+
+
+def emit(text: str) -> None:
+    print(json.dumps({"hookSpecificOutput": {
+        "hookEventName": "PostToolUse",
+        "additionalContext": text,
+    }}, ensure_ascii=False))
 
 
 def main() -> int:
+    started = time.monotonic()
     try:
         payload = json.loads(sys.stdin.read() or "{}")
     except (json.JSONDecodeError, ValueError, OSError):
@@ -128,25 +172,33 @@ def main() -> int:
     if (tool_name == SHELL_TOOL_NAME and branch_name is None
             and fingerprint == state.get("worktree_fingerprint")):
         return 0
-
-    try:
-        lister = load_lister()
-        names = lister.new_shared_names(checkout, branch_name)
-    except Exception:
-        return 0
+    state["worktree_fingerprint"] = fingerprint
 
     reported = set(state.get("reported", []))
-    new_names = [triple for triple in names if f"{triple[1]}\t{triple[2]}" not in reported]
-    state["worktree_fingerprint"] = fingerprint
-    state["reported"] = sorted(reported | {f"{kind}\t{name}" for _, kind, name in new_names})
-    write_state(session_id, state)
-    if not new_names:
+    file_cache = state.get("file_cache") if isinstance(state.get("file_cache"), dict) else {}
+    try:
+        lister = load_lister()
+        result = lister.new_shared_names(checkout, branch_name, already_reported=frozenset(reported),
+                                         file_cache=file_cache,
+                                         deadline=started + HOOK_TIME_BUDGET_SECONDS)
+    except Exception as failure:
+        error = str(failure) or type(failure).__name__
+        failures = set(state.get("reported_failures", []))
+        state["file_cache"] = file_cache
+        if error not in failures:
+            state["reported_failures"] = sorted(failures | {error})
+            write_state(session_id, state)
+            emit(FAILURE_TEMPLATE.format(error=error, page=NAMING_PAGE_PATH))
+        else:
+            write_state(session_id, state)
         return 0
 
-    print(json.dumps({"hookSpecificOutput": {
-        "hookEventName": "PostToolUse",
-        "additionalContext": reminder_text(new_names),
-    }}, ensure_ascii=False))
+    state["file_cache"] = file_cache
+    state["reported"] = sorted(reported | {f"{kind}\t{name}" for _, kind, name in result.names})
+    write_state(session_id, state)
+    if not result.names:
+        return 0
+    emit(reminder_text(result.names, result))
     return 0
 
 
