@@ -477,7 +477,7 @@ def case_hook_shows_names_past_the_cap_later(root):
           and not shown_first & shown_second, f"{len(shown_first)} then {len(shown_second)}")
 
 
-def case_hook_reports_once_per_session(root):
+def case_hook_reports_once_per_worktree(root):
     clone = make_clone(root, BASE_MAIN_FILES)
     state_root = root / "state"
     state_root.mkdir()
@@ -489,9 +489,400 @@ def case_hook_reports_once_per_session(root):
     check("the hook names the naming fresh-agent", "new-name-propose-and-check-fresh-agent" in first)
     _, second = run_hook(clone, state_root, {"tool_name": "Edit", "tool_input": {"file_path": "beta.py"}})
     check("the same names are not reported twice in one agent-session", second == "", second)
-    _, other_session = run_hook(clone, state_root, {"tool_name": "Write", "session_id": "session-two",
+    git_directory = subprocess.run(["git", "rev-parse", "--absolute-git-dir"], cwd=str(clone), check=True,
+                                   capture_output=True, text=True).stdout.strip()
+    record = Path(git_directory) / "new-shared-names-reported.json"
+    check("the reported names are kept in the worktree's own git directory, under its branch",
+          "python-function\tshared_helper" in json.loads(record.read_text()).get("topic", []), str(record))
+    _, later_session = run_hook(clone, state_root, {"tool_name": "Write", "session_id": "session-two",
                                                      "tool_input": {"file_path": "beta.py"}})
-    check("another agent-session hears about them", "shared_helper" in other_session, other_session)
+    check("a later agent-session in the same worktree is not told the same names again",
+          later_session == "", later_session)
+    write(clone, "gamma.py", "import alpha\ndef second_helper():\n    return alpha.shared_helper()\n")
+    write(clone, "delta.py", "import gamma\ngamma.second_helper()\n")
+    _, later_new = run_hook(clone, state_root, {"tool_name": "Write", "session_id": "session-two",
+                                                 "tool_input": {"file_path": "delta.py"}})
+    check("the later agent-session is told only the names that are new to the worktree",
+          "second_helper" in later_new and "shared_helper (" not in later_new, later_new)
+
+
+def record_path_of(clone: Path) -> Path:
+    git_directory = subprocess.run(["git", "rev-parse", "--absolute-git-dir"], cwd=str(clone), check=True,
+                                   capture_output=True, text=True).stdout.strip()
+    return Path(git_directory) / "new-shared-names-reported.json"
+
+
+def case_new_branch_is_told_a_name_again_and_gone_branches_are_dropped(root):
+    clone = make_clone(root, BASE_MAIN_FILES)
+    state_root = root / "state"
+    state_root.mkdir()
+    write(clone, "alpha.py", "def shared_helper():\n    return 1\n")
+    write(clone, "beta.py", "import alpha\nalpha.shared_helper()\n")
+    _, first = run_hook(clone, state_root, {"tool_name": "Write", "tool_input": {"file_path": "beta.py"}})
+    check("the name is told on the first branch", "shared_helper" in first, first)
+    git(["stash", "-q", "-u"], clone)
+    git(["switch", "-q", "main"], clone)
+    git(["branch", "-q", "-D", "topic"], clone)
+    git(["switch", "-q", "-c", "later-topic"], clone)
+    git(["stash", "pop", "-q"], clone)
+    _, again = run_hook(clone, state_root, {"tool_name": "Write", "tool_input": {"file_path": "beta.py"}})
+    check("a later branch that adds the same name is told it again", "shared_helper" in again, again)
+    record = json.loads(record_path_of(clone).read_text())
+    check("the abandoned branch's entries are dropped from the record",
+          "topic" not in record and "later-topic" in record, str(sorted(record)))
+
+
+def case_unreadable_record_is_told_and_names_are_told_again(root):
+    clone = make_clone(root, BASE_MAIN_FILES)
+    state_root = root / "state"
+    state_root.mkdir()
+    record_path_of(clone).write_text("{not json")
+    write(clone, "alpha.py", "def shared_helper():\n    return 1\n")
+    write(clone, "beta.py", "import alpha\nalpha.shared_helper()\n")
+    code, context = run_hook(clone, state_root, {"tool_name": "Write", "tool_input": {"file_path": "beta.py"}})
+    check("an unreadable record exits 0", code == 0)
+    check("an unreadable record is told to the agent",
+          "could not be read (not valid JSON)" in context, context)
+    check("the names are still listed after an unreadable record", "shared_helper" in context, context)
+    check("the record is rewritten as valid JSON",
+          isinstance(json.loads(record_path_of(clone).read_text()), dict))
+    unreadable = record_path_of(clone).with_name("new-shared-names-reported.json.unreadable")
+    check("the unreadable record is moved aside, unchanged, to inspect",
+          unreadable.exists() and unreadable.read_text() == "{not json", str(unreadable))
+    check("the agent is told where the unreadable record was moved", str(unreadable) in context, context)
+    record_path_of(clone).write_text("{second bad record")
+    write(clone, "gamma.py", "import alpha\ndef second_helper():\n    return alpha.shared_helper()\n")
+    write(clone, "delta.py", "import gamma\ngamma.second_helper()\n")
+    run_hook(clone, state_root, {"tool_name": "Write", "session_id": "session-two",
+                                 "tool_input": {"file_path": "delta.py"}})
+    check("a later unreadable record replaces the older moved-aside one",
+          unreadable.read_text() == "{second bad record", unreadable.read_text())
+
+
+def case_unreadable_record_that_cannot_be_moved_stays_and_is_told(root):
+    clone = make_clone(root, BASE_MAIN_FILES)
+    state_root = root / "state"
+    state_root.mkdir()
+    record = record_path_of(clone)
+    record.write_text("{not json")
+    blocking_directory = record.with_name("new-shared-names-reported.json.unreadable")
+    blocking_directory.mkdir()
+    (blocking_directory / "keep").write_text("a non-empty directory cannot be replaced by a file")
+    write(clone, "alpha.py", "def shared_helper():\n    return 1\n")
+    write(clone, "beta.py", "import alpha\nalpha.shared_helper()\n")
+    code, context = run_hook(clone, state_root, {"tool_name": "Write", "tool_input": {"file_path": "beta.py"}})
+    check("an unreadable record that cannot be moved exits 0", code == 0)
+    check("an unreadable record that cannot be moved is told, with both reasons, and not as moved",
+          "could not be read (not valid JSON)" in context and "could not be moved to" in context
+          and "stays in place" in context and "was moved" not in context, context)
+    check("the names are still listed when the record cannot be moved", "shared_helper" in context, context)
+    check("the unreadable record stays in place, unchanged", record.read_text() == "{not json")
+
+
+def case_write_failure_after_moving_an_unreadable_record_aside_tells_both(root):
+    clone = make_clone(root, BASE_MAIN_FILES)
+    record = record_path_of(clone)
+    record.write_text("{not json")
+    unreadable = record.with_name("new-shared-names-reported.json.unreadable")
+    write(clone, "alpha.py", "def shared_helper():\n    return 1\n")
+    write(clone, "beta.py", "import alpha\nalpha.shared_helper()\n")
+    hook = load_module("hook_for_write_failure_after_move_case", HOOK_PATH)
+    real_replace = hook.os.replace
+
+    def replace_failing_with_no_space_onto_the_record(source, destination, *arguments, **options):
+        # Moving the unreadable record aside succeeds; only writing the new record over it fails.
+        if Path(destination).name == record.name:
+            raise OSError(28, "No space left on device")
+        return real_replace(source, destination, *arguments, **options)
+    hook.os.replace = replace_failing_with_no_space_onto_the_record
+    try:
+        code, context = run_hook_in_process(hook, root, clone, {"tool_name": "Write",
+                                            "tool_input": {"file_path": "beta.py"}}, {})
+    finally:
+        hook.os.replace = real_replace
+    check("a write that fails after moving an unreadable record aside exits 0", code == 0)
+    check("the agent is told the unreadable record was moved, with where",
+          "could not be read (not valid JSON)" in context and f"was moved to {unreadable}" in context, context)
+    check("the agent is also told the new record could not be written",
+          "could not be written (No space left on device)" in context, context)
+    check("the moved record holds the original bytes", unreadable.read_text() == "{not json")
+
+
+def case_each_record_notice_is_told_once_per_agent_session(root):
+    clone = make_clone(root, BASE_MAIN_FILES)
+    record_path_of(clone).write_text(json.dumps({"topic": ["branch\ttopic"]}))
+    hook = load_module("hook_for_notice_once_case", HOOK_PATH)
+    _, first = run_hook_in_process(hook, root, clone, {"tool_name": "Write", "tool_input": {"file_path": "x"}},
+                                   {"for-each-ref": 128})
+    _, second = run_hook_in_process(hook, root, clone, {"tool_name": "Write", "tool_input": {"file_path": "x"}},
+                                    {"for-each-ref": 128})
+    check("the branch-list notice is told on the first call", "git for-each-ref failed" in first, first)
+    check("the same notice is not told again later in the same agent-session",
+          "git for-each-ref failed" not in second, second)
+
+
+def case_branch_list_failure_with_nothing_new_to_record_is_told(root):
+    clone = make_clone(root, BASE_MAIN_FILES)
+    # This worktree's branch is already reported and nothing has changed, so the writer returns early.
+    record_path_of(clone).write_text(json.dumps({"topic": ["branch\ttopic"]}))
+    before = record_path_of(clone).read_bytes()
+    hook = load_module("hook_for_branch_list_failure_nothing_new_case", HOOK_PATH)
+    code, context = run_hook_in_process(hook, root, clone, {"tool_name": "Bash",
+                                        "tool_input": {"command": "ls"}}, {"for-each-ref": 128})
+    check("a failing branch list with nothing new to record exits 0", code == 0)
+    check("a failing branch list with nothing new to record is told to the agent",
+          "git for-each-ref failed" in context, context)
+    check("the record is not rewritten when nothing changes", record_path_of(clone).read_bytes() == before)
+
+
+def case_missing_record_is_silent_about_the_record(root):
+    clone = make_clone(root, BASE_MAIN_FILES)
+    state_root = root / "state"
+    state_root.mkdir()
+    check("a fresh worktree has no record", not record_path_of(clone).exists())
+    write(clone, "alpha.py", "def shared_helper():\n    return 1\n")
+    write(clone, "beta.py", "import alpha\nalpha.shared_helper()\n")
+    _, context = run_hook(clone, state_root, {"tool_name": "Write", "tool_input": {"file_path": "beta.py"}})
+    check("a missing record is the normal first run and says nothing about the record",
+          "failed" not in context and "shared_helper" in context, context)
+
+
+def case_failed_write_after_a_good_read_is_told_and_leaves_no_temporary_file(root):
+    clone = make_clone(root, BASE_MAIN_FILES)
+    state_root = root / "state"
+    state_root.mkdir()
+    write(clone, "alpha.py", "def shared_helper():\n    return 1\n")
+    write(clone, "beta.py", "import alpha\nalpha.shared_helper()\n")
+    run_hook(clone, state_root, {"tool_name": "Write", "tool_input": {"file_path": "beta.py"}})
+    record = record_path_of(clone)
+    before = record.read_bytes()
+    write(clone, "gamma.py", "import alpha\ndef second_helper():\n    return alpha.shared_helper()\n")
+    write(clone, "delta.py", "import gamma\ngamma.second_helper()\n")
+    hook = load_module("hook_for_failed_write_case", HOOK_PATH)
+    real_replace = hook.os.replace
+
+    def replace_failing_for_the_record(source, destination, *arguments, **options):
+        if Path(destination).name == record.name:
+            raise PermissionError(13, "Permission denied")
+        return real_replace(source, destination, *arguments, **options)
+    hook.os.replace = replace_failing_for_the_record
+    try:
+        code, context = run_hook_in_process(hook, root, clone, {"tool_name": "Write",
+                                            "tool_input": {"file_path": "delta.py"}}, {})
+    finally:
+        hook.os.replace = real_replace
+    check("a write that fails after a good read exits 0", code == 0)
+    check("a write that fails after a good read is told to the agent",
+          "could not be written (Permission denied)" in context, context)
+    check("the names are still listed when the write fails", "second_helper" in context, context)
+    check("the record is left as it was", record.read_bytes() == before)
+    leftovers = [path.name for path in record.parent.iterdir() if path.name.endswith(".partial")]
+    check("a failed write removes its temporary file", leftovers == [], str(leftovers))
+
+
+def case_branch_recorded_by_a_concurrent_run_while_scanning_survives(root):
+    clone = make_clone(root, BASE_MAIN_FILES)
+    write(clone, "alpha.py", "def shared_helper():\n    return 1\n")
+    write(clone, "beta.py", "import alpha\nalpha.shared_helper()\n")
+    hook = load_module("hook_for_concurrent_branch_case", HOOK_PATH)
+    record = record_path_of(clone)
+    second = root / "second-worktree"
+    real_load_lister = hook.load_lister
+
+    def lister_that_lets_a_second_run_record_meanwhile():
+        lister = real_load_lister()
+        real_new_shared_names = lister.new_shared_names
+
+        def new_shared_names_with_a_concurrent_run(*arguments, **options):
+            # While the first run scans, a second run creates a branch and records a name on it.
+            git(["worktree", "add", "-q", "-b", "concurrent-topic", str(second)], clone)
+            hook.reported_names_record_merge_prune_and_write(
+                record, "concurrent-topic", {"python-function\tconcurrent_helper"}, second)
+            return real_new_shared_names(*arguments, **options)
+        lister.new_shared_names = new_shared_names_with_a_concurrent_run
+        return lister
+    hook.load_lister = lister_that_lets_a_second_run_record_meanwhile
+    code, context = run_hook_in_process(hook, root, clone, {"tool_name": "Write",
+                                        "tool_input": {"file_path": "beta.py"}}, {})
+    stored = json.loads(record.read_text())
+    check("the first run exits 0 and lists its names", code == 0 and "shared_helper" in context, context)
+    check("the first run's names are recorded under its branch",
+          "python-function\tshared_helper" in stored.get("topic", []), str(stored))
+    check("a branch another run created and recorded while this run scanned is not dropped",
+          stored.get("concurrent-topic") == ["python-function\tconcurrent_helper"], str(stored))
+
+
+def case_failed_prune_write_with_no_new_names_is_told(root):
+    clone = make_clone(root, BASE_MAIN_FILES)
+    record = record_path_of(clone)
+    # The worktree's own branch is already reported, so this run has no new names and writes only to prune.
+    record.write_text(json.dumps({"long-gone-topic": ["python-function\told_name"], "topic": ["branch\ttopic"]}))
+    hook = load_module("hook_for_failed_prune_case", HOOK_PATH)
+    real_replace = hook.os.replace
+
+    def replace_failing_for_the_record(source, destination, *arguments, **options):
+        if Path(destination).name == record.name:
+            raise PermissionError(13, "Permission denied")
+        return real_replace(source, destination, *arguments, **options)
+    hook.os.replace = replace_failing_for_the_record
+    try:
+        code, context = run_hook_in_process(hook, root, clone, {"tool_name": "Bash",
+                                            "tool_input": {"command": "ls"}}, {})
+    finally:
+        hook.os.replace = real_replace
+    check("a prune write that fails exits 0", code == 0)
+    check("a prune write that fails, in a run with no new names, is told to the agent",
+          "could not be written (Permission denied)" in context, context)
+    check("the record is left as it was after a failed prune",
+          "long-gone-topic" in json.loads(record.read_text()))
+
+
+def case_record_that_is_not_utf8_is_told(root):
+    clone = make_clone(root, BASE_MAIN_FILES)
+    state_root = root / "state"
+    state_root.mkdir()
+    record_path_of(clone).write_bytes(b'{"topic": ["\xff\xfe"]}')
+    write(clone, "alpha.py", "def shared_helper():\n    return 1\n")
+    write(clone, "beta.py", "import alpha\nalpha.shared_helper()\n")
+    code, context = run_hook(clone, state_root, {"tool_name": "Write", "tool_input": {"file_path": "beta.py"}})
+    check("a record that is not UTF-8 exits 0", code == 0)
+    check("a record that is not UTF-8 is told to the agent",
+          "could not be read (not valid UTF-8)" in context, context)
+    check("the names are still listed after a record that is not UTF-8", "shared_helper" in context, context)
+
+
+def case_local_branch_list_failure_is_told_and_keeps_the_record(root):
+    clone = make_clone(root, BASE_MAIN_FILES)
+    record_path_of(clone).write_text(json.dumps({"long-gone-topic": ["python-function\told_name"]}))
+    write(clone, "alpha.py", "def shared_helper():\n    return 1\n")
+    write(clone, "beta.py", "import alpha\nalpha.shared_helper()\n")
+    hook = load_module("hook_for_branch_list_failure_case", HOOK_PATH)
+    code, context = run_hook_in_process(hook, root, clone, {"tool_name": "Write",
+                                        "tool_input": {"file_path": "beta.py"}}, {"for-each-ref": 128})
+    check("a failing branch list exits 0", code == 0)
+    check("a failing branch list is told to the agent", "git for-each-ref failed" in context, context)
+    check("the names are still listed when the branch list fails", "shared_helper" in context, context)
+    check("a failing branch list keeps every branch's entries",
+          "long-gone-topic" in json.loads(record_path_of(clone).read_text()))
+
+
+def case_branch_list_failure_inside_the_final_write_is_told(root):
+    clone = make_clone(root, BASE_MAIN_FILES)
+    record_path_of(clone).write_text(json.dumps({"long-gone-topic": ["python-function\told_name"]}))
+    write(clone, "alpha.py", "def shared_helper():\n    return 1\n")
+    write(clone, "beta.py", "import alpha\nalpha.shared_helper()\n")
+    hook = load_module("hook_for_late_branch_list_failure_case", HOOK_PATH)
+    real_local_branches = hook.local_branches
+    calls = []
+
+    def branch_list_that_fails_after_the_first_read(checkout):
+        calls.append(checkout)
+        return real_local_branches(checkout) if len(calls) == 1 else None
+    hook.local_branches = branch_list_that_fails_after_the_first_read
+    code, context = run_hook_in_process(hook, root, clone, {"tool_name": "Write",
+                                        "tool_input": {"file_path": "beta.py"}}, {})
+    stored = json.loads(record_path_of(clone).read_text())
+    check("the branch list is read inside the lock once per write: the prune, then the final write",
+          len(calls) == 2, str(len(calls)))
+    check("a branch list that fails only inside the final write is told to the agent",
+          code == 0 and "git for-each-ref failed" in context, context)
+    check("the final write still records this run's names when the branch list fails",
+          "python-function\tshared_helper" in stored.get("topic", []), str(stored))
+
+
+def case_same_branch_name_recreated_is_told_names_again(root):
+    clone = make_clone(root, BASE_MAIN_FILES)
+    state_root = root / "state"
+    state_root.mkdir()
+    write(clone, "alpha.py", "def shared_helper():\n    return 1\n")
+    write(clone, "beta.py", "import alpha\nalpha.shared_helper()\n")
+    _, first = run_hook(clone, state_root, {"tool_name": "Write", "tool_input": {"file_path": "beta.py"}})
+    check("the name is told on topic", "shared_helper" in first, first)
+    for command in (["stash", "-q", "-u"], ["switch", "-q", "main"], ["branch", "-q", "-D", "topic"]):
+        git(command, clone)
+        run_hook(clone, state_root, {"tool_name": "Bash", "tool_input": {"command": "git " + " ".join(command)}})
+    check("deleting topic drops its entries even with no new names to write",
+          "topic" not in json.loads(record_path_of(clone).read_text()))
+    git(["switch", "-q", "-c", "topic"], clone)
+    git(["stash", "pop", "-q"], clone)
+    _, again = run_hook(clone, state_root, {"tool_name": "Write", "tool_input": {"file_path": "beta.py"}})
+    check("a recreated branch of the same name is told the name again", "shared_helper" in again, again)
+
+
+def case_switch_to_a_branch_origin_has_lists_its_names(root):
+    clone = make_clone(root, BASE_MAIN_FILES)
+    git(["branch", "-q", "pushed-topic"], clone)
+    git(["push", "-q", "origin", "pushed-topic"], clone)
+    state_root = root / "state"
+    state_root.mkdir()
+    write(clone, "alpha.py", "def shared_helper():\n    return 1\n")
+    write(clone, "beta.py", "import alpha\nalpha.shared_helper()\n")
+    _, first = run_hook(clone, state_root, {"tool_name": "Write", "tool_input": {"file_path": "beta.py"}})
+    check("the name is told on topic", "shared_helper" in first, first)
+    git(["switch", "-q", "pushed-topic"], clone)
+    _, after_switch = run_hook(clone, state_root, {"tool_name": "Bash",
+                                                   "tool_input": {"command": "git switch pushed-topic"}})
+    check("a switch to another branch at the same commit, with the same changes, lists that branch's names",
+          "shared_helper" in after_switch, after_switch)
+
+
+OVERLAPPING_WRITER_SCRIPT = """
+import importlib.util, sys
+from pathlib import Path
+spec = importlib.util.spec_from_file_location("hook", sys.argv[1])
+hook = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(hook)
+record = Path(sys.argv[2])
+writer = sys.argv[3]
+checkout = Path(sys.argv[4])
+for index in range(40):
+    hook.reported_names_record_merge_prune_and_write(record, "topic", {f"python-function\\t{writer}_{index}"}, checkout)
+"""
+
+
+def case_overlapping_writers_never_leave_invalid_json_and_keep_every_name(root):
+    clone = make_clone(root, BASE_MAIN_FILES)
+    record = record_path_of(clone)
+    hook_path = Path(__file__).resolve().parent / "new-shared-names-reminder-hook.py"
+    writers = [subprocess.Popen([sys.executable, "-c", OVERLAPPING_WRITER_SCRIPT, str(hook_path), str(record),
+                                 f"writer{number}", str(clone)]) for number in range(4)]
+    invalid_reads = 0
+    reads = 0
+    while any(writer.poll() is None for writer in writers):
+        try:
+            json.loads(record.read_text())
+        except FileNotFoundError:
+            continue
+        except ValueError:
+            invalid_reads += 1
+        reads += 1
+    codes = [writer.wait() for writer in writers]
+    check("the overlapping writers all exit 0", codes == [0, 0, 0, 0], str(codes))
+    check("no read of the record during overlapping writes is invalid JSON",
+          invalid_reads == 0, f"{invalid_reads} invalid of {reads}")
+    stored = set(json.loads(record.read_text()).get("topic", []))
+    expected = {f"python-function\twriter{number}_{index}" for number in range(4) for index in range(40)}
+    check("every writer's names are kept", stored == expected, f"{len(stored)} of {len(expected)}")
+    leftovers = [path.name for path in record.parent.iterdir() if path.name.endswith(".partial")]
+    check("no temporary files are left behind", leftovers == [], str(leftovers))
+
+
+def case_two_worktrees_keep_separate_records(root):
+    clone = make_clone(root, BASE_MAIN_FILES)
+    second = root / "second-worktree"
+    git(["worktree", "add", "-q", "-b", "second-worktree-topic", str(second)], clone)
+    state_root = root / "state"
+    state_root.mkdir()
+    for worktree in (clone, second):
+        write(worktree, "alpha.py", "def shared_helper():\n    return 1\n")
+        write(worktree, "beta.py", "import alpha\nalpha.shared_helper()\n")
+    _, first = run_hook(clone, state_root, {"tool_name": "Write", "session_id": "session-a",
+                                            "tool_input": {"file_path": "beta.py"}})
+    _, other = run_hook(second, state_root, {"tool_name": "Write", "session_id": "session-b",
+                                             "tool_input": {"file_path": "beta.py"}})
+    check("the first worktree is told its new function", "shared_helper" in first, first)
+    check("a second worktree of the same clone is told the same name, from its own record",
+          "shared_helper" in other, other)
 
 
 def case_hook_shell_commands(root):
@@ -561,7 +952,22 @@ def main() -> int:
              case_branch_check_failure_is_told_and_the_file_check_still_runs,
              case_remote_branch_lookup_failure_is_told_and_no_branch_reported,
              case_branch_check_failure_on_a_quiet_shell_call_is_told,
-             case_hook_reports_once_per_session, case_hook_shell_commands,
+             case_hook_reports_once_per_worktree, case_two_worktrees_keep_separate_records,
+             case_new_branch_is_told_a_name_again_and_gone_branches_are_dropped,
+             case_unreadable_record_is_told_and_names_are_told_again,
+             case_missing_record_is_silent_about_the_record,
+             case_failed_write_after_a_good_read_is_told_and_leaves_no_temporary_file,
+             case_branch_recorded_by_a_concurrent_run_while_scanning_survives,
+             case_failed_prune_write_with_no_new_names_is_told,
+             case_record_that_is_not_utf8_is_told, case_local_branch_list_failure_is_told_and_keeps_the_record,
+             case_branch_list_failure_inside_the_final_write_is_told,
+             case_branch_list_failure_with_nothing_new_to_record_is_told,
+             case_unreadable_record_that_cannot_be_moved_stays_and_is_told,
+             case_write_failure_after_moving_an_unreadable_record_aside_tells_both,
+             case_each_record_notice_is_told_once_per_agent_session,
+             case_same_branch_name_recreated_is_told_names_again, case_switch_to_a_branch_origin_has_lists_its_names,
+             case_overlapping_writers_never_leave_invalid_json_and_keep_every_name,
+             case_hook_shell_commands,
              case_hook_reports_failure_once, case_hook_ignores_other_input]
     for case in cases:
         with tempfile.TemporaryDirectory() as directory:

@@ -1,10 +1,19 @@
 #!/usr/bin/env python3
-"""After a write, edit or shell command, name the shared names the branch newly adds, once per agent-session."""
+"""After a write, edit or shell command, name the shared names the branch newly adds, once per worktree and branch.
+
+The names already reported are kept in the worktree's own git directory, keyed by the branch
+the worktree is on, so a later agent-session of the same agent-seat is not told them again on
+that branch, a new branch that adds the same name is told it, and each other worktree keeps its
+own record. Entries for branches that no longer exist are dropped when the record is written.
+The content cache and the once-per-session failure reports stay per agent-session.
+"""
 # The hook never blocks: any failure leaves the agent's turn as it was, apart from one line saying the check failed.
 
+import fcntl
 import hashlib
 import importlib.util
 import json
+import os
 import re
 import subprocess
 import sys
@@ -22,6 +31,7 @@ SESSION_ID_SAFE_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
 LISTER_PATH = Path(__file__).resolve().parent / "new-shared-names-in-changed-files-list.py"
 NAMING_PAGE_PATH = "docs/nedschorus-wiki/nedschorus-how-to-choose-a-name-for-files-code-and-glossary-terms.md"
 NAMING_FRESH_AGENT_NAME = "new-name-propose-and-check-fresh-agent"
+REPORTED_NAMES_FILE_NAME = "new-shared-names-reported.json"
 
 REMINDER_TEMPLATE = (
     "new-shared-names-reminder: your branch now adds these shared names, which other files "
@@ -68,7 +78,7 @@ def state_path_for(session_id: str) -> Path:
 
 
 def empty_state() -> dict:
-    return {"reported": [], "worktree_fingerprint": "", "file_cache": {}, "reported_failures": []}
+    return {"worktree_fingerprint": "", "file_cache": {}, "reported_failures": []}
 
 
 def read_state(session_id: str) -> dict:
@@ -89,6 +99,151 @@ def write_state(session_id: str, state: dict) -> None:
         temporary.replace(state_path_for(session_id))
     except OSError:
         pass
+
+
+def reported_names_path(checkout: Path):
+    """Return the worktree's record of reported names, in its own git directory, or None when git cannot answer."""
+    git_directory = git_output(["rev-parse", "--absolute-git-dir"], checkout)
+    if not git_directory or not git_directory.strip():
+        return None
+    return Path(git_directory.strip()) / REPORTED_NAMES_FILE_NAME
+
+
+DETACHED_HEAD_REPORTED_NAMES_RECORD_KEY = "HEAD"
+LOCAL_BRANCH_LIST_FAILURE = (
+    "new-shared-names-reminder: git for-each-ref failed, so this run could not drop the record's "
+    "entries for branches that no longer exist; they are kept for now.\n"
+    "The new names on the current branch were still recorded.\n"
+    "Nothing is needed from you: the hook tries again on its next run."
+)
+UNREADABLE_RECORD_MOVED_TEMPLATE = (
+    "new-shared-names-reminder: the record of names already reported in this worktree could not "
+    "be read ({reason}), so it was moved to {unreadable} for inspection and a new record was started.\n"
+    "Names reported before in this worktree may be reported again.\n"
+    "Nothing is needed from you."
+)
+UNREADABLE_RECORD_NOT_MOVED_TEMPLATE = (
+    "new-shared-names-reminder: the record of names already reported in this worktree could not "
+    "be read ({reason}), and could not be moved to {unreadable} ({move_reason}), so it stays in place "
+    "at {record}.\n"
+    "Until a person fixes this, names reported before, and the names shown now, may be reported "
+    "again on later calls.\n"
+    "Tell the user now, with the reasons: the read failure ({reason}) and the move failure ({move_reason})."
+)
+RECORD_WRITE_FAILED_TEMPLATE = (
+    "new-shared-names-reminder: the record of names already reported in this worktree, {record}, "
+    "could not be written ({reason}).\n"
+    "Until a person fixes this, the names just shown may be shown again on later calls.\n"
+    "Tell the user now, with the reason: {reason}."
+)
+
+
+class ReportedNamesRecordFailure(Exception):
+    def __init__(self, reason: str, moved_reason=None):
+        super().__init__(reason)
+        # Why an unreadable record was moved aside before this failure, so the move is still told.
+        self.moved_reason = moved_reason
+
+
+class UnreadableReportedNamesRecordNotMoved(ReportedNamesRecordFailure):
+    def __init__(self, read_reason: str, move_reason: str):
+        super().__init__(f"{read_reason}; {move_reason}")
+        self.read_reason = read_reason
+        self.move_reason = move_reason
+
+
+def reported_names_record_key_for(checkout: Path) -> str:
+    """Return the branch the worktree is on, or the detached-HEAD key when HEAD is detached or unreadable."""
+    branch = git_output(["symbolic-ref", "--short", "-q", "HEAD"], checkout)
+    return branch.strip() if branch and branch.strip() else DETACHED_HEAD_REPORTED_NAMES_RECORD_KEY
+
+
+def read_reported_names_record(record_path: Path) -> dict:
+    """Return the record, {branch: {reported "kind\\tname" keys}}; a missing record is empty.
+
+    Raises ReportedNamesRecordFailure when the record exists but cannot be read or parsed.
+    """
+    try:
+        text = record_path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return {}
+    except UnicodeDecodeError as error:
+        raise ReportedNamesRecordFailure("not valid UTF-8") from error
+    except OSError as error:
+        raise ReportedNamesRecordFailure(error.strerror or type(error).__name__) from error
+    try:
+        record = json.loads(text)
+    except ValueError as error:
+        raise ReportedNamesRecordFailure("not valid JSON") from error
+    if not isinstance(record, dict):
+        raise ReportedNamesRecordFailure("not a record keyed by branch")
+    return {key: {entry for entry in entries if isinstance(entry, str)}
+            for key, entries in record.items() if isinstance(key, str) and isinstance(entries, list)}
+
+
+def unreadable_record_path_for(record_path: Path) -> Path:
+    return record_path.with_name(record_path.name + ".unreadable")
+
+
+def reported_names_record_merge_prune_and_write(record_path: Path, key: str, entries: set, checkout: Path):
+    """Add entries under key, merged with what other writers stored, drop branches that no longer exist, and write.
+
+    Returns (branch_list_read, moved_reason). The branch list is read inside the lock, so a branch
+    another run created and recorded while this run was scanning is not dropped; when git cannot
+    list the branches, every branch is kept and branch_list_read is False. A record that cannot be
+    read is first moved aside to the .unreadable file, replacing an older one, so it can still be
+    inspected; moved_reason is then why it could not be read, and otherwise None.
+    Nothing is written when the record would not change.
+    A lock file serialises writers in one worktree, and each write goes to its own temporary
+    file renamed over the record, so a reader never sees a partly written record.
+    Raises UnreadableReportedNamesRecordNotMoved when an unreadable record cannot be moved aside,
+    which leaves it in place, and ReportedNamesRecordFailure when the record cannot be written.
+    """
+    lock_path = record_path.with_name(record_path.name + ".lock")
+    moved_reason = None
+    try:
+        with open(lock_path, "a") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            try:
+                stored = read_reported_names_record(record_path)
+            except ReportedNamesRecordFailure as read_failure:
+                stored = None
+                try:
+                    os.replace(record_path, unreadable_record_path_for(record_path))
+                except OSError as move_error:
+                    raise UnreadableReportedNamesRecordNotMoved(
+                        str(read_failure), move_error.strerror or type(move_error).__name__) from move_error
+                moved_reason = str(read_failure)
+            record = dict(stored or {})
+            if entries:
+                record[key] = record.get(key, set()) | entries
+            live_branches = local_branches(checkout)
+            if live_branches is not None:
+                keep = set(live_branches) | {key, DETACHED_HEAD_REPORTED_NAMES_RECORD_KEY}
+                record = {name: values for name, values in record.items() if name in keep}
+            if stored is not None and record == stored:
+                return live_branches is not None, moved_reason
+            descriptor, temporary = tempfile.mkstemp(prefix=record_path.name + ".", suffix=".partial",
+                                                     dir=str(record_path.parent))
+            try:
+                with os.fdopen(descriptor, "w") as handle:
+                    handle.write(json.dumps({name: sorted(values) for name, values in sorted(record.items())}))
+                os.replace(temporary, record_path)
+            except BaseException:
+                try:
+                    os.unlink(temporary)
+                except OSError:
+                    pass
+                raise
+    except OSError as error:
+        raise ReportedNamesRecordFailure(error.strerror or type(error).__name__, moved_reason) from error
+    return live_branches is not None, moved_reason
+
+
+def local_branches(checkout: Path):
+    """Return the names of the local branches, or None when git cannot list them."""
+    listing = git_output(["for-each-ref", "--format=%(refname:short)", "refs/heads"], checkout)
+    return listing.splitlines() if listing is not None else None
 
 
 def worktree_fingerprint(checkout: Path):
@@ -199,12 +354,54 @@ def main() -> int:
         return 0
     checkout = Path(top_level.strip())
 
+    record_path = reported_names_path(checkout)
+    if record_path is None:
+        return 0
     state = read_state(session_id)
     fingerprint = worktree_fingerprint(checkout)
     if fingerprint is None:
         return 0
-    reported = set(state.get("reported", []))
     messages = []
+
+    record_key = reported_names_record_key_for(checkout)
+    # The branch is part of the identity, so a switch to another branch is never skipped as unchanged.
+    fingerprint = f"{fingerprint}\0{record_key}"
+    def tell_notice_once(text: str) -> None:
+        notices = set(state.get("reported_failures", []))
+        if text not in notices:
+            state["reported_failures"] = sorted(notices | {text})
+            messages.append(text)
+
+    unreadable = unreadable_record_path_for(record_path)
+
+    def record_merge_prune_and_write_telling_failures(entries: set) -> None:
+        try:
+            branch_list_read, moved_reason = reported_names_record_merge_prune_and_write(
+                record_path, record_key, entries, checkout)
+        except UnreadableReportedNamesRecordNotMoved as failure:
+            tell_notice_once(UNREADABLE_RECORD_NOT_MOVED_TEMPLATE.format(
+                reason=failure.read_reason, unreadable=unreadable, move_reason=failure.move_reason,
+                record=record_path))
+            return
+        except ReportedNamesRecordFailure as failure:
+            if failure.moved_reason:
+                tell_notice_once(UNREADABLE_RECORD_MOVED_TEMPLATE.format(reason=failure.moved_reason,
+                                                                         unreadable=unreadable))
+            tell_notice_once(RECORD_WRITE_FAILED_TEMPLATE.format(record=record_path, reason=failure))
+            return
+        if not branch_list_read:
+            tell_notice_once(LOCAL_BRANCH_LIST_FAILURE)
+        if moved_reason:
+            tell_notice_once(UNREADABLE_RECORD_MOVED_TEMPLATE.format(reason=moved_reason, unreadable=unreadable))
+
+    try:
+        record = read_reported_names_record(record_path)
+    except ReportedNamesRecordFailure:
+        # The locked writer below moves the unreadable record aside and tells the agent the outcome.
+        record = {}
+    reported = record.get(record_key, set())
+    # Pruned on every run, so a branch deleted and later recreated under the same name starts fresh.
+    record_merge_prune_and_write_telling_failures(set())
     try:
         new_branch = unreported_new_branch(checkout, reported)
     except BranchCheckFailure as failure:
@@ -232,7 +429,9 @@ def main() -> int:
     state["file_cache"] = file_cache
     # Only the names the reminder shows count as reported; the rest are shown by a later reminder.
     shown = names[:REMINDER_NAME_LIMIT]
-    state["reported"] = sorted(reported | {f"{kind}\t{name}" for _, kind, name in shown})
+    newly_reported = {f"{kind}\t{name}" for _, kind, name in shown}
+    if newly_reported - reported:
+        record_merge_prune_and_write_telling_failures(newly_reported)
     write_state(session_id, state)
     if names:
         messages.append(reminder_text(names))
