@@ -542,7 +542,7 @@ def case_unreadable_record_is_told_and_names_are_told_again(root):
     code, context = run_hook(clone, state_root, {"tool_name": "Write", "tool_input": {"file_path": "beta.py"}})
     check("an unreadable record exits 0", code == 0)
     check("an unreadable record is told to the agent",
-          "new-shared-names-reported.json is not valid JSON" in context, context)
+          "could not be read (not valid JSON)" in context, context)
     check("the names are still listed after an unreadable record", "shared_helper" in context, context)
     check("the record is rewritten as valid JSON",
           isinstance(json.loads(record_path_of(clone).read_text()), dict))
@@ -557,6 +557,26 @@ def case_unreadable_record_is_told_and_names_are_told_again(root):
                                  "tool_input": {"file_path": "delta.py"}})
     check("a later unreadable record replaces the older moved-aside one",
           unreadable.read_text() == "{second bad record", unreadable.read_text())
+
+
+def case_unreadable_record_that_cannot_be_moved_stays_and_is_told(root):
+    clone = make_clone(root, BASE_MAIN_FILES)
+    state_root = root / "state"
+    state_root.mkdir()
+    record = record_path_of(clone)
+    record.write_text("{not json")
+    blocking_directory = record.with_name("new-shared-names-reported.json.unreadable")
+    blocking_directory.mkdir()
+    (blocking_directory / "keep").write_text("a non-empty directory cannot be replaced by a file")
+    write(clone, "alpha.py", "def shared_helper():\n    return 1\n")
+    write(clone, "beta.py", "import alpha\nalpha.shared_helper()\n")
+    code, context = run_hook(clone, state_root, {"tool_name": "Write", "tool_input": {"file_path": "beta.py"}})
+    check("an unreadable record that cannot be moved exits 0", code == 0)
+    check("an unreadable record that cannot be moved is told, with both reasons, and not as moved",
+          "could not be read (not valid JSON)" in context and "could not be moved to" in context
+          and "stays in place" in context and "was moved" not in context, context)
+    check("the names are still listed when the record cannot be moved", "shared_helper" in context, context)
+    check("the unreadable record stays in place, unchanged", record.read_text() == "{not json")
 
 
 def case_branch_list_failure_with_nothing_new_to_record_is_told(root):
@@ -611,7 +631,7 @@ def case_failed_write_after_a_good_read_is_told_and_leaves_no_temporary_file(roo
         hook.os.replace = real_replace
     check("a write that fails after a good read exits 0", code == 0)
     check("a write that fails after a good read is told to the agent",
-          f"could not write {record.name}: Permission denied" in context, context)
+          "could not be written (Permission denied)" in context, context)
     check("the names are still listed when the write fails", "second_helper" in context, context)
     check("the record is left as it was", record.read_bytes() == before)
     leftovers = [path.name for path in record.parent.iterdir() if path.name.endswith(".partial")]
@@ -670,7 +690,7 @@ def case_failed_prune_write_with_no_new_names_is_told(root):
         hook.os.replace = real_replace
     check("a prune write that fails exits 0", code == 0)
     check("a prune write that fails, in a run with no new names, is told to the agent",
-          f"could not write {record.name}: Permission denied" in context, context)
+          "could not be written (Permission denied)" in context, context)
     check("the record is left as it was after a failed prune",
           "long-gone-topic" in json.loads(record.read_text()))
 
@@ -685,7 +705,7 @@ def case_record_that_is_not_utf8_is_told(root):
     code, context = run_hook(clone, state_root, {"tool_name": "Write", "tool_input": {"file_path": "beta.py"}})
     check("a record that is not UTF-8 exits 0", code == 0)
     check("a record that is not UTF-8 is told to the agent",
-          "new-shared-names-reported.json is not valid UTF-8" in context, context)
+          "could not be read (not valid UTF-8)" in context, context)
     check("the names are still listed after a record that is not UTF-8", "shared_helper" in context, context)
 
 
@@ -900,6 +920,7 @@ def main() -> int:
              case_record_that_is_not_utf8_is_told, case_local_branch_list_failure_is_told_and_keeps_the_record,
              case_branch_list_failure_inside_the_final_write_is_told,
              case_branch_list_failure_with_nothing_new_to_record_is_told,
+             case_unreadable_record_that_cannot_be_moved_stays_and_is_told,
              case_same_branch_name_recreated_is_told_names_again, case_switch_to_a_branch_origin_has_lists_its_names,
              case_overlapping_writers_never_leave_invalid_json_and_keep_every_name,
              case_hook_shell_commands,

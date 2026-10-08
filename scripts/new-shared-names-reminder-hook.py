@@ -110,12 +110,43 @@ def reported_names_path(checkout: Path):
 
 
 DETACHED_HEAD_REPORTED_NAMES_RECORD_KEY = "HEAD"
-LOCAL_BRANCH_LIST_FAILURE = ("git for-each-ref failed, so reported names of deleted branches are kept "
-                             "until it works")
+LOCAL_BRANCH_LIST_FAILURE = (
+    "new-shared-names-reminder: git for-each-ref failed, so this run could not drop the record's "
+    "entries for branches that no longer exist; they are kept for now.\n"
+    "The new names on the current branch were still recorded.\n"
+    "Nothing is needed from you: the hook tries again on its next run."
+)
+UNREADABLE_RECORD_MOVED_TEMPLATE = (
+    "new-shared-names-reminder: the record of names already reported in this worktree could not "
+    "be read ({reason}), so it was moved to {unreadable} for inspection and a new record was started.\n"
+    "Names reported before in this worktree may be reported again; nothing is needed from you for that.\n"
+    "If this message repeats on later calls, tell the user, with the reason above."
+)
+UNREADABLE_RECORD_NOT_MOVED_TEMPLATE = (
+    "new-shared-names-reminder: the record of names already reported in this worktree could not "
+    "be read ({reason}), and could not be moved to {unreadable} ({move_reason}), so it stays in place "
+    "at {record}.\n"
+    "Names reported before, and the names shown now, may be reported again on later calls; nothing "
+    "is needed from you for that.\n"
+    "If this message repeats on later calls, tell the user, with both reasons above."
+)
+RECORD_WRITE_FAILED_TEMPLATE = (
+    "new-shared-names-reminder: the record of names already reported in this worktree, {record}, "
+    "could not be written ({reason}).\n"
+    "The names just shown may be shown again on later calls; nothing is needed from you for that.\n"
+    "If this message repeats on later calls, tell the user, with the reason above."
+)
 
 
 class ReportedNamesRecordFailure(Exception):
     pass
+
+
+class UnreadableReportedNamesRecordNotMoved(ReportedNamesRecordFailure):
+    def __init__(self, read_reason: str, move_reason: str):
+        super().__init__(f"{read_reason}; {move_reason}")
+        self.read_reason = read_reason
+        self.move_reason = move_reason
 
 
 def reported_names_record_key_for(checkout: Path) -> str:
@@ -134,16 +165,15 @@ def read_reported_names_record(record_path: Path) -> dict:
     except FileNotFoundError:
         return {}
     except UnicodeDecodeError as error:
-        raise ReportedNamesRecordFailure(f"{record_path.name} is not valid UTF-8") from error
+        raise ReportedNamesRecordFailure("not valid UTF-8") from error
     except OSError as error:
-        raise ReportedNamesRecordFailure(
-            f"could not read {record_path.name}: {error.strerror or type(error).__name__}") from error
+        raise ReportedNamesRecordFailure(error.strerror or type(error).__name__) from error
     try:
         record = json.loads(text)
     except ValueError as error:
-        raise ReportedNamesRecordFailure(f"{record_path.name} is not valid JSON") from error
+        raise ReportedNamesRecordFailure("not valid JSON") from error
     if not isinstance(record, dict):
-        raise ReportedNamesRecordFailure(f"{record_path.name} does not hold a branch-keyed record")
+        raise ReportedNamesRecordFailure("not a record keyed by branch")
     return {key: {entry for entry in entries if isinstance(entry, str)}
             for key, entries in record.items() if isinstance(key, str) and isinstance(entries, list)}
 
@@ -152,27 +182,35 @@ def unreadable_record_path_for(record_path: Path) -> Path:
     return record_path.with_name(record_path.name + ".unreadable")
 
 
-def reported_names_record_merge_prune_and_write(record_path: Path, key: str, entries: set, checkout: Path) -> bool:
+def reported_names_record_merge_prune_and_write(record_path: Path, key: str, entries: set, checkout: Path):
     """Add entries under key, merged with what other writers stored, drop branches that no longer exist, and write.
 
-    The branch list is read inside the lock, so a branch another run created and recorded while
-    this run was scanning is not dropped. When git cannot list the branches, every branch is kept
-    and False is returned, so the caller can tell the agent; otherwise True is returned.
-    Nothing is written when the record would not change. A record that cannot be read is first
-    moved aside to the .unreadable file, replacing an older one, so it can still be inspected.
+    Returns (branch_list_read, moved_reason). The branch list is read inside the lock, so a branch
+    another run created and recorded while this run was scanning is not dropped; when git cannot
+    list the branches, every branch is kept and branch_list_read is False. A record that cannot be
+    read is first moved aside to the .unreadable file, replacing an older one, so it can still be
+    inspected; moved_reason is then why it could not be read, and otherwise None.
+    Nothing is written when the record would not change.
     A lock file serialises writers in one worktree, and each write goes to its own temporary
     file renamed over the record, so a reader never sees a partly written record.
-    Raises ReportedNamesRecordFailure when the record cannot be written.
+    Raises UnreadableReportedNamesRecordNotMoved when an unreadable record cannot be moved aside,
+    which leaves it in place, and ReportedNamesRecordFailure when the record cannot be written.
     """
     lock_path = record_path.with_name(record_path.name + ".lock")
+    moved_reason = None
     try:
         with open(lock_path, "a") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX)
             try:
                 stored = read_reported_names_record(record_path)
-            except ReportedNamesRecordFailure:
+            except ReportedNamesRecordFailure as read_failure:
                 stored = None
-                os.replace(record_path, unreadable_record_path_for(record_path))
+                try:
+                    os.replace(record_path, unreadable_record_path_for(record_path))
+                except OSError as move_error:
+                    raise UnreadableReportedNamesRecordNotMoved(
+                        str(read_failure), move_error.strerror or type(move_error).__name__) from move_error
+                moved_reason = str(read_failure)
             record = dict(stored or {})
             if entries:
                 record[key] = record.get(key, set()) | entries
@@ -181,7 +219,7 @@ def reported_names_record_merge_prune_and_write(record_path: Path, key: str, ent
                 keep = set(live_branches) | {key, DETACHED_HEAD_REPORTED_NAMES_RECORD_KEY}
                 record = {name: values for name, values in record.items() if name in keep}
             if stored is not None and record == stored:
-                return live_branches is not None
+                return live_branches is not None, moved_reason
             descriptor, temporary = tempfile.mkstemp(prefix=record_path.name + ".", suffix=".partial",
                                                      dir=str(record_path.parent))
             try:
@@ -195,9 +233,8 @@ def reported_names_record_merge_prune_and_write(record_path: Path, key: str, ent
                     pass
                 raise
     except OSError as error:
-        raise ReportedNamesRecordFailure(
-            f"could not write {record_path.name}: {error.strerror or type(error).__name__}") from error
-    return live_branches is not None
+        raise ReportedNamesRecordFailure(error.strerror or type(error).__name__) from error
+    return live_branches is not None, moved_reason
 
 
 def local_branches(checkout: Path):
@@ -323,27 +360,39 @@ def main() -> int:
         return 0
     messages = []
 
-    def tell_failure_once(error: str) -> None:
-        failure_text = failure_report_once(state, error)
-        if failure_text:
-            messages.append(failure_text)
-
     record_key = reported_names_record_key_for(checkout)
     # The branch is part of the identity, so a switch to another branch is never skipped as unchanged.
     fingerprint = f"{fingerprint}\0{record_key}"
+    def tell_notice_once(text: str) -> None:
+        notices = set(state.get("reported_failures", []))
+        if text not in notices:
+            state["reported_failures"] = sorted(notices | {text})
+            messages.append(text)
+
+    unreadable = unreadable_record_path_for(record_path)
+
     def record_merge_prune_and_write_telling_failures(entries: set) -> None:
         try:
-            if not reported_names_record_merge_prune_and_write(record_path, record_key, entries, checkout):
-                tell_failure_once(LOCAL_BRANCH_LIST_FAILURE)
+            branch_list_read, moved_reason = reported_names_record_merge_prune_and_write(
+                record_path, record_key, entries, checkout)
+        except UnreadableReportedNamesRecordNotMoved as failure:
+            tell_notice_once(UNREADABLE_RECORD_NOT_MOVED_TEMPLATE.format(
+                reason=failure.read_reason, unreadable=unreadable, move_reason=failure.move_reason,
+                record=record_path))
+            return
         except ReportedNamesRecordFailure as failure:
-            tell_failure_once(str(failure))
+            tell_notice_once(RECORD_WRITE_FAILED_TEMPLATE.format(record=record_path, reason=failure))
+            return
+        if not branch_list_read:
+            tell_notice_once(LOCAL_BRANCH_LIST_FAILURE)
+        if moved_reason:
+            tell_notice_once(UNREADABLE_RECORD_MOVED_TEMPLATE.format(reason=moved_reason, unreadable=unreadable))
 
     try:
         record = read_reported_names_record(record_path)
-    except ReportedNamesRecordFailure as failure:
+    except ReportedNamesRecordFailure:
+        # The locked writer below moves the unreadable record aside and tells the agent the outcome.
         record = {}
-        tell_failure_once(f"{failure}; it is moved to {unreadable_record_path_for(record_path)} "
-                          f"and a new record is started")
     reported = record.get(record_key, set())
     # Pruned on every run, so a branch deleted and later recreated under the same name starts fresh.
     record_merge_prune_and_write_telling_failures(set())
