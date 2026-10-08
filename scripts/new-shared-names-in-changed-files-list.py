@@ -20,7 +20,6 @@ import re
 import subprocess
 import sys
 import tempfile
-import time
 from pathlib import Path, PurePosixPath
 
 GIT_CALL_TIMEOUT_SECONDS = 20
@@ -59,18 +58,22 @@ class GitFailure(Exception):
     pass
 
 
-def git(arguments, checkout: Path, allowed_exit_codes=(0,), deadline=None, stdin_text=None) -> str:
-    timeout = GIT_CALL_TIMEOUT_SECONDS
-    if deadline is not None:
-        timeout = max(0.1, min(timeout, deadline - time.monotonic()))
+def git_failure_text(subcommand: str, outcome: str, stderr: str = "") -> str:
+    """Return a short failure text that is the same each time the same failure recurs."""
+    first_line = stderr.strip().splitlines()[0][:200] if stderr.strip() else ""
+    return f"git {subcommand} {outcome}" + (f": {first_line}" if first_line else "")
+
+
+def git(arguments, checkout: Path, allowed_exit_codes=(0,)) -> str:
     try:
         finished = subprocess.run(["git", *arguments], cwd=str(checkout), capture_output=True,
-                                  text=True, check=False, timeout=timeout, input=stdin_text)
-    except (OSError, subprocess.TimeoutExpired) as error:
-        raise GitFailure(f"git {' '.join(arguments[:3])}: {error}") from error
+                                  text=True, check=False, timeout=GIT_CALL_TIMEOUT_SECONDS)
+    except subprocess.TimeoutExpired as error:
+        raise GitFailure(git_failure_text(arguments[0], "timed out")) from error
+    except OSError as error:
+        raise GitFailure(git_failure_text(arguments[0], "could not start", error.strerror or "")) from error
     if finished.returncode not in allowed_exit_codes:
-        raise GitFailure(f"git {' '.join(arguments[:3])} exited {finished.returncode}: "
-                         f"{finished.stderr.strip()}")
+        raise GitFailure(git_failure_text(arguments[0], f"exited {finished.returncode}", finished.stderr))
     return finished.stdout
 
 
@@ -84,14 +87,14 @@ def changed_files(checkout: Path, merge_base: str):
     return sorted(path for path in names if (checkout / path).is_file())
 
 
-def main_token_set(checkout: Path, main_commit: str, deadline=None):
+def main_token_set(checkout: Path, main_commit: str):
     """Return every token in main's files, read once per main commit and cached on disk."""
     cache_path = MAIN_TOKEN_CACHE_DIRECTORY / f"{main_commit}.txt"
     try:
         return set(cache_path.read_text().split("\n"))
     except OSError:
         pass
-    listing = git(["ls-tree", "-r", "-l", main_commit], checkout, deadline=deadline)
+    listing = git(["ls-tree", "-r", "-l", main_commit], checkout)
     blob_ids = []
     for line in listing.splitlines():
         metadata, _, _ = line.partition("\t")
@@ -99,19 +102,24 @@ def main_token_set(checkout: Path, main_commit: str, deadline=None):
         if len(fields) == 4 and fields[1] == "blob" and fields[3].isdigit() \
                 and int(fields[3]) <= MAIN_BLOB_SIZE_LIMIT_BYTES:
             blob_ids.append(fields[2])
-    timeout = GIT_CALL_TIMEOUT_SECONDS
-    if deadline is not None:
-        timeout = max(0.1, min(timeout, deadline - time.monotonic()))
     try:
         finished = subprocess.run(["git", "cat-file", "--batch"], cwd=str(checkout),
                                   input=("\n".join(blob_ids) + "\n").encode(),
-                                  capture_output=True, check=False, timeout=timeout)
-    except (OSError, subprocess.TimeoutExpired) as error:
-        raise GitFailure(f"git cat-file --batch: {error}") from error
+                                  capture_output=True, check=False, timeout=GIT_CALL_TIMEOUT_SECONDS)
+    except subprocess.TimeoutExpired as error:
+        raise GitFailure(git_failure_text("cat-file", "timed out")) from error
+    except OSError as error:
+        raise GitFailure(git_failure_text("cat-file", "could not start", error.strerror or "")) from error
     if finished.returncode != 0:
-        raise GitFailure(f"git cat-file --batch exited {finished.returncode}")
+        raise GitFailure(git_failure_text("cat-file", f"exited {finished.returncode}",
+                                          finished.stderr.decode(errors="replace")))
     tokens = {token.decode("ascii") for token in MAIN_TOKEN_PATTERN.findall(finished.stdout)}
-    tokens.update(line.split("\t", 1)[1] for line in listing.splitlines() if "\t" in line)
+    # A file main only has as a file, named in none of its texts, is still on main: add each path and its parts.
+    for line in listing.splitlines():
+        if "\t" in line:
+            main_path = line.split("\t", 1)[1]
+            tokens.add(main_path)
+            tokens.update(PurePosixPath(main_path).parts)
     try:
         MAIN_TOKEN_CACHE_DIRECTORY.mkdir(parents=True, exist_ok=True)
         for stale in MAIN_TOKEN_CACHE_DIRECTORY.glob("*.txt"):
@@ -193,14 +201,14 @@ def candidates_in_file(path: str, text: str, checkout: Path, main_commit: str):
     return candidates
 
 
-def names_used_in_other_files(names_and_files, checkout: Path, deadline=None):
+def names_used_in_other_files(names_and_files, checkout: Path):
     """Return the names that some file other than the files defining them mentions."""
     if not names_and_files:
         return set()
     arguments = ["grep", "--untracked", "-n", "-o", "-w", "-F"]
     for name in sorted({name for name, _ in names_and_files}):
         arguments += ["-e", name]
-    found = git(arguments, checkout, allowed_exit_codes=(0, 1), deadline=deadline)
+    found = git(arguments, checkout, allowed_exit_codes=(0, 1))
     files_mentioning = {}
     for line in found.splitlines():
         path, _, rest = line.partition(":")
@@ -214,25 +222,13 @@ def names_used_in_other_files(names_and_files, checkout: Path, deadline=None):
             if files_mentioning.get(name, set()) - defining_files[name]}
 
 
-class NewSharedNamesResult:
-    def __init__(self, names, files_scanned, files_total):
-        self.names = names
-        self.files_scanned = files_scanned
-        self.files_total = files_total
-
-    @property
-    def complete(self) -> bool:
-        return self.files_scanned == self.files_total
-
-
 def new_shared_names(checkout: Path, branch_name=None, already_reported=frozenset(),
-                     file_cache=None, deadline=None) -> NewSharedNamesResult:
+                     file_cache=None):
     """Find the branch's new shared names.
 
     already_reported holds "kind\\tname" keys the caller has already shown, which are
     skipped before the costly checks. file_cache maps a path to its content digest and
-    candidates, and is updated in place. When deadline (a time.monotonic() value)
-    passes, the scan stops and the result says how many files it covered.
+    candidates, and is updated in place. Returns sorted (file, kind, name) triples.
     """
     file_cache = {} if file_cache is None else file_cache
     main_commit = git(["rev-parse", MAIN_REF], checkout).strip()
@@ -244,11 +240,7 @@ def new_shared_names(checkout: Path, branch_name=None, already_reported=frozense
 
     found = []
     candidates = []
-    files_scanned = 0
     for path in paths:
-        if deadline is not None and time.monotonic() > deadline:
-            break
-        files_scanned += 1
         if path not in main_paths:
             found.append((path, KIND_FILE_PATH, path))
         try:
@@ -277,11 +269,11 @@ def new_shared_names(checkout: Path, branch_name=None, already_reported=frozense
         del file_cache[stale]
 
     if candidates:
-        on_main = main_token_set(checkout, main_commit, deadline)
+        on_main = main_token_set(checkout, main_commit)
         candidates = [triple for triple in candidates
                       if triple[2] not in on_main or triple[1] == KIND_GLOSSARY_ENTRY]
     python_candidates = [(name, path) for path, kind, name in candidates if kind in PYTHON_KINDS]
-    used_elsewhere = names_used_in_other_files(python_candidates, checkout, deadline)
+    used_elsewhere = names_used_in_other_files(python_candidates, checkout)
     found.extend(triple for triple in candidates
                  if triple[1] not in PYTHON_KINDS or triple[2] in used_elsewhere)
 
@@ -290,7 +282,7 @@ def new_shared_names(checkout: Path, branch_name=None, already_reported=frozense
         if not remote_branch.strip():
             found.append(("", KIND_BRANCH, branch_name))
     found = [triple for triple in found if f"{triple[1]}\t{triple[2]}" not in already_reported]
-    return NewSharedNamesResult(sorted(set(found)), files_scanned, len(paths))
+    return sorted(set(found))
 
 
 def main() -> int:
@@ -300,11 +292,11 @@ def main() -> int:
     arguments = parser.parse_args()
     try:
         checkout = Path(git(["rev-parse", "--show-toplevel"], Path(arguments.checkout)).strip())
-        result = new_shared_names(checkout, arguments.branch_name)
+        names = new_shared_names(checkout, arguments.branch_name)
     except GitFailure as failure:
         print(f"new-shared-names-in-changed-files-list: {failure}", file=sys.stderr)
         return 2
-    for path, kind, name in result.names:
+    for path, kind, name in names:
         print(f"{path}\t{kind}\t{name}")
     return 0
 

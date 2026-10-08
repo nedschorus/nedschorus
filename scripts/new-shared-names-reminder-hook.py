@@ -9,18 +9,26 @@ import re
 import subprocess
 import sys
 import tempfile
-import time
 from pathlib import Path
 
 GIT_CALL_TIMEOUT_SECONDS = 10
-# Well under the 30-second timeout the hook is registered with: a large branch is scanned over several edits instead.
-HOOK_TIME_BUDGET_SECONDS = 8
+# A first reminder on a large branch would otherwise run to hundreds of lines.
+REMINDER_NAME_LIMIT = 30
+LISTER_COMMAND = "scripts/new-shared-names-in-changed-files-list.py"
 FILE_WRITING_TOOL_NAMES = frozenset({"Write", "Edit", "MultiEdit", "NotebookEdit"})
 SHELL_TOOL_NAME = "Bash"
-# git [-C dir | -c key=value | --flag]... checkout|switch [options]... -b|-B|-c|-C|--create|--force-create <name>
-BRANCH_CREATION_PATTERN = re.compile(
-    r"\bgit\s+(?:(?:-C|-c)\s+\S+\s+|--\S+\s+)*(?:checkout|switch)\s+(?:-[^\s]*\s+)*?"
-    r"(?:-b|-B|-c|-C|--create|--force-create)\s+([^\s;&|-][^\s;&|]*)")
+GIT_GLOBAL_OPTIONS = r"\bgit\s+(?:(?:-C|-c)\s+\S+\s+|--\S+\s+)*"
+BRANCH_NAME = r"([A-Za-z0-9][^\s;&|]*)"
+BRANCH_CREATION_PATTERNS = (
+    # git checkout|switch [options]... -b|-B|-c|-C|--create|--force-create <name>
+    re.compile(GIT_GLOBAL_OPTIONS + r"(?:checkout|switch)\s+(?:-\S*\s+)*?"
+               r"(?:-b|-B|-c|-C|--create|--force-create)\s+" + BRANCH_NAME),
+    # git worktree add [options]... -b|-B <name>
+    re.compile(GIT_GLOBAL_OPTIONS + r"worktree\s+add\s+(?:-\S*\s+)*?(?:-b|-B)\s+" + BRANCH_NAME),
+    # git branch [-f|--force|-t|--track|--no-track|-q|--quiet]... <name>; listing, deleting and renaming do not match
+    re.compile(GIT_GLOBAL_OPTIONS + r"branch\s+(?:(?:-f|--force|-t|--track|--no-track|-q|--quiet)\s+)*"
+               + BRANCH_NAME),
+)
 STATE_DIRECTORY = Path(tempfile.gettempdir()) / "new-shared-names-reminder-hook-state"
 SESSION_ID_SAFE_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
 LISTER_PATH = Path(__file__).resolve().parent / "new-shared-names-in-changed-files-list.py"
@@ -39,10 +47,7 @@ REMINDER_TEMPLATE = (
     "differently, do not send it and do not rename it.\n"
     "How names are chosen: {page}."
 )
-PARTIAL_SCAN_LINE = (
-    "The check stopped after {scanned} of {total} changed files to stay within its time limit; "
-    "names in the other files are listed after a later edit."
-)
+MORE_NAMES_LINE = "  and {count} more; run {command} to see all"
 FAILURE_TEMPLATE = (
     "new-shared-names-reminder: the check for new shared names on this branch failed, so "
     "no names are being listed: {error}\n"
@@ -116,13 +121,22 @@ def worktree_fingerprint(checkout: Path):
     return hashlib.sha256("\n".join(parts).encode()).hexdigest()
 
 
-def reminder_text(new_names, result) -> str:
-    lines = "\n".join(f"  {name} ({kind}{', in ' + path if path and path != name else ''})"
-                      for path, kind, name in new_names)
-    text = REMINDER_TEMPLATE.format(names=lines, agent=NAMING_FRESH_AGENT_NAME, page=NAMING_PAGE_PATH)
-    if not result.complete:
-        text += "\n" + PARTIAL_SCAN_LINE.format(scanned=result.files_scanned, total=result.files_total)
-    return text
+def created_branch_name(command: str):
+    for pattern in BRANCH_CREATION_PATTERNS:
+        match = pattern.search(command)
+        if match:
+            return match.group(1)
+    return None
+
+
+def reminder_text(new_names) -> str:
+    lines = [f"  {name} ({kind}{', in ' + path if path and path != name else ''})"
+             for path, kind, name in new_names[:REMINDER_NAME_LIMIT]]
+    if len(new_names) > REMINDER_NAME_LIMIT:
+        lines.append(MORE_NAMES_LINE.format(count=len(new_names) - REMINDER_NAME_LIMIT,
+                                            command=LISTER_COMMAND))
+    return REMINDER_TEMPLATE.format(names="\n".join(lines), agent=NAMING_FRESH_AGENT_NAME,
+                                    page=NAMING_PAGE_PATH)
 
 
 def emit(text: str) -> None:
@@ -133,7 +147,6 @@ def emit(text: str) -> None:
 
 
 def main() -> int:
-    started = time.monotonic()
     try:
         payload = json.loads(sys.stdin.read() or "{}")
     except (json.JSONDecodeError, ValueError, OSError):
@@ -160,9 +173,7 @@ def main() -> int:
         tool_input = payload.get("tool_input")
         command = tool_input.get("command") if isinstance(tool_input, dict) else None
         if isinstance(command, str):
-            match = BRANCH_CREATION_PATTERN.search(command)
-            if match:
-                branch_name = match.group(1)
+            branch_name = created_branch_name(command)
 
     state = read_state(session_id)
     fingerprint = worktree_fingerprint(checkout)
@@ -178,9 +189,8 @@ def main() -> int:
     file_cache = state.get("file_cache") if isinstance(state.get("file_cache"), dict) else {}
     try:
         lister = load_lister()
-        result = lister.new_shared_names(checkout, branch_name, already_reported=frozenset(reported),
-                                         file_cache=file_cache,
-                                         deadline=started + HOOK_TIME_BUDGET_SECONDS)
+        names = lister.new_shared_names(checkout, branch_name, already_reported=frozenset(reported),
+                                        file_cache=file_cache)
     except Exception as failure:
         error = str(failure) or type(failure).__name__
         failures = set(state.get("reported_failures", []))
@@ -194,11 +204,11 @@ def main() -> int:
         return 0
 
     state["file_cache"] = file_cache
-    state["reported"] = sorted(reported | {f"{kind}\t{name}" for _, kind, name in result.names})
+    state["reported"] = sorted(reported | {f"{kind}\t{name}" for _, kind, name in names})
     write_state(session_id, state)
-    if not result.names:
+    if not names:
         return 0
-    emit(reminder_text(result.names, result))
+    emit(reminder_text(names))
     return 0
 
 

@@ -5,7 +5,7 @@ Run: python3 scripts/new-shared-names-in-changed-files-list-test.py
 Prints one line per case and exits non-zero if any case fails.
 
 Most cases build a throwaway origin repository and a clone whose branch adds files,
-then run the lister or the hook as a program against the clone; the cache, deadline
+then run the lister or the hook as a program against the clone; the cache, reminder
 and pattern cases import them as modules. The first case is the positive one, so the
 lister is shown able to report before any case asserts that it stays silent.
 """
@@ -259,14 +259,14 @@ def case_git_failure_exits_nonzero(root):
     check("the failure names the git command", "git " in error, error)
 
 
-def case_file_cache_and_deadline(root):
+def case_file_cache(root):
     clone = make_clone(root, BASE_MAIN_FILES)
     write(clone, "notes.md", "A `cached-name-one` here.\n")
     lister = load_module("lister_for_cache_case", LISTER_PATH)
     lister.MAIN_TOKEN_CACHE_DIRECTORY = root / "token-cache"
     cache = {}
     first = lister.new_shared_names(clone, file_cache=cache)
-    check("the first run lists the name", "cached-name-one" in names_only(first.names), str(first.names))
+    check("the first run lists the name", "cached-name-one" in names_only(first), str(first))
     check("the first run fills the file cache", "notes.md" in cache)
 
     def parse_must_not_run(*_arguments):
@@ -274,17 +274,22 @@ def case_file_cache_and_deadline(root):
     lister.candidates_in_file = parse_must_not_run
     try:
         second = lister.new_shared_names(clone, file_cache=cache)
-        reused = "cached-name-one" in names_only(second.names)
+        reused = "cached-name-one" in names_only(second)
     except AssertionError:
         reused = False
     check("an unchanged file is not parsed again", reused)
     reported = lister.new_shared_names(clone, already_reported=frozenset(
         {"markdown-backquoted-name\tcached-name-one", "file-path\tnotes.md"}), file_cache=cache)
-    check("names already reported are not returned", not reported.names, str(reported.names))
-    stopped = lister.new_shared_names(clone, file_cache={}, deadline=time.monotonic() - 1)
-    check("a passed deadline stops the scan and says so",
-          not stopped.complete and stopped.files_scanned == 0 and stopped.files_total == 1,
-          f"{stopped.files_scanned} of {stopped.files_total}")
+    check("names already reported are not returned", not reported, str(reported))
+
+
+def case_file_only_main_has_counts_as_on_main(root):
+    clone = make_clone(root, dict(BASE_MAIN_FILES, **{"tools/quiet-tool-file.py": "print(1)\n"}))
+    write(clone, "mentions.md", "Run `quiet-tool-file.py` and the `tools/quiet-tool-file.py` copy.\n")
+    _, listed, _ = run_lister(clone)
+    names = names_only(listed)
+    check("a file name main has only as a file is not listed", "quiet-tool-file.py" not in names, str(listed))
+    check("a path main has only as a file is not listed", "tools/quiet-tool-file.py" not in names, str(listed))
 
 
 def case_branch_creation_pattern():
@@ -295,23 +300,30 @@ def case_branch_creation_pattern():
         "git switch --quiet -c topic-three": "topic-three",
         "git -C /some/path checkout -b topic-four": "topic-four",
         "cd x && git checkout -b topic-five && ls": "topic-five",
+        "git worktree add -b topic-six ../elsewhere": "topic-six",
+        "git worktree add --detach -B topic-seven ../elsewhere": "topic-seven",
+        "git branch topic-eight": "topic-eight",
+        "git branch -f topic-nine origin/main": "topic-nine",
         "git checkout main": None,
+        "git branch": None,
+        "git branch -d old-topic": None,
+        "git branch -m old-name new-name": None,
+        "git branch --list": None,
     }
     for command, branch in expected.items():
-        match = hook.BRANCH_CREATION_PATTERN.search(command)
-        check(f"branch creation pattern on {command!r}", (match.group(1) if match else None) == branch,
-              str(match.group(1) if match else None))
+        found = hook.created_branch_name(command)
+        check(f"branch creation recognised in {command!r}", found == branch, str(found))
 
 
-def case_partial_scan_is_reported():
-    hook = load_module("hook_for_partial_case", HOOK_PATH)
-
-    class Partial:
-        complete = False
-        files_scanned = 3
-        files_total = 9
-    text = hook.reminder_text([("a.md", "markdown-backquoted-name", "some-name")], Partial())
-    check("a partial scan says how far it got", "3 of 9" in text, text)
+def case_reminder_is_capped():
+    hook = load_module("hook_for_cap_case", HOOK_PATH)
+    many = [("a.md", "markdown-backquoted-name", f"listed-name-{index:02d}") for index in range(35)]
+    text = hook.reminder_text(many)
+    check("the reminder lists the first 30 names", "listed-name-29" in text and "listed-name-30" not in text, text)
+    check("the reminder says how many more and how to see them",
+          "and 5 more" in text and "new-shared-names-in-changed-files-list.py" in text, text)
+    few = hook.reminder_text(many[:3])
+    check("a short reminder has no more-names line", "more;" not in few, few)
 
 
 def case_hook_reports_once_per_session(root):
@@ -366,6 +378,7 @@ def case_hook_reports_failure_once(root):
     check("a failing check exits 0", code == 0)
     check("a failing check tells the agent the check failed", "failed" in first and "origin/main" in first, first)
     _, second = run_hook(lonely, state_root, {"tool_name": "Write", "tool_input": {"file_path": "a.md"}})
+    check("the failure text is short", len(first) < 800, str(len(first)))
     check("the same failure is told only once per agent-session", second == "", second)
     state = json.loads(next((state_root / "new-shared-names-reminder-hook-state").glob("session-one.json")).read_text())
     check("the worktree fingerprint is saved after a failure", bool(state.get("worktree_fingerprint")))
@@ -389,14 +402,14 @@ def main() -> int:
              case_changed_file_on_main_is_not_a_new_path, case_function_listed_once_its_caller_appears,
              case_same_name_defined_in_two_files_is_not_a_use, case_one_word_constant_used_elsewhere_is_listed,
              case_markdown_names, case_exemptions, case_new_glossary_entry, case_branch_name,
-             case_nothing_new_is_silent, case_git_failure_exits_nonzero, case_file_cache_and_deadline,
+             case_nothing_new_is_silent, case_git_failure_exits_nonzero, case_file_cache, case_file_only_main_has_counts_as_on_main,
              case_hook_reports_once_per_session, case_hook_shell_commands,
              case_hook_reports_failure_once, case_hook_ignores_other_input]
     for case in cases:
         with tempfile.TemporaryDirectory() as directory:
             case(Path(directory).resolve())
     case_branch_creation_pattern()
-    case_partial_scan_is_reported()
+    case_reminder_is_capped()
     print()
     if FAILURES:
         print(f"{len(FAILURES)} case(s) failed")
