@@ -33,7 +33,7 @@ If the thing you are naming already has a name in this project, use that name. D
 
 Look in three places, in this order:
 
-1. **The glossaries.** The project glossary, `docs/nedschorus-wiki/nedschorus-glossary.md`, lists the project-terms, and lists at its top the system glossaries, each of which lists the system-terms of one system: today `.claude/skills/skills-glossary.md` for every skill, and `docs/design-to-main/design-to-main-glossary.md` for design-to-main.
+1. **The glossaries.** The project glossary, `docs/nedschorus-wiki/nedschorus-glossary.md`, lists the project-terms, and lists at its top the system glossaries, each of which lists the system-terms of one system: today `.claude/skills/skills-glossary.md` for every skill, `docs/design-to-main/design-to-main-glossary.md` for design-to-main, and `nc-systems/main-gatekeeper/main-gatekeeper-glossary.md` for the main-gatekeeper.
 2. **The SDLC-terms.** When a standard term of software engineering or another computing field fits, such as worktree, pull request or test double, use it with its standard meaning, as an SDLC-term. `docs/nedschorus-wiki/nedschorus-sdlc-terms.md` lists the few this project relies on most; a standard term that is not on that list may still be used as it is.
 3. **The code and documents.** Search your checkout and main for words that describe the thing, not only for the name you have in mind, because the thing may already exist under a name you would not guess: run `git grep -i <word> origin/main` for each word, after `git fetch` (see Step 3 for what to do if the fetch fails).
 
