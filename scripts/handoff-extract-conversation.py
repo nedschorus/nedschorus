@@ -108,8 +108,13 @@ def find_transcript_path(session_id: str, working_directory: Path) -> Path:
     )
 
 
-def read_dialog_turns(transcript_path: Path):
-    """Return (turns, skip_counts), counting malformed and oversized records as skipped."""
+def read_dialog_turns(transcript_path: Path, drop_acknowledgements=True):
+    """Return (turns, skip_counts), counting malformed and oversized records as skipped.
+
+    Each turn holds its voice, its text and its record's timestamp ("" when the record has none).
+    With drop_acknowledgements False, every agent message is kept, a short one after a
+    notification included, so a reader attributing a user's reply sees the message it followed.
+    """
     # The writer may still be exiting, leaving a partial final record.
     turns = []
     skip_counts = {
@@ -151,6 +156,7 @@ def read_dialog_turns(transcript_path: Path):
             if record_shows_tool_activity(record):
                 following_injected_record = False
             continue
+        turn["timestamp"] = record.get("timestamp") or ""
 
         if turn["voice"] == "user":
             if turn["text"].startswith(INJECTED_TEXT_PREFIXES):
@@ -170,7 +176,7 @@ def read_dialog_turns(transcript_path: Path):
                 interrupted_since_queued = False
             continue
 
-        if (following_injected_record
+        if (drop_acknowledgements and following_injected_record
                 and len(turn["text"].split()) <= MAXIMUM_ACKNOWLEDGEMENT_WORDS):
             skip_counts["acknowledgement"] += 1
         else:

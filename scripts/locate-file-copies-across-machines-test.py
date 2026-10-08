@@ -732,7 +732,7 @@ with scratch() as directory:
     plan["this"].pop("not_searched_because", None)
     code, stdout, stderr = run(base, "absent-everywhere.md", plan=plan)
     check("run on ned-box, nothing found exits 3: the Mac was not searched",
-          code == 3 and "mac: no route from ned-box to the Mac is documented"
+          code == 3 and "mac: a run on ned-box cannot search the Mac; run the locator on the Mac, which searches both machines"
           in stdout, stdout + stderr)
     check("run on ned-box, the agent is told to run it on the Mac too",
           "To search the Mac as well, run this program on the Mac." in stdout

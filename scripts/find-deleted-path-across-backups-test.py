@@ -1862,7 +1862,7 @@ with tempfile.TemporaryDirectory() as tmp:
           "was not searched and why, and names the copy it looked for",
           by_surface["transcripts"].lines
           == ["ned-box: searched %s, no transcript mentions it" % Path(box, ".claude", "projects"),
-              "the Mac: not searched — no route from ned-box to the Mac is documented",
+              "the Mac: not searched — a run on ned-box cannot search the Mac; run the locator on the Mac, which searches both machines",
               "the Mac's log-store copy, %s, does not exist, so it was not searched either"
               % Path(NO_LOG_STORE_ON_THIS_MACHINE, "transcripts", "mac", "projects")],
           str(by_surface["transcripts"].lines))
@@ -2028,7 +2028,7 @@ with tempfile.TemporaryDirectory() as tmp:
                            log_store_root=str(empty_store))
     check("on the box: a copy holding no session transcript is UNAVAILABLE, keeping the not-searched line",
           reports[0].status == UNAVAILABLE
-          and reports[0].lines[1:] == ["the Mac: not searched — no route from ned-box to the Mac is documented",
+          and reports[0].lines[1:] == ["the Mac: not searched — a run on ned-box cannot search the Mac; run the locator on the Mac, which searches both machines",
                                        "the Mac's log-store copy, %s, holds no session transcript, so it was not "
                                        "searched either" % empty_copy],
           "%s %s" % (reports[0].status, reports[0].lines))
@@ -2037,7 +2037,7 @@ with tempfile.TemporaryDirectory() as tmp:
                            log_store_root=str(store))
     check("on the box: a copy grep that fails is UNAVAILABLE, keeps the not-searched line, and quotes grep",
           reports[0].status == UNAVAILABLE
-          and reports[0].lines[1:] == ["the Mac: not searched — no route from ned-box to the Mac is documented",
+          and reports[0].lines[1:] == ["the Mac: not searched — a run on ned-box cannot search the Mac; run the locator on the Mac, which searches both machines",
                                        "the Mac's log-store copy, %s: grep failed (exit 2) — grep: %s/p: "
                                        "Permission denied" % (copy, copy)],
           "%s %s" % (reports[0].status, reports[0].lines))
