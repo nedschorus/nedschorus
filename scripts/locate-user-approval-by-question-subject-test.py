@@ -62,6 +62,9 @@ with open(os.environ["FAKE_SSH_ARGV_LOG"], "a") as log:
 if os.environ.get("FAKE_SSH_MODE", "ok") == "unreachable":
     sys.stderr.write("ssh: connect to host ned-box port 22: No route to host\\n")
     sys.exit(255)
+if os.environ.get("FAKE_SSH_MODE", "ok") == "hang":
+    import time
+    time.sleep(60)
 sys.exit(subprocess.run(["sh", "-c", sys.argv[-1]]).returncode)
 """
 
@@ -281,6 +284,53 @@ with scratch() as base:
           and "User:  y" in stripped
           and not any("Still waiting" in line for line in stripped), body)
 
+# A short question after a notification is kept: it can be what the user answered.
+with scratch() as base:
+    s = Scratch(base)
+    write_transcript(s.transcripts, "short-question-after-notification", [
+        assistant("Shall I build bwrap?", "2026-10-03T10:00:00Z"),
+        notification("Agent \"fork\" finished", "2026-10-03T10:01:00Z"),
+        assistant("Shall I delete the stale branch instead?", "2026-10-03T10:01:05Z"),
+        user("y", "2026-10-03T10:02:00Z"),
+    ])
+    result = s.run("bwrap")
+    _, body = section(result.stdout, f"agent-session transcripts in {s.transcripts}")
+    stripped = [line.strip() for line in body]
+    check("a short question after a notification is kept and shown as what the user replied to, "
+          "so the answer is not given to the earlier question alone",
+          any(line.startswith("Agent:") and "Shall I build bwrap?" in line for line in stripped)
+          and "User replied to: Shall I delete the stale branch instead?" in stripped
+          and "User:  y" in stripped, body)
+
+with scratch() as base:
+    s = Scratch(base)
+    write_transcript(s.transcripts, "only-question-after-notification", [
+        assistant("A long report about other work, with no question in it.", "2026-10-03T10:00:00Z"),
+        notification("Agent \"fork\" finished", "2026-10-03T10:01:00Z"),
+        assistant("Shall I merge the bwrap change?", "2026-10-03T10:01:05Z"),
+        user("y", "2026-10-03T10:02:00Z"),
+    ])
+    result = s.run("bwrap")
+    _, body = section(result.stdout, f"agent-session transcripts in {s.transcripts}")
+    stripped = [line.strip() for line in body]
+    check("a matching short question after a notification is still found and paired",
+          any(line.startswith("Agent:") and "Shall I merge the bwrap change?" in line for line in stripped)
+          and "User:  y" in stripped, (result.stdout, body))
+
+with scratch() as base:
+    s = Scratch(base)
+    write_transcript(s.transcripts, "recommendation-after-notification", [
+        assistant("Shall I build bwrap?", "2026-10-03T10:00:00Z"),
+        notification("Agent \"fork\" finished", "2026-10-03T10:01:00Z"),
+        assistant("The fork finished. I recommend keeping the branch.", "2026-10-03T10:01:05Z"),
+        user("y", "2026-10-03T10:02:00Z"),
+    ])
+    result = s.run("bwrap")
+    check("a short message after a notification that makes a recommendation is kept as what the user "
+          "replied to",
+          "User replied to: The fork finished. I recommend keeping the branch." in result.stdout,
+          result.stdout)
+
 # A question already answered is not paired again with a later user message.
 with scratch() as base:
     s = Scratch(base)
@@ -373,6 +423,20 @@ with scratch() as base:
     result = s.run("bwrap")
     check("a few matches print no too-wide guidance", "Too wide" not in result.stdout, result.stdout)
     check("matches print how to read the pairs", "Read each pair" in result.stdout, result.stdout)
+
+# Only unanswered matches: they are counted and named, never reported as nothing found.
+with scratch() as base:
+    s = Scratch(base)
+    write_transcript(s.transcripts, "zorblax", [assistant("Shall I build zorblax?", "2026-10-03T10:00:00Z")])
+    result = s.run("zorblax")
+    check("when the only matches are unanswered, the report says how many were left out and names "
+          "--include-unanswered",
+          "1 matching agent message(s) that no user message followed are not shown" in result.stdout
+          and "--include-unanswered" in result.stdout, result.stdout)
+    check("when matches were left out, the report never says nothing matched or not found",
+          "Not found in these places." not in result.stdout and "Nothing matched" not in result.stdout,
+          result.stdout)
+    check("only unanswered matches, every place searched, exits 0", result.returncode == 0, result.stderr)
 
 # Nothing found.
 with scratch() as base:
@@ -623,6 +687,34 @@ with scratch() as base:
           unreachable.returncode == 1
           and "ned-box's agent-session transcripts, over ssh: ssh nedlern@fake-box failed" in unreachable.stdout
           and "ssh nedlern@ned-box true" in unreachable.stdout, unreachable.stdout)
+
+# An ssh search of ned-box's transcripts that does not finish in time.
+with scratch() as base:
+    s = Scratch(base)
+    _saved_path, _saved_timeout = os.environ.get("PATH", ""), _program.COMMAND_TIMEOUT_SECONDS
+    _saved_ssh_mode, _saved_ssh_log = os.environ.get("FAKE_SSH_MODE"), os.environ.get("FAKE_SSH_ARGV_LOG")
+    try:
+        os.environ["PATH"] = f"{s.bin}{os.pathsep}{_saved_path}"
+        os.environ["FAKE_SSH_MODE"] = "hang"
+        os.environ["FAKE_SSH_ARGV_LOG"] = str(s.ssh_log)
+        _program.COMMAND_TIMEOUT_SECONDS = 1
+        timed_out = _program.search_transcripts_over_ssh(
+            "nedlern@fake-box", "/remote/projects", "ned-box's agent-session transcripts, over ssh",
+            ["bwrap"], False, None, False)
+    finally:
+        os.environ["PATH"] = _saved_path
+        _program.COMMAND_TIMEOUT_SECONDS = _saved_timeout
+        for _name, _value in (("FAKE_SSH_MODE", _saved_ssh_mode), ("FAKE_SSH_ARGV_LOG", _saved_ssh_log)):
+            if _value is None:
+                os.environ.pop(_name, None)
+            else:
+                os.environ[_name] = _value
+    check("an ssh search that does not finish in time is reported unreachable, with the time limit",
+          timed_out.get("unreachable") is True and timed_out["items"] == []
+          and "did not finish within 1 s" in timed_out.get("failure", ""), timed_out)
+    report, code = _program.render_report([timed_out], ["bwrap"], False, None)
+    check("a timed-out ssh search makes the run exit 1 and gives the remedy",
+          code == 1 and "ssh nedlern@ned-box true" in report, report)
 
 # Bad invocations and missing places.
 with scratch() as base:

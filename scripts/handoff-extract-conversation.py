@@ -108,10 +108,13 @@ def find_transcript_path(session_id: str, working_directory: Path) -> Path:
     )
 
 
-def read_dialog_turns(transcript_path: Path):
+def read_dialog_turns(transcript_path: Path, keep_after_notification=None):
     """Return (turns, skip_counts), counting malformed and oversized records as skipped.
 
     Each turn holds its voice, its text and its record's timestamp ("" when the record has none).
+    keep_after_notification, when given, is called with the text of a short agent
+    message that follows a notification; when it returns True the message is kept
+    instead of being dropped as an acknowledgement.
     """
     # The writer may still be exiting, leaving a partial final record.
     turns = []
@@ -175,7 +178,8 @@ def read_dialog_turns(transcript_path: Path):
             continue
 
         if (following_injected_record
-                and len(turn["text"].split()) <= MAXIMUM_ACKNOWLEDGEMENT_WORDS):
+                and len(turn["text"].split()) <= MAXIMUM_ACKNOWLEDGEMENT_WORDS
+                and not (keep_after_notification and keep_after_notification(turn["text"]))):
             skip_counts["acknowledgement"] += 1
         else:
             turns.append(turn)

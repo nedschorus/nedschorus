@@ -17,19 +17,22 @@ searches, in parallel:
 For a transcript it prints question-and-answer pairs: the agent's message that
 holds the words, then the user's next message. Notifications, and the agent's
 short acknowledgements of them, are left out first, by the handoff extractor's
-rules. When the user's message directly followed a different agent message,
+rules; a short agent message after a notification that asks something (its last
+line holds a question mark, or it says "Recommend", "Shall I", "Y:" or "Y/N")
+is kept, because it can be the question the user answered. When the user's message directly followed a different agent message,
 that message is shown too, as what the user replied to, so the reader judges
 which question was answered. Several matching agent messages before one user
 message make one pair, shown with the last of them. Answered pairs come first,
 newest first; a matching message the user never answered is left out unless
---include-unanswered is given. A word matches
+--include-unanswered is given, and the report says how many were left out. A word matches
 case-insensitively anywhere in a message. By default a message matches when it
 holds any of the words; --all-words requires every word in the same message or
 line. --since leaves out what is older than a date, read in UTC; a
 walk-minutes line is dated by the latest date written in it, and a line with no
 date is kept.
 
-Exit codes: 0 every place was searched, whatever was found; 1 a place could
+Exit codes: 0 every place was searched, whatever was found, including when the
+only matches were unanswered questions left out of the report; 1 a place could
 not be searched, or was searched only in part; 2 bad invocation.
 """
 
@@ -90,6 +93,7 @@ GITHUB_RESULTS_FETCHED = 50
 EXCERPT_CHARACTERS = 300
 COMMAND_TIMEOUT_SECONDS = 300
 DATE_PATTERN = re.compile(r"\d{4}-\d{2}-\d{2}")
+ASK_MARKERS = ("recommend", "shall i", "y:", "y/n")
 
 
 def production_plan() -> dict:
@@ -141,15 +145,30 @@ def shortened(text: str) -> str:
     return flat if len(flat) <= EXCERPT_CHARACTERS else flat[:EXCERPT_CHARACTERS] + "…"
 
 
+def asks_something(text: str) -> bool:
+    """Return whether an agent message asks the user something.
+
+    The handoff extractor drops every short agent message after a notification,
+    by length alone; a short message that asks something can be the question
+    the user answered, so it is kept for pairing.
+    """
+    lines = [line for line in text.strip().splitlines() if line.strip()]
+    if lines and "?" in lines[-1]:
+        return True
+    lowered = text.lower()
+    return any(marker in lowered for marker in ASK_MARKERS)
+
+
 def dialog_with_timestamps(transcript_path: Path):
     """Return the transcript's dialog turns, each with voice, text and timestamp.
 
     The handoff extractor's rules leave out injected notices, tool results,
     subagent turns, and the agent's short acknowledgements of notifications,
     so neither a notification nor its acknowledgement stands between a
-    question and the user's answer.
+    question and the user's answer. A short message after a notification that
+    asks something is kept.
     """
-    turns, _ = _extractor.read_dialog_turns(transcript_path)
+    turns, _ = _extractor.read_dialog_turns(transcript_path, keep_after_notification=asks_something)
     return turns
 
 
@@ -315,6 +334,7 @@ def search_transcripts(entry, words, all_words, since, include_unanswered=False)
         since_start = start_of_day_in_utc(since).timestamp()
         paths = [path for path in paths if _modified_at_or_after(path, since_start)]
     items, errors = [], []
+    hidden_unanswered = 0
     # Worker processes cannot import a program that arrived on stdin.
     pool_class = (concurrent.futures.ThreadPoolExecutor if RUNNING_FROM_EMBEDDED_SOURCE
                   else concurrent.futures.ProcessPoolExecutor)
@@ -324,16 +344,17 @@ def search_transcripts(entry, words, all_words, since, include_unanswered=False)
             if error:
                 errors.append(error)
             for pair in pairs:
-                if pair["answer"] is None and not include_unanswered:
-                    continue
                 if since and pair["timestamp"] and pair["timestamp"][:10] < since:
+                    continue
+                if pair["answer"] is None and not include_unanswered:
+                    hidden_unanswered += 1
                     continue
                 items.append({"sort_key": (pair["answer"] is not None, pair["timestamp"]),
                               "pair": pair, "path": path})
     items.sort(key=lambda item: item["sort_key"], reverse=True)
     for item in items:
         item["sort_key"] = item["pair"]["timestamp"]
-    place = {"place": label, "items": items}
+    place = {"place": label, "items": items, "hidden_unanswered": hidden_unanswered}
     problems = []
     if result.returncode == 2:
         problems.append(in_part_failure(result.stderr))
@@ -486,9 +507,17 @@ def render_report(places, words, all_words, since):
     lines = [f"Searched for {', '.join(repr(word) for word in words)} ({mode})"
              + (f", since {since}" if since else "") + "."]
     total = sum(len(place["items"]) for place in places)
+    hidden = sum(place.get("hidden_unanswered", 0) for place in places)
     too_wide = any(len(place["items"]) > SHOWN_PER_SECTION for place in places)
     for place in places:
+        if place.get("hidden_unanswered"):
+            hidden_line = (f"  {place['hidden_unanswered']} matching agent message(s) that no user message "
+                           f"followed are not shown; run again with --include-unanswered to see them.")
+        else:
+            hidden_line = None
         if not place["items"]:
+            if hidden_line:
+                lines += ["", f"{place['place']}: no answered question found:", hidden_line]
             continue
         shown = place["items"][:SHOWN_PER_SECTION]
         lines += ["", f"{place['place']}: {len(place['items'])} found, "
@@ -501,6 +530,8 @@ def render_report(places, words, all_words, since):
         rest = len(place["items"]) - len(shown)
         if rest:
             lines.append(f"  … and {rest} more not shown.")
+        if hidden_line:
+            lines.append(hidden_line)
     failed = [place for place in places if place.get("failure")]
     searched = [place for place in places if not place.get("failure") or place["items"]]
     lines += ["", "Places searched:"]
@@ -508,11 +539,17 @@ def render_report(places, words, all_words, since):
     if failed:
         lines += ["", "NOT searched, or searched only in part:"]
         lines += [f"  {place['place']}: {place['failure']}" for place in failed]
-    if total == 0:
+    if total == 0 and not hidden:
         lines += ["", "Not found in these places."]
 
     instructions = []
-    if total == 0:
+    if total == 0 and hidden:
+        instructions += [
+            f"No answered question matched, but {hidden} matching agent message(s) that no user "
+            "message followed were left out. Run again with --include-unanswered to read them before "
+            "you report.",
+        ]
+    elif total == 0:
         instructions += [
             "Nothing matched. Before you report, run this program again with another name for "
             "the subject, or with the name of the program or file the change touched.",
