@@ -10,10 +10,10 @@ hook's own clone, and every ref written, is the scratch clone's. Git reads a
 scratch global config and no system config.
 
 The hook finds its owner by walking up to a process named claude. The suite
-stands one in with a shell script named `claude`: on Linux the kernel names a
-script's process after the script. On macOS `ps` names it after the shell, so
-the cases that run the hook under that stand-in print SKIP there. No case
-sends a signal: the stand-in ends when its stdin closes.
+stands one in with a copy of a shell binary named `claude`, which both Linux
+and macOS name after the copied file; the cases that run the hook under it
+print SKIP, with the names observed, only where no such copy is named claude.
+No case sends a signal: the stand-in ends when its stdin closes.
 
 Run: python3 nc-systems/handoff/tests/uncommitted-work-snapshots-test.py
 """
@@ -25,6 +25,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import types
 import threading
 import time
 from pathlib import Path
@@ -55,7 +56,6 @@ snapshots = load(REPOSITORY_ROOT / MODULE_RELATIVE, "uncommitted_work_snapshots"
 
 failures = []
 SKIPPED = []
-CLAUDE_STAND_IN_WORKS = sys.platform.startswith("linux")
 
 
 def check(condition, name, detail=""):
@@ -92,15 +92,75 @@ GLOBAL_CONFIG.write_text(
 os.environ.update(HOME=str(HOME), GIT_CONFIG_GLOBAL=str(GLOBAL_CONFIG), GIT_CONFIG_NOSYSTEM="1")
 os.environ.pop("GIT_AUTHOR_NAME", None)
 
+# The stand-in for claude is a copy of a shell binary named claude: both Linux
+# (/proc/<pid>/comm) and macOS ps name a process after the file it executes, so
+# a shell script named claude would be named after its interpreter on macOS.
 CLAUDE_STAND_IN = SCRATCH / "bin" / "claude"
 CLAUDE_STAND_IN.parent.mkdir()
-CLAUDE_STAND_IN.write_text(
-    "#!/bin/sh\n"
-    "while read hook_input; do\n"
-    "  \"$@\" < \"$hook_input\"\n"
-    "  echo \"hook-done $?\"\n"
-    "done\n")
-CLAUDE_STAND_IN.chmod(0o755)
+CLAUDE_STAND_IN_SCRIPT = (
+    'echo stand-in-ready\n'
+    'while read hook_input; do\n'
+    '  "$@" < "$hook_input"\n'
+    '  echo "hook-done $?"\n'
+    'done\n')
+
+
+def find_claude_stand_in():
+    """Copy a shell to CLAUDE_STAND_IN; return None if it is named claude, else why not."""
+    observed = []
+    candidates = []
+    for found in (shutil.which("bash"), "/bin/bash", shutil.which("sh"), "/bin/sh"):
+        if found and os.path.exists(found) and os.path.realpath(found) not in candidates:
+            candidates.append(os.path.realpath(found))
+    for candidate in candidates:
+        try:
+            shutil.copy2(candidate, CLAUDE_STAND_IN)
+            CLAUDE_STAND_IN.chmod(0o755)
+            probe = subprocess.Popen([str(CLAUDE_STAND_IN), "-c", "echo ready; read x"],
+                                     stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+        except OSError as error:
+            observed.append(f"{candidate}: {error}")
+            continue
+        try:
+            probe.stdout.readline()
+            name = snapshots.process_command_name_and_parent(probe.pid)[0]
+        except (OSError, snapshots.WorkSnapshotError) as error:
+            name = f"unreadable ({error})"
+        probe.stdin.close()
+        probe.wait(timeout=30)
+        probe.stdout.close()
+        if name == snapshots.OWNER_PROCESS_COMMAND_NAME:
+            return None
+        observed.append(f"a copy of {candidate} is named {name!r}")
+    return "; ".join(observed) or "no shell binary found"
+
+
+CLAUDE_STAND_IN_PROBLEM = find_claude_stand_in()
+CLAUDE_STAND_IN_WORKS = CLAUDE_STAND_IN_PROBLEM is None
+
+
+def stand_in_skip_reason():
+    return f"no claude stand-in that this platform names claude: {CLAUDE_STAND_IN_PROBLEM}"
+
+
+def dead_process_id():
+    """The id of a process that has exited and been reaped, so no process has it."""
+    gone = subprocess.Popen([sys.executable, "-c", "pass"])
+    gone.wait()
+    try:
+        os.kill(gone.pid, 0)
+    except ProcessLookupError:
+        return gone.pid
+    raise RuntimeError(f"process id {gone.pid} was reused at once; run the suite again")
+
+
+def dead_owner_key(linux_process_id):
+    """An owner key of the running platform's form naming no live process."""
+    if sys.platform.startswith("linux"):
+        # A boot id that is not this boot's.
+        return "0" * 32 + f"-{linux_process_id}-1"
+    return f"{dead_process_id()}-1"
+
 
 clone_count = [0]
 
@@ -143,9 +203,12 @@ class ClaudeStandIn:
         self.count = 0
         self.last_exit = None
         self.process = subprocess.Popen(
-            [str(CLAUDE_STAND_IN), sys.executable, str(main / HOOK_RELATIVE)],
+            [str(CLAUDE_STAND_IN), "-c", CLAUDE_STAND_IN_SCRIPT, "claude", sys.executable,
+             str(main / HOOK_RELATIVE)],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True,
             env=dict(os.environ, **(environment or {})))
+        # Read only after the exec, so the owner key names the stand-in, not this process.
+        self.process.stdout.readline()
         self.owner_key = snapshots.owner_key_of_process(self.process.pid)
 
     def run_hook(self, payload):
@@ -198,7 +261,7 @@ def edit(path):
 def test_what_a_work_snapshot_holds():
     name = "a work-snapshot holds modified, deleted and new files, not ignored ones"
     if not CLAUDE_STAND_IN_WORKS:
-        return skip(name, "the claude stand-in is named after its shell on this platform")
+        return skip(name, stand_in_skip_reason())
     main = new_clone()
     worktree = add_worktree(main, main / ".claude" / "worktrees" / "fork", "fork-branch")
     (worktree / "tracked.txt").write_text("two\n")
@@ -264,7 +327,7 @@ def test_same_size_edit_in_the_index_second():
 def test_ref_names():
     name = "two worktrees with the same directory name get different refs; a space is legal"
     if not CLAUDE_STAND_IN_WORKS:
-        return skip(name, "the claude stand-in is named after its shell on this platform")
+        return skip(name, stand_in_skip_reason())
     main = new_clone()
     first = add_worktree(main, main / ".claude" / "worktrees" / "a" / "same", "a-branch")
     second = add_worktree(main, main / ".claude" / "worktrees" / "b" / "same", "b-branch")
@@ -283,7 +346,7 @@ def test_ref_names():
 def test_bash_commit_deletes_and_other_worktrees_follow():
     name = "a Bash call that commits everything deletes the ref"
     if not CLAUDE_STAND_IN_WORKS:
-        return skip(name, "the claude stand-in is named after its shell on this platform")
+        return skip(name, stand_in_skip_reason())
     main = new_clone()
     fork = add_worktree(main, main / ".claude" / "worktrees" / "fork", "fork-branch")
     other = add_worktree(main, main / ".claude" / "worktrees" / "other", "other-branch")
@@ -361,7 +424,7 @@ def test_operation_trailer():
 def test_hook_failure_is_reported():
     name = "a hook that cannot write reports it through additionalContext and exits 0"
     if not CLAUDE_STAND_IN_WORKS:
-        return skip(name, "the claude stand-in is named after its shell on this platform")
+        return skip(name, stand_in_skip_reason())
     main = new_clone()
     worktree = add_worktree(main, main / ".claude" / "worktrees" / "fork", "fork-branch")
     (worktree / "tracked.txt").write_text("changed\n")
@@ -394,7 +457,7 @@ def test_hook_failure_is_reported():
 def test_other_repository_is_untouched():
     name = "an edit or a Bash call in another repository writes no work-snapshot there"
     if not CLAUDE_STAND_IN_WORKS:
-        return skip(name, "the claude stand-in is named after its shell on this platform")
+        return skip(name, stand_in_skip_reason())
     main = new_clone()
     other = SCRATCH / f"unrelated-repository-{clone_count[0]}"
     git(SCRATCH, "init", "-q", str(other))
@@ -456,14 +519,35 @@ class FakePs:
 
 
 def test_macos_ps_failure_is_not_a_dead_owner():
-    real_run_ps = snapshots.run_ps
+    real_run_ps, real_process_exists = snapshots.run_ps, snapshots.process_exists
     try:
+        # A gone process is decided before ps runs: macOS ps exits 1 for an id no
+        # process has, sometimes with a message, which must not raise.
+        snapshots.process_exists = lambda process_id: False
+        for fake, why in ((FakePs(1, stderr="ps: process id too large: 999999\n"),
+                           "with \"process id too large\""),
+                          (FakePs(1), "with no output")):
+            snapshots.run_ps = lambda arguments, fake=fake: fake
+            try:
+                started = snapshots.macos_start_seconds(100)
+                outcome = f"returned {started}"
+                alive = snapshots.owner_process_is_alive("100-5", platform="darwin")
+            except snapshots.WorkSnapshotError as error:
+                outcome, alive = f"raised {error}", None
+            check(outcome == "returned None" and alive is False,
+                  f"a process id no process has counts as gone, whatever ps says ({why})",
+                  outcome)
+        # The process exits between the check and ps: exit 1 with no output, and
+        # the check now says gone.
+        answers = iter((True, False))
+        snapshots.process_exists = lambda process_id: next(answers)
         snapshots.run_ps = lambda arguments: FakePs(1)
         check(snapshots.macos_start_seconds(100) is None,
-              "ps exiting 1 with no output means the process is gone")
-        check(not snapshots.owner_process_is_alive("100-5", platform="darwin"),
-              "a gone macOS owner counts as dead")
-        for fake, why in ((FakePs(-9), "killed by a signal"),
+              "a process that exits just before ps reads it counts as gone")
+        # A process that exists: every ps failure raises.
+        snapshots.process_exists = lambda process_id: True
+        for fake, why in ((FakePs(1), "exit 1 with no output"),
+                          (FakePs(-9), "killed by a signal"),
                           (FakePs(1, stderr="ps: illegal option"), "an error message"),
                           (FakePs(2), "another exit code")):
             snapshots.run_ps = lambda arguments, fake=fake: fake
@@ -473,16 +557,29 @@ def test_macos_ps_failure_is_not_a_dead_owner():
             except snapshots.WorkSnapshotError:
                 outcome = "raised"
             check(outcome == "raised",
-                  f"a ps failure ({why}) raises instead of counting the owner dead", outcome)
+                  f"a ps failure for a live process ({why}) raises instead of counting "
+                  "the owner dead", outcome)
     finally:
-        snapshots.run_ps = real_run_ps
+        snapshots.run_ps, snapshots.process_exists = real_run_ps, real_process_exists
+    dead = dead_process_id()
+    check(not snapshots.process_exists(dead) and snapshots.process_exists(os.getpid()),
+          "process_exists tells a reaped process from this one")
+    # A process of another user refuses the signal: it exists all the same. Only
+    # the module's name for os is replaced, so the real os.kill is never touched.
+    def refuse(process_id, signal_number):
+        raise PermissionError(1, "Operation not permitted")
+    real_os = snapshots.os
+    snapshots.os = types.SimpleNamespace(kill=refuse)
+    try:
+        exists = snapshots.process_exists(dead)
+    finally:
+        snapshots.os = real_os
+    check(exists, "a process that refuses the signal exists")
     if shutil.which("ps") is None:
         return skip("ps on this machine reads a live and a gone process", "no ps here")
     check(snapshots.macos_start_seconds(os.getpid()) is not None,
           "ps on this machine gives a live process's start")
-    gone = subprocess.Popen([sys.executable, "-c", "pass"])
-    gone.wait()
-    check(snapshots.macos_start_seconds(gone.pid) is None,
+    check(snapshots.macos_start_seconds(dead) is None,
           "ps on this machine gives None for a process that is gone")
 
 
@@ -537,7 +634,7 @@ def test_live_and_dead_owners_listed():
     name = ("a dead owner's work-snapshot is listed when its worktree is gone or changed, "
             "not while the worktree still holds its changes")
     if not CLAUDE_STAND_IN_WORKS:
-        return skip(name, "the claude stand-in is named after its shell on this platform")
+        return skip(name, stand_in_skip_reason())
     main = new_clone()
     kept = add_worktree(main, main / ".claude" / "worktrees" / "kept", "kept-branch")
     removed = add_worktree(main, main / ".claude" / "worktrees" / "removed", "removed-branch")
@@ -866,7 +963,7 @@ def test_unreadable_head_is_reported():
     main = new_clone()
     worktree = add_worktree(main, main / ".claude" / "worktrees" / "bad-head", "bad-head")
     (worktree / "work.txt").write_text("work\n")
-    dead_key = ("0" * 32 + "-43-1") if sys.platform.startswith("linux") else "999999-1"
+    dead_key = dead_owner_key(43)
     ref = snapshot_at(worktree, dead_key, 1000, "seat-eleven")
     head_file = Path(git(worktree, "rev-parse", "--path-format=absolute", "--git-path", "HEAD"))
     head_file.write_text("1234567890123456789012345678901234567890\n")
@@ -900,7 +997,7 @@ def test_branch_ref_naming_a_missing_object_is_reported():
     main = new_clone()
     worktree = add_worktree(main, main / ".claude" / "worktrees" / "bad-branch", "bad-branch")
     (worktree / "work.txt").write_text("work\n")
-    dead_key = ("0" * 32 + "-44-1") if sys.platform.startswith("linux") else "999998-1"
+    dead_key = dead_owner_key(44)
     ref = snapshot_at(worktree, dead_key, 1000, "seat-twelve")
     branch_file = Path(git(worktree, "rev-parse", "--path-format=absolute", "--git-path",
                            "refs/heads/bad-branch"))
@@ -1092,9 +1189,7 @@ def test_list_exits_nonzero_after_a_comparison_failure():
     main = new_clone()
     worktree = add_worktree(main, main / ".claude" / "worktrees" / "broken", "broken-branch")
     (worktree / "work.txt").write_text("work\n")
-    # An owner key of the running platform's form naming no live process: a boot id
-    # that is not this boot's on Linux, a process id past the macOS maximum.
-    dead_key = ("0" * 32 + "-37-1") if sys.platform.startswith("linux") else "999999-1"
+    dead_key = dead_owner_key(37)
     ref = snapshot_at(worktree, dead_key, 1000, "seat-ten")
     (worktree / ".git").write_text("gitdir: /nonexistent/work-snapshot-test\n")
     result = subprocess.run(
@@ -1111,7 +1206,7 @@ def test_list_exits_nonzero_after_a_comparison_failure():
 def test_the_2026_10_05_loss_replayed():
     name = "the 2026-10-05 loss replayed: the restore brings both files back as a commit"
     if not CLAUDE_STAND_IN_WORKS:
-        return skip(name, "the claude stand-in is named after its shell on this platform")
+        return skip(name, stand_in_skip_reason())
     main = new_clone()
     worktree = add_worktree(main, main / ".claude" / "worktrees" / "concurrency-step-1",
                             "concurrency-step-1")

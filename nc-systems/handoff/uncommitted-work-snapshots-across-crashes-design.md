@@ -50,7 +50,7 @@ The hook is a Claude Code PostToolUse hook. It runs after every Edit, Write and 
 
 The commit's author date is the work-snapshot's time.
 
-**When nothing is uncommitted**, the hook deletes that worktree's ref for this owner, if there is one. The hook runs after the Bash call that makes a commit, so a work-snapshot of now-committed work is deleted when that call returns.
+**When nothing is uncommitted**, the hook deletes that worktree's ref for this owner, if there is one. The hook runs after the Bash call that makes a commit, so a work-snapshot of work that has since been committed is deleted when that call returns.
 
 **What it cannot protect.** Changes made by a tool call that is killed before it returns, and changes a Bash command makes in a worktree that has no work-snapshot yet and is not the command's `cwd`, have no work-snapshot until the hook next runs for that worktree. Ignored files and files outside a git worktree are never held.
 
