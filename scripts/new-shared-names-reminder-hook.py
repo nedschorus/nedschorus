@@ -148,10 +148,12 @@ def read_reported_names_record(record_path: Path) -> dict:
             for key, entries in record.items() if isinstance(key, str) and isinstance(entries, list)}
 
 
-def reported_names_record_merge_prune_and_write(record_path: Path, key: str, entries: set, live_branches) -> None:
+def reported_names_record_merge_prune_and_write(record_path: Path, key: str, entries: set, checkout: Path) -> None:
     """Add entries under key, merged with what other writers stored, drop branches that no longer exist, and write.
 
-    live_branches None keeps every branch. Nothing is written when the record would not change.
+    The branch list is read inside the lock, so a branch another run created and recorded while
+    this run was scanning is not dropped. When git cannot list the branches, every branch is kept.
+    Nothing is written when the record would not change.
     A lock file serialises writers in one worktree, and each write goes to its own temporary
     file renamed over the record, so a reader never sees a partly written record.
     Raises ReportedNamesRecordFailure when the record cannot be written.
@@ -167,6 +169,7 @@ def reported_names_record_merge_prune_and_write(record_path: Path, key: str, ent
             record = dict(stored or {})
             if entries:
                 record[key] = record.get(key, set()) | entries
+            live_branches = local_branches(checkout)
             if live_branches is not None:
                 keep = set(live_branches) | {key, DETACHED_HEAD_REPORTED_NAMES_RECORD_KEY}
                 record = {name: values for name, values in record.items() if name in keep}
@@ -333,7 +336,7 @@ def main() -> int:
     if live_branches is not None and set(record) - set(live_branches) - {record_key,
                                                                        DETACHED_HEAD_REPORTED_NAMES_RECORD_KEY}:
         try:
-            reported_names_record_merge_prune_and_write(record_path, record_key, set(), live_branches)
+            reported_names_record_merge_prune_and_write(record_path, record_key, set(), checkout)
         except ReportedNamesRecordFailure as failure:
             tell_failure_once(str(failure))
     try:
@@ -366,7 +369,7 @@ def main() -> int:
     newly_reported = {f"{kind}\t{name}" for _, kind, name in shown}
     if newly_reported - reported:
         try:
-            reported_names_record_merge_prune_and_write(record_path, record_key, newly_reported, live_branches)
+            reported_names_record_merge_prune_and_write(record_path, record_key, newly_reported, checkout)
         except ReportedNamesRecordFailure as failure:
             tell_failure_once(str(failure))
     write_state(session_id, state)

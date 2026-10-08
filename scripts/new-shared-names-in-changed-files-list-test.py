@@ -593,6 +593,63 @@ def case_failed_write_after_a_good_read_is_told_and_leaves_no_temporary_file(roo
     check("a failed write removes its temporary file", leftovers == [], str(leftovers))
 
 
+def case_branch_recorded_by_a_concurrent_run_while_scanning_survives(root):
+    clone = make_clone(root, BASE_MAIN_FILES)
+    write(clone, "alpha.py", "def shared_helper():\n    return 1\n")
+    write(clone, "beta.py", "import alpha\nalpha.shared_helper()\n")
+    hook = load_module("hook_for_concurrent_branch_case", HOOK_PATH)
+    record = record_path_of(clone)
+    second = root / "second-worktree"
+    real_load_lister = hook.load_lister
+
+    def lister_that_lets_a_second_run_record_meanwhile():
+        lister = real_load_lister()
+        real_new_shared_names = lister.new_shared_names
+
+        def new_shared_names_with_a_concurrent_run(*arguments, **options):
+            # While the first run scans, a second run creates a branch and records a name on it.
+            git(["worktree", "add", "-q", "-b", "concurrent-topic", str(second)], clone)
+            hook.reported_names_record_merge_prune_and_write(
+                record, "concurrent-topic", {"python-function\tconcurrent_helper"}, second)
+            return real_new_shared_names(*arguments, **options)
+        lister.new_shared_names = new_shared_names_with_a_concurrent_run
+        return lister
+    hook.load_lister = lister_that_lets_a_second_run_record_meanwhile
+    code, context = run_hook_in_process(hook, root, clone, {"tool_name": "Write",
+                                        "tool_input": {"file_path": "beta.py"}}, {})
+    stored = json.loads(record.read_text())
+    check("the first run exits 0 and lists its names", code == 0 and "shared_helper" in context, context)
+    check("the first run's names are recorded under its branch",
+          "python-function\tshared_helper" in stored.get("topic", []), str(stored))
+    check("a branch another run created and recorded while this run scanned is not dropped",
+          stored.get("concurrent-topic") == ["python-function\tconcurrent_helper"], str(stored))
+
+
+def case_failed_prune_write_with_no_new_names_is_told(root):
+    clone = make_clone(root, BASE_MAIN_FILES)
+    record = record_path_of(clone)
+    # The worktree's own branch is already reported, so this run has no new names and writes only to prune.
+    record.write_text(json.dumps({"long-gone-topic": ["python-function\told_name"], "topic": ["branch\ttopic"]}))
+    hook = load_module("hook_for_failed_prune_case", HOOK_PATH)
+    real_replace = hook.os.replace
+
+    def replace_failing_for_the_record(source, destination, *arguments, **options):
+        if Path(destination).name == record.name:
+            raise PermissionError(13, "Permission denied")
+        return real_replace(source, destination, *arguments, **options)
+    hook.os.replace = replace_failing_for_the_record
+    try:
+        code, context = run_hook_in_process(hook, root, clone, {"tool_name": "Bash",
+                                            "tool_input": {"command": "ls"}}, {})
+    finally:
+        hook.os.replace = real_replace
+    check("a prune write that fails exits 0", code == 0)
+    check("a prune write that fails, in a run with no new names, is told to the agent",
+          f"could not write {record.name}: Permission denied" in context, context)
+    check("the record is left as it was after a failed prune",
+          "long-gone-topic" in json.loads(record.read_text()))
+
+
 def case_record_that_is_not_utf8_is_told(root):
     clone = make_clone(root, BASE_MAIN_FILES)
     state_root = root / "state"
@@ -666,8 +723,9 @@ hook = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(hook)
 record = Path(sys.argv[2])
 writer = sys.argv[3]
+checkout = Path(sys.argv[4])
 for index in range(40):
-    hook.reported_names_record_merge_prune_and_write(record, "topic", {f"python-function\\t{writer}_{index}"}, ["topic"])
+    hook.reported_names_record_merge_prune_and_write(record, "topic", {f"python-function\\t{writer}_{index}"}, checkout)
 """
 
 
@@ -676,7 +734,7 @@ def case_overlapping_writers_never_leave_invalid_json_and_keep_every_name(root):
     record = record_path_of(clone)
     hook_path = Path(__file__).resolve().parent / "new-shared-names-reminder-hook.py"
     writers = [subprocess.Popen([sys.executable, "-c", OVERLAPPING_WRITER_SCRIPT, str(hook_path), str(record),
-                                 f"writer{number}"]) for number in range(4)]
+                                 f"writer{number}", str(clone)]) for number in range(4)]
     invalid_reads = 0
     reads = 0
     while any(writer.poll() is None for writer in writers):
@@ -788,6 +846,8 @@ def main() -> int:
              case_unreadable_record_is_told_and_names_are_told_again,
              case_missing_record_is_silent_about_the_record,
              case_failed_write_after_a_good_read_is_told_and_leaves_no_temporary_file,
+             case_branch_recorded_by_a_concurrent_run_while_scanning_survives,
+             case_failed_prune_write_with_no_new_names_is_told,
              case_record_that_is_not_utf8_is_told, case_local_branch_list_failure_is_told_and_keeps_the_record,
              case_same_branch_name_recreated_is_told_names_again, case_switch_to_a_branch_origin_has_lists_its_names,
              case_overlapping_writers_never_leave_invalid_json_and_keep_every_name,
