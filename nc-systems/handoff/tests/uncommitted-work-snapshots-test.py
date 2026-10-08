@@ -784,10 +784,10 @@ def test_in_place_and_superseded_leftovers():
           and any(first in line and "still in its worktree" in line for line in report),
           "after a session-handoff the dead owner's work-snapshot is kept, unlisted, while its "
           "worktree still holds its changes", report)
-    (home / "draft.md").write_text("the draft, edited by the next agent-session\n")
+    (home / "notes.md").write_text("notes the next agent-session added\n")
     second = snapshot_at(home, "22-1", 1500, "seat-eight")
     check(snapshots.first_prompt_text(main, "seat-eight", handoffs, is_alive=dead) == "",
-          "an older work-snapshot of a worktree with a later one is not listed")
+          "an older work-snapshot whose files a later leftover holds unchanged is not listed")
     report = []
     snapshots.clean_leftover_work_snapshots(main, remove=False, only_due=True,
                                             handoff_directory=handoffs, now=2000,
@@ -809,8 +809,8 @@ def test_in_place_and_superseded_leftovers():
                                             handoff_directory=handoffs, now=2000,
                                             is_alive=dead, out=report.append)
     check(second not in refs_of(main),
-          "a work-snapshot of a worktree with nothing uncommitted is superseded and deleted",
-          report)
+          "a work-snapshot whose changes were committed in its worktree is superseded and "
+          "deleted", report)
     gone = add_worktree(main, main / ".claude" / "worktrees" / "gone", "gone-branch")
     (gone / "work.txt").write_text("work\n")
     older = snapshot_at(gone, "23-1", 1000, "seat-eight")
@@ -835,6 +835,138 @@ def test_in_place_and_superseded_leftovers():
           and any(broken in line and "could not be checked, kept" in line for line in report),
           "the cleaner keeps a leftover whose worktree cannot be read and counts a failure",
           report)
+
+
+def leftover_with_worktree_then(label, change_after):
+    """A dead owner's work-snapshot of new.txt added and tracked.txt edited, then change_after(worktree)."""
+    main = new_clone()
+    worktree = add_worktree(main, main / ".claude" / "worktrees" / label, f"{label}-branch")
+    (worktree / "tracked.txt").write_text("edited by the dead agent\n")
+    (worktree / "new.txt").write_text("a new file from the dead agent\n")
+    ref = snapshot_at(worktree, "31-1", 1000, "seat-ten")
+    change_after(worktree)
+    return main, worktree, ref
+
+
+def test_discarded_work_is_never_deleted_as_superseded():
+    dead = lambda key: False
+    def discard_by_checkout(worktree):
+        git(worktree, "checkout", "--", "tracked.txt")
+        (worktree / "new.txt").unlink()
+    def discard_by_reset(worktree):
+        git(worktree, "add", "-A")
+        git(worktree, "reset", "-q", "--hard")
+    def discard_part_then_edit(worktree):
+        git(worktree, "checkout", "--", "tracked.txt")
+        (worktree / "other.txt").write_text("the next agent's own edit\n")
+        snapshot_at(worktree, "32-1", 1500, "seat-ten")
+    for label, change in (("checkout", discard_by_checkout), ("reset", discard_by_reset),
+                          ("part", discard_part_then_edit)):
+        main, worktree, ref = leftover_with_worktree_then(f"discard-{label}", change)
+        handoffs = SCRATCH / f"handoffs-discard-{label}"
+        handoffs.mkdir()
+        text = snapshots.first_prompt_text(main, "seat-ten", handoffs, is_alive=dead)
+        report = []
+        snapshots.clean_leftover_work_snapshots(main, remove=True, only_due=False,
+                                                handoff_directory=handoffs, now=2000,
+                                                is_alive=dead, out=report.append)
+        check(ref in text and ref in refs_of(main)
+              and not any(ref in line and "deleted" in line for line in report),
+              f"work a later agent discarded ({label}) is listed and kept, not deleted as "
+              "superseded", (text[:300], report))
+
+
+def test_live_owner_copy_does_not_supersede():
+    main, worktree, ref = leftover_with_worktree_then(
+        "live-copy", lambda worktree: snapshot_at(worktree, "33-1", 1500, "seat-ten"))
+    handoffs = SCRATCH / "handoffs-live-copy"
+    handoffs.mkdir()
+    report = []
+    snapshots.clean_leftover_work_snapshots(main, remove=True, only_due=False,
+                                            handoff_directory=handoffs, now=2000,
+                                            is_alive=lambda key: key == "33-1",
+                                            out=report.append)
+    check(ref in refs_of(main),
+          "a live owner's later work-snapshot does not supersede a dead owner's one, since "
+          "the live owner's hook deletes it when the live owner discards the changes", report)
+
+
+def test_edited_draft_older_version_is_listed():
+    main, worktree, ref = leftover_with_worktree_then(
+        "edited", lambda worktree: ((worktree / "new.txt").write_text("rewritten\n"),
+                                    snapshot_at(worktree, "34-1", 1500, "seat-ten")))
+    handoffs = SCRATCH / "handoffs-edited"
+    handoffs.mkdir()
+    text = snapshots.first_prompt_text(main, "seat-ten", handoffs, is_alive=lambda key: False)
+    check(ref in text,
+          "an older version that no later leftover or commit holds is listed", text[:300])
+
+
+def test_empty_leftover_directory_is_not_the_worktree():
+    main = new_clone()
+    worktree = add_worktree(main, main / ".claude" / "worktrees" / "emptied", "emptied-branch")
+    (worktree / "work.txt").write_text("work\n")
+    ref = snapshot_at(worktree, "35-1", 1000, "seat-ten")
+    git(main, "worktree", "remove", "--force", str(worktree))
+    worktree.mkdir(parents=True)
+    handoffs = SCRATCH / "handoffs-emptied"
+    handoffs.mkdir()
+    dead = lambda key: False
+    text = snapshots.first_prompt_text(main, "seat-ten", handoffs, is_alive=dead)
+    report = []
+    snapshots.clean_leftover_work_snapshots(main, remove=True, only_due=False,
+                                            handoff_directory=handoffs, now=2000,
+                                            is_alive=dead, out=report.append)
+    check(ref in text and ref in refs_of(main),
+          "an empty directory left where the worktree was is not taken for the clean checkout "
+          "around it: the work-snapshot is listed and kept", (text[:300], report))
+    (main / "work.txt").write_text("work\n")
+    text = snapshots.first_prompt_text(main, "seat-ten", handoffs, is_alive=dead)
+    check(ref in text,
+          "nor for the checkout around it when that checkout holds the same uncommitted "
+          "change: the work-snapshot is still listed", text[:300])
+    git(main, "add", "work.txt")
+    git(main, "commit", "-q", "-m", "the same file, committed in the checkout around it")
+    text = snapshots.first_prompt_text(main, "seat-ten", handoffs, is_alive=dead)
+    check(ref in text,
+          "nor when the checkout around it has committed the same file: only the worktree's "
+          "own HEAD counts", text[:300])
+
+
+def test_in_place_leftover_is_not_expired():
+    main = new_clone()
+    worktree = add_worktree(main, main / ".claude" / "worktrees" / "kept", "kept-branch")
+    (worktree / "draft.md").write_text("a draft kept uncommitted\n")
+    ref = snapshot_at(worktree, "36-1", 1000, "seat-ten")
+    handoffs = SCRATCH / "handoffs-in-place-expiry"
+    handoffs.mkdir()
+    now = 100 * 86400
+    (handoffs / "seat-ten-work-snapshots-first-listed.json").write_text(
+        json.dumps({ref: now - 30 * 86400}))
+    report = []
+    snapshots.clean_leftover_work_snapshots(main, remove=True, only_due=False,
+                                            handoff_directory=handoffs, now=now,
+                                            is_alive=lambda key: False, out=report.append)
+    check(ref in refs_of(main),
+          "a work-snapshot first listed long ago but now in place in its worktree is kept",
+          report)
+
+
+def test_list_exits_nonzero_after_a_comparison_failure():
+    main = new_clone()
+    worktree = add_worktree(main, main / ".claude" / "worktrees" / "broken", "broken-branch")
+    (worktree / "work.txt").write_text("work\n")
+    # An owner key of the running platform's form naming no live process: a boot id
+    # that is not this boot's on Linux, a process id past the macOS maximum.
+    dead_key = ("0" * 32 + "-37-1") if sys.platform.startswith("linux") else "999999-1"
+    ref = snapshot_at(worktree, dead_key, 1000, "seat-ten")
+    (worktree / ".git").write_text("gitdir: /nonexistent/work-snapshot-test\n")
+    result = subprocess.run(
+        [sys.executable, str(REPOSITORY_ROOT / MODULE_RELATIVE), "list", "--repo", str(main)],
+        capture_output=True, text=True, check=False)
+    check(result.returncode == 1 and ref in result.stdout,
+          "list prints a work-snapshot it could not compare and exits 1",
+          (result.returncode, result.stdout[-300:], result.stderr[-300:]))
 
 
 # ---------------------------------------------------------------- replay
@@ -888,6 +1020,12 @@ def main():
                      test_live_and_dead_owners_listed, test_list_caps_and_failure,
                      test_supervisor_appends_the_list, test_restore_a_subset, test_cleaner,
                      test_in_place_and_superseded_leftovers,
+                     test_discarded_work_is_never_deleted_as_superseded,
+                     test_live_owner_copy_does_not_supersede,
+                     test_edited_draft_older_version_is_listed,
+                     test_empty_leftover_directory_is_not_the_worktree,
+                     test_in_place_leftover_is_not_expired,
+                     test_list_exits_nonzero_after_a_comparison_failure,
                      test_the_2026_10_05_loss_replayed):
             try:
                 case()

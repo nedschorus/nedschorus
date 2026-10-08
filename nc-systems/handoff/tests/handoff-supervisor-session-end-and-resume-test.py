@@ -517,8 +517,9 @@ def run_handoff_worktree_cleanup_cases_without_git_redirection(workspace: Path):
         "(agent-seat seat, worktree /w/b, files: M x.txt)",
         "work-snapshot refs/work-snapshots/k/c: kept — owner process gone, written 1 day(s) "
         "ago, never listed in a first prompt (agent-seat seat, worktree /w/c, files: M y.txt)",
-        "work-snapshot refs/work-snapshots/k/d: deleted, superseded: its worktree has a later "
-        "work-snapshot or nothing uncommitted (agent-seat seat, worktree /w/d, files: M z.txt)",
+        "work-snapshot refs/work-snapshots/k/d: deleted, superseded: every file it changed has "
+        "the same content in a later leftover work-snapshot or in its worktree's HEAD commit "
+        "(agent-seat seat, worktree /w/d, files: M z.txt)",
         "work-snapshot refs/work-snapshots/k/e: could not be checked, kept: git status failed",
     ])
     check("WORKTREE CLEANUP: the summary names each leftover work-snapshot deleted and "

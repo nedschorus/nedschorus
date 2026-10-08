@@ -15,12 +15,14 @@ scripts/uncommitted-work-snapshot-hook.py writes and deletes work-snapshots,
 nc-systems/handoff/handoff-supervisor.py lists an agent-seat's lost work in
 the first prompt of every agent-session it starts, and
 scripts/clean-worktrees.py deletes a listed leftover first listed more than
-LEFTOVER_DELETED_DAYS_AFTER_FIRST_LISTING days ago, and a superseded one.
+LEFTOVER_DELETED_DAYS_AFTER_FIRST_LISTING days ago and still lost, and a
+superseded one, whose changed files all exist elsewhere.
 
 Usage:
   uncommitted-work-snapshots.py list [--agent-seat NAME] [--repo PATH]
       every leftover work-snapshot holding lost work, or the agent-seat's;
-      exit 0, 2 on failure
+      exit 0, 1 when a work-snapshot could not be compared with its worktree,
+      2 when listing failed
 """
 
 import hashlib
@@ -373,42 +375,101 @@ IN_PLACE = "in place"
 SUPERSEDED = "superseded"
 
 
-def leftover_state(repo, snapshot, everything):
+def leftover_state(repo, snapshot, other_leftovers):
     """Whether a leftover's changes exist anywhere but in the work-snapshot itself.
 
-    SUPERSEDED: a later work-snapshot of the same worktree exists, or the
-    worktree exists with nothing uncommitted, so a later agent worked in that
-    worktree after the dead one and the later work-snapshot or the worktree
-    holds what counts; it can be deleted. LOST: its worktree is gone or holds
-    something else, so the work-snapshot may be the only copy; it is listed
-    for restoring. IN_PLACE: the worktree still holds exactly its changes; it
-    is kept, unlisted, so it is still there if the worktree is removed later.
-    Raises WorkSnapshotError when the worktree cannot be read.
+    SUPERSEDED: every path it changed has the same content elsewhere, in a
+    later leftover of the same worktree or in the worktree's HEAD commit, so
+    deleting it loses nothing. Only leftovers count as later copies: a live
+    owner's work-snapshot is deleted by its own hook when that owner discards
+    the changes. LOST: anything else with its worktree gone, or holding other
+    changes, including changes a later agent discarded; the work-snapshot may
+    be the only copy, so it is listed for restoring. IN_PLACE: the worktree
+    still holds exactly its changes; it is kept, unlisted, so it is still
+    there if the worktree is removed later. Raises WorkSnapshotError when the
+    worktree or the work-snapshot cannot be read.
     """
     worktree = snapshot["worktree"]
     if not worktree:
         return LOST
-    if any(other["worktree"] == worktree and other["time"] > snapshot["time"]
-           for other in everything):
+    later_copies = [other["commit"] for other in other_leftovers
+                    if other["worktree"] == worktree and other["time"] > snapshot["time"]]
+    resolves = worktree_resolves_to_itself(worktree)
+    if resolves:
+        head = head_commit(worktree)
+        if head:
+            later_copies.append(head)
+    if changes_held_elsewhere(repo, snapshot["ref"], later_copies):
         return SUPERSEDED
-    if not Path(worktree).is_dir():
+    if not resolves:
         return LOST
-    if not has_uncommitted_changes(worktree):
-        return SUPERSEDED
     return IN_PLACE if snapshot_matches_worktree(repo, snapshot) else LOST
+
+
+def worktree_resolves_to_itself(worktree):
+    """Whether git, run in worktree, answers for that worktree and not an enclosing one.
+
+    A directory without a .git entry is not the worktree: an interrupted
+    removal can leave one, and git there would answer for the checkout around
+    it. Raises WorkSnapshotError when the directory has a .git entry git
+    cannot use.
+    """
+    directory = Path(worktree)
+    if not directory.is_dir():
+        return False
+    if (directory / ".git").exists():
+        result = run_git(directory, "rev-parse", "--show-toplevel")
+        if result.returncode != 0 or not result.stdout.strip():
+            raise WorkSnapshotError(
+                f"git rev-parse --show-toplevel in {directory}, which has a .git entry, "
+                f"exited {result.returncode}: {result.stderr.strip() or 'no output'}")
+        return Path(result.stdout.strip()).resolve() == directory.resolve()
+    return False
+
+
+def tree_entries(repo, commit):
+    """path -> (mode, object) of every file in commit's tree."""
+    output = git_output(repo, "ls-tree", "-r", "-z", "--full-tree", commit)
+    entries = {}
+    for record in output.split("\0"):
+        if not record:
+            continue
+        details, path = record.split("\t", 1)
+        mode, _kind, object_id = details.split()
+        entries[path] = (mode, object_id)
+    return entries
+
+
+def changes_held_elsewhere(repo, ref, commits):
+    """Whether each path ref changed has the same content in one of commits.
+
+    A deleted path counts when it is absent there too.
+    """
+    if not commits:
+        return False
+    wanted = tree_entries(repo, ref)
+    elsewhere = [tree_entries(repo, commit) for commit in commits]
+    for _status, path in changed_files(repo, ref):
+        if not any(entries.get(path) == wanted.get(path) for entries in elsewhere):
+            return False
+    return True
 
 
 def lost_work_snapshots(repo, agent_seat=None, is_alive=None, everything=None):
     """(leftover, problem) pairs to list, newest first.
 
-    problem is None, or why the worktree could not be read; such a leftover is
-    listed, since its changes may exist nowhere else.
+    problem is None, or why the work-snapshot could not be compared with its
+    worktree; such a leftover is listed, since its changes may exist nowhere
+    else.
     """
     everything = all_work_snapshots(repo) if everything is None else everything
+    all_leftovers = leftover_work_snapshots(repo, None, is_alive, everything)
     lost = []
-    for snapshot in leftover_work_snapshots(repo, agent_seat, is_alive, everything):
+    for snapshot in all_leftovers:
+        if agent_seat is not None and snapshot["agent_seat"] != agent_seat:
+            continue
         try:
-            if leftover_state(repo, snapshot, everything) == LOST:
+            if leftover_state(repo, snapshot, all_leftovers) == LOST:
                 lost.append((snapshot, None))
         except WorkSnapshotError as error:
             lost.append((snapshot, str(error)))
@@ -569,7 +630,7 @@ def clean_leftover_work_snapshots(repo, remove, only_due, handoff_directory, now
         first_listed = listed.get(ref)
         try:
             files = changed_files_text(repo, ref)
-            state = leftover_state(repo, snapshot, everything)
+            state = leftover_state(repo, snapshot, leftovers)
         except WorkSnapshotError as error:
             out(f"work-snapshot {ref}: could not be checked, kept: {error}")
             failures += 1
@@ -577,11 +638,12 @@ def clean_leftover_work_snapshots(repo, remove, only_due, handoff_directory, now
         where = (f"agent-seat {snapshot['agent_seat']}, worktree {snapshot['worktree']}, "
                  f"files: {files}")
         superseded = state == SUPERSEDED
-        due = superseded or (first_listed is not None and now - first_listed > threshold)
+        due = superseded or (state == LOST and first_listed is not None
+                             and now - first_listed > threshold)
         if due and remove:
             result = run_git(repo, "update-ref", "-d", ref, snapshot["commit"])
-            reason = ("superseded: its worktree has a later work-snapshot or nothing "
-                      "uncommitted" if superseded else
+            reason = ("superseded: every file it changed has the same content in a later "
+                      "leftover work-snapshot or in its worktree's HEAD commit" if superseded else
                       f"first listed {utc_text(first_listed)} and not restored")
             if result.returncode == 0:
                 out(f"work-snapshot {ref}: deleted, {reason} ({where})")
@@ -592,7 +654,7 @@ def clean_leftover_work_snapshots(repo, remove, only_due, handoff_directory, now
         if only_due and not due:
             continue
         if superseded:
-            listing = "superseded by a later work-snapshot or a clean worktree"
+            listing = "superseded: its files are in a later leftover or its worktree's HEAD"
         elif state == IN_PLACE:
             listing = "its changes are still in its worktree, so it is not listed"
         elif first_listed is not None:
@@ -653,6 +715,12 @@ def main(argv=None):
             return 2
         if not leftovers:
             print("no leftover work-snapshots")
+        unchecked = sum(1 for _snapshot, problem in leftovers if problem)
+        if unchecked:
+            print(f"uncommitted-work-snapshots: {unchecked} work-snapshot(s) could not be "
+                  "compared with their worktree; they are listed above with the reason",
+                  file=sys.stderr)
+            return 1
         return 0
     print(__doc__, file=sys.stderr)
     return 2
