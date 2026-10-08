@@ -426,12 +426,15 @@ def tree_and_parents(repo, commit, cache):
 
 
 def newer_duplicate(repo, snapshot, leftovers, cache):
-    """A later leftover of the same worktree with the same tree and parents, or None.
+    """A later leftover of the same agent-seat and worktree with the same tree and parents, or None.
 
     Such a pair is what each session-handoff leaves: the same unchanged files
     written again by the next owner. The later one holds every byte the
     earlier one holds, compared by git object id. Only leftovers count, never
-    a live owner's work-snapshot, which its own hook may delete.
+    a live owner's work-snapshot, which its own hook may delete. Only the same
+    agent-seat counts, because a leftover is listed only to its own
+    agent-seat: a copy kept under another agent-seat, or under `unknown`,
+    which no first prompt lists, would never be listed to this one.
     """
     if not snapshot["worktree"]:
         return None
@@ -439,6 +442,7 @@ def newer_duplicate(repo, snapshot, leftovers, cache):
     order = (snapshot["time"], snapshot["ref"])
     for other in leftovers:
         if (other["worktree"] == snapshot["worktree"]
+                and other["agent_seat"] == snapshot["agent_seat"]
                 and (other["time"], other["ref"]) > order
                 and tree_and_parents(repo, other["commit"], cache) == mine):
             return other
@@ -696,8 +700,14 @@ def head_commit_or_raise(worktree):
     branch = run_git(worktree, "symbolic-ref", "-q", "HEAD")
     if branch.returncode == 0 and branch.stdout.strip():
         exists = run_git(worktree, "show-ref", "--verify", "-q", branch.stdout.strip())
-        if exists.returncode != 0:
+        # show-ref exits 1 only when the ref does not exist; a ref naming a
+        # missing object exits 128.
+        if exists.returncode == 1:
             return None
+        if exists.returncode != 0:
+            raise WorkSnapshotError(
+                f"git show-ref --verify {branch.stdout.strip()} in {worktree} exited "
+                f"{exists.returncode}: {exists.stderr.strip() or 'the branch could not be read'}")
     raise WorkSnapshotError(
         f"git rev-parse --verify -q HEAD^{{commit}} in {worktree} exited {result.returncode}: "
         f"{result.stderr.strip() or 'HEAD could not be resolved'}")

@@ -896,6 +896,71 @@ def test_unreadable_head_is_reported():
           "an unborn HEAD is no commit, not a failure")
 
 
+def test_branch_ref_naming_a_missing_object_is_reported():
+    main = new_clone()
+    worktree = add_worktree(main, main / ".claude" / "worktrees" / "bad-branch", "bad-branch")
+    (worktree / "work.txt").write_text("work\n")
+    dead_key = ("0" * 32 + "-44-1") if sys.platform.startswith("linux") else "999998-1"
+    ref = snapshot_at(worktree, dead_key, 1000, "seat-twelve")
+    branch_file = Path(git(worktree, "rev-parse", "--path-format=absolute", "--git-path",
+                           "refs/heads/bad-branch"))
+    branch_file.parent.mkdir(parents=True, exist_ok=True)
+    branch_file.write_text("1234567890123456789012345678901234567890\n")
+    raised = None
+    try:
+        snapshots.head_commit_or_raise(worktree)
+    except snapshots.WorkSnapshotError as error:
+        raised = str(error)
+    check(raised is not None and "show-ref" in raised,
+          "a branch whose ref names a missing object is a failure, not an unborn HEAD", raised)
+    handoffs = SCRATCH / "handoffs-bad-branch"
+    handoffs.mkdir()
+    text = snapshots.first_prompt_text(main, "seat-twelve", handoffs, is_alive=lambda key: False)
+    check(ref in text and "could not be compared" in text,
+          "the listing names the failure for a branch ref naming a missing object", text[:400])
+    result = subprocess.run(
+        [sys.executable, str(REPOSITORY_ROOT / MODULE_RELATIVE), "list", "--repo", str(main)],
+        capture_output=True, text=True, check=False)
+    check(result.returncode == 1 and ref in result.stdout,
+          "list exits 1 when a branch ref names a missing object",
+          (result.returncode, result.stdout[-300:]))
+
+
+def test_unborn_head_snapshot_stays_in_place():
+    main = new_clone()
+    orphan = add_worktree(main, main / ".claude" / "worktrees" / "unborn", "unborn-base")
+    git(orphan, "checkout", "-q", "--orphan", "unborn-branch")
+    git(orphan, "rm", "-rq", "--cached", ".")
+    (orphan / "draft.md").write_text("a draft on a branch with no commit yet\n")
+    ref = snapshot_at(orphan, "45-1", 1000, "seat-twelve")
+    snapshot = next(item for item in snapshots.all_work_snapshots(main) if item["ref"] == ref)
+    check(snapshots.leftover_state(main, snapshot) == snapshots.IN_PLACE,
+          "a work-snapshot taken on an unborn HEAD is in place while that HEAD is still unborn",
+          snapshots.leftover_state(main, snapshot))
+
+
+def test_duplicates_count_only_within_one_agent_seat():
+    for label, newer_seat in (("other-seat", "seat-fourteen"), ("unknown", "unknown")):
+        main = new_clone()
+        worktree = add_worktree(main, main / ".claude" / "worktrees" / label, f"{label}-branch")
+        (worktree / "draft.md").write_text("a draft\n")
+        older = snapshot_at(worktree, "46-1", 1000, "seat-thirteen")
+        newer = snapshot_at(worktree, "47-1", 1500, newer_seat)
+        git(main, "worktree", "remove", "--force", str(worktree))
+        handoffs = SCRATCH / f"handoffs-seat-{label}"
+        handoffs.mkdir()
+        dead = lambda key: False
+        text = snapshots.first_prompt_text(main, "seat-thirteen", handoffs, is_alive=dead)
+        report = []
+        snapshots.clean_leftover_work_snapshots(main, remove=True, only_due=False,
+                                                handoff_directory=handoffs, now=2000,
+                                                is_alive=dead, out=report.append)
+        check(older in text and {older, newer} <= set(refs_of(main))
+              and not any("duplicate" in line for line in report),
+              f"an identical newer leftover under {newer_seat} does not make the older one a "
+              "duplicate: it is listed to its own agent-seat and kept", (text[:300], report))
+
+
 def leftover_with_worktree_then(label, change_after):
     """A dead owner's work-snapshot of new.txt added and tracked.txt edited, then change_after(worktree)."""
     main = new_clone()
@@ -1093,6 +1158,9 @@ def main():
                      test_in_place_and_duplicate_leftovers,
                      test_same_tree_on_another_head_is_not_a_duplicate,
                      test_unreadable_head_is_reported,
+                     test_branch_ref_naming_a_missing_object_is_reported,
+                     test_unborn_head_snapshot_stays_in_place,
+                     test_duplicates_count_only_within_one_agent_seat,
                      test_discarded_work_is_listed_and_kept,
                      test_live_owner_duplicate_does_not_count,
                      test_edited_draft_older_version_is_listed,
