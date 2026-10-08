@@ -309,6 +309,14 @@ def case_branch_creation_pattern():
         "git branch -d old-topic": None,
         "git branch -m old-name new-name": None,
         "git branch --list": None,
+        "cd /repo\ngit branch\ngit status": None,
+        "git fetch -q\ngit branch\necho done": None,
+        "git branch -q\nls": None,
+        "echo 'git branch foo'": None,
+        "echo \"git checkout -b quoted-topic\"": None,
+        "git status && git branch topic-ten || true": "topic-ten",
+        "git -C /repo branch topic-eleven; ls": "topic-eleven",
+        "echo 'unclosed; git branch topic-twelve": "topic-twelve",
     }
     for command, branch in expected.items():
         found = hook.created_branch_name(command)
@@ -322,8 +330,51 @@ def case_reminder_is_capped():
     check("the reminder lists the first 30 names", "listed-name-29" in text and "listed-name-30" not in text, text)
     check("the reminder says how many more and how to see them",
           "and 5 more" in text and "new-shared-names-in-changed-files-list.py" in text, text)
+    check("the more-names line gives a command that runs the lister with python3",
+          "python3 scripts/new-shared-names-in-changed-files-list.py" in text, text)
     few = hook.reminder_text(many[:3])
-    check("a short reminder has no more-names line", "more;" not in few, few)
+    check("a short reminder has no more-names line", " more," not in few, few)
+    exactly_at_cap = hook.reminder_text(many[:30])
+    check("a reminder of exactly 30 names has no more-names line", " more," not in exactly_at_cap, exactly_at_cap)
+
+
+def case_timeout_failure_text_is_stable(root):
+    lister = load_module("lister_for_timeout_case", LISTER_PATH)
+
+    def time_out(arguments, **_options):
+        raise subprocess.TimeoutExpired(arguments, 0.5)
+    real_run = subprocess.run
+    lister.subprocess.run = time_out
+    texts = set()
+    try:
+        for pending_names in (["first-name"], ["first-name", "second-name", "third-name"]):
+            arguments = ["grep", "--untracked", "-n", "-o", "-w", "-F"]
+            for name in pending_names:
+                arguments += ["-e", name]
+            try:
+                lister.git(arguments, root)
+            except lister.GitFailure as failure:
+                texts.add(str(failure))
+    finally:
+        lister.subprocess.run = real_run
+    check("a git timeout fails with the same short text whatever the arguments",
+          texts == {"git grep timed out"}, str(texts))
+
+
+def case_hook_shows_names_past_the_cap_later(root):
+    clone = make_clone(root, BASE_MAIN_FILES)
+    state_root = root / "state"
+    state_root.mkdir()
+    write(clone, "many.md", "".join(f"Name `capped-name-{index:02d}` here.\n" for index in range(35)))
+    _, first = run_hook(clone, state_root, {"tool_name": "Write", "tool_input": {"file_path": "many.md"}})
+    shown_first = set(re.findall(r"capped-name-\d\d", first))
+    check("the first reminder shows 30 names: the new file path, then 29 of the 35 backquoted names",
+          len(shown_first) == 29 and "many.md (file-path)" in first, str(len(shown_first)))
+    _, second = run_hook(clone, state_root, {"tool_name": "Edit", "tool_input": {"file_path": "many.md"}})
+    shown_second = set(re.findall(r"capped-name-\d\d", second))
+    check("the next reminder shows the names past the cap",
+          shown_first | shown_second == {f"capped-name-{index:02d}" for index in range(35)}
+          and not shown_first & shown_second, f"{len(shown_first)} then {len(shown_second)}")
 
 
 def case_hook_reports_once_per_session(root):
@@ -403,6 +454,7 @@ def main() -> int:
              case_same_name_defined_in_two_files_is_not_a_use, case_one_word_constant_used_elsewhere_is_listed,
              case_markdown_names, case_exemptions, case_new_glossary_entry, case_branch_name,
              case_nothing_new_is_silent, case_git_failure_exits_nonzero, case_file_cache, case_file_only_main_has_counts_as_on_main,
+             case_timeout_failure_text_is_stable, case_hook_shows_names_past_the_cap_later,
              case_hook_reports_once_per_session, case_hook_shell_commands,
              case_hook_reports_failure_once, case_hook_ignores_other_input]
     for case in cases:

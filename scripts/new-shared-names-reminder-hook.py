@@ -6,6 +6,7 @@ import hashlib
 import importlib.util
 import json
 import re
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -14,21 +15,20 @@ from pathlib import Path
 GIT_CALL_TIMEOUT_SECONDS = 10
 # A first reminder on a large branch would otherwise run to hundreds of lines.
 REMINDER_NAME_LIMIT = 30
-LISTER_COMMAND = "scripts/new-shared-names-in-changed-files-list.py"
+LISTER_COMMAND = "python3 scripts/new-shared-names-in-changed-files-list.py"
 FILE_WRITING_TOOL_NAMES = frozenset({"Write", "Edit", "MultiEdit", "NotebookEdit"})
 SHELL_TOOL_NAME = "Bash"
-GIT_GLOBAL_OPTIONS = r"\bgit\s+(?:(?:-C|-c)\s+\S+\s+|--\S+\s+)*"
-BRANCH_NAME = r"([A-Za-z0-9][^\s;&|]*)"
-BRANCH_CREATION_PATTERNS = (
-    # git checkout|switch [options]... -b|-B|-c|-C|--create|--force-create <name>
-    re.compile(GIT_GLOBAL_OPTIONS + r"(?:checkout|switch)\s+(?:-\S*\s+)*?"
-               r"(?:-b|-B|-c|-C|--create|--force-create)\s+" + BRANCH_NAME),
-    # git worktree add [options]... -b|-B <name>
-    re.compile(GIT_GLOBAL_OPTIONS + r"worktree\s+add\s+(?:-\S*\s+)*?(?:-b|-B)\s+" + BRANCH_NAME),
-    # git branch [-f|--force|-t|--track|--no-track|-q|--quiet]... <name>; listing, deleting and renaming do not match
-    re.compile(GIT_GLOBAL_OPTIONS + r"branch\s+(?:(?:-f|--force|-t|--track|--no-track|-q|--quiet)\s+)*"
-               + BRANCH_NAME),
-)
+# A shell command line is split into simple commands here, then each is tokenised with shlex,
+# so a quoted string stays one token and one command cannot run into the next.
+SHELL_COMMAND_SEPARATOR_PATTERN = re.compile(r"\n|;|&&|\|\|")
+GIT_GLOBAL_OPTIONS_WITH_VALUE = frozenset({"-C", "-c"})
+BRANCH_CREATING_FLAGS = {
+    "checkout": frozenset({"-b", "-B"}),
+    "switch": frozenset({"-c", "-C", "--create", "--force-create"}),
+    "worktree add": frozenset({"-b", "-B"}),
+}
+# Options `git branch` accepts when creating a branch; any other option means it lists, deletes or renames.
+GIT_BRANCH_CREATING_OPTIONS = frozenset({"-f", "--force", "-t", "--track", "--no-track", "-q", "--quiet"})
 STATE_DIRECTORY = Path(tempfile.gettempdir()) / "new-shared-names-reminder-hook-state"
 SESSION_ID_SAFE_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
 LISTER_PATH = Path(__file__).resolve().parent / "new-shared-names-in-changed-files-list.py"
@@ -47,7 +47,7 @@ REMINDER_TEMPLATE = (
     "differently, do not send it and do not rename it.\n"
     "How names are chosen: {page}."
 )
-MORE_NAMES_LINE = "  and {count} more; run {command} to see all"
+MORE_NAMES_LINE = "  and {count} more, shown after a later edit; run {command} to see all now"
 FAILURE_TEMPLATE = (
     "new-shared-names-reminder: the check for new shared names on this branch failed, so "
     "no names are being listed: {error}\n"
@@ -121,11 +121,47 @@ def worktree_fingerprint(checkout: Path):
     return hashlib.sha256("\n".join(parts).encode()).hexdigest()
 
 
+def branch_created_by_tokens(tokens):
+    """Return the branch a tokenised git command creates, or None."""
+    if not tokens or tokens[0] != "git":
+        return None
+    index = 1
+    while index < len(tokens):
+        if tokens[index] in GIT_GLOBAL_OPTIONS_WITH_VALUE:
+            index += 2
+        elif tokens[index].startswith("--"):
+            index += 1
+        else:
+            break
+    if index >= len(tokens):
+        return None
+    subcommand, rest = tokens[index], tokens[index + 1:]
+    if subcommand == "worktree":
+        if not rest or rest[0] != "add":
+            return None
+        subcommand, rest = "worktree add", rest[1:]
+    if subcommand in BRANCH_CREATING_FLAGS:
+        for position, token in enumerate(rest[:-1]):
+            if token in BRANCH_CREATING_FLAGS[subcommand] and not rest[position + 1].startswith("-"):
+                return rest[position + 1]
+        return None
+    if subcommand == "branch":
+        for token in rest:
+            if token in GIT_BRANCH_CREATING_OPTIONS:
+                continue
+            return None if token.startswith("-") else token
+    return None
+
+
 def created_branch_name(command: str):
-    for pattern in BRANCH_CREATION_PATTERNS:
-        match = pattern.search(command)
-        if match:
-            return match.group(1)
+    for simple_command in SHELL_COMMAND_SEPARATOR_PATTERN.split(command):
+        try:
+            tokens = shlex.split(simple_command)
+        except ValueError:
+            continue
+        name = branch_created_by_tokens(tokens)
+        if name:
+            return name
     return None
 
 
@@ -204,7 +240,9 @@ def main() -> int:
         return 0
 
     state["file_cache"] = file_cache
-    state["reported"] = sorted(reported | {f"{kind}\t{name}" for _, kind, name in names})
+    # Only the names the reminder shows count as reported; the rest are shown by a later reminder.
+    shown = names[:REMINDER_NAME_LIMIT]
+    state["reported"] = sorted(reported | {f"{kind}\t{name}" for _, kind, name in shown})
     write_state(session_id, state)
     if not names:
         return 0
