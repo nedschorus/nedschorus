@@ -4,7 +4,7 @@ The naming and location convention for this project's files. Where internal or e
 
 ## Terms this page uses
 
-`docs/nedschorus-wiki/nedschorus-glossary.md` defines the project-terms. `.claude/skills/skills-glossary.md` and `docs/design-to-main/design-to-main-glossary.md` define the system-terms of the skills and of design-to-main. We avoid spaces in directory and file names, using a hyphen, `-`, instead.
+`docs/nedschorus-wiki/nedschorus-glossary.md` defines the project-terms. `.claude/skills/skills-glossary.md`, `docs/design-to-main/design-to-main-glossary.md` and `nc-systems/main-gatekeeper/main-gatekeeper-glossary.md` define the system-terms of the skills, of design-to-main and of the main-gatekeeper. We avoid spaces in directory and file names, using a hyphen, `-`, instead.
 
 - **stem**: a filename without its extension.
 - **suffix**, on this page: the last hyphen-separated part of the filename
