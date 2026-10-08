@@ -90,7 +90,8 @@ NED_BOX_SURFACES = {
 }
 KNOWN_HOST_HOMES = {NED_BOX_HOSTNAME: "/home/nedlern"}
 MAC_NOT_REACHABLE_FROM_NED_BOX = (
-    "no route from ned-box to the Mac is documented")
+    "a run on ned-box cannot search the Mac; "
+    "run the locator on the Mac, which searches both machines")
 
 STATUS_WORDS = {"A": "added", "M": "modified", "D": "deleted",
                 "T": "type changed"}
