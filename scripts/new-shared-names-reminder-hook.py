@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""After a write, edit or shell command, name the shared names the branch newly adds, once per agent-session."""
+"""After a write, edit or shell command, name the shared names the branch newly adds, once per worktree.
+
+The names already reported are kept in the worktree's own git directory, so a later
+agent-session of the same agent-seat is not told them again, while each other worktree keeps
+its own record. The content cache and the once-per-session failure reports stay per agent-session.
+"""
 # The hook never blocks: any failure leaves the agent's turn as it was, apart from one line saying the check failed.
 
 import hashlib
@@ -22,6 +27,7 @@ SESSION_ID_SAFE_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
 LISTER_PATH = Path(__file__).resolve().parent / "new-shared-names-in-changed-files-list.py"
 NAMING_PAGE_PATH = "docs/nedschorus-wiki/nedschorus-how-to-choose-a-name-for-files-code-and-glossary-terms.md"
 NAMING_FRESH_AGENT_NAME = "new-name-propose-and-check-fresh-agent"
+REPORTED_NAMES_FILE_NAME = "new-shared-names-reported.json"
 
 REMINDER_TEMPLATE = (
     "new-shared-names-reminder: your branch now adds these shared names, which other files "
@@ -68,7 +74,7 @@ def state_path_for(session_id: str) -> Path:
 
 
 def empty_state() -> dict:
-    return {"reported": [], "worktree_fingerprint": "", "file_cache": {}, "reported_failures": []}
+    return {"worktree_fingerprint": "", "file_cache": {}, "reported_failures": []}
 
 
 def read_state(session_id: str) -> dict:
@@ -87,6 +93,34 @@ def write_state(session_id: str, state: dict) -> None:
         temporary = state_path_for(session_id).with_suffix(".partial")
         temporary.write_text(json.dumps(state))
         temporary.replace(state_path_for(session_id))
+    except OSError:
+        pass
+
+
+def reported_names_path(checkout: Path):
+    """Return the worktree's record of reported names, in its own git directory, or None when git cannot answer."""
+    git_directory = git_output(["rev-parse", "--absolute-git-dir"], checkout)
+    if not git_directory or not git_directory.strip():
+        return None
+    return Path(git_directory.strip()) / REPORTED_NAMES_FILE_NAME
+
+
+def read_reported_names(record_path: Path) -> set:
+    try:
+        reported = json.loads(record_path.read_text())
+    except (OSError, ValueError):
+        return set()
+    if not isinstance(reported, list):
+        return set()
+    return {entry for entry in reported if isinstance(entry, str)}
+
+
+def write_reported_names(record_path: Path, reported: set) -> None:
+    # Two agent-sessions in one worktree are not the normal case; the last writer wins.
+    try:
+        temporary = record_path.with_name(record_path.name + ".partial")
+        temporary.write_text(json.dumps(sorted(reported)))
+        temporary.replace(record_path)
     except OSError:
         pass
 
@@ -199,11 +233,14 @@ def main() -> int:
         return 0
     checkout = Path(top_level.strip())
 
+    record_path = reported_names_path(checkout)
+    if record_path is None:
+        return 0
     state = read_state(session_id)
     fingerprint = worktree_fingerprint(checkout)
     if fingerprint is None:
         return 0
-    reported = set(state.get("reported", []))
+    reported = read_reported_names(record_path)
     messages = []
     try:
         new_branch = unreported_new_branch(checkout, reported)
@@ -232,7 +269,9 @@ def main() -> int:
     state["file_cache"] = file_cache
     # Only the names the reminder shows count as reported; the rest are shown by a later reminder.
     shown = names[:REMINDER_NAME_LIMIT]
-    state["reported"] = sorted(reported | {f"{kind}\t{name}" for _, kind, name in shown})
+    newly_reported = {f"{kind}\t{name}" for _, kind, name in shown}
+    if newly_reported - reported:
+        write_reported_names(record_path, reported | newly_reported)
     write_state(session_id, state)
     if names:
         messages.append(reminder_text(names))

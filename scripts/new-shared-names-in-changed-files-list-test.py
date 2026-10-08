@@ -477,7 +477,7 @@ def case_hook_shows_names_past_the_cap_later(root):
           and not shown_first & shown_second, f"{len(shown_first)} then {len(shown_second)}")
 
 
-def case_hook_reports_once_per_session(root):
+def case_hook_reports_once_per_worktree(root):
     clone = make_clone(root, BASE_MAIN_FILES)
     state_root = root / "state"
     state_root.mkdir()
@@ -489,9 +489,39 @@ def case_hook_reports_once_per_session(root):
     check("the hook names the naming fresh-agent", "new-name-propose-and-check-fresh-agent" in first)
     _, second = run_hook(clone, state_root, {"tool_name": "Edit", "tool_input": {"file_path": "beta.py"}})
     check("the same names are not reported twice in one agent-session", second == "", second)
-    _, other_session = run_hook(clone, state_root, {"tool_name": "Write", "session_id": "session-two",
+    git_directory = subprocess.run(["git", "rev-parse", "--absolute-git-dir"], cwd=str(clone), check=True,
+                                   capture_output=True, text=True).stdout.strip()
+    record = Path(git_directory) / "new-shared-names-reported.json"
+    check("the reported names are kept in the worktree's own git directory",
+          "python-function\tshared_helper" in json.loads(record.read_text()), str(record))
+    _, later_session = run_hook(clone, state_root, {"tool_name": "Write", "session_id": "session-two",
                                                      "tool_input": {"file_path": "beta.py"}})
-    check("another agent-session hears about them", "shared_helper" in other_session, other_session)
+    check("a later agent-session in the same worktree is not told the same names again",
+          later_session == "", later_session)
+    write(clone, "gamma.py", "import alpha\ndef second_helper():\n    return alpha.shared_helper()\n")
+    write(clone, "delta.py", "import gamma\ngamma.second_helper()\n")
+    _, later_new = run_hook(clone, state_root, {"tool_name": "Write", "session_id": "session-two",
+                                                 "tool_input": {"file_path": "delta.py"}})
+    check("the later agent-session is told only the names that are new to the worktree",
+          "second_helper" in later_new and "shared_helper (" not in later_new, later_new)
+
+
+def case_two_worktrees_keep_separate_records(root):
+    clone = make_clone(root, BASE_MAIN_FILES)
+    second = root / "second-worktree"
+    git(["worktree", "add", "-q", "-b", "second-worktree-topic", str(second)], clone)
+    state_root = root / "state"
+    state_root.mkdir()
+    for worktree in (clone, second):
+        write(worktree, "alpha.py", "def shared_helper():\n    return 1\n")
+        write(worktree, "beta.py", "import alpha\nalpha.shared_helper()\n")
+    _, first = run_hook(clone, state_root, {"tool_name": "Write", "session_id": "session-a",
+                                            "tool_input": {"file_path": "beta.py"}})
+    _, other = run_hook(second, state_root, {"tool_name": "Write", "session_id": "session-b",
+                                             "tool_input": {"file_path": "beta.py"}})
+    check("the first worktree is told its new function", "shared_helper" in first, first)
+    check("a second worktree of the same clone is told the same name, from its own record",
+          "shared_helper" in other, other)
 
 
 def case_hook_shell_commands(root):
@@ -561,7 +591,8 @@ def main() -> int:
              case_branch_check_failure_is_told_and_the_file_check_still_runs,
              case_remote_branch_lookup_failure_is_told_and_no_branch_reported,
              case_branch_check_failure_on_a_quiet_shell_call_is_told,
-             case_hook_reports_once_per_session, case_hook_shell_commands,
+             case_hook_reports_once_per_worktree, case_two_worktrees_keep_separate_records,
+             case_hook_shell_commands,
              case_hook_reports_failure_once, case_hook_ignores_other_input]
     for case in cases:
         with tempfile.TemporaryDirectory() as directory:
