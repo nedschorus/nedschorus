@@ -9,7 +9,8 @@ Every case runs the program against scratch directories named through
 LOCATE_USER_APPROVAL_PLAN_JSON, with the variables that redirect git removed
 first. `gh` and `ssh` are stand-ins on PATH that log
 their arguments and answer as each case asks; nothing reaches GitHub or
-ned-box. `git` is the real one, on a scratch repository.
+ned-box. `grep` on PATH passes through to the real grep, and can add a path
+that does not exist to its list. `git` is the real one, on a scratch repository.
 
 LOCATE_USER_APPROVAL_PROGRAM_UNDER_TEST names a different copy of the program
 to test.
@@ -21,6 +22,8 @@ import importlib.util
 import json
 import os
 import pathlib
+import shutil
+import socket
 import subprocess
 import sys
 import tempfile
@@ -61,6 +64,19 @@ if os.environ.get("FAKE_SSH_MODE", "ok") == "unreachable":
     sys.exit(255)
 sys.exit(subprocess.run(["sh", "-c", sys.argv[-1]]).returncode)
 """
+
+STAND_IN_GREP = """#!/usr/bin/env python3
+import os, subprocess, sys
+result = subprocess.run([os.environ["FAKE_REAL_GREP"], *sys.argv[1:]])
+extra = os.environ.get("FAKE_GREP_EXTRA_PATH")
+if extra and "-rliF" in sys.argv[1:]:
+    print(extra, flush=True)
+    sys.exit(0)
+sys.exit(result.returncode)
+"""
+
+REAL_GREP = shutil.which("grep")
+RUNNING_AS_ROOT = hasattr(os, "geteuid") and os.geteuid() == 0
 
 failures = []
 
@@ -127,7 +143,7 @@ class Scratch:
         git(self.repository, "commit", "-q", "--allow-empty", "-m", "Unrelated start")
         self.bin = self.base / "bin"
         self.bin.mkdir()
-        for name, text in (("gh", STAND_IN_GH), ("ssh", STAND_IN_SSH)):
+        for name, text in (("gh", STAND_IN_GH), ("ssh", STAND_IN_SSH), ("grep", STAND_IN_GREP)):
             path = self.bin / name
             path.write_text(text)
             path.chmod(0o755)
@@ -141,14 +157,17 @@ class Scratch:
                 "repository": str(self.repository),
                 "github_repository": "owner/repository"}
 
-    def run(self, *arguments, gh_mode="ok", gh_json="[]", ssh_mode="ok", plan=None):
+    def run(self, *arguments, gh_mode="ok", gh_json="[]", ssh_mode="ok", plan=None,
+            extra_environment=None):
         environment = clean_environment()
         environment.update({
+            "FAKE_REAL_GREP": REAL_GREP,
             "LOCATE_USER_APPROVAL_PLAN_JSON": json.dumps(plan or self.plan()),
             "PATH": f"{self.bin}{os.pathsep}{environment.get('PATH', '')}",
             "FAKE_GH_ARGV_LOG": str(self.gh_log), "FAKE_GH_MODE": gh_mode, "FAKE_GH_JSON": gh_json,
             "FAKE_SSH_ARGV_LOG": str(self.ssh_log), "FAKE_SSH_MODE": ssh_mode,
         })
+        environment.update(extra_environment or {})
         result = subprocess.run([sys.executable, str(PROGRAM), *arguments], capture_output=True,
                                 text=True, env=environment, timeout=120)
         return result
@@ -206,9 +225,14 @@ with scratch() as base:
     ])
     result = s.run("bwrap")
     _, body = section(result.stdout, f"agent-session transcripts in {s.transcripts}")
-    agent_lines = [line for line in body if line.strip().startswith("Agent:")]
-    check("of several matching agent messages before one answer, only the last is paired",
-          len(agent_lines) == 1 and "Second" in agent_lines[0], body)
+    stripped = [line.strip() for line in body]
+    second = next((index for index, line in enumerate(stripped)
+                   if line.startswith("Agent:") and "Second" in line), None)
+    first = next((index for index, line in enumerate(stripped)
+                  if line.startswith("Agent:") and "First" in line), None)
+    check("of several matching agent messages before one answer, the answer is paired with the last",
+          second is not None and stripped[second + 1] == "User:  yes go"
+          and first is not None and "agent wrote again" in stripped[first + 1], body)
 
 with scratch() as base:
     s = Scratch(base)
@@ -322,7 +346,7 @@ with scratch() as base:
         "| 1 | bwrap for suites that send signals | Y (\"y\") | accepted |\n"
         "| 2 | something unrelated | N | rejected |\n")
     (s.walk / "sandbox-choice-2026-10-04.md").write_text("bwrap in the walk-document, not minutes\n")
-    (s.walk / "old-walk-2026-09-01-minutes.md").write_text("bwrap ruled long ago\n")
+    (s.walk / "old-walk-2026-09-01-minutes.md").write_text("bwrap ruled long ago, 2026-09-01\n")
     result = s.run("bwrap")
     heading, body = section(result.stdout, f"walk-minutes in {s.walk}")
     check("a walk-minutes line holding the word is shown with its file, line and date",
@@ -378,15 +402,152 @@ with scratch() as base:
     check("pull requests are listed by title and link, newest first",
           0 < result.stdout.find("Newer PR about bwrap") < result.stdout.find("Older PR about bwrap")
           and "https://example.invalid/pull/2" in result.stdout, result.stdout)
-    check("any-word search asks GitHub for either word, since the date",
-          calls and calls[-1][-1] == "bwrap OR sandbox" and ">=2026-09-30" in calls[-1], calls)
+    check("any-word search gives gh each word as its own argument, with OR between, since the date",
+          calls and calls[-1][-4:] == ["--", "bwrap", "OR", "sandbox"] and ">=2026-09-30" in calls[-1],
+          calls)
     s.run("bwrap", "sandbox", "--all-words")
     calls = s.logged(s.gh_log)
-    check("--all-words asks GitHub for both words", calls[-1][-1] == "bwrap sandbox", calls)
+    check("--all-words gives gh each word as its own argument, so GitHub requires every word",
+          calls[-1][-3:] == ["--", "bwrap", "sandbox"], calls)
     failed = s.run("bwrap", gh_mode="fail")
     check("a failed GitHub search is named with gh's message and exits 1",
           failed.returncode == 1 and "NOT searched" in failed.stdout
           and "gh auth login" in failed.stdout, failed.stdout)
+
+# A matching agent message followed by another agent message before the user wrote.
+with scratch() as base:
+    s = Scratch(base)
+    write_transcript(s.transcripts, "agent-wrote-again", [
+        assistant("Status: the bwrap sandbox work is merged.", "2026-10-03T10:00:00Z"),
+        assistant("Shall I delete the stale branch old-thing?", "2026-10-03T10:00:01Z"),
+        user("y", "2026-10-03T10:00:02Z"),
+    ])
+    result = s.run("bwrap")
+    _, body = section(result.stdout, f"agent-session transcripts in {s.transcripts}")
+    check("a user's answer to a later agent message is not paired with an earlier matching one",
+          not any(line.strip() == "User:  y" for line in body)
+          and any("the agent wrote again before the user answered" in line for line in body), body)
+
+# grep cannot read part of a place.
+if not RUNNING_AS_ROOT:
+    with scratch() as base:
+        s = Scratch(base)
+        write_transcript(s.transcripts, "readable", [
+            assistant("Shall I build bwrap?", "2026-10-03T10:00:00Z"), user("readable-answer", "2026-10-03T10:00:01Z")])
+        locked = write_transcript(s.transcripts, "locked", [
+            assistant("Approve the bwrap change?", "2026-10-03T11:00:00Z"), user("approved", "2026-10-03T11:00:01Z")])
+        locked.chmod(0)
+        try:
+            result = s.run("bwrap")
+        finally:
+            locked.chmod(0o644)
+        check("an unreadable transcript beside a matching one: the match is kept, the place is searched "
+              "in part, the file is named, and the run exits 1",
+              result.returncode == 1 and "readable-answer" in result.stdout
+              and f"{s.transcripts} (in part)" in result.stdout and "locked.jsonl" in result.stdout,
+              result.stdout)
+
+    with scratch() as base:
+        s = Scratch(base)
+        (s.walk / "a-2026-10-01-minutes.md").write_text("bwrap approved y\n")
+        locked_minutes = s.walk / "b-2026-10-02-minutes.md"
+        locked_minutes.write_text("bwrap something\n")
+        locked_minutes.chmod(0)
+        try:
+            result = s.run("bwrap")
+        finally:
+            locked_minutes.chmod(0o644)
+        check("an unreadable walk-minutes file: the lines from readable files are kept, the place is "
+              "searched in part, the file is named, and the run exits 1",
+              result.returncode == 1 and "bwrap approved y" in result.stdout
+              and f"walk-minutes in {s.walk} (in part)" in result.stdout
+              and "b-2026-10-02-minutes.md" in result.stdout, result.stdout)
+else:
+    print("SKIP: unreadable-file cases: running as root, which reads a mode-000 file")
+
+# A transcript grep listed that the program then cannot open.
+with scratch() as base:
+    s = Scratch(base)
+    write_transcript(s.transcripts, "present", [
+        assistant("Shall I build bwrap?", "2026-10-03T10:00:00Z"), user("present-answer", "2026-10-03T10:00:01Z")])
+    vanished = s.transcripts / "-home-someone-project" / "vanished.jsonl"
+    result = s.run("bwrap", extra_environment={"FAKE_GREP_EXTRA_PATH": str(vanished)})
+    check("a transcript grep listed but the program cannot open is reported as not read, and exits 1",
+          result.returncode == 1 and "present-answer" in result.stdout
+          and "could not be read" in result.stdout and "vanished.jsonl" in result.stdout, result.stdout)
+
+# --since is read in UTC.
+with scratch() as base:
+    s = Scratch(base)
+    early = write_transcript(s.transcripts, "early-utc", [
+        assistant("Shall I build bwrap?", "2026-10-01T02:00:00Z"), user("early-answer", "2026-10-01T02:00:01Z")])
+    early_time = 1790820000  # 2026-10-01T02:00:00Z
+    os.utime(early, (early_time, early_time))
+    result = s.run("bwrap", "--since", "2026-10-01",
+                   extra_environment={"TZ": "America/Los_Angeles"})
+    check("--since keeps a transcript modified after midnight UTC on that date, whatever the local zone",
+          "early-answer" in result.stdout, result.stdout)
+
+with scratch() as base:
+    s = Scratch(base)
+    environment = clean_environment()
+    environment.update({"GIT_COMMITTER_DATE": "2026-10-01T00:30:00+0000",
+                        "GIT_AUTHOR_DATE": "2026-10-01T00:30:00+0000"})
+    subprocess.run(["git", "-C", str(s.repository), "commit", "-q", "--allow-empty", "-m",
+                    "Early bwrap commit"], check=True, env=environment)
+    result = s.run("bwrap", "--since", "2026-10-01")
+    check("--since keeps a commit made just after midnight UTC on that date",
+          "Early bwrap commit" in result.stdout, result.stdout)
+
+# Walk-minutes are dated by their lines, not by the file name.
+with scratch() as base:
+    s = Scratch(base)
+    (s.walk / "long-walk-2026-10-05-minutes.md").write_text(
+        "| 1 | bwrap item | Y (\"y\", 2026-10-07) | accepted |\n"
+        "| 2 | bwrap item without a date | Y | accepted |\n"
+        "| 3 | bwrap item from before | Y (\"y\", 2026-09-01) | accepted |\n")
+    result = s.run("bwrap", "--since", "2026-10-07")
+    check("--since keeps a walk-minutes ruling dated on or after it, in a file named for an earlier day",
+          "bwrap item | Y" in result.stdout, result.stdout)
+    check("--since keeps a walk-minutes line that carries no date",
+          "bwrap item without a date" in result.stdout, result.stdout)
+    check("--since leaves out a walk-minutes line dated before it",
+          "bwrap item from before" not in result.stdout, result.stdout)
+
+# Where the real run searches, on each machine.
+_program_spec = importlib.util.spec_from_file_location("locate_user_approval_under_test", PROGRAM)
+_program = importlib.util.module_from_spec(_program_spec)
+_program_spec.loader.exec_module(_program)
+_real_gethostname = socket.gethostname
+try:
+    _program.socket.gethostname = lambda: "ned-box"
+    ned_box_plan = _program.production_plan()
+    _program.socket.gethostname = lambda: "Neds-MacBook-Pro.local"
+    mac_plan = _program.production_plan()
+finally:
+    _program.socket.gethostname = _real_gethostname
+check("on ned-box the walk-minutes are read locally and the Mac's transcript copy is searched",
+      ned_box_plan["walk_minutes"]["ssh_target"] is None
+      and _program.MAC_TRANSCRIPTS_COPY_ON_NED_BOX in ned_box_plan["transcript_directories"],
+      ned_box_plan)
+mac_transcript_directories = [entry["directory"] if isinstance(entry, dict) else entry
+                              for entry in mac_plan["transcript_directories"]]
+check("on the Mac the walk-minutes are read over ssh, and ned-box's transcripts through the mount",
+      mac_plan["walk_minutes"]["ssh_target"] == "nedlern@ned-box"
+      and _program.MAC_TRANSCRIPTS_COPY_ON_NED_BOX not in mac_transcript_directories
+      and "/Volumes/nedhome/.claude/projects" in mac_transcript_directories, mac_plan)
+
+with scratch() as base:
+    s = Scratch(base)
+    plan = s.plan()
+    plan["transcript_directories"].append({"directory": str(s.base / "not-mounted"),
+                                           "label": "ned-box's agent-session transcripts, through the mount",
+                                           "remedy": "mount ned-box's home on the Mac"})
+    result = s.run("bwrap", plan=plan)
+    check("on the Mac, ned-box's transcripts when the mount is missing are named as not searched, "
+          "with the remedy, and the run exits 1",
+          result.returncode == 1 and "ned-box's agent-session transcripts, through the mount" in result.stdout
+          and "mount ned-box's home on the Mac" in result.stdout, result.stdout)
 
 # Bad invocations and missing places.
 with scratch() as base:

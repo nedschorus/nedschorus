@@ -7,19 +7,23 @@ searches, in parallel:
 
 - the walk-minutes in the log-store on ned-box, which record each question's
   subject beside the answer (over ssh when run on the Mac);
-- this machine's agent-session transcripts, and on ned-box also the copy of
-  the Mac's transcripts in the log-store;
+- this machine's agent-session transcripts; on ned-box also the copy of the
+  Mac's transcripts in the log-store, and on the Mac also ned-box's
+  transcripts through the Mac's mount of ned-box's home;
 - commit messages in this checkout, every ref;
 - pull requests on GitHub, with their comments.
 
 For a transcript it prints question-and-answer pairs: the agent's message that
-holds the words, then the user's next message, newest first. A word matches
+holds the words, then the user's next message, newest first. An answer is
+paired only with the agent message just before it. A word matches
 case-insensitively anywhere in a message. By default a message matches when it
 holds any of the words; --all-words requires every word in the same message or
-line. --since leaves out what is older than a date.
+line. --since leaves out what is older than a date, read in UTC; a
+walk-minutes line is dated by the latest date written in it, and a line with no
+date is kept.
 
 Exit codes: 0 every place was searched, whatever was found; 1 a place could
-not be searched; 2 bad invocation.
+not be searched, or was searched only in part; 2 bad invocation.
 """
 
 import argparse
@@ -49,6 +53,9 @@ SSH_OPTIONS = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=5"]
 SSH_EXIT_CONNECTION_FAILED = 255
 WALK_MINUTES_DIRECTORY = "/home/nedlern/nedschorus-logs/walk"
 MAC_TRANSCRIPTS_COPY_ON_NED_BOX = "/home/nedlern/nedschorus-logs/transcripts/mac/projects"
+NED_BOX_TRANSCRIPTS_THROUGH_MAC_MOUNT = "/Volumes/nedhome/.claude/projects"
+NED_BOX_MOUNT_REMEDY = ("mount ned-box's home on the Mac at /Volumes/nedhome (Finder: Go > Connect to "
+                        "Server), or run this program on ned-box, where those transcripts are local")
 GITHUB_REPOSITORY = "nedschorus/nedschorus"
 PLAN_ENVIRONMENT_VARIABLE = "LOCATE_USER_APPROVAL_PLAN_JSON"
 
@@ -57,7 +64,7 @@ SHOWN_PER_SECTION = 20
 GITHUB_RESULTS_FETCHED = 50
 EXCERPT_CHARACTERS = 300
 COMMAND_TIMEOUT_SECONDS = 300
-DATE_IN_NAME = re.compile(r"(\d{4}-\d{2}-\d{2})")
+DATE_PATTERN = re.compile(r"\d{4}-\d{2}-\d{2}")
 
 
 def production_plan() -> dict:
@@ -66,6 +73,11 @@ def production_plan() -> dict:
     transcripts = [str(Path.home() / ".claude" / "projects")]
     if on_ned_box:
         transcripts.append(MAC_TRANSCRIPTS_COPY_ON_NED_BOX)
+    else:
+        transcripts.append({"directory": NED_BOX_TRANSCRIPTS_THROUGH_MAC_MOUNT,
+                            "label": "ned-box's agent-session transcripts, through the Mac's mount at "
+                                     + NED_BOX_TRANSCRIPTS_THROUGH_MAC_MOUNT,
+                            "remedy": NED_BOX_MOUNT_REMEDY})
     return {
         "walk_minutes": {"directory": WALK_MINUTES_DIRECTORY,
                          "ssh_target": None if on_ned_box else NED_BOX_SSH_TARGET},
@@ -136,13 +148,19 @@ def dialog_with_timestamps(transcript_path: Path):
 def question_answer_pairs(turns, words, all_words: bool):
     """Pair each matching agent message with the user's next message.
 
-    When several agent messages before one user message match, the last one is
-    kept: it is the one the user answered.
+    The user's message answers only the agent message just before it. A
+    matching agent message followed by another agent message before the user
+    wrote is listed with no answer, because the user answered the later one.
     """
     pairs = []
     pending_question = None
     for turn in turns:
         if turn["voice"] == "assistant":
+            if pending_question is not None:
+                pairs.append({"question": excerpt_around_match(pending_question["text"], words),
+                              "answer": None, "no_answer_because": "agent-wrote-again",
+                              "timestamp": pending_question["timestamp"]})
+                pending_question = None
             if text_matches(turn["text"], words, all_words):
                 pending_question = turn
         elif pending_question is not None:
@@ -182,9 +200,22 @@ def word_arguments_for_grep(words):
     return arguments
 
 
-def date_in_name_or_none(path: str):
-    match = DATE_IN_NAME.search(Path(path).name)
-    return match.group(1) if match else None
+def latest_date_in(text: str):
+    dates = DATE_PATTERN.findall(text)
+    return max(dates) if dates else None
+
+
+def grep_unreadable_files(stderr: str):
+    """Return what grep's error lines name, one entry per line."""
+    return [line.removeprefix("grep: ").strip() for line in stderr.splitlines() if line.strip()]
+
+
+def in_part_failure(stderr: str) -> str:
+    unreadable = grep_unreadable_files(stderr)
+    if not unreadable:
+        return "searched only in part: grep exited 2 without naming what it could not read"
+    return (f"searched only in part: grep could not read {len(unreadable)} file(s): "
+            + "; ".join(unreadable[:5]) + (" …" if len(unreadable) > 5 else ""))
 
 
 def search_walk_minutes(plan, words, all_words, since):
@@ -205,7 +236,7 @@ def search_walk_minutes(plan, words, all_words, since):
     if ssh_target and result.returncode == SSH_EXIT_CONNECTION_FAILED:
         return {"place": label, "unreachable": True,
                 "failure": f"ssh {ssh_target} failed: {last_line(result.stderr)}", "items": []}
-    if result.returncode not in (0, 1):
+    if result.returncode not in (0, 1, 2):
         return {"place": label, "failure": f"grep exited {result.returncode}: {last_line(result.stderr)}",
                 "items": []}
     items = []
@@ -216,35 +247,52 @@ def search_walk_minutes(plan, words, all_words, since):
         path, line_number, text = parts
         if not text_matches(text, words, all_words):
             continue
-        date = date_in_name_or_none(path)
+        # A walk can run over several days, so the file name's date does not date its rulings.
+        date = latest_date_in(text)
         if since and date and date < since:
             continue
-        items.append({"sort_key": date or "", "line": f"{date or '(no date)'}  {path}:{line_number}: {excerpt_around_match(text, words)}"})
+        sort_date = date or latest_date_in(Path(path).name) or ""
+        items.append({"sort_key": sort_date,
+                      "line": f"{date or '(no date)'}  {path}:{line_number}: {excerpt_around_match(text, words)}"})
     items.sort(key=lambda item: item["sort_key"], reverse=True)
-    return {"place": label, "items": items}
+    place = {"place": label, "items": items}
+    if result.returncode == 2:
+        place["failure"] = in_part_failure(result.stderr)
+    return place
 
 
 def _shell_quote(text: str) -> str:
     return "'" + text.replace("'", "'\\''") + "'"
 
 
-def search_transcripts(directory, words, all_words, since):
-    """Return a place result for one directory of agent-session transcripts."""
-    label = f"agent-session transcripts in {directory}"
+def search_transcripts(entry, words, all_words, since):
+    """Return a place result for one directory of agent-session transcripts.
+
+    entry is a directory, or a dict with the directory, a label, and the
+    remedy to give when the directory is missing.
+    """
+    if isinstance(entry, dict):
+        directory = entry["directory"]
+        label = entry.get("label") or f"agent-session transcripts in {directory}"
+        remedy = entry.get("remedy")
+    else:
+        directory, label, remedy = entry, f"agent-session transcripts in {entry}", None
     if not Path(directory).is_dir():
-        return {"place": label, "failure": "the directory does not exist", "items": []}
+        place = {"place": label, "failure": f"{directory}: the directory does not exist", "items": []}
+        if remedy:
+            place["remedy"] = remedy
+        return place
     grep = ["grep", "-rliF", "--include=*.jsonl", *word_arguments_for_grep(words), directory]
     try:
         result = run_command(grep)
     except (OSError, subprocess.TimeoutExpired) as error:
         return {"place": label, "failure": f"could not run grep: {error}", "items": []}
-    # grep exits 2 for an unreadable file even when others matched.
-    if result.returncode not in (0, 1, 2) or (result.returncode == 2 and not result.stdout):
+    if result.returncode not in (0, 1, 2):
         return {"place": label, "failure": f"grep exited {result.returncode}: {last_line(result.stderr)}",
                 "items": []}
     paths = [path for path in result.stdout.splitlines() if path]
     if since:
-        since_start = datetime.datetime.fromisoformat(since).timestamp()
+        since_start = start_of_day_in_utc(since).timestamp()
         paths = [path for path in paths if _modified_at_or_after(path, since_start)]
     items, errors = [], []
     with concurrent.futures.ProcessPoolExecutor() as pool:
@@ -258,9 +306,18 @@ def search_transcripts(directory, words, all_words, since):
                 items.append({"sort_key": pair["timestamp"], "pair": pair, "path": path})
     items.sort(key=lambda item: item["sort_key"], reverse=True)
     place = {"place": label, "items": items}
+    problems = []
+    if result.returncode == 2:
+        problems.append(in_part_failure(result.stderr))
     if errors:
-        place["failure"] = f"{len(errors)} transcript(s) could not be read, first: {errors[0]}"
+        problems.append(f"{len(errors)} transcript(s) grep listed could not be read, first: {errors[0]}")
+    if problems:
+        place["failure"] = "; ".join(problems)
     return place
+
+
+def start_of_day_in_utc(date_text: str) -> datetime.datetime:
+    return datetime.datetime.fromisoformat(date_text).replace(tzinfo=datetime.timezone.utc)
 
 
 def _modified_at_or_after(path: str, start: float) -> bool:
@@ -280,7 +337,7 @@ def search_commit_messages(plan, words, all_words, since):
     if all_words:
         command.append("--all-match")
     if since:
-        command.append(f"--since={since}")
+        command.append(f"--since={since} 00:00:00 +0000")
     try:
         result = run_command(command)
     except (OSError, subprocess.TimeoutExpired) as error:
@@ -299,12 +356,18 @@ def search_commit_messages(plan, words, all_words, since):
 def search_pull_requests(plan, words, all_words, since):
     repository = plan["github_repository"]
     label = f"pull requests and their comments in {repository} on GitHub"
-    query = " ".join(words) if all_words else " OR ".join(words)
+    # One argument per word: gh quotes an argument holding a space, which would make
+    # GitHub search for the exact phrase. Words next to each other must all match; OR between them lets any match.
+    query_arguments = []
+    for index, word in enumerate(words):
+        if index and not all_words:
+            query_arguments.append("OR")
+        query_arguments.append(word)
     command = ["gh", "search", "prs", "--repo", repository, "--limit", str(GITHUB_RESULTS_FETCHED),
                "--json", "title,url,updatedAt"]
     if since:
         command += ["--updated", f">={since}"]
-    command += ["--", query]
+    command += ["--", *query_arguments]
     try:
         result = run_command(command)
     except (OSError, subprocess.TimeoutExpired) as error:
@@ -326,8 +389,8 @@ def search_pull_requests(plan, words, all_words, since):
 def run_searches(plan, words, all_words, since):
     """Run every place's search at once; return the place results in a fixed order."""
     searches = [lambda: search_walk_minutes(plan, words, all_words, since)]
-    searches += [(lambda directory=directory: search_transcripts(directory, words, all_words, since))
-                 for directory in plan["transcript_directories"]]
+    searches += [(lambda entry=entry: search_transcripts(entry, words, all_words, since))
+                 for entry in plan["transcript_directories"]]
     searches += [lambda: search_commit_messages(plan, words, all_words, since),
                  lambda: search_pull_requests(plan, words, all_words, since)]
     with concurrent.futures.ThreadPoolExecutor(max_workers=len(searches)) as pool:
@@ -338,7 +401,12 @@ def run_searches(plan, words, all_words, since):
 def render_item(item):
     if "pair" in item:
         pair = item["pair"]
-        answer = pair["answer"] if pair["answer"] is not None else "(no user message followed)"
+        if pair["answer"] is not None:
+            answer = pair["answer"]
+        elif pair.get("no_answer_because") == "agent-wrote-again":
+            answer = "(no reply: the agent wrote again before the user answered)"
+        else:
+            answer = "(no user message followed)"
         when = pair["timestamp"][:16].replace("T", " ") + " UTC" if pair["timestamp"] else "(no time)"
         return [f"  {when}  {item['path']}",
                 f"    Agent: {pair['question']}",
@@ -404,6 +472,8 @@ def render_report(places, words, all_words, since):
         else:
             instructions.append(f"Tell the user this place was not fully searched, and why: "
                                 f"{place['place']}: {place['failure']}.")
+            if place.get("remedy"):
+                instructions.append(f"Give the user this remedy: {place['remedy']}.")
     lines += ["", "What to do next:"] + [f"- {instruction}" for instruction in instructions]
     return "\n".join(lines) + "\n", (1 if failed else 0)
 
