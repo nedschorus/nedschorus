@@ -112,6 +112,11 @@ def tool_result(timestamp):
         {"type": "tool_result", "tool_use_id": "t1", "content": "y"}]}}
 
 
+def notification(text, timestamp):
+    return {"type": "user", "timestamp": timestamp, "message": {"role": "user", "content":
+            f"<task-notification>\n<summary>{text}</summary>\n</task-notification>"}}
+
+
 def queued_human(text, timestamp):
     return {"type": "attachment", "timestamp": timestamp, "attachment": {
         "type": "queued_command", "prompt": text, "origin": {"kind": "human"}}}
@@ -224,15 +229,16 @@ with scratch() as base:
         user("yes go", "2026-10-03T10:00:02Z"),
     ])
     result = s.run("bwrap")
-    _, body = section(result.stdout, f"agent-session transcripts in {s.transcripts}")
+    heading, body = section(result.stdout, f"agent-session transcripts in {s.transcripts}")
     stripped = [line.strip() for line in body]
-    second = next((index for index, line in enumerate(stripped)
-                   if line.startswith("Agent:") and "Second" in line), None)
-    first = next((index for index, line in enumerate(stripped)
-                  if line.startswith("Agent:") and "First" in line), None)
-    check("of several matching agent messages before one answer, the answer is paired with the last",
-          second is not None and stripped[second + 1] == "User:  yes go"
-          and first is not None and "agent wrote again" in stripped[first + 1], body)
+    check("several matching agent messages before one answer make one pair, shown with the last "
+          "and a count of the others",
+          heading is not None and "1 found" in heading
+          and any(line.startswith("Agent:") and "Second" in line for line in stripped)
+          and not any("First" in line for line in stripped)
+          and any("1 earlier matching agent message" in line for line in stripped)
+          and "User:  yes go" in stripped
+          and not any(line.startswith("User replied to:") for line in stripped), body)
 
 with scratch() as base:
     s = Scratch(base)
@@ -250,8 +256,55 @@ with scratch() as base:
         assistant("Shall I build bwrap?", "2026-10-03T10:00:00Z"),
     ])
     result = s.run("bwrap")
-    check("a matching question with no message after it is shown as unanswered",
-          "(no user message followed)" in result.stdout, result.stdout)
+    check("a matching question with no message after it is left out by default",
+          "Shall I build bwrap?" not in result.stdout and "(no user message followed)" not in result.stdout,
+          result.stdout)
+    included = s.run("bwrap", "--include-unanswered")
+    check("--include-unanswered lists a matching question with no message after it",
+          "Shall I build bwrap?" in included.stdout and "(no user message followed)" in included.stdout,
+          included.stdout)
+
+# A notification and the agent's acknowledgement of it between the question and the answer.
+with scratch() as base:
+    s = Scratch(base)
+    write_transcript(s.transcripts, "notification-between", [
+        assistant("Shall I build the bwrap sandbox? Y builds it.", "2026-10-03T10:00:00Z"),
+        notification("Agent \"fork\" finished", "2026-10-03T10:01:00Z"),
+        assistant("Still waiting on your answer about the sandbox.", "2026-10-03T10:01:05Z"),
+        user("y", "2026-10-03T10:02:00Z"),
+    ])
+    result = s.run("bwrap")
+    _, body = section(result.stdout, f"agent-session transcripts in {s.transcripts}")
+    stripped = [line.strip() for line in body]
+    check("a notification and the agent's acknowledgement of it do not separate a question from its answer",
+          any(line.startswith("Agent:") and "Shall I build the bwrap sandbox" in line for line in stripped)
+          and "User:  y" in stripped
+          and not any("Still waiting" in line for line in stripped), body)
+
+# A question already answered is not paired again with a later user message.
+with scratch() as base:
+    s = Scratch(base)
+    write_transcript(s.transcripts, "answered-once", [
+        assistant("Shall I build bwrap?", "2026-10-03T10:00:00Z"),
+        user("first-answer", "2026-10-03T10:00:01Z"),
+        assistant("Something unrelated.", "2026-10-03T10:00:02Z"),
+        user("second-answer", "2026-10-03T10:00:03Z"),
+    ])
+    result = s.run("bwrap", "--include-unanswered")
+    check("a question already answered is not paired again with a later user message",
+          "first-answer" in result.stdout and "second-answer" not in result.stdout, result.stdout)
+
+# Answered pairs are listed before unanswered ones.
+with scratch() as base:
+    s = Scratch(base)
+    write_transcript(s.transcripts, "answered-old", [
+        assistant("Shall I build bwrap? (old)", "2026-10-01T10:00:00Z"), user("old-yes", "2026-10-01T10:00:01Z")])
+    write_transcript(s.transcripts, "unanswered-new", [
+        assistant("Shall I keep bwrap? (new, never answered)", "2026-10-04T10:00:00Z")])
+    result = s.run("bwrap", "--include-unanswered")
+    output = result.stdout
+    check("answered pairs are listed before unanswered ones, even when older",
+          0 < output.find("old-yes") < output.find("never answered"), output)
 
 # --all-words and --since.
 with scratch() as base:
@@ -424,9 +477,13 @@ with scratch() as base:
     ])
     result = s.run("bwrap")
     _, body = section(result.stdout, f"agent-session transcripts in {s.transcripts}")
-    check("a user's answer to a later agent message is not paired with an earlier matching one",
-          not any(line.strip() == "User:  y" for line in body)
-          and any("the agent wrote again before the user answered" in line for line in body), body)
+    stripped = [line.strip() for line in body]
+    check("when the user's answer directly followed a different agent message, that message is shown "
+          "as what the user replied to",
+          any(line.startswith("Agent:") and "bwrap sandbox work is merged" in line for line in stripped)
+          and any(line.startswith("User replied to:") and "delete the stale branch" in line
+                  for line in stripped)
+          and "User:  y" in stripped, body)
 
 # grep cannot read part of a place.
 if not RUNNING_AS_ROOT:
@@ -532,22 +589,40 @@ check("on ned-box the walk-minutes are read locally and the Mac's transcript cop
       ned_box_plan)
 mac_transcript_directories = [entry["directory"] if isinstance(entry, dict) else entry
                               for entry in mac_plan["transcript_directories"]]
-check("on the Mac the walk-minutes are read over ssh, and ned-box's transcripts through the mount",
+mac_remote_entries = [entry for entry in mac_plan["transcript_directories"] if isinstance(entry, dict)]
+check("on the Mac the walk-minutes and ned-box's transcripts are read over ssh, never through the mount",
       mac_plan["walk_minutes"]["ssh_target"] == "nedlern@ned-box"
       and _program.MAC_TRANSCRIPTS_COPY_ON_NED_BOX not in mac_transcript_directories
-      and "/Volumes/nedhome/.claude/projects" in mac_transcript_directories, mac_plan)
+      and not any("/Volumes/" in directory for directory in mac_transcript_directories)
+      and len(mac_remote_entries) == 1
+      and mac_remote_entries[0]["directory"] == "/home/nedlern/.claude/projects"
+      and mac_remote_entries[0]["ssh_target"] == "nedlern@ned-box", mac_plan)
 
+# ned-box's transcripts searched over ssh from the Mac; the ssh stand-in runs the command here.
 with scratch() as base:
     s = Scratch(base)
+    remote = s.base / "remote-transcripts"
+    write_transcript(remote, "remote-session", [
+        assistant("Shall I build bwrap on the box?", "2026-10-03T10:00:00Z"),
+        notification("done", "2026-10-03T10:00:30Z"),
+        assistant("Noted.", "2026-10-03T10:00:31Z"),
+        user("remote-yes", "2026-10-03T10:01:00Z")])
     plan = s.plan()
-    plan["transcript_directories"].append({"directory": str(s.base / "not-mounted"),
-                                           "label": "ned-box's agent-session transcripts, through the mount",
-                                           "remedy": "mount ned-box's home on the Mac"})
+    plan["transcript_directories"].append({"directory": str(remote), "ssh_target": "nedlern@fake-box",
+                                           "label": "ned-box's agent-session transcripts, over ssh"})
     result = s.run("bwrap", plan=plan)
-    check("on the Mac, ned-box's transcripts when the mount is missing are named as not searched, "
-          "with the remedy, and the run exits 1",
-          result.returncode == 1 and "ned-box's agent-session transcripts, through the mount" in result.stdout
-          and "mount ned-box's home on the Mac" in result.stdout, result.stdout)
+    calls = s.logged(s.ssh_log)
+    check("on the Mac, ned-box's transcripts are searched over ssh and their pairs are shown",
+          result.returncode == 0 and "remote-yes" in result.stdout
+          and "ned-box's agent-session transcripts, over ssh" in result.stdout
+          and any(call and "nedlern@fake-box" in call and "ConnectTimeout=10" in call for call in calls),
+          (result.stdout, result.stderr, calls))
+    unreachable = s.run("bwrap", plan=plan, ssh_mode="unreachable")
+    check("an unreachable ned-box leaves its transcripts named as not searched, with the remedy, "
+          "and exits 1",
+          unreachable.returncode == 1
+          and "ned-box's agent-session transcripts, over ssh: ssh nedlern@fake-box failed" in unreachable.stdout
+          and "ssh nedlern@ned-box true" in unreachable.stdout, unreachable.stdout)
 
 # Bad invocations and missing places.
 with scratch() as base:

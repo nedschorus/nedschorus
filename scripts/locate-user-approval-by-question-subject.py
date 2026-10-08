@@ -9,13 +9,20 @@ searches, in parallel:
   subject beside the answer (over ssh when run on the Mac);
 - this machine's agent-session transcripts; on ned-box also the copy of the
   Mac's transcripts in the log-store, and on the Mac also ned-box's
-  transcripts through the Mac's mount of ned-box's home;
+  transcripts, over ssh, which has a time limit where a read through the Mac's
+  mount of ned-box's home has none;
 - commit messages in this checkout, every ref;
 - pull requests on GitHub, with their comments.
 
 For a transcript it prints question-and-answer pairs: the agent's message that
-holds the words, then the user's next message, newest first. An answer is
-paired only with the agent message just before it. A word matches
+holds the words, then the user's next message. Notifications, and the agent's
+short acknowledgements of them, are left out first, by the handoff extractor's
+rules. When the user's message directly followed a different agent message,
+that message is shown too, as what the user replied to, so the reader judges
+which question was answered. Several matching agent messages before one user
+message make one pair, shown with the last of them. Answered pairs come first,
+newest first; a matching message the user never answered is left out unless
+--include-unanswered is given. A word matches
 case-insensitively anywhere in a message. By default a message matches when it
 holds any of the words; --all-words requires every word in the same message or
 line. --since leaves out what is older than a date, read in UTC; a
@@ -36,28 +43,46 @@ import re
 import socket
 import subprocess
 import sys
+import types
 from pathlib import Path
 
 PROGRAM = "locate-user-approval-by-question-subject"
-REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
+EXTRACTOR_RELATIVE_PATH = Path("scripts") / "handoff-extract-conversation.py"
+# Run over ssh from stdin, the program has no file of its own, and the sender
+# prepends the extractor's source as EMBEDDED_EXTRACTOR_SOURCE.
+RUNNING_FROM_EMBEDDED_SOURCE = "EMBEDDED_EXTRACTOR_SOURCE" in globals()
+REPOSITORY_ROOT = (Path.cwd() if RUNNING_FROM_EMBEDDED_SOURCE
+                   else Path(__file__).resolve().parents[1])
 
-_extractor_spec = importlib.util.spec_from_file_location(
-    "handoff_extract_conversation",
-    REPOSITORY_ROOT / "scripts" / "handoff-extract-conversation.py")
-_extractor = importlib.util.module_from_spec(_extractor_spec)
-_extractor_spec.loader.exec_module(_extractor)
+
+def _load_extractor():
+    name = "handoff_extract_conversation"
+    if RUNNING_FROM_EMBEDDED_SOURCE:
+        module = types.ModuleType(name)
+        sys.modules[name] = module
+        exec(compile(globals()["EMBEDDED_EXTRACTOR_SOURCE"], str(EXTRACTOR_RELATIVE_PATH), "exec"),
+             module.__dict__)
+        return module
+    spec = importlib.util.spec_from_file_location(name, REPOSITORY_ROOT / EXTRACTOR_RELATIVE_PATH)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+_extractor = _load_extractor()
 
 NED_BOX_HOSTNAME = "ned-box"
 NED_BOX_SSH_TARGET = "nedlern@ned-box"
-SSH_OPTIONS = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=5"]
+SSH_OPTIONS = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=10"]
 SSH_EXIT_CONNECTION_FAILED = 255
 WALK_MINUTES_DIRECTORY = "/home/nedlern/nedschorus-logs/walk"
 MAC_TRANSCRIPTS_COPY_ON_NED_BOX = "/home/nedlern/nedschorus-logs/transcripts/mac/projects"
-NED_BOX_TRANSCRIPTS_THROUGH_MAC_MOUNT = "/Volumes/nedhome/.claude/projects"
-NED_BOX_MOUNT_REMEDY = ("mount ned-box's home on the Mac at /Volumes/nedhome (Finder: Go > Connect to "
-                        "Server), or run this program on ned-box, where those transcripts are local")
+NED_BOX_TRANSCRIPTS_DIRECTORY = "/home/nedlern/.claude/projects"
+NED_BOX_UNREACHABLE_REMEDY = (f"make sure ned-box is on and on the LAN, then check that "
+                              f"`ssh {NED_BOX_SSH_TARGET} true` succeeds")
 GITHUB_REPOSITORY = "nedschorus/nedschorus"
 PLAN_ENVIRONMENT_VARIABLE = "LOCATE_USER_APPROVAL_PLAN_JSON"
+THIS_MACHINE_TRANSCRIPTS_JSON_FLAG = "--this-machine-transcripts-json"
 
 MAXIMUM_WORDS = 3
 SHOWN_PER_SECTION = 20
@@ -74,10 +99,10 @@ def production_plan() -> dict:
     if on_ned_box:
         transcripts.append(MAC_TRANSCRIPTS_COPY_ON_NED_BOX)
     else:
-        transcripts.append({"directory": NED_BOX_TRANSCRIPTS_THROUGH_MAC_MOUNT,
-                            "label": "ned-box's agent-session transcripts, through the Mac's mount at "
-                                     + NED_BOX_TRANSCRIPTS_THROUGH_MAC_MOUNT,
-                            "remedy": NED_BOX_MOUNT_REMEDY})
+        transcripts.append({"directory": NED_BOX_TRANSCRIPTS_DIRECTORY,
+                            "ssh_target": NED_BOX_SSH_TARGET,
+                            "label": f"ned-box's agent-session transcripts in {NED_BOX_TRANSCRIPTS_DIRECTORY}, "
+                                     f"over ssh"})
     return {
         "walk_minutes": {"directory": WALK_MINUTES_DIRECTORY,
                          "ssh_target": None if on_ned_box else NED_BOX_SSH_TARGET},
@@ -119,58 +144,54 @@ def shortened(text: str) -> str:
 def dialog_with_timestamps(transcript_path: Path):
     """Return the transcript's dialog turns, each with voice, text and timestamp.
 
-    Turns are classified by the handoff extractor's rules, so injected
-    notices, tool results and subagent turns are not taken for the user.
+    The handoff extractor's rules leave out injected notices, tool results,
+    subagent turns, and the agent's short acknowledgements of notifications,
+    so neither a notification nor its acknowledgement stands between a
+    question and the user's answer.
     """
-    turns = []
-    with transcript_path.open("rb") as handle:
-        for raw_line in handle:
-            if len(raw_line) > _extractor.MAXIMUM_RECORD_BYTES:
-                continue
-            stripped = raw_line.strip()
-            if not stripped:
-                continue
-            try:
-                record = json.loads(stripped)
-            except (json.JSONDecodeError, UnicodeDecodeError):
-                continue
-            turn = _extractor.dialog_turn_from_record(record)
-            if turn is None:
-                continue
-            if turn["voice"] == "user" and turn["text"].startswith(
-                    _extractor.INJECTED_TEXT_PREFIXES):
-                continue
-            turn["timestamp"] = record.get("timestamp") or ""
-            turns.append(turn)
+    turns, _ = _extractor.read_dialog_turns(transcript_path)
     return turns
 
 
-def question_answer_pairs(turns, words, all_words: bool):
-    """Pair each matching agent message with the user's next message.
+def tail_excerpt(text: str) -> str:
+    """Return the end of a message, where an agent's question usually sits."""
+    flat = " ".join(text.split())
+    return flat if len(flat) <= EXCERPT_CHARACTERS else "…" + flat[-EXCERPT_CHARACTERS:]
 
-    The user's message answers only the agent message just before it. A
-    matching agent message followed by another agent message before the user
-    wrote is listed with no answer, because the user answered the later one.
+
+def question_answer_pairs(turns, words, all_words: bool):
+    """Pair matching agent messages with the user's next message.
+
+    Matching agent messages before one user message make one pair, shown with
+    the last of them and a count of the others. When the user's message
+    directly followed a different agent message, that message is kept as
+    replied_to. Matching messages that no user message follows make one pair
+    with no answer.
     """
     pairs = []
-    pending_question = None
-    for turn in turns:
+    pending = []
+    for index, turn in enumerate(turns):
         if turn["voice"] == "assistant":
-            if pending_question is not None:
-                pairs.append({"question": excerpt_around_match(pending_question["text"], words),
-                              "answer": None, "no_answer_because": "agent-wrote-again",
-                              "timestamp": pending_question["timestamp"]})
-                pending_question = None
             if text_matches(turn["text"], words, all_words):
-                pending_question = turn
-        elif pending_question is not None:
-            pairs.append({"question": excerpt_around_match(pending_question["text"], words),
-                          "answer": shortened(turn["text"]),
-                          "timestamp": turn["timestamp"]})
-            pending_question = None
-    if pending_question is not None:
-        pairs.append({"question": excerpt_around_match(pending_question["text"], words),
-                      "answer": None, "timestamp": pending_question["timestamp"]})
+                pending.append(index)
+            continue
+        if not pending:
+            continue
+        question_index = pending[-1]
+        previous = turns[index - 1]
+        replied_to = (tail_excerpt(previous["text"])
+                      if previous["voice"] == "assistant" and index - 1 != question_index else None)
+        pairs.append({"question": excerpt_around_match(turns[question_index]["text"], words),
+                      "earlier_matching": len(pending) - 1,
+                      "replied_to": replied_to,
+                      "answer": shortened(turn["text"]),
+                      "timestamp": turn.get("timestamp", "")})
+        pending = []
+    if pending:
+        last = turns[pending[-1]]
+        pairs.append({"question": excerpt_around_match(last["text"], words),
+                      "earlier_matching": len(pending) - 1, "replied_to": None,
+                      "answer": None, "timestamp": last.get("timestamp", "")})
     return pairs
 
 
@@ -265,23 +286,22 @@ def _shell_quote(text: str) -> str:
     return "'" + text.replace("'", "'\\''") + "'"
 
 
-def search_transcripts(entry, words, all_words, since):
+def search_transcripts(entry, words, all_words, since, include_unanswered=False):
     """Return a place result for one directory of agent-session transcripts.
 
-    entry is a directory, or a dict with the directory, a label, and the
-    remedy to give when the directory is missing.
+    entry is a directory, or a dict with the directory, a label, and, for
+    another machine's transcripts, the ssh target to search them through.
     """
     if isinstance(entry, dict):
         directory = entry["directory"]
         label = entry.get("label") or f"agent-session transcripts in {directory}"
-        remedy = entry.get("remedy")
+        if entry.get("ssh_target"):
+            return search_transcripts_over_ssh(entry["ssh_target"], directory, label, words,
+                                               all_words, since, include_unanswered)
     else:
-        directory, label, remedy = entry, f"agent-session transcripts in {entry}", None
+        directory, label = entry, f"agent-session transcripts in {entry}"
     if not Path(directory).is_dir():
-        place = {"place": label, "failure": f"{directory}: the directory does not exist", "items": []}
-        if remedy:
-            place["remedy"] = remedy
-        return place
+        return {"place": label, "failure": f"{directory}: the directory does not exist", "items": []}
     grep = ["grep", "-rliF", "--include=*.jsonl", *word_arguments_for_grep(words), directory]
     try:
         result = run_command(grep)
@@ -295,16 +315,24 @@ def search_transcripts(entry, words, all_words, since):
         since_start = start_of_day_in_utc(since).timestamp()
         paths = [path for path in paths if _modified_at_or_after(path, since_start)]
     items, errors = [], []
-    with concurrent.futures.ProcessPoolExecutor() as pool:
+    # Worker processes cannot import a program that arrived on stdin.
+    pool_class = (concurrent.futures.ThreadPoolExecutor if RUNNING_FROM_EMBEDDED_SOURCE
+                  else concurrent.futures.ProcessPoolExecutor)
+    with pool_class() as pool:
         for path, pairs, error in pool.map(pairs_in_transcript,
                                            [(path, list(words), all_words) for path in paths]):
             if error:
                 errors.append(error)
             for pair in pairs:
+                if pair["answer"] is None and not include_unanswered:
+                    continue
                 if since and pair["timestamp"] and pair["timestamp"][:10] < since:
                     continue
-                items.append({"sort_key": pair["timestamp"], "pair": pair, "path": path})
+                items.append({"sort_key": (pair["answer"] is not None, pair["timestamp"]),
+                              "pair": pair, "path": path})
     items.sort(key=lambda item: item["sort_key"], reverse=True)
+    for item in items:
+        item["sort_key"] = item["pair"]["timestamp"]
     place = {"place": label, "items": items}
     problems = []
     if result.returncode == 2:
@@ -313,6 +341,42 @@ def search_transcripts(entry, words, all_words, since):
         problems.append(f"{len(errors)} transcript(s) grep listed could not be read, first: {errors[0]}")
     if problems:
         place["failure"] = "; ".join(problems)
+    return place
+
+
+def program_text_for_ssh() -> str:
+    """Return this program's source with the extractor's source in front, to run from stdin."""
+    extractor_source = (REPOSITORY_ROOT / EXTRACTOR_RELATIVE_PATH).read_text()
+    program_source = Path(__file__).read_text()
+    return f"EMBEDDED_EXTRACTOR_SOURCE = {extractor_source!r}\n" + program_source
+
+
+def search_transcripts_over_ssh(ssh_target, directory, label, words, all_words, since,
+                                include_unanswered):
+    """Run this program's transcript search on the other machine, through ssh."""
+    request = json.dumps({"directory": directory, "label": label, "words": list(words),
+                          "all_words": all_words, "since": since,
+                          "include_unanswered": include_unanswered})
+    remote_command = f"python3 - {THIS_MACHINE_TRANSCRIPTS_JSON_FLAG} {_shell_quote(request)}"
+    try:
+        result = subprocess.run(["ssh", *SSH_OPTIONS, ssh_target, remote_command],
+                                input=program_text_for_ssh(), capture_output=True, text=True,
+                                timeout=COMMAND_TIMEOUT_SECONDS)
+    except subprocess.TimeoutExpired:
+        return {"place": label, "unreachable": True, "items": [],
+                "failure": f"ssh {ssh_target} did not finish within {COMMAND_TIMEOUT_SECONDS} s"}
+    except OSError as error:
+        return {"place": label, "failure": f"could not run ssh: {error}", "items": []}
+    if result.returncode == SSH_EXIT_CONNECTION_FAILED:
+        return {"place": label, "unreachable": True, "items": [],
+                "failure": f"ssh {ssh_target} failed: {last_line(result.stderr)}"}
+    try:
+        place = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        return {"place": label, "items": [],
+                "failure": f"the search on {ssh_target} exited {result.returncode} without a result: "
+                           f"{last_line(result.stderr)}"}
+    place["place"] = label
     return place
 
 
@@ -386,10 +450,11 @@ def search_pull_requests(plan, words, all_words, since):
     return {"place": label, "items": items}
 
 
-def run_searches(plan, words, all_words, since):
+def run_searches(plan, words, all_words, since, include_unanswered=False):
     """Run every place's search at once; return the place results in a fixed order."""
     searches = [lambda: search_walk_minutes(plan, words, all_words, since)]
-    searches += [(lambda entry=entry: search_transcripts(entry, words, all_words, since))
+    searches += [(lambda entry=entry: search_transcripts(entry, words, all_words, since,
+                                                         include_unanswered))
                  for entry in plan["transcript_directories"]]
     searches += [lambda: search_commit_messages(plan, words, all_words, since),
                  lambda: search_pull_requests(plan, words, all_words, since)]
@@ -401,16 +466,17 @@ def run_searches(plan, words, all_words, since):
 def render_item(item):
     if "pair" in item:
         pair = item["pair"]
-        if pair["answer"] is not None:
-            answer = pair["answer"]
-        elif pair.get("no_answer_because") == "agent-wrote-again":
-            answer = "(no reply: the agent wrote again before the user answered)"
-        else:
-            answer = "(no user message followed)"
+        answer = pair["answer"] if pair["answer"] is not None else "(no user message followed)"
         when = pair["timestamp"][:16].replace("T", " ") + " UTC" if pair["timestamp"] else "(no time)"
-        return [f"  {when}  {item['path']}",
-                f"    Agent: {pair['question']}",
-                f"    User:  {answer}"]
+        lines = [f"  {when}  {item['path']}",
+                 f"    Agent: {pair['question']}"]
+        if pair.get("earlier_matching"):
+            lines.append(f"    ({pair['earlier_matching']} earlier matching agent message(s) "
+                         f"before the same user message not shown)")
+        if pair.get("replied_to"):
+            lines.append(f"    User replied to: {pair['replied_to']}")
+        lines.append(f"    User:  {answer}")
+        return lines
     return [f"  {item['line']}"]
 
 
@@ -425,7 +491,9 @@ def render_report(places, words, all_words, since):
         if not place["items"]:
             continue
         shown = place["items"][:SHOWN_PER_SECTION]
-        lines += ["", f"{place['place']}: {len(place['items'])} found, newest first"
+        lines += ["", f"{place['place']}: {len(place['items'])} found, "
+                  + ("answered first, newest first" if any("pair" in item for item in place["items"])
+                     else "newest first")
                   + (f", showing {SHOWN_PER_SECTION}" if len(place["items"]) > SHOWN_PER_SECTION else "")
                   + ":"]
         for item in shown:
@@ -459,15 +527,16 @@ def render_report(places, words, all_words, since):
         ]
     if total:
         instructions += [
-            "Read each pair: the User line is the answer to the Agent line above it. "
-            "Report the answer with its date and transcript, walk-minutes, commit or pull request.",
+            "Read each pair: the User line answers the \"User replied to\" line when there is one, "
+            "and otherwise the Agent line. Judge from the Agent line whether that was the question "
+            "about this subject. Report the answer with its date and transcript, walk-minutes, "
+            "commit or pull request.",
         ]
     for place in failed:
         if place.get("unreachable"):
             instructions += [
-                f"Tell the user the walk-minutes on ned-box were not searched: {place['failure']}.",
-                f"Give the user this remedy: make sure ned-box is on and on the LAN, then check "
-                f"that `ssh {NED_BOX_SSH_TARGET} true` succeeds.",
+                f"Tell the user this place on ned-box was not searched: {place['place']}: {place['failure']}.",
+                f"Give the user this remedy: {NED_BOX_UNREACHABLE_REMEDY}.",
             ]
         else:
             instructions.append(f"Tell the user this place was not fully searched, and why: "
@@ -491,21 +560,36 @@ def main(argv=None) -> int:
         prog=PROGRAM,
         description="Find where the user answered a question about a subject: walk-minutes, "
                     "agent-session transcripts, commit messages and pull requests, searched in parallel.")
-    parser.add_argument("words", nargs="+",
+    parser.add_argument("words", nargs="*",
                         help=f"one to {MAXIMUM_WORDS} words for the subject of the question, "
                              "such as a program's or file's name")
     parser.add_argument("--all-words", action="store_true",
                         help="require every word in the same message or line")
     parser.add_argument("--since", type=valid_date, metavar="YYYY-MM-DD",
                         help="leave out what is older than this date")
+    parser.add_argument("--include-unanswered", action="store_true",
+                        help="also list matching agent messages that no user message followed")
+    parser.add_argument(THIS_MACHINE_TRANSCRIPTS_JSON_FLAG, metavar="REQUEST_JSON",
+                        help="search this machine's transcripts and print the result as JSON: "
+                             "what the program runs on the other machine over ssh")
     arguments = parser.parse_args(argv)
+    if arguments.this_machine_transcripts_json:
+        request = json.loads(arguments.this_machine_transcripts_json)
+        place = search_transcripts({"directory": request["directory"], "label": request["label"]},
+                                   request["words"], request["all_words"], request["since"],
+                                   request["include_unanswered"])
+        sys.stdout.write(json.dumps(place))
+        return 0
+    if not arguments.words:
+        parser.error("give one to three words for the subject of the question")
     if len(arguments.words) > MAXIMUM_WORDS:
         parser.error(f"give at most {MAXIMUM_WORDS} words; more words widen the search "
                      "unless --all-words is given")
     words = [word for word in arguments.words if word.strip()]
     if not words:
         parser.error("give at least one word that is not blank")
-    places = run_searches(plan_for_this_run(), words, arguments.all_words, arguments.since)
+    places = run_searches(plan_for_this_run(), words, arguments.all_words, arguments.since,
+                          arguments.include_unanswered)
     report, exit_code = render_report(places, words, arguments.all_words, arguments.since)
     sys.stdout.write(report)
     return exit_code

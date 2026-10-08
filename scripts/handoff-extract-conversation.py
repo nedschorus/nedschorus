@@ -109,7 +109,10 @@ def find_transcript_path(session_id: str, working_directory: Path) -> Path:
 
 
 def read_dialog_turns(transcript_path: Path):
-    """Return (turns, skip_counts), counting malformed and oversized records as skipped."""
+    """Return (turns, skip_counts), counting malformed and oversized records as skipped.
+
+    Each turn holds its voice, its text and its record's timestamp ("" when the record has none).
+    """
     # The writer may still be exiting, leaving a partial final record.
     turns = []
     skip_counts = {
@@ -151,6 +154,7 @@ def read_dialog_turns(transcript_path: Path):
             if record_shows_tool_activity(record):
                 following_injected_record = False
             continue
+        turn["timestamp"] = record.get("timestamp") or ""
 
         if turn["voice"] == "user":
             if turn["text"].startswith(INJECTED_TEXT_PREFIXES):
