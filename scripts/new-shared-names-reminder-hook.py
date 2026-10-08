@@ -109,12 +109,44 @@ def worktree_fingerprint(checkout: Path):
     return hashlib.sha256("\n".join(parts).encode()).hexdigest()
 
 
-def local_branch_names(checkout: Path):
-    """Return the set of local branch names, or None when git cannot answer."""
-    listing = git_output(["for-each-ref", "--format=%(refname:short)", "refs/heads"], checkout)
-    if listing is None:
+class BranchCheckFailure(Exception):
+    pass
+
+
+def unreported_new_branch(checkout: Path, reported) -> str:
+    """Return this worktree's branch when origin lacks it and it is not yet reported, else "".
+
+    Only this worktree's own branch is considered: other worktrees of the same clone share
+    refs/heads, and their branches belong to other agents.
+    """
+    try:
+        finished = subprocess.run(["git", "symbolic-ref", "--short", "-q", "HEAD"], cwd=str(checkout),
+                                  capture_output=True, text=True, check=False,
+                                  timeout=GIT_CALL_TIMEOUT_SECONDS)
+    except subprocess.TimeoutExpired as error:
+        raise BranchCheckFailure("git symbolic-ref timed out") from error
+    except OSError as error:
+        raise BranchCheckFailure("git symbolic-ref could not start") from error
+    if finished.returncode == 1:
+        return ""
+    if finished.returncode != 0:
+        first_line = (finished.stderr.strip().splitlines() or [""])[0][:200]
+        raise BranchCheckFailure(f"git symbolic-ref exited {finished.returncode}: {first_line}")
+    branch = finished.stdout.strip()
+    if not branch or f"branch\t{branch}" in reported:
+        return ""
+    if git_output(["rev-parse", "--verify", "-q", f"refs/remotes/origin/{branch}"], checkout) is not None:
+        return ""
+    return branch
+
+
+def failure_report_once(state: dict, error: str):
+    """Return the failure text the first time this error is seen in the agent-session, else None."""
+    failures = set(state.get("reported_failures", []))
+    if error in failures:
         return None
-    return {line for line in listing.splitlines() if line}
+    state["reported_failures"] = sorted(failures | {error})
+    return FAILURE_TEMPLATE.format(error=error, page=NAMING_PAGE_PATH)
 
 
 def reminder_text(new_names) -> str:
@@ -158,46 +190,43 @@ def main() -> int:
 
     state = read_state(session_id)
     fingerprint = worktree_fingerprint(checkout)
-    branches_now = local_branch_names(checkout)
-    if fingerprint is None or branches_now is None:
+    if fingerprint is None:
         return 0
-    # Branches are compared with the set seen at the previous run; the first run of an agent-session only records it.
-    branches_before = state.get("local_branches")
-    new_branches = sorted(branches_now - set(branches_before)) if isinstance(branches_before, list) else []
-    state["local_branches"] = sorted(branches_now)
-    # A shell command that changed no file and made no branch has nothing new to list.
-    if (tool_name == SHELL_TOOL_NAME and not new_branches
+    reported = set(state.get("reported", []))
+    messages = []
+    try:
+        new_branch = unreported_new_branch(checkout, reported)
+    except BranchCheckFailure as failure:
+        new_branch = ""
+        failure_text = failure_report_once(state, str(failure))
+        if failure_text:
+            messages.append(failure_text)
+    # A shell command that changed no file and left no new branch has nothing new to list.
+    if (tool_name == SHELL_TOOL_NAME and not new_branch and not messages
             and fingerprint == state.get("worktree_fingerprint")):
-        write_state(session_id, state)
         return 0
     state["worktree_fingerprint"] = fingerprint
 
-    reported = set(state.get("reported", []))
     file_cache = state.get("file_cache") if isinstance(state.get("file_cache"), dict) else {}
+    names = []
     try:
         lister = load_lister()
-        names = lister.new_shared_names(checkout, new_branches, already_reported=frozenset(reported),
-                                        file_cache=file_cache)
+        names = lister.new_shared_names(checkout, [new_branch] if new_branch else [],
+                                        already_reported=frozenset(reported), file_cache=file_cache)
     except Exception as failure:
-        error = str(failure) or type(failure).__name__
-        failures = set(state.get("reported_failures", []))
-        state["file_cache"] = file_cache
-        if error not in failures:
-            state["reported_failures"] = sorted(failures | {error})
-            write_state(session_id, state)
-            emit(FAILURE_TEMPLATE.format(error=error, page=NAMING_PAGE_PATH))
-        else:
-            write_state(session_id, state)
-        return 0
+        failure_text = failure_report_once(state, str(failure) or type(failure).__name__)
+        if failure_text:
+            messages.append(failure_text)
 
     state["file_cache"] = file_cache
     # Only the names the reminder shows count as reported; the rest are shown by a later reminder.
     shown = names[:REMINDER_NAME_LIMIT]
     state["reported"] = sorted(reported | {f"{kind}\t{name}" for _, kind, name in shown})
     write_state(session_id, state)
-    if not names:
-        return 0
-    emit(reminder_text(names))
+    if names:
+        messages.append(reminder_text(names))
+    if messages:
+        emit("\n\n".join(messages))
     return 0
 
 

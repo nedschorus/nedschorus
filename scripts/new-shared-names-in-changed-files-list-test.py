@@ -11,6 +11,7 @@ lister is shown able to report before any case asserts that it stays silent.
 """
 
 import importlib.util
+import io
 import json
 import os
 import re
@@ -292,23 +293,28 @@ def case_file_only_main_has_counts_as_on_main(root):
     check("a path main has only as a file is not listed", "tools/quiet-tool-file.py" not in names, str(listed))
 
 
-def case_hook_reports_branches_git_shows_as_new(root):
+def state_file_bytes(state_root: Path, session_id: str) -> bytes:
+    return (state_root / "new-shared-names-reminder-hook-state" / f"{session_id}.json").read_bytes()
+
+
+def case_hook_reports_this_worktrees_new_branch(root):
     clone = make_clone(root, BASE_MAIN_FILES)
     state_root = root / "state"
     state_root.mkdir()
-    subprocess.run(["git", "branch", "pre-session-topic"], cwd=str(clone), check=True, capture_output=True)
-    _, first = run_hook(clone, state_root, {"tool_name": "Bash", "tool_input": {"command": "ls"}})
-    check("the first run of an agent-session reports no branch", "(branch)" not in first, first)
+    _, first = run_hook(clone, state_root, {"tool_name": "Bash", "tool_input": {"command": "git switch -c topic"}})
+    check("a branch made by the first hooked call of an agent-session is reported",
+          "  topic (branch)" in first, first)
+    before = state_file_bytes(state_root, "session-one")
+    _, quiet = run_hook(clone, state_root, {"tool_name": "Bash", "tool_input": {"command": "ls"}})
+    check("a shell command that changed nothing is silent", quiet == "", quiet)
+    check("a shell command that changed nothing leaves the state file as it was",
+          state_file_bytes(state_root, "session-one") == before)
     commands = {
-        "git branch plain-topic": "plain-topic",
-        "git branch | grep plain": None,
-        "git branch piped-topic | cat": "piped-topic",
-        "git branch redirected-topic > /dev/null 2>&1": "redirected-topic",
-        "git branch commented-topic # a comment": "commented-topic",
-        "env -u GH_TOKEN git branch env-topic": "env-topic",
-        "git -c user.name='A;B' branch quoted-option-topic": "quoted-option-topic",
-        "git worktree add -q -b worktree-topic ../worktree-elsewhere": "worktree-topic",
-        "echo 'git branch echoed-topic'": None,
+        "git branch side-topic": None,
+        "env -u GH_TOKEN git switch -q -c env-switched-topic": "env-switched-topic",
+        "git checkout -q --detach": None,
+        "git checkout -q main": None,
+        "git -c user.name='A;B' checkout -q -b quoted-option-topic 2>&1 | cat": "quoted-option-topic",
     }
     for command, branch in commands.items():
         subprocess.run(command, shell=True, cwd=str(clone), capture_output=True)
@@ -316,8 +322,55 @@ def case_hook_reports_branches_git_shows_as_new(root):
         reported = set(re.findall(r"^  (\S+) \(branch\)", context, re.M))
         expected = {branch} if branch else set()
         check(f"after {command!r} the hook reports {expected or 'no branch'}", reported == expected, context)
-    _, later = run_hook(clone, state_root, {"tool_name": "Bash", "tool_input": {"command": "ls"}})
-    check("a branch that existed before the agent-session is never reported", "pre-session-topic" not in later, later)
+
+
+def case_two_worktrees_each_report_their_own_branch(root):
+    clone = make_clone(root, BASE_MAIN_FILES)
+    second = root / "second-worktree"
+    git(["worktree", "add", "-q", "-b", "second-worktree-topic", str(second)], clone)
+    state_root = root / "state"
+    state_root.mkdir()
+    _, first = run_hook(clone, state_root, {"tool_name": "Bash", "session_id": "session-a",
+                                            "tool_input": {"command": "ls"}})
+    _, other = run_hook(second, state_root, {"tool_name": "Bash", "session_id": "session-b",
+                                             "tool_input": {"command": "ls"}})
+    check("the first worktree's agent-session reports only its own branch",
+          set(re.findall(r"^  (\S+) \(branch\)", first, re.M)) == {"topic"}, first)
+    check("the second worktree's agent-session reports only its own branch",
+          set(re.findall(r"^  (\S+) \(branch\)", other, re.M)) == {"second-worktree-topic"}, other)
+
+
+def case_branch_check_failure_is_told_and_the_file_check_still_runs(root):
+    clone = make_clone(root, BASE_MAIN_FILES)
+    write(clone, "after-failure.md", "A `still-checked-name` here.\n")
+    hook = load_module("hook_for_branch_failure_case", HOOK_PATH)
+    hook.STATE_DIRECTORY = root / "state"
+    real_run = subprocess.run
+
+    def symbolic_ref_fails(arguments, **options):
+        if arguments[:2] == ["git", "symbolic-ref"]:
+            return subprocess.CompletedProcess(arguments, 128, "", "fatal: planted failure\n")
+        return real_run(arguments, **options)
+    payload = json.dumps({"tool_name": "Write", "session_id": "session-one", "cwd": str(clone),
+                          "tool_input": {"file_path": "after-failure.md"}})
+    hook.subprocess.run = symbolic_ref_fails
+    # The lister the hook loads keeps its token cache under the temporary directory; keep it inside this case.
+    original_tempdir = tempfile.tempdir
+    (root / "tmp").mkdir()
+    tempfile.tempdir = str(root / "tmp")
+    original_stdin, original_stdout = sys.stdin, sys.stdout
+    sys.stdin, sys.stdout = io.StringIO(payload), io.StringIO()
+    try:
+        code = hook.main()
+        output = sys.stdout.getvalue()
+    finally:
+        sys.stdin, sys.stdout = original_stdin, original_stdout
+        hook.subprocess.run = real_run
+        tempfile.tempdir = original_tempdir
+    context = json.loads(output)["hookSpecificOutput"]["additionalContext"] if output.strip() else ""
+    check("a failing branch check exits 0", code == 0)
+    check("a failing branch check is told to the agent", "git symbolic-ref exited 128" in context, context)
+    check("the file-name check still runs after a failing branch check", "still-checked-name" in context, context)
 
 
 def case_reminder_is_capped():
@@ -365,8 +418,9 @@ def case_hook_shows_names_past_the_cap_later(root):
     write(clone, "many.md", "".join(f"Name `capped-name-{index:02d}` here.\n" for index in range(35)))
     _, first = run_hook(clone, state_root, {"tool_name": "Write", "tool_input": {"file_path": "many.md"}})
     shown_first = set(re.findall(r"capped-name-\d\d", first))
-    check("the first reminder shows 30 names: the new file path, then 29 of the 35 backquoted names",
-          len(shown_first) == 29 and "many.md (file-path)" in first, str(len(shown_first)))
+    check("the first reminder shows 30 names: the new branch, the new file path, then 28 of the 35 backquoted names",
+          len(shown_first) == 28 and "topic (branch)" in first and "many.md (file-path)" in first,
+          str(len(shown_first)))
     _, second = run_hook(clone, state_root, {"tool_name": "Edit", "tool_input": {"file_path": "many.md"}})
     shown_second = set(re.findall(r"capped-name-\d\d", second))
     check("the next reminder shows the names past the cap",
@@ -397,7 +451,7 @@ def case_hook_shell_commands(root):
     state_root.mkdir()
     run_hook(clone, state_root, {"tool_name": "Bash", "tool_input": {"command": "ls"}})
     _, quiet = run_hook(clone, state_root, {"tool_name": "Bash", "tool_input": {"command": "ls"}})
-    check("a shell command that changed nothing is silent", quiet == "", quiet)
+    check("a second shell command that changed nothing is silent", quiet == "", quiet)
     subprocess.run(["git", "checkout", "-q", "-b", "brand-new-topic"], cwd=str(clone), check=True, capture_output=True)
     _, branch = run_hook(clone, state_root, {"tool_name": "Bash",
                                              "tool_input": {"command": "git checkout -q -b brand-new-topic"}})
@@ -453,7 +507,8 @@ def main() -> int:
              case_markdown_names, case_exemptions, case_new_glossary_entry, case_branch_name,
              case_nothing_new_is_silent, case_git_failure_exits_nonzero, case_file_cache, case_file_only_main_has_counts_as_on_main,
              case_timeout_failure_text_is_stable, case_hook_shows_names_past_the_cap_later,
-             case_hook_reports_branches_git_shows_as_new,
+             case_hook_reports_this_worktrees_new_branch, case_two_worktrees_each_report_their_own_branch,
+             case_branch_check_failure_is_told_and_the_file_check_still_runs,
              case_hook_reports_once_per_session, case_hook_shell_commands,
              case_hook_reports_failure_once, case_hook_ignores_other_input]
     for case in cases:
