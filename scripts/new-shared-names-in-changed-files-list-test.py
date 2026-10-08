@@ -546,6 +546,31 @@ def case_unreadable_record_is_told_and_names_are_told_again(root):
     check("the names are still listed after an unreadable record", "shared_helper" in context, context)
     check("the record is rewritten as valid JSON",
           isinstance(json.loads(record_path_of(clone).read_text()), dict))
+    unreadable = record_path_of(clone).with_name("new-shared-names-reported.json.unreadable")
+    check("the unreadable record is moved aside, unchanged, to inspect",
+          unreadable.exists() and unreadable.read_text() == "{not json", str(unreadable))
+    check("the agent is told where the unreadable record was moved", str(unreadable) in context, context)
+    record_path_of(clone).write_text("{second bad record")
+    write(clone, "gamma.py", "import alpha\ndef second_helper():\n    return alpha.shared_helper()\n")
+    write(clone, "delta.py", "import gamma\ngamma.second_helper()\n")
+    run_hook(clone, state_root, {"tool_name": "Write", "session_id": "session-two",
+                                 "tool_input": {"file_path": "delta.py"}})
+    check("a later unreadable record replaces the older moved-aside one",
+          unreadable.read_text() == "{second bad record", unreadable.read_text())
+
+
+def case_branch_list_failure_with_nothing_new_to_record_is_told(root):
+    clone = make_clone(root, BASE_MAIN_FILES)
+    # This worktree's branch is already reported and nothing has changed, so the writer returns early.
+    record_path_of(clone).write_text(json.dumps({"topic": ["branch\ttopic"]}))
+    before = record_path_of(clone).read_bytes()
+    hook = load_module("hook_for_branch_list_failure_nothing_new_case", HOOK_PATH)
+    code, context = run_hook_in_process(hook, root, clone, {"tool_name": "Bash",
+                                        "tool_input": {"command": "ls"}}, {"for-each-ref": 128})
+    check("a failing branch list with nothing new to record exits 0", code == 0)
+    check("a failing branch list with nothing new to record is told to the agent",
+          "git for-each-ref failed" in context, context)
+    check("the record is not rewritten when nothing changes", record_path_of(clone).read_bytes() == before)
 
 
 def case_missing_record_is_silent_about_the_record(root):
@@ -874,6 +899,7 @@ def main() -> int:
              case_failed_prune_write_with_no_new_names_is_told,
              case_record_that_is_not_utf8_is_told, case_local_branch_list_failure_is_told_and_keeps_the_record,
              case_branch_list_failure_inside_the_final_write_is_told,
+             case_branch_list_failure_with_nothing_new_to_record_is_told,
              case_same_branch_name_recreated_is_told_names_again, case_switch_to_a_branch_origin_has_lists_its_names,
              case_overlapping_writers_never_leave_invalid_json_and_keep_every_name,
              case_hook_shell_commands,

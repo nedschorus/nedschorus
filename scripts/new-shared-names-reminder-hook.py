@@ -148,13 +148,18 @@ def read_reported_names_record(record_path: Path) -> dict:
             for key, entries in record.items() if isinstance(key, str) and isinstance(entries, list)}
 
 
+def unreadable_record_path_for(record_path: Path) -> Path:
+    return record_path.with_name(record_path.name + ".unreadable")
+
+
 def reported_names_record_merge_prune_and_write(record_path: Path, key: str, entries: set, checkout: Path) -> bool:
     """Add entries under key, merged with what other writers stored, drop branches that no longer exist, and write.
 
     The branch list is read inside the lock, so a branch another run created and recorded while
     this run was scanning is not dropped. When git cannot list the branches, every branch is kept
     and False is returned, so the caller can tell the agent; otherwise True is returned.
-    Nothing is written when the record would not change.
+    Nothing is written when the record would not change. A record that cannot be read is first
+    moved aside to the .unreadable file, replacing an older one, so it can still be inspected.
     A lock file serialises writers in one worktree, and each write goes to its own temporary
     file renamed over the record, so a reader never sees a partly written record.
     Raises ReportedNamesRecordFailure when the record cannot be written.
@@ -167,6 +172,7 @@ def reported_names_record_merge_prune_and_write(record_path: Path, key: str, ent
                 stored = read_reported_names_record(record_path)
             except ReportedNamesRecordFailure:
                 stored = None
+                os.replace(record_path, unreadable_record_path_for(record_path))
             record = dict(stored or {})
             if entries:
                 record[key] = record.get(key, set()) | entries
@@ -336,7 +342,8 @@ def main() -> int:
         record = read_reported_names_record(record_path)
     except ReportedNamesRecordFailure as failure:
         record = {}
-        tell_failure_once(str(failure))
+        tell_failure_once(f"{failure}; it is moved to {unreadable_record_path_for(record_path)} "
+                          f"and a new record is started")
     reported = record.get(record_key, set())
     # Pruned on every run, so a branch deleted and later recreated under the same name starts fresh.
     record_merge_prune_and_write_telling_failures(set())
