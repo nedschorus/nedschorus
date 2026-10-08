@@ -453,7 +453,15 @@ with scratch() as base:
         assistant("bwrap question", "2026-10-03T10:00:00Z"), user("answer", "2026-10-03T10:00:01Z")])
     result = s.run("bwrap")
     check("a few matches print no too-wide guidance", "Too wide" not in result.stdout, result.stdout)
-    check("matches print how to read the pairs", "Read each pair" in result.stdout, result.stdout)
+    check("matches print how to read a pair with no \"User replied to\" line",
+          "When a pair has no \"User replied to\" line: the user answered the Agent line." in result.stdout,
+          result.stdout)
+    check("matches print that a \"User replied to\" line, not the Agent line, is what the user answered",
+          "When a pair has a \"User replied to\" line: the user answered that message, not the Agent line"
+          in result.stdout and "Report the replied-to message and the answer." in result.stdout,
+          result.stdout)
+    check("answered matches with nothing left out print no --include-unanswered instruction",
+          "--include-unanswered" not in result.stdout, result.stdout)
 
 # Only unanswered matches: they are counted and named, never reported as nothing found.
 with scratch() as base:
@@ -494,6 +502,27 @@ with scratch() as base:
           "yes-answer" in result.stdout
           and any("1 matching agent message(s) that no user message followed are not shown" in line
                   for line in body), (result.stdout, body))
+    check("with answered pairs shown, --include-unanswered is suggested only if none of them is the question",
+          "Only if no answered pair above is the question you are looking for: run again with "
+          "--include-unanswered" in result.stdout, result.stdout)
+
+# --since applies to each message of an unanswered group, not only the newest.
+with scratch() as base:
+    s = Scratch(base)
+    write_transcript(s.transcripts, "group-across-cutoff", [
+        assistant("Shall I build zorblax? (before the cutoff)", "2026-09-30T23:00:00Z"),
+        assistant("Shall I keep zorblax? (on the cutoff day)", "2026-10-01T09:00:00Z")])
+    result = s.run("zorblax", "--since", "2026-10-01")
+    check("an unanswered group spanning --since counts only its messages on or after the date",
+          "1 matching agent message(s) that no user message followed are not shown" in result.stdout
+          and "2 matching agent message(s)" not in result.stdout, result.stdout)
+    write_transcript(s.transcripts, "group-on-cutoff-day", [
+        assistant("Shall I rename zorblax? (on the cutoff day, early)", "2026-10-01T08:00:00Z"),
+        assistant("Shall I move zorblax? (on the cutoff day, later)", "2026-10-01T10:00:00Z")])
+    result = s.run("zorblax", "--since", "2026-10-01")
+    check("earlier messages of a group dated on the --since day itself are still counted",
+          "3 matching agent message(s) that no user message followed are not shown" in result.stdout,
+          result.stdout)
 
 # --since leaves an older unanswered match out before it is counted.
 with scratch() as base:
@@ -519,8 +548,9 @@ with scratch() as base:
           and str(s.walk) in result.stdout and str(s.transcripts) in result.stdout
           and str(s.second_transcripts) in result.stdout and "commit messages" in result.stdout
           and "pull requests" in result.stdout, result.stdout)
-    check("nothing found tells the agent to try another name before reporting",
-          "another name for the subject" in result.stdout, result.stdout)
+    check("nothing found tells the agent to try at most two other names before reporting",
+          "another name for the subject" in result.stdout
+          and "try at most two other names" in result.stdout, result.stdout)
     check("nothing found never reports that no approval was given",
           "never \"no approval\"" in result.stdout
           and "No approval" not in result.stdout, result.stdout)
@@ -702,6 +732,10 @@ with scratch() as base:
           "bwrap item | Y" in result.stdout, result.stdout)
     check("--since keeps a walk-minutes line that carries no date",
           "bwrap item without a date" in result.stdout, result.stdout)
+    check("a kept \"(no date)\" walk-minutes line comes with the reason and an instruction to date it",
+          "nothing in the line dates it" in result.stdout
+          and "Before you report a \"(no date)\" line: date it yourself from the walk-minutes file"
+          in result.stdout, result.stdout)
     check("--since leaves out a walk-minutes line dated before it",
           "bwrap item from before" not in result.stdout, result.stdout)
 

@@ -184,6 +184,7 @@ def question_answer_pairs(turns, words, all_words: bool):
                       if previous["voice"] == "assistant" and index - 1 != question_index else None)
         pairs.append({"question": excerpt_around_match(turns[question_index]["text"], words),
                       "earlier_matching": len(pending) - 1,
+                      "earlier_matching_timestamps": [turns[i].get("timestamp", "") for i in pending[:-1]],
                       "replied_to": replied_to,
                       "answer": shortened(turn["text"]),
                       "timestamp": turn.get("timestamp", "")})
@@ -191,7 +192,9 @@ def question_answer_pairs(turns, words, all_words: bool):
     if pending:
         last = turns[pending[-1]]
         pairs.append({"question": excerpt_around_match(last["text"], words),
-                      "earlier_matching": len(pending) - 1, "replied_to": None,
+                      "earlier_matching": len(pending) - 1,
+                      "earlier_matching_timestamps": [turns[i].get("timestamp", "") for i in pending[:-1]],
+                      "replied_to": None,
                       "answer": None, "timestamp": last.get("timestamp", "")})
     return pairs
 
@@ -328,6 +331,10 @@ def search_transcripts(entry, words, all_words, since, include_unanswered=False)
             for pair in pairs:
                 if since and pair["timestamp"] and pair["timestamp"][:10] < since:
                     continue
+                if since:
+                    pair["earlier_matching"] = sum(
+                        1 for timestamp in pair.get("earlier_matching_timestamps", [])
+                        if not timestamp or timestamp[:10] >= since)
                 if pair["answer"] is None and not include_unanswered:
                     hidden_unanswered += 1 + pair["earlier_matching"]
                     continue
@@ -494,7 +501,7 @@ def render_report(places, words, all_words, since):
     for place in places:
         if place.get("hidden_unanswered"):
             hidden_line = (f"  {place['hidden_unanswered']} matching agent message(s) that no user message "
-                           f"followed are not shown; run again with --include-unanswered to see them.")
+                           f"followed are not shown; see What to do next.")
         else:
             hidden_line = None
         if not place["items"]:
@@ -527,29 +534,47 @@ def render_report(places, words, all_words, since):
     instructions = []
     if total == 0 and hidden:
         instructions += [
-            f"No answered question matched, but {hidden} matching agent message(s) that no user "
-            "message followed were left out. Run again with --include-unanswered to read them before "
-            "you report.",
+            f"No answered question matched; {hidden} matching agent message(s) that no user "
+            "message followed were left out.",
+            "Before you report: run again with --include-unanswered to read them.",
         ]
     elif total == 0:
         instructions += [
-            "Nothing matched. Before you report, run this program again with another name for "
-            "the subject, or with the name of the program or file the change touched.",
-            "If nothing matches then either, report \"not found in\" the places listed above, "
-            "never \"no approval\": the question may have used other words.",
+            "Nothing matched in the places searched.",
+            "Before you report: run this program again with another name for the subject, such "
+            "as the name of the program or file the change touched; try at most two other names.",
+            "If none of those match either: report \"not found in\" the places listed above, never "
+            "\"no approval\", because the question may have used other words.",
         ]
     if too_wide:
         instructions += [
-            "Too wide: some places matched more than are shown. Narrow the search with "
-            "--all-words, with --since YYYY-MM-DD, or with a more specific word, such as the "
-            "name of the program or file the change touched.",
+            "Too wide: some places matched more than are shown.",
+            "To see the rest: narrow the search with --all-words, with --since YYYY-MM-DD, or with "
+            "a more specific word, such as the name of the program or file the change touched.",
         ]
     if total:
         instructions += [
-            "Read each pair: the User line answers the \"User replied to\" line when there is one, "
-            "and otherwise the Agent line. Judge from the Agent line whether that was the question "
-            "about this subject. Report the answer with its date and transcript, walk-minutes, "
-            "commit or pull request.",
+            "Each pair shows an agent message that matched the words, and the user's next message.",
+            "When a pair has a \"User replied to\" line: the user answered that message, not the "
+            "Agent line above it; the Agent line was answered only if the replied-to message asks "
+            "the same question. Report the replied-to message and the answer.",
+            "When a pair has no \"User replied to\" line: the user answered the Agent line. Report "
+            "it and the answer.",
+            "Report each answer with its date and its transcript, walk-minutes file, commit or "
+            "pull request.",
+        ]
+    if total and hidden:
+        instructions += [
+            f"{hidden} matching agent message(s) that no user message followed were left out.",
+            "Only if no answered pair above is the question you are looking for: run again with "
+            "--include-unanswered to read them.",
+        ]
+    if any(item.get("line", "").startswith("(no date)") for place in places for item in place["items"]):
+        instructions += [
+            "Some walk-minutes lines are marked \"(no date)\": nothing in the line dates it, and a "
+            "walk-minutes file's name gives only the day its walk started, so --since keeps the line.",
+            "Before you report a \"(no date)\" line: date it yourself from the walk-minutes file, "
+            "from the dated lines around it.",
         ]
     for place in failed:
         if place.get("unreachable"):
