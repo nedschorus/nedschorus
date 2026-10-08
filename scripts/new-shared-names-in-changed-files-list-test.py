@@ -13,6 +13,7 @@ that it stays silent.
 import importlib.util
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -218,8 +219,32 @@ def case_hook_ignores_other_input(root):
     check("unreadable input exits 0 silently", finished.returncode == 0 and not finished.stdout.strip())
 
 
+def words_on_list(text: str):
+    return {line[2:].strip() for line in text.splitlines() if line.startswith("- ")}
+
+
+def glossary_terms_in(text: str):
+    return {match.group(1).strip().lower()
+            for match in re.finditer(r"^- \*\*([^*]+)\*\*", text, re.M)}
+
+
+def case_no_listed_word_is_a_glossary_term(root):
+    planted = words_on_list("- follow-up\n- agent-seat\n") & glossary_terms_in("- **agent-seat** — x\n")
+    check("the overlap check finds a word planted in both a list and a glossary", planted == {"agent-seat"})
+    repository = Path(__file__).resolve().parent.parent
+    listed = words_on_list((repository / EXCEPTION_LIST_PATH).read_text())
+    check("the ordinary hyphenated words list is not empty", bool(listed))
+    terms = set()
+    for glossary in subprocess.run(["git", "ls-files", "*-glossary.md"], cwd=str(repository),
+                                   capture_output=True, text=True, check=True).stdout.split():
+        terms |= glossary_terms_in((repository / glossary).read_text())
+    overlap = sorted(listed & terms)
+    check("no word on the ordinary hyphenated words list is a term in a glossary", not overlap,
+          ", ".join(overlap))
+
+
 def main() -> int:
-    cases = [case_python_function_used_from_another_file_is_listed,
+    cases = [case_no_listed_word_is_a_glossary_term,case_python_function_used_from_another_file_is_listed,
              case_function_listed_once_its_caller_appears, case_markdown_names,
              case_new_glossary_entry, case_branch_name, case_nothing_new_is_silent,
              case_git_failure_exits_nonzero, case_hook_reports_once_per_session,
