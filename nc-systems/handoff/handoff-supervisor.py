@@ -22,6 +22,10 @@ The cycle, per reincarnation:
      one line saying so when the day's reminder marks cannot be read,
      and, on the Mac from noon Pacific, one line when the day's memory review
      is due (memory_review_due_lines).
+     Every launch, a resume included, also carries the agent-seat's leftover
+     work-snapshots whose worktree is gone or no longer holds their changes,
+     with the steps to restore them
+     (uncommitted_work_snapshot_text).
   7. Keep the current and previous handoff and extract; delete older ones.
 
 The handoff file the agent writes (simple `key: value` lines):
@@ -130,6 +134,13 @@ daily_overview_refresh_reminder_mark = importlib.util.module_from_spec(
     _daily_overview_refresh_reminder_mark_spec)
 _daily_overview_refresh_reminder_mark_spec.loader.exec_module(
     daily_overview_refresh_reminder_mark)
+
+UNCOMMITTED_WORK_SNAPSHOTS_PATH = Path(__file__).resolve().with_name(
+    "uncommitted-work-snapshots.py")
+_uncommitted_work_snapshots_spec = importlib.util.spec_from_file_location(
+    "uncommitted_work_snapshots", UNCOMMITTED_WORK_SNAPSHOTS_PATH)
+uncommitted_work_snapshots = importlib.util.module_from_spec(_uncommitted_work_snapshots_spec)
+_uncommitted_work_snapshots_spec.loader.exec_module(uncommitted_work_snapshots)
 
 # The opening is an EMPTY_SUCCESSOR_MARKERS entry used to recognize a workless resume.
 RESUME_PROMPT_WHEN_A_SESSION_ENDED_WITHOUT_A_HANDOFF = (
@@ -1009,6 +1020,16 @@ def memory_review_due_lines(now: Optional[datetime] = None) -> tuple:
                 ned_box_memory_store=mark_module.ned_box_memory_store_citation()),)
 
 
+def uncommitted_work_snapshot_text(agent: str, working_directory: Path,
+                                   handoff_directory: Path) -> str:
+    """The first prompt's paragraph on the agent-seat's leftover work-snapshots, or ""."""
+    text = uncommitted_work_snapshots.first_prompt_text(
+        working_directory, agent, handoff_directory)
+    if text:
+        print(f"handoff-supervisor: {text.splitlines()[0]}")
+    return text
+
+
 def remove_finished_worktrees_at_handoff(
         working_directory: Path,
         timeout_seconds: int = FINISHED_WORKTREE_REMOVAL_TIMEOUT_SECONDS) -> str:
@@ -1034,7 +1055,8 @@ def remove_finished_worktrees_at_handoff(
         return (f"worktree cleanup: clean-worktrees.py could not be run: "
                 f"{type(error).__name__}: {error}")
     report = summarize_worktree_cleanup_output(stdout.splitlines())
-    if cleaner.returncode != 0 and "FAILED" not in stdout:
+    if (cleaner.returncode != 0 and "FAILED" not in stdout
+            and "work-snapshot failure(s)" not in report):
         detail = stderr.strip().splitlines()[-1:] or ["no detail"]
         report += f"; clean-worktrees.py exited {cleaner.returncode}: {detail[0]}"
     return report
@@ -1070,6 +1092,16 @@ def summarize_worktree_cleanup_output(lines) -> str:
                  if ": kept — " in line
                  and ("(lsof)" in line or "lsof is not installed" in line)]
     discarded = [line for line in lines if ": discarded with it " in line]
+    snapshots_deleted = [line for line in lines
+                         if line.startswith("work-snapshot ") and ": deleted, first listed " in line]
+    # A duplicate held nothing a newer leftover does not, so only its count is worth a line.
+    duplicates_deleted = [line for line in lines
+                          if line.startswith("work-snapshot ") and ": deleted, a duplicate " in line]
+    snapshot_failures = [line for line in lines
+                         if line.startswith("work-snapshots: could not be listed")
+                         or (line.startswith("work-snapshot ")
+                             and (": deletion failed: " in line
+                                  or ": could not be checked, kept: " in line))]
     announced = {line.partition(": removing it will discard ")[0]:
                  line.partition(": removing it will discard ")[2]
                  for line in lines if ": removing it will discard " in line}
@@ -1097,6 +1129,14 @@ def summarize_worktree_cleanup_output(lines) -> str:
     if unchecked:
         report += (f"; {len(unchecked)} worktree(s) kept because the vacancy check "
                    f"could not be run: " + unchecked[0].split(": kept — ", 1)[-1])
+    if snapshots_deleted:
+        report += (f"; {len(snapshots_deleted)} leftover work-snapshot(s) deleted: "
+                   + "; ".join(snapshots_deleted))
+    if duplicates_deleted:
+        report += f"; {len(duplicates_deleted)} duplicate work-snapshot(s) deleted"
+    if snapshot_failures:
+        report += (f"; {len(snapshot_failures)} work-snapshot failure(s): "
+                   + "; ".join(snapshot_failures))
     return report
 
 
@@ -1584,8 +1624,13 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
                 substantive_turns_at_the_last_resume = None
             verb = "resuming" if next_launch_resumes_the_session else "launching"
             print(f"handoff-supervisor: {verb} session {session_id} (generation {generation})")
+            # Read at each launch: a resume after a crash is when a dead agent's work-snapshots appear.
+            leftover_work_snapshots = uncommitted_work_snapshot_text(
+                settings.agent, settings.working_directory, settings.handoff_directory)
+            launch_prompt = (f"{prompt}\n\n{leftover_work_snapshots}"
+                             if leftover_work_snapshots else prompt)
             process = launch_agent_session(
-                settings.agent_command, session_id, settings.working_directory, prompt,
+                settings.agent_command, session_id, settings.working_directory, launch_prompt,
                 resume=next_launch_resumes_the_session, remote_control_name=settings.agent,
                 appended_system_prompt_file=appended_system_prompt_file,
                 handoff_supervisor_agent_name=settings.agent,

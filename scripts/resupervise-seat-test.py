@@ -288,11 +288,13 @@ def run_missing_launcher_case(workspace: Path):
     # pinned-line reader in stale-code-citation-check.py (2026-09-28). The
     # daily memory review's mark program (2026-09-30) sits beside the
     # supervisor, so it is copied beside the supervisor's copy, and so is the
-    # mark program of the day's overview refresh reminder (2026-10-01).
+    # mark program of the day's overview refresh reminder (2026-10-01), and
+    # the work-snapshots module.
     supervisor_home = workspace / "nc-systems" / "handoff"
     supervisor_home.mkdir(parents=True)
     for supervisor_file in ("handoff-supervisor.py", "daily-memory-review-mark.py",
-                            "daily-overview-refresh-reminder-mark.py"):
+                            "daily-overview-refresh-reminder-mark.py",
+                            "uncommitted-work-snapshots.py"):
         (supervisor_home / supervisor_file).write_text(
             SUPERVISOR_SCRIPT.with_name(supervisor_file).read_text(encoding="utf-8"),
             encoding="utf-8")

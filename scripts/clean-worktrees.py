@@ -60,6 +60,18 @@ prune command. The line prints in every mode and is report only: the prune
 stays a deliberate human act (ruled 2026-08-18; R25 in
 docs/nedschorus-wiki/nedschorus-fleet-git-worktree-working-model.md).
 
+Separately again, it handles work-snapshots, the copies of uncommitted work
+that scripts/uncommitted-work-snapshot-hook.py keeps under
+refs/work-snapshots/ (nc-systems/handoff/uncommitted-work-snapshots.py). A
+work-snapshot whose owner `claude` process is gone is reported with its age
+and whether the handoff-supervisor has listed it in a first prompt, which it
+does only when the worktree is gone or no longer holds its changes; --remove
+deletes one first listed more than ten days ago and still not in its worktree,
+naming its files, and one that a newer leftover work-snapshot of the same
+worktree duplicates: the same parent commit and the same tree, by git object
+id. --only-done prints only the ones --remove would delete.
+A live owner's work-snapshot is never touched.
+
 Modes:
   (default)    report every worktree, one line each
   --only-done  print only what needs someone's attention — done worktrees,
@@ -91,9 +103,11 @@ the next day.
 Usage:
   scripts/clean-worktrees.py [--only-done | --remove] [--repo PATH]
 
-Exit codes: 0 ok, 1 a removal or a ref deletion failed, 2 bad invocation.
+Exit codes: 0 ok, 1 a removal, a ref deletion, or a work-snapshot listing or
+deletion failed, 2 bad invocation.
 """
 
+import importlib.util
 import os
 import shutil
 import subprocess
@@ -102,6 +116,12 @@ import time
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+
+_work_snapshots_spec = importlib.util.spec_from_file_location(
+    "uncommitted_work_snapshots",
+    REPO_ROOT / "nc-systems" / "handoff" / "uncommitted-work-snapshots.py")
+work_snapshots = importlib.util.module_from_spec(_work_snapshots_spec)
+_work_snapshots_spec.loader.exec_module(work_snapshots)
 
 # Regenerable junk is left out of the list of files a removal discards.
 DISPOSABLE_JUNK_BASENAMES = (".DS_Store", "__pycache__")
@@ -397,6 +417,11 @@ def main(argv=None):
         print("dead registration(s) git would prune: "
               + ", ".join(f"{path} ({reason})" for path, reason in dead_registrations)
               + " — remove with: git worktree prune")
+
+    # The handoff-supervisor records each agent-seat's first listings in its handoff directory.
+    failures += work_snapshots.clean_leftover_work_snapshots(
+        repo, remove=remove, only_due=only_done,
+        handoff_directory=Path.home() / ".claude" / "handoffs")
 
     return 1 if failures else 0
 
