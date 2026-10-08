@@ -324,6 +324,18 @@ def case_hook_reports_this_worktrees_new_branch(root):
         check(f"after {command!r} the hook reports {expected or 'no branch'}", reported == expected, context)
 
 
+def case_branch_origin_already_has_is_not_reported(root):
+    clone = make_clone(root, BASE_MAIN_FILES)
+    git(["switch", "-q", "-c", "pushed-topic"], clone)
+    git(["push", "-q", "-u", "origin", "pushed-topic"], clone)
+    state_root = root / "state"
+    state_root.mkdir()
+    code, context = run_hook(clone, state_root, {"tool_name": "Bash", "session_id": "session-on-pushed-branch",
+                                                 "tool_input": {"command": "git push -u origin pushed-topic"}})
+    check("on a branch other than main that origin already has, the hook exits 0 and says nothing",
+          code == 0 and context == "", context)
+
+
 def case_two_worktrees_each_report_their_own_branch(root):
     clone = make_clone(root, BASE_MAIN_FILES)
     second = root / "second-worktree"
@@ -545,6 +557,7 @@ def main() -> int:
              case_nothing_new_is_silent, case_git_failure_exits_nonzero, case_file_cache, case_file_only_main_has_counts_as_on_main,
              case_timeout_failure_text_is_stable, case_hook_shows_names_past_the_cap_later,
              case_hook_reports_this_worktrees_new_branch, case_two_worktrees_each_report_their_own_branch,
+             case_branch_origin_already_has_is_not_reported,
              case_branch_check_failure_is_told_and_the_file_check_still_runs,
              case_remote_branch_lookup_failure_is_told_and_no_branch_reported,
              case_branch_check_failure_on_a_quiet_shell_call_is_told,
