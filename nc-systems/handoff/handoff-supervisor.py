@@ -1094,9 +1094,9 @@ def summarize_worktree_cleanup_output(lines) -> str:
     discarded = [line for line in lines if ": discarded with it " in line]
     snapshots_deleted = [line for line in lines
                          if line.startswith("work-snapshot ") and ": deleted, first listed " in line]
-    # A superseded one held nothing lost, so only its count is worth a line.
-    superseded_deleted = [line for line in lines
-                          if line.startswith("work-snapshot ") and ": deleted, superseded" in line]
+    # A duplicate held nothing a newer leftover does not, so only its count is worth a line.
+    duplicates_deleted = [line for line in lines
+                          if line.startswith("work-snapshot ") and ": deleted, a duplicate " in line]
     snapshot_failures = [line for line in lines
                          if line.startswith("work-snapshots: could not be listed")
                          or (line.startswith("work-snapshot ")
@@ -1132,8 +1132,8 @@ def summarize_worktree_cleanup_output(lines) -> str:
     if snapshots_deleted:
         report += (f"; {len(snapshots_deleted)} leftover work-snapshot(s) deleted: "
                    + "; ".join(snapshots_deleted))
-    if superseded_deleted:
-        report += f"; {len(superseded_deleted)} superseded work-snapshot(s) deleted"
+    if duplicates_deleted:
+        report += f"; {len(duplicates_deleted)} duplicate work-snapshot(s) deleted"
     if snapshot_failures:
         report += (f"; {len(snapshot_failures)} work-snapshot failure(s): "
                    + "; ".join(snapshot_failures))

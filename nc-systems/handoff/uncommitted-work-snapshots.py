@@ -16,7 +16,7 @@ nc-systems/handoff/handoff-supervisor.py lists an agent-seat's lost work in
 the first prompt of every agent-session it starts, and
 scripts/clean-worktrees.py deletes a listed leftover first listed more than
 LEFTOVER_DELETED_DAYS_AFTER_FIRST_LISTING days ago and still lost, and a
-superseded one, whose changed files all exist elsewhere.
+leftover a newer leftover of the same worktree duplicates exactly.
 
 Usage:
   uncommitted-work-snapshots.py list [--agent-seat NAME] [--repo PATH]
@@ -372,36 +372,21 @@ def leftover_work_snapshots(repo, agent_seat=None, is_alive=None, everything=Non
 
 LOST = "lost"
 IN_PLACE = "in place"
-SUPERSEDED = "superseded"
 
 
-def leftover_state(repo, snapshot, other_leftovers):
-    """Whether a leftover's changes exist anywhere but in the work-snapshot itself.
+def leftover_state(repo, snapshot):
+    """LOST or IN_PLACE: whether a leftover's worktree still holds its changes.
 
-    SUPERSEDED: every path it changed has the same content elsewhere, in a
-    later leftover of the same worktree or in the worktree's HEAD commit, so
-    deleting it loses nothing. Only leftovers count as later copies: a live
-    owner's work-snapshot is deleted by its own hook when that owner discards
-    the changes. LOST: anything else with its worktree gone, or holding other
-    changes, including changes a later agent discarded; the work-snapshot may
-    be the only copy, so it is listed for restoring. IN_PLACE: the worktree
-    still holds exactly its changes; it is kept, unlisted, so it is still
-    there if the worktree is removed later. Raises WorkSnapshotError when the
+    IN_PLACE: the worktree exists and still has the work-snapshot's parent as
+    HEAD and its tree, as after a session-handoff, a quota stop or a logout;
+    it is kept, unlisted, so it is still there if the worktree is removed
+    later. LOST: anything else, including a worktree that is gone, holds other
+    changes, or had the changes committed or discarded; the work-snapshot may
+    be the only copy, so it is listed. Raises WorkSnapshotError when the
     worktree or the work-snapshot cannot be read.
     """
     worktree = snapshot["worktree"]
-    if not worktree:
-        return LOST
-    later_copies = [other["commit"] for other in other_leftovers
-                    if other["worktree"] == worktree and other["time"] > snapshot["time"]]
-    resolves = worktree_resolves_to_itself(worktree)
-    if resolves:
-        head = head_commit(worktree)
-        if head:
-            later_copies.append(head)
-    if changes_held_elsewhere(repo, snapshot["ref"], later_copies):
-        return SUPERSEDED
-    if not resolves:
+    if not worktree or not worktree_resolves_to_itself(worktree):
         return LOST
     return IN_PLACE if snapshot_matches_worktree(repo, snapshot) else LOST
 
@@ -412,64 +397,72 @@ def worktree_resolves_to_itself(worktree):
     A directory without a .git entry is not the worktree: an interrupted
     removal can leave one, and git there would answer for the checkout around
     it. Raises WorkSnapshotError when the directory has a .git entry git
-    cannot use.
+    cannot use, including one git skips to answer for an enclosing checkout.
     """
     directory = Path(worktree)
     if not directory.is_dir():
         return False
-    if (directory / ".git").exists():
-        result = run_git(directory, "rev-parse", "--show-toplevel")
-        if result.returncode != 0 or not result.stdout.strip():
-            raise WorkSnapshotError(
-                f"git rev-parse --show-toplevel in {directory}, which has a .git entry, "
-                f"exited {result.returncode}: {result.stderr.strip() or 'no output'}")
-        return Path(result.stdout.strip()).resolve() == directory.resolve()
-    return False
-
-
-def tree_entries(repo, commit):
-    """path -> (mode, object) of every file in commit's tree."""
-    output = git_output(repo, "ls-tree", "-r", "-z", "--full-tree", commit)
-    entries = {}
-    for record in output.split("\0"):
-        if not record:
-            continue
-        details, path = record.split("\t", 1)
-        mode, _kind, object_id = details.split()
-        entries[path] = (mode, object_id)
-    return entries
-
-
-def changes_held_elsewhere(repo, ref, commits):
-    """Whether each path ref changed has the same content in one of commits.
-
-    A deleted path counts when it is absent there too.
-    """
-    if not commits:
+    if not (directory / ".git").exists():
         return False
-    wanted = tree_entries(repo, ref)
-    elsewhere = [tree_entries(repo, commit) for commit in commits]
-    for _status, path in changed_files(repo, ref):
-        if not any(entries.get(path) == wanted.get(path) for entries in elsewhere):
-            return False
+    result = run_git(directory, "rev-parse", "--show-toplevel")
+    if result.returncode != 0 or not result.stdout.strip():
+        raise WorkSnapshotError(
+            f"git rev-parse --show-toplevel in {directory}, which has a .git entry, "
+            f"exited {result.returncode}: {result.stderr.strip() or 'no output'}")
+    toplevel = Path(result.stdout.strip()).resolve()
+    if toplevel != directory.resolve():
+        raise WorkSnapshotError(
+            f"{directory} has a .git entry git cannot use: git there answers for {toplevel}")
     return True
+
+
+def tree_and_parents(repo, commit, cache):
+    """(tree id, parent ids) of commit, read once per commit."""
+    if commit not in cache:
+        tree, _, parents = git_output(repo, "log", "-1", "--format=%T%x00%P",
+                                      commit).partition("\0")
+        cache[commit] = (tree, parents)
+    return cache[commit]
+
+
+def newer_duplicate(repo, snapshot, leftovers, cache):
+    """A later leftover of the same worktree with the same tree and parents, or None.
+
+    Such a pair is what each session-handoff leaves: the same unchanged files
+    written again by the next owner. The later one holds every byte the
+    earlier one holds, compared by git object id. Only leftovers count, never
+    a live owner's work-snapshot, which its own hook may delete.
+    """
+    if not snapshot["worktree"]:
+        return None
+    mine = tree_and_parents(repo, snapshot["commit"], cache)
+    order = (snapshot["time"], snapshot["ref"])
+    for other in leftovers:
+        if (other["worktree"] == snapshot["worktree"]
+                and (other["time"], other["ref"]) > order
+                and tree_and_parents(repo, other["commit"], cache) == mine):
+            return other
+    return None
 
 
 def lost_work_snapshots(repo, agent_seat=None, is_alive=None, everything=None):
     """(leftover, problem) pairs to list, newest first.
 
-    problem is None, or why the work-snapshot could not be compared with its
-    worktree; such a leftover is listed, since its changes may exist nowhere
-    else.
+    problem is None, or why the work-snapshot could not be checked; such a
+    leftover is listed, since its changes may exist nowhere else. A leftover
+    with a newer duplicate is left out: the duplicate is listed in its place.
     """
     everything = all_work_snapshots(repo) if everything is None else everything
     all_leftovers = leftover_work_snapshots(repo, None, is_alive, everything)
+    cache = {}
     lost = []
     for snapshot in all_leftovers:
         if agent_seat is not None and snapshot["agent_seat"] != agent_seat:
             continue
         try:
-            if leftover_state(repo, snapshot, all_leftovers) == LOST:
+            if newer_duplicate(repo, snapshot, all_leftovers, cache):
+                continue
+            if leftover_state(repo, snapshot) == LOST:
                 lost.append((snapshot, None))
         except WorkSnapshotError as error:
             lost.append((snapshot, str(error)))
@@ -608,8 +601,11 @@ def first_listing_times(handoff_directory):
 
 def clean_leftover_work_snapshots(repo, remove, only_due, handoff_directory, now=None,
                                   is_alive=None, out=print):
-    """Report leftovers; with remove, delete the superseded ones and those listed and left.
+    """Report leftovers; with remove, delete duplicates and those listed and left.
 
+    A leftover is due when a newer leftover of the same worktree duplicates
+    it, or when it is still lost more than
+    LEFTOVER_DELETED_DAYS_AFTER_FIRST_LISTING days after its first listing.
     Returns the number of failures. A live owner's work-snapshot is never
     touched or reported.
     """
@@ -624,26 +620,27 @@ def clean_leftover_work_snapshots(repo, remove, only_due, handoff_directory, now
         return 1
     failures = 0
     threshold = LEFTOVER_DELETED_DAYS_AFTER_FIRST_LISTING * 86400
+    cache = {}
     for snapshot in leftovers:
         ref = snapshot["ref"]
         age_days = int((now - snapshot["time"]) // 86400)
         first_listed = listed.get(ref)
         try:
             files = changed_files_text(repo, ref)
-            state = leftover_state(repo, snapshot, leftovers)
+            duplicate = newer_duplicate(repo, snapshot, leftovers, cache)
+            state = None if duplicate else leftover_state(repo, snapshot)
         except WorkSnapshotError as error:
             out(f"work-snapshot {ref}: could not be checked, kept: {error}")
             failures += 1
             continue
         where = (f"agent-seat {snapshot['agent_seat']}, worktree {snapshot['worktree']}, "
                  f"files: {files}")
-        superseded = state == SUPERSEDED
-        due = superseded or (state == LOST and first_listed is not None
-                             and now - first_listed > threshold)
+        due = duplicate is not None or (state == LOST and first_listed is not None
+                                        and now - first_listed > threshold)
         if due and remove:
             result = run_git(repo, "update-ref", "-d", ref, snapshot["commit"])
-            reason = ("superseded: every file it changed has the same content in a later "
-                      "leftover work-snapshot or in its worktree's HEAD commit" if superseded else
+            reason = (f"a duplicate of the newer leftover {duplicate['ref']}, same HEAD and "
+                      "same content" if duplicate else
                       f"first listed {utc_text(first_listed)} and not restored")
             if result.returncode == 0:
                 out(f"work-snapshot {ref}: deleted, {reason} ({where})")
@@ -653,8 +650,8 @@ def clean_leftover_work_snapshots(repo, remove, only_due, handoff_directory, now
             continue
         if only_due and not due:
             continue
-        if superseded:
-            listing = "superseded: its files are in a later leftover or its worktree's HEAD"
+        if duplicate:
+            listing = f"a duplicate of the newer leftover {duplicate['ref']}"
         elif state == IN_PLACE:
             listing = "its changes are still in its worktree, so it is not listed"
         elif first_listed is not None:
@@ -672,15 +669,38 @@ def clean_leftover_work_snapshots(repo, remove, only_due, handoff_directory, now
 
 
 def snapshot_matches_worktree(repo, snapshot):
-    """Whether the worktree still has the work-snapshot's parent as HEAD and its tree."""
-    ref = snapshot["ref"]
+    """Whether the worktree still has the work-snapshot's parent as HEAD and its tree.
+
+    Raises WorkSnapshotError when HEAD or a tree cannot be read, so a failed
+    comparison is reported, not taken for a mismatch.
+    """
     worktree = Path(snapshot["worktree"])
     if not worktree.is_dir():
         return False
-    parent = current_ref_value(repo, f"{ref}^")
-    if parent is None or head_commit(worktree) != parent:
+    tree, parents = tree_and_parents(repo, snapshot["commit"], {})
+    if head_commit_or_raise(worktree) != (parents or None):
         return False
-    return tree_of_worktree_now(worktree) == git_output(repo, "rev-parse", f"{ref}^{{tree}}")
+    return tree_of_worktree_now(worktree) == tree
+
+
+def head_commit_or_raise(worktree):
+    """HEAD's commit, or None when HEAD is unborn; raises WorkSnapshotError on any other failure.
+
+    Unborn means HEAD names a branch that has no commit yet; `rev-parse -q`
+    alone cannot tell that from a HEAD git cannot resolve.
+    """
+    # ^{commit} makes git check the object exists; plain HEAD echoes any id HEAD holds.
+    result = run_git(worktree, "rev-parse", "--verify", "-q", "HEAD^{commit}")
+    if result.returncode == 0 and result.stdout.strip():
+        return result.stdout.strip()
+    branch = run_git(worktree, "symbolic-ref", "-q", "HEAD")
+    if branch.returncode == 0 and branch.stdout.strip():
+        exists = run_git(worktree, "show-ref", "--verify", "-q", branch.stdout.strip())
+        if exists.returncode != 0:
+            return None
+    raise WorkSnapshotError(
+        f"git rev-parse --verify -q HEAD^{{commit}} in {worktree} exited {result.returncode}: "
+        f"{result.stderr.strip() or 'HEAD could not be resolved'}")
 
 
 # ---------------------------------------------------------------- command line

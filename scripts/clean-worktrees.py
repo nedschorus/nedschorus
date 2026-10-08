@@ -67,9 +67,9 @@ work-snapshot whose owner `claude` process is gone is reported with its age
 and whether the handoff-supervisor has listed it in a first prompt, which it
 does only when the worktree is gone or no longer holds its changes; --remove
 deletes one first listed more than ten days ago and still not in its worktree,
-naming its files, and one superseded: every file it changed has the same
-content in a later leftover work-snapshot of the same worktree or in that
-worktree's HEAD commit. --only-done prints only the ones --remove would delete.
+naming its files, and one that a newer leftover work-snapshot of the same
+worktree duplicates: the same parent commit and the same tree, by git object
+id. --only-done prints only the ones --remove would delete.
 A live owner's work-snapshot is never touched.
 
 Modes:
