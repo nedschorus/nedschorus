@@ -454,12 +454,22 @@ with scratch() as base:
     result = s.run("bwrap")
     check("a few matches print no too-wide guidance", "Too wide" not in result.stdout, result.stdout)
     check("matches print how to read a pair with no \"User replied to\" line",
-          "When a pair has no \"User replied to\" line: the user answered the Agent line." in result.stdout,
-          result.stdout)
+          "When a pair has no \"User replied to\" line: the user's message answers the Agent line."
+          in result.stdout, result.stdout)
     check("matches print that a \"User replied to\" line, not the Agent line, is what the user answered",
-          "When a pair has a \"User replied to\" line: the user answered that message, not the Agent line"
-          in result.stdout and "Report the replied-to message and the answer." in result.stdout,
+          "When a pair has a \"User replied to\" line: the user's message answers that line, not "
+          "the Agent line." in result.stdout, result.stdout)
+    check("matches print what to report when the replied-to line is about the same subject, and when not",
+          "If the replied-to line asks about the same subject as the Agent line: report the "
+          "replied-to line and the user's message." in result.stdout
+          and "If the replied-to line asks about something else: the Agent line's question was not "
+          "answered in this pair; do not report this pair as its answer." in result.stdout,
           result.stdout)
+    check("matches print that only a yes approves, and that a question, a no or a change is reported as that",
+          "A user's message approves only if it says yes, such as \"y\" or \"yes\", to the message "
+          "it answers." in result.stdout
+          and "If the user's message is a question, a no, or a change: report it as that, not as an "
+          "approval." in result.stdout, result.stdout)
     check("answered matches with nothing left out print no --include-unanswered instruction",
           "--include-unanswered" not in result.stdout, result.stdout)
 
@@ -475,6 +485,9 @@ with scratch() as base:
     check("when matches were left out, the report never says nothing matched or not found",
           "Not found in these places." not in result.stdout and "Nothing matched" not in result.stdout,
           result.stdout)
+    check("only unanswered matches tell the agent what to report when the question was asked but not answered",
+          "If the question appears only among the unanswered messages: report that it was asked "
+          "and that no answer was found in these places." in result.stdout, result.stdout)
     check("only unanswered matches, every place searched, exits 0", result.returncode == 0, result.stderr)
 
 # Every matching message in a group the user never answered is counted as left out.
@@ -524,6 +537,31 @@ with scratch() as base:
           "3 matching agent message(s) that no user message followed are not shown" in result.stdout,
           result.stdout)
 
+# --since keeps an answered pair by its answer's date and leaves its earlier matching messages counted.
+with scratch() as base:
+    s = Scratch(base)
+    write_transcript(s.transcripts, "answered-across-cutoff", [
+        assistant("Shall I build zorblax? (first)", "2026-09-29T10:00:00Z"),
+        assistant("Shall I build zorblax? (asked again)", "2026-09-30T10:00:00Z"),
+        user("answered-after-cutoff", "2026-10-01T10:00:00Z")])
+    result = s.run("zorblax", "--since", "2026-10-01")
+    check("--since keeps an answered pair whose answer is on or after the date",
+          "answered-after-cutoff" in result.stdout, result.stdout)
+    check("an answered pair kept by --since still counts its earlier matching messages from before the date",
+          "(1 earlier matching agent message(s) before the same user message not shown)" in result.stdout,
+          result.stdout)
+
+# A matching message with no timestamp is kept and counted: nothing dates it.
+with scratch() as base:
+    s = Scratch(base)
+    write_transcript(s.transcripts, "undated-earlier", [
+        assistant("Shall I build zorblax? (no timestamp)", ""),
+        assistant("Shall I keep zorblax? (dated)", "2026-10-02T10:00:00Z")])
+    result = s.run("zorblax", "--since", "2026-10-01")
+    check("an unanswered group's earlier message with no timestamp is counted under --since",
+          "2 matching agent message(s) that no user message followed are not shown" in result.stdout,
+          result.stdout)
+
 # --since leaves an older unanswered match out before it is counted.
 with scratch() as base:
     s = Scratch(base)
@@ -550,7 +588,7 @@ with scratch() as base:
           and "pull requests" in result.stdout, result.stdout)
     check("nothing found tells the agent to try at most two other names before reporting",
           "another name for the subject" in result.stdout
-          and "try at most two other names" in result.stdout, result.stdout)
+          and "Try at most two other names, that is, two more runs." in result.stdout, result.stdout)
     check("nothing found never reports that no approval was given",
           "never \"no approval\"" in result.stdout
           and "No approval" not in result.stdout, result.stdout)
@@ -738,6 +776,17 @@ with scratch() as base:
           in result.stdout, result.stdout)
     check("--since leaves out a walk-minutes line dated before it",
           "bwrap item from before" not in result.stdout, result.stdout)
+
+# The "(no date)" guidance refers only to lines that are shown.
+with scratch() as base:
+    s = Scratch(base)
+    dated = "".join(f"| {n} | bwrap dated item {n:02d} | Y (\"y\", 2026-10-{(n % 9) + 1:02d}) | accepted |\n"
+                    for n in range(25))
+    (s.walk / "many-2026-10-01-minutes.md").write_text(dated + "| 99 | bwrap undated item | Y | accepted |\n")
+    result = s.run("bwrap")
+    check("an undated walk-minutes line beyond the shown ones gets no \"(no date)\" guidance",
+          "bwrap undated item" not in result.stdout and "(no date)" not in result.stdout,
+          result.stdout)
 
 # Where the real run searches, on each machine.
 _program_spec = importlib.util.spec_from_file_location("locate_user_approval_under_test", PROGRAM)

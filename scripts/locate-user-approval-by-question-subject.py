@@ -164,7 +164,11 @@ def question_answer_pairs(turns, words, all_words: bool):
     """Pair matching agent messages with the user's next message.
 
     Matching agent messages before one user message make one pair, shown with
-    the last of them and a count of the others. When the user's message
+    the last of them and a count of the others. --since keeps or drops an
+    answered pair by its answer's date and leaves its count of earlier matching
+    messages whole, because they are the history of the question answered; an
+    unanswered pair counts only its messages on or after --since, and a message
+    with no timestamp is kept and counted, since nothing dates it. When the user's message
     directly followed a different agent message, that message is kept as
     replied_to. Matching messages that no user message follows make one pair
     with no answer.
@@ -184,7 +188,6 @@ def question_answer_pairs(turns, words, all_words: bool):
                       if previous["voice"] == "assistant" and index - 1 != question_index else None)
         pairs.append({"question": excerpt_around_match(turns[question_index]["text"], words),
                       "earlier_matching": len(pending) - 1,
-                      "earlier_matching_timestamps": [turns[i].get("timestamp", "") for i in pending[:-1]],
                       "replied_to": replied_to,
                       "answer": shortened(turn["text"]),
                       "timestamp": turn.get("timestamp", "")})
@@ -331,7 +334,7 @@ def search_transcripts(entry, words, all_words, since, include_unanswered=False)
             for pair in pairs:
                 if since and pair["timestamp"] and pair["timestamp"][:10] < since:
                     continue
-                if since:
+                if since and pair["answer"] is None:
                     pair["earlier_matching"] = sum(
                         1 for timestamp in pair.get("earlier_matching_timestamps", [])
                         if not timestamp or timestamp[:10] >= since)
@@ -537,12 +540,15 @@ def render_report(places, words, all_words, since):
             f"No answered question matched; {hidden} matching agent message(s) that no user "
             "message followed were left out.",
             "Before you report: run again with --include-unanswered to read them.",
+            "If the question appears only among the unanswered messages: report that it was asked "
+            "and that no answer was found in these places.",
         ]
     elif total == 0:
         instructions += [
             "Nothing matched in the places searched.",
             "Before you report: run this program again with another name for the subject, such "
-            "as the name of the program or file the change touched; try at most two other names.",
+            "as the name of the program or file the change touched.",
+            "Try at most two other names, that is, two more runs.",
             "If none of those match either: report \"not found in\" the places listed above, never "
             "\"no approval\", because the question may have used other words.",
         ]
@@ -555,11 +561,17 @@ def render_report(places, words, all_words, since):
     if total:
         instructions += [
             "Each pair shows an agent message that matched the words, and the user's next message.",
-            "When a pair has a \"User replied to\" line: the user answered that message, not the "
-            "Agent line above it; the Agent line was answered only if the replied-to message asks "
-            "the same question. Report the replied-to message and the answer.",
-            "When a pair has no \"User replied to\" line: the user answered the Agent line. Report "
-            "it and the answer.",
+            "When a pair has no \"User replied to\" line: the user's message answers the Agent line.",
+            "When a pair has a \"User replied to\" line: the user's message answers that line, not "
+            "the Agent line.",
+            "If the replied-to line asks about the same subject as the Agent line: report the "
+            "replied-to line and the user's message.",
+            "If the replied-to line asks about something else: the Agent line's question was not "
+            "answered in this pair; do not report this pair as its answer.",
+            "A user's message approves only if it says yes, such as \"y\" or \"yes\", to the message "
+            "it answers.",
+            "If the user's message is a question, a no, or a change: report it as that, not as an "
+            "approval.",
             "Report each answer with its date and its transcript, walk-minutes file, commit or "
             "pull request.",
         ]
@@ -568,10 +580,13 @@ def render_report(places, words, all_words, since):
             f"{hidden} matching agent message(s) that no user message followed were left out.",
             "Only if no answered pair above is the question you are looking for: run again with "
             "--include-unanswered to read them.",
+            "If the question appears only among the unanswered messages: report that it was asked "
+            "and that no answer was found in these places.",
         ]
-    if any(item.get("line", "").startswith("(no date)") for place in places for item in place["items"]):
+    if any(item.get("line", "").startswith("(no date)")
+           for place in places for item in place["items"][:SHOWN_PER_SECTION]):
         instructions += [
-            "Some walk-minutes lines are marked \"(no date)\": nothing in the line dates it, and a "
+            "Some walk-minutes lines shown are marked \"(no date)\": nothing in the line dates it, and a "
             "walk-minutes file's name gives only the day its walk started, so --since keeps the line.",
             "Before you report a \"(no date)\" line: date it yourself from the walk-minutes file, "
             "from the dated lines around it.",
