@@ -148,11 +148,12 @@ def read_reported_names_record(record_path: Path) -> dict:
             for key, entries in record.items() if isinstance(key, str) and isinstance(entries, list)}
 
 
-def reported_names_record_merge_prune_and_write(record_path: Path, key: str, entries: set, checkout: Path) -> None:
+def reported_names_record_merge_prune_and_write(record_path: Path, key: str, entries: set, checkout: Path) -> bool:
     """Add entries under key, merged with what other writers stored, drop branches that no longer exist, and write.
 
     The branch list is read inside the lock, so a branch another run created and recorded while
-    this run was scanning is not dropped. When git cannot list the branches, every branch is kept.
+    this run was scanning is not dropped. When git cannot list the branches, every branch is kept
+    and False is returned, so the caller can tell the agent; otherwise True is returned.
     Nothing is written when the record would not change.
     A lock file serialises writers in one worktree, and each write goes to its own temporary
     file renamed over the record, so a reader never sees a partly written record.
@@ -174,7 +175,7 @@ def reported_names_record_merge_prune_and_write(record_path: Path, key: str, ent
                 keep = set(live_branches) | {key, DETACHED_HEAD_REPORTED_NAMES_RECORD_KEY}
                 record = {name: values for name, values in record.items() if name in keep}
             if stored is not None and record == stored:
-                return
+                return live_branches is not None
             descriptor, temporary = tempfile.mkstemp(prefix=record_path.name + ".", suffix=".partial",
                                                      dir=str(record_path.parent))
             try:
@@ -190,6 +191,7 @@ def reported_names_record_merge_prune_and_write(record_path: Path, key: str, ent
     except OSError as error:
         raise ReportedNamesRecordFailure(
             f"could not write {record_path.name}: {error.strerror or type(error).__name__}") from error
+    return live_branches is not None
 
 
 def local_branches(checkout: Path):
@@ -323,9 +325,13 @@ def main() -> int:
     record_key = reported_names_record_key_for(checkout)
     # The branch is part of the identity, so a switch to another branch is never skipped as unchanged.
     fingerprint = f"{fingerprint}\0{record_key}"
-    live_branches = local_branches(checkout)
-    if live_branches is None:
-        tell_failure_once(LOCAL_BRANCH_LIST_FAILURE)
+    def record_merge_prune_and_write_telling_failures(entries: set) -> None:
+        try:
+            if not reported_names_record_merge_prune_and_write(record_path, record_key, entries, checkout):
+                tell_failure_once(LOCAL_BRANCH_LIST_FAILURE)
+        except ReportedNamesRecordFailure as failure:
+            tell_failure_once(str(failure))
+
     try:
         record = read_reported_names_record(record_path)
     except ReportedNamesRecordFailure as failure:
@@ -333,12 +339,7 @@ def main() -> int:
         tell_failure_once(str(failure))
     reported = record.get(record_key, set())
     # Pruned on every run, so a branch deleted and later recreated under the same name starts fresh.
-    if live_branches is not None and set(record) - set(live_branches) - {record_key,
-                                                                       DETACHED_HEAD_REPORTED_NAMES_RECORD_KEY}:
-        try:
-            reported_names_record_merge_prune_and_write(record_path, record_key, set(), checkout)
-        except ReportedNamesRecordFailure as failure:
-            tell_failure_once(str(failure))
+    record_merge_prune_and_write_telling_failures(set())
     try:
         new_branch = unreported_new_branch(checkout, reported)
     except BranchCheckFailure as failure:
@@ -368,10 +369,7 @@ def main() -> int:
     shown = names[:REMINDER_NAME_LIMIT]
     newly_reported = {f"{kind}\t{name}" for _, kind, name in shown}
     if newly_reported - reported:
-        try:
-            reported_names_record_merge_prune_and_write(record_path, record_key, newly_reported, checkout)
-        except ReportedNamesRecordFailure as failure:
-            tell_failure_once(str(failure))
+        record_merge_prune_and_write_telling_failures(newly_reported)
     write_state(session_id, state)
     if names:
         messages.append(reminder_text(names))

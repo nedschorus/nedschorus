@@ -679,6 +679,30 @@ def case_local_branch_list_failure_is_told_and_keeps_the_record(root):
           "long-gone-topic" in json.loads(record_path_of(clone).read_text()))
 
 
+def case_branch_list_failure_inside_the_final_write_is_told(root):
+    clone = make_clone(root, BASE_MAIN_FILES)
+    record_path_of(clone).write_text(json.dumps({"long-gone-topic": ["python-function\told_name"]}))
+    write(clone, "alpha.py", "def shared_helper():\n    return 1\n")
+    write(clone, "beta.py", "import alpha\nalpha.shared_helper()\n")
+    hook = load_module("hook_for_late_branch_list_failure_case", HOOK_PATH)
+    real_local_branches = hook.local_branches
+    calls = []
+
+    def branch_list_that_fails_after_the_first_read(checkout):
+        calls.append(checkout)
+        return real_local_branches(checkout) if len(calls) == 1 else None
+    hook.local_branches = branch_list_that_fails_after_the_first_read
+    code, context = run_hook_in_process(hook, root, clone, {"tool_name": "Write",
+                                        "tool_input": {"file_path": "beta.py"}}, {})
+    stored = json.loads(record_path_of(clone).read_text())
+    check("the branch list is read inside the lock once per write: the prune, then the final write",
+          len(calls) == 2, str(len(calls)))
+    check("a branch list that fails only inside the final write is told to the agent",
+          code == 0 and "git for-each-ref failed" in context, context)
+    check("the final write still records this run's names when the branch list fails",
+          "python-function\tshared_helper" in stored.get("topic", []), str(stored))
+
+
 def case_same_branch_name_recreated_is_told_names_again(root):
     clone = make_clone(root, BASE_MAIN_FILES)
     state_root = root / "state"
@@ -849,6 +873,7 @@ def main() -> int:
              case_branch_recorded_by_a_concurrent_run_while_scanning_survives,
              case_failed_prune_write_with_no_new_names_is_told,
              case_record_that_is_not_utf8_is_told, case_local_branch_list_failure_is_told_and_keeps_the_record,
+             case_branch_list_failure_inside_the_final_write_is_told,
              case_same_branch_name_recreated_is_told_names_again, case_switch_to_a_branch_origin_has_lists_its_names,
              case_overlapping_writers_never_leave_invalid_json_and_keep_every_name,
              case_hook_shell_commands,
