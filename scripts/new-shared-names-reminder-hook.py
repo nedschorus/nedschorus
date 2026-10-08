@@ -1,15 +1,19 @@
 #!/usr/bin/env python3
-"""After a write, edit or shell command, name the shared names the branch newly adds, once per worktree.
+"""After a write, edit or shell command, name the shared names the branch newly adds, once per worktree and branch.
 
-The names already reported are kept in the worktree's own git directory, so a later
-agent-session of the same agent-seat is not told them again, while each other worktree keeps
-its own record. The content cache and the once-per-session failure reports stay per agent-session.
+The names already reported are kept in the worktree's own git directory, keyed by the branch
+the worktree is on, so a later agent-session of the same agent-seat is not told them again on
+that branch, a new branch that adds the same name is told it, and each other worktree keeps its
+own record. Entries for branches that no longer exist are dropped when the record is written.
+The content cache and the once-per-session failure reports stay per agent-session.
 """
 # The hook never blocks: any failure leaves the agent's turn as it was, apart from one line saying the check failed.
 
+import fcntl
 import hashlib
 import importlib.util
 import json
+import os
 import re
 import subprocess
 import sys
@@ -105,24 +109,78 @@ def reported_names_path(checkout: Path):
     return Path(git_directory.strip()) / REPORTED_NAMES_FILE_NAME
 
 
-def read_reported_names(record_path: Path) -> set:
-    try:
-        reported = json.loads(record_path.read_text())
-    except (OSError, ValueError):
-        return set()
-    if not isinstance(reported, list):
-        return set()
-    return {entry for entry in reported if isinstance(entry, str)}
+DETACHED_HEAD_RECORD_KEY = "HEAD"
 
 
-def write_reported_names(record_path: Path, reported: set) -> None:
-    # Two agent-sessions in one worktree are not the normal case; the last writer wins.
+class RecordFailure(Exception):
+    pass
+
+
+def record_key_for(checkout: Path) -> str:
+    """Return the branch the worktree is on, or DETACHED_HEAD_RECORD_KEY when HEAD is detached or unreadable."""
+    branch = git_output(["symbolic-ref", "--short", "-q", "HEAD"], checkout)
+    return branch.strip() if branch and branch.strip() else DETACHED_HEAD_RECORD_KEY
+
+
+def read_record(record_path: Path) -> dict:
+    """Return the record, {branch: [reported "kind\\tname" keys]}; a missing record is empty.
+
+    Raises RecordFailure when the record exists but cannot be read or parsed.
+    """
     try:
-        temporary = record_path.with_name(record_path.name + ".partial")
-        temporary.write_text(json.dumps(sorted(reported)))
-        temporary.replace(record_path)
-    except OSError:
-        pass
+        text = record_path.read_text()
+    except FileNotFoundError:
+        return {}
+    except OSError as error:
+        raise RecordFailure(f"could not read {record_path.name}: {error.strerror or type(error).__name__}") from error
+    try:
+        record = json.loads(text)
+    except ValueError as error:
+        raise RecordFailure(f"{record_path.name} is not valid JSON") from error
+    if not isinstance(record, dict):
+        raise RecordFailure(f"{record_path.name} does not hold a branch-keyed record")
+    return {key: {entry for entry in entries if isinstance(entry, str)}
+            for key, entries in record.items() if isinstance(key, str) and isinstance(entries, list)}
+
+
+def write_record_entries(record_path: Path, key: str, entries: set, live_branches) -> None:
+    """Add entries under key, merged with what other writers stored, and drop branches that no longer exist.
+
+    A lock file serialises writers in one worktree, and each write goes to its own temporary
+    file renamed over the record, so a reader never sees a partly written record.
+    Raises RecordFailure when the record cannot be written.
+    """
+    lock_path = record_path.with_name(record_path.name + ".lock")
+    try:
+        with open(lock_path, "a") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            try:
+                record = read_record(record_path)
+            except RecordFailure:
+                record = {}
+            record[key] = record.get(key, set()) | entries
+            keep = (set(live_branches) | {key, DETACHED_HEAD_RECORD_KEY}) if live_branches is not None else set(record)
+            serialised = json.dumps({name: sorted(values) for name, values in sorted(record.items())
+                                     if name in keep})
+            descriptor, temporary = tempfile.mkstemp(prefix=record_path.name + ".", suffix=".partial",
+                                                     dir=str(record_path.parent))
+            try:
+                with os.fdopen(descriptor, "w") as handle:
+                    handle.write(serialised)
+                os.replace(temporary, record_path)
+            except BaseException:
+                try:
+                    os.unlink(temporary)
+                except OSError:
+                    pass
+                raise
+    except OSError as error:
+        raise RecordFailure(f"could not write {record_path.name}: {error.strerror or type(error).__name__}") from error
+
+
+def local_branches(checkout: Path):
+    listing = git_output(["for-each-ref", "--format=%(refname:short)", "refs/heads"], checkout)
+    return listing.splitlines() if listing is not None else None
 
 
 def worktree_fingerprint(checkout: Path):
@@ -240,8 +298,15 @@ def main() -> int:
     fingerprint = worktree_fingerprint(checkout)
     if fingerprint is None:
         return 0
-    reported = read_reported_names(record_path)
     messages = []
+    record_key = record_key_for(checkout)
+    try:
+        reported = read_record(record_path).get(record_key, set())
+    except RecordFailure as failure:
+        reported = set()
+        failure_text = failure_report_once(state, str(failure))
+        if failure_text:
+            messages.append(failure_text)
     try:
         new_branch = unreported_new_branch(checkout, reported)
     except BranchCheckFailure as failure:
@@ -271,7 +336,12 @@ def main() -> int:
     shown = names[:REMINDER_NAME_LIMIT]
     newly_reported = {f"{kind}\t{name}" for _, kind, name in shown}
     if newly_reported - reported:
-        write_reported_names(record_path, reported | newly_reported)
+        try:
+            write_record_entries(record_path, record_key, newly_reported, local_branches(checkout))
+        except RecordFailure as failure:
+            failure_text = failure_report_once(state, str(failure))
+            if failure_text:
+                messages.append(failure_text)
     write_state(session_id, state)
     if names:
         messages.append(reminder_text(names))

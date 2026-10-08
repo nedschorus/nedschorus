@@ -492,8 +492,8 @@ def case_hook_reports_once_per_worktree(root):
     git_directory = subprocess.run(["git", "rev-parse", "--absolute-git-dir"], cwd=str(clone), check=True,
                                    capture_output=True, text=True).stdout.strip()
     record = Path(git_directory) / "new-shared-names-reported.json"
-    check("the reported names are kept in the worktree's own git directory",
-          "python-function\tshared_helper" in json.loads(record.read_text()), str(record))
+    check("the reported names are kept in the worktree's own git directory, under its branch",
+          "python-function\tshared_helper" in json.loads(record.read_text()).get("topic", []), str(record))
     _, later_session = run_hook(clone, state_root, {"tool_name": "Write", "session_id": "session-two",
                                                      "tool_input": {"file_path": "beta.py"}})
     check("a later agent-session in the same worktree is not told the same names again",
@@ -504,6 +504,113 @@ def case_hook_reports_once_per_worktree(root):
                                                  "tool_input": {"file_path": "delta.py"}})
     check("the later agent-session is told only the names that are new to the worktree",
           "second_helper" in later_new and "shared_helper (" not in later_new, later_new)
+
+
+def record_path_of(clone: Path) -> Path:
+    git_directory = subprocess.run(["git", "rev-parse", "--absolute-git-dir"], cwd=str(clone), check=True,
+                                   capture_output=True, text=True).stdout.strip()
+    return Path(git_directory) / "new-shared-names-reported.json"
+
+
+def case_new_branch_is_told_a_name_again_and_gone_branches_are_dropped(root):
+    clone = make_clone(root, BASE_MAIN_FILES)
+    state_root = root / "state"
+    state_root.mkdir()
+    write(clone, "alpha.py", "def shared_helper():\n    return 1\n")
+    write(clone, "beta.py", "import alpha\nalpha.shared_helper()\n")
+    _, first = run_hook(clone, state_root, {"tool_name": "Write", "tool_input": {"file_path": "beta.py"}})
+    check("the name is told on the first branch", "shared_helper" in first, first)
+    git(["stash", "-q", "-u"], clone)
+    git(["switch", "-q", "main"], clone)
+    git(["branch", "-q", "-D", "topic"], clone)
+    git(["switch", "-q", "-c", "later-topic"], clone)
+    git(["stash", "pop", "-q"], clone)
+    _, again = run_hook(clone, state_root, {"tool_name": "Write", "tool_input": {"file_path": "beta.py"}})
+    check("a later branch that adds the same name is told it again", "shared_helper" in again, again)
+    record = json.loads(record_path_of(clone).read_text())
+    check("the abandoned branch's entries are dropped from the record",
+          "topic" not in record and "later-topic" in record, str(sorted(record)))
+
+
+def case_unreadable_record_is_told_and_names_are_told_again(root):
+    clone = make_clone(root, BASE_MAIN_FILES)
+    state_root = root / "state"
+    state_root.mkdir()
+    record_path_of(clone).write_text("{not json")
+    write(clone, "alpha.py", "def shared_helper():\n    return 1\n")
+    write(clone, "beta.py", "import alpha\nalpha.shared_helper()\n")
+    code, context = run_hook(clone, state_root, {"tool_name": "Write", "tool_input": {"file_path": "beta.py"}})
+    check("an unreadable record exits 0", code == 0)
+    check("an unreadable record is told to the agent",
+          "new-shared-names-reported.json is not valid JSON" in context, context)
+    check("the names are still listed after an unreadable record", "shared_helper" in context, context)
+    check("the record is rewritten as valid JSON",
+          isinstance(json.loads(record_path_of(clone).read_text()), dict))
+
+
+def case_missing_record_is_silent_about_the_record(root):
+    clone = make_clone(root, BASE_MAIN_FILES)
+    state_root = root / "state"
+    state_root.mkdir()
+    check("a fresh worktree has no record", not record_path_of(clone).exists())
+    write(clone, "alpha.py", "def shared_helper():\n    return 1\n")
+    write(clone, "beta.py", "import alpha\nalpha.shared_helper()\n")
+    _, context = run_hook(clone, state_root, {"tool_name": "Write", "tool_input": {"file_path": "beta.py"}})
+    check("a missing record is the normal first run and says nothing about the record",
+          "failed" not in context and "shared_helper" in context, context)
+
+
+def case_unwritable_record_is_told(root):
+    clone = make_clone(root, BASE_MAIN_FILES)
+    state_root = root / "state"
+    state_root.mkdir()
+    record_path_of(clone).mkdir()
+    write(clone, "alpha.py", "def shared_helper():\n    return 1\n")
+    write(clone, "beta.py", "import alpha\nalpha.shared_helper()\n")
+    code, context = run_hook(clone, state_root, {"tool_name": "Write", "tool_input": {"file_path": "beta.py"}})
+    check("a record that cannot be written exits 0", code == 0)
+    check("a record that cannot be written is told to the agent",
+          "new-shared-names-reported.json" in context and "failed" in context, context)
+
+
+OVERLAPPING_WRITER_SCRIPT = """
+import importlib.util, sys
+from pathlib import Path
+spec = importlib.util.spec_from_file_location("hook", sys.argv[1])
+hook = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(hook)
+record = Path(sys.argv[2])
+writer = sys.argv[3]
+for index in range(40):
+    hook.write_record_entries(record, "topic", {f"python-function\\t{writer}_{index}"}, ["topic"])
+"""
+
+
+def case_overlapping_writers_never_leave_invalid_json_and_keep_every_name(root):
+    clone = make_clone(root, BASE_MAIN_FILES)
+    record = record_path_of(clone)
+    hook_path = Path(__file__).resolve().parent / "new-shared-names-reminder-hook.py"
+    writers = [subprocess.Popen([sys.executable, "-c", OVERLAPPING_WRITER_SCRIPT, str(hook_path), str(record),
+                                 f"writer{number}"]) for number in range(4)]
+    invalid_reads = 0
+    reads = 0
+    while any(writer.poll() is None for writer in writers):
+        try:
+            json.loads(record.read_text())
+        except FileNotFoundError:
+            continue
+        except ValueError:
+            invalid_reads += 1
+        reads += 1
+    codes = [writer.wait() for writer in writers]
+    check("the overlapping writers all exit 0", codes == [0, 0, 0, 0], str(codes))
+    check("no read of the record during overlapping writes is invalid JSON",
+          invalid_reads == 0, f"{invalid_reads} invalid of {reads}")
+    stored = set(json.loads(record.read_text()).get("topic", []))
+    expected = {f"python-function\twriter{number}_{index}" for number in range(4) for index in range(40)}
+    check("every writer's names are kept", stored == expected, f"{len(stored)} of {len(expected)}")
+    leftovers = [path.name for path in record.parent.iterdir() if path.name.endswith(".partial")]
+    check("no temporary files are left behind", leftovers == [], str(leftovers))
 
 
 def case_two_worktrees_keep_separate_records(root):
@@ -592,6 +699,10 @@ def main() -> int:
              case_remote_branch_lookup_failure_is_told_and_no_branch_reported,
              case_branch_check_failure_on_a_quiet_shell_call_is_told,
              case_hook_reports_once_per_worktree, case_two_worktrees_keep_separate_records,
+             case_new_branch_is_told_a_name_again_and_gone_branches_are_dropped,
+             case_unreadable_record_is_told_and_names_are_told_again,
+             case_missing_record_is_silent_about_the_record, case_unwritable_record_is_told,
+             case_overlapping_writers_never_leave_invalid_json_and_keep_every_name,
              case_hook_shell_commands,
              case_hook_reports_failure_once, case_hook_ignores_other_input]
     for case in cases:
