@@ -23,6 +23,7 @@ Run: python3 nc-systems/handoff/tests/uncommitted-work-snapshots-test.py
 """
 
 import importlib.util
+import io
 import json
 import os
 import shutil
@@ -237,9 +238,10 @@ def claude_stand_in_candidates(platform=sys.platform, which=shutil.which):
     return candidates
 
 
-def find_claude_stand_in(candidates=None, destination=CLAUDE_STAND_IN):
+def find_claude_stand_in(candidates=None, destination=CLAUDE_STAND_IN, launch=subprocess.Popen):
     """Put each candidate at destination until one runs and is named claude.
 
+    launch starts the probe; a test passes a fake so it needs no binary that runs here.
     Returns (kind, None) for the candidate that works, or (None, what was observed).
     """
     observed = []
@@ -247,8 +249,8 @@ def find_claude_stand_in(candidates=None, destination=CLAUDE_STAND_IN):
                                  else candidates):
         try:
             prepare(destination)
-            probe = subprocess.Popen([str(destination), "-c", CLAUDE_STAND_IN_PROBES[kind]],
-                                     stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+            probe = launch([str(destination), "-c", CLAUDE_STAND_IN_PROBES[kind]],
+                           stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
         except OSError as error:
             observed.append(f"{label}: {error}")
             continue
@@ -1469,10 +1471,20 @@ def test_stand_in_candidate_order():
 def test_stand_in_lookup_failure_is_named():
     name = "a stand-in that ran but whose name could not be read says so"
     destination = SCRATCH / "lookup-failure" / "claude"
-    destination.parent.mkdir()
-    shell = os.path.realpath("/bin/sh")
-    candidates = [("shell", f"a copy of {shell}",
-                   lambda target: copy_binary_as_claude_stand_in(shell, target))]
+    candidates = [("shell", "a stand-in that reports ready", lambda target: None)]
+
+    class ReadyProbe:
+        """A probe that says ready and exits 0, whatever binary this platform can run."""
+
+        def __init__(self, *arguments, **keywords):
+            self.pid = os.getpid()
+            self.returncode = None
+            self.stdin = io.StringIO()
+            self.stdout = io.StringIO("ready\n")
+
+        def wait(self, timeout=None):
+            self.returncode = 0
+            return 0
 
     def refuse(process_id, *arguments, **keywords):
         raise snapshots.WorkSnapshotError("process lookup refused")
@@ -1480,11 +1492,11 @@ def test_stand_in_lookup_failure_is_named():
     real_lookup = snapshots.process_command_name_and_parent
     snapshots.process_command_name_and_parent = refuse
     try:
-        kind, observed = find_claude_stand_in(candidates, destination)
+        kind, observed = find_claude_stand_in(candidates, destination, launch=ReadyProbe)
     finally:
         snapshots.process_command_name_and_parent = real_lookup
-    check(kind is None and observed == f"a copy of {shell} ran, but its process name "
-          "could not be read: process lookup refused", name, f"{kind} {observed!r}")
+    check(kind is None and observed == "a stand-in that reports ready ran, but its process "
+          "name could not be read: process lookup refused", name, f"{kind} {observed!r}")
 
 
 def test_compiled_stand_in_runs_the_hook():
