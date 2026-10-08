@@ -15,13 +15,11 @@ searches, in parallel:
 - pull requests on GitHub, with their comments.
 
 For a transcript it prints question-and-answer pairs: the agent's message that
-holds the words, then the user's next message. Notifications, and the agent's
-short acknowledgements of them, are left out first, by the handoff extractor's
-rules; a short agent message after a notification that asks something (its last
-line holds a question mark, or it says "Recommend", "Shall I", "Y:" or "Y/N")
-is kept, because it can be the question the user answered. When the user's message directly followed a different agent message,
-that message is shown too, as what the user replied to, so the reader judges
-which question was answered. Several matching agent messages before one user
+holds the words, then the user's next message. Notifications and other injected
+records are left out, by the handoff extractor's rules, but no agent message is:
+the user's message answers the last agent message before it, so when that is a
+different agent message it is shown too, as what the user replied to, and the
+reader judges which question was answered. Several matching agent messages before one user
 message make one pair, shown with the last of them. Answered pairs come first,
 newest first; a matching message the user never answered is left out unless
 --include-unanswered is given, and the report says how many were left out. A word matches
@@ -93,7 +91,6 @@ GITHUB_RESULTS_FETCHED = 50
 EXCERPT_CHARACTERS = 300
 COMMAND_TIMEOUT_SECONDS = 300
 DATE_PATTERN = re.compile(r"\d{4}-\d{2}-\d{2}")
-ASK_MARKERS = ("recommend", "shall i", "y:", "y/n")
 
 
 def production_plan() -> dict:
@@ -145,30 +142,15 @@ def shortened(text: str) -> str:
     return flat if len(flat) <= EXCERPT_CHARACTERS else flat[:EXCERPT_CHARACTERS] + "…"
 
 
-def asks_something(text: str) -> bool:
-    """Return whether an agent message asks the user something.
-
-    The handoff extractor drops every short agent message after a notification,
-    by length alone; a short message that asks something can be the question
-    the user answered, so it is kept for pairing.
-    """
-    lines = [line for line in text.strip().splitlines() if line.strip()]
-    if lines and "?" in lines[-1]:
-        return True
-    lowered = text.lower()
-    return any(marker in lowered for marker in ASK_MARKERS)
-
-
 def dialog_with_timestamps(transcript_path: Path):
     """Return the transcript's dialog turns, each with voice, text and timestamp.
 
-    The handoff extractor's rules leave out injected notices, tool results,
-    subagent turns, and the agent's short acknowledgements of notifications,
-    so neither a notification nor its acknowledgement stands between a
-    question and the user's answer. A short message after a notification that
-    asks something is kept.
+    The handoff extractor's rules leave out injected notices, tool results and
+    subagent turns. Every agent message is kept, a short acknowledgement of a
+    notification included: a reply is attributed to the message it followed,
+    and dropping a message by its length could drop the question answered.
     """
-    turns, _ = _extractor.read_dialog_turns(transcript_path, keep_after_notification=asks_something)
+    turns, _ = _extractor.read_dialog_turns(transcript_path, drop_acknowledgements=False)
     return turns
 
 
@@ -347,7 +329,7 @@ def search_transcripts(entry, words, all_words, since, include_unanswered=False)
                 if since and pair["timestamp"] and pair["timestamp"][:10] < since:
                     continue
                 if pair["answer"] is None and not include_unanswered:
-                    hidden_unanswered += 1
+                    hidden_unanswered += 1 + pair["earlier_matching"]
                     continue
                 items.append({"sort_key": (pair["answer"] is not None, pair["timestamp"]),
                               "pair": pair, "path": path})

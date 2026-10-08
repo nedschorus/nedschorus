@@ -279,10 +279,41 @@ with scratch() as base:
     result = s.run("bwrap")
     _, body = section(result.stdout, f"agent-session transcripts in {s.transcripts}")
     stripped = [line.strip() for line in body]
-    check("a notification and the agent's acknowledgement of it do not separate a question from its answer",
+    check("a notification does not separate a question from its answer, and the acknowledgement the "
+          "user's message followed is shown as what the user replied to",
           any(line.startswith("Agent:") and "Shall I build the bwrap sandbox" in line for line in stripped)
+          and "User replied to: Still waiting on your answer about the sandbox." in stripped
           and "User:  y" in stripped
-          and not any("Still waiting" in line for line in stripped), body)
+          and not any("Agent \"fork\" finished" in line for line in stripped), body)
+
+# The commonest approval-walk prompt, short and after a notification, is what the user replied to.
+with scratch() as base:
+    s = Scratch(base)
+    write_transcript(s.transcripts, "walk-prompt-after-notification", [
+        assistant("Item 3 of 9: build the bwrap sandbox for suites that send signals.", "2026-10-03T10:00:00Z"),
+        notification("Agent \"fork\" finished", "2026-10-03T10:01:00Z"),
+        assistant("Item 4 of 9: keep the old lock on the Mac. Y to approve, N to disapprove, D to defer.",
+                  "2026-10-03T10:01:05Z"),
+        user("y", "2026-10-03T10:02:00Z"),
+    ])
+    result = s.run("bwrap")
+    check("a short Y/N/D walk prompt after a notification is shown as what the user replied to",
+          "User replied to: Item 4 of 9: keep the old lock on the Mac. Y to approve, N to disapprove, "
+          "D to defer." in result.stdout, result.stdout)
+
+# A short summary after a notification is shown as what the user replied to, which is what happened.
+with scratch() as base:
+    s = Scratch(base)
+    write_transcript(s.transcripts, "summary-after-notification", [
+        assistant("Shall I build bwrap?", "2026-10-03T10:00:00Z"),
+        notification("Agent \"fork\" finished", "2026-10-03T10:01:00Z"),
+        assistant("Summary: the review finished; still waiting for your answer.", "2026-10-03T10:01:05Z"),
+        user("y", "2026-10-03T10:02:00Z"),
+    ])
+    result = s.run("bwrap")
+    check("a short summary after a notification is shown as what the user replied to",
+          "User replied to: Summary: the review finished; still waiting for your answer." in result.stdout
+          and "Shall I build bwrap?" in result.stdout, result.stdout)
 
 # A short question after a notification is kept: it can be what the user answered.
 with scratch() as base:
@@ -437,6 +468,45 @@ with scratch() as base:
           "Not found in these places." not in result.stdout and "Nothing matched" not in result.stdout,
           result.stdout)
     check("only unanswered matches, every place searched, exits 0", result.returncode == 0, result.stderr)
+
+# Every matching message in a group the user never answered is counted as left out.
+with scratch() as base:
+    s = Scratch(base)
+    write_transcript(s.transcripts, "two-unanswered", [
+        assistant("Shall I build zorblax?", "2026-10-03T10:00:00Z"),
+        assistant("Or shall I delete zorblax?", "2026-10-03T10:00:05Z"),
+    ])
+    result = s.run("zorblax")
+    check("two matching messages no user message followed are both counted as left out",
+          "2 matching agent message(s) that no user message followed are not shown" in result.stdout,
+          result.stdout)
+
+# A place with answered pairs also says how many unanswered matches it left out.
+with scratch() as base:
+    s = Scratch(base)
+    write_transcript(s.transcripts, "answered", [
+        assistant("Shall I build zorblax?", "2026-10-03T10:00:00Z"), user("yes-answer", "2026-10-03T10:00:01Z")])
+    write_transcript(s.transcripts, "unanswered", [
+        assistant("Shall I keep zorblax?", "2026-10-04T10:00:00Z")])
+    result = s.run("zorblax")
+    _, body = section(result.stdout, f"agent-session transcripts in {s.transcripts}")
+    check("a place with answered pairs names the unanswered matches it left out",
+          "yes-answer" in result.stdout
+          and any("1 matching agent message(s) that no user message followed are not shown" in line
+                  for line in body), (result.stdout, body))
+
+# --since leaves an older unanswered match out before it is counted.
+with scratch() as base:
+    s = Scratch(base)
+    write_transcript(s.transcripts, "old-unanswered", [
+        assistant("Shall I build zorblax? (old)", "2026-09-01T10:00:00Z"),
+        user("old-yes", "2026-09-01T10:00:01Z"),
+        assistant("Shall I keep zorblax? (old, never answered)", "2026-09-01T10:00:02Z")])
+    write_transcript(s.transcripts, "new-answered", [
+        assistant("Shall I build zorblax? (new)", "2026-10-04T10:00:00Z"), user("new-yes", "2026-10-04T10:00:01Z")])
+    result = s.run("zorblax", "--since", "2026-10-01")
+    check("--since leaves out an older unanswered match before counting what was left out",
+          "new-yes" in result.stdout and "not shown" not in result.stdout, result.stdout)
 
 # Nothing found.
 with scratch() as base:
