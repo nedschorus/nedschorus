@@ -135,8 +135,19 @@ def unreported_new_branch(checkout: Path, reported) -> str:
     branch = finished.stdout.strip()
     if not branch or f"branch\t{branch}" in reported:
         return ""
-    if git_output(["rev-parse", "--verify", "-q", f"refs/remotes/origin/{branch}"], checkout) is not None:
+    try:
+        lookup = subprocess.run(["git", "show-ref", "--verify", "--quiet", f"refs/remotes/origin/{branch}"],
+                                cwd=str(checkout), capture_output=True, text=True, check=False,
+                                timeout=GIT_CALL_TIMEOUT_SECONDS)
+    except subprocess.TimeoutExpired as error:
+        raise BranchCheckFailure("git show-ref timed out") from error
+    except OSError as error:
+        raise BranchCheckFailure("git show-ref could not start") from error
+    if lookup.returncode == 0:
         return ""
+    if lookup.returncode != 1:
+        first_line = (lookup.stderr.strip().splitlines() or [""])[0][:200]
+        raise BranchCheckFailure(f"git show-ref exited {lookup.returncode}: {first_line}")
     return branch
 
 

@@ -340,26 +340,29 @@ def case_two_worktrees_each_report_their_own_branch(root):
           set(re.findall(r"^  (\S+) \(branch\)", other, re.M)) == {"second-worktree-topic"}, other)
 
 
-def case_branch_check_failure_is_told_and_the_file_check_still_runs(root):
-    clone = make_clone(root, BASE_MAIN_FILES)
-    write(clone, "after-failure.md", "A `still-checked-name` here.\n")
-    hook = load_module("hook_for_branch_failure_case", HOOK_PATH)
-    hook.STATE_DIRECTORY = root / "state"
+def run_hook_in_process(hook, root: Path, clone: Path, payload: dict, planted_failures: dict):
+    """Run the hook's main() with git subcommands named in planted_failures failing; return (exit, context).
+
+    planted_failures maps a git subcommand to a CompletedProcess exit code, or to "timeout".
+    """
     real_run = subprocess.run
 
-    def symbolic_ref_fails(arguments, **options):
-        if arguments[:2] == ["git", "symbolic-ref"]:
-            return subprocess.CompletedProcess(arguments, 128, "", "fatal: planted failure\n")
+    def run_with_planted_failures(arguments, **options):
+        planted = planted_failures.get(arguments[1]) if len(arguments) > 1 and arguments[0] == "git" else None
+        if planted == "timeout":
+            raise subprocess.TimeoutExpired(arguments, 10)
+        if planted is not None:
+            return subprocess.CompletedProcess(arguments, planted, "", "fatal: planted failure\n")
         return real_run(arguments, **options)
-    payload = json.dumps({"tool_name": "Write", "session_id": "session-one", "cwd": str(clone),
-                          "tool_input": {"file_path": "after-failure.md"}})
-    hook.subprocess.run = symbolic_ref_fails
+    hook.STATE_DIRECTORY = root / "state"
+    hook.subprocess.run = run_with_planted_failures
     # The lister the hook loads keeps its token cache under the temporary directory; keep it inside this case.
     original_tempdir = tempfile.tempdir
-    (root / "tmp").mkdir()
+    (root / "tmp").mkdir(exist_ok=True)
     tempfile.tempdir = str(root / "tmp")
+    body = json.dumps(dict({"session_id": "session-one", "cwd": str(clone)}, **payload))
     original_stdin, original_stdout = sys.stdin, sys.stdout
-    sys.stdin, sys.stdout = io.StringIO(payload), io.StringIO()
+    sys.stdin, sys.stdout = io.StringIO(body), io.StringIO()
     try:
         code = hook.main()
         output = sys.stdout.getvalue()
@@ -368,9 +371,43 @@ def case_branch_check_failure_is_told_and_the_file_check_still_runs(root):
         hook.subprocess.run = real_run
         tempfile.tempdir = original_tempdir
     context = json.loads(output)["hookSpecificOutput"]["additionalContext"] if output.strip() else ""
+    return code, context
+
+
+def case_branch_check_failure_is_told_and_the_file_check_still_runs(root):
+    clone = make_clone(root, BASE_MAIN_FILES)
+    write(clone, "after-failure.md", "A `still-checked-name` here.\n")
+    hook = load_module("hook_for_branch_failure_case", HOOK_PATH)
+    code, context = run_hook_in_process(hook, root, clone, {"tool_name": "Write",
+                                        "tool_input": {"file_path": "after-failure.md"}}, {"symbolic-ref": 128})
     check("a failing branch check exits 0", code == 0)
     check("a failing branch check is told to the agent", "git symbolic-ref exited 128" in context, context)
     check("the file-name check still runs after a failing branch check", "still-checked-name" in context, context)
+
+
+def case_remote_branch_lookup_failure_is_told_and_no_branch_reported(root):
+    for planted, expected_text in ((128, "git show-ref exited 128"), ("timeout", "git show-ref timed out")):
+        case_root = root / f"lookup-{planted}"
+        case_root.mkdir()
+        clone = make_clone(case_root, BASE_MAIN_FILES)
+        hook = load_module(f"hook_for_lookup_failure_{planted}", HOOK_PATH)
+        code, context = run_hook_in_process(hook, case_root, clone, {"tool_name": "Bash",
+                                            "tool_input": {"command": "ls"}}, {"show-ref": planted})
+        check(f"a remote-branch lookup that fails ({planted}) is told to the agent",
+              code == 0 and expected_text in context, context)
+        check(f"a remote-branch lookup that fails ({planted}) reports no branch", "(branch)" not in context, context)
+
+
+def case_branch_check_failure_on_a_quiet_shell_call_is_told(root):
+    clone = make_clone(root, BASE_MAIN_FILES)
+    hook = load_module("hook_for_quiet_failure_case", HOOK_PATH)
+    run_hook_in_process(hook, root, clone, {"tool_name": "Bash", "tool_input": {"command": "ls"}}, {})
+    _, quiet = run_hook_in_process(hook, root, clone, {"tool_name": "Bash", "tool_input": {"command": "ls"}}, {})
+    check("a quiet shell call with a working branch check is silent", quiet == "", quiet)
+    _, context = run_hook_in_process(hook, root, clone, {"tool_name": "Bash", "tool_input": {"command": "ls"}},
+                                     {"symbolic-ref": 128})
+    check("a branch check that fails during a quiet shell call is still told to the agent",
+          "git symbolic-ref exited 128" in context, context)
 
 
 def case_reminder_is_capped():
@@ -509,6 +546,8 @@ def main() -> int:
              case_timeout_failure_text_is_stable, case_hook_shows_names_past_the_cap_later,
              case_hook_reports_this_worktrees_new_branch, case_two_worktrees_each_report_their_own_branch,
              case_branch_check_failure_is_told_and_the_file_check_still_runs,
+             case_remote_branch_lookup_failure_is_told_and_no_branch_reported,
+             case_branch_check_failure_on_a_quiet_shell_call_is_told,
              case_hook_reports_once_per_session, case_hook_shell_commands,
              case_hook_reports_failure_once, case_hook_ignores_other_input]
     for case in cases:
