@@ -222,7 +222,7 @@ def names_used_in_other_files(names_and_files, checkout: Path):
             if files_mentioning.get(name, set()) - defining_files[name]}
 
 
-def new_shared_names(checkout: Path, branch_name=None, already_reported=frozenset(),
+def new_shared_names(checkout: Path, branch_names=(), already_reported=frozenset(),
                      file_cache=None):
     """Find the branch's new shared names.
 
@@ -277,7 +277,7 @@ def new_shared_names(checkout: Path, branch_name=None, already_reported=frozense
     found.extend(triple for triple in candidates
                  if triple[1] not in PYTHON_KINDS or triple[2] in used_elsewhere)
 
-    if branch_name:
+    for branch_name in branch_names:
         remote_branch = git(["branch", "-r", "--list", f"origin/{branch_name}"], checkout)
         if not remote_branch.strip():
             found.append(("", KIND_BRANCH, branch_name))
@@ -292,7 +292,7 @@ def main() -> int:
     arguments = parser.parse_args()
     try:
         checkout = Path(git(["rev-parse", "--show-toplevel"], Path(arguments.checkout)).strip())
-        names = new_shared_names(checkout, arguments.branch_name)
+        names = new_shared_names(checkout, [arguments.branch_name] if arguments.branch_name else [])
     except GitFailure as failure:
         print(f"new-shared-names-in-changed-files-list: {failure}", file=sys.stderr)
         return 2

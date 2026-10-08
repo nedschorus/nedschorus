@@ -5,8 +5,8 @@ Run: python3 scripts/new-shared-names-in-changed-files-list-test.py
 Prints one line per case and exits non-zero if any case fails.
 
 Most cases build a throwaway origin repository and a clone whose branch adds files,
-then run the lister or the hook as a program against the clone; the cache, reminder
-and pattern cases import them as modules. The first case is the positive one, so the
+then run the lister or the hook as a program against the clone; the cache, timeout
+and reminder cases import them as modules. The first case is the positive one, so the
 lister is shown able to report before any case asserts that it stays silent.
 """
 
@@ -292,35 +292,32 @@ def case_file_only_main_has_counts_as_on_main(root):
     check("a path main has only as a file is not listed", "tools/quiet-tool-file.py" not in names, str(listed))
 
 
-def case_branch_creation_pattern():
-    hook = load_module("hook_for_pattern_case", HOOK_PATH)
-    expected = {
-        "git switch -c topic-one": "topic-one",
-        "git checkout -q -b topic-two": "topic-two",
-        "git switch --quiet -c topic-three": "topic-three",
-        "git -C /some/path checkout -b topic-four": "topic-four",
-        "cd x && git checkout -b topic-five && ls": "topic-five",
-        "git worktree add -b topic-six ../elsewhere": "topic-six",
-        "git worktree add --detach -B topic-seven ../elsewhere": "topic-seven",
-        "git branch topic-eight": "topic-eight",
-        "git branch -f topic-nine origin/main": "topic-nine",
-        "git checkout main": None,
-        "git branch": None,
-        "git branch -d old-topic": None,
-        "git branch -m old-name new-name": None,
-        "git branch --list": None,
-        "cd /repo\ngit branch\ngit status": None,
-        "git fetch -q\ngit branch\necho done": None,
-        "git branch -q\nls": None,
-        "echo 'git branch foo'": None,
-        "echo \"git checkout -b quoted-topic\"": None,
-        "git status && git branch topic-ten || true": "topic-ten",
-        "git -C /repo branch topic-eleven; ls": "topic-eleven",
-        "echo 'unclosed; git branch topic-twelve": "topic-twelve",
+def case_hook_reports_branches_git_shows_as_new(root):
+    clone = make_clone(root, BASE_MAIN_FILES)
+    state_root = root / "state"
+    state_root.mkdir()
+    subprocess.run(["git", "branch", "pre-session-topic"], cwd=str(clone), check=True, capture_output=True)
+    _, first = run_hook(clone, state_root, {"tool_name": "Bash", "tool_input": {"command": "ls"}})
+    check("the first run of an agent-session reports no branch", "(branch)" not in first, first)
+    commands = {
+        "git branch plain-topic": "plain-topic",
+        "git branch | grep plain": None,
+        "git branch piped-topic | cat": "piped-topic",
+        "git branch redirected-topic > /dev/null 2>&1": "redirected-topic",
+        "git branch commented-topic # a comment": "commented-topic",
+        "env -u GH_TOKEN git branch env-topic": "env-topic",
+        "git -c user.name='A;B' branch quoted-option-topic": "quoted-option-topic",
+        "git worktree add -q -b worktree-topic ../worktree-elsewhere": "worktree-topic",
+        "echo 'git branch echoed-topic'": None,
     }
-    for command, branch in expected.items():
-        found = hook.created_branch_name(command)
-        check(f"branch creation recognised in {command!r}", found == branch, str(found))
+    for command, branch in commands.items():
+        subprocess.run(command, shell=True, cwd=str(clone), capture_output=True)
+        _, context = run_hook(clone, state_root, {"tool_name": "Bash", "tool_input": {"command": command}})
+        reported = set(re.findall(r"^  (\S+) \(branch\)", context, re.M))
+        expected = {branch} if branch else set()
+        check(f"after {command!r} the hook reports {expected or 'no branch'}", reported == expected, context)
+    _, later = run_hook(clone, state_root, {"tool_name": "Bash", "tool_input": {"command": "ls"}})
+    check("a branch that existed before the agent-session is never reported", "pre-session-topic" not in later, later)
 
 
 def case_reminder_is_capped():
@@ -401,6 +398,7 @@ def case_hook_shell_commands(root):
     run_hook(clone, state_root, {"tool_name": "Bash", "tool_input": {"command": "ls"}})
     _, quiet = run_hook(clone, state_root, {"tool_name": "Bash", "tool_input": {"command": "ls"}})
     check("a shell command that changed nothing is silent", quiet == "", quiet)
+    subprocess.run(["git", "checkout", "-q", "-b", "brand-new-topic"], cwd=str(clone), check=True, capture_output=True)
     _, branch = run_hook(clone, state_root, {"tool_name": "Bash",
                                              "tool_input": {"command": "git checkout -q -b brand-new-topic"}})
     check("a branch made with options before -b is reported", "brand-new-topic" in branch, branch)
@@ -455,12 +453,12 @@ def main() -> int:
              case_markdown_names, case_exemptions, case_new_glossary_entry, case_branch_name,
              case_nothing_new_is_silent, case_git_failure_exits_nonzero, case_file_cache, case_file_only_main_has_counts_as_on_main,
              case_timeout_failure_text_is_stable, case_hook_shows_names_past_the_cap_later,
+             case_hook_reports_branches_git_shows_as_new,
              case_hook_reports_once_per_session, case_hook_shell_commands,
              case_hook_reports_failure_once, case_hook_ignores_other_input]
     for case in cases:
         with tempfile.TemporaryDirectory() as directory:
             case(Path(directory).resolve())
-    case_branch_creation_pattern()
     case_reminder_is_capped()
     print()
     if FAILURES:

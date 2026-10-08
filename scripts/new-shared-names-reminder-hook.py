@@ -6,7 +6,6 @@ import hashlib
 import importlib.util
 import json
 import re
-import shlex
 import subprocess
 import sys
 import tempfile
@@ -18,17 +17,6 @@ REMINDER_NAME_LIMIT = 30
 LISTER_COMMAND = "python3 scripts/new-shared-names-in-changed-files-list.py"
 FILE_WRITING_TOOL_NAMES = frozenset({"Write", "Edit", "MultiEdit", "NotebookEdit"})
 SHELL_TOOL_NAME = "Bash"
-# A shell command line is split into simple commands here, then each is tokenised with shlex,
-# so a quoted string stays one token and one command cannot run into the next.
-SHELL_COMMAND_SEPARATOR_PATTERN = re.compile(r"\n|;|&&|\|\|")
-GIT_GLOBAL_OPTIONS_WITH_VALUE = frozenset({"-C", "-c"})
-BRANCH_CREATING_FLAGS = {
-    "checkout": frozenset({"-b", "-B"}),
-    "switch": frozenset({"-c", "-C", "--create", "--force-create"}),
-    "worktree add": frozenset({"-b", "-B"}),
-}
-# Options `git branch` accepts when creating a branch; any other option means it lists, deletes or renames.
-GIT_BRANCH_CREATING_OPTIONS = frozenset({"-f", "--force", "-t", "--track", "--no-track", "-q", "--quiet"})
 STATE_DIRECTORY = Path(tempfile.gettempdir()) / "new-shared-names-reminder-hook-state"
 SESSION_ID_SAFE_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
 LISTER_PATH = Path(__file__).resolve().parent / "new-shared-names-in-changed-files-list.py"
@@ -121,48 +109,12 @@ def worktree_fingerprint(checkout: Path):
     return hashlib.sha256("\n".join(parts).encode()).hexdigest()
 
 
-def branch_created_by_tokens(tokens):
-    """Return the branch a tokenised git command creates, or None."""
-    if not tokens or tokens[0] != "git":
+def local_branch_names(checkout: Path):
+    """Return the set of local branch names, or None when git cannot answer."""
+    listing = git_output(["for-each-ref", "--format=%(refname:short)", "refs/heads"], checkout)
+    if listing is None:
         return None
-    index = 1
-    while index < len(tokens):
-        if tokens[index] in GIT_GLOBAL_OPTIONS_WITH_VALUE:
-            index += 2
-        elif tokens[index].startswith("--"):
-            index += 1
-        else:
-            break
-    if index >= len(tokens):
-        return None
-    subcommand, rest = tokens[index], tokens[index + 1:]
-    if subcommand == "worktree":
-        if not rest or rest[0] != "add":
-            return None
-        subcommand, rest = "worktree add", rest[1:]
-    if subcommand in BRANCH_CREATING_FLAGS:
-        for position, token in enumerate(rest[:-1]):
-            if token in BRANCH_CREATING_FLAGS[subcommand] and not rest[position + 1].startswith("-"):
-                return rest[position + 1]
-        return None
-    if subcommand == "branch":
-        for token in rest:
-            if token in GIT_BRANCH_CREATING_OPTIONS:
-                continue
-            return None if token.startswith("-") else token
-    return None
-
-
-def created_branch_name(command: str):
-    for simple_command in SHELL_COMMAND_SEPARATOR_PATTERN.split(command):
-        try:
-            tokens = shlex.split(simple_command)
-        except ValueError:
-            continue
-        name = branch_created_by_tokens(tokens)
-        if name:
-            return name
-    return None
+    return {line for line in listing.splitlines() if line}
 
 
 def reminder_text(new_names) -> str:
@@ -204,20 +156,19 @@ def main() -> int:
         return 0
     checkout = Path(top_level.strip())
 
-    branch_name = None
-    if tool_name == SHELL_TOOL_NAME:
-        tool_input = payload.get("tool_input")
-        command = tool_input.get("command") if isinstance(tool_input, dict) else None
-        if isinstance(command, str):
-            branch_name = created_branch_name(command)
-
     state = read_state(session_id)
     fingerprint = worktree_fingerprint(checkout)
-    if fingerprint is None:
+    branches_now = local_branch_names(checkout)
+    if fingerprint is None or branches_now is None:
         return 0
+    # Branches are compared with the set seen at the previous run; the first run of an agent-session only records it.
+    branches_before = state.get("local_branches")
+    new_branches = sorted(branches_now - set(branches_before)) if isinstance(branches_before, list) else []
+    state["local_branches"] = sorted(branches_now)
     # A shell command that changed no file and made no branch has nothing new to list.
-    if (tool_name == SHELL_TOOL_NAME and branch_name is None
+    if (tool_name == SHELL_TOOL_NAME and not new_branches
             and fingerprint == state.get("worktree_fingerprint")):
+        write_state(session_id, state)
         return 0
     state["worktree_fingerprint"] = fingerprint
 
@@ -225,7 +176,7 @@ def main() -> int:
     file_cache = state.get("file_cache") if isinstance(state.get("file_cache"), dict) else {}
     try:
         lister = load_lister()
-        names = lister.new_shared_names(checkout, branch_name, already_reported=frozenset(reported),
+        names = lister.new_shared_names(checkout, new_branches, already_reported=frozenset(reported),
                                         file_cache=file_cache)
     except Exception as failure:
         error = str(failure) or type(failure).__name__
