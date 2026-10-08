@@ -23,7 +23,8 @@ The cycle, per reincarnation:
      and, on the Mac from noon Pacific, one line when the day's memory review
      is due (memory_review_due_lines).
      Every launch, a resume included, also carries the agent-seat's leftover
-     work-snapshots, with the steps to restore them
+     work-snapshots whose worktree is gone or no longer holds their changes,
+     with the steps to restore them
      (uncommitted_work_snapshot_text).
   7. Keep the current and previous handoff and extract; delete older ones.
 
@@ -1093,11 +1094,14 @@ def summarize_worktree_cleanup_output(lines) -> str:
     discarded = [line for line in lines if ": discarded with it " in line]
     snapshots_deleted = [line for line in lines
                          if line.startswith("work-snapshot ") and ": deleted, first listed " in line]
+    # A superseded one held nothing lost, so only its count is worth a line.
+    superseded_deleted = [line for line in lines
+                          if line.startswith("work-snapshot ") and ": deleted, superseded" in line]
     snapshot_failures = [line for line in lines
                          if line.startswith("work-snapshots: could not be listed")
                          or (line.startswith("work-snapshot ")
                              and (": deletion failed: " in line
-                                  or ": could not read its files: " in line))]
+                                  or ": could not be checked, kept: " in line))]
     announced = {line.partition(": removing it will discard ")[0]:
                  line.partition(": removing it will discard ")[2]
                  for line in lines if ": removing it will discard " in line}
@@ -1128,6 +1132,8 @@ def summarize_worktree_cleanup_output(lines) -> str:
     if snapshots_deleted:
         report += (f"; {len(snapshots_deleted)} leftover work-snapshot(s) deleted: "
                    + "; ".join(snapshots_deleted))
+    if superseded_deleted:
+        report += f"; {len(superseded_deleted)} superseded work-snapshot(s) deleted"
     if snapshot_failures:
         report += (f"; {len(snapshot_failures)} work-snapshot failure(s): "
                    + "; ".join(snapshot_failures))

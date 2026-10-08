@@ -7,20 +7,20 @@ A work-snapshot is a commit in the clone's shared object store under
 refs/work-snapshots/<owner key>/<SHA-1 of the worktree's path>, holding every
 change `git add -A` would stage, with the worktree's HEAD as its parent. The
 owner key names the `claude` process that wrote it, so a work-snapshot whose
-owner is gone is a leftover. Three callers share this module:
+owner is gone is a leftover. A leftover is lost work only when its worktree
+is gone or no longer holds its changes; a session-handoff, a quota stop or a
+logout leaves the files in place, and those leftovers are not listed.
+Three callers share this module:
 scripts/uncommitted-work-snapshot-hook.py writes and deletes work-snapshots,
-nc-systems/handoff/handoff-supervisor.py lists an agent-seat's leftovers in
+nc-systems/handoff/handoff-supervisor.py lists an agent-seat's lost work in
 the first prompt of every agent-session it starts, and
-scripts/clean-worktrees.py deletes a leftover first listed more than
-LEFTOVER_DELETED_DAYS_AFTER_FIRST_LISTING days ago.
+scripts/clean-worktrees.py deletes a listed leftover first listed more than
+LEFTOVER_DELETED_DAYS_AFTER_FIRST_LISTING days ago, and a superseded one.
 
 Usage:
   uncommitted-work-snapshots.py list [--agent-seat NAME] [--repo PATH]
-      every leftover work-snapshot, or the agent-seat's; exit 0, 2 on failure
-  uncommitted-work-snapshots.py matches REF [--repo PATH]
-      prints yes when the worktree REF was taken from still holds exactly
-      REF's changes on REF's parent (exit 0), no otherwise (exit 1); exit 2
-      when that cannot be checked
+      every leftover work-snapshot holding lost work, or the agent-seat's;
+      exit 0, 2 on failure
 """
 
 import hashlib
@@ -359,12 +359,60 @@ def all_work_snapshots(repo):
     return snapshots
 
 
-def leftover_work_snapshots(repo, agent_seat=None, is_alive=None):
+def leftover_work_snapshots(repo, agent_seat=None, is_alive=None, everything=None):
     """Work-snapshots whose owner process is gone, newest first."""
     is_alive = is_alive or owner_process_is_alive
-    return [snapshot for snapshot in all_work_snapshots(repo)
+    everything = all_work_snapshots(repo) if everything is None else everything
+    return [snapshot for snapshot in everything
             if (agent_seat is None or snapshot["agent_seat"] == agent_seat)
             and not is_alive(snapshot["owner_key"])]
+
+
+LOST = "lost"
+IN_PLACE = "in place"
+SUPERSEDED = "superseded"
+
+
+def leftover_state(repo, snapshot, everything):
+    """Whether a leftover's changes exist anywhere but in the work-snapshot itself.
+
+    SUPERSEDED: a later work-snapshot of the same worktree exists, or the
+    worktree exists with nothing uncommitted, so a later agent worked in that
+    worktree after the dead one and the later work-snapshot or the worktree
+    holds what counts; it can be deleted. LOST: its worktree is gone or holds
+    something else, so the work-snapshot may be the only copy; it is listed
+    for restoring. IN_PLACE: the worktree still holds exactly its changes; it
+    is kept, unlisted, so it is still there if the worktree is removed later.
+    Raises WorkSnapshotError when the worktree cannot be read.
+    """
+    worktree = snapshot["worktree"]
+    if not worktree:
+        return LOST
+    if any(other["worktree"] == worktree and other["time"] > snapshot["time"]
+           for other in everything):
+        return SUPERSEDED
+    if not Path(worktree).is_dir():
+        return LOST
+    if not has_uncommitted_changes(worktree):
+        return SUPERSEDED
+    return IN_PLACE if snapshot_matches_worktree(repo, snapshot) else LOST
+
+
+def lost_work_snapshots(repo, agent_seat=None, is_alive=None, everything=None):
+    """(leftover, problem) pairs to list, newest first.
+
+    problem is None, or why the worktree could not be read; such a leftover is
+    listed, since its changes may exist nowhere else.
+    """
+    everything = all_work_snapshots(repo) if everything is None else everything
+    lost = []
+    for snapshot in leftover_work_snapshots(repo, agent_seat, is_alive, everything):
+        try:
+            if leftover_state(repo, snapshot, everything) == LOST:
+                lost.append((snapshot, None))
+        except WorkSnapshotError as error:
+            lost.append((snapshot, str(error)))
+    return lost
 
 
 def changed_files(repo, ref):
@@ -385,7 +433,7 @@ def utc_text(seconds):
     return datetime.fromtimestamp(seconds, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def entry_text(repo, snapshot):
+def entry_text(repo, snapshot, problem=None):
     worktree = snapshot["worktree"]
     transcript = snapshot["transcript"]
     exists = "exists" if worktree and Path(worktree).is_dir() else "is gone"
@@ -399,6 +447,8 @@ def entry_text(repo, snapshot):
     ]
     if snapshot["operation"]:
         parts.append(f"taken during a {snapshot['operation']}")
+    if problem:
+        parts.append(f"its worktree could not be compared with it: {problem}")
     parts.append(f"changes: {changed_files_text(repo, snapshot['ref'])}")
     return "; ".join(parts)
 
@@ -408,13 +458,12 @@ def list_command_text(agent_seat):
 
 
 RESTORE_STEPS = """\
-Handle each of them before your other work:
+Each was listed because its worktree is gone or no longer holds its changes. Handle each of them before your other work:
 1. See what it holds: `git diff --stat <ref>^ <ref>`, then `git diff <ref>^ <ref>`.
 2. Decide what to keep. If you keep nothing, skip step 3. Read the end of the transcript the entry names, to learn what the dead agent was doing; if the transcript is gone, decide from the diff alone, and ask the user when unsure. Drop any mutant: a deliberate small break in code that mutation testing makes, by a program or by an agent's own edit, to check that the tests notice. A crash during mutation testing leaves the mutant in the work-snapshot. If one file holds both wanted work and a mutant, keep the file and remove the mutant from it by editing it before you commit in step 3.
 3. Restore what you keep, as a commit.
    - If the entry says the work-snapshot was taken during a merge, rebase, cherry-pick, revert or am: restore nothing from it. Delete it (step 4), tell the user in one line which worktree and which operation were discarded, and, if the dead agent's task still needs the operation, start the operation again from the branch, which still holds the committed work.
-   - If the worktree still exists and `python3 {module} matches <ref>` prints yes, the changes are still in it. In that worktree, commit the files you keep with `git add -- <files>` and `git commit -m "Restore work from <ref>"`, and undo the rest: `git restore --source=HEAD --staged --worktree -- <dropped tracked files>`, and delete the dropped new files. If it prints no, leave that worktree alone and restore into a new worktree as below.
-   - Otherwise make a worktree from the work-snapshot's parent, so the changes apply without conflict. With <name> standing for `restored-` and the ref's last two parts joined by a hyphen: `git worktree add -b <name> <clone>/.claude/worktrees/<name> <ref>^`, where <clone> is the directory containing the path `git rev-parse --path-format=absolute --git-common-dir` prints. In the new worktree run `git diff --binary <ref>^ <ref> -- <files to keep> | git apply --index`, then `git commit -m "Restore work from <ref>"`. Carry the restored branch on, or tell the user it is there.
+   - Otherwise make a new worktree from the work-snapshot's parent, so the changes apply without conflict. Do this even when the entry's worktree still exists: it no longer holds these changes, so leave it alone. With <name> standing for `restored-` and the ref's last two parts joined by a hyphen: `git worktree add -b <name> <clone>/.claude/worktrees/<name> <ref>^`, where <clone> is the directory containing the path `git rev-parse --path-format=absolute --git-common-dir` prints. In the new worktree run `git diff --binary <ref>^ <ref> -- <files to keep> | git apply --index`, then `git commit -m "Restore work from <ref>"`. Carry the restored branch on, or tell the user it is there.
    - If a command here fails, stop, leave the ref in place, and tell the user what failed.
 4. Delete the ref: `git update-ref -d <ref>`, whether the work was kept or dropped.
 5. Tell the user, in your next message to the user, each work-snapshot handled, what was kept and where, and what was dropped and why. Finishing the dead agent's task is a separate decision, made after the restore."""
@@ -455,19 +504,19 @@ def first_prompt_text(repo, agent_seat, handoff_directory, now=None, is_alive=No
         return ""
     try:
         everything = all_work_snapshots(repo)
-        leftovers = [snapshot for snapshot in everything
-                     if snapshot["agent_seat"] == agent_seat
-                     and not is_alive(snapshot["owner_key"])]
-        if not leftovers:
+        lost = lost_work_snapshots(repo, agent_seat, is_alive, everything)
+        if not lost:
             return ""
-        entries = [entry_text(repo, snapshot)
-                   for snapshot in leftovers[:FIRST_PROMPT_ENTRIES_AT_MOST]]
+        leftovers = [snapshot for snapshot, problem in lost]
+        entries = [entry_text(repo, snapshot, problem)
+                   for snapshot, problem in lost[:FIRST_PROMPT_ENTRIES_AT_MOST]]
     except Exception as error:
         return (f"Leftover work-snapshots could not be listed ({type(error).__name__}: "
                 f"{error}). Uncommitted work from a dead agent of this agent-seat may be "
                 f"waiting; list it with: {list_command_text(agent_seat)}")
     lines = [f"Leftover work-snapshots: {len(leftovers)} copy(ies) of uncommitted work "
-             "left by an agent of this agent-seat whose `claude` process is gone:"]
+             "left by an agent of this agent-seat whose `claude` process is gone, and no "
+             "longer in its worktree:"]
     lines.extend(f"- {entry}" for entry in entries)
     rest = len(leftovers) - len(entries)
     if rest > 0:
@@ -498,7 +547,7 @@ def first_listing_times(handoff_directory):
 
 def clean_leftover_work_snapshots(repo, remove, only_due, handoff_directory, now=None,
                                   is_alive=None, out=print):
-    """Report leftovers, and with remove delete those listed and left long enough.
+    """Report leftovers; with remove, delete the superseded ones and those listed and left.
 
     Returns the number of failures. A live owner's work-snapshot is never
     touched or reported.
@@ -506,7 +555,8 @@ def clean_leftover_work_snapshots(repo, remove, only_due, handoff_directory, now
     now = time.time() if now is None else now
     is_alive = is_alive or owner_process_is_alive
     try:
-        leftovers = leftover_work_snapshots(repo, is_alive=is_alive)
+        everything = all_work_snapshots(repo)
+        leftovers = leftover_work_snapshots(repo, is_alive=is_alive, everything=everything)
         listed = first_listing_times(handoff_directory)
     except Exception as error:
         out(f"work-snapshots: could not be listed: {type(error).__name__}: {error}")
@@ -517,28 +567,38 @@ def clean_leftover_work_snapshots(repo, remove, only_due, handoff_directory, now
         ref = snapshot["ref"]
         age_days = int((now - snapshot["time"]) // 86400)
         first_listed = listed.get(ref)
-        due = first_listed is not None and now - first_listed > threshold
         try:
             files = changed_files_text(repo, ref)
+            state = leftover_state(repo, snapshot, everything)
         except WorkSnapshotError as error:
-            out(f"work-snapshot {ref}: could not read its files: {error}")
+            out(f"work-snapshot {ref}: could not be checked, kept: {error}")
             failures += 1
             continue
         where = (f"agent-seat {snapshot['agent_seat']}, worktree {snapshot['worktree']}, "
                  f"files: {files}")
+        superseded = state == SUPERSEDED
+        due = superseded or (first_listed is not None and now - first_listed > threshold)
         if due and remove:
             result = run_git(repo, "update-ref", "-d", ref, snapshot["commit"])
+            reason = ("superseded: its worktree has a later work-snapshot or nothing "
+                      "uncommitted" if superseded else
+                      f"first listed {utc_text(first_listed)} and not restored")
             if result.returncode == 0:
-                out(f"work-snapshot {ref}: deleted, first listed "
-                    f"{utc_text(first_listed)} and not restored ({where})")
+                out(f"work-snapshot {ref}: deleted, {reason} ({where})")
             else:
                 out(f"work-snapshot {ref}: deletion failed: {result.stderr.strip()} ({where})")
                 failures += 1
             continue
         if only_due and not due:
             continue
-        listing = (f"first listed {utc_text(first_listed)}" if first_listed is not None
-                   else "never listed in a first prompt")
+        if superseded:
+            listing = "superseded by a later work-snapshot or a clean worktree"
+        elif state == IN_PLACE:
+            listing = "its changes are still in its worktree, so it is not listed"
+        elif first_listed is not None:
+            listing = f"first listed {utc_text(first_listed)}"
+        else:
+            listing = "never listed in a first prompt"
         verdict = ("due for deletion — delete with: scripts/clean-worktrees.py --remove"
                    if due else "kept")
         out(f"work-snapshot {ref}: {verdict} — owner process gone, written {age_days} "
@@ -546,13 +606,12 @@ def clean_leftover_work_snapshots(repo, remove, only_due, handoff_directory, now
     return failures
 
 
-# ---------------------------------------------------------------- matches
+# ---------------------------------------------------------------- comparing with the worktree
 
 
-def worktree_still_matches(repo, ref):
-    snapshot = next((s for s in all_work_snapshots(repo) if s["ref"] == ref), None)
-    if snapshot is None:
-        raise WorkSnapshotError(f"{ref} is not a work-snapshot ref")
+def snapshot_matches_worktree(repo, snapshot):
+    """Whether the worktree still has the work-snapshot's parent as HEAD and its tree."""
+    ref = snapshot["ref"]
     worktree = Path(snapshot["worktree"])
     if not worktree.is_dir():
         return False
@@ -584,9 +643,10 @@ def main(argv=None):
             print(__doc__, file=sys.stderr)
             return 2
         try:
-            leftovers = leftover_work_snapshots(repo, agent_seat)
-            for snapshot in leftovers:
-                print(f"agent-seat {snapshot['agent_seat']}: {entry_text(repo, snapshot)}")
+            leftovers = lost_work_snapshots(repo, agent_seat)
+            for snapshot, problem in leftovers:
+                print(f"agent-seat {snapshot['agent_seat']}: "
+                      f"{entry_text(repo, snapshot, problem)}")
         except Exception as error:
             print(f"uncommitted-work-snapshots: could not list: {type(error).__name__}: "
                   f"{error}", file=sys.stderr)
@@ -594,15 +654,6 @@ def main(argv=None):
         if not leftovers:
             print("no leftover work-snapshots")
         return 0
-    if len(arguments) == 2 and arguments[0] == "matches":
-        try:
-            matches = worktree_still_matches(repo, arguments[1])
-        except Exception as error:
-            print(f"uncommitted-work-snapshots: could not check {arguments[1]}: "
-                  f"{type(error).__name__}: {error}", file=sys.stderr)
-            return 2
-        print("yes" if matches else "no")
-        return 0 if matches else 1
     print(__doc__, file=sys.stderr)
     return 2
 

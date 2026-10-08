@@ -517,16 +517,22 @@ def run_handoff_worktree_cleanup_cases_without_git_redirection(workspace: Path):
         "(agent-seat seat, worktree /w/b, files: M x.txt)",
         "work-snapshot refs/work-snapshots/k/c: kept — owner process gone, written 1 day(s) "
         "ago, never listed in a first prompt (agent-seat seat, worktree /w/c, files: M y.txt)",
+        "work-snapshot refs/work-snapshots/k/d: deleted, superseded: its worktree has a later "
+        "work-snapshot or nothing uncommitted (agent-seat seat, worktree /w/d, files: M z.txt)",
+        "work-snapshot refs/work-snapshots/k/e: could not be checked, kept: git status failed",
     ])
     check("WORKTREE CLEANUP: the summary names each leftover work-snapshot deleted and "
-          "each work-snapshot failure, and not one kept",
+          "each work-snapshot failure, counts the superseded ones deleted, and names no kept one",
           snapshot_summary.endswith(
               "; 1 leftover work-snapshot(s) deleted: work-snapshot refs/work-snapshots/k/a: "
               "deleted, first listed 2026-09-20 10:00 UTC and not restored (agent-seat seat, "
-              "worktree /w/a, files: A new.txt); 1 work-snapshot failure(s): work-snapshot "
+              "worktree /w/a, files: A new.txt); 1 superseded work-snapshot(s) deleted; "
+              "2 work-snapshot failure(s): work-snapshot "
               "refs/work-snapshots/k/b: deletion failed: lock exists (agent-seat seat, "
-              "worktree /w/b, files: M x.txt)")
+              "worktree /w/b, files: M x.txt); work-snapshot refs/work-snapshots/k/e: could "
+              "not be checked, kept: git status failed")
           and "refs/work-snapshots/k/c" not in snapshot_summary
+          and "refs/work-snapshots/k/d" not in snapshot_summary
           and "0 branch ref(s)" in snapshot_summary, snapshot_summary)
     listing_failure = supervisor.summarize_worktree_cleanup_output([
         "work-snapshots: could not be listed: WorkSnapshotError: git for-each-ref failed"])

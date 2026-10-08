@@ -64,10 +64,12 @@ Separately again, it handles work-snapshots, the copies of uncommitted work
 that scripts/uncommitted-work-snapshot-hook.py keeps under
 refs/work-snapshots/ (nc-systems/handoff/uncommitted-work-snapshots.py). A
 work-snapshot whose owner `claude` process is gone is reported with its age
-and whether the handoff-supervisor has listed it in a first prompt; --remove
-deletes one first listed more than ten days ago and names its files.
---only-done prints only the ones --remove would delete. A live owner's
-work-snapshot is never touched.
+and whether the handoff-supervisor has listed it in a first prompt, which it
+does only when the worktree is gone or no longer holds its changes; --remove
+deletes one first listed more than ten days ago and names its files, and one
+superseded by a later work-snapshot of the same worktree or by a worktree with
+nothing uncommitted. --only-done prints only the ones --remove would delete.
+A live owner's work-snapshot is never touched.
 
 Modes:
   (default)    report every worktree, one line each

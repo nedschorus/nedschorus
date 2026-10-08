@@ -534,25 +534,32 @@ def test_owner_liveness():
 
 
 def test_live_and_dead_owners_listed():
-    name = "a dead owner's work-snapshots are listed, a live owner's are not"
+    name = ("a dead owner's work-snapshot is listed when its worktree is gone or changed, "
+            "not while the worktree still holds its changes")
     if not CLAUDE_STAND_IN_WORKS:
         return skip(name, "the claude stand-in is named after its shell on this platform")
     main = new_clone()
     kept = add_worktree(main, main / ".claude" / "worktrees" / "kept", "kept-branch")
     removed = add_worktree(main, main / ".claude" / "worktrees" / "removed", "removed-branch")
-    for worktree in (kept, removed):
+    changed = add_worktree(main, main / ".claude" / "worktrees" / "changed", "changed-branch")
+    for worktree in (kept, removed, changed):
         (worktree / "new.txt").write_text("work\n")
     claude = ClaudeStandIn(main, {"GIT_AUTHOR_NAME": "seat-two"})
-    for worktree in (kept, removed):
+    for worktree in (kept, removed, changed):
         claude.run_hook(bash(worktree))
     handoffs = SCRATCH / "handoffs-listing"
     handoffs.mkdir()
     check(snapshots.first_prompt_text(main, "seat-two", handoffs) == "",
           "a live owner's work-snapshots are not listed")
     claude.end()
+    check(snapshots.first_prompt_text(main, "seat-two", handoffs) == "",
+          "a dead owner's work-snapshots are not listed while their worktrees still hold "
+          "their changes, as after a session-handoff")
     git(main, "worktree", "remove", "--force", str(removed))
+    (changed / "new.txt").write_text("changed with no hook to see it\n")
     text = snapshots.first_prompt_text(main, "seat-two", handoffs)
-    check(str(kept) in text and str(removed) in text and "(is gone)" in text, name, text)
+    check(str(removed) in text and "(is gone)" in text and str(changed) in text
+          and str(kept) not in text, name, text)
     check(snapshots.first_prompt_text(main, "another-seat", handoffs) == "",
           "another agent-seat's leftovers are not listed")
 
@@ -562,11 +569,13 @@ def test_live_and_dead_owners_listed():
 
 def test_list_caps_and_failure():
     main = new_clone()
-    worktree = add_worktree(main, main / ".claude" / "worktrees" / "many", "many-branch")
-    for number in range(12):
-        (worktree / f"file-{number:02d}.txt").write_text("x\n")
     for number in range(21):
+        worktree = add_worktree(main, main / ".claude" / "worktrees" / f"many-{number}",
+                                f"many-{number}")
+        for file_number in range(12):
+            (worktree / f"file-{file_number:02d}.txt").write_text("x\n")
         snapshots.refresh_work_snapshot(worktree, f"{number + 10}-1", "seat-three", "")
+        git(main, "worktree", "remove", "--force", str(worktree))
     handoffs = SCRATCH / "handoffs-caps"
     handoffs.mkdir()
     text = snapshots.first_prompt_text(main, "seat-three", handoffs, now=1000,
@@ -608,6 +617,7 @@ def test_supervisor_appends_the_list():
     worktree = add_worktree(main, main / ".claude" / "worktrees" / "fork", "fork-branch")
     (worktree / "new.txt").write_text("work\n")
     snapshots.refresh_work_snapshot(worktree, "1-1", "seat-four", "")
+    git(main, "worktree", "remove", "--force", str(worktree))
     fixture = load(SYSTEM_DIRECTORY / "tests" / "handoff-supervisor-test-fixture.py",
                    "handoff_supervisor_test_fixture")
     supervisor = fixture.supervisor
@@ -639,26 +649,8 @@ def test_supervisor_appends_the_list():
 # ---------------------------------------------------------------- restore
 
 
-def restore_steps_commit(main, ref, keep, into_new_worktree):
-    """Follow the restore steps' commands; return (the commit's directory, its branch)."""
-    module = main / MODULE_RELATIVE
-    if not into_new_worktree:
-        snapshot = next(s for s in snapshots.all_work_snapshots(main) if s["ref"] == ref)
-        worktree = Path(snapshot["worktree"])
-        matches = subprocess.run([sys.executable, str(module), "matches", ref, "--repo",
-                                  str(main)], capture_output=True, text=True)
-        if matches.stdout.strip() != "yes":
-            raise RuntimeError(f"matches said {matches.stdout!r} {matches.stderr!r}")
-        git(worktree, "add", "-A", "--", *keep)
-        git(worktree, "commit", "-q", "-m", f"Restore work from {ref}")
-        dropped_tracked = [path for path in
-                           git(worktree, "diff", "--name-only", "HEAD").split() if path]
-        if dropped_tracked:
-            git(worktree, "restore", "--source=HEAD", "--staged", "--worktree", "--",
-                *dropped_tracked)
-        for path in git(worktree, "ls-files", "--others", "--exclude-standard").split():
-            (worktree / path).unlink()
-        return worktree
+def restore_steps_commit(main, ref, keep):
+    """Follow the restore steps' commands; return the new worktree holding the commit."""
     name = "restored-" + "-".join(ref.split("/")[-2:])
     clone = Path(git(main, "rev-parse", "--path-format=absolute", "--git-common-dir")).parent
     target = clone / ".claude" / "worktrees" / name
@@ -671,8 +663,10 @@ def restore_steps_commit(main, ref, keep, into_new_worktree):
 
 
 def test_restore_a_subset():
-    for into_new in (False, True):
-        where = "into a new worktree from <ref>^" if into_new else "in the surviving worktree"
+    for worktree_survives in (False, True):
+        where = ("into a new worktree, the changed original left alone" if worktree_survives
+                 else "into a new worktree from <ref>^")
+        into_new = worktree_survives
         main = new_clone()
         worktree = add_worktree(main, main / ".claude" / "worktrees" / f"fork-{into_new}",
                                 f"fork-{into_new}")
@@ -682,30 +676,36 @@ def test_restore_a_subset():
         (worktree / "mutant.txt").write_text("a mutant to drop\n")
         snapshots.refresh_work_snapshot(worktree, "7-7", "seat-five", "")
         ref = snapshots.work_snapshot_ref("7-7", worktree)
-        if into_new:
+        if worktree_survives:
+            (worktree / "new.txt").write_text("changed since\n")
+        else:
             git(main, "worktree", "remove", "--force", str(worktree))
-        target = restore_steps_commit(main, ref, ["tracked.txt", "doomed.txt", "new.txt"],
-                                      into_new)
+        target = restore_steps_commit(main, ref, ["tracked.txt", "doomed.txt", "new.txt"])
         changed = git(target, "diff-tree", "-r", "--no-commit-id", "--name-status",
                       "HEAD").splitlines()
         check(sorted(changed) == ["A\tnew.txt", "D\tdoomed.txt", "M\ttracked.txt"],
               f"restoring a chosen subset {where} commits exactly those changes", changed)
         check(git(target, "status", "--porcelain") == "",
               f"nothing dropped is left behind {where}")
+        if worktree_survives:
+            check((worktree / "new.txt").read_text() == "changed since\n",
+                  "the changed original worktree is left alone")
     main = new_clone()
     worktree = add_worktree(main, main / ".claude" / "worktrees" / "drift", "drift")
     (worktree / "new.txt").write_text("work\n")
     snapshots.refresh_work_snapshot(worktree, "8-8", "seat", "")
     ref = snapshots.work_snapshot_ref("8-8", worktree)
-    check(snapshots.worktree_still_matches(main, ref), "matches says yes for an unchanged worktree")
+    snapshot = next(s for s in snapshots.all_work_snapshots(main) if s["ref"] == ref)
+    check(snapshots.snapshot_matches_worktree(main, snapshot),
+          "an unchanged worktree matches its work-snapshot")
     (worktree / "new.txt").write_text("changed since\n")
-    check(not snapshots.worktree_still_matches(main, ref),
-          "matches says no once the worktree has changed")
+    check(not snapshots.snapshot_matches_worktree(main, snapshot),
+          "a worktree changed since no longer matches")
     (worktree / "new.txt").write_text("work\n")
     git(worktree, "add", "-A")
     git(worktree, "commit", "-q", "-m", "the same changes, committed")
-    check(not snapshots.worktree_still_matches(main, ref),
-          "matches says no once the changes are committed, though the tree is the same")
+    check(not snapshots.snapshot_matches_worktree(main, snapshot),
+          "a worktree whose HEAD moved no longer matches, though the tree is the same")
 
 
 # ---------------------------------------------------------------- cleaner
@@ -716,10 +716,10 @@ def test_cleaner():
     worktree = add_worktree(main, main / ".claude" / "worktrees" / "fork", "fork-branch")
     (worktree / "new.txt").write_text("work\n")
     owners = {"old": "11-1", "recent": "12-1", "never": "13-1", "alive": "14-1"}
-    for owner in owners.values():
-        snapshots.refresh_work_snapshot(worktree, owner, "seat-six", "")
-    refs = {label: snapshots.work_snapshot_ref(owner, worktree)
+    # One author time for all four, so none supersedes another whatever the clock does.
+    refs = {label: snapshot_at(worktree, owner, 1000, "seat-six")
             for label, owner in owners.items()}
+    git(main, "worktree", "remove", "--force", str(worktree))
     now = 100 * 86400
     handoffs = SCRATCH / "handoffs-cleaner"
     handoffs.mkdir()
@@ -757,6 +757,86 @@ def test_cleaner():
           "a failure to list work-snapshots is said and counted", report)
 
 
+def snapshot_at(worktree, owner_key, seconds, agent_seat):
+    """refresh_work_snapshot with its author date set, so later ones sort later."""
+    os.environ["GIT_AUTHOR_DATE"] = f"@{seconds} +0000"
+    try:
+        snapshots.refresh_work_snapshot(worktree, owner_key, agent_seat, "")
+    finally:
+        del os.environ["GIT_AUTHOR_DATE"]
+    return snapshots.work_snapshot_ref(owner_key, worktree)
+
+
+def test_in_place_and_superseded_leftovers():
+    main = new_clone()
+    handoffs = SCRATCH / "handoffs-in-place"
+    handoffs.mkdir()
+    dead = lambda key: False
+    home = add_worktree(main, main / ".claude" / "worktrees" / "home", "home-branch")
+    (home / "draft.md").write_text("a draft kept uncommitted on purpose\n")
+    first = snapshot_at(home, "21-1", 1000, "seat-eight")
+    report = []
+    snapshots.clean_leftover_work_snapshots(main, remove=True, only_due=False,
+                                            handoff_directory=handoffs, now=2000,
+                                            is_alive=dead, out=report.append)
+    check(snapshots.first_prompt_text(main, "seat-eight", handoffs, is_alive=dead) == ""
+          and first in refs_of(main)
+          and any(first in line and "still in its worktree" in line for line in report),
+          "after a session-handoff the dead owner's work-snapshot is kept, unlisted, while its "
+          "worktree still holds its changes", report)
+    (home / "draft.md").write_text("the draft, edited by the next agent-session\n")
+    second = snapshot_at(home, "22-1", 1500, "seat-eight")
+    check(snapshots.first_prompt_text(main, "seat-eight", handoffs, is_alive=dead) == "",
+          "an older work-snapshot of a worktree with a later one is not listed")
+    report = []
+    snapshots.clean_leftover_work_snapshots(main, remove=False, only_due=True,
+                                            handoff_directory=handoffs, now=2000,
+                                            is_alive=dead, out=report.append)
+    check(any(first in line and "superseded" in line for line in report)
+          and not any(second in line for line in report),
+          "--only-done shows the superseded one, which --remove would delete", report)
+    report = []
+    snapshots.clean_leftover_work_snapshots(main, remove=True, only_due=False,
+                                            handoff_directory=handoffs, now=2000,
+                                            is_alive=dead, out=report.append)
+    check(first not in refs_of(main) and second in refs_of(main)
+          and any(first in line and "deleted, superseded" in line for line in report),
+          "the cleaner deletes the superseded work-snapshot and keeps the later one", report)
+    git(home, "add", "-A")
+    git(home, "commit", "-q", "-m", "the draft, committed")
+    report = []
+    snapshots.clean_leftover_work_snapshots(main, remove=True, only_due=False,
+                                            handoff_directory=handoffs, now=2000,
+                                            is_alive=dead, out=report.append)
+    check(second not in refs_of(main),
+          "a work-snapshot of a worktree with nothing uncommitted is superseded and deleted",
+          report)
+    gone = add_worktree(main, main / ".claude" / "worktrees" / "gone", "gone-branch")
+    (gone / "work.txt").write_text("work\n")
+    older = snapshot_at(gone, "23-1", 1000, "seat-eight")
+    newer = snapshot_at(gone, "24-1", 1500, "seat-eight")
+    git(main, "worktree", "remove", "--force", str(gone))
+    text = snapshots.first_prompt_text(main, "seat-eight", handoffs, is_alive=dead)
+    check(newer in text and older not in text,
+          "once the worktree is gone, only its latest work-snapshot is listed", text[:400])
+    unreadable = add_worktree(main, main / ".claude" / "worktrees" / "unreadable",
+                              "unreadable-branch")
+    (unreadable / "work.txt").write_text("work\n")
+    broken = snapshot_at(unreadable, "25-1", 1000, "seat-nine")
+    (unreadable / ".git").write_text("gitdir: /nonexistent/work-snapshot-test\n")
+    text = snapshots.first_prompt_text(main, "seat-nine", handoffs, is_alive=dead)
+    check(broken in text and "could not be compared" in text,
+          "a leftover whose worktree cannot be read is listed, saying why", text[:400])
+    report = []
+    failures_seen = snapshots.clean_leftover_work_snapshots(
+        main, remove=True, only_due=False, handoff_directory=handoffs, now=2000,
+        is_alive=lambda key: key != "25-1", out=report.append)
+    check(failures_seen == 1 and broken in refs_of(main)
+          and any(broken in line and "could not be checked, kept" in line for line in report),
+          "the cleaner keeps a leftover whose worktree cannot be read and counts a failure",
+          report)
+
+
 # ---------------------------------------------------------------- replay
 
 
@@ -787,7 +867,7 @@ def test_the_2026_10_05_loss_replayed():
     check(len(refs) == 1 and "(is gone)" in text,
           "the next agent-session's first prompt lists the work-snapshot", text[:300])
     if refs:
-        target = restore_steps_commit(main, refs[0], ["tracked.txt", "new-test.py"], True)
+        target = restore_steps_commit(main, refs[0], ["tracked.txt", "new-test.py"])
         check(git(target, "show", "HEAD:tracked.txt") == "edited by the fork"
               and git(target, "show", "HEAD:new-test.py") == "print('a new test')",
               name)
@@ -807,6 +887,7 @@ def main():
                      test_macos_ps_failure_is_not_a_dead_owner,
                      test_live_and_dead_owners_listed, test_list_caps_and_failure,
                      test_supervisor_appends_the_list, test_restore_a_subset, test_cleaner,
+                     test_in_place_and_superseded_leftovers,
                      test_the_2026_10_05_loss_replayed):
             try:
                 case()
