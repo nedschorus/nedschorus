@@ -119,27 +119,30 @@ LOCAL_BRANCH_LIST_FAILURE = (
 UNREADABLE_RECORD_MOVED_TEMPLATE = (
     "new-shared-names-reminder: the record of names already reported in this worktree could not "
     "be read ({reason}), so it was moved to {unreadable} for inspection and a new record was started.\n"
-    "Names reported before in this worktree may be reported again; nothing is needed from you for that.\n"
-    "If this message repeats on later calls, tell the user, with the reason above."
+    "Names reported before in this worktree may be reported again.\n"
+    "Nothing is needed from you."
 )
 UNREADABLE_RECORD_NOT_MOVED_TEMPLATE = (
     "new-shared-names-reminder: the record of names already reported in this worktree could not "
     "be read ({reason}), and could not be moved to {unreadable} ({move_reason}), so it stays in place "
     "at {record}.\n"
-    "Names reported before, and the names shown now, may be reported again on later calls; nothing "
-    "is needed from you for that.\n"
-    "If this message repeats on later calls, tell the user, with both reasons above."
+    "Until a person fixes this, names reported before, and the names shown now, may be reported "
+    "again on later calls.\n"
+    "Tell the user now, with the reasons: the read failure ({reason}) and the move failure ({move_reason})."
 )
 RECORD_WRITE_FAILED_TEMPLATE = (
     "new-shared-names-reminder: the record of names already reported in this worktree, {record}, "
     "could not be written ({reason}).\n"
-    "The names just shown may be shown again on later calls; nothing is needed from you for that.\n"
-    "If this message repeats on later calls, tell the user, with the reason above."
+    "Until a person fixes this, the names just shown may be shown again on later calls.\n"
+    "Tell the user now, with the reason: {reason}."
 )
 
 
 class ReportedNamesRecordFailure(Exception):
-    pass
+    def __init__(self, reason: str, moved_reason=None):
+        super().__init__(reason)
+        # Why an unreadable record was moved aside before this failure, so the move is still told.
+        self.moved_reason = moved_reason
 
 
 class UnreadableReportedNamesRecordNotMoved(ReportedNamesRecordFailure):
@@ -233,7 +236,7 @@ def reported_names_record_merge_prune_and_write(record_path: Path, key: str, ent
                     pass
                 raise
     except OSError as error:
-        raise ReportedNamesRecordFailure(error.strerror or type(error).__name__) from error
+        raise ReportedNamesRecordFailure(error.strerror or type(error).__name__, moved_reason) from error
     return live_branches is not None, moved_reason
 
 
@@ -381,6 +384,9 @@ def main() -> int:
                 record=record_path))
             return
         except ReportedNamesRecordFailure as failure:
+            if failure.moved_reason:
+                tell_notice_once(UNREADABLE_RECORD_MOVED_TEMPLATE.format(reason=failure.moved_reason,
+                                                                         unreadable=unreadable))
             tell_notice_once(RECORD_WRITE_FAILED_TEMPLATE.format(record=record_path, reason=failure))
             return
         if not branch_list_read:

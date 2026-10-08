@@ -579,6 +579,48 @@ def case_unreadable_record_that_cannot_be_moved_stays_and_is_told(root):
     check("the unreadable record stays in place, unchanged", record.read_text() == "{not json")
 
 
+def case_write_failure_after_moving_an_unreadable_record_aside_tells_both(root):
+    clone = make_clone(root, BASE_MAIN_FILES)
+    record = record_path_of(clone)
+    record.write_text("{not json")
+    unreadable = record.with_name("new-shared-names-reported.json.unreadable")
+    write(clone, "alpha.py", "def shared_helper():\n    return 1\n")
+    write(clone, "beta.py", "import alpha\nalpha.shared_helper()\n")
+    hook = load_module("hook_for_write_failure_after_move_case", HOOK_PATH)
+    real_replace = hook.os.replace
+
+    def replace_failing_with_no_space_onto_the_record(source, destination, *arguments, **options):
+        # Moving the unreadable record aside succeeds; only writing the new record over it fails.
+        if Path(destination).name == record.name:
+            raise OSError(28, "No space left on device")
+        return real_replace(source, destination, *arguments, **options)
+    hook.os.replace = replace_failing_with_no_space_onto_the_record
+    try:
+        code, context = run_hook_in_process(hook, root, clone, {"tool_name": "Write",
+                                            "tool_input": {"file_path": "beta.py"}}, {})
+    finally:
+        hook.os.replace = real_replace
+    check("a write that fails after moving an unreadable record aside exits 0", code == 0)
+    check("the agent is told the unreadable record was moved, with where",
+          "could not be read (not valid JSON)" in context and f"was moved to {unreadable}" in context, context)
+    check("the agent is also told the new record could not be written",
+          "could not be written (No space left on device)" in context, context)
+    check("the moved record holds the original bytes", unreadable.read_text() == "{not json")
+
+
+def case_each_record_notice_is_told_once_per_agent_session(root):
+    clone = make_clone(root, BASE_MAIN_FILES)
+    record_path_of(clone).write_text(json.dumps({"topic": ["branch\ttopic"]}))
+    hook = load_module("hook_for_notice_once_case", HOOK_PATH)
+    _, first = run_hook_in_process(hook, root, clone, {"tool_name": "Write", "tool_input": {"file_path": "x"}},
+                                   {"for-each-ref": 128})
+    _, second = run_hook_in_process(hook, root, clone, {"tool_name": "Write", "tool_input": {"file_path": "x"}},
+                                    {"for-each-ref": 128})
+    check("the branch-list notice is told on the first call", "git for-each-ref failed" in first, first)
+    check("the same notice is not told again later in the same agent-session",
+          "git for-each-ref failed" not in second, second)
+
+
 def case_branch_list_failure_with_nothing_new_to_record_is_told(root):
     clone = make_clone(root, BASE_MAIN_FILES)
     # This worktree's branch is already reported and nothing has changed, so the writer returns early.
@@ -921,6 +963,8 @@ def main() -> int:
              case_branch_list_failure_inside_the_final_write_is_told,
              case_branch_list_failure_with_nothing_new_to_record_is_told,
              case_unreadable_record_that_cannot_be_moved_stays_and_is_told,
+             case_write_failure_after_moving_an_unreadable_record_aside_tells_both,
+             case_each_record_notice_is_told_once_per_agent_session,
              case_same_branch_name_recreated_is_told_names_again, case_switch_to_a_branch_origin_has_lists_its_names,
              case_overlapping_writers_never_leave_invalid_json_and_keep_every_name,
              case_hook_shell_commands,
