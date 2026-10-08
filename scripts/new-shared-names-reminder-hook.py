@@ -109,64 +109,74 @@ def reported_names_path(checkout: Path):
     return Path(git_directory.strip()) / REPORTED_NAMES_FILE_NAME
 
 
-DETACHED_HEAD_RECORD_KEY = "HEAD"
+DETACHED_HEAD_REPORTED_NAMES_RECORD_KEY = "HEAD"
+LOCAL_BRANCH_LIST_FAILURE = ("git for-each-ref failed, so reported names of deleted branches are kept "
+                             "until it works")
 
 
-class RecordFailure(Exception):
+class ReportedNamesRecordFailure(Exception):
     pass
 
 
-def record_key_for(checkout: Path) -> str:
-    """Return the branch the worktree is on, or DETACHED_HEAD_RECORD_KEY when HEAD is detached or unreadable."""
+def reported_names_record_key_for(checkout: Path) -> str:
+    """Return the branch the worktree is on, or the detached-HEAD key when HEAD is detached or unreadable."""
     branch = git_output(["symbolic-ref", "--short", "-q", "HEAD"], checkout)
-    return branch.strip() if branch and branch.strip() else DETACHED_HEAD_RECORD_KEY
+    return branch.strip() if branch and branch.strip() else DETACHED_HEAD_REPORTED_NAMES_RECORD_KEY
 
 
-def read_record(record_path: Path) -> dict:
-    """Return the record, {branch: [reported "kind\\tname" keys]}; a missing record is empty.
+def read_reported_names_record(record_path: Path) -> dict:
+    """Return the record, {branch: {reported "kind\\tname" keys}}; a missing record is empty.
 
-    Raises RecordFailure when the record exists but cannot be read or parsed.
+    Raises ReportedNamesRecordFailure when the record exists but cannot be read or parsed.
     """
     try:
-        text = record_path.read_text()
+        text = record_path.read_text(encoding="utf-8")
     except FileNotFoundError:
         return {}
+    except UnicodeDecodeError as error:
+        raise ReportedNamesRecordFailure(f"{record_path.name} is not valid UTF-8") from error
     except OSError as error:
-        raise RecordFailure(f"could not read {record_path.name}: {error.strerror or type(error).__name__}") from error
+        raise ReportedNamesRecordFailure(
+            f"could not read {record_path.name}: {error.strerror or type(error).__name__}") from error
     try:
         record = json.loads(text)
     except ValueError as error:
-        raise RecordFailure(f"{record_path.name} is not valid JSON") from error
+        raise ReportedNamesRecordFailure(f"{record_path.name} is not valid JSON") from error
     if not isinstance(record, dict):
-        raise RecordFailure(f"{record_path.name} does not hold a branch-keyed record")
+        raise ReportedNamesRecordFailure(f"{record_path.name} does not hold a branch-keyed record")
     return {key: {entry for entry in entries if isinstance(entry, str)}
             for key, entries in record.items() if isinstance(key, str) and isinstance(entries, list)}
 
 
-def write_record_entries(record_path: Path, key: str, entries: set, live_branches) -> None:
-    """Add entries under key, merged with what other writers stored, and drop branches that no longer exist.
+def reported_names_record_merge_prune_and_write(record_path: Path, key: str, entries: set, live_branches) -> None:
+    """Add entries under key, merged with what other writers stored, drop branches that no longer exist, and write.
 
+    live_branches None keeps every branch. Nothing is written when the record would not change.
     A lock file serialises writers in one worktree, and each write goes to its own temporary
     file renamed over the record, so a reader never sees a partly written record.
-    Raises RecordFailure when the record cannot be written.
+    Raises ReportedNamesRecordFailure when the record cannot be written.
     """
     lock_path = record_path.with_name(record_path.name + ".lock")
     try:
         with open(lock_path, "a") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX)
             try:
-                record = read_record(record_path)
-            except RecordFailure:
-                record = {}
-            record[key] = record.get(key, set()) | entries
-            keep = (set(live_branches) | {key, DETACHED_HEAD_RECORD_KEY}) if live_branches is not None else set(record)
-            serialised = json.dumps({name: sorted(values) for name, values in sorted(record.items())
-                                     if name in keep})
+                stored = read_reported_names_record(record_path)
+            except ReportedNamesRecordFailure:
+                stored = None
+            record = dict(stored or {})
+            if entries:
+                record[key] = record.get(key, set()) | entries
+            if live_branches is not None:
+                keep = set(live_branches) | {key, DETACHED_HEAD_REPORTED_NAMES_RECORD_KEY}
+                record = {name: values for name, values in record.items() if name in keep}
+            if stored is not None and record == stored:
+                return
             descriptor, temporary = tempfile.mkstemp(prefix=record_path.name + ".", suffix=".partial",
                                                      dir=str(record_path.parent))
             try:
                 with os.fdopen(descriptor, "w") as handle:
-                    handle.write(serialised)
+                    handle.write(json.dumps({name: sorted(values) for name, values in sorted(record.items())}))
                 os.replace(temporary, record_path)
             except BaseException:
                 try:
@@ -175,10 +185,12 @@ def write_record_entries(record_path: Path, key: str, entries: set, live_branche
                     pass
                 raise
     except OSError as error:
-        raise RecordFailure(f"could not write {record_path.name}: {error.strerror or type(error).__name__}") from error
+        raise ReportedNamesRecordFailure(
+            f"could not write {record_path.name}: {error.strerror or type(error).__name__}") from error
 
 
 def local_branches(checkout: Path):
+    """Return the names of the local branches, or None when git cannot list them."""
     listing = git_output(["for-each-ref", "--format=%(refname:short)", "refs/heads"], checkout)
     return listing.splitlines() if listing is not None else None
 
@@ -299,14 +311,31 @@ def main() -> int:
     if fingerprint is None:
         return 0
     messages = []
-    record_key = record_key_for(checkout)
-    try:
-        reported = read_record(record_path).get(record_key, set())
-    except RecordFailure as failure:
-        reported = set()
-        failure_text = failure_report_once(state, str(failure))
+
+    def tell_failure_once(error: str) -> None:
+        failure_text = failure_report_once(state, error)
         if failure_text:
             messages.append(failure_text)
+
+    record_key = reported_names_record_key_for(checkout)
+    # The branch is part of the identity, so a switch to another branch is never skipped as unchanged.
+    fingerprint = f"{fingerprint}\0{record_key}"
+    live_branches = local_branches(checkout)
+    if live_branches is None:
+        tell_failure_once(LOCAL_BRANCH_LIST_FAILURE)
+    try:
+        record = read_reported_names_record(record_path)
+    except ReportedNamesRecordFailure as failure:
+        record = {}
+        tell_failure_once(str(failure))
+    reported = record.get(record_key, set())
+    # Pruned on every run, so a branch deleted and later recreated under the same name starts fresh.
+    if live_branches is not None and set(record) - set(live_branches) - {record_key,
+                                                                       DETACHED_HEAD_REPORTED_NAMES_RECORD_KEY}:
+        try:
+            reported_names_record_merge_prune_and_write(record_path, record_key, set(), live_branches)
+        except ReportedNamesRecordFailure as failure:
+            tell_failure_once(str(failure))
     try:
         new_branch = unreported_new_branch(checkout, reported)
     except BranchCheckFailure as failure:
@@ -337,11 +366,9 @@ def main() -> int:
     newly_reported = {f"{kind}\t{name}" for _, kind, name in shown}
     if newly_reported - reported:
         try:
-            write_record_entries(record_path, record_key, newly_reported, local_branches(checkout))
-        except RecordFailure as failure:
-            failure_text = failure_report_once(state, str(failure))
-            if failure_text:
-                messages.append(failure_text)
+            reported_names_record_merge_prune_and_write(record_path, record_key, newly_reported, live_branches)
+        except ReportedNamesRecordFailure as failure:
+            tell_failure_once(str(failure))
     write_state(session_id, state)
     if names:
         messages.append(reminder_text(names))

@@ -560,17 +560,102 @@ def case_missing_record_is_silent_about_the_record(root):
           "failed" not in context and "shared_helper" in context, context)
 
 
-def case_unwritable_record_is_told(root):
+def case_failed_write_after_a_good_read_is_told_and_leaves_no_temporary_file(root):
     clone = make_clone(root, BASE_MAIN_FILES)
     state_root = root / "state"
     state_root.mkdir()
-    record_path_of(clone).mkdir()
+    write(clone, "alpha.py", "def shared_helper():\n    return 1\n")
+    write(clone, "beta.py", "import alpha\nalpha.shared_helper()\n")
+    run_hook(clone, state_root, {"tool_name": "Write", "tool_input": {"file_path": "beta.py"}})
+    record = record_path_of(clone)
+    before = record.read_bytes()
+    write(clone, "gamma.py", "import alpha\ndef second_helper():\n    return alpha.shared_helper()\n")
+    write(clone, "delta.py", "import gamma\ngamma.second_helper()\n")
+    hook = load_module("hook_for_failed_write_case", HOOK_PATH)
+    real_replace = hook.os.replace
+
+    def replace_failing_for_the_record(source, destination, *arguments, **options):
+        if Path(destination).name == record.name:
+            raise PermissionError(13, "Permission denied")
+        return real_replace(source, destination, *arguments, **options)
+    hook.os.replace = replace_failing_for_the_record
+    try:
+        code, context = run_hook_in_process(hook, root, clone, {"tool_name": "Write",
+                                            "tool_input": {"file_path": "delta.py"}}, {})
+    finally:
+        hook.os.replace = real_replace
+    check("a write that fails after a good read exits 0", code == 0)
+    check("a write that fails after a good read is told to the agent",
+          f"could not write {record.name}: Permission denied" in context, context)
+    check("the names are still listed when the write fails", "second_helper" in context, context)
+    check("the record is left as it was", record.read_bytes() == before)
+    leftovers = [path.name for path in record.parent.iterdir() if path.name.endswith(".partial")]
+    check("a failed write removes its temporary file", leftovers == [], str(leftovers))
+
+
+def case_record_that_is_not_utf8_is_told(root):
+    clone = make_clone(root, BASE_MAIN_FILES)
+    state_root = root / "state"
+    state_root.mkdir()
+    record_path_of(clone).write_bytes(b'{"topic": ["\xff\xfe"]}')
     write(clone, "alpha.py", "def shared_helper():\n    return 1\n")
     write(clone, "beta.py", "import alpha\nalpha.shared_helper()\n")
     code, context = run_hook(clone, state_root, {"tool_name": "Write", "tool_input": {"file_path": "beta.py"}})
-    check("a record that cannot be written exits 0", code == 0)
-    check("a record that cannot be written is told to the agent",
-          "new-shared-names-reported.json" in context and "failed" in context, context)
+    check("a record that is not UTF-8 exits 0", code == 0)
+    check("a record that is not UTF-8 is told to the agent",
+          "new-shared-names-reported.json is not valid UTF-8" in context, context)
+    check("the names are still listed after a record that is not UTF-8", "shared_helper" in context, context)
+
+
+def case_local_branch_list_failure_is_told_and_keeps_the_record(root):
+    clone = make_clone(root, BASE_MAIN_FILES)
+    record_path_of(clone).write_text(json.dumps({"long-gone-topic": ["python-function\told_name"]}))
+    write(clone, "alpha.py", "def shared_helper():\n    return 1\n")
+    write(clone, "beta.py", "import alpha\nalpha.shared_helper()\n")
+    hook = load_module("hook_for_branch_list_failure_case", HOOK_PATH)
+    code, context = run_hook_in_process(hook, root, clone, {"tool_name": "Write",
+                                        "tool_input": {"file_path": "beta.py"}}, {"for-each-ref": 128})
+    check("a failing branch list exits 0", code == 0)
+    check("a failing branch list is told to the agent", "git for-each-ref failed" in context, context)
+    check("the names are still listed when the branch list fails", "shared_helper" in context, context)
+    check("a failing branch list keeps every branch's entries",
+          "long-gone-topic" in json.loads(record_path_of(clone).read_text()))
+
+
+def case_same_branch_name_recreated_is_told_names_again(root):
+    clone = make_clone(root, BASE_MAIN_FILES)
+    state_root = root / "state"
+    state_root.mkdir()
+    write(clone, "alpha.py", "def shared_helper():\n    return 1\n")
+    write(clone, "beta.py", "import alpha\nalpha.shared_helper()\n")
+    _, first = run_hook(clone, state_root, {"tool_name": "Write", "tool_input": {"file_path": "beta.py"}})
+    check("the name is told on topic", "shared_helper" in first, first)
+    for command in (["stash", "-q", "-u"], ["switch", "-q", "main"], ["branch", "-q", "-D", "topic"]):
+        git(command, clone)
+        run_hook(clone, state_root, {"tool_name": "Bash", "tool_input": {"command": "git " + " ".join(command)}})
+    check("deleting topic drops its entries even with no new names to write",
+          "topic" not in json.loads(record_path_of(clone).read_text()))
+    git(["switch", "-q", "-c", "topic"], clone)
+    git(["stash", "pop", "-q"], clone)
+    _, again = run_hook(clone, state_root, {"tool_name": "Write", "tool_input": {"file_path": "beta.py"}})
+    check("a recreated branch of the same name is told the name again", "shared_helper" in again, again)
+
+
+def case_switch_to_a_branch_origin_has_lists_its_names(root):
+    clone = make_clone(root, BASE_MAIN_FILES)
+    git(["branch", "-q", "pushed-topic"], clone)
+    git(["push", "-q", "origin", "pushed-topic"], clone)
+    state_root = root / "state"
+    state_root.mkdir()
+    write(clone, "alpha.py", "def shared_helper():\n    return 1\n")
+    write(clone, "beta.py", "import alpha\nalpha.shared_helper()\n")
+    _, first = run_hook(clone, state_root, {"tool_name": "Write", "tool_input": {"file_path": "beta.py"}})
+    check("the name is told on topic", "shared_helper" in first, first)
+    git(["switch", "-q", "pushed-topic"], clone)
+    _, after_switch = run_hook(clone, state_root, {"tool_name": "Bash",
+                                                   "tool_input": {"command": "git switch pushed-topic"}})
+    check("a switch to another branch at the same commit, with the same changes, lists that branch's names",
+          "shared_helper" in after_switch, after_switch)
 
 
 OVERLAPPING_WRITER_SCRIPT = """
@@ -582,7 +667,7 @@ spec.loader.exec_module(hook)
 record = Path(sys.argv[2])
 writer = sys.argv[3]
 for index in range(40):
-    hook.write_record_entries(record, "topic", {f"python-function\\t{writer}_{index}"}, ["topic"])
+    hook.reported_names_record_merge_prune_and_write(record, "topic", {f"python-function\\t{writer}_{index}"}, ["topic"])
 """
 
 
@@ -701,7 +786,10 @@ def main() -> int:
              case_hook_reports_once_per_worktree, case_two_worktrees_keep_separate_records,
              case_new_branch_is_told_a_name_again_and_gone_branches_are_dropped,
              case_unreadable_record_is_told_and_names_are_told_again,
-             case_missing_record_is_silent_about_the_record, case_unwritable_record_is_told,
+             case_missing_record_is_silent_about_the_record,
+             case_failed_write_after_a_good_read_is_told_and_leaves_no_temporary_file,
+             case_record_that_is_not_utf8_is_told, case_local_branch_list_failure_is_told_and_keeps_the_record,
+             case_same_branch_name_recreated_is_told_names_again, case_switch_to_a_branch_origin_has_lists_its_names,
              case_overlapping_writers_never_leave_invalid_json_and_keep_every_name,
              case_hook_shell_commands,
              case_hook_reports_failure_once, case_hook_ignores_other_input]
