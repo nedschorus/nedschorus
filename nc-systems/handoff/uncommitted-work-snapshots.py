@@ -105,8 +105,13 @@ def run_ps(arguments):
     return subprocess.run(["ps", *arguments], capture_output=True, text=True, check=False)
 
 
-def process_exists(process_id):
-    """Whether any process has this id: signal 0 checks without sending anything."""
+def process_exists_or_raise(process_id):
+    """Whether any process has this id: signal 0 checks without sending anything.
+
+    An error other than "no such process" or "not permitted" raises, unlike
+    handoff-supervisor.py's process_exists_by_signal, which counts every error
+    as a live process because a lock must not be taken from an unknown owner.
+    """
     try:
         os.kill(int(process_id), 0)
     except ProcessLookupError:
@@ -119,13 +124,13 @@ def process_exists(process_id):
 def macos_start_seconds(process_id):
     """The process's start as whole seconds since 1970, or None when it is gone.
 
-    Whether the process is gone is decided by process_exists, not by ps: macOS ps
+    Whether the process is gone is decided by process_exists_or_raise, not by ps: macOS ps
     exits 1 for an id no process has, with a message for some ids ("process id
     too large"), and the same exit can mean ps failed. Raises WorkSnapshotError
     when ps fails for a process that exists, so a failed lookup is never taken
     for a dead owner.
     """
-    if not process_exists(process_id):
+    if not process_exists_or_raise(process_id):
         return None
     arguments = ["-o", "lstart=", "-p", str(process_id)]
     result = run_ps(arguments)
@@ -133,7 +138,7 @@ def macos_start_seconds(process_id):
     if result.returncode == 0 and started:
         return str(int(time.mktime(time.strptime(started, "%a %b %d %H:%M:%S %Y"))))
     # The process can exit between the check above and ps.
-    if result.returncode == 1 and not started and not process_exists(process_id):
+    if result.returncode == 1 and not started and not process_exists_or_raise(process_id):
         return None
     raise WorkSnapshotError(
         f"ps {' '.join(arguments)} exited {result.returncode}: "

@@ -9,16 +9,21 @@ Every case works in a scratch clone with the programs copied into it, so the
 hook's own clone, and every ref written, is the scratch clone's. Git reads a
 scratch global config and no system config.
 
-The hook finds its owner by walking up to a process named claude. The suite
-stands one in with a copy of a shell binary named `claude`, which both Linux
-and macOS name after the copied file; the cases that run the hook under it
-print SKIP, with the names observed, only where no such copy is named claude.
+The hook finds its owner by walking up to a process named claude. Both Linux
+and macOS name a process after the file it executes, so the suite stands one in
+with a binary named `claude`, trying in order: a copy of a shell; on macOS, that
+copy re-signed ad hoc, because macOS kills a copied system binary whose
+signature no longer holds; a small C program compiled with `cc`, which runs
+/bin/sh as its child; a copy of the Python binary. The cases that run the hook
+under it print SKIP, with what each candidate showed, only where none runs and
+is named claude.
 No case sends a signal: the stand-in ends when its stdin closes.
 
 Run: python3 nc-systems/handoff/tests/uncommitted-work-snapshots-test.py
 """
 
 import importlib.util
+import io
 import json
 import os
 import shutil
@@ -92,50 +97,189 @@ GLOBAL_CONFIG.write_text(
 os.environ.update(HOME=str(HOME), GIT_CONFIG_GLOBAL=str(GLOBAL_CONFIG), GIT_CONFIG_NOSYSTEM="1")
 os.environ.pop("GIT_AUTHOR_NAME", None)
 
-# The stand-in for claude is a copy of a shell binary named claude: both Linux
+# The stand-in for claude is a copy of a binary named claude: both Linux
 # (/proc/<pid>/comm) and macOS ps name a process after the file it executes, so
 # a shell script named claude would be named after its interpreter on macOS.
 CLAUDE_STAND_IN = SCRATCH / "bin" / "claude"
 CLAUDE_STAND_IN.parent.mkdir()
-CLAUDE_STAND_IN_SCRIPT = (
-    'echo stand-in-ready\n'
-    'while read hook_input; do\n'
-    '  "$@" < "$hook_input"\n'
-    '  echo "hook-done $?"\n'
-    'done\n')
+# Each kind of stand-in: the script it runs under -c, with the hook's command as
+# its arguments, and a probe that prints a line and waits for stdin to close.
+# bash -c makes the first argument $0; python -c makes it sys.argv[1].
+CLAUDE_STAND_IN_SCRIPTS = {
+    "shell": (
+        'echo stand-in-ready\n'
+        'while read hook_input; do\n'
+        '  "$@" < "$hook_input"\n'
+        '  echo "hook-done $?"\n'
+        'done\n'),
+    "python": (
+        'import subprocess, sys\n'
+        'print("stand-in-ready", flush=True)\n'
+        'for line in sys.stdin:\n'
+        '    with open(line.strip()) as hook_input:\n'
+        '        exit_code = subprocess.run(sys.argv[2:], stdin=hook_input).returncode\n'
+        '    print(f"hook-done {exit_code}", flush=True)\n'),
+}
+# The compiled stand-in passes its arguments to /bin/sh, so it runs the shell's scripts.
+CLAUDE_STAND_IN_SCRIPTS["compiled"] = CLAUDE_STAND_IN_SCRIPTS["shell"]
+CLAUDE_STAND_IN_PROBES = {
+    "shell": "echo ready; read x",
+    "compiled": "echo ready; read x",
+    "python": "import sys; print('ready', flush=True); sys.stdin.readline()",
+}
 
 
-def find_claude_stand_in():
-    """Copy a shell to CLAUDE_STAND_IN; return None if it is named claude, else why not."""
+def copy_binary_as_claude_stand_in(source, destination):
+    """Copy the binary's bytes and make the copy executable.
+
+    The copy takes none of the source's metadata: macOS refuses to give a copy a
+    protected system binary's flags, so shutil.copy2 fails on /bin/bash there.
+    A failed earlier attempt can leave the destination unwritable, so it is
+    removed first.
+    """
+    destination = Path(destination)
+    destination.unlink(missing_ok=True)
+    shutil.copyfile(source, destination)
+    os.chmod(destination, 0o755)
+
+
+# Stays the parent of the shell it runs, so the hook's walk up the process tree
+# finds a process named claude; an exec would give the process the shell's name.
+CLAUDE_STAND_IN_C_SOURCE = r"""
+#include <errno.h>
+#include <spawn.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <sys/wait.h>
+
+extern char **environ;
+
+int main(int argc, char **argv) {
+    char **child_argv = calloc((size_t)argc + 1, sizeof(char *));
+    if (child_argv == NULL) {
+        perror("claude stand-in: calloc");
+        return 127;
+    }
+    child_argv[0] = "sh";
+    for (int i = 1; i < argc; i++) {
+        child_argv[i] = argv[i];
+    }
+    pid_t child;
+    int spawn_error = posix_spawn(&child, "/bin/sh", NULL, NULL, child_argv, environ);
+    if (spawn_error != 0) {
+        fprintf(stderr, "claude stand-in: posix_spawn /bin/sh failed: %d\n", spawn_error);
+        return 127;
+    }
+    int status;
+    while (waitpid(child, &status, 0) < 0) {
+        if (errno != EINTR) {
+            perror("claude stand-in: waitpid");
+            return 127;
+        }
+    }
+    if (WIFEXITED(status)) {
+        return WEXITSTATUS(status);
+    }
+    return 128 + WTERMSIG(status);
+}
+"""
+
+
+def compile_claude_stand_in(destination, compiler):
+    """Compile CLAUDE_STAND_IN_C_SOURCE to destination; raise OSError if cc fails."""
+    destination = Path(destination)
+    source = destination.parent / "claude-stand-in.c"
+    source.write_text(CLAUDE_STAND_IN_C_SOURCE)
+    destination.unlink(missing_ok=True)
+    result = subprocess.run([compiler, "-o", str(destination), str(source)],
+                            capture_output=True, text=True)
+    if result.returncode != 0:
+        raise OSError(f"{compiler} exited {result.returncode}: {result.stderr.strip()}")
+
+
+def copy_and_sign_claude_stand_in(source, destination, codesign):
+    """Copy the binary, then re-sign the copy ad hoc; raise OSError if codesign fails."""
+    copy_binary_as_claude_stand_in(source, destination)
+    result = subprocess.run([codesign, "--force", "-s", "-", str(destination)],
+                            capture_output=True, text=True)
+    if result.returncode != 0:
+        raise OSError(f"codesign exited {result.returncode}: {result.stderr.strip()}")
+
+
+def claude_stand_in_candidates(platform=sys.platform, which=shutil.which):
+    """Each candidate as (kind, label, prepare), in the order they are tried.
+
+    prepare(destination) puts the candidate binary at destination. The compiled
+    program runs the shell's scripts, so its kind's scripts are the shell's.
+    """
+    shells = []
+    for found in (which("bash"), "/bin/bash", which("sh"), "/bin/sh"):
+        if found and os.path.exists(found):
+            resolved = os.path.realpath(found)
+            if resolved not in shells:
+                shells.append(resolved)
+    candidates = [("shell", f"a copy of {shell}",
+                   lambda destination, shell=shell: copy_binary_as_claude_stand_in(
+                       shell, destination))
+                  for shell in shells]
+    codesign = which("codesign")
+    if platform == "darwin" and codesign:
+        candidates += [("shell", f"a copy of {shell} re-signed ad hoc",
+                        lambda destination, shell=shell: copy_and_sign_claude_stand_in(
+                            shell, destination, codesign))
+                       for shell in shells]
+    compiler = which("cc")
+    if compiler:
+        candidates.append(("compiled", f"a C program compiled with {compiler}",
+                           lambda destination: compile_claude_stand_in(destination, compiler)))
+    python = os.path.realpath(sys.executable)
+    candidates.append(("python", f"a copy of {python}",
+                       lambda destination: copy_binary_as_claude_stand_in(python, destination)))
+    return candidates
+
+
+def find_claude_stand_in(candidates=None, destination=CLAUDE_STAND_IN, launch=subprocess.Popen):
+    """Put each candidate at destination until one runs and is named claude.
+
+    launch starts the probe; a test passes a fake so it needs no binary that runs here.
+    Returns (kind, None) for the candidate that works, or (None, what was observed).
+    """
     observed = []
-    candidates = []
-    for found in (shutil.which("bash"), "/bin/bash", shutil.which("sh"), "/bin/sh"):
-        if found and os.path.exists(found) and os.path.realpath(found) not in candidates:
-            candidates.append(os.path.realpath(found))
-    for candidate in candidates:
+    for kind, label, prepare in (claude_stand_in_candidates() if candidates is None
+                                 else candidates):
         try:
-            shutil.copy2(candidate, CLAUDE_STAND_IN)
-            CLAUDE_STAND_IN.chmod(0o755)
-            probe = subprocess.Popen([str(CLAUDE_STAND_IN), "-c", "echo ready; read x"],
-                                     stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+            prepare(destination)
+            probe = launch([str(destination), "-c", CLAUDE_STAND_IN_PROBES[kind]],
+                           stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
         except OSError as error:
-            observed.append(f"{candidate}: {error}")
+            observed.append(f"{label}: {error}")
             continue
         try:
-            probe.stdout.readline()
-            name = snapshots.process_command_name_and_parent(probe.pid)[0]
-        except (OSError, snapshots.WorkSnapshotError) as error:
-            name = f"unreadable ({error})"
+            ready = probe.stdout.readline().strip() == "ready"
+        except OSError:
+            ready = False
+        name, lookup_error = None, None
+        if ready:
+            try:
+                name = snapshots.process_command_name_and_parent(probe.pid)[0]
+            except (OSError, snapshots.WorkSnapshotError) as error:
+                lookup_error = error
         probe.stdin.close()
         probe.wait(timeout=30)
         probe.stdout.close()
         if name == snapshots.OWNER_PROCESS_COMMAND_NAME:
-            return None
-        observed.append(f"a copy of {candidate} is named {name!r}")
-    return "; ".join(observed) or "no shell binary found"
+            return kind, None
+        if not ready:
+            observed.append(f"{label} did not run (exit {probe.returncode})")
+        elif lookup_error is not None:
+            observed.append(f"{label} ran, but its process name could not be read: "
+                            f"{lookup_error}")
+        else:
+            observed.append(f"{label} is named {name!r}")
+    return None, "; ".join(observed) or "no candidate binary found"
 
 
-CLAUDE_STAND_IN_PROBLEM = find_claude_stand_in()
+CLAUDE_STAND_IN_KIND, CLAUDE_STAND_IN_PROBLEM = find_claude_stand_in()
 CLAUDE_STAND_IN_WORKS = CLAUDE_STAND_IN_PROBLEM is None
 
 
@@ -195,15 +339,18 @@ class ClaudeStandIn:
 
     started = 0
 
-    def __init__(self, main, environment=None):
+    def __init__(self, main, environment=None, binary=None, kind=None):
         self.main = main
+        binary = binary or CLAUDE_STAND_IN
+        kind = kind or CLAUDE_STAND_IN_KIND
         ClaudeStandIn.started += 1
         self.inputs = SCRATCH / f"hook-inputs-{ClaudeStandIn.started}"
         self.inputs.mkdir()
         self.count = 0
         self.last_exit = None
         self.process = subprocess.Popen(
-            [str(CLAUDE_STAND_IN), "-c", CLAUDE_STAND_IN_SCRIPT, "claude", sys.executable,
+            [str(binary), "-c", CLAUDE_STAND_IN_SCRIPTS[kind],
+             "claude", sys.executable,
              str(main / HOOK_RELATIVE)],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True,
             env=dict(os.environ, **(environment or {})))
@@ -519,11 +666,11 @@ class FakePs:
 
 
 def test_macos_ps_failure_is_not_a_dead_owner():
-    real_run_ps, real_process_exists = snapshots.run_ps, snapshots.process_exists
+    real_run_ps, real_process_exists = snapshots.run_ps, snapshots.process_exists_or_raise
     try:
         # A gone process is decided before ps runs: macOS ps exits 1 for an id no
         # process has, sometimes with a message, which must not raise.
-        snapshots.process_exists = lambda process_id: False
+        snapshots.process_exists_or_raise = lambda process_id: False
         for fake, why in ((FakePs(1, stderr="ps: process id too large: 999999\n"),
                            "with \"process id too large\""),
                           (FakePs(1), "with no output")):
@@ -540,12 +687,12 @@ def test_macos_ps_failure_is_not_a_dead_owner():
         # The process exits between the check and ps: exit 1 with no output, and
         # the check now says gone.
         answers = iter((True, False))
-        snapshots.process_exists = lambda process_id: next(answers)
+        snapshots.process_exists_or_raise = lambda process_id: next(answers)
         snapshots.run_ps = lambda arguments: FakePs(1)
         check(snapshots.macos_start_seconds(100) is None,
               "a process that exits just before ps reads it counts as gone")
         # A process that exists: every ps failure raises.
-        snapshots.process_exists = lambda process_id: True
+        snapshots.process_exists_or_raise = lambda process_id: True
         for fake, why in ((FakePs(1), "exit 1 with no output"),
                           (FakePs(-9), "killed by a signal"),
                           (FakePs(1, stderr="ps: illegal option"), "an error message"),
@@ -560,10 +707,10 @@ def test_macos_ps_failure_is_not_a_dead_owner():
                   f"a ps failure for a live process ({why}) raises instead of counting "
                   "the owner dead", outcome)
     finally:
-        snapshots.run_ps, snapshots.process_exists = real_run_ps, real_process_exists
+        snapshots.run_ps, snapshots.process_exists_or_raise = real_run_ps, real_process_exists
     dead = dead_process_id()
-    check(not snapshots.process_exists(dead) and snapshots.process_exists(os.getpid()),
-          "process_exists tells a reaped process from this one")
+    check(not snapshots.process_exists_or_raise(dead) and snapshots.process_exists_or_raise(os.getpid()),
+          "process_exists_or_raise tells a reaped process from this one")
     # A process of another user refuses the signal: it exists all the same. Only
     # the module's name for os is replaced, so the real os.kill is never touched.
     def refuse(process_id, signal_number):
@@ -571,7 +718,7 @@ def test_macos_ps_failure_is_not_a_dead_owner():
     real_os = snapshots.os
     snapshots.os = types.SimpleNamespace(kill=refuse)
     try:
-        exists = snapshots.process_exists(dead)
+        exists = snapshots.process_exists_or_raise(dead)
     finally:
         snapshots.os = real_os
     check(exists, "a process that refuses the signal exists")
@@ -1238,9 +1385,152 @@ def test_the_2026_10_05_loss_replayed():
         check(refs_of(main) == [], "step 4 deletes the ref")
 
 
+def test_stand_in_copy_takes_no_metadata():
+    name = "the claude stand-in is copied without the source's metadata"
+    source = SCRATCH / "protected-binary"
+    source.write_bytes(b"#!/bin/sh\necho copied\n")
+    destination = SCRATCH / "metadata-test" / "claude"
+    destination.parent.mkdir()
+    destination.write_text("left by a failed attempt\n")
+    destination.chmod(0o444)
+
+    def refuse(*arguments, **keywords):
+        raise PermissionError(1, "Operation not permitted")
+
+    real_copystat, real_chflags = shutil.copystat, getattr(os, "chflags", None)
+    shutil.copystat = refuse
+    if real_chflags is not None:
+        os.chflags = refuse
+    try:
+        copy_binary_as_claude_stand_in(source, destination)
+        copied = True
+    except OSError as error:
+        copied = error
+    finally:
+        shutil.copystat = real_copystat
+        if real_chflags is not None:
+            os.chflags = real_chflags
+    check(copied is True, name, f"{copied}")
+    check(destination.read_bytes() == source.read_bytes()
+          and destination.stat().st_mode & 0o777 == 0o755,
+          "the copy holds the source's bytes and is mode 755")
+
+
+def test_python_stand_in_runs_the_hook():
+    name = "a copy of the Python binary stands in for claude and runs the hook"
+    check(claude_stand_in_candidates()[-1][:2]
+          == ("python", f"a copy of {os.path.realpath(sys.executable)}"),
+          "the Python binary is the last stand-in candidate")
+    binary = SCRATCH / "python-stand-in" / "claude"
+    binary.parent.mkdir()
+    try:
+        copy_binary_as_claude_stand_in(os.path.realpath(sys.executable), binary)
+    except OSError as error:
+        return skip(name, f"the Python binary could not be copied: {error}")
+    main = new_clone()
+    worktree = add_worktree(main, main / ".claude" / "worktrees" / "py", "py-branch")
+    (worktree / "tracked.txt").write_text("python stand-in\n")
+    try:
+        claude = ClaudeStandIn(main, binary=binary, kind="python")
+    except (OSError, snapshots.WorkSnapshotError) as error:
+        return skip(name, f"the copied Python binary did not run as claude: {error}")
+    try:
+        command_name = snapshots.process_command_name_and_parent(claude.process.pid)[0]
+        if command_name != snapshots.OWNER_PROCESS_COMMAND_NAME:
+            return skip(name, f"a copy of the Python binary is named {command_name!r}")
+        claude.run_hook(edit(worktree / "tracked.txt"))
+        check(claude.last_exit == 0 and len(refs_of(main, claude.owner_key)) == 1, name,
+              f"exit {claude.last_exit}, refs {refs_of(main)}")
+    finally:
+        claude.end()
+
+
+def test_stand_in_candidate_order():
+    name = "stand-in candidates: shell copies, re-signed copies on macOS, compiled, Python"
+    tools = {"bash": "/bin/bash", "sh": "/bin/sh",
+             "codesign": "/usr/bin/codesign", "cc": "/usr/bin/cc"}
+    which = tools.get
+    shells = []
+    for shell in ("/bin/bash", "/bin/sh"):
+        if os.path.exists(shell) and os.path.realpath(shell) not in shells:
+            shells.append(os.path.realpath(shell))
+    on_macos = [label for _, label, _ in claude_stand_in_candidates("darwin", which)]
+    on_linux = [label for _, label, _ in claude_stand_in_candidates("linux", which)]
+    python = f"a copy of {os.path.realpath(sys.executable)}"
+    copies = [f"a copy of {shell}" for shell in shells]
+    check(on_macos == copies + [f"{copy} re-signed ad hoc" for copy in copies]
+          + ["a C program compiled with /usr/bin/cc", python], name, f"{on_macos}")
+    check(on_linux == copies + ["a C program compiled with /usr/bin/cc", python],
+          "off macOS no candidate is re-signed", f"{on_linux}")
+    without_tools = [label for _, label, _ in claude_stand_in_candidates(
+        "darwin", {"bash": "/bin/bash", "sh": "/bin/sh"}.get)]
+    check(without_tools == copies + [python],
+          "without codesign or cc those candidates are left out", f"{without_tools}")
+
+
+def test_stand_in_lookup_failure_is_named():
+    name = "a stand-in that ran but whose name could not be read says so"
+    destination = SCRATCH / "lookup-failure" / "claude"
+    candidates = [("shell", "a stand-in that reports ready", lambda target: None)]
+
+    class ReadyProbe:
+        """A probe that says ready and exits 0, whatever binary this platform can run."""
+
+        def __init__(self, *arguments, **keywords):
+            self.pid = os.getpid()
+            self.returncode = None
+            self.stdin = io.StringIO()
+            self.stdout = io.StringIO("ready\n")
+
+        def wait(self, timeout=None):
+            self.returncode = 0
+            return 0
+
+    def refuse(process_id, *arguments, **keywords):
+        raise snapshots.WorkSnapshotError("process lookup refused")
+
+    real_lookup = snapshots.process_command_name_and_parent
+    snapshots.process_command_name_and_parent = refuse
+    try:
+        kind, observed = find_claude_stand_in(candidates, destination, launch=ReadyProbe)
+    finally:
+        snapshots.process_command_name_and_parent = real_lookup
+    check(kind is None and observed == "a stand-in that reports ready ran, but its process "
+          "name could not be read: process lookup refused", name, f"{kind} {observed!r}")
+
+
+def test_compiled_stand_in_runs_the_hook():
+    name = "a C program compiled with cc stands in for claude and runs the hook"
+    compiler = shutil.which("cc")
+    if not compiler:
+        return skip(name, "no cc on PATH")
+    binary = SCRATCH / "compiled-stand-in" / "claude"
+    binary.parent.mkdir()
+    try:
+        compile_claude_stand_in(binary, compiler)
+    except OSError as error:
+        return check(False, name, f"the stand-in did not compile: {error}")
+    kind, observed = find_claude_stand_in(
+        [("compiled", "the compiled program", lambda target: None)], binary)
+    check(kind == "compiled", "the compiled stand-in runs and is named claude", observed)
+    main = new_clone()
+    worktree = add_worktree(main, main / ".claude" / "worktrees" / "cc", "cc-branch")
+    (worktree / "tracked.txt").write_text("compiled stand-in\n")
+    claude = ClaudeStandIn(main, binary=binary, kind="compiled")
+    try:
+        claude.run_hook(edit(worktree / "tracked.txt"))
+        check(claude.last_exit == 0 and len(refs_of(main, claude.owner_key)) == 1, name,
+              f"exit {claude.last_exit}, refs {refs_of(main)}")
+    finally:
+        claude.end()
+
+
 def main():
     try:
-        for case in (test_what_a_work_snapshot_holds, test_same_size_edit_in_the_index_second,
+        for case in (test_stand_in_copy_takes_no_metadata, test_stand_in_candidate_order,
+                     test_stand_in_lookup_failure_is_named, test_compiled_stand_in_runs_the_hook,
+                     test_python_stand_in_runs_the_hook,
+                     test_what_a_work_snapshot_holds, test_same_size_edit_in_the_index_second,
                      test_ref_names,
                      test_bash_commit_deletes_and_other_worktrees_follow,
                      test_overlapping_runs_end_on_the_final_state, test_operation_trailer,
