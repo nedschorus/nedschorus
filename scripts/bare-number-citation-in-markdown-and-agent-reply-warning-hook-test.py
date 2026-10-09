@@ -7,7 +7,7 @@ Prints one line per case and exits non-zero if any case fails.
 The scanner's cases call bare_references_in() directly. The hook's cases run
 the hook as Claude Code does, as a subprocess reading a payload on stdin: the
 PostToolUse cases against a throwaway repository under a temporary directory,
-the Stop cases against transcripts written there.
+the UserPromptSubmit cases against transcripts written there.
 
 Every git call, the hook's included, runs with the variables that redirect
 git (GIT_DIR and its kin) removed, so a GIT_DIR inherited from the caller
@@ -116,6 +116,27 @@ for line in ("supports-issues: 1058, 1036", "issue-marker: #1058",
 check("a line merely mentioning supports-issues later is still read",
       found("We set supports-issues: on PR 12.") == ["PR 12"],
       found("We set supports-issues: on PR 12."))
+barrier = "I merged PR [Fix](https://example.com/pull/931) 2 hours ago."
+check("a match cannot run across a skipped link", found(barrier) == [], found(barrier))
+quoted_fence = "> ~~~\n> PR 931\n> ~~~\nAfter PR 5."
+check("a fenced block inside a block quote is skipped, and prose after it is read",
+      found(quoted_fence) == ["PR 5"], found(quoted_fence))
+for titled in ("[PR 931](https://x.y/pull/931 'details')",
+               "[PR 931](https://x.y/pull/931 (details))",
+               '[PR 931](https://x.y/pull/931 "details")'):
+    check(f"a link with a title is skipped whole: {titled}", found(titled) == [], found(titled))
+for named in ('task #244, "the subject"', 'task #361 \u2014 "the subject"',
+              "task 361: \u201cthe subject\u201d", "PR 931 [the fix](https://x.y/pull/931)",
+              "GHI 1058: [Daily maintenance](https://x.y/issues/1058)"):
+    check(f"a reference followed by its name is not reported: {named}",
+          found(named) == [], found(named))
+check("a reference followed by other words is still reported",
+      found('task 361 is "done"') == ["task 361"], found('task 361 is "done"'))
+for protocol in ("verdict: related #216", "verdict: too-similar #12",
+                 "read #13, #24, #31"):
+    check(f"a ghi-info reply line is skipped: {protocol}", found(protocol) == [], found(protocol))
+check("read followed by a number mid-sentence is still read",
+      found("We read #13 later.") == ["#13"], found("We read #13 later."))
 check("a hit outside a link on the same line as a link is found",
       found("[x](https://y.z/pull/1) and PR 2") == ["PR 2"],
       found("[x](https://y.z/pull/1) and PR 2"))
@@ -131,12 +152,14 @@ check("a long line's excerpt is bounded and marked as cut",
       excerpt.startswith("...") and excerpt.endswith("...") and "PR 9" in excerpt
       and len(excerpt) < 100, excerpt)
 
-note = hook.note_text(hook.LAST_MESSAGE_OPENING_LINES,
+note = hook.note_text(hook.PREVIOUS_REPLY_OPENING_LINES,
                       hook.bare_references_in(" ".join(f"PR {n}" for n in range(1, 14))))
 check("the note lists at most ten hits and counts the rest",
       note.count('" in "') == 10 and "3 more not listed" in note, note)
 check("the note says how to cite instead",
       "ID-type and its name" in note and "PR [title](url), not a bare number" in note, note)
+check("the note says how to cite a task, which has no link",
+      'task #<number>, "<subject>"' in note, note)
 
 
 # ---------------------------------------------------------------------------
@@ -226,6 +249,11 @@ check("a file that is not Markdown is not scanned", result.stdout == "", result.
 result = run_hook(tool_payload("Write", REPOSITORY / "ignored" / "x.md", content="PR 931\n"))
 check("a Markdown file git ignores is not scanned", result.stdout == "", result.stdout)
 
+(REPOSITORY / "ignored" / "y.md").write_text("Text.\n", encoding="utf-8")
+result = run_hook(tool_payload("Edit", REPOSITORY / "ignored" / "y.md",
+                               old_string="Text.", new_string="PR 931"))
+check("an Edit of a Markdown file git ignores is not scanned", result.stdout == "", result.stdout)
+
 result = run_hook(tool_payload("Write", SCRATCH / "outside.md", content="PR 931\n"))
 check("a Markdown file outside the session's checkout is not scanned",
       result.stdout == "", result.stdout)
@@ -234,7 +262,7 @@ result = run_hook(tool_payload("Read", REPOSITORY / "docs" / "old.md"))
 check("a tool other than Edit or Write is ignored", result.stdout == "", result.stdout)
 
 
-# --- Stop -------------------------------------------------------------------
+# --- UserPromptSubmit -------------------------------------------------------
 
 def transcript(*records):
     path = SCRATCH / f"transcript-{len(list(SCRATCH.glob('transcript-*')))}.jsonl"
@@ -257,9 +285,9 @@ def text_block(text):
     return {"type": "text", "text": text}
 
 
-def stop_payload(path, **extra):
-    return {"hook_event_name": "Stop", "transcript_path": str(path),
-            "session_id": "s", "stop_hook_active": False, **extra}
+def prompt_payload(path, prompt="next question", **extra):
+    return {"hook_event_name": "UserPromptSubmit", "transcript_path": str(path),
+            "session_id": "s", "prompt": prompt, **extra}
 
 
 path = transcript(user("status?"),
@@ -267,45 +295,63 @@ path = transcript(user("status?"),
                   assistant("m2", {"type": "tool_use", "name": "Bash", "input": {"command": "ls"}}),
                   "not json at all",
                   assistant("m3", text_block("Done: PR 931 merged, `PR 5` is code.")))
-result = run_hook(stop_payload(path))
+result = run_hook(prompt_payload(path))
 context = context_of(result)
-check("Stop: a bare reference in the last message gets a Stop note",
-      result.returncode == 0 and context is not None and context["hookEventName"] == "Stop"
+check("UserPromptSubmit: a bare reference in the previous reply gets a note",
+      result.returncode == 0 and context is not None
+      and context["hookEventName"] == "UserPromptSubmit"
       and '"PR 931"' in context["additionalContext"]
-      and "cites 1 pull request(s)" in context["additionalContext"], result.stdout)
+      and "previous reply to the user cited 1 pull request(s)" in context["additionalContext"],
+      result.stdout)
+check("UserPromptSubmit: the note never blocks the prompt",
+      "decision" not in json.loads(result.stdout or "{}"), result.stdout)
+
+path = transcript(user("status?"), assistant("m1", text_block("Done: PR 931 merged.")),
+                  user("next question"))
+result = run_hook(prompt_payload(path))
+context = context_of(result)
+check("UserPromptSubmit: the prompt being submitted, already in the transcript, is skipped",
+      context is not None and '"PR 931"' in context["additionalContext"], result.stdout)
 
 path = transcript(user("first"), assistant("m1", text_block("See PR 12.")),
                   user("second"), assistant("m2", text_block("All clear.")))
-result = run_hook(stop_payload(path))
-check("Stop: a bare reference only in an earlier turn is silent",
+result = run_hook(prompt_payload(path))
+check("UserPromptSubmit: a bare reference only in an earlier turn is silent",
       result.returncode == 0 and result.stdout == "", result.stdout)
 
 path = transcript(user("go"), assistant("m1", text_block("See GHI 7.")),
                   assistant("m2", text_block("Finished, no numbers.")))
-result = run_hook(stop_payload(path))
-check("Stop: only the last message with text is scanned",
+result = run_hook(prompt_payload(path))
+check("UserPromptSubmit: only the last message with text is scanned",
       result.stdout == "", result.stdout)
 
 path = transcript(user("go"), assistant("m1", text_block("See PR 12.")))
-result = run_hook(stop_payload(path, stop_hook_active=True))
-check("Stop: silent when stop_hook_active is set", result.stdout == "", result.stdout)
-
 headless = dict(HOOK_ENVIRONMENT, CLAUDE_CODE_SESSION_ATTENDED="0")
-result = run_hook(stop_payload(path), headless)
-check("Stop: silent in a headless claude -p child", result.stdout == "", result.stdout)
+result = run_hook(prompt_payload(path), headless)
+check("UserPromptSubmit: silent in a headless claude -p child", result.stdout == "", result.stdout)
 owned = dict(HOOK_ENVIRONMENT, NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER="1")
-result = run_hook(stop_payload(path), owned)
-check("Stop: silent when a caller owns the session", result.stdout == "", result.stdout)
+result = run_hook(prompt_payload(path), owned)
+check("UserPromptSubmit: silent when a caller owns the session", result.stdout == "", result.stdout)
 
-result = run_hook(stop_payload(SCRATCH / "no-such-transcript.jsonl"))
-check("Stop: a missing transcript fails open, silent, exit 0",
-      result.returncode == 0 and result.stdout == "" and result.stderr == "",
+result = run_hook({"hook_event_name": "Stop", "transcript_path": str(path)})
+check("Stop is no longer handled", result.returncode == 0 and result.stdout == "", result.stdout)
+
+result = run_hook(prompt_payload(SCRATCH / "no-such-transcript.jsonl"))
+check("UserPromptSubmit: a missing transcript is reported on stderr, no note, exit 0",
+      result.returncode == 0 and result.stdout == ""
+      and "no check was made: FileNotFoundError" in result.stderr,
       (result.returncode, result.stdout, result.stderr))
 
 
 # --- Fail open on bad input ---------------------------------------------------
 
-for name, stdin in (("not JSON", "{oops"), ("a JSON list", "[1, 2]"), ("empty stdin", ""),
+result = run_hook("{oops")
+check("stdin that is not JSON is reported on stderr, no note, exit 0",
+      result.returncode == 0 and result.stdout == ""
+      and "no check was made: JSONDecodeError" in result.stderr,
+      (result.returncode, result.stdout, result.stderr))
+
+for name, stdin in (("a JSON list", "[1, 2]"), ("empty stdin", ""),
                     ("an unknown event", json.dumps({"hook_event_name": "Other"})),
                     ("tool_input not an object",
                      json.dumps({"hook_event_name": "PostToolUse", "tool_name": "Write",
@@ -315,9 +361,9 @@ for name, stdin in (("not JSON", "{oops"), ("a JSON list", "[1, 2]"), ("empty st
                                            "tool_input": {"file_path": "a.md",
                                                           "content": "PR 1"}})),
                     ("a transcript_path that is not a string",
-                     json.dumps({"hook_event_name": "Stop", "transcript_path": 5}))):
+                     json.dumps({"hook_event_name": "UserPromptSubmit", "transcript_path": 5}))):
     result = run_hook(stdin)
-    check(f"bad input fails open, silent, exit 0: {name}",
+    check(f"input with nothing to check is silent, exit 0: {name}",
           result.returncode == 0 and result.stdout == "" and result.stderr == "",
           (result.returncode, result.stdout, result.stderr))
 
