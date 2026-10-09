@@ -1163,17 +1163,14 @@ def run_cases(scratch: Path):
         except tool.Refused as refusal:
             check(case_name, False, f"refused: {refusal}")
 
-    # ghi-info-ask.py exits 2 or 3, message on stderr, when ghi-info replies
-    # out-of-scope or escalate: instead of a list (user-ruled 2026-09-29).
-    # The write fails open as for any missing verdict, and the report says
-    # what ghi-info said instead of "did not answer".
+    # ghi-info-ask.py exits 2, message on stderr, when ghi-info replies
+    # not-about-issues instead of a list. The write fails open as for any
+    # missing verdict, and the report says what ghi-info said instead of
+    # "did not answer". Exit 3, the ruling question, has its own cases below.
     for case_name, exit_code, first_line in [
             ("an out-of-scope reply lets the write proceed and says so", 2,
              "Not a question about GitHub issues: ghi-info reports which "
-             "issues relate to a subject."),
-            ("an escalate: reply lets the write proceed and says so", 3,
-             "ghi-info found a ruling of the user's that it cannot tell "
-             "still applies: the 2026-09-19 ruling on #46 may not hold")]:
+             "issues relate to a subject.")]:
         lines = []
         replied = Recorder({ASK: Completed(
             "", returncode=exit_code,
@@ -1196,10 +1193,7 @@ def run_cases(scratch: Path):
             "ghi-info-ask: reincarnating the session — 40 closes since birth"]:
         for exit_code, first_line in [
                 (2, "Not a question about GitHub issues: ghi-info reports "
-                    "which issues relate to a subject."),
-                (3, "ghi-info found a ruling of the user's that it cannot "
-                    "tell still applies: the 2026-09-19 ruling on #46 may "
-                    "not hold")]:
+                    "which issues relate to a subject.")]:
             case_name = (f"exit {exit_code} after the line "
                          f"{leading_line[:40]!r} reports the message")
             lines = []
@@ -1235,6 +1229,251 @@ def run_cases(scratch: Path):
               ask_module.RULING_QUESTION_MESSAGE_TEMPLATE.split(
                   "{sentence}")[0].rstrip()),
           tool.GHI_INFO_ASK_NO_LIST_MESSAGE_OPENINGS)
+
+    check("the tool's copy of the ruling question's exit code and of the "
+          "line after its sentence match ghi-info-ask.py's",
+          tool.GHI_INFO_ASK_RULING_QUESTION_EXIT_CODE
+          == ask_module.EXIT_RULING_QUESTION
+          and ask_module.RULING_QUESTION_MESSAGE_TEMPLATE.split(
+              "{sentence}\n")[1].startswith(
+                  tool.GHI_INFO_ASK_RULING_QUESTION_SENTENCE_END),
+          tool.GHI_INFO_ASK_RULING_QUESTION_SENTENCE_END)
+
+    # --- A ruling question: the write goes ahead and records it ----------
+
+    def ruling_stderr(sentence, leading=""):
+        return leading + ask_module.RULING_QUESTION_MESSAGE_TEMPLATE.format(
+            sentence=sentence) + "\n"
+
+    check("the request offers ghi-info the numbered ruling question",
+          "ask-user-about-ruling: #<issue>" in " ".join(
+              " ".join(call) for call in (lambda r: (tool.adjudicate(
+                  REPO, "t", FILE_TEXT, scratch, r, quiet), r.calls)[1])(
+                      Recorder({ASK: Completed("verdict: unrelated\n")}))))
+
+    for case_name, stderr, expected_issue, expected_sentence in [
+            ("a numbered ruling question is returned, number and sentence "
+             "apart",
+             ruling_stderr("#46 the 2026-09-19 ruling may not hold"),
+             46, "the 2026-09-19 ruling may not hold"),
+            ("after a refresh line, the question is still found",
+             ruling_stderr("#46 the ruling may not hold",
+                           "ghi-info-ask: refreshed the seat checkout 1 "
+                           "commit(s) to origin/main\n"),
+             46, "the ruling may not hold"),
+            ("a question naming no issue is returned with no number",
+             ruling_stderr("the ruling on frozen issues may not hold"),
+             None, "the ruling on frozen issues may not hold"),
+            ("a sentence over two lines arrives whole",
+             ruling_stderr("#783 closed issues are frozen,\nbut this one "
+                           "was reopened"),
+             783, "closed issues are frozen, but this one was reopened")]:
+        lines = []
+        try:
+            got = tool.adjudicate(REPO, "t", FILE_TEXT, scratch, Recorder(
+                {ASK: Completed("", returncode=3, stderr=stderr)}),
+                lines.append)
+            check(case_name,
+                  got is not None and got.ruling_issue == expected_issue
+                  and got.sentence == expected_sentence,
+                  (got and (got.ruling_issue, got.sentence), lines))
+        except tool.Refused as refusal:
+            check(case_name, False, f"refused: {refusal}")
+
+    lost = Recorder({ASK: Completed("", returncode=3, stderr="")})
+    lost_lines = []
+    check("an exit 3 whose message is lost fails open and says so",
+          tool.adjudicate(REPO, "t", FILE_TEXT, scratch, lost,
+                          lost_lines.append) is None
+          and lost_lines == ["adjudication skipped: ghi-info gave no "
+                             "verdict: no detail"], lost_lines)
+
+    conflict_46 = tool.RulingConflict(46, "the ruling may not hold")
+    recorded_lines = []
+    recording = Recorder({"gh issue view 46": Completed(
+        "Closed issues are frozen\n")})
+    tool.record_ruling_conflict(REPO, 900, conflict_46, recording,
+                                recorded_lines.append,
+                                edit_not_yet_landed=False)
+    comment_calls = [call for call in recording.calls
+                     if call[:3] == ["gh", "issue", "comment"]]
+    check("recording labels the issue and comments ghi-info's question, "
+          "citing the ruling's issue by title and link",
+          recording.ran("gh label create conflicts-with-a-ruling")
+          and recording.ran("gh issue edit 900 --repo nedschorus/nedschorus "
+                            "--add-label conflicts-with-a-ruling")
+          and len(comment_calls) == 1 and "900" in comment_calls[0]
+          and ("GHI [Closed issues are frozen](https://github.com/"
+               "nedschorus/nedschorus/issues/46)") in comment_calls[0][-1]
+          and "the ruling may not hold" in comment_calls[0][-1],
+          recording.calls)
+    check("and tells the agent what happened and to follow the ruling",
+          recorded_lines and recorded_lines[-1].startswith(
+              "Filed issue 900; ghi-info thinks it conflicts with the ruling "
+              "in GHI [Closed issues are frozen](")
+          and "the ruling stands until he changes it." in recorded_lines[-1]
+          and recorded_lines[-1].endswith(
+              "\nFollow that ruling until the user changes it."),
+          recorded_lines)
+
+    unnamed = Recorder()
+    unnamed_lines = []
+    tool.record_ruling_conflict(REPO, 900, tool.RulingConflict(
+        None, "the ruling may not hold"), unnamed, unnamed_lines.append,
+        edit_not_yet_landed=True)
+    unnamed_comment = [call for call in unnamed.calls
+                       if call[:3] == ["gh", "issue", "comment"]]
+    check("a question naming no issue is recorded as naming none, and no "
+          "issue is looked up",
+          not unnamed.ran("--json title")
+          and len(unnamed_comment) == 1
+          and "ghi-info named no issue holding the ruling"
+          in unnamed_comment[0][-1]
+          and unnamed_lines[-1].startswith(
+              "Issue 900: ghi-info thinks this edit conflicts with a ruling "
+              "of the user's")
+          and unnamed_lines[-1].endswith(
+              "\nghi-info's question: the ruling may not hold")
+          and "Follow that ruling" not in unnamed_lines[-1],
+          (unnamed.calls, unnamed_lines))
+
+    failing = Recorder({"gh issue comment": Completed(
+        "", returncode=1, stderr="HTTP 502")})
+    try:
+        tool.record_ruling_conflict(REPO, 900, conflict_46, failing, quiet,
+                                    edit_not_yet_landed=False)
+        check("a failed comment exits nonzero, saying the issue is written "
+              "and what failed", False, "it reported success")
+    except tool.Refused as refusal:
+        check("a failed comment exits nonzero, saying the issue is written "
+              "and what failed",
+              refusal.code == 1
+              and str(refusal).startswith("Issue 900 was filed, but "
+                                          "recording ghi-info's ruling "
+                                          "question on it failed:")
+              and "HTTP 502" in str(refusal)
+              and "Tell the user that issue 900" in str(refusal),
+              str(refusal))
+        check("and says the filing is unfinished and a rerun finishes it, "
+              "without recording the question",
+              "the GHI-MD is not landed on main and the issue's body is not "
+              "yet the links to it" in str(refusal)
+              and "Rerun this command to land the GHI-MD and link the body"
+              in str(refusal)
+              and "files no second issue" in str(refusal)
+              and "The rerun does not ask ghi-info again, so it will not "
+              "record the question" in str(refusal)
+              and "Do not rerun" not in str(refusal),
+              str(refusal))
+
+    timing_out = Recorder({"gh issue comment": subprocess.TimeoutExpired(
+        ["gh", "issue", "comment"], 120)})
+    try:
+        tool.record_ruling_conflict(REPO, 900, conflict_46, timing_out, quiet,
+                                    edit_not_yet_landed=False)
+        check("a timed-out gh call while recording exits nonzero, saying the "
+              "issue is written and what the user must be told", False,
+              "it reported success")
+    except tool.Refused as refusal:
+        check("a timed-out gh call while recording exits nonzero, saying the "
+              "issue is written and what the user must be told",
+              refusal.code == 1
+              and str(refusal).startswith("Issue 900 was filed, but "
+                                          "recording ghi-info's ruling "
+                                          "question on it failed:")
+              and "Tell the user that issue 900 may conflict with a ruling "
+              "of his: the ruling may not hold" in str(refusal),
+              str(refusal))
+    except subprocess.TimeoutExpired:
+        check("a timed-out gh call while recording exits nonzero, saying the "
+              "issue is written and what the user must be told", False,
+              "the timeout escaped without the message")
+
+    already_there = Recorder({
+        "gh issue view 46": Completed("Closed issues are frozen\n"),
+        "gh issue view 900": Completed(tool.ruling_conflict_comment_body(
+            REPO, conflict_46, "Closed issues are frozen") + "\n"),
+    })
+    tool.record_ruling_conflict(REPO, 900, conflict_46, already_there, quiet,
+                                edit_not_yet_landed=True)
+    check("a question already commented on the issue is not commented twice",
+          not already_there.ran("gh issue comment")
+          and already_there.ran("--add-label conflicts-with-a-ruling"),
+          already_there.commands())
+
+    conflicting_source = written(
+        scratch, name="frozen-issue-reopened.md",
+        text="# Reopen a closed issue to add its last finding\n\nBody.\n")
+    conflicting_create = Recorder({
+        ASK: Completed("", returncode=3, stderr=ruling_stderr(
+            "#46 closed issues are frozen")),
+        "gh issue view 46": Completed("Closed issues are frozen\n"),
+        "gh issue list": Completed("[]"),
+        "gh issue create": Completed(
+            "https://github.com/nedschorus/nedschorus/issues/571\n"),
+        "git show": Completed("", returncode=1),
+        "git ls-remote": Completed(""),
+        "git ls-tree": Completed(""),
+        "gh pr create": Completed("https://github.com/x/y/pull/10\n"),
+    })
+    create_lines = []
+    try:
+        created_number, _ = tool.create(conflicting_source, REPO, scratch,
+                                         conflicting_create,
+                                         create_lines.append)
+        create_order = conflicting_create.commands()
+        check("create with a ruling question records it as soon as the "
+              "issue is filed, then lands the issue",
+              created_number == 571
+              and conflicting_create.count("gh issue create") == 1
+              and "gh pr create" in create_order
+              and "gh issue comment" in create_order
+              and create_order.index("gh issue comment")
+              < create_order.index("gh pr create")
+              and conflicting_create.ran("--add-label conflicts-with-a-ruling")
+              and any(line.startswith("Filed issue 571;")
+                      for line in create_lines),
+              (create_order, create_lines))
+    except tool.Refused as refusal:
+        check("create with a ruling question records it as soon as the "
+              "issue is filed, then lands the issue", False,
+              f"refused: {refusal}")
+
+    # Step 4 failing after the question was drawn must not lose it: the
+    # rerun resumes without asking ghi-info, so only this run can record it.
+    failing_landing_create = Recorder({
+        **conflicting_create.answers,
+        "gh pr create": Completed("", returncode=1, stderr="HTTP 502"),
+    })
+    try:
+        tool.create(conflicting_source, REPO, scratch, failing_landing_create,
+                    quiet)
+        check("a create whose landing fails after a ruling question has "
+              "already recorded the question", False, "the landing passed")
+    except tool.Refused:
+        check("a create whose landing fails after a ruling question has "
+              "already recorded the question",
+              failing_landing_create.ran("gh issue comment 571")
+              and failing_landing_create.ran(
+                  "--add-label conflicts-with-a-ruling"),
+              failing_landing_create.commands())
+
+    resumed_create = Recorder({
+        "gh issue list": Completed(json.dumps([{
+            "number": 571, "title": "t",
+            "body": "in progress " + tool.pairing_key(
+                conflicting_source.read_text())}])),
+        "git show": Completed("", returncode=1),
+        "git ls-remote": Completed(""),
+        "git ls-tree": Completed(""),
+        "gh pr create": Completed("https://github.com/x/y/pull/10\n"),
+    })
+    tool.create(conflicting_source, REPO, scratch, resumed_create, quiet)
+    check("a create that resumes its own issue asks nothing and records "
+          "nothing",
+          not resumed_create.ran(ASK)
+          and not resumed_create.ran("gh issue comment"),
+          resumed_create.commands())
 
     marker = scratch / tool.RECONSIDERED_MARKER_NAME
     marker.write_text("I checked #13 and it is a different matter.\n")
@@ -1684,6 +1923,107 @@ def run_edit_cases(scratch: Path):
           < landing.commands().index("git worktree add"),
           str(landing.commands()))
     check("the run is unfinished while its pull request waits", not finished)
+    check("an edit with no ruling question records nothing on the issue",
+          not landing.ran("gh issue comment")
+          and not landing.ran("conflicts-with-a-ruling"),
+          str(landing.commands()))
+
+    conflicting_edit = Recorder({
+        ASK: Completed("", returncode=3, stderr=(
+            "ghi-info found a ruling of the user's that it cannot tell "
+            "still applies: #46 closed issues are frozen\n"
+            "Ask the user whether that ruling still applies, and put the "
+            "question on your task list.\n")),
+        "gh issue view 46": Completed("Closed issues are frozen\n"),
+        f"git show origin/main:{EDIT_RELATIVE}": Completed("# Older\n"),
+        "git merge-base": Completed(BASE_REVISION + "\n"),
+        f"git show {BASE_REVISION}:{EDIT_RELATIVE}": Completed("# Older\n"),
+        "git ls-remote": Completed(""),
+        "gh pr create": Completed("https://github.com/x/y/pull/11\n"),
+        "gh issue view": issue_json("Older", one_link),
+        "git ls-tree": Completed(EDIT_RELATIVE + "\n"),
+    })
+    edit_lines = []
+    try:
+        tool.edit(source, REPO, scratch, conflicting_edit, edit_lines.append)
+        edit_order = conflicting_edit.commands()
+        check("edit with a ruling question records it on the issue before "
+              "landing the edit",
+              "gh pr create" in edit_order
+              and "gh issue comment" in edit_order
+              and edit_order.index("gh issue comment")
+              < edit_order.index("gh pr create")
+              and conflicting_edit.ran("gh issue edit 570 --repo "
+                                       "nedschorus/nedschorus --add-label "
+                                       "conflicts-with-a-ruling")
+              and any(line.startswith("Issue 570: ghi-info thinks this "
+                                      "edit conflicts with")
+                      for line in edit_lines)
+              and not any("Edited issue" in line for line in edit_lines),
+              (edit_order, edit_lines))
+    except tool.Refused as refusal:
+        check("edit with a ruling question records it on the issue before "
+              "landing the edit", False, f"refused: {refusal}")
+
+    # Recording runs before the edit lands, so its failure must not claim
+    # the edit landed, and must send the agent to the rerun that asks
+    # ghi-info again.
+    failing_edit_recording = Recorder({
+        **conflicting_edit.answers,
+        "gh issue comment": Completed("", returncode=1, stderr="HTTP 502"),
+    })
+    edit_recording_case = ("an edit whose recording fails lands nothing and "
+                           "says so, sending the agent to rerun")
+    try:
+        tool.edit(source, REPO, scratch, failing_edit_recording, quiet)
+        check(edit_recording_case, False, "it reported success")
+    except tool.Refused as refusal:
+        refused_text = str(refusal)
+        check(edit_recording_case,
+              refusal.code == 1
+              and not failing_edit_recording.ran("git push")
+              and not failing_edit_recording.ran("gh pr create")
+              and "HTTP 502" in refused_text
+              and "was not landed" in refused_text
+              and "was edited" not in refused_text
+              and "Do not rerun" not in refused_text
+              and "the rerun asks ghi-info again" in refused_text
+              and "Tell the user that this edit of issue 570 may conflict "
+              "with a ruling of his: closed issues are frozen"
+              in refused_text,
+              (refused_text, failing_edit_recording.commands()))
+    rerun_after_failed_recording = Recorder(dict(conflicting_edit.answers))
+    try:
+        tool.edit(source, REPO, scratch, rerun_after_failed_recording, quiet)
+        check("the rerun after a failed recording asks ghi-info again, "
+              "records the question and lands the edit",
+              rerun_after_failed_recording.ran("ghi-info-ask.py")
+              and rerun_after_failed_recording.ran("gh issue comment 570")
+              and rerun_after_failed_recording.ran("gh pr create"),
+              rerun_after_failed_recording.commands())
+    except tool.Refused as refusal:
+        check("the rerun after a failed recording asks ghi-info again, "
+              "records the question and lands the edit", False,
+              f"refused: {refusal}")
+
+    # The landing failing after the push leaves state already-pushed, and a
+    # rerun from there skips adjudication; the question must be recorded
+    # by this run.
+    failing_edit_landing = Recorder({
+        **conflicting_edit.answers,
+        "gh pr create": Completed("", returncode=1, stderr="HTTP 502"),
+    })
+    try:
+        tool.edit(source, REPO, scratch, failing_edit_landing, quiet)
+        check("an edit whose landing fails after a ruling question has "
+              "already recorded the question", False, "the landing passed")
+    except tool.Refused:
+        check("an edit whose landing fails after a ruling question has "
+              "already recorded the question",
+              failing_edit_landing.ran("gh issue comment 570")
+              and failing_edit_landing.ran(
+                  "--add-label conflicts-with-a-ruling"),
+              failing_edit_landing.commands())
     check("a heading the edit did change renames the issue",
           ran_with(landing, "gh issue edit", "--title", EDIT_TITLE),
           str(landing.commands()))
@@ -2014,6 +2354,39 @@ def run_edit_cases(scratch: Path):
           and not conflicted.ran("gh pr create")
           and not conflicted.ran("gh issue edit"),
           str(conflicted.commands()))
+
+    # A draft the conflict refusal rejects must leave the issue as it was,
+    # ruling question or not: the refusals run before the question is
+    # recorded.
+    for case, extra in (
+            ("a file that moved on main", {}),
+            ("an earlier edit still open", {
+                "ghi-570-edit-*": Completed(
+                    f"abc123\trefs/heads/{EARLIER_EDIT_BRANCH}\n"),
+                f"--head {EARLIER_EDIT_BRANCH}": earlier_edit_pull_request(
+                    EDIT_RELATIVE)})):
+        # The case's own answers go first: the first prefix that matches
+        # answers the call.
+        rejected_with_question = Recorder({
+            **extra,
+            **conflicted.answers,
+            ASK: Completed("", returncode=3, stderr=(
+                "ghi-info found a ruling of the user's that it cannot tell "
+                "still applies: #46 closed issues are frozen\n")),
+            "gh issue view 46": Completed("Closed issues are frozen\n"),
+        })
+        rejected_case = (f"{case} with a ruling question refuses before "
+                         "labelling or commenting on the issue")
+        try:
+            tool.edit(source, REPO, scratch, rejected_with_question, quiet)
+            check(rejected_case, False, "it proceeded")
+        except tool.Refused as refusal:
+            check(rejected_case,
+                  refusal.code == 66
+                  and rejected_with_question.ran(ASK)
+                  and not rejected_with_question.ran("conflicts-with-a-ruling")
+                  and not rejected_with_question.ran("gh issue comment"),
+                  (refusal.code, rejected_with_question.commands()))
 
     # A move puts a second path under the same ruling: the author's path is
     # where the file lands, the moved-from path is where main's copy is
