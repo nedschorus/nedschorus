@@ -606,6 +606,20 @@ with tempfile.TemporaryDirectory() as temporary_directory:
           f"{NOT_FOR_THE_USER_LINE}" in agent_text(result)
           and detached_work_line not in agent_text(result), agent_text(result))
 
+    rebasing = detached_worktree_behind_main("detached-rebase-with-own-commit-worktree")
+    commit_file(rebasing, "own-work.txt", "own\n", "a commit on a detached HEAD")
+    rebasing_git_dir = Path(git(["rev-parse", "--absolute-git-dir"], rebasing).stdout.strip())
+    (rebasing_git_dir / "rebase-merge").mkdir()
+    result = run_catch_up(["--cwd", str(rebasing)])
+    check("mid-rebase with a commit of its own, message B names both but gives only the "
+          "in-progress line",
+          "not moved forward: a rebase in progress; 1 commit(s) of its own.\n"
+          in agent_text(result)
+          and f"{detached_not_moved_second_line}\n" + detached_bisect_line.replace(
+              "A bisect", "A rebase") + f"\n{NOT_FOR_THE_USER_LINE}" in agent_text(result)
+          and detached_work_line not in agent_text(result), agent_text(result))
+    (rebasing_git_dir / "rebase-merge").rmdir()
+
     commit_file(origin, "scripts/detached-collision.py", "main's copy\n",
                 "main adds a file a detached checkout holds untracked")
     colliding = detached_worktree_behind_main("detached-untracked-collision-worktree")

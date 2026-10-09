@@ -621,7 +621,8 @@ def move_detached_checkout_forward(checkout: Path, git_dir: Path, ahead: int):
     own and no operation is in progress, or say why not.
 
     Returns (outcome, reasons, condition_lines, error): "moved"; "blocked" with
-    every condition that holds and the line for each; or "refused" with git's
+    every condition that holds and its lines, the in-progress line alone while an
+    operation is in progress; or "refused" with git's
     error, which is the only outcome where git was asked to move.
     """
     reasons, lines = [], []
@@ -637,7 +638,9 @@ def move_detached_checkout_forward(checkout: Path, git_dir: Path, ahead: int):
         reasons.append("git status unreadable")
     elif tracked_changes:
         reasons.append(f"{tracked_changes} uncommitted tracked change(s)")
-    if ahead or tracked_changes:
+    # Mid-operation, the other conditions are not yet what they will be once it
+    # ends, and `git switch -c` inside a rebase is the wrong move.
+    if (ahead or tracked_changes) and marker is None:
         lines.append(DETACHED_WORK_OF_ITS_OWN_LINE)
     if reasons:
         return "blocked", reasons, lines, ""
