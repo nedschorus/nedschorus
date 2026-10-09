@@ -40,10 +40,12 @@ REMINDER_TEMPLATE = (
     "Send them, with one sentence on what each names, to the {agent} subagent, run in the "
     "background, and keep working.\n"
     "If you are a subagent and cannot start one, run the same check through Codex instead, in "
-    "the background, and act on its report the same way:\n"
-    "`codex exec -m gpt-6.1-sol -c model_reasoning_effort=medium --disable memories --sandbox "
-    "workspace-write -c sandbox_workspace_write.network_access=true -C {checkout} \"Read "
-    ".claude/agents/{agent}.md and do exactly what it says, for these entries, one per line: "
+    "the background, and act on its report the same way.\n"
+    "First run `git fetch` yourself; Codex's sandbox cannot write the git directory.\n"
+    "Then run: `codex exec -m gpt-6.1-sol -c model_reasoning_effort=medium --disable memories "
+    "--sandbox workspace-write -c sandbox_workspace_write.network_access=true -c {writable_roots} "
+    "-C {checkout} \"git fetch has already been run; skip that step and use origin/main as it is. "
+    "Read .claude/agents/{agent}.md and do exactly what it says, for these entries, one per line: "
     "<name>: <one sentence saying what it names>\" < /dev/null`\n"
     "Keep the `< /dev/null`: Codex hangs when stdin is left open.\n"
     "When it flags a name, rename it everywhere your branch uses it, in one commit.\n"
@@ -323,6 +325,12 @@ def failure_report_once(state: dict, error: str):
     return FAILURE_TEMPLATE.format(error=error, page=NAMING_PAGE_PATH)
 
 
+def codex_writable_roots_argument() -> str:
+    # The fresh-agent's blind guess runs agy, which must write under ~/.gemini inside Codex's sandbox.
+    gemini_directory = str(Path.home() / ".gemini")
+    return shlex.quote("sandbox_workspace_write.writable_roots=" + json.dumps([gemini_directory]))
+
+
 def reminder_text(new_names, checkout: Path) -> str:
     lines = [f"  {name} ({kind}{', in ' + path if path and path != name else ''})"
              for path, kind, name in new_names[:REMINDER_NAME_LIMIT]]
@@ -330,7 +338,8 @@ def reminder_text(new_names, checkout: Path) -> str:
         lines.append(MORE_NAMES_LINE.format(count=len(new_names) - REMINDER_NAME_LIMIT,
                                             command=LISTER_COMMAND))
     return REMINDER_TEMPLATE.format(names="\n".join(lines), agent=NAMING_FRESH_AGENT_NAME,
-                                    page=NAMING_PAGE_PATH, checkout=shlex.quote(str(checkout)))
+                                    page=NAMING_PAGE_PATH, checkout=shlex.quote(str(checkout)),
+                                    writable_roots=codex_writable_roots_argument())
 
 
 def emit(text: str) -> None:
