@@ -15,6 +15,7 @@ import io
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -425,15 +426,15 @@ def case_branch_check_failure_on_a_quiet_shell_call_is_told(root):
 def case_reminder_is_capped():
     hook = load_module("hook_for_cap_case", HOOK_PATH)
     many = [("a.md", "markdown-backquoted-name", f"listed-name-{index:02d}") for index in range(35)]
-    text = hook.reminder_text(many)
+    text = hook.reminder_text(many, Path("/checkout"))
     check("the reminder lists the first 30 names", "listed-name-29" in text and "listed-name-30" not in text, text)
     check("the reminder says how many more and how to see them",
           "and 5 more" in text and "new-shared-names-in-changed-files-list.py" in text, text)
     check("the more-names line gives a command that runs the lister with python3",
           "python3 scripts/new-shared-names-in-changed-files-list.py" in text, text)
-    few = hook.reminder_text(many[:3])
+    few = hook.reminder_text(many[:3], Path("/checkout"))
     check("a short reminder has no more-names line", " more," not in few, few)
-    exactly_at_cap = hook.reminder_text(many[:30])
+    exactly_at_cap = hook.reminder_text(many[:30], Path("/checkout"))
     check("a reminder of exactly 30 names has no more-names line", " more," not in exactly_at_cap, exactly_at_cap)
 
 
@@ -477,6 +478,37 @@ def case_hook_shows_names_past_the_cap_later(root):
           and not shown_first & shown_second, f"{len(shown_first)} then {len(shown_second)}")
 
 
+def case_codex_command_keeps_paths_with_spaces_whole(root):
+    spaced_root = root / "parent with space"
+    spaced_root.mkdir()
+    clone = make_clone(spaced_root, BASE_MAIN_FILES)
+    state_root = root / "state"
+    state_root.mkdir()
+    home = root / "home with space"
+    home.mkdir()
+    write(clone, "alpha.py", "def shared_helper():\n    return 1\n")
+    write(clone, "beta.py", "import alpha\nalpha.shared_helper()\n")
+    environment_home = os.environ.get("HOME")
+    os.environ["HOME"] = str(home)
+    try:
+        _, context = run_hook(clone, state_root, {"tool_name": "Write", "tool_input": {"file_path": "beta.py"}})
+    finally:
+        if environment_home is None:
+            del os.environ["HOME"]
+        else:
+            os.environ["HOME"] = environment_home
+    command_match = re.search(r"`(codex exec [^`]*)`", context)
+    check("the reminder carries a codex command", command_match is not None, context)
+    if command_match is None:
+        return
+    arguments = shlex.split(command_match.group(1).removesuffix(" < /dev/null"))
+    check("the -C argument is the real checkout path, kept whole",
+          arguments[arguments.index("-C") + 1] == str(clone), str(arguments))
+    roots = [argument for argument in arguments if argument.startswith("sandbox_workspace_write.writable_roots=")]
+    check("the writable_roots argument names the real ~/.gemini path, kept whole",
+          roots == ["sandbox_workspace_write.writable_roots=" + json.dumps([str(home / ".gemini")])], str(roots))
+
+
 def case_hook_reports_once_per_worktree(root):
     clone = make_clone(root, BASE_MAIN_FILES)
     state_root = root / "state"
@@ -487,6 +519,17 @@ def case_hook_reports_once_per_worktree(root):
     check("the hook exits 0", code == 0)
     check("the hook names the new function", "shared_helper" in first, first)
     check("the hook names the naming fresh-agent", "new-name-propose-and-check-fresh-agent" in first)
+    gemini_roots = shlex.quote("sandbox_workspace_write.writable_roots=" + json.dumps([str(Path.home() / ".gemini")]))
+    codex_command = ("`codex exec -m gpt-6.1-sol -c model_reasoning_effort=medium --disable memories "
+                     "--sandbox workspace-write -c sandbox_workspace_write.network_access=true "
+                     f"-c {gemini_roots} -C {shlex.quote(str(clone))} \"git fetch has already been run; skip that "
+                     "step and use origin/main as it is. Read .claude/agents/new-name-propose-and-check-fresh-agent.md "
+                     "and do exactly what it says, for these entries, one per line: "
+                     "<name>: <one sentence saying what it names>\" < /dev/null`")
+    check("the hook tells a subagent to run the check through Codex, in the real checkout, with stdin closed",
+          "If you are a subagent and cannot start one" in first and codex_command in first, first)
+    check("the hook tells a subagent to run git fetch itself before Codex",
+          "First run `git fetch` yourself" in first, first)
     _, second = run_hook(clone, state_root, {"tool_name": "Edit", "tool_input": {"file_path": "beta.py"}})
     check("the same names are not reported twice in one agent-session", second == "", second)
     git_directory = subprocess.run(["git", "rev-parse", "--absolute-git-dir"], cwd=str(clone), check=True,
@@ -952,7 +995,8 @@ def main() -> int:
              case_branch_check_failure_is_told_and_the_file_check_still_runs,
              case_remote_branch_lookup_failure_is_told_and_no_branch_reported,
              case_branch_check_failure_on_a_quiet_shell_call_is_told,
-             case_hook_reports_once_per_worktree, case_two_worktrees_keep_separate_records,
+             case_hook_reports_once_per_worktree, case_codex_command_keeps_paths_with_spaces_whole,
+             case_two_worktrees_keep_separate_records,
              case_new_branch_is_told_a_name_again_and_gone_branches_are_dropped,
              case_unreadable_record_is_told_and_names_are_told_again,
              case_missing_record_is_silent_about_the_record,
