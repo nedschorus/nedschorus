@@ -43,6 +43,11 @@
             "type": "command",
             "command": "python3 \"$CLAUDE_PROJECT_DIR\"/scripts/absence-claim-locator-reminder-hook.py",
             "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/scripts/bare-number-citation-note-hook.py",
+            "timeout": 10
           }
         ]
       }
@@ -119,6 +124,11 @@
           {
             "type": "command",
             "command": "python3 \"$CLAUDE_PROJECT_DIR\"/scripts/style-guide-word-checker-markdown-edit-hook.py",
+            "timeout": 30
+          },
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/scripts/bare-number-citation-note-hook.py",
             "timeout": 30
           }
         ]
