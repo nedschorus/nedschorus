@@ -42,7 +42,11 @@ THE SEQUENCE, and what makes each step safe to run twice:
                 commit, push, open a pull request.
   5. Link       rewrite the body as one link per file of docs/issues/<n>-*.
   6. Record     only when step 2 got a ruling question: comment it on the
-                issue and add the label `conflicts-with-a-ruling`.
+                issue and add the label `conflicts-with-a-ruling`. It runs
+                as soon as the issue exists, right after step 3 for a
+                create and right after step 2 for an edit, because a
+                rerun after a later failure resumes without asking
+                ghi-info again and would never record the question.
 
 RESUMING, and why there is no state file. Steps 3 to 5 are three separate
 remote operations and any of them can fail, leaving an issue with a
@@ -921,7 +925,7 @@ def adjudicate(repo: str, title: str, text: str, repository_root: Path,
     once and passes by leaving its reasoning in the marker file.
 
     Returns the RulingConflict when ghi-info answered with a ruling
-    question, for step 6 to record once the issue is written; otherwise
+    question, for step 6 to record as soon as the issue exists; otherwise
     None. A ruling question does not stop the write."""
     marker = repository_root / RECONSIDERED_MARKER_NAME
     if marker.is_file():
@@ -1021,8 +1025,15 @@ def ruling_conflict_comment_body(repo: str, conflict, ruling_title):
 
 def record_ruling_conflict(repo: str, number: int, conflict, runner,
                            report, operation_done: str):
-    """Step 6. The issue is already written, so a failure here leaves it
-    written and says which part of the record is missing."""
+    """Record ghi-info's ruling question on an issue that already exists.
+
+    Called as soon as the issue exists, before anything is landed: the
+    question lives only in this run's memory, and a later step that fails
+    leaves a rerun that resumes without asking ghi-info again. A failure
+    here, a timed-out `gh` call included, leaves the issue as it is and
+    says which question went unrecorded. A rerun that asks again and gets
+    the same question finds its comment already there and posts no second
+    one."""
     ruling_title = None
     try:
         if conflict.ruling_issue is not None:
@@ -1034,10 +1045,14 @@ def record_ruling_conflict(repo: str, number: int, conflict, runner,
                 RULING_CONFLICT_LABEL_DESCRIPTION, "--force"])
         runner(["gh", "issue", "edit", str(number), "--repo", repo,
                 "--add-label", RULING_CONFLICT_LABEL])
-        runner(["gh", "issue", "comment", str(number), "--repo", repo,
-                "--body", ruling_conflict_comment_body(repo, conflict,
-                                                       ruling_title)])
-    except Refused as failure:
+        body = ruling_conflict_comment_body(repo, conflict, ruling_title)
+        existing_comments = runner(
+            ["gh", "issue", "view", str(number), "--repo", repo, "--json",
+             "comments", "--jq", ".comments[].body"]).stdout or ""
+        if body not in existing_comments:
+            runner(["gh", "issue", "comment", str(number), "--repo", repo,
+                    "--body", body])
+    except (Refused, subprocess.TimeoutExpired) as failure:
         raise Refused(
             f"Issue {number} was {operation_done}, but recording ghi-info's "
             f"ruling question on it failed: {failure}\n"
@@ -1489,14 +1504,14 @@ def create(path: Path, repo: str, repository_root: Path, runner, report):
         conflict = adjudicate(repo, title, text, repository_root, runner,
                               report)
         number = file_issue(repo, title, key, runner, report)
+        if conflict is not None:
+            record_ruling_conflict(repo, number, conflict, runner, report,
+                                   "filed")
 
     destination = land_file(repo, number, title, path, repository_root,
                             runner, report)
     finished = link_body(repo, number, repository_root, runner, report,
                          destination)
-    if conflict is not None:
-        record_ruling_conflict(repo, number, conflict, runner, report,
-                               "filed")
     return number, finished
 
 
@@ -2339,7 +2354,6 @@ def edit(path: Path, repo: str, repository_root: Path, runner, report):
                                     issue))
     state, branch = edit_landing_state(number, staged, on_main,
                                        repository_root, runner)
-    conflict = None
     if state == EDIT_LANDING_NEW_CONTENT:
         # Nothing new to land is nothing new to adjudicate, so a rerun that
         # only finishes steps 4 and 5 costs no model call — the same reason
@@ -2348,6 +2362,9 @@ def edit(path: Path, repo: str, repository_root: Path, runner, report):
         # see `edit_landing_state`.
         conflict = adjudicate(repo, title, text, repository_root, runner,
                               report, exclude_issue=number)
+        if conflict is not None:
+            record_ruling_conflict(repo, number, conflict, runner, report,
+                                   "edited")
     pending = land_edit(repo, number, title, relative, staged, on_main,
                         moved_from, moved_from_on_main, state, branch,
                         repository_root, runner, report)
@@ -2356,9 +2373,6 @@ def edit(path: Path, repo: str, repository_root: Path, runner, report):
                                  title, paths, issue, runner, report)
     finished = relink_body_from_main(repo, number, relative, on_main, paths,
                                      issue, runner, report)
-    if conflict is not None:
-        record_ruling_conflict(repo, number, conflict, runner, report,
-                               "edited")
     if pending:
         report("the body follows main's copy of the files, so it changes "
                "when that pull request merges; rerun this command then")
