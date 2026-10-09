@@ -200,7 +200,7 @@ and by the rerun after the merge main's copy is the changed file itself —
 so a moved file's title would follow a heading change never.
 
 WHICH IS WHY THE FILE'S `issue:` LINE CITES GITHUB'S TITLE, NOT THE
-HEADING. That line cites the issue the way CLAUDE.md says to cite one, by
+HEADING. That line cites the issue the way the project's citation rule says to cite one, by
 title and link. In `create` the heading IS the title, the issue being
 filed under it. In `edit` it is not, on 25 of the 26 filed GHI-MDs on main,
 and a run that cited the heading wrote each of an issue's files a
@@ -2020,7 +2020,7 @@ def issue_title_after_this_edit(document_before_this_edit, heading: str,
     file's `issue:` frontmatter line has to cite.
 
     THE ISSUE'S TITLE, NOT THE FILE'S HEADING. That line cites the issue
-    the way CLAUDE.md says to cite one — by title, as a link — and it was
+    the way the project's citation rule says to cite one — by title, as a link — and it was
     built from `first_heading` until the review of PR [Build the GHI write
     tool's edit verb](https://github.com/nedschorus/nedschorus/pull/596).
     In `create` the two are one thing: the issue is filed under the

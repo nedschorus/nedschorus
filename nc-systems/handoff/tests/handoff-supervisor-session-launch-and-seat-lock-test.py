@@ -1016,6 +1016,36 @@ with tempfile.TemporaryDirectory() as update_workspace:
           "checking for" not in captured_output.getvalue(),
           captured_output.getvalue())
 
+for resume in (False, True):
+    with tempfile.TemporaryDirectory() as naming_workspace:
+        # Without --name, Claude Code registers a name derived from the working
+        # directory plus a code that changes every agent-session, and a peer
+        # addressing the agent-seat's name misses the live session.
+        agent = an_agent_recording_its_invocations(naming_workspace)
+        supervisor.launch_agent_session(
+            str(agent), "session-named-after-seat", Path(naming_workspace), "the prompt",
+            resume=resume, remote_control_name="merge-lane-2",
+            update_timeout_seconds=0).wait()
+        arguments = (invocations_of(naming_workspace) or [""])[0].split(" ")
+        flag = "--resume" if resume else "--session-id"
+        check(f"a launch with {flag} names the session after its agent-seat, "
+              "locally and on Remote Control",
+              arguments == [flag, "session-named-after-seat",
+                            "--remote-control", "merge-lane-2",
+                            "--name", "merge-lane-2",
+                            "--remote-control-session-name-prefix", "merge-lane-2",
+                            "the", "prompt"],
+              str(arguments))
+
+with tempfile.TemporaryDirectory() as naming_workspace:
+    agent = an_agent_recording_its_invocations(naming_workspace)
+    supervisor.launch_agent_session(
+        str(agent), "session-without-seat-name", Path(naming_workspace), "prompt",
+        update_timeout_seconds=0).wait()
+    check("a launch with no agent-seat name passes no naming flag",
+          invocations_of(naming_workspace) == ["--session-id session-without-seat-name prompt"],
+          str(invocations_of(naming_workspace)))
+
 check("the update timeout defaults to the launchers' own 120 seconds",
       supervisor.AGENT_BINARY_UPDATE_TIMEOUT_SECONDS == 120,
       str(supervisor.AGENT_BINARY_UPDATE_TIMEOUT_SECONDS))
