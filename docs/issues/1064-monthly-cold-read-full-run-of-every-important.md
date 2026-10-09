@@ -1,10 +1,10 @@
 ---
-issue: "[Monthly cold-read-full-run of every important markdown file that has changed since its last one or never had one](https://github.com/nedschorus/nedschorus/issues/1064)"
+issue: "[Cold-read-full-run every 10 days of every important markdown file that has changed since its last one or never had one](https://github.com/nedschorus/nedschorus/issues/1064)"
 ---
 
-# Monthly cold-read-full-run of every important markdown file that has changed since its last one or never had one
+# Cold-read-full-run every 10 days of every important markdown file that has changed since its last one or never had one
 
-Once a month, give the cold-read-full-run — the /cold-read skill's six-reviewer read — to each important markdown file, wiki pages included, that has never had a cold-read-full-run or has changed since its last one. Spread the files across the month, so they do not all come due on one day. Keep a simple record of which file had its last cold-read-full-run when, and at which content, so a program can tell which files are due.
+Every 10 days, give the cold-read-full-run — the /cold-read skill's six-reviewer read — to each important markdown file, wiki pages included, that has never had a cold-read-full-run or has changed since its last one. Spread the files across the 10 days, so they do not all come due on one day. Keep a simple record of which file had its last cold-read-full-run when, and at which content, so a program can tell which files are due.
 
 **Priority: not to be started now.** The user expects that more valuable work, other GHIs or tasks, comes first. When the work is picked up, the next action, under Next action at the end, is to write a design and put the design to the user; no design exists yet.
 
@@ -13,6 +13,8 @@ Once a month, give the cold-read-full-run — the /cold-read skill's six-reviewe
 The daily maintenance in GHI [Daily maintenance in one daily step, starting with a daily check of every wiki page](https://github.com/nedschorus/nedschorus/issues/1058) checks what the wiki's pages say against the things the pages describe. For that daily maintenance, a cold-read-fast-read — one fresh reviewer — is enough. A cold-read-fast-read does not finish the review of a document that needs a cold-read-full-run, and a file that needed one when first written goes on changing afterwards. Nothing today notices that an important file has changed since its last cold-read-full-run, or that the file never had one.
 
 The user asked for this on 2026-10-05 (UTC), in the agent-seat merge-lane-2: "for daily maintenance a fast cold read is enough. Maybe we want a monthly full code read of any changed important MD files - wikis included. We would not want all pages to hit on the same day. BUt even then I'd only read pages that haven't been full code read ever, or not again after a change. I guess this could be done with a simple DB and a mechanism that defined with pages or kind or locations of pages are imprtant, which I think we've already done, though perhaps not perfectly or methodically." In his words, "full code read" means the cold-read-full-run. He added: "I thikn this should link to daily, and probably share some components, but I'd probably split this off into a monthly Ghi. I wasnt thnking we'd immediately tackle sth GHI. There might be more important or higher bang for buck tasks or GHIs."
+
+On 2026-10-09 (UTC) the user changed the cycle from monthly to every 10 days, answering "Y" to item 2 of the approval-walk ned-box-helper-open-decisions-2026-10-08 (walk-minutes `nedlern@ned-box:/home/nedlern/nedschorus-logs/walk/ned-box-helper-open-decisions-2026-10-08-minutes.md`), which asked whether to make that change and to use the same 10-day cycle for any later periodic job that does not belong in the daily step. He had proposed it in ned-box-helper's agent-session on 2026-10-07 (UTC): "instead of a weekly an\d monthly maintencance cycle or proc\edure we just have a 10 day cycle for both. A bit simpler." So this GHI's cycle is the project's one periodic cycle beyond the daily step.
 
 ## What exists today
 
@@ -31,15 +33,15 @@ Search receipt: `scripts/ghi-info-ask.py --include-closed` on 2026-10-05, asked 
 
 ## How this relates to the daily maintenance
 
-GHI [Daily maintenance in one daily step, starting with a daily check of every wiki page](https://github.com/nedschorus/nedschorus/issues/1058) is the daily cycle; this GHI is the monthly one. The two probably share components: the list of which files are important; how the job is started, either by the noon step (the once-a-day line that, from noon Pacific, the Mac handoff-supervisor gives the next agent-session at a session-handoff, described in GHI 1058) or by a scheduled job; which machine and agent-seat runs the job; how the user hears the result; how a run that stops partway resumes; and how the two cycles avoid working on the same page at the same time. A design in progress for an agent that refreshes a system overview, not yet on main, has a nightly refresh that uses the cold-read-fast-read (user-ruled 2026-10-05); that refresh is daily work, not this GHI's.
+GHI [Daily maintenance in one daily step, starting with a daily check of every wiki page](https://github.com/nedschorus/nedschorus/issues/1058) is the daily cycle; this GHI is the 10-day one. The two probably share components: the list of which files are important; how the job is started, either by the noon step (the once-a-day line that, from noon Pacific, the Mac handoff-supervisor gives the next agent-session at a session-handoff, described in GHI 1058) or by a scheduled job; which machine and agent-seat runs the job; how the user hears the result; how a run that stops partway resumes; and how the two cycles avoid working on the same page at the same time. A design in progress for an agent that refreshes a system overview, not yet on main, has a nightly refresh that uses the cold-read-fast-read (user-ruled 2026-10-05); that refresh is daily work, not this GHI's.
 
-## What the monthly cycle does
+## What the 10-day cycle does
 
 This section is the outline the user asked for. How each step works is open, under What is not decided.
 
 - Takes the list of important files from one definition, the one step 2 of the /cold-read skill makes, held once rather than in two copies that can disagree.
 - Keeps a simple record, one entry per file: the file's path in the repository, and the date, the content and the cold-read-record of the file's last cold-read-full-run. A file is due when the record has no entry for the file, or when the file's content on main differs from the content the entry records.
-- Spreads the due files across the month, so a few come due each day instead of all on one day.
+- Spreads the due files across the 10 days, so a few come due each day instead of all on one day.
 - Gives each due file a cold-read-full-run, with the triage and the approval-walk the /cold-read skill requires, and updates the record once the file's revision has merged to main.
 
 ## What is not decided
@@ -47,11 +49,11 @@ This section is the outline the user asked for. How each step works is open, und
 1. **What the record stores as the content and when the record is written.** The frozen copy is the text before the rewrite, so the record must store the content that merged, such as the blob hash or commit on main, and be written after the merge. Whether the record is a file in the repository, a file in the log-store, or a small database, and whether existing cold-read-records are used to seed the record or every file starts as due, is open.
 2. **How a change is counted.** Whether any change makes a file due, or only a change larger than the exception in step 2 of the /cold-read skill (one sentence, or a mechanical search-and-replace change such as a rename), which gets a cold-read-fast-read instead.
 3. **The list of important files.** Whether to repair the definition first so the skill and the program agree, including how a GHI-MD that is a design is recognised.
-4. **How the month is spread.** A fixed day for each file, or a daily share of the due files, and the cost per day, which a cold-read-full-run of six reviewers makes much larger than a cold-read-fast-read.
-5. **Who rules on the findings.** Each cold-read-full-run produces findings that may go to the user in an approval-walk; how many approval-walks a month the user wants is open.
+4. **How the 10 days are spread.** A fixed day for each file, or a daily share of the due files, and the cost per day, which a cold-read-full-run of six reviewers makes much larger than a cold-read-fast-read.
+5. **Who rules on the findings.** Each cold-read-full-run produces findings that may go to the user in an approval-walk; how many approval-walks in each 10 days the user wants is open.
 6. **The shared components with the daily maintenance**, listed in the section above, and whether those components are built once for both cycles.
 7. **A file that moves, is renamed or is deleted.** The record is keyed by path, and files move: `nedschorus-style-guide.md` moved out of `docs/nedschorus-wiki/queue/`. Whether a moved file keeps its entry, and how the entry of a deleted file is removed, is open.
-8. **A file that changes again in the same month, and a run that does not finish.** Whether a file that had its cold-read-full-run earlier in the month and changed again waits until the next month; and whether a file whose run failed, whose approval-walk waits, or whose pull request has not merged stays due or waits.
+8. **A file that changes again in the same 10 days, and a run that does not finish.** Whether a file that had its cold-read-full-run earlier in the 10 days and changed again waits until the next 10 days; and whether a file whose run failed, whose approval-walk waits, or whose pull request has not merged stays due or waits.
 9. **Files waiting in a queue.** Whether files in the queue directories, such as `docs/nedschorus-wiki/queue/` and `docs/agents/queue/`, and files whose names end in `-draft.md` are left out, as GHI 1058 leaves out `docs/nedschorus-wiki/queue/`.
 
 ## Next action
