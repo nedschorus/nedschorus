@@ -21,6 +21,7 @@ Run: python3 scripts/run-all-test-suites-test.py   (exit 0 = all passed)
 """
 
 import contextlib
+import datetime
 import fcntl
 import io
 import importlib.util
@@ -1427,7 +1428,7 @@ def ended_process():
 
 
 def killed_run_record(root, killed_logs, runner, suite_processes, temporary=False):
-    runs = module.runs_directory_for(root / "run.lock")
+    runs = module.run_records_directory_for_lock_file(root / "run.lock")
     runs.mkdir(parents=True, exist_ok=True)
     record = runs / f"{runner[0]}-{runner[1]}.json"
     record.write_text(json.dumps({
@@ -1496,7 +1497,7 @@ if sys.platform.startswith("linux"):
         root = pathlib.Path(scratch)
         make_repo(root, {"a-test.py": PASSES})
         result = run(root)
-        records = list(module.runs_directory_for(root / "run.lock").glob("*.json"))
+        records = list(module.run_records_directory_for_lock_file(root / "run.lock").glob("*.json"))
         check("a run that logged to a directory its caller chose leaves no record behind",
               result.returncode == 0 and records == [], (result.stdout, records))
         with open(root / "logs" / module.LOG_DIRECTORY_LOCK_FILE_NAME, "a") as held:
@@ -1853,10 +1854,14 @@ with tempfile.TemporaryDirectory() as scratch:
           not module.process_alive(10, 499, proc) and module.process_alive(10, 500, proc))
 
 
-def reap_case(alive_pids, temporary=False, age_seconds=0, finished=None):
-    """Run reap_finished_runs on one record whose runner is pid 1 and suite process pid 2,
-    with liveness stubbed; return (lines, trace left, log dir left, record left)."""
+def reap_case(alive_pids, temporary=False, ages=(0,), finished_age=None, record_age=0,
+              unremovable_log_dir=False):
+    """Run remove_leftovers_of_ended_runs_named_in_run_records on one record whose runner
+    is pid 1 and suite process pid 2, with liveness stubbed, once for each age in ages
+    (seconds after the record was written); return (lines of the last run, trace left,
+    log dir left, record left, the record's content or None)."""
     scratch = pathlib.Path(tempfile.mkdtemp())
+    locked = None
     try:
         runs = scratch / "runs"
         runs.mkdir()
@@ -1864,46 +1869,90 @@ def reap_case(alive_pids, temporary=False, age_seconds=0, finished=None):
         trace = log_dir / "recorded-inputs" / "a-test.py.strace"
         trace.mkdir(parents=True)
         record = runs / "1-100.json"
+        written = time.time() - record_age
+        finished = (None if finished_age is None else datetime.datetime.fromtimestamp(
+            written - finished_age, datetime.timezone.utc).isoformat())
         record.write_text(json.dumps({
             "runner": {"pid": 1, "start_ticks": 100}, "log_dir": str(log_dir),
             "log_dir_is_temporary": temporary, "started": "x", "finished": finished,
             "suite_processes": [{"pid": 2, "start_ticks": 200, "namespace_init": True}]}))
-        now = record.stat().st_mtime + age_seconds
-        lines = module.reap_finished_runs(runs, now=now,
-                                          alive=lambda pid, ticks: pid in alive_pids)
-        return lines, trace.exists(), log_dir.exists(), record.exists()
+        os.utime(record, (written, written))
+        if unremovable_log_dir:
+            locked = log_dir / "kept-by-permissions"
+            locked.mkdir()
+            (locked / "file").write_text("x")
+            locked.chmod(0o500)
+        lines = []
+        for age in ages:
+            lines = module.remove_leftovers_of_ended_runs_named_in_run_records(
+                runs, now=time.time() + age, alive=lambda pid, ticks: pid in alive_pids)
+        content = json.loads(record.read_text()) if record.exists() else None
+        return lines, trace.exists(), log_dir.exists(), record.exists(), content
     finally:
+        if locked is not None and locked.exists():
+            locked.chmod(0o700)
         shutil.rmtree(scratch)
 
 
-lines, trace_left, log_left, record_left = reap_case({1})
+RETENTION = module.FINISHED_RUN_LOG_RETENTION_SECONDS
+lines, trace_left, log_left, record_left, _ = reap_case({1})
 check("a run whose runner still runs is left alone",
       trace_left and record_left and lines == [], (lines, trace_left, record_left))
-lines, trace_left, log_left, record_left = reap_case({2})
+lines, trace_left, log_left, record_left, _ = reap_case({2})
 check("a run whose runner ended but whose suite process still runs keeps its traces",
       trace_left and record_left, (lines, trace_left, record_left))
-lines, trace_left, log_left, record_left = reap_case(set())
+lines, trace_left, log_left, record_left, _ = reap_case(set())
 check("a run whose runner and suite processes all ended loses its traces and its record",
       not trace_left and log_left and not record_left, (lines, trace_left, record_left))
-lines, trace_left, log_left, record_left = reap_case(set(), temporary=True,
-                                                    age_seconds=3600)
-check("an ended run's temporary log directory is kept until two days have passed",
+lines, trace_left, log_left, record_left, _ = reap_case(set(), temporary=True,
+                                                       finished_age=3600)
+check("a finished run's temporary log directory is kept until two days after it finished",
       not trace_left and log_left and record_left, (lines, trace_left, log_left))
-lines, trace_left, log_left, record_left = reap_case(
-    set(), temporary=True, age_seconds=module.FINISHED_RUN_LOG_RETENTION_SECONDS)
+lines, trace_left, log_left, record_left, _ = reap_case(set(), temporary=True,
+                                                       finished_age=RETENTION)
 check("and removed, with its record, once they have",
       not log_left and not record_left, (lines, log_left, record_left))
-lines, trace_left, log_left, record_left = reap_case(
-    {2}, temporary=True, age_seconds=module.FINISHED_RUN_LOG_RETENTION_SECONDS)
+lines, trace_left, log_left, record_left, content = reap_case(
+    set(), temporary=True, record_age=3 * 24 * 3600)
+check("a killed run whose processes ran on for days keeps its log directory when first "
+      "found ended, and its record gains the time it was found ended",
+      log_left and record_left and content.get("confirmed_ended") is not None,
+      (lines, log_left, content))
+lines, trace_left, log_left, record_left, _ = reap_case(
+    set(), temporary=True, ages=(0, RETENTION))
+check("and loses it two days after that",
+      not log_left and not record_left, (lines, log_left, record_left))
+lines, trace_left, log_left, record_left, _ = reap_case(
+    {2}, temporary=True, finished_age=RETENTION)
 check("however old, a run with a suite process still running keeps its log directory",
       trace_left and log_left and record_left, (lines, log_left))
+if os.geteuid() != 0:
+    lines, trace_left, log_left, record_left, _ = reap_case(
+        set(), temporary=True, finished_age=RETENTION, unremovable_log_dir=True)
+    check("a log directory that cannot be removed keeps its record, and the run says so",
+          log_left and record_left and any("could not remove" in line for line in lines)
+          and not any(line.startswith("removed the log directory") for line in lines),
+          (lines, log_left, record_left))
+else:
+    print("SKIP  a log directory that cannot be removed keeps its record: running as root, "
+          "who can remove any directory")
+
+ended_pid, ended_ticks = ended_process()
+check("a process recorded without a start time never counts as running",
+      module.process_alive(ended_pid, None) is False)
+with tempfile.TemporaryDirectory() as scratch:
+    record = module.RunRecord(pathlib.Path(scratch) / "runs", pathlib.Path(scratch) / "logs",
+                              True)
+    record.note_suite_process(ended_pid, True)
+    check("a suite process that ended before its start time was read is not recorded",
+          record.content["suite_processes"] == [], record.content["suite_processes"])
 
 with tempfile.TemporaryDirectory() as scratch:
     root = pathlib.Path(scratch)
     runs = root / "runs"
     runs.mkdir()
     (runs / "broken.json").write_text("{not json")
-    lines = module.reap_finished_runs(runs, alive=lambda pid, ticks: False)
+    lines = module.remove_leftovers_of_ended_runs_named_in_run_records(runs, alive=lambda pid, ticks: False)
     check("a record that cannot be read is kept and named",
           (runs / "broken.json").exists() and any("could not be read" in line
                                                   for line in lines), lines)
@@ -1927,11 +1976,29 @@ with tempfile.TemporaryDirectory() as scratch:
             os.utime(path, (time.time(), time.time()))
     for path in (recent, recent / "report.txt"):
         os.utime(path, (now, now))
-    removed = module.remove_log_directories_no_record_names(runs, now=now, temp_dir=temp)
+    explicit = temp / "run-all-test-suites-explicit"
+    deep = temp / "run-all-test-suites-deep"
+    for directory in (explicit, deep):
+        (directory / "recorded-inputs" / "a-test.py.strace").mkdir(parents=True)
+        (directory / "recorded-inputs" / "a-test.py.strace" / "trace.1").write_text("x")
+    (explicit / module.LOG_DIRECTORY_LOCK_FILE_NAME).write_text("")
+    for path in (explicit, explicit / module.LOG_DIRECTORY_LOCK_FILE_NAME,
+                 explicit / "recorded-inputs", explicit / "recorded-inputs" / "a-test.py.strace",
+                 explicit / "recorded-inputs" / "a-test.py.strace" / "trace.1",
+                 deep, deep / "recorded-inputs", deep / "recorded-inputs" / "a-test.py.strace"):
+        os.utime(path, (time.time(), time.time()))
+    os.utime(deep / "recorded-inputs" / "a-test.py.strace" / "trace.1", (now, now))
+    removed, removal_failures = module.remove_old_temporary_log_directories_without_run_records(
+        runs, now=now, temp_dir=temp)
     check("a log directory from before run records is removed once unchanged for two days",
-          removed == [old] and not old.exists(), removed)
+          removed == [old] and not old.exists() and removal_failures == [],
+          (removed, removal_failures))
     check("but not a recent one, one a record names, or another program's",
           recent.exists() and named.exists() and other.exists())
+    check("nor one a caller chose with --log-dir, which holds the log-directory lock file",
+          explicit.exists())
+    check("nor one with a trace deep inside it that changed recently",
+          deep.exists())
 
 with tempfile.TemporaryDirectory() as scratch:
     root = pathlib.Path(scratch)
@@ -1943,7 +2010,7 @@ with tempfile.TemporaryDirectory() as scratch:
     check("on macOS a run still cleans up after the lock's last holder, as before",
           not left.exists() and lines and "strace directories" in lines[0], lines)
     check("and keeps no run records there",
-          not module.runs_directory_for(lock).exists())
+          not module.run_records_directory_for_lock_file(lock).exists())
     left.mkdir(parents=True)
     module.clean_up_after_earlier_runs(
         lock, f"pid 4242, checkout x, started y, logs in {root / 'logs'}\n", platform="linux")
@@ -1976,7 +2043,7 @@ with tempfile.TemporaryDirectory() as scratch:
           held_code == module.EXIT_LOCKED, held_code)
     check("and runs when the lock is free, naming itself in it, with no run record",
           code == 0 and lock.read_text().startswith("pid ")
-          and not module.runs_directory_for(lock).exists(), (code, lock.read_text()))
+          and not module.run_records_directory_for_lock_file(lock).exists(), (code, lock.read_text()))
 
 # --- The defaults -------------------------------------------------------------
 defaults = module.parse_arguments([])

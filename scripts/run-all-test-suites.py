@@ -466,7 +466,7 @@ SUITES_RUN_OUTSIDE_THE_SIGNAL_SANDBOX = {
         "it starts the agy cell's own bwrap, which cannot start inside bwrap",
     "nc-systems/cold-read/tests/cold-read-fast-read-test.py":
         "it starts the agy cell's own bwrap, which cannot start inside bwrap",
-    "scripts/run-all-test-suites-killed-run-cleanup-live-test.py":
+    "scripts/run-all-test-suites-cleanup-after-killed-runs-real-process-test.py":
         "it starts this program, whose suites run in bwrap, which cannot start inside bwrap",
     "scripts/mac-window-opened-for-ned-box-forced-command-test.py":
         "it runs the real ssh, which refuses its root-owned config files because "
@@ -919,7 +919,7 @@ def remove_traces_the_last_lock_holder_left(previous_holder):
     return left
 
 
-def runs_directory_for(lock_file):
+def run_records_directory_for_lock_file(lock_file):
     """The directory of run records that goes with a lock file."""
     # Beside the lock, so a test that passes its own lock file also gets its own records.
     return Path(f"{lock_file}{RUN_RECORDS_DIRECTORY_SUFFIX}")
@@ -939,7 +939,12 @@ def process_start_ticks(pid, proc=Path("/proc")):
 
 
 def process_alive(pid, start_ticks, proc=Path("/proc")):
-    """True while the process that had this pid and start time still runs."""
+    """True while the process that had this pid and start time still runs.
+
+    A process recorded without a start time had ended before it could be read,
+    so it never counts as running."""
+    if start_ticks is None:
+        return False
     return process_start_ticks(pid, proc) == start_ticks
 
 
@@ -988,12 +993,50 @@ class RunRecord:
             self.write()
 
 
-def reap_finished_runs(runs_dir, own_record=None, now=None, alive=process_alive,
-                       retention_seconds=FINISHED_RUN_LOG_RETENTION_SECONDS):
+def remove_tree_or_say_why(path):
+    """Delete a directory tree; return None when it is gone, or the reason it is not."""
+    try:
+        shutil.rmtree(path)
+    except FileNotFoundError:
+        return None
+    except OSError as error:
+        return str(error)
+    return None
+
+
+def write_run_record(path, content):
+    temporary = path.with_name(f".{path.name}.{os.getpid()}.{threading.get_ident()}")
+    temporary.write_text(json.dumps(content))
+    os.replace(temporary, path)
+
+
+def first_confirmed_end(path, record, now):
+    """When this ended run was first seen ended, written into its record the first time.
+
+    A finished run ended when it wrote "finished". A killed run's end is known
+    only when a later run first finds all of its processes gone, so the time
+    that later run looked is recorded and the retention counts from it."""
+    if record.get("confirmed_ended") is not None:
+        return record["confirmed_ended"]
+    if record.get("finished"):
+        ended = datetime.datetime.fromisoformat(record["finished"]).timestamp()
+    else:
+        ended = now
+    record["confirmed_ended"] = ended
+    write_run_record(path, record)
+    return ended
+
+
+def remove_leftovers_of_ended_runs_named_in_run_records(
+        runs_dir, own_record=None, now=None, alive=process_alive,
+        retention_seconds=FINISHED_RUN_LOG_RETENTION_SECONDS):
     """Remove what ended runs left behind; return one report line per run acted on or kept.
 
     A run is ended only when its runner and every suite process it recorded are
-    gone: a suite process of a killed runner may still be writing its traces."""
+    gone: a suite process of a killed runner may still be writing its traces.
+    A run's temporary log directory goes once the run has been ended for
+    retention_seconds; its record goes only with it, so a directory that could
+    not be removed is tried again by the next run."""
     now = time.time() if now is None else now
     lines = []
     for path in sorted(runs_dir.glob("*.json")) if runs_dir.is_dir() else []:
@@ -1001,7 +1044,6 @@ def reap_finished_runs(runs_dir, own_record=None, now=None, alive=process_alive,
             continue
         try:
             record = json.loads(path.read_text())
-            modified = path.stat().st_mtime
         except (OSError, ValueError) as error:
             lines.append(f"run record {path} could not be read ({error}); it is kept")
             continue
@@ -1016,43 +1058,80 @@ def reap_finished_runs(runs_dir, own_record=None, now=None, alive=process_alive,
                          f"{len(running)} of its suite processes still run; its files are kept")
             continue
         traces = sorted((log_dir / "recorded-inputs").glob("*.strace"))
-        for trace_dir in traces:
-            shutil.rmtree(trace_dir, ignore_errors=True)
-        if traces:
-            lines.append(f"removed {len(traces)} strace directories the ended run left in "
+        failures = [(trace_dir, why) for trace_dir in traces
+                    if (why := remove_tree_or_say_why(trace_dir)) is not None]
+        removed_traces = len(traces) - len(failures)
+        if removed_traces:
+            lines.append(f"removed {removed_traces} strace directories the ended run left in "
                          f"{log_dir / 'recorded-inputs'}")
         if not record["log_dir_is_temporary"]:
-            path.unlink(missing_ok=True)
-        elif now - modified >= retention_seconds:
-            shutil.rmtree(log_dir, ignore_errors=True)
-            path.unlink(missing_ok=True)
-            lines.append(f"removed the log directory {log_dir} of a run that ended more than "
-                         f"{retention_seconds // 3600} hours ago")
+            if not failures:
+                path.unlink(missing_ok=True)
+        else:
+            try:
+                ended = first_confirmed_end(path, record, now)
+            except (OSError, ValueError) as error:
+                lines.append(f"run record {path} could not be updated ({error}); it is kept")
+                continue
+            if not failures and now - ended >= retention_seconds:
+                why = remove_tree_or_say_why(log_dir)
+                if why is None:
+                    path.unlink(missing_ok=True)
+                    lines.append(f"removed the log directory {log_dir} of a run that ended "
+                                 f"more than {retention_seconds // 3600} hours ago")
+                else:
+                    failures.append((log_dir, why))
+        for failed, why in failures:
+            lines.append(f"could not remove {failed} ({why}); its run record {path} is kept, "
+                         f"so the next run tries again")
     return lines
 
 
-def remove_log_directories_no_record_names(runs_dir, now=None, temp_dir=None,
-                                           retention_seconds=FINISHED_RUN_LOG_RETENTION_SECONDS):
-    """Remove old log directories that runs made before runs kept records; return them."""
+def newest_modification_time_in_tree(directory):
+    """The newest modification time of the directory and everything under it."""
+    newest = directory.stat().st_mtime
+
+    def fail(error):
+        raise error
+    for parent, subdirectories, files in os.walk(directory, onerror=fail):
+        for name in subdirectories + files:
+            newest = max(newest, (Path(parent) / name).lstat().st_mtime)
+    return newest
+
+
+def remove_old_temporary_log_directories_without_run_records(
+        runs_dir, now=None, temp_dir=None,
+        retention_seconds=FINISHED_RUN_LOG_RETENTION_SECONDS):
+    """Remove old log directories that runs made before runs kept records.
+
+    Returns (removed, failures), failures being (directory, reason) pairs. A
+    directory a caller chose with --log-dir holds the log-directory lock file and
+    is the caller's to remove, so it is never touched. A directory counts as old
+    only when nothing anywhere under it changed for retention_seconds, because a
+    suite of an old run may still be appending to a trace deep inside it."""
     now = time.time() if now is None else now
     temp_dir = Path(tempfile.gettempdir() if temp_dir is None else temp_dir)
     named = set()
     for path in runs_dir.glob("*.json") if runs_dir.is_dir() else []:
         with contextlib.suppress(OSError, ValueError, KeyError):
             named.add(Path(json.loads(path.read_text())["log_dir"]))
-    removed = []
+    removed, failures = [], []
     for log_dir in sorted(temp_dir.glob(f"{PROGRAM}-*")):
         if log_dir in named or not log_dir.is_dir():
             continue
+        if (log_dir / LOG_DIRECTORY_LOCK_FILE_NAME).exists():
+            continue
         try:
-            newest = max([log_dir.stat().st_mtime]
-                         + [entry.stat().st_mtime for entry in log_dir.iterdir()])
+            newest = newest_modification_time_in_tree(log_dir)
         except OSError:
             continue
         if now - newest >= retention_seconds:
-            shutil.rmtree(log_dir, ignore_errors=True)
-            removed.append(log_dir)
-    return removed
+            why = remove_tree_or_say_why(log_dir)
+            if why is None:
+                removed.append(log_dir)
+            else:
+                failures.append((log_dir, why))
+    return removed, failures
 
 
 def clean_up_after_earlier_runs(lock_file, previous_holder, platform=None):
@@ -1066,12 +1145,15 @@ def clean_up_after_earlier_runs(lock_file, previous_holder, platform=None):
         left = remove_traces_the_last_lock_holder_left(previous_holder)
         return ([f"removed {len(left)} strace directories the run before this one left "
                  f"in {left[0].parent}"] if left else [])
-    runs_dir = runs_directory_for(lock_file)
-    lines = reap_finished_runs(runs_dir)
+    runs_dir = run_records_directory_for_lock_file(lock_file)
+    lines = remove_leftovers_of_ended_runs_named_in_run_records(runs_dir)
     if Path(lock_file) == DEFAULT_LOCK_FILE:
         # Only the machine's own runs share the system temp directory with records this old.
+        removed, failures = remove_old_temporary_log_directories_without_run_records(runs_dir)
         lines += [f"removed the log directory {log_dir}, left by a run from before run records"
-                  for log_dir in remove_log_directories_no_record_names(runs_dir)]
+                  for log_dir in removed]
+        lines += [f"could not remove the log directory {log_dir}, left by a run from before "
+                  f"run records ({why})" for log_dir, why in failures]
     return lines
 
 
@@ -1823,7 +1905,7 @@ def main(argv=None):
         else:
             log_dir = Path(tempfile.mkdtemp(prefix=f"{PROGRAM}-"))
         if sys.platform.startswith("linux"):
-            run_record = RunRecord(runs_directory_for(arguments.lock_file), log_dir,
+            run_record = RunRecord(run_records_directory_for_lock_file(arguments.lock_file), log_dir,
                                    log_dir_is_temporary=not arguments.log_dir)
         name_log_directory_in_lock(lock_handle, log_dir)
         clean_up_lines = clean_up_after_earlier_runs(Path(arguments.lock_file), previous_holder)

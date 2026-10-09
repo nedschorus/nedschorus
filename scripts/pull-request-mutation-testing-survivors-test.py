@@ -677,10 +677,12 @@ def run_cases():
         test_suite_runner = load_test_suite_runner()
         if sys.platform.startswith("linux"):
             # On Linux the runner keeps a record of each run; this one has ended.
-            ended = subprocess.Popen([sys.executable, "-c", "pass"])
+            # Started to sleep, so its start ticks are read while it still runs.
+            ended = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
             ended_ticks = test_suite_runner.process_start_ticks(ended.pid)
+            ended.terminate()
             ended.wait()
-            runs = test_suite_runner.runs_directory_for(control / "machine.lock")
+            runs = test_suite_runner.run_records_directory_for_lock_file(control / "machine.lock")
             runs.mkdir(parents=True, exist_ok=True)
             (runs / f"{ended.pid}-{ended_ticks}.json").write_text(json.dumps({
                 "runner": {"pid": ended.pid, "start_ticks": ended_ticks},

@@ -19,7 +19,7 @@ child subreaper, so a suite orphaned by its killed runner stays its descendant.
 
 Linux only, and only where bwrap starts: elsewhere every case prints SKIP.
 
-Run: python3 scripts/run-all-test-suites-killed-run-cleanup-live-test.py   (exit 0 = all passed)
+Run: python3 scripts/run-all-test-suites-cleanup-after-killed-runs-real-process-test.py   (exit 0 = all passed)
 """
 
 import ctypes
@@ -86,6 +86,8 @@ def signal_own_descendant(pid, start_ticks, signal_number, kill=os.kill):
     """Send the signal only to a live descendant of this process with this start time."""
     if not isinstance(pid, int) or pid <= 1:
         raise SignalRefused(f"pid {pid!r} is not a single process this test started")
+    if start_ticks is None:
+        raise SignalRefused(f"pid {pid} has no start time to check it against")
     if module.process_start_ticks(pid) != start_ticks:
         raise SignalRefused(f"pid {pid} is not the process with start ticks {start_ticks}")
     ancestor = pid
@@ -153,7 +155,7 @@ def start_run(root, repo, name):
 
 
 def run_records(root):
-    runs = module.runs_directory_for(root / "run.lock")
+    runs = module.run_records_directory_for_lock_file(root / "run.lock")
     return [json.loads(path.read_text()) for path in sorted(runs.glob("*.json"))]
 
 
@@ -200,39 +202,52 @@ for refused_pid, why in ((1, "pid 1"), (0, "pid 0, the whole process group"),
         refused = False
     check(f"the signal helper refuses {why}", refused and not sent, sent)
 
-try:
-    signal_own_descendant(os.getppid(), module.process_start_ticks(os.getppid()),
-                          signal.SIGTERM, kill=recorder)
-except SignalRefused:
-    refused = True
+# The cases below read start times and ancestry from /proc, which only Linux has.
+not_linux = None if sys.platform.startswith("linux") else f"{sys.platform} is not Linux"
+if not_linux:
+    print(f"SKIP  the signal helper's descendant and start-time cases: {not_linux}, "
+          f"so there is no /proc to read start times and ancestry from")
 else:
-    refused = False
-check("the signal helper refuses a process that is not its descendant", refused and not sent,
-      sent)
+    try:
+        signal_own_descendant(os.getppid(), module.process_start_ticks(os.getppid()),
+                              signal.SIGTERM, kill=recorder)
+    except SignalRefused:
+        refused = True
+    else:
+        refused = False
+    check("the signal helper refuses a process that is not its descendant", refused and not sent,
+          sent)
 
-child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
-child_ticks = module.process_start_ticks(child.pid)
-try:
-    signal_own_descendant(child.pid, child_ticks + 1, signal.SIGTERM, kill=recorder)
-except SignalRefused:
-    refused = True
-else:
-    refused = False
-check("the signal helper refuses a descendant whose start time is not the one it was given",
-      refused and not sent, sent)
-signal_own_descendant(child.pid, child_ticks, signal.SIGTERM)
-check("the signal helper signals its own live child", child.wait(timeout=30) == -signal.SIGTERM)
-try:
-    signal_own_descendant(child.pid, child_ticks, signal.SIGTERM, kill=recorder)
-except SignalRefused:
-    refused = True
-else:
-    refused = False
-check("the signal helper refuses a child that has ended", refused and not sent, sent)
+    child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+    child_ticks = module.process_start_ticks(child.pid)
+    try:
+        signal_own_descendant(child.pid, child_ticks + 1, signal.SIGTERM, kill=recorder)
+    except SignalRefused:
+        refused = True
+    else:
+        refused = False
+    check("the signal helper refuses a descendant whose start time is not the one it was given",
+          refused and not sent, sent)
+    try:
+        signal_own_descendant(child.pid, None, signal.SIGTERM, kill=recorder)
+    except SignalRefused:
+        refused = True
+    else:
+        refused = False
+    check("the signal helper refuses a process given without a start time",
+          refused and not sent, sent)
+    signal_own_descendant(child.pid, child_ticks, signal.SIGTERM)
+    check("the signal helper signals its own live child", child.wait(timeout=30) == -signal.SIGTERM)
+    try:
+        signal_own_descendant(child.pid, child_ticks, signal.SIGTERM, kill=recorder)
+    except SignalRefused:
+        refused = True
+    else:
+        refused = False
+    check("the signal helper refuses a child that has ended", refused and not sent, sent)
 
 # --- A killed run's suite that still runs keeps its traces ---------------------
-not_runnable = (None if sys.platform.startswith("linux") else f"{sys.platform} is not Linux")
-not_runnable = not_runnable or sandbox_starts()
+not_runnable = not_linux or sandbox_starts()
 if not_runnable:
     print(f"SKIP  every killed-run case: {not_runnable}")
 else:

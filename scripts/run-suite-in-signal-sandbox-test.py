@@ -690,10 +690,12 @@ else:
         left_trace.mkdir(parents=True)
         lock_path.write_text(f"pid 1, checkout elsewhere, started then, logs in "
                              f"{scratch / 'killed-run-logs'}\n")
-        ended = subprocess.Popen([sys.executable, "-c", "pass"])
+        # Started to sleep, so its start ticks are read while it still runs.
+        ended = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
         ended_ticks = program.runner.process_start_ticks(ended.pid)
+        ended.terminate()
         ended.wait()
-        runs = program.runner.runs_directory_for(lock_path)
+        runs = program.runner.run_records_directory_for_lock_file(lock_path)
         runs.mkdir(parents=True, exist_ok=True)
         (runs / f"{ended.pid}-{ended_ticks}.json").write_text(json.dumps({
             "runner": {"pid": ended.pid, "start_ticks": ended_ticks},
