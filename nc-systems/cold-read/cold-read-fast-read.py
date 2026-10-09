@@ -25,7 +25,7 @@ It warns and never refuses, because the fast read is the cold-read-full-run's
 first step. When the cold-read-target is a walk draft, the read also lists every
 bare issue or pull request number in it -- `#426`, `nedschorus#418`, a link
 whose text is the number, and a task number written `#N` too, because
-CLAUDE.md's citation rule covers tasks -- with one line on stderr giving the
+the project's citation rule covers tasks -- with one line on stderr giving the
 count and a section at the end of the suggestions file naming each by line;
 when the read itself failed there is no suggestions file, so that line says so
 and the numbers are listed on stderr instead, each with its line
@@ -597,7 +597,7 @@ def attach_sentences_and_coverage(report_text: str, sentences: dict,
 
 # A bare issue, pull request or task number: `#` and digits, with whatever
 # repository name is glued to its front (`nedschorus#418`,
-# `nedschorus/nedschorus#418`), because each is a number where CLAUDE.md wants
+# `nedschorus/nedschorus#418`), because each is a number where the project's citation rule wants
 # an ID-type and a name. A repository name may not start after a word
 # character or any of `& / . : -`, so no piece of a URL's path becomes one. A
 # bare `#` may not follow `&` or a word character, which keeps an HTML entity
