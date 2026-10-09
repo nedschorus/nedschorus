@@ -71,6 +71,16 @@ BROKEN_CASES = (
      "```\ncode\n```\n\nOne line\nand another.\n"),
     ("a broken paragraph after front matter",
      "---\ntitle: x\n---\n\nOne line\nand another.\n"),
+    ("a line ending in an escaped backslash is not a hard break",
+     "One line ending in a backslash \\\\\nand another.\n"),
+    ("a line ending in a backslash and one space is not a hard break",
+     "One line ending in a backslash \\ \nand another.\n"),
+    ("a list closed by an unindented paragraph that is itself broken",
+     "- item\n\nParagraph one\ncontinued here.\n"),
+    ("a broken list-item paragraph after a fence opened on a list-item line",
+     "1. ```py\n   x = 1\n   ```\n\n    The item's paragraph, first half\n    and its second half.\n"),
+    ("a backtick in a fence's info string makes no fence",
+     "```a`b\nline one\nline two\n"),
 )
 for case_name, text in BROKEN_CASES:
     check(f"fires: {case_name}", hook.markdown_has_hard_wrapped_paragraph(text) is True)
@@ -94,8 +104,24 @@ CLEAN_CASES = (
     ("block quote lines", "> quoted first line\n> quoted second line\n"),
     ("HTML lines and a comment over several lines",
      "<details>\n<summary>x</summary>\n</details>\n\n<!-- a comment\nover lines\n-->\n"),
-    ("an indented code block after a blank line",
-     "Intro paragraph.\n\n    code line one\n    code line two\n"),
+    ("an indented code block of three lines after a blank line",
+     "Intro paragraph.\n\n    code line one\n    code line two\n    code line three\n"),
+    ("an indented code block inside a list item",
+     "- item\n\n      code1\n      code2\n      code3\n"),
+    ("an indented code block right after a heading",
+     "# H\n    code1\n    code2\n    code3\n"),
+    ("an indented code block after a list closed by a one-line paragraph",
+     "- item\n\nA closing paragraph.\n\n    code1\n    code2\n    code3\n"),
+    ("text lines inside a multi-line HTML block",
+     "<div>\nfirst text line\nsecond text line\n</div>\n\n<details>\nhidden first\nhidden second\n</details>\n"),
+    ("a pre block with a blank line inside",
+     "<pre>\nline one\n\nline two\nline three\n</pre>\n"),
+    ("a link reference definition with a title on later lines",
+     "[a]: https://example.com\n'a title\nover two lines'\n"),
+    ("lazy continuation lines of a block quote",
+     "> First line\nsecond line\nthird line\n"),
+    ("a setext heading of several lines",
+     "A heading\ncontinued\n---\n\nAnother heading\nover lines\n===\n"),
     ("a hard line break with two trailing spaces or a backslash",
      "First line  \nsecond line\n\nThird line\\\nfourth line\n"),
     ("link reference definitions", "[a]: https://example.com\n[b]: https://example.org\n"),
@@ -193,8 +219,8 @@ with tempfile.TemporaryDirectory() as temporary_directory:
           agent_text(result).startswith("markdown-edit-hard-wrapped-paragraph-reminder: notes.markdown"),
           result.stdout + result.stderr)
 
-    result = write_then_run(checkout, checkout / "scripts" / "tool.py",
-                            "# a comment\n# over two lines\n")
+    result = write_then_run(checkout, checkout / "scripts" / "tool.txt",
+                            "The first half of a sentence\nand the second half.\n")
     check("a non-Markdown file is silent", silent(result), result.stdout + result.stderr)
 
     result = write_then_run(checkout, checkout / "ignored-notes" / "scratch.md", BROKEN_TEXT)

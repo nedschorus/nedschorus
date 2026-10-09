@@ -30,12 +30,15 @@ REMINDER_MESSAGE = (
 )
 
 FENCE_OPENING_PATTERN = re.compile(r"^\s*(?:(?:[-*+]|\d{1,9}[.)])\s+)?(`{3,}|~{3,})(.*)$")
-LIST_ITEM_PATTERN = re.compile(r"^\s*(?:[-*+]|\d{1,9}[.)])(?:\s|$)")
+LIST_ITEM_PATTERN = re.compile(r"^(\s*)([-*+]|\d{1,9}[.)])(\s+|$)")
 HEADING_PATTERN = re.compile(r"^ {0,3}#{1,6}(?:\s|$)")
 THEMATIC_BREAK_OR_SETEXT_PATTERN = re.compile(r"^ {0,3}(?:(?:[-*_=]\s*){3,}|=+|-+)\s*$")
+SETEXT_UNDERLINE_PATTERN = re.compile(r"^ {0,3}(?:=+|-+)\s*$")
 TABLE_DELIMITER_ROW_PATTERN = re.compile(r"^\s*\|?\s*:?-+:?\s*(?:\|\s*:?-+:?\s*)*\|?\s*$")
 LINK_REFERENCE_DEFINITION_PATTERN = re.compile(r"^ {0,3}\[[^\]]+\]:\s")
-
+# CommonMark HTML blocks of type 1 run to their closing tag, blank lines included.
+HTML_RAW_BLOCK_OPENING_PATTERN = re.compile(r"^ {0,3}<(pre|script|style|textarea)(?:\s|>|$)",
+                                            re.IGNORECASE)
 
 def run_git(arguments, working_directory: Path):
     return subprocess.run(["git", *arguments], cwd=str(working_directory),
@@ -77,7 +80,34 @@ def is_table_delimiter_row(line: str) -> bool:
 
 
 def ends_in_hard_line_break(line: str) -> bool:
-    return line.endswith("  ") or line.rstrip(" ").endswith("\\")
+    # A backslash makes a hard break only as the line's last character, and only
+    # when not itself escaped: a line ending "a\\" ends in an escaped backslash.
+    if line.endswith("  "):
+        return True
+    return (len(line) - len(line.rstrip("\\"))) % 2 == 1
+
+
+def indentation_width(line: str) -> int:
+    expanded = line.expandtabs(4)
+    return len(expanded) - len(expanded.lstrip(" "))
+
+
+def list_item_content_indent(match) -> int:
+    spaces_after_marker = len(match.group(3).expandtabs(4))
+    # Five or more spaces after the marker start indented code inside the item.
+    if spaces_after_marker == 0 or spaces_after_marker > 4:
+        spaces_after_marker = 1
+    return len(match.group(1).expandtabs(4)) + len(match.group(2)) + spaces_after_marker
+
+
+def paragraph_ends_in_setext_underline(lines, start_index: int) -> bool:
+    """True when the run of non-blank lines from start_index ends a setext heading."""
+    for line in lines[start_index:]:
+        if not line.strip():
+            return False
+        if SETEXT_UNDERLINE_PATTERN.match(line.rstrip("\r")):
+            return True
+    return False
 
 
 def markdown_has_hard_wrapped_paragraph(text: str) -> bool:
@@ -89,8 +119,11 @@ def first_hard_wrapped_paragraph_line_index(text: str):
     or list item on the line before it, or None.
 
     A prose line is a non-blank line outside front matter, fenced and indented code
-    blocks, tables, block quotes and HTML, that is not a heading, list item,
-    thematic break, setext underline or link reference definition."""
+    blocks, tables, block quotes (lazy continuation lines included), HTML blocks and
+    link reference definitions (multi-line titles included), that is not a heading,
+    setext heading, list item, thematic break or setext underline.
+    Where a shape is unclear the line is not counted: a false reminder tells the
+    agent to join lines that must stay apart."""
     lines = text.split("\n")
     index = 0
     if lines and lines[0].rstrip() == "---":
@@ -102,9 +135,13 @@ def first_hard_wrapped_paragraph_line_index(text: str):
     fence_character = None
     fence_length = 0
     inside_html_comment = False
+    html_raw_block_tag = None
+    # Blocks that run until the next blank line.
+    inside_html_block = False
+    inside_block_quote = False
+    inside_link_reference_definition = False
     inside_table = False
-    inside_indented_code = False
-    list_open = False
+    list_content_indent = None
     # What the previous line was, for deciding whether the current line continues it:
     # "blank", "prose", "list item", or "other" (a line no paragraph can continue).
     previous_kind = "blank"
@@ -126,28 +163,36 @@ def first_hard_wrapped_paragraph_line_index(text: str):
                 inside_html_comment = False
             previous_kind, previous_line = "other", line
             continue
+        if html_raw_block_tag is not None:
+            if f"</{html_raw_block_tag}" in line.lower():
+                html_raw_block_tag = None
+            previous_kind, previous_line = "other", line
+            continue
         if not stripped:
-            inside_table = False
+            inside_table = inside_html_block = False
+            inside_block_quote = inside_link_reference_definition = False
             previous_kind, previous_line = "blank", line
             continue
-        if inside_indented_code:
-            if line.startswith(("    ", "\t")):
-                previous_kind, previous_line = "other", line
-                continue
-            inside_indented_code = False
+        if inside_html_block or inside_block_quote or inside_link_reference_definition:
+            previous_kind, previous_line = "other", line
+            continue
         if inside_table:
             previous_kind, previous_line = "other", line
             continue
 
+        # An indented code line: each line of the block is "other", so the next line,
+        # indented as deep, is code again.
+        code_indent = (list_content_indent or 0) + 4
+        if previous_kind not in ("prose", "list item") and indentation_width(line) >= code_indent:
+            previous_kind, previous_line = "other", line
+            continue
         fence_match = FENCE_OPENING_PATTERN.match(line)
         if fence_match and not (fence_match.group(1)[0] == "`" and "`" in fence_match.group(2)):
             fence_character = fence_match.group(1)[0]
             fence_length = len(fence_match.group(1))
-            list_open = list_open or bool(LIST_ITEM_PATTERN.match(line))
-            previous_kind, previous_line = "other", line
-            continue
-        if previous_kind == "blank" and not list_open and line.startswith(("    ", "\t")):
-            inside_indented_code = True
+            list_match = LIST_ITEM_PATTERN.match(line)
+            if list_match:
+                list_content_indent = list_item_content_indent(list_match)
             previous_kind, previous_line = "other", line
             continue
         if index < len(lines) and is_table_delimiter_row(lines[index]) and "|" in line:
@@ -155,29 +200,43 @@ def first_hard_wrapped_paragraph_line_index(text: str):
             previous_kind, previous_line = "other", line
             continue
         if stripped.startswith("<"):
-            if stripped.startswith("<!--") and "-->" not in stripped:
-                inside_html_comment = True
+            raw_match = HTML_RAW_BLOCK_OPENING_PATTERN.match(line)
+            if stripped.startswith("<!--"):
+                inside_html_comment = "-->" not in stripped
+            elif raw_match and f"</{raw_match.group(1).lower()}" not in line.lower():
+                html_raw_block_tag = raw_match.group(1).lower()
+            else:
+                inside_html_block = True
             previous_kind, previous_line = "other", line
             continue
         if (stripped.startswith((">", "|")) or HEADING_PATTERN.match(line)
                 or THEMATIC_BREAK_OR_SETEXT_PATTERN.match(line)
                 or LINK_REFERENCE_DEFINITION_PATTERN.match(line)):
+            inside_block_quote = stripped.startswith(">")
+            inside_link_reference_definition = bool(LINK_REFERENCE_DEFINITION_PATTERN.match(line))
             if not line.startswith((" ", "\t")):
-                list_open = False
+                list_content_indent = None
             previous_kind, previous_line = "other", line
             continue
-        if LIST_ITEM_PATTERN.match(line):
-            list_open = True
+        list_match = LIST_ITEM_PATTERN.match(line)
+        if list_match:
+            list_content_indent = list_item_content_indent(list_match)
             previous_kind, previous_line = "list item", line
             continue
 
         if previous_kind in ("prose", "list item") and not ends_in_hard_line_break(previous_line):
+            if previous_kind == "prose" and paragraph_ends_in_setext_underline(lines, index - 1):
+                # A setext heading of several lines: skip to its underline.
+                while not SETEXT_UNDERLINE_PATTERN.match(lines[index].rstrip("\r")):
+                    index += 1
+                index += 1
+                previous_kind, previous_line = "other", lines[index - 1]
+                continue
             return index - 1
         if not line.startswith((" ", "\t")):
-            list_open = False
+            list_content_indent = None
         previous_kind, previous_line = "prose", line
     return None
-
 
 def main() -> int:
     try:
