@@ -94,9 +94,10 @@ WHAT IT DOES NOT FAIL, said plainly so no one reads cover into it:
   * a copy of the value written out at a second remove: a name bound to a
     name bound to the string. Only the first hop is followed.
 
-Only the cold-read family is checked. scripts/sanity-check-attacks.py and
-scripts/design-to-main/design-to-main-state-tables.py name their own record
-kinds, which are theirs to name.
+Only the cold-read family is checked, with the hooks in RECORD_FINDING_HOOKS
+that find cold-read-records from outside it. scripts/sanity-check-attacks.py
+and scripts/design-to-main/design-to-main-state-tables.py name their own
+record kinds, which are theirs to name.
 
 Run: python3 nc-systems/cold-read/tests/cold-read-record-names-test.py
 Prints one line per case and exits non-zero if any case fails.
@@ -110,6 +111,9 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 SYSTEM_DIRECTORY = REPO_ROOT / "nc-systems" / "cold-read"
 NAMES_MODULE = SYSTEM_DIRECTORY / "cold-read-record-names.py"
+# Programs outside nc-systems/cold-read/ that find cold-read-records.
+RECORD_FINDING_HOOKS = (
+    REPO_ROOT / "scripts" / "cold-read-fast-read-due-for-linked-document-reminder-hook.py",)
 # The records directory's name, as it reads on disk. Matched as a substring
 # of a path join's string operand, because `"cold-read-records/<name>"`
 # spells the name out as surely as `"cold-read-records"` alone.
@@ -126,7 +130,9 @@ JOINED_SEGMENT_VALUES = ("target",)
 OWNED_NAMES = frozenset({
     "RECORDS_DIR", "FROZEN_TARGET_DIRECTORY_NAME", "record_name_for_target",
     "record_directory_name_for_target", "fresh_record_directory",
-    "frozen_target_path"})
+    "frozen_target_path", "RECORDS_DIRECTORY_NAME", "RECORD_DATE_PATTERN",
+    "COMPLETED_REPORT_NAME_PATTERN", "record_directory_name_pattern_for_target",
+    "frozen_target_candidate_paths", "record_holds_completed_report"})
 # The constant whose join says a path is being built inside the frozen copy's
 # directory. Matched as an identifier, exactly: a program reaches it as
 # `FROZEN_TARGET_DIRECTORY_NAME` or as `<module>.FROZEN_TARGET_DIRECTORY_NAME`,
@@ -152,9 +158,11 @@ def check(case_name, condition, detail=""):
 
 
 def cold_read_scripts():
-    """The cold-read family's programs, the shared module itself excluded."""
-    return sorted(path for path in SYSTEM_DIRECTORY.glob("cold-read-*.py")
-                  if not path.name.endswith("-test.py") and path != NAMES_MODULE)
+    """The cold-read family's programs, the shared module itself excluded,
+    and the hooks outside the system that find cold-read-records."""
+    return sorted([path for path in SYSTEM_DIRECTORY.glob("cold-read-*.py")
+                   if not path.name.endswith("-test.py") and path != NAMES_MODULE]
+                  + list(RECORD_FINDING_HOOKS))
 
 
 def call_attribute(call):

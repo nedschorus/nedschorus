@@ -5,8 +5,8 @@ linked for the user that have had no cold-read-fast-read since their last change
 Each hook case runs the hook as a subprocess, its real stdin-to-stdout path,
 in a scratch checkout this suite made, with the log-store cold-read-records directory pointed by
 NEDSCHORUS_LOG_STORE_COLD_READ_RECORDS_DIRECTORY into a scratch directory, so no
-case reads the live log-store. The exit code is asserted on every case: a Stop
-hook that exits nonzero can block a turn from ending.
+case reads the live log-store. The exit code is asserted on every case: the
+hook exits 0 unless it hit a fault, which it names on stderr with exit 1.
 """
 
 import importlib.util
@@ -53,8 +53,10 @@ class Case:
         self.checkout = self.root / "checkout"
         (self.checkout / "docs").mkdir(parents=True)
         subprocess.run(["git", "init", "-q", str(self.checkout)], check=True)
-        self.store = self.root / "store"
-        self.store.mkdir()
+        # The log-store is the records directory's parent, as on ned-box.
+        self.log_store = self.root / "log-store"
+        self.store = self.log_store / "cold-read-records"
+        self.store.mkdir(parents=True)
         self.transcript = self.root / "transcript.jsonl"
 
     def document(self, relative, text="# A document\n", modified=1_000_000):
@@ -64,12 +66,14 @@ class Case:
         os.utime(path, (modified, modified))
         return path
 
-    def record(self, name, modified, frozen_relative=None, frozen_text=None, local=False):
+    def record(self, name, modified, frozen_relative=None, frozen_text=None, local=False,
+               report_name="fast-read.md"):
         directory = (self.checkout / "cold-read-records" if local else self.store) / name
         directory.mkdir(parents=True)
-        report = directory / "fast-read.md"
-        report.write_text("<!-- provenance: cell=fast-clarify -->\nfindings\n")
-        os.utime(report, (modified, modified))
+        if report_name is not None:
+            report = directory / report_name
+            report.write_text("<!-- provenance: cell=fast-clarify -->\nfindings\n")
+            os.utime(report, (modified, modified))
         if frozen_relative is not None:
             frozen = directory / "target" / frozen_relative
             frozen.parent.mkdir(parents=True)
@@ -195,9 +199,71 @@ def main():
     expect("a missing log-store cold-read-records directory is silent",
            case.run("I wrote docs/plan-of-record.md.",
                     environment_extra={STORE_VARIABLE: str(case.root / "absent")}), None)
-    expect("input that is not JSON is silent", case.run("", stdin_text="not json {"), None)
+    completed = case.run("", stdin_text="not json {")
+    check("input that is not JSON is a fault: exit 1, one stderr line, no output",
+          completed.returncode == 1 and completed.stdout == ""
+          and "no check was made" in completed.stderr
+          and len(completed.stderr.strip().splitlines()) == 1,
+          f"exit {completed.returncode}, stdout {completed.stdout!r}, stderr {completed.stderr!r}")
     expect("a transcript that does not exist is silent",
            case.run("", {"transcript_path": str(case.root / "absent.jsonl")}), None)
+
+    case = Case()
+    draft = case.document("docs/walk/naming-rules-draft.md", text="walk\n", modified=3_000_000)
+    case.record("naming-rules-draft-2026-10-08", 2_000_000,
+                Path(*draft.resolve().parts[1:]), "walk\n")
+    expect("a walk-document read from another checkout, into a cold-read-record, is silent",
+           case.run("The walk-document is docs/walk/naming-rules-draft.md."), None)
+
+    case = Case()
+    document = case.document("docs/plan-of-record.md", text="same\n", modified=3_000_000)
+    case.record("plan-of-record-2026-10-08", 2_000_000, "docs/plan-of-record.md", "same\n")
+    other = SUITE_ROOT / "other-checkout"
+    subprocess.run(["git", "init", "-q", str(other)], check=True)
+    expect("a leaked GIT_DIR and GIT_WORK_TREE do not hide the document's own checkout",
+           case.run("Updated docs/plan-of-record.md.",
+                    environment_extra={"GIT_DIR": str(other / ".git"),
+                                       "GIT_WORK_TREE": str(other)}), None)
+
+    case = Case()
+    document = case.document("docs/plan-of-record.md", text="same\n", modified=3_000_000)
+    case.record("plan-of-record-2026-10-08", 2_000_000, "docs/plan-of-record.md", "same\n",
+                report_name=None)
+    expect("a read that failed after freezing its target, with no report, does not count",
+           case.run("Updated docs/plan-of-record.md."), [document])
+
+    case = Case()
+    document = case.document("docs/composed-prompt.md", modified=1_000_000)
+    case.record("2026-08-24-composed-prompt-restate", 2_000_000)
+    expect("an older-form record of a longer name does not count for a shorter one",
+           case.run("See docs/composed-prompt.md."), [document])
+
+    case = Case()
+    document = case.document("docs/plan-of-record.md", modified=1_000_000)
+    case.record("2026-08-25-plan-of-record", 2_000_000,
+                report_name="2026-08-25-plan-of-record--claude-hunt-good.md")
+    expect("an older full run's prefixed report counts as a finished report",
+           case.run("See docs/plan-of-record.md."), None)
+
+    case = Case()
+    log_store_file = case.log_store / "analysis" / "survey.md"
+    log_store_file.parent.mkdir(parents=True)
+    log_store_file.write_text("x\n")
+    expect("a file in the log-store is skipped",
+           case.run(f"The survey is at file://{log_store_file}."), None)
+
+    case = Case()
+    case.document("cold-read-records/plan-2026-10-08/fast-read.md")
+    expect("a file in a cold-read-records directory is skipped",
+           case.run("The report is at file://"
+                    f"{case.checkout / 'cold-read-records/plan-2026-10-08/fast-read.md'}."),
+           None)
+
+    case = Case()
+    document = case.document("docs/plan-of-record.md")
+    expect("a document linked twice is reported once",
+           case.run(f"See docs/plan-of-record.md, or [the plan](file://{document})."),
+           [document])
 
     # The Mac mount maps to ned-box's /home/nedlern; point that prefix at a scratch directory.
     specification = importlib.util.spec_from_file_location("hook_under_test", HOOK_SCRIPT)
