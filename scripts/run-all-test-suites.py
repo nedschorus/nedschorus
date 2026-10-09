@@ -466,6 +466,8 @@ SUITES_RUN_OUTSIDE_THE_SIGNAL_SANDBOX = {
         "it starts the agy cell's own bwrap, which cannot start inside bwrap",
     "nc-systems/cold-read/tests/cold-read-fast-read-test.py":
         "it starts the agy cell's own bwrap, which cannot start inside bwrap",
+    "scripts/run-all-test-suites-killed-run-cleanup-live-test.py":
+        "it starts this program, whose suites run in bwrap, which cannot start inside bwrap",
     "scripts/mac-window-opened-for-ned-box-forced-command-test.py":
         "it runs the real ssh, which refuses its root-owned config files because "
         "inside the sandbox's user namespace they show as owned by nobody",

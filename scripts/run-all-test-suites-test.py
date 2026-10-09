@@ -20,7 +20,9 @@ run does not trust the thing it is testing.
 Run: python3 scripts/run-all-test-suites-test.py   (exit 0 = all passed)
 """
 
+import contextlib
 import fcntl
+import io
 import importlib.util
 import json
 import os
@@ -1412,26 +1414,97 @@ with tempfile.TemporaryDirectory() as scratch:
           "of cases, so it recorded only what the cases that ran read" in lines(result.stdout),
           result.stdout)
 
-# A run killed by SIGKILL leaves its suites' strace directories behind.
-with tempfile.TemporaryDirectory() as scratch:
-    root = pathlib.Path(scratch)
-    make_repo(root, {"a-test.py": PASSES})
+# A run killed by SIGKILL leaves its suites' strace directories behind. On
+# Linux a later run removes them only when the killed run's record shows that
+# nothing of it still runs.
+def ended_process():
+    """The pid and start ticks of a process that has ended and been reaped."""
+    child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+    ticks = module.process_start_ticks(child.pid)
+    child.terminate()
+    child.wait()
+    return child.pid, ticks
+
+
+def killed_run_record(root, killed_logs, runner, suite_processes, temporary=False):
+    runs = module.runs_directory_for(root / "run.lock")
+    runs.mkdir(parents=True, exist_ok=True)
+    record = runs / f"{runner[0]}-{runner[1]}.json"
+    record.write_text(json.dumps({
+        "runner": {"pid": runner[0], "start_ticks": runner[1]},
+        "log_dir": str(killed_logs), "log_dir_is_temporary": temporary,
+        "started": "2026-10-08T00:00:00+00:00", "finished": None,
+        "suite_processes": [{"pid": pid, "start_ticks": ticks, "namespace_init": True}
+                            for pid, ticks in suite_processes]}))
+    return record
+
+
+def killed_run_logs(root):
     killed_logs = root / "logs-of-a-killed-run"
     left = killed_logs / "recorded-inputs" / "a-test.py.strace"
     left.mkdir(parents=True)
     (left / "trace.4242").write_text("a trace nobody removed\n")
     hook_log = killed_logs / "recorded-inputs" / "a-test.py.hook"
     hook_log.write_text("read\t/elsewhere\n")
-    (root / "run.lock").write_text(f"pid 4242, checkout {root / 'repo'}, started "
-                                   f"2026-09-30T00:00:00Z, logs in {killed_logs}\n")
-    result = run(root)
-    check("a run removes the strace directories the lock's last holder left behind",
-          result.returncode == 0 and not left.exists(), (result.stdout, left.exists()))
-    check("and nothing else in that holder's log directory", hook_log.exists())
-    holder = (root / "run.lock").read_text()
-    check("the lock names its holder's log directory, on one line",
-          holder.endswith(f", logs in {(root / 'logs').resolve()}\n")
-          and holder.count("\n") == 1 and holder.startswith("pid "), holder)
+    return killed_logs, left, hook_log
+
+
+if sys.platform.startswith("linux"):
+    with tempfile.TemporaryDirectory() as scratch:
+        root = pathlib.Path(scratch)
+        make_repo(root, {"a-test.py": PASSES})
+        killed_logs, left, hook_log = killed_run_logs(root)
+        record = killed_run_record(root, killed_logs, ended_process(), [ended_process()])
+        result = run(root)
+        check("a run removes the strace directories a killed run left, once its record "
+              "shows its runner and suite processes have all ended",
+              result.returncode == 0 and not left.exists(), (result.stdout, left.exists()))
+        check("and nothing else in that run's log directory", hook_log.exists())
+        check("and the record goes with them, since that run's caller chose its log "
+              "directory", not record.exists())
+        holder = (root / "run.lock").read_text()
+        check("the lock names its holder's log directory, on one line",
+              holder.endswith(f", logs in {(root / 'logs').resolve()}\n")
+              and holder.count("\n") == 1 and holder.startswith("pid "), holder)
+
+    with tempfile.TemporaryDirectory() as scratch:
+        root = pathlib.Path(scratch)
+        make_repo(root, {"a-test.py": PASSES})
+        killed_logs, left, hook_log = killed_run_logs(root)
+        still_running = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+        try:
+            killed_run_record(root, killed_logs, ended_process(),
+                              [(still_running.pid,
+                                module.process_start_ticks(still_running.pid))])
+            # The lock still names the killed run, as it does after a SIGKILL.
+            (root / "run.lock").write_text(f"pid 4242, checkout {root / 'repo'}, started "
+                                           f"2026-09-30T00:00:00Z, logs in {killed_logs}\n")
+            result = run(root)
+            check("a run keeps the traces of a killed run whose suite process still runs",
+                  result.returncode == 0 and left.exists(), (result.stdout, left.exists()))
+            check("and says why it kept them",
+                  "has no runner, but 1 of its suite processes still run; its files are kept"
+                  in result.stdout, result.stdout)
+        finally:
+            still_running.terminate()
+            still_running.wait()
+        result = run(root)
+        check("a run after that suite process ended removes the traces",
+              result.returncode == 0 and not left.exists(), (result.stdout, left.exists()))
+
+    with tempfile.TemporaryDirectory() as scratch:
+        root = pathlib.Path(scratch)
+        make_repo(root, {"a-test.py": PASSES})
+        result = run(root)
+        records = list(module.runs_directory_for(root / "run.lock").glob("*.json"))
+        check("a run that logged to a directory its caller chose leaves no record behind",
+              result.returncode == 0 and records == [], (result.stdout, records))
+        with open(root / "logs" / module.LOG_DIRECTORY_LOCK_FILE_NAME, "a") as held:
+            fcntl.flock(held.fileno(), fcntl.LOCK_EX)
+            result = run(root, lock_file=root / "another.lock")
+        check("a run refuses a --log-dir another run is writing to, with exit 3",
+              result.returncode == 3 and "another run is writing to the log directory"
+              in result.stderr, (result.returncode, result.stderr))
 
 # --- Git calls that read no file of the checkout -----------------------------
 # Full arguments distinguish location and config reads from calls whose
@@ -1756,6 +1829,154 @@ with tempfile.TemporaryDirectory() as scratch:
     result = run(root, environment_extra={"PYTHONPATH": str(shadowed)})
     check("a sitecustomize.py already on PYTHONPATH still runs beneath the recorder",
           result.returncode == 0, (result.stdout, result.stderr))
+
+# --- Run records: what a later run removes, decided without real processes ---
+def fake_proc(root, processes):
+    """A /proc holding a stat file per pid: processes maps pid -> (state, start ticks)."""
+    proc = root / "proc"
+    for pid, (state, ticks) in processes.items():
+        (proc / str(pid)).mkdir(parents=True)
+        fields = [state] + ["0"] * 18 + [str(ticks)] + ["0"] * 10
+        (proc / str(pid) / "stat").write_text(f"{pid} (a (strange) name) {' '.join(fields)}\n")
+    return proc
+
+
+with tempfile.TemporaryDirectory() as scratch:
+    root = pathlib.Path(scratch)
+    proc = fake_proc(root, {10: ("S", 500), 11: ("Z", 600)})
+    check("start ticks are read after the command name's last ')', which may hold spaces",
+          module.process_start_ticks(10, proc) == 500, module.process_start_ticks(10, proc))
+    check("a zombie counts as ended", module.process_start_ticks(11, proc) is None)
+    check("a pid with no /proc entry counts as ended",
+          module.process_start_ticks(12, proc) is None)
+    check("a process with the same pid but another start time is another process",
+          not module.process_alive(10, 499, proc) and module.process_alive(10, 500, proc))
+
+
+def reap_case(alive_pids, temporary=False, age_seconds=0, finished=None):
+    """Run reap_finished_runs on one record whose runner is pid 1 and suite process pid 2,
+    with liveness stubbed; return (lines, trace left, log dir left, record left)."""
+    scratch = pathlib.Path(tempfile.mkdtemp())
+    try:
+        runs = scratch / "runs"
+        runs.mkdir()
+        log_dir = scratch / "logs"
+        trace = log_dir / "recorded-inputs" / "a-test.py.strace"
+        trace.mkdir(parents=True)
+        record = runs / "1-100.json"
+        record.write_text(json.dumps({
+            "runner": {"pid": 1, "start_ticks": 100}, "log_dir": str(log_dir),
+            "log_dir_is_temporary": temporary, "started": "x", "finished": finished,
+            "suite_processes": [{"pid": 2, "start_ticks": 200, "namespace_init": True}]}))
+        now = record.stat().st_mtime + age_seconds
+        lines = module.reap_finished_runs(runs, now=now,
+                                          alive=lambda pid, ticks: pid in alive_pids)
+        return lines, trace.exists(), log_dir.exists(), record.exists()
+    finally:
+        shutil.rmtree(scratch)
+
+
+lines, trace_left, log_left, record_left = reap_case({1})
+check("a run whose runner still runs is left alone",
+      trace_left and record_left and lines == [], (lines, trace_left, record_left))
+lines, trace_left, log_left, record_left = reap_case({2})
+check("a run whose runner ended but whose suite process still runs keeps its traces",
+      trace_left and record_left, (lines, trace_left, record_left))
+lines, trace_left, log_left, record_left = reap_case(set())
+check("a run whose runner and suite processes all ended loses its traces and its record",
+      not trace_left and log_left and not record_left, (lines, trace_left, record_left))
+lines, trace_left, log_left, record_left = reap_case(set(), temporary=True,
+                                                    age_seconds=3600)
+check("an ended run's temporary log directory is kept until two days have passed",
+      not trace_left and log_left and record_left, (lines, trace_left, log_left))
+lines, trace_left, log_left, record_left = reap_case(
+    set(), temporary=True, age_seconds=module.FINISHED_RUN_LOG_RETENTION_SECONDS)
+check("and removed, with its record, once they have",
+      not log_left and not record_left, (lines, log_left, record_left))
+lines, trace_left, log_left, record_left = reap_case(
+    {2}, temporary=True, age_seconds=module.FINISHED_RUN_LOG_RETENTION_SECONDS)
+check("however old, a run with a suite process still running keeps its log directory",
+      trace_left and log_left and record_left, (lines, log_left))
+
+with tempfile.TemporaryDirectory() as scratch:
+    root = pathlib.Path(scratch)
+    runs = root / "runs"
+    runs.mkdir()
+    (runs / "broken.json").write_text("{not json")
+    lines = module.reap_finished_runs(runs, alive=lambda pid, ticks: False)
+    check("a record that cannot be read is kept and named",
+          (runs / "broken.json").exists() and any("could not be read" in line
+                                                  for line in lines), lines)
+
+with tempfile.TemporaryDirectory() as scratch:
+    root = pathlib.Path(scratch)
+    runs = root / "runs"
+    runs.mkdir()
+    temp = root / "tmp"
+    old = temp / "run-all-test-suites-old"
+    recent = temp / "run-all-test-suites-recent"
+    named = temp / "run-all-test-suites-named"
+    other = temp / "another-program-old"
+    for directory in (old, recent, named, other):
+        directory.mkdir(parents=True)
+        (directory / "report.txt").write_text("report\n")
+    (runs / "9-9.json").write_text(json.dumps({"log_dir": str(named)}))
+    now = time.time() + module.FINISHED_RUN_LOG_RETENTION_SECONDS + 60
+    for directory in (old, named, other):
+        for path in (directory, directory / "report.txt"):
+            os.utime(path, (time.time(), time.time()))
+    for path in (recent, recent / "report.txt"):
+        os.utime(path, (now, now))
+    removed = module.remove_log_directories_no_record_names(runs, now=now, temp_dir=temp)
+    check("a log directory from before run records is removed once unchanged for two days",
+          removed == [old] and not old.exists(), removed)
+    check("but not a recent one, one a record names, or another program's",
+          recent.exists() and named.exists() and other.exists())
+
+with tempfile.TemporaryDirectory() as scratch:
+    root = pathlib.Path(scratch)
+    left = root / "logs" / "recorded-inputs" / "a-test.py.strace"
+    left.mkdir(parents=True)
+    lock = root / "run.lock"
+    lines = module.clean_up_after_earlier_runs(
+        lock, f"pid 4242, checkout x, started y, logs in {root / 'logs'}\n", platform="darwin")
+    check("on macOS a run still cleans up after the lock's last holder, as before",
+          not left.exists() and lines and "strace directories" in lines[0], lines)
+    check("and keeps no run records there",
+          not module.runs_directory_for(lock).exists())
+    left.mkdir(parents=True)
+    module.clean_up_after_earlier_runs(
+        lock, f"pid 4242, checkout x, started y, logs in {root / 'logs'}\n", platform="linux")
+    check("on Linux the lock's last holder alone is no reason to remove traces",
+          left.exists())
+
+# On macOS the whole run still takes the machine lock and writes no record.
+with tempfile.TemporaryDirectory() as scratch:
+    root = pathlib.Path(scratch)
+    make_repo(root, {"a-test.py": PASSES})
+    darwin_module = load_program_module()
+    darwin_module.sys = type(sys)("sys_on_darwin")
+    darwin_module.sys.__dict__.update(sys.__dict__)
+    darwin_module.sys.platform = "darwin"
+    lock = root / "run.lock"
+    darwin_arguments = ["--checkout", str(root / "repo"), "--log-dir", str(root / "logs"),
+                        "--lock-file", str(lock),
+                        "--recorded-inputs-directory", str(root / "recordings")]
+    os.environ[RAN_FILE_VARIABLE] = str(root / "ran.txt")
+    try:
+        with contextlib.redirect_stdout(io.StringIO()), \
+                contextlib.redirect_stderr(io.StringIO()):
+            with open(lock, "a+") as held:
+                fcntl.flock(held.fileno(), fcntl.LOCK_EX)
+                held_code = darwin_module.main(darwin_arguments)
+            code = darwin_module.main(darwin_arguments)
+    finally:
+        del os.environ[RAN_FILE_VARIABLE]
+    check("on macOS a run refuses while another holds the machine lock",
+          held_code == module.EXIT_LOCKED, held_code)
+    check("and runs when the lock is free, naming itself in it, with no run record",
+          code == 0 and lock.read_text().startswith("pid ")
+          and not module.runs_directory_for(lock).exists(), (code, lock.read_text()))
 
 # --- The defaults -------------------------------------------------------------
 defaults = module.parse_arguments([])
