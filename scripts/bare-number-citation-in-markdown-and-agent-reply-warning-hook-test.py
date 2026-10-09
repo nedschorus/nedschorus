@@ -136,6 +136,15 @@ check("a quote inside a code span does not count when deciding whether a name fo
 check("a quote outside a code span still closes a quotation",
       found('Use " as the delimiter; task #244, "Fix parser".') == ["task #244"],
       found('Use " as the delimiter; task #244, "Fix parser".'))
+quoted_url_named = 'Open "https://github.com/x/y" then task #244, "Fix parser".'
+check("a quoted URL's closing quote still counts, so a named task after it is not reported",
+      found(quoted_url_named) == [], found(quoted_url_named))
+link_text_quote = '[a "b](https://x.y/z) then task #244, "Fix parser".'
+check("a quote inside a link's text does not count when deciding whether a name follows",
+      found(link_text_quote) == [], found(link_text_quote))
+quoted_url_then_quoted_reference = 'Open "https://github.com/x/y" and "PR 931" "is open".'
+check("after a quoted URL, a reference inside a quotation is still reported",
+      found(quoted_url_then_quoted_reference) == ["PR 931"], found(quoted_url_then_quoted_reference))
 check("a reference followed by other words is still reported",
       found('task 361 is "done"') == ["task 361"], found('task 361 is "done"'))
 for unnamed, expected in (('"Fix PR 931"', ["PR 931"]),
