@@ -1024,7 +1024,7 @@ def ruling_conflict_comment_body(repo: str, conflict, ruling_title):
 
 
 def record_ruling_conflict(repo: str, number: int, conflict, runner,
-                           report, operation_done: str):
+                           report, edit_not_yet_landed: bool):
     """Record ghi-info's ruling question on an issue that already exists.
 
     Called as soon as the issue exists, before anything is landed: the
@@ -1033,7 +1033,11 @@ def record_ruling_conflict(repo: str, number: int, conflict, runner,
     here, a timed-out `gh` call included, leaves the issue as it is and
     says which question went unrecorded. A rerun that asks again and gets
     the same question finds its comment already there and posts no second
-    one."""
+    one.
+
+    On the edit path this runs before the edit lands, so nothing it prints
+    may say the issue was edited, and its failure leaves a rerun that asks
+    ghi-info again, unlike a create's."""
     ruling_title = None
     try:
         if conflict.ruling_issue is not None:
@@ -1053,8 +1057,16 @@ def record_ruling_conflict(repo: str, number: int, conflict, runner,
             runner(["gh", "issue", "comment", str(number), "--repo", repo,
                     "--body", body])
     except (Refused, subprocess.TimeoutExpired) as failure:
+        if edit_not_yet_landed:
+            raise Refused(
+                f"Recording ghi-info's ruling question on issue {number} "
+                f"failed, so this edit was not landed: {failure}\n"
+                f"Tell the user that this edit of issue {number} may "
+                f"conflict with a ruling of his: {conflict.sentence}\n"
+                "Rerun this command once the failure is fixed; the rerun "
+                "asks ghi-info again and records its question.", 1)
         raise Refused(
-            f"Issue {number} was {operation_done}, but recording ghi-info's "
+            f"Issue {number} was filed, but recording ghi-info's "
             f"ruling question on it failed: {failure}\n"
             f"Tell the user that issue {number} may conflict with a ruling "
             f"of his: {conflict.sentence}\n"
@@ -1065,8 +1077,13 @@ def record_ruling_conflict(repo: str, number: int, conflict, runner,
     else:
         ruling = (f"the ruling in GHI [{ruling_title}](https://github.com/"
                   f"{repo}/issues/{conflict.ruling_issue})")
-    report(f"{operation_done.capitalize()} issue {number}; ghi-info thinks "
-           f"it conflicts with {ruling}; recorded on the issue for the user; "
+    if edit_not_yet_landed:
+        done = (f"Issue {number}: ghi-info thinks this edit conflicts with "
+                f"{ruling}")
+    else:
+        done = (f"Filed issue {number}; ghi-info thinks it conflicts with "
+                f"{ruling}")
+    report(f"{done}; recorded on the issue for the user; "
            "the ruling stands until he changes it.\n"
            "Follow that ruling until the user changes it.")
 
@@ -1506,7 +1523,7 @@ def create(path: Path, repo: str, repository_root: Path, runner, report):
         number = file_issue(repo, title, key, runner, report)
         if conflict is not None:
             record_ruling_conflict(repo, number, conflict, runner, report,
-                                   "filed")
+                                   edit_not_yet_landed=False)
 
     destination = land_file(repo, number, title, path, repository_root,
                             runner, report)
@@ -2364,7 +2381,7 @@ def edit(path: Path, repo: str, repository_root: Path, runner, report):
                               report, exclude_issue=number)
         if conflict is not None:
             record_ruling_conflict(repo, number, conflict, runner, report,
-                                   "edited")
+                                   edit_not_yet_landed=True)
     pending = land_edit(repo, number, title, relative, staged, on_main,
                         moved_from, moved_from_on_main, state, branch,
                         repository_root, runner, report)

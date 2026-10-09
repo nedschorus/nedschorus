@@ -1293,7 +1293,8 @@ def run_cases(scratch: Path):
     recording = Recorder({"gh issue view 46": Completed(
         "Closed issues are frozen\n")})
     tool.record_ruling_conflict(REPO, 900, conflict_46, recording,
-                                recorded_lines.append, "filed")
+                                recorded_lines.append,
+                                edit_not_yet_landed=False)
     comment_calls = [call for call in recording.calls
                      if call[:3] == ["gh", "issue", "comment"]]
     check("recording labels the issue and comments ghi-info's question, "
@@ -1319,7 +1320,7 @@ def run_cases(scratch: Path):
     unnamed_lines = []
     tool.record_ruling_conflict(REPO, 900, tool.RulingConflict(
         None, "the ruling may not hold"), unnamed, unnamed_lines.append,
-        "edited")
+        edit_not_yet_landed=True)
     unnamed_comment = [call for call in unnamed.calls
                        if call[:3] == ["gh", "issue", "comment"]]
     check("a question naming no issue is recorded as naming none, and no "
@@ -1328,14 +1329,16 @@ def run_cases(scratch: Path):
           and len(unnamed_comment) == 1
           and "ghi-info named no issue holding the ruling"
           in unnamed_comment[0][-1]
-          and unnamed_lines[-1].startswith("Edited issue 900;"),
+          and unnamed_lines[-1].startswith(
+              "Issue 900: ghi-info thinks this edit conflicts with a ruling "
+              "of the user's"),
           (unnamed.calls, unnamed_lines))
 
     failing = Recorder({"gh issue comment": Completed(
         "", returncode=1, stderr="HTTP 502")})
     try:
         tool.record_ruling_conflict(REPO, 900, conflict_46, failing, quiet,
-                                    "filed")
+                                    edit_not_yet_landed=False)
         check("a failed comment exits nonzero, saying the issue is written "
               "and what failed", False, "it reported success")
     except tool.Refused as refusal:
@@ -1353,7 +1356,7 @@ def run_cases(scratch: Path):
         ["gh", "issue", "comment"], 120)})
     try:
         tool.record_ruling_conflict(REPO, 900, conflict_46, timing_out, quiet,
-                                    "filed")
+                                    edit_not_yet_landed=False)
         check("a timed-out gh call while recording exits nonzero, saying the "
               "issue is written and what the user must be told", False,
               "it reported success")
@@ -1378,7 +1381,7 @@ def run_cases(scratch: Path):
             REPO, conflict_46, "Closed issues are frozen") + "\n"),
     })
     tool.record_ruling_conflict(REPO, 900, conflict_46, already_there, quiet,
-                                "edited")
+                                edit_not_yet_landed=True)
     check("a question already commented on the issue is not commented twice",
           not already_there.ran("gh issue comment")
           and already_there.ran("--add-label conflicts-with-a-ruling"),
@@ -1939,12 +1942,55 @@ def run_edit_cases(scratch: Path):
               and conflicting_edit.ran("gh issue edit 570 --repo "
                                        "nedschorus/nedschorus --add-label "
                                        "conflicts-with-a-ruling")
-              and any(line.startswith("Edited issue 570;")
-                      for line in edit_lines),
+              and any(line.startswith("Issue 570: ghi-info thinks this "
+                                      "edit conflicts with")
+                      for line in edit_lines)
+              and not any("Edited issue" in line for line in edit_lines),
               (edit_order, edit_lines))
     except tool.Refused as refusal:
         check("edit with a ruling question records it on the issue before "
               "landing the edit", False, f"refused: {refusal}")
+
+    # Recording runs before the edit lands, so its failure must not claim
+    # the edit landed, and must send the agent to the rerun that asks
+    # ghi-info again.
+    failing_edit_recording = Recorder({
+        **conflicting_edit.answers,
+        "gh issue comment": Completed("", returncode=1, stderr="HTTP 502"),
+    })
+    edit_recording_case = ("an edit whose recording fails lands nothing and "
+                           "says so, sending the agent to rerun")
+    try:
+        tool.edit(source, REPO, scratch, failing_edit_recording, quiet)
+        check(edit_recording_case, False, "it reported success")
+    except tool.Refused as refusal:
+        refused_text = str(refusal)
+        check(edit_recording_case,
+              refusal.code == 1
+              and not failing_edit_recording.ran("git push")
+              and not failing_edit_recording.ran("gh pr create")
+              and "HTTP 502" in refused_text
+              and "was not landed" in refused_text
+              and "was edited" not in refused_text
+              and "Do not rerun" not in refused_text
+              and "the rerun asks ghi-info again" in refused_text
+              and "Tell the user that this edit of issue 570 may conflict "
+              "with a ruling of his: closed issues are frozen"
+              in refused_text,
+              (refused_text, failing_edit_recording.commands()))
+    rerun_after_failed_recording = Recorder(dict(conflicting_edit.answers))
+    try:
+        tool.edit(source, REPO, scratch, rerun_after_failed_recording, quiet)
+        check("the rerun after a failed recording asks ghi-info again, "
+              "records the question and lands the edit",
+              rerun_after_failed_recording.ran("ghi-info-ask.py")
+              and rerun_after_failed_recording.ran("gh issue comment 570")
+              and rerun_after_failed_recording.ran("gh pr create"),
+              rerun_after_failed_recording.commands())
+    except tool.Refused as refusal:
+        check("the rerun after a failed recording asks ghi-info again, "
+              "records the question and lands the edit", False,
+              f"refused: {refusal}")
 
     # The landing failing after the push leaves state already-pushed, and a
     # rerun from there skips adjudication; the question must be recorded
