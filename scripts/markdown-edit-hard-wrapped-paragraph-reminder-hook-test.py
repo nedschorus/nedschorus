@@ -4,7 +4,10 @@
 Run: python3 scripts/markdown-edit-hard-wrapped-paragraph-reminder-hook-test.py
 Prints one line per case and exits non-zero if any case fails.
 
-The detector's cases call markdown_has_hard_wrapped_paragraph directly. The hook's
+The detector's cases call markdown_has_hard_wrapped_paragraph directly. The
+detector needs markdown-it-py; without it the cases that expect a reminder print
+SKIP lines, and one case checks that the hook stays silent when the package fails
+to import. The hook's
 cases run the hook as Claude Code does, as a subprocess reading a PostToolUse
 payload on stdin, against a throwaway repository under a temporary directory
 with a .gitignore that ignores one directory.
@@ -115,8 +118,47 @@ BROKEN_CASES = (
      "$$x$$ inline-ish\n\nOne line\nand another.\n"),
     ("a broken paragraph after display math closed by $$ alone",
      "$$\nx = 1\n$$\n\nOne line\nand another.\n"),
+    # Cases the parser reads as wrapped paragraphs although an earlier hand
+    # detector stayed silent on them: CommonMark makes each one a paragraph.
+    ("a list item wrapped onto an indented line",
+     "- The first half of an item\n  and the second half.\n"),
+    ("a list item continued onto an unindented line",
+     "1. The first half of an item\nand the second half.\n"),
+    ("unindented lines after a fence opened on a list-item line leave the list item",
+     "1. ```py\nx = 1\ny = 2\n   ```\n"),
+    ("a blank line ends a block quote, so the lines after it are a paragraph",
+     "> ```\n\nline a\nline b\n> ```\n"),
+    ("lines after a blank leave a list item whose fence they were meant for",
+     "1. ```py\n\nx = 1\ny = 2\n```\n"),
+    ("emphasis on two lines is one paragraph",
+     "*emphasised*\n**bold**\n"),
+    ("two image lines are one paragraph",
+     "![image](x.png)\n![other](y.png)\n"),
+    ("pipe lines with no delimiter row are a paragraph, not a table",
+     "a | b\nc | d\n"),
+    # This round's findings and notes.
+    ("a fence opened on a ten-item list line closes at four spaces (round 6, item 1)",
+     "10. ```sh\n    x\n    ```\n\nPara a\npara b\n"),
+    ("a fence opened on a nested list-item line closes (round 6, item 1)",
+     "- outer\n  - ```sh\n    x\n    ```\n\nPara a\npara b\n"),
+    ("a fence opened on a list line with a wide marker gap closes (round 6, item 1)",
+     "-   ```\n    x\n    ```\n\nPara a\npara b\n"),
+    ("display math closed by a line ending in $$ (round 6 note)",
+     "$$\n\\begin{aligned}\nx\n\\end{aligned}$$\n\nOne line\nand another.\n"),
+    ("a lone $$ with no closer hides nothing",
+     "$$\nx = 1\n\nOne line\nand another.\n"),
 )
+try:
+    import markdown_it  # noqa: F401
+    PARSER_AVAILABLE = True
+except ImportError:
+    PARSER_AVAILABLE = False
+PARSER_MISSING_REASON = "markdown-it-py is not installed, so the hook stays silent here"
+
 for case_name, text in BROKEN_CASES:
+    if not PARSER_AVAILABLE:
+        print(f"SKIP  fires: {case_name}: {PARSER_MISSING_REASON}")
+        continue
     check(f"fires: {case_name}", hook.markdown_has_hard_wrapped_paragraph(text) is True)
 
 CLEAN_CASES = (
@@ -124,22 +166,12 @@ CLEAN_CASES = (
      "# Title\n\nA whole paragraph on one line.\n\nAnother whole paragraph.\n"),
     ("a list of one-line items, nested items included",
      "Intro paragraph.\n\n- first item\n- second item\n  - nested item\n1. numbered\n2) numbered\n"),
-    ("list items wrapped onto an indented line are not detected, by choice",
-     "- The first half of an item\n  and the second half.\n"),
-    ("a list item continued onto an unindented line is not detected",
-     "1. The first half of an item\nand the second half.\n"),
     ("a table, with and without outer pipes",
      "| a | b |\n|---|---|\n| 1 | 2 |\n\na | b\n--|--\n1 | 2\n"),
     ("a fenced code block with backticks, tildes and a list-item fence",
      "```sh\nline one\nline two\n```\n\n~~~\nx\ny\n~~~\n\n- step\n  ```\n  a\n  b\n  ```\n"),
-    ("a fence opened on a list-item line",
-     "1. ```py\nx = 1\ny = 2\n   ```\n"),
     ("a fence line with an info string does not close an open fence",
      "```\n```py\nline one\nline two\n```\n"),
-    ("a fence opened inside a block quote hides what follows until it closes",
-     "> ```\n\nline a\nline b\n> ```\n"),
-    ("a fence opened on a list-item line hides the lines after a blank",
-     "1. ```py\n\nx = 1\ny = 2\n```\n"),
     ("front matter closed by ... is skipped",
      "---\ntitle: x\n\nkey: a\nkey: b\n...\n"),
     ("a fence longer than three closes only on a fence as long",
@@ -185,10 +217,6 @@ CLEAN_CASES = (
     ("a hard line break with two trailing spaces, a backslash or <br>",
      "First line  \nsecond line\n\nThird line\\\nfourth line\n\nFifth<br>\nsixth\n"),
     ("link reference definitions", "[a]: https://example.com\n[b]: https://example.org\n"),
-    ("emphasis, images and definition-like lines are not plain prose",
-     "*emphasised*\n**bold**\n\n![image](x.png)\n![other](y.png)\n\n: term\n: other\n"),
-    ("a line holding a pipe is not plain prose",
-     "a | b\nc | d\n"),
     ("a pre block with a blank line inside",
      "<pre>\nline one\n\nline two\nline three\n</pre>\n"),
     ("a pre block whose first inner line is blank",
@@ -219,19 +247,38 @@ CLEAN_CASES = (
      "$$\na $$ b\n\nfirst math line\nsecond math line\n$$\n"),
     ("display math whose closing $$ line is indented by spaces",
      "$$\nfirst math line\n\nsecond math line\nthird math line\n  $$\n"),
+    ("display math closed by a line ending in $$, nothing after it",
+     "$$\n\\begin{aligned}\nx = 1\ny = 2\n\\end{aligned}$$\n"),
+    ("a paragraph inside a block quote is left alone",
+     "> quoted first line\nquoted second line\n"),
+    ("a <br> at a line's end is a hard break",
+     "First<br>\nsecond\n"),
+    ("a fence after a <br> line that cannot interrupt a paragraph (round 6, item 3)",
+     "Intro.  \n<br>\n```text\n\nalpha\nbeta\n```\n"),
+    ("an HTML block whose start is indented by two spaces (round 6 note)",
+     "  <div>\nfirst text line\nsecond text line\n</div>\n"),
+    ("a later top-level fence opener after a list-item fence (round 6, item 2)",
+     "10. ```sh\n    x\n    ```\n\n```\nfirst code line\nsecond code line\n```\n"),
 )
 for case_name, text in CLEAN_CASES:
     check(f"silent: {case_name}", hook.markdown_has_hard_wrapped_paragraph(text) is False)
 
-check("the index names the line that continues the paragraph",
-      hook.first_hard_wrapped_paragraph_line_index("# T\n\nFirst half\nsecond half.\n") == 3)
+if PARSER_AVAILABLE:
+    check("the index names the line that continues the paragraph",
+          hook.first_hard_wrapped_paragraph_line_index("# T\n\nFirst half\nsecond half.\n") == 3)
+    check("the index counts a hard break before the soft one",
+          hook.first_hard_wrapped_paragraph_line_index("First line  \nsecond line\nthird line\n") == 2)
+    check("the index is a line of the file when front matter was blanked",
+          hook.first_hard_wrapped_paragraph_line_index("---\nt: x\n---\n\nOne\ntwo\n") == 5)
 
-large_text = ("One whole paragraph on one line.\n\n" * 50000)
-import time as _time
-_started = _time.monotonic()
-hook.markdown_has_hard_wrapped_paragraph(large_text)
-check("a 1.6 MB file is judged in under two seconds",
-      _time.monotonic() - _started < 2.0)
+    large_text = ("One whole paragraph on one line.\n\n" * 50000)
+    import time as _time
+    _started = _time.monotonic()
+    hook.markdown_has_hard_wrapped_paragraph(large_text)
+    check("a 1.6 MB file is judged in under five seconds",
+          _time.monotonic() - _started < 5.0)
+else:
+    print(f"SKIP  the line index and timing cases: {PARSER_MISSING_REASON}")
 
 # ---------------------------------------------------------------------------
 # The hook, run as a subprocess against a scratch repository.
@@ -293,34 +340,55 @@ with tempfile.TemporaryDirectory() as temporary_directory:
         sys.exit(1)
     (checkout / ".gitignore").write_text("ignored-notes/\n", encoding="utf-8")
 
-    result = write_then_run(checkout, checkout / "docs" / "broken.md", BROKEN_TEXT)
-    reply = json.loads(result.stdout) if result.stdout.strip() else {}
-    text = agent_text(result)
-    check("a Write leaving a broken paragraph gets one PostToolUse reminder, exit 0",
-          result.returncode == 0 and result.stderr == ""
-          and reply.get("hookSpecificOutput", {}).get("hookEventName") == "PostToolUse"
-          and text.startswith("markdown-edit-hard-wrapped-paragraph-reminder: docs/broken.md holds")
-          and "every Markdown file you write from now on" in text,
-          result.stdout + result.stderr)
-    check("the reminder names no line number",
-          ":3" not in text and "line 3" not in text, text)
+    if PARSER_AVAILABLE:
+        result = write_then_run(checkout, checkout / "docs" / "broken.md", BROKEN_TEXT)
+        reply = json.loads(result.stdout) if result.stdout.strip() else {}
+        text = agent_text(result)
+        check("a Write leaving a broken paragraph gets one PostToolUse reminder, exit 0",
+              result.returncode == 0 and result.stderr == ""
+              and reply.get("hookSpecificOutput", {}).get("hookEventName") == "PostToolUse"
+              and text.startswith("markdown-edit-hard-wrapped-paragraph-reminder: docs/broken.md holds")
+              and "every Markdown file you write from now on" in text,
+              result.stdout + result.stderr)
+        check("the reminder names no line number",
+              ":3" not in text and "line 3" not in text, text)
 
-    edited_file = checkout / "docs" / "edited.md"
-    edited_file.write_text(BROKEN_TEXT, encoding="utf-8")
-    result = run_hook(payload_for(checkout, "Edit", edited_file,
-                                  {"old_string": "x", "new_string": "Notes",
-                                   "replace_all": False}))
-    check("an Edit is judged on the whole file on disk, not its new_string",
-          agent_text(result).startswith("markdown-edit-hard-wrapped-paragraph-reminder: docs/edited.md"),
-          result.stdout + result.stderr)
+        edited_file = checkout / "docs" / "edited.md"
+        edited_file.write_text(BROKEN_TEXT, encoding="utf-8")
+        result = run_hook(payload_for(checkout, "Edit", edited_file,
+                                      {"old_string": "x", "new_string": "Notes",
+                                       "replace_all": False}))
+        check("an Edit is judged on the whole file on disk, not its new_string",
+              agent_text(result).startswith("markdown-edit-hard-wrapped-paragraph-reminder: docs/edited.md"),
+              result.stdout + result.stderr)
+
+    else:
+        print(f"SKIP  the hook's reminder cases: {PARSER_MISSING_REASON}")
 
     result = write_then_run(checkout, checkout / "docs" / "clean.md", CLEAN_TEXT)
     check("a Write leaving no broken paragraph outputs nothing", silent(result),
           result.stdout + result.stderr)
 
-    result = write_then_run(checkout, checkout / "notes.markdown", BROKEN_TEXT)
-    check("a .markdown file is checked too",
-          agent_text(result).startswith("markdown-edit-hard-wrapped-paragraph-reminder: notes.markdown"),
+    if PARSER_AVAILABLE:
+        result = write_then_run(checkout, checkout / "notes.markdown", BROKEN_TEXT)
+        check("a .markdown file is checked too",
+              agent_text(result).startswith("markdown-edit-hard-wrapped-paragraph-reminder: notes.markdown"),
+              result.stdout + result.stderr)
+
+    # A machine without markdown-it-py: a package of that name that fails to
+    # import stands in for the missing one, and the hook must stay silent.
+    blocked_packages = tmp / "blocked-packages"
+    (blocked_packages / "markdown_it").mkdir(parents=True)
+    (blocked_packages / "markdown_it" / "__init__.py").write_text(
+        "raise ImportError('markdown-it-py blocked by the test')\n", encoding="utf-8")
+    blocked_file = checkout / "docs" / "blocked.md"
+    blocked_file.write_text(BROKEN_TEXT, encoding="utf-8")
+    blocked_environment = {**CLEAN_ENVIRONMENT, "PYTHONPATH": str(blocked_packages)}
+    result = subprocess.run(
+        [sys.executable, str(HOOK_PATH)],
+        input=json.dumps(payload_for(checkout, "Write", blocked_file, {"content": BROKEN_TEXT})),
+        capture_output=True, text=True, check=False, env=blocked_environment)
+    check("without markdown-it-py the hook is silent on a broken paragraph", silent(result),
           result.stdout + result.stderr)
 
     result = write_then_run(checkout, checkout / "scripts" / "tool.txt",

@@ -8,7 +8,13 @@ Read cwd from the payload; CLAUDE_PROJECT_DIR can name a different checkout in a
 The whole file is read from disk after the tool ran, for Edit as for Write, so an
 Edit inside a fenced code block is judged with the fence visible.
 The reminder carries no line numbers: the agent is to rejoin every broken
-paragraph in the file, and to write later Markdown files the same way."""
+paragraph in the file, and to write later Markdown files the same way.
+
+Which lines form a paragraph is decided by markdown-it-py's CommonMark parser, not
+by this file: a paragraph, in a list item or at the top level, is broken when its
+inline content holds a soft line break. Without markdown-it-py installed, the hook
+stays silent, so a machine lacking the package gets no reminder rather than a
+wrong one."""
 
 import json
 import re
@@ -29,42 +35,16 @@ REMINDER_MESSAGE = (
     "table row as one line, however long; break lines only where Markdown needs a break."
 )
 
-# A fence may sit inside block quotes and may open on a list-item line.
-FENCE_OPENING_PATTERN = re.compile(r"^[ >]*(?:(?:[-*+]|\d{1,9}[.)])[ \t]+)?(`{3,}|~{3,})(.*)$")
-FENCE_LINE_PREFIX_PATTERN = re.compile(r"^[ >]*")
-ORDERED_LIST_MARKER_PATTERN = re.compile(r"^\d{1,9}[.)]")
-ATX_HEADING_PATTERN = re.compile(r"^#{1,6}(?:\s|$)")
-SETEXT_UNDERLINE_PATTERN = re.compile(r"^ {0,3}(?:=+|-+)\s*$")
-PROSE_FIRST_CHARACTER_PATTERN = re.compile(r"^[\w\"'(\u201c\u2018<]")
-# CommonMark HTML block starts: a line opening one of these is HTML, not prose.
-HTML_BLOCK_SPECIAL_START_PATTERN = re.compile(r"^<(?:!--|\?|![A-Za-z]|!\[CDATA\[)")
-HTML_BLOCK_TAG_NAMES = frozenset("""
-    address article aside base basefont blockquote body caption center col colgroup dd
-    details dialog dir div dl dt fieldset figcaption figure footer form frame frameset
-    h1 h2 h3 h4 h5 h6 head header hr html iframe legend li link main menu menuitem nav
-    noframes ol optgroup option p param pre script section search source style summary
-    table tbody td textarea tfoot th thead title tr track ul
-""".split())
-HTML_BLOCK_TAG_START_PATTERN = re.compile(r"^</?([A-Za-z][A-Za-z0-9-]*)(?=[\s/>]|$)")
-# A complete open or closing tag standing alone on its line also starts an HTML block.
-HTML_LONE_TAG_LINE_PATTERN = re.compile(
-    r"^(?:<[A-Za-z][A-Za-z0-9-]*(?:\s+[A-Za-z_:][\w.:-]*(?:\s*=\s*(?:\"[^\"]*\"|'[^']*'|[^\s\"'=<>`]+))?)*\s*/?>"
-    r"|</[A-Za-z][A-Za-z0-9-]*\s*>)\s*$")
-# Blocks that end only at their terminator, blank lines inside them included: the
-# CommonMark raw HTML blocks (pre, script, style, textarea, comments, processing
-# instructions, declarations, CDATA) and display math between lines holding $$ alone.
-RAW_BLOCK_START_AND_END_PATTERNS = (
-    (re.compile(r"^ {0,3}<(?:pre|script|style|textarea)(?=[\s>]|$)", re.IGNORECASE),
-     re.compile(r"</(?:pre|script|style|textarea)>", re.IGNORECASE)),
-    (re.compile(r"^ {0,3}<!--"), re.compile(r"-->")),
-    (re.compile(r"^ {0,3}<\?"), re.compile(r"\?>")),
-    (re.compile(r"^ {0,3}<!\[CDATA\["), re.compile(r"\]\]>")),
-    (re.compile(r"^ {0,3}<![A-Za-z]"), re.compile(r">")),
-    (re.compile(r"^ {0,3}\$\$[ \t]*$"), re.compile(r"^[ \t]*\$\$[ \t]*$")),
-)
-THEMATIC_BREAK_PATTERN = re.compile(r"^ {0,3}([-*_])(?:[ \t]*\1){2,}[ \t]*$")
-# A fence indented four spaces or more is a line of an indented code block.
-FENCE_MAXIMUM_INDENTATION = 3
+# Front matter opens on the file's first line and closes on a line holding --- or ...
+FRONT_MATTER_DELIMITER = "---"
+FRONT_MATTER_CLOSERS = ("---", "...")
+# Display math between a line holding $$ alone and a line holding $$ alone, or a
+# line ending in $$ such as \end{aligned}$$. CommonMark has no math, so without
+# blanking these lines the parser reads display math as a paragraph.
+DISPLAY_MATH_OPENER_PATTERN = re.compile(r"^[ \t]*\$\$[ \t]*$")
+DISPLAY_MATH_CLOSER_PATTERN = re.compile(r"\$\$[ \t]*$")
+# An inline <br> at a line's end is a hard break the author chose, like two trailing spaces.
+LINE_END_BREAK_TAG_PATTERN = re.compile(r"^<br\s*/?>$", re.IGNORECASE)
 
 def run_git(arguments, working_directory: Path):
     return subprocess.run(["git", *arguments], cwd=str(working_directory),
@@ -101,49 +81,36 @@ def git_would_track(root: Path, relative_path: str) -> bool:
     return run_git(["check-ignore", "-q", "--", relative_path], root).returncode == 1
 
 
-def ends_in_hard_line_break(line: str) -> bool:
-    # A backslash makes a hard break only when it is itself unescaped: a line
-    # ending "a\\\\" ends in an escaped backslash, and "a\\ " is no break at all.
-    if line.endswith("  ") or line.rstrip().lower().endswith(("<br>", "<br/>", "<br />")):
-        return True
-    return (len(line) - len(line.rstrip("\\"))) % 2 == 1
+def lines_hidden_from_the_parser(text: str) -> str:
+    """Return text with front matter and display math blanked, line count kept,
+    so the parser's line numbers still name lines of the file."""
+    lines = text.split("\n")
+    if lines and lines[0].rstrip("\r").rstrip() == FRONT_MATTER_DELIMITER:
+        for closing_index in range(1, len(lines)):
+            if lines[closing_index].rstrip("\r").rstrip() in FRONT_MATTER_CLOSERS:
+                for index in range(closing_index + 1):
+                    lines[index] = ""
+                break
+    index = 0
+    while index < len(lines):
+        if DISPLAY_MATH_OPENER_PATTERN.match(lines[index].rstrip("\r")):
+            for closing_index in range(index + 1, len(lines)):
+                if DISPLAY_MATH_CLOSER_PATTERN.search(lines[closing_index].rstrip("\r")):
+                    for blanked in range(index, closing_index + 1):
+                        lines[blanked] = ""
+                    index = closing_index
+                    break
+            # An opener with no closer blanks nothing: the rest of the file stays visible.
+        index += 1
+    return "\n".join(lines)
 
 
-def starts_html_block(line: str) -> bool:
-    if HTML_BLOCK_SPECIAL_START_PATTERN.match(line) or HTML_LONE_TAG_LINE_PATTERN.match(line):
-        return True
-    tag_match = HTML_BLOCK_TAG_START_PATTERN.match(line)
-    return bool(tag_match) and tag_match.group(1).lower() in HTML_BLOCK_TAG_NAMES
-
-
-def raw_block_end_pattern(line: str):
-    """Return the pattern that ends the raw block this line opens, or None when the
-    line opens no raw block or the block also ends on this line."""
-    for start_pattern, end_pattern in RAW_BLOCK_START_AND_END_PATTERNS:
-        start_match = start_pattern.match(line)
-        if start_match:
-            if end_pattern.search(line, start_match.end()):
-                return None
-            return end_pattern
-    return None
-
-
-def opens_raw_block(line: str) -> bool:
-    return any(start_pattern.match(line) for start_pattern, _ in RAW_BLOCK_START_AND_END_PATTERNS)
-
-
-def is_plain_prose(line: str) -> bool:
-    """True for a line that can only be paragraph text: unindented, starting with a
-    word character, a quotation mark, a parenthesis, or a "<" that opens no HTML
-    block, holding no table pipe, and not a thematic break such as ___."""
-    if not PROSE_FIRST_CHARACTER_PATTERN.match(line) or "|" in line:
-        return False
-    if THEMATIC_BREAK_PATTERN.match(line):
-        return False
-    if ORDERED_LIST_MARKER_PATTERN.match(line):
-        return False
-    if line.startswith("<"):
-        return not starts_html_block(line)
+def counts_as_line_break(children, position: int) -> bool:
+    """A soft break counts unless the inline token before it is a <br> tag."""
+    if position > 0:
+        previous = children[position - 1]
+        if previous.type == "html_inline" and LINE_END_BREAK_TAG_PATTERN.match(previous.content.strip()):
+            return False
     return True
 
 
@@ -153,121 +120,35 @@ def markdown_has_hard_wrapped_paragraph(text: str) -> bool:
 
 def first_hard_wrapped_paragraph_line_index(text: str):
     """Return the 0-based index of the first line that continues a paragraph begun
-    on the line before it, or None.
+    on the line before it, or None, also None when markdown-it-py is missing.
 
-    Only plain paragraphs count: a run of plain-prose lines (see is_plain_prose)
-    that begins after a blank line, an ATX heading, a thematic break, a closed
-    fence, a closed raw block, front matter or the file's start. A raw block (see
-    RAW_BLOCK_START_AND_END_PATTERNS) is skipped to its terminator, blank lines
-    inside it included. Any other HTML block is skipped to its next blank line,
-    whatever it holds. A fence line indented four spaces or more opens no fence:
-    it is a line of an indented code block, so a fence nested that deep in a list
-    item is not seen either, and its lines, being indented, are never prose. A run begun anywhere else continues some other block,
-    such as a block quote, list item, HTML block or link reference definition, and
-    is left alone; so is a run that a setext underline turns into a heading.
-    List items wrapped onto an indented line are not detected, by choice: a missed
-    reminder costs little, while a false one tells the agent to join lines that
-    must stay apart."""
-    lines = [line.rstrip("\r") for line in text.split("\n")]
-    index = 0
-    if lines and lines[0].rstrip() == "---":
-        for closing_index in range(1, len(lines)):
-            if lines[closing_index].rstrip() in ("---", "..."):
-                index = closing_index + 1
-                break
-
-    fence_character = None
-    fence_length = 0
-    # Whether the open fence's opening line sat inside a block quote: only then
-    # may its closing line carry the quote's ">" markers.
-    fence_inside_block_quote = False
-    raw_block_end = None
-    inside_html_block = False
-    run_start = None
-    # Whether a paragraph may begin on the current line.
-    paragraph_may_begin = True
-
-    def broken_line_in_run(run_end: int, terminating_line: str):
-        if run_start is None or run_end - run_start < 2:
-            return None
-        if SETEXT_UNDERLINE_PATTERN.match(terminating_line):
-            return None
-        for line_index in range(run_start, run_end - 1):
-            if not ends_in_hard_line_break(lines[line_index]):
-                return line_index + 1
+    A paragraph is what the CommonMark parser calls one, at the top level or in a
+    list item. A paragraph inside a block quote is left alone: a quote often keeps
+    the line breaks of the text it quotes. Hard breaks, two trailing spaces, a
+    trailing backslash or a trailing <br>, are breaks the author chose."""
+    try:
+        from markdown_it import MarkdownIt
+    except ImportError:
         return None
-
-    while index < len(lines):
-        line = lines[index]
-        if fence_character is not None:
-            if fence_inside_block_quote:
-                body = FENCE_LINE_PREFIX_PATTERN.sub("", line).rstrip()
-            else:
-                # A closer may be indented at most three columns; a tab counts as four.
-                expanded = line.expandtabs(4)
-                body = expanded.strip()
-                if len(expanded) - len(expanded.lstrip(" ")) > FENCE_MAXIMUM_INDENTATION:
-                    body = ""
-            if body.startswith(fence_character * fence_length) and set(body) == {fence_character}:
-                fence_character = None
-                paragraph_may_begin = True
-            index += 1
-            continue
-
-        if raw_block_end is not None:
-            if raw_block_end.search(line):
-                raw_block_end = None
-                paragraph_may_begin = True
-            index += 1
-            continue
-
-        if inside_html_block:
-            # An HTML block that is not a raw block ends only at a blank line, so
-            # a comment closing or a ___ inside it lets no paragraph begin.
-            if not line.strip():
-                inside_html_block = False
-                paragraph_may_begin = True
-            index += 1
-            continue
-
-        if opens_raw_block(line):
-            found = broken_line_in_run(index, line)
-            if found is not None:
-                return found
-            run_start = None
-            raw_block_end = raw_block_end_pattern(line)
-            paragraph_may_begin = raw_block_end is None
-            index += 1
-            continue
-
-        if is_plain_prose(line):
-            if run_start is None and paragraph_may_begin:
-                run_start = index
-            paragraph_may_begin = False
-            index += 1
-            continue
-
-        found = broken_line_in_run(index, line)
-        if found is not None:
-            return found
-        run_start = None
-
-        fence_match = FENCE_OPENING_PATTERN.match(line)
-        indentation = len(line) - len(line.lstrip(" "))
-        if (fence_match and indentation <= FENCE_MAXIMUM_INDENTATION
-                and not (fence_match.group(1)[0] == "`" and "`" in fence_match.group(2))):
-            fence_character = fence_match.group(1)[0]
-            fence_length = len(fence_match.group(1))
-            fence_inside_block_quote = ">" in line[:fence_match.start(1)]
-            paragraph_may_begin = False
-        elif starts_html_block(line):
-            inside_html_block = True
-            paragraph_may_begin = False
-        else:
-            paragraph_may_begin = (not line.strip() or bool(ATX_HEADING_PATTERN.match(line))
-                                   or bool(THEMATIC_BREAK_PATTERN.match(line)))
-        index += 1
-    return broken_line_in_run(len(lines), "")
+    tokens = MarkdownIt("commonmark").enable("table").parse(lines_hidden_from_the_parser(text))
+    block_quote_depth = 0
+    for position, token in enumerate(tokens):
+        if token.type == "blockquote_open":
+            block_quote_depth += 1
+        elif token.type == "blockquote_close":
+            block_quote_depth -= 1
+        elif (token.type == "inline" and block_quote_depth == 0 and token.map
+                and position > 0 and tokens[position - 1].type == "paragraph_open"):
+            breaks_before = 0
+            children = token.children or []
+            for child_position, child in enumerate(children):
+                if child.type == "hardbreak":
+                    breaks_before += 1
+                elif child.type == "softbreak":
+                    breaks_before += 1
+                    if counts_as_line_break(children, child_position):
+                        return token.map[0] + breaks_before
+    return None
 
 def main() -> int:
     try:
