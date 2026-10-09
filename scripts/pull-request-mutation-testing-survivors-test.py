@@ -16,6 +16,8 @@ import importlib.util
 import io
 import json
 import os
+import re
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -227,12 +229,18 @@ def run_cases():
               f"rc={completed.returncode} out={out} err={completed.stderr}")
         check("the config names the changed file as the module path",
               'module-path = "scripts/thing.py"' in config, config)
-        sandbox_prefix, _ = load_test_suite_runner().signal_sandbox()
-        launch = " ".join([*sandbox_prefix, "/usr/bin/python3", "-u", "scripts/thing-test.py"])
+        test_suite_runner = load_test_suite_runner()
+        sandbox_prefix, _ = test_suite_runner.signal_sandbox()
+        launch = shlex.join([*sandbox_prefix, "/usr/bin/python3", "-u", "scripts/thing-test.py"])
+        # On macOS the prefix names the process that built it, which differs between
+        # this file and the script it runs.
+        outside_process = re.compile(
+            re.escape(test_suite_runner.SIGNAL_SANDBOX_OUTSIDE_PROCESS_VARIABLE) + r"=\d+")
         check("the config's test command runs the sibling suite through sh -c, "
               "because cosmic-ray runs it without a shell, inside the signal sandbox "
               "when this machine has one",
-              f"test-command = \"sh -c '{launch}'\"" in config,
+              outside_process.sub("OUTSIDE", f"test-command = {json.dumps('sh -c ' + shlex.quote(launch))}")
+              in outside_process.sub("OUTSIDE", config),
               (launch, config))
         check("the config sets the git filter's branch to the merge base, not the base's tip",
               f'branch = "{base}"' in config

@@ -66,13 +66,23 @@ same account. bwrap also gives the suite a user namespace of its own, in which
 every file owned by another user, root included, shows as owned by nobody: a
 check of a file's owner, such as ssh's check of its config files, fails there. bwrap is
 tried once before any suite runs; when it is on PATH but cannot start, the
-run stops with exit 2 rather than run the suites unconfined. Without bwrap,
-or on macOS, the suites run unconfined and the report says so. A run started
+run stops with exit 2 rather than run the suites unconfined. Without bwrap
+the suites run unconfined and the report says so.
+
+On macOS, which has no PID namespaces, each suite runs under
+`/usr/bin/sandbox-exec` with a profile that refuses any signal to a process
+outside the suite's own sandbox, broadcasts to -1 and to a process group
+included, while the suite can still signal the processes it started. A
+process the suite leaves running is not stopped when the suite ends, as it is
+in a PID namespace. Before any suite runs, a trial process inside the sandbox
+signals this program; the run stops with exit 2 when sandbox-exec is missing,
+cannot start, or lets that signal through. A run started
 inside the sandbox, such as one a suite of this program starts, does not
 start another: bwrap cannot start inside bwrap, and its suites are already
 confined. The suites listed in SUITES_RUN_OUTSIDE_THE_SIGNAL_SANDBOX cannot
 work inside it and run unconfined, each named in the report with the reason.
-A suite bwrap reports as exiting 128+N is reported as killed by signal N.
+A suite bwrap reports as exiting 128+N is reported as killed by signal N;
+sandbox-exec replaces itself with the suite, so a suite's exit passes through.
 
 THE ENVIRONMENT EACH SUITE IS LAUNCHED WITH is this program's own, less the
 variables that redirect where git reads and writes. They are stripped
@@ -440,6 +450,25 @@ SIGNAL_SANDBOX_BWRAP_ARGUMENTS = (
     "--dev-bind", "/", "/", "--unshare-pid", "--die-with-parent", "--proc", "/proc")
 SIGNAL_SANDBOX_INSIDE_VARIABLE = "RUN_ALL_TEST_SUITES_INSIDE_SIGNAL_SANDBOX"
 SIGNAL_SANDBOX_START_TIMEOUT_SECONDS = 60
+# The profile the user's Mac run of the check passed on 2026-10-08 (macOS 26.6.2).
+SIGNAL_SANDBOX_MACOS_SANDBOX_EXEC = "/usr/bin/sandbox-exec"
+SIGNAL_SANDBOX_MACOS_PROFILE = (
+    "(version 1)(allow default)(deny signal)(allow signal (target same-sandbox))")
+# The process outside the sandbox that a check inside it signals and must be refused by.
+SIGNAL_SANDBOX_OUTSIDE_PROCESS_VARIABLE = "RUN_ALL_TEST_SUITES_SIGNAL_SANDBOX_OUTSIDE_PROCESS_ID"
+# SIGWINCH, because a process that does not handle it ignores it: if the sandbox
+# lets the probe through, nothing outside is stopped.
+SIGNAL_SANDBOX_MACOS_PROBE_SIGNAL = signal.SIGWINCH
+SIGNAL_SANDBOX_MACOS_TRIAL_SOURCE = (
+    "import os, signal, sys\n"
+    f"outside = int(os.environ[{SIGNAL_SANDBOX_OUTSIDE_PROCESS_VARIABLE!r}])\n"
+    "try:\n"
+    f"    os.kill(outside, {int(SIGNAL_SANDBOX_MACOS_PROBE_SIGNAL)})\n"
+    "except PermissionError:\n"
+    "    sys.exit(0)\n"
+    "except OSError as error:\n"
+    "    sys.exit(f'the trial signal to process {outside} outside the sandbox failed: {error}')\n"
+    "sys.exit(f'a signal from inside the sandbox reached process {outside} outside it')\n")
 SIGNAL_NUMBER_LIMIT = 64
 # Suites that cannot work inside the sandbox run outside it, each named in the report.
 SUITES_RUN_OUTSIDE_THE_SIGNAL_SANDBOX = {
@@ -960,23 +989,30 @@ def is_shell_test_suite(suite):
 
 
 class SignalSandboxCouldNotStart(Exception):
-    """bwrap is installed but could not start; the message says what it printed."""
+    """The signal sandbox is expected here but could not start; the message says why."""
 
 
 def signal_sandbox(platform=None, environment=None, which=shutil.which,
-                   runner=subprocess.run):
+                   runner=subprocess.run, sandbox_exec=SIGNAL_SANDBOX_MACOS_SANDBOX_EXEC,
+                   outside_process_id=None):
     """Return (prefix, None) to put before a suite's command, or ((), why) when it runs unconfined.
 
     Raises SignalSandboxCouldNotStart when bwrap is on PATH but fails to start,
-    since running unconfined then would hide a broken sandbox.
+    or on macOS when sandbox-exec is missing, fails to start or lets a trial
+    signal out, since running unconfined then would hide a broken sandbox.
+    outside_process_id is the process outside the sandbox that checks inside it
+    signal; default this process.
     """
     platform = sys.platform if platform is None else platform
     environment = os.environ if environment is None else environment
     if environment.get(SIGNAL_SANDBOX_INSIDE_VARIABLE):
         return (), None
+    if platform == "darwin":
+        return macos_signal_sandbox(
+            runner, sandbox_exec,
+            os.getpid() if outside_process_id is None else outside_process_id), None
     if not platform.startswith("linux"):
-        return (), (f"{platform} has no PID namespaces and no signal sandbox "
-                    f"is built for it yet")
+        return (), f"{platform} has no signal sandbox built for it"
     bwrap = which("bwrap")
     if bwrap is None:
         return (), "bwrap is not on PATH (Ubuntu: sudo apt install bubblewrap)"
@@ -994,24 +1030,56 @@ def signal_sandbox(platform=None, environment=None, which=shutil.which,
     return prefix, None
 
 
+def macos_signal_sandbox(runner, sandbox_exec, outside_process_id):
+    """Return the sandbox-exec prefix once a trial inside it is refused a signal to outside_process_id."""
+    if not Path(sandbox_exec).is_file():
+        raise SignalSandboxCouldNotStart(f"{sandbox_exec} is not on this Mac")
+    prefix = (sandbox_exec, "-p", SIGNAL_SANDBOX_MACOS_PROFILE, "/usr/bin/env",
+              f"{SIGNAL_SANDBOX_INSIDE_VARIABLE}=1",
+              f"{SIGNAL_SANDBOX_OUTSIDE_PROCESS_VARIABLE}={outside_process_id}")
+    trial_command = [*prefix, sys.executable, "-c", SIGNAL_SANDBOX_MACOS_TRIAL_SOURCE]
+    try:
+        trial = runner(trial_command, stdin=subprocess.DEVNULL, capture_output=True,
+                       text=True, timeout=SIGNAL_SANDBOX_START_TIMEOUT_SECONDS, check=False)
+    except (OSError, subprocess.TimeoutExpired) as error:
+        raise SignalSandboxCouldNotStart(f"{sandbox_exec} trial: {error}") from error
+    if trial.returncode != 0:
+        raise SignalSandboxCouldNotStart(
+            f"the trial inside {sandbox_exec} -p '{SIGNAL_SANDBOX_MACOS_PROFILE}' exited "
+            f"{trial.returncode}: {(trial.stderr or trial.stdout).strip()}")
+    return prefix
+
+
+def sandbox_reports_signal_as_128_plus(prefix):
+    """bwrap stays the suite's parent and exits 128+N for a suite killed by signal N."""
+    return bool(prefix) and Path(prefix[0]).name == "bwrap"
+
+
 def signal_sandbox_refusal(error, program=PROGRAM):
-    """The text a program prints when bwrap is installed but cannot start."""
+    """The text a program prints when the signal sandbox is expected but cannot start."""
     return (f"{program}: not run — the signal sandbox could not start: {error}\n"
-            f"Each suite runs inside bwrap so that a stray signal cannot reach the "
+            f"Each suite runs inside the signal sandbox (bwrap on Linux, "
+            f"sandbox-exec on macOS) so that a stray signal cannot reach the "
             f"agent-seats running as the same account.\n"
             f"If this run is itself inside a bwrap sandbox (for example a Codex "
             f"sandbox), run it from an ordinary shell instead.\n"
             f"If this run is inside such a sandbox and you cannot leave it, tell "
             f"the user the suites were not run and why, and ask the user to run "
             f"the same command from an ordinary shell on this machine.\n"
-            f"If this run is not inside another sandbox, check that "
+            f"On Linux, if this run is not inside another sandbox, check that "
             f"`bwrap {' '.join(SIGNAL_SANDBOX_BWRAP_ARGUMENTS)} true` "
-            f"works on this machine, and report what it prints to the user.")
+            f"works on this machine, and report what it prints to the user.\n"
+            f"On macOS, report the reason above to the user: the suites need "
+            f"{SIGNAL_SANDBOX_MACOS_SANDBOX_EXEC} to refuse their signals to "
+            f"processes outside the sandbox.")
 
 
 def signal_sandbox_line(prefix, unconfined_because):
-    if prefix:
+    if sandbox_reports_signal_as_128_plus(prefix):
         return f"each suite runs in its own PID namespace: {' '.join(prefix)}"
+    if prefix:
+        return (f"each suite runs in a sandbox that refuses its signals to any process "
+                f"outside it: {' '.join(prefix)}")
     if unconfined_because:
         return (f"suites run WITHOUT the signal sandbox, so a stray signal can reach "
                 f"any process of this account: {unconfined_because}")
@@ -1048,7 +1116,8 @@ def run_one_suite(top, interpreter, suite, log_dir, recorder=None, sandbox_prefi
                                    stderr=subprocess.STDOUT, check=False)
     exit_code = completed.returncode
     # bwrap exits 128+N when the suite is killed by signal N; report it as the signal, as unsandboxed runs do.
-    if sandbox_prefix and 128 < exit_code <= 128 + SIGNAL_NUMBER_LIMIT:
+    if sandbox_reports_signal_as_128_plus(sandbox_prefix) and \
+            128 < exit_code <= 128 + SIGNAL_NUMBER_LIMIT:
         exit_code = -(exit_code - 128)
     return {
         "suite": suite,

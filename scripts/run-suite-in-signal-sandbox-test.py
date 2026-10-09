@@ -194,7 +194,10 @@ with tempfile.TemporaryDirectory() as scratch_name:
           not program.pid_one_is_bwrap(scratch / "missing"))
 
     # The inside check, run outside any sandbox, must refuse and leave the proof empty.
-    if not program.pid_one_is_bwrap():
+    if not sys.platform.startswith("linux"):
+        print("SKIP  the inside check's process-1 refusals: they read /proc/1/comm, "
+              "which only Linux has")
+    elif not program.pid_one_is_bwrap():
         proof = scratch / "proof"
         proof.write_text("")
         ran_marker = scratch / "ran"
@@ -219,27 +222,131 @@ with tempfile.TemporaryDirectory() as scratch_name:
               completed.returncode == program.EXIT_NOT_RUN and proof.read_text() == ""
               and not ran_marker.exists(), (completed.returncode, completed.stderr))
 
-    # The inside check with process 1 not bwrap and the inside variable leaked in: the
-    # suite must not start. Run in a child process, because a passing check execs.
-    (scratch / "proof-leaked").write_text("")
+    def inside_check_in_child(proof, marker, platform, setup="", environment=None):
+        """Run the inside check for `platform` in a child, because a passing check execs."""
+        proof.write_text("")
+        return subprocess.run(
+            [sys.executable, "-c",
+             "import importlib.util, pathlib, sys\n"
+             f"spec = importlib.util.spec_from_file_location('p', {str(PROGRAM_PATH)!r})\n"
+             "program = importlib.util.module_from_spec(spec)\n"
+             "spec.loader.exec_module(program)\n"
+             + setup +
+             f"sys.exit(program.inside_check_then_exec(sys.argv[1], sys.argv[2:], "
+             f"platform={platform!r}))\n",
+             str(proof), "touch", str(marker)],
+            capture_output=True, text=True, check=False,
+            env={**os.environ, "RUN_ALL_TEST_SUITES_INSIDE_SIGNAL_SANDBOX": "1",
+                 **(environment or {})})
+
+    # Process 1 not bwrap and the inside variable leaked in: the suite must not start.
     leaked_marker = scratch / "ran-with-leaked-variable"
-    completed = subprocess.run(
-        [sys.executable, "-c",
-         "import importlib.util, pathlib, sys\n"
-         f"spec = importlib.util.spec_from_file_location('p', {str(PROGRAM_PATH)!r})\n"
-         "program = importlib.util.module_from_spec(spec)\n"
-         "spec.loader.exec_module(program)\n"
-         f"program.PID_ONE_COMMAND_FILE = pathlib.Path({str(scratch / 'init-comm')!r})\n"
-         "sys.exit(program.main(sys.argv[1:]))\n",
-         program.INSIDE_CHECK_OPTION, str(scratch / "proof-leaked"), "--",
-         "touch", str(leaked_marker)],
-        capture_output=True, text=True, check=False,
-        env={**os.environ, "RUN_ALL_TEST_SUITES_INSIDE_SIGNAL_SANDBOX": "1"})
+    completed = inside_check_in_child(
+        scratch / "proof-leaked", leaked_marker, "linux",
+        setup=f"program.PID_ONE_COMMAND_FILE = pathlib.Path({str(scratch / 'init-comm')!r})\n")
     check("with the inside variable leaked in but process 1 not bwrap, the inside check "
           "refuses: no proof, the command not started",
           completed.returncode == program.EXIT_NOT_RUN
           and (scratch / "proof-leaked").read_text() == "" and not leaked_marker.exists()
           and "not bwrap" in completed.stderr, (completed.returncode, completed.stderr))
+
+    # The macOS check, run without any sandbox: its signal to the outside process, this
+    # file, gets through (SIGWINCH, which this file ignores), so the suite must not start.
+    unconfined_marker = scratch / "ran-unconfined-on-macos-check"
+    completed = inside_check_in_child(
+        scratch / "proof-macos-unconfined", unconfined_marker, "darwin",
+        environment={program.runner.SIGNAL_SANDBOX_OUTSIDE_PROCESS_VARIABLE: str(os.getpid())})
+    check("the macOS inside check, unconfined, refuses: its signal out was let through, "
+          "no proof, the command not started",
+          completed.returncode == program.EXIT_NOT_RUN
+          and (scratch / "proof-macos-unconfined").read_text() == ""
+          and not unconfined_marker.exists() and "was let through" in completed.stderr,
+          (completed.returncode, completed.stderr))
+    # The same check with the signal refused, as inside sandbox-exec: proof, then the command.
+    confined_marker = scratch / "ran-confined-on-macos-check"
+    completed = inside_check_in_child(
+        scratch / "proof-macos-confined", confined_marker, "darwin",
+        setup="program.outside_signal_refusal_failure = lambda: None\n")
+    check("the macOS inside check, its signal out refused, writes its proof and starts the "
+          "command",
+          completed.returncode == 0 and confined_marker.exists()
+          and (scratch / "proof-macos-confined").read_text().strip()
+          == program.OUTSIDE_SIGNAL_REFUSED_PROOF, (completed.returncode, completed.stderr))
+    check("the proof a run expects is the process-1 proof on Linux and the refused-signal "
+          "proof on macOS",
+          program.expected_proof("linux") == program.PID_ONE_PROOF
+          and program.expected_proof("darwin") == program.OUTSIDE_SIGNAL_REFUSED_PROOF)
+
+    variable = program.runner.SIGNAL_SANDBOX_OUTSIDE_PROCESS_VARIABLE
+    signalled = []
+
+    def refusing_kill(pid, number):
+        signalled.append((pid, number))
+        raise PermissionError(1, "Operation not permitted")
+
+    def lookup_failing_kill(pid, number):
+        raise ProcessLookupError(3, "No such process")
+
+    check("the macOS check passes when its signal to the outside process is refused, "
+          "and sends that process SIGWINCH",
+          program.outside_signal_refusal_failure({variable: "4242"}, kill=refusing_kill) is None
+          and signalled == [(4242, signal.SIGWINCH)], signalled)
+    for case_name, environment, kill, expected in (
+            ("the macOS check fails when the signal is let through",
+             {variable: "4242"}, lambda pid, number: None, "was let through"),
+            ("the macOS check fails when the outside process is gone: that is not a refusal",
+             {variable: "4242"}, lookup_failing_kill, "not a refusal"),
+            ("the macOS check fails when no outside process is named",
+             {}, refusing_kill, "does not name a process"),
+            ("the macOS check fails when the outside process named is process 1",
+             {variable: "1"}, refusing_kill, "not a process this program started")):
+        why_not = program.outside_signal_refusal_failure(environment, kill=kill)
+        check(case_name, why_not is not None and expected in why_not, why_not)
+
+# --- Stopping a suite's leftovers by process group, as on macOS -------------------
+
+def process_alive(pid):
+    try:
+        state = pathlib.Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[0]
+    except (OSError, IndexError):
+        return False
+    return state != "Z"
+
+
+if not sys.platform.startswith("linux"):
+    print("SKIP  the process-group stop case: it checks that the leftover is gone through "
+          "/proc, which only Linux has")
+else:
+    with tempfile.TemporaryDirectory() as scratch_name:
+        leftover_file = pathlib.Path(scratch_name) / "leftover-pid"
+        # The leader starts a sleeper in its own process group, records it, and exits 5.
+        leader = subprocess.Popen(
+            [sys.executable, "-c",
+             "import subprocess, sys\n"
+             "sleeper = subprocess.Popen(['sleep', '60'])\n"
+             f"open({str(leftover_file)!r}, 'w').write(str(sleeper.pid))\n"
+             "sys.exit(5)\n"],
+            start_new_session=True, stdin=subprocess.DEVNULL)
+        try:
+            program.wait_without_reaping(leader)
+            leader_unreaped = leader.returncode is None
+            leftover = int(leftover_file.read_text())
+            leftover_alive_before = process_alive(leftover)
+            program.stop_process_group_then_reap(leader)
+            deadline = time.monotonic() + 5
+            while process_alive(leftover) and time.monotonic() < deadline:
+                time.sleep(0.05)
+            check("after the suite's leader exits, it is left unreaped until its process "
+                  "group is stopped, then the leftover in the group is killed and the leader's "
+                  "own exit is kept",
+                  leader_unreaped and leftover_alive_before and not process_alive(leftover)
+                  and leader.returncode == 5,
+                  (leader_unreaped, leftover_alive_before, leader.returncode))
+        finally:
+            if leader.returncode is None:
+                with contextlib.suppress(ProcessLookupError):
+                    os.killpg(leader.pid, signal.SIGKILL)
+                leader.wait()
 
 # --- Interruption handling ------------------------------------------------------
 
@@ -286,13 +393,25 @@ with tempfile.TemporaryDirectory() as scratch_name:
 with tempfile.TemporaryDirectory() as scratch_name:
     scratch = pathlib.Path(scratch_name)
     repository = scratch_checkout(scratch)
-    def main_with_nothing_run(platform, sandbox=None, mutant=None):
-        """Run main in this process with the suite run replaced; return (exit, output, runs)."""
+    def main_with_nothing_run(platform, sandbox=None, mutant=None, sandbox_function=None):
+        """Run main in this process with the suite run replaced; return (exit, output, runs).
+
+        Each run is recorded as (top, suite, interpreter, prefix, proof, platform).
+        """
         ran = []
         original_run, original_sandbox = program.run_suite_confined, program.runner.signal_sandbox
-        program.run_suite_confined = lambda *arguments, **options: ran.append(arguments) or 0
+        original_become_subreaper = program.become_child_subreaper
+
+        def record_run(top, suite, interpreter, prefix, proof, bytecode_dir=None, platform=None):
+            ran.append((top, suite, interpreter, prefix, proof, platform))
+            return 0
+
+        program.run_suite_confined = record_run
+        program.become_child_subreaper = lambda: None
         if sandbox is not None:
             program.runner.signal_sandbox = lambda platform=None: sandbox
+        if sandbox_function is not None:
+            program.runner.signal_sandbox = sandbox_function
         output = io.StringIO()
         try:
             with contextlib.redirect_stdout(output):
@@ -303,15 +422,31 @@ with tempfile.TemporaryDirectory() as scratch_name:
         finally:
             program.run_suite_confined = original_run
             program.runner.signal_sandbox = original_sandbox
+            program.become_child_subreaper = original_become_subreaper
             signal.signal(signal.SIGTERM, signal.SIG_DFL)
             signal.signal(signal.SIGHUP, signal.SIG_DFL)
             signal.signal(signal.SIGINT, signal.default_int_handler)
         return code, output.getvalue(), ran
 
-    code, output, ran = main_with_nothing_run("darwin")
-    check("on a platform other than Linux, nothing runs and the exit is 2",
-          code == program.EXIT_NOT_RUN and ran == [] and "only on Linux" in output,
+    code, output, ran = main_with_nothing_run("freebsd14")
+    check("on a platform other than Linux and macOS, nothing runs and the exit is 2",
+          code == program.EXIT_NOT_RUN and ran == [] and "only on Linux and macOS" in output,
           (code, output, ran))
+    macos_prefix = ("/usr/bin/sandbox-exec", "-p", program.runner.SIGNAL_SANDBOX_MACOS_PROFILE)
+    code, output, ran = main_with_nothing_run("darwin", sandbox=(macos_prefix, None))
+    check("on macOS with the sandbox, the suite runs under the sandbox-exec prefix, "
+          "told it is on macOS",
+          code == program.EXIT_PASSED_OR_KILLED and len(ran) == 1
+          and ran[0][3] == macos_prefix and ran[0][5] == "darwin",
+          (code, output, ran))
+
+    def sandbox_exec_missing(platform=None):
+        raise program.runner.SignalSandboxCouldNotStart("/usr/bin/sandbox-exec is not on this Mac")
+
+    code, output, ran = main_with_nothing_run("darwin", sandbox_function=sandbox_exec_missing)
+    check("on macOS without sandbox-exec, the suite is not run unconfined: exit 2 naming it",
+          code == program.EXIT_NOT_RUN and ran == []
+          and "/usr/bin/sandbox-exec is not on this Mac" in output, (code, output, ran))
     code, output, ran = main_with_nothing_run(
         "linux", sandbox=((), "bwrap is not on PATH (Ubuntu: sudo apt install bubblewrap)"))
     check("on Linux without bwrap, the suite is not run unconfined: exit 2 naming bwrap",

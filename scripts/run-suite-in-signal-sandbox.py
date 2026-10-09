@@ -21,15 +21,20 @@ Usage:
 
 The suite runs exactly as scripts/run-all-test-suites.py runs it: from the
 checkout's top directory, stdin closed, without the variables that redirect
-git, inside `bwrap --unshare-pid`, with RUN_ALL_TEST_SUITES_INSIDE_SIGNAL_SANDBOX=1,
-while holding the machine's test-run lock. Before the suite starts, a check
-inside the sandbox confirms that process 1 there is bwrap; if it is not, the
-suite is not run. This program never runs a suite unconfined: without bwrap, on
-a platform other than Linux, or for a suite listed in
+git, inside the signal sandbox (`bwrap --unshare-pid` on Linux, `sandbox-exec`
+on macOS), with RUN_ALL_TEST_SUITES_INSIDE_SIGNAL_SANDBOX=1, while holding the
+machine's test-run lock. Before the suite starts, a check inside the sandbox
+proves it is confined: on Linux, that process 1 there is bwrap; on macOS, that
+a signal to a process outside the sandbox is refused. If the check fails, the
+suite is not run. This program never runs a suite unconfined: without the
+sandbox, on a platform other than Linux and macOS, or for a suite listed in
 SUITES_RUN_OUTSIDE_THE_SIGNAL_SANDBOX, it refuses. Started inside a sandbox
-already, it runs the suite there, after the same check, and when the suite
-ends or the run is interrupted it kills every process the suite left behind,
-as the end of the sandbox's PID namespace does otherwise.
+already, it runs the suite there, after the same check. When the suite ends or
+the run is interrupted, it kills every process the suite left behind: on Linux
+every descendant, as the end of the sandbox's PID namespace does otherwise; on
+macOS every process still in the suite's process group, since macOS keeps no
+link from a process whose parent has exited back to that parent, so a leftover
+process that moved to another process group and outlived its parent is not found.
 
 The patch may only change files that already exist; a patch that creates,
 deletes or renames a file is refused, because putting the files back is then
@@ -68,6 +73,7 @@ SCRIPTS_DIR = Path(__file__).resolve().parent
 INSIDE_CHECK_OPTION = "--inside-signal-sandbox-check-pid-one-then-exec"
 PID_ONE_COMMAND_FILE = Path("/proc/1/comm")
 PID_ONE_PROOF = "process 1 is bwrap"
+OUTSIDE_SIGNAL_REFUSED_PROOF = "a signal to a process outside the sandbox was refused"
 INTERRUPTING_SIGNALS = (signal.SIGTERM, signal.SIGHUP, signal.SIGINT)
 PR_SET_CHILD_SUBREAPER = 36
 
@@ -132,18 +138,56 @@ def pid_one_is_bwrap(command_file=None):
         return False
 
 
-def inside_check_then_exec(proof_file, command):
+def outside_signal_refusal_failure(environment=None, kill=os.kill):
+    """Return None when a signal to the process outside the sandbox is refused, else why not.
+
+    The process is the one named by the outside-process variable, which the
+    program that started the sandbox sets to its own process id.
+    """
+    environment = os.environ if environment is None else environment
+    variable = runner.SIGNAL_SANDBOX_OUTSIDE_PROCESS_VARIABLE
+    try:
+        outside = int(environment[variable])
+    except (KeyError, ValueError):
+        return f"{variable} does not name a process here, so there is nothing to signal"
+    if outside <= 1:
+        return f"{variable} is {outside}, which is not a process this program started"
+    try:
+        kill(outside, runner.SIGNAL_SANDBOX_MACOS_PROBE_SIGNAL)
+    except PermissionError:
+        return None
+    except OSError as error:
+        return f"the trial signal to process {outside} failed with {error}, not a refusal"
+    return f"a trial signal to process {outside}, outside the sandbox, was let through"
+
+
+def inside_check_then_exec(proof_file, command, platform=None):
     """Inside the sandbox: write the proof and start the suite, or refuse without starting it."""
-    if not pid_one_is_bwrap():
+    platform = sys.platform if platform is None else platform
+    if platform == "darwin":
+        why_not = outside_signal_refusal_failure()
+        if why_not is not None:
+            print(f"{PROGRAM}: the suite was not started — {why_not}, so a signal "
+                  f"from the suite could reach processes outside its sandbox.",
+                  file=sys.stderr)
+            return EXIT_NOT_RUN
+        proof = OUTSIDE_SIGNAL_REFUSED_PROOF
+    elif not pid_one_is_bwrap():
         print(f"{PROGRAM}: the suite was not started — process 1 here is not bwrap, "
               f"so the suite would not be in a PID namespace of its own.", file=sys.stderr)
         return EXIT_NOT_RUN
+    else:
+        proof = PID_ONE_PROOF
     if os.environ.get(runner.SIGNAL_SANDBOX_INSIDE_VARIABLE) != "1":
         print(f"{PROGRAM}: the suite was not started — "
               f"{runner.SIGNAL_SANDBOX_INSIDE_VARIABLE} is not 1 here.", file=sys.stderr)
         return EXIT_NOT_RUN
-    Path(proof_file).write_text(PID_ONE_PROOF + "\n")
+    Path(proof_file).write_text(proof + "\n")
     os.execvp(command[0], command)
+
+
+def expected_proof(platform):
+    return OUTSIDE_SIGNAL_REFUSED_PROOF if platform == "darwin" else PID_ONE_PROOF
 
 
 def files_the_patch_changes(top, patch):
@@ -293,7 +337,33 @@ def stop_descendants():
     raise NotRun("processes the suite started could not all be stopped")
 
 
-def run_suite_confined(top, suite, interpreter, sandbox_prefix, proof_file, bytecode_dir=None):
+def wait_without_reaping(process):
+    """Wait for the process to exit but leave it a zombie, so its process group id stays its own."""
+    while True:
+        try:
+            os.waitid(os.P_PID, process.pid, os.WEXITED | os.WNOWAIT)
+            return
+        except ChildProcessError:
+            return
+        except InterruptedError:
+            continue
+
+
+def stop_process_group_then_reap(process):
+    """SIGKILL every process left in the suite's process group, then reap its leader.
+
+    The leader is not yet reaped, so its process id, which is the group's id,
+    cannot have passed to another process: the signal reaches only the suite's group.
+    """
+    try:
+        os.killpg(process.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    process.wait()
+
+
+def run_suite_confined(top, suite, interpreter, sandbox_prefix, proof_file, bytecode_dir=None,
+                       platform=None):
     """Run the suite inside the sandbox; return its exit code, or raise NotRun if unproven.
 
     With bytecode_dir, Python started with this environment reads and writes
@@ -302,8 +372,12 @@ def run_suite_confined(top, suite, interpreter, sandbox_prefix, proof_file, byte
     caches beside them; the restore deletes that bytecode.
 
     However the suite ends, every process it left is killed before this returns:
-    inside a sandbox that this program did not start, nothing else would.
+    inside a sandbox that this program did not start, nothing else would. On
+    macOS, where no process can adopt orphans, the suite runs as the leader of
+    a process group of its own, and that group is what is killed.
     """
+    platform = sys.platform if platform is None else platform
+    by_process_group = platform == "darwin"
     command = [*sandbox_prefix, sys.executable, str(Path(__file__).resolve()),
                INSIDE_CHECK_OPTION, str(proof_file), "--",
                *suite_command(top, suite, interpreter)]
@@ -313,19 +387,26 @@ def run_suite_confined(top, suite, interpreter, sandbox_prefix, proof_file, byte
     # A proof left by an earlier run must not vouch for this one.
     proof_file.write_text("")
     process = subprocess.Popen(command, cwd=str(top), env=environment,
-                               stdin=subprocess.DEVNULL)
-    try:
-        process.wait()
-    finally:
-        if process.returncode is None:
-            process.kill()
+                               stdin=subprocess.DEVNULL, start_new_session=by_process_group)
+    if by_process_group:
+        try:
+            wait_without_reaping(process)
+        finally:
+            stop_process_group_then_reap(process)
+    else:
+        try:
             process.wait()
-        stop_descendants()
-    if proof_file.read_text().strip() != PID_ONE_PROOF:
-        raise NotRun(f"the check inside the sandbox did not confirm process 1 is bwrap "
-                     f"(exit {process.returncode}), so the suite was not started")
+        finally:
+            if process.returncode is None:
+                process.kill()
+                process.wait()
+            stop_descendants()
+    if proof_file.read_text().strip() != expected_proof(platform):
+        raise NotRun(f"the check inside the sandbox did not confirm the suite would be "
+                     f"confined (exit {process.returncode}), so the suite was not started")
     exit_code = process.returncode
-    if sandbox_prefix and 128 < exit_code <= 128 + runner.SIGNAL_NUMBER_LIMIT:
+    if runner.sandbox_reports_signal_as_128_plus(sandbox_prefix) and \
+            128 < exit_code <= 128 + runner.SIGNAL_NUMBER_LIMIT:
         exit_code = -(exit_code - 128)
     return exit_code
 
@@ -370,12 +451,16 @@ def run(arguments, platform):
     patch = Path(arguments.mutant).resolve() if arguments.mutant else None
     if patch is not None and not patch.is_file():
         raise NotRun(f"the mutant {arguments.mutant} is not a file")
-    if not platform.startswith("linux"):
-        raise NotRun(f"{platform} has no signal sandbox yet; this program runs only on Linux")
+    if not (platform.startswith("linux") or platform == "darwin"):
+        raise NotRun(f"{platform} has no signal sandbox; this program runs only on Linux "
+                     f"and macOS")
+    if platform == "darwin" and not hasattr(os, "waitid"):
+        raise NotRun("this Python has no os.waitid, which stopping the suite's leftover "
+                     "processes on macOS needs; run it with Python 3.13 or later")
     try:
         sandbox_prefix, unconfined_because = runner.signal_sandbox(platform=platform)
     except runner.SignalSandboxCouldNotStart as error:
-        raise NotRun(f"bwrap could not start: {error}") from error
+        raise NotRun(f"the signal sandbox could not start: {error}") from error
     if unconfined_because:
         raise NotRun(f"no signal sandbox: {unconfined_because}")
 
@@ -388,15 +473,18 @@ def run(arguments, platform):
         # Taking the lock overwrote the description a killed run left; clean up after it
         # here, as the run of scripts/run-all-test-suites.py that would have read it does.
         runner.remove_traces_the_last_lock_holder_left(previous_holder)
-        become_child_subreaper()
+        if platform != "darwin":
+            become_child_subreaper()
         with tempfile.TemporaryDirectory(prefix=f"{PROGRAM}-") as work_name:
             work = Path(work_name)
-            proof_file = work / "pid-one-proof"
+            proof_file = work / "sandbox-proof"
             if patch is None:
-                code = run_suite_confined(top, suite, interpreter, sandbox_prefix, proof_file)
+                code = run_suite_confined(top, suite, interpreter, sandbox_prefix, proof_file,
+                                          platform=platform)
                 return verdict(code, mutant=False)
             paths = files_the_patch_changes(top, patch)
-            baseline = run_suite_confined(top, suite, interpreter, sandbox_prefix, proof_file)
+            baseline = run_suite_confined(top, suite, interpreter, sandbox_prefix, proof_file,
+                                          platform=platform)
             if baseline != 0:
                 raise NotRun(f"the suite fails without the mutant ({runner.describe_exit(baseline)}), "
                              f"so a failure with the mutant in would not show the mutant "
@@ -413,7 +501,7 @@ def run(arguments, platform):
                 print(f"{PROGRAM}: mutant applied to {', '.join(paths)}; originals kept "
                       f"under {keep_dir}", flush=True)
                 code = run_suite_confined(top, suite, interpreter, sandbox_prefix, proof_file,
-                                          bytecode_dir=work / "bytecode")
+                                          bytecode_dir=work / "bytecode", platform=platform)
             finally:
                 restore_originals(top, originals, keep_dir)
             print(f"{PROGRAM}: restored {', '.join(paths)} byte for byte", flush=True)
