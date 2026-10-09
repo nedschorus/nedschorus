@@ -415,32 +415,40 @@ with tempfile.TemporaryDirectory() as scratch_name:
     scratch = pathlib.Path(scratch_name)
     (scratch / "quiet-test.py").write_text("pass\n")
     stops = []
-    group_leaders = []
     original_group_stop = program.stop_process_group_then_reap
     original_descendants_stop = program.stop_descendants
-    # The suite is still unreaped here, so its process group can be read.
-    program.stop_process_group_then_reap = lambda process: (
-        stops.append("group"),
-        group_leaders.append(os.getpgid(process.pid) == process.pid),
-        process.wait())
+    # The started process records whether it leads its own process group while it
+    # is alive: macOS getpgid refuses a zombie, which is all the stop below sees.
+    group_record = scratch / "leads-own-process-group"
+    recording_prefix = (
+        sys.executable, "-c",
+        "import os, sys\n"
+        "open(sys.argv[1], 'w').write(str(os.getpgid(0) == os.getpid()))\n"
+        "os.execvp('env', ['env', *sys.argv[2:]])\n",
+        str(group_record), "RUN_ALL_TEST_SUITES_INSIDE_SIGNAL_SANDBOX=")
+    program.stop_process_group_then_reap = lambda process: (stops.append("group"),
+                                                            process.wait())
     program.stop_descendants = lambda: stops.append("descendants")
     try:
         for platform_name in ("darwin", "linux"):
             stops.clear()
+            group_record.unlink(missing_ok=True)
             try:
                 program.run_suite_confined(
                     scratch, "quiet-test.py", sys.executable,
-                    ("env", "RUN_ALL_TEST_SUITES_INSIDE_SIGNAL_SANDBOX="), scratch / "proof",
+                    recording_prefix, scratch / "proof",
                     platform=platform_name)
             except program.NotRun:
                 pass
             expected = ["group"] if platform_name == "darwin" else ["descendants"]
             check(f"run_suite_confined on {platform_name} stops leftovers by "
                   f"{expected[0]}", stops == expected, stops)
-        # Without a group of its own, the suite's leftovers share the runner's
-        # group, which the group stop on macOS cannot reach.
-        check("run_suite_confined on darwin starts the suite as the leader of its own "
-              "process group", group_leaders == [True], group_leaders)
+            if platform_name == "darwin":
+                # Without a group of its own, the suite's leftovers share the
+                # runner's group, which the group stop on macOS cannot reach.
+                leads = group_record.read_text() if group_record.exists() else "no record"
+                check("run_suite_confined on darwin starts the suite as the leader of its "
+                      "own process group", leads == "True", leads)
     finally:
         program.stop_process_group_then_reap = original_group_stop
         program.stop_descendants = original_descendants_stop
