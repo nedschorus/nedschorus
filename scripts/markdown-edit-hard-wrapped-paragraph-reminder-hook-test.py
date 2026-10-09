@@ -93,6 +93,18 @@ BROKEN_CASES = (
      "> ```\n> code\n> ```\n\nOne line\nand another.\n"),
     ("a third paragraph line after a hard break",
      "First line  \nsecond line\nthird line\n"),
+    ("a broken paragraph at the end of a file with no final newline",
+     "One line\nand another."),
+    ("a broken paragraph after a pre block that opens and closes on one line",
+     "<pre></pre>\nOne line\nand another.\n"),
+    ("a broken paragraph after a closed HTML comment",
+     "<!--\nx\n-->\nOne line\nand another.\n"),
+    ("a broken paragraph after a ___ thematic break",
+     "___\nOne line\nand another.\n"),
+    ("a broken paragraph after a _ _ _ thematic break",
+     "_ _ _\nOne line\nand another.\n"),
+    ("a broken paragraph that an HTML comment interrupts",
+     "One line\nand another.\n<!-- note -->\n"),
 )
 for case_name, text in BROKEN_CASES:
     check(f"fires: {case_name}", hook.markdown_has_hard_wrapped_paragraph(text) is True)
@@ -167,6 +179,24 @@ CLEAN_CASES = (
      "*emphasised*\n**bold**\n\n![image](x.png)\n![other](y.png)\n\n: term\n: other\n"),
     ("a line holding a pipe is not plain prose",
      "a | b\nc | d\n"),
+    ("a pre block with a blank line inside",
+     "<pre>\nline one\n\nline two\nline three\n</pre>\n"),
+    ("a pre block whose first inner line is blank",
+     "<pre>\n\nfirst line\nsecond line\n</pre>\n"),
+    ("an HTML comment with a blank line inside",
+     "<!--\nfirst\n\nsecond line\nthird line\n-->\n"),
+    ("a script block with a blank line inside",
+     "<script>\nvar a\n\nvar b\nvar c\n</script>\n"),
+    ("display math between $$ lines with a blank line inside",
+     "$$\nx = 1\n\ny = 2\nz = 3\n$$\n"),
+    ("a one-line paragraph either side of a ___ thematic break",
+     "First paragraph.\n___\nSecond paragraph.\n"),
+    ("a line opening a p tag starts an HTML block",
+     "<p>Para one\nline two\n"),
+    ("a quoted fence line inside an ordinary fence does not close it",
+     "```\n> ```\nline one\nline two\n```\n"),
+    ("a fence line in an indented code block opens no fence",
+     "Intro.\n\n    ```\n    x\n\n```\nfirst code line\nsecond code line\n```\n"),
 )
 for case_name, text in CLEAN_CASES:
     check(f"silent: {case_name}", hook.markdown_has_hard_wrapped_paragraph(text) is False)

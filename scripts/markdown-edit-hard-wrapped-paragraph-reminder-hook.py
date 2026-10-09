@@ -50,6 +50,21 @@ HTML_BLOCK_TAG_START_PATTERN = re.compile(r"^</?([A-Za-z][A-Za-z0-9-]*)(?=[\s/>]
 HTML_LONE_TAG_LINE_PATTERN = re.compile(
     r"^(?:<[A-Za-z][A-Za-z0-9-]*(?:\s+[A-Za-z_:][\w.:-]*(?:\s*=\s*(?:\"[^\"]*\"|'[^']*'|[^\s\"'=<>`]+))?)*\s*/?>"
     r"|</[A-Za-z][A-Za-z0-9-]*\s*>)\s*$")
+# Blocks that end only at their terminator, blank lines inside them included: the
+# CommonMark raw HTML blocks (pre, script, style, textarea, comments, processing
+# instructions, declarations, CDATA) and display math between $$ lines.
+RAW_BLOCK_START_AND_END_PATTERNS = (
+    (re.compile(r"^ {0,3}<(?:pre|script|style|textarea)(?=[\s>]|$)", re.IGNORECASE),
+     re.compile(r"</(?:pre|script|style|textarea)>", re.IGNORECASE)),
+    (re.compile(r"^ {0,3}<!--"), re.compile(r"-->")),
+    (re.compile(r"^ {0,3}<\?"), re.compile(r"\?>")),
+    (re.compile(r"^ {0,3}<!\[CDATA\["), re.compile(r"\]\]>")),
+    (re.compile(r"^ {0,3}<![A-Za-z]"), re.compile(r">")),
+    (re.compile(r"^ {0,3}\$\$"), re.compile(r"\$\$")),
+)
+THEMATIC_BREAK_PATTERN = re.compile(r"^ {0,3}([-*_])(?:[ \t]*\1){2,}[ \t]*$")
+# A fence indented four spaces or more is a line of an indented code block.
+FENCE_MAXIMUM_INDENTATION = 3
 
 def run_git(arguments, working_directory: Path):
     return subprocess.run(["git", *arguments], cwd=str(working_directory),
@@ -101,11 +116,29 @@ def starts_html_block(line: str) -> bool:
     return bool(tag_match) and tag_match.group(1).lower() in HTML_BLOCK_TAG_NAMES
 
 
+def raw_block_end_pattern(line: str):
+    """Return the pattern that ends the raw block this line opens, or None when the
+    line opens no raw block or the block also ends on this line."""
+    for start_pattern, end_pattern in RAW_BLOCK_START_AND_END_PATTERNS:
+        start_match = start_pattern.match(line)
+        if start_match:
+            if end_pattern.search(line, start_match.end()):
+                return None
+            return end_pattern
+    return None
+
+
+def opens_raw_block(line: str) -> bool:
+    return any(start_pattern.match(line) for start_pattern, _ in RAW_BLOCK_START_AND_END_PATTERNS)
+
+
 def is_plain_prose(line: str) -> bool:
     """True for a line that can only be paragraph text: unindented, starting with a
     word character, a quotation mark, a parenthesis, or a "<" that opens no HTML
-    block, and holding no table pipe."""
+    block, holding no table pipe, and not a thematic break such as ___."""
     if not PROSE_FIRST_CHARACTER_PATTERN.match(line) or "|" in line:
+        return False
+    if THEMATIC_BREAK_PATTERN.match(line):
         return False
     if ORDERED_LIST_MARKER_PATTERN.match(line):
         return False
@@ -123,8 +156,12 @@ def first_hard_wrapped_paragraph_line_index(text: str):
     on the line before it, or None.
 
     Only plain paragraphs count: a run of plain-prose lines (see is_plain_prose)
-    that begins after a blank line, an ATX heading, a closed fence, front matter
-    or the file's start. A run begun anywhere else continues some other block,
+    that begins after a blank line, an ATX heading, a thematic break, a closed
+    fence, a closed raw block, front matter or the file's start. A raw block (see
+    RAW_BLOCK_START_AND_END_PATTERNS) is skipped to its terminator, blank lines
+    inside it included. A fence line indented four spaces or more opens no fence:
+    it is a line of an indented code block, so a fence nested that deep in a list
+    item is not seen either, and its lines, being indented, are never prose. A run begun anywhere else continues some other block,
     such as a block quote, list item, HTML block or link reference definition, and
     is left alone; so is a run that a setext underline turns into a heading.
     List items wrapped onto an indented line are not detected, by choice: a missed
@@ -140,6 +177,10 @@ def first_hard_wrapped_paragraph_line_index(text: str):
 
     fence_character = None
     fence_length = 0
+    # Whether the open fence's opening line sat inside a block quote: only then
+    # may its closing line carry the quote's ">" markers.
+    fence_inside_block_quote = False
+    raw_block_end = None
     run_start = None
     # Whether a paragraph may begin on the current line.
     paragraph_may_begin = True
@@ -157,10 +198,30 @@ def first_hard_wrapped_paragraph_line_index(text: str):
     while index < len(lines):
         line = lines[index]
         if fence_character is not None:
-            body = FENCE_LINE_PREFIX_PATTERN.sub("", line).rstrip()
+            if fence_inside_block_quote:
+                body = FENCE_LINE_PREFIX_PATTERN.sub("", line).rstrip()
+            else:
+                body = line.strip()
             if body.startswith(fence_character * fence_length) and set(body) == {fence_character}:
                 fence_character = None
                 paragraph_may_begin = True
+            index += 1
+            continue
+
+        if raw_block_end is not None:
+            if raw_block_end.search(line):
+                raw_block_end = None
+                paragraph_may_begin = True
+            index += 1
+            continue
+
+        if opens_raw_block(line):
+            found = broken_line_in_run(index, line)
+            if found is not None:
+                return found
+            run_start = None
+            raw_block_end = raw_block_end_pattern(line)
+            paragraph_may_begin = raw_block_end is None
             index += 1
             continue
 
@@ -177,12 +238,16 @@ def first_hard_wrapped_paragraph_line_index(text: str):
         run_start = None
 
         fence_match = FENCE_OPENING_PATTERN.match(line)
-        if fence_match and not (fence_match.group(1)[0] == "`" and "`" in fence_match.group(2)):
+        indentation = len(line) - len(line.lstrip(" "))
+        if (fence_match and indentation <= FENCE_MAXIMUM_INDENTATION
+                and not (fence_match.group(1)[0] == "`" and "`" in fence_match.group(2))):
             fence_character = fence_match.group(1)[0]
             fence_length = len(fence_match.group(1))
+            fence_inside_block_quote = ">" in line[:fence_match.start(1)]
             paragraph_may_begin = False
         else:
-            paragraph_may_begin = not line.strip() or bool(ATX_HEADING_PATTERN.match(line))
+            paragraph_may_begin = (not line.strip() or bool(ATX_HEADING_PATTERN.match(line))
+                                   or bool(THEMATIC_BREAK_PATTERN.match(line)))
         index += 1
     return broken_line_in_run(len(lines), "")
 
