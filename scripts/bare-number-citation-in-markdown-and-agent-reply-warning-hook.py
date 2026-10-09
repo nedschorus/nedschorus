@@ -53,7 +53,7 @@ SESSION_UNATTENDED_VALUE = "0"
 ID_TYPE_WORD_FOLLOWED_BY_NUMBER = (
     r"\b(?:PRs?|pull\s+requests?|issues?|GHIs?|tasks?)(?:\s+#?|\s*#)\d+(?!\w)")
 HASH_FOLLOWED_BY_TWO_TO_FIVE_DIGITS = r"(?<![&\w])#\d{2,5}(?![\w])"
-# One alternation, so "PR #426" is one hit, not also a second hit for "#426".
+# One alternation, so an ID-type word with `#` and digits is one hit, not also a second hit for the `#` and digits alone.
 BARE_REFERENCE_PATTERN = re.compile(
     ID_TYPE_WORD_FOLLOWED_BY_NUMBER + "|" + HASH_FOLLOWED_BY_TWO_TO_FIVE_DIGITS,
     re.IGNORECASE)
