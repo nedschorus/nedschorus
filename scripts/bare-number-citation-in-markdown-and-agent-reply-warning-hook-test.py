@@ -130,6 +130,12 @@ for named in ('task #244, "the subject"', 'task #361 \u2014 "the subject"',
               "GHI 1058: [Daily maintenance](https://x.y/issues/1058)"):
     check(f"a reference followed by its name is not reported: {named}",
           found(named) == [], found(named))
+code_span_quote = 'Use `"` as the delimiter; task #244, "Fix parser".'
+check("a quote inside a code span does not count when deciding whether a name follows",
+      found(code_span_quote) == [], found(code_span_quote))
+check("a quote outside a code span still closes a quotation",
+      found('Use " as the delimiter; task #244, "Fix parser".') == ["task #244"],
+      found('Use " as the delimiter; task #244, "Fix parser".'))
 check("a reference followed by other words is still reported",
       found('task 361 is "done"') == ["task 361"], found('task 361 is "done"'))
 for unnamed, expected in (('"Fix PR 931"', ["PR 931"]),
@@ -143,14 +149,18 @@ for unnamed, expected in (('"Fix PR 931"', ["PR 931"]),
           found(unnamed) == expected, found(unnamed))
 for protocol in ("verdict: related #216", "verdict: related #216,#217",
                  "verdict: too-similar #12", "verdict: unrelated",
-                 "read #13, #24, #31", "read #13."):
+                 "read #13, #24, #31", "read #13.",
+                 "read #13, #31 (closed 2026-08-08)",
+                 "read #31 (closed 2026-08-08), #13"):
     check(f"a ghi-info reply line is skipped: {protocol}", found(protocol) == [], found(protocol))
 check("read followed by a number mid-sentence is still read",
       found("We read #13 later.") == ["#13"], found("We read #13 later."))
 for sentence, expected in (("Read #931 before making changes; PR 932 contains the fix.",
                             ["#931", "PR 932"]),
                            ("verdict: related #216 and PR 5 too", ["#216", "PR 5"]),
-                           ("verdict: unrelated, see PR 5", ["PR 5"])):
+                           ("verdict: unrelated, see PR 5", ["PR 5"]),
+                           ("Read #31 (closed 2026-08-08) before changing PR 5.", ["#31", "PR 5"]),
+                           ("read #31 (merged 2026-08-08)", ["#31"])):
     check(f"a sentence shaped like the start of a ghi-info reply is still read: {sentence}",
           found(sentence) == expected, found(sentence))
 unclosed_quoted_fence = "> ~~~\n> code PR 1\n\nSee PR 931."

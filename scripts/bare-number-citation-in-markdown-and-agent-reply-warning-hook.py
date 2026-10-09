@@ -75,11 +75,14 @@ BARE_REFERENCE_PATTERN = re.compile(
     re.IGNORECASE)
 FENCE_PATTERN = re.compile(r"^\s*(?:>\s?)*\s*(?:[-*+]\s+|\d+[.)]\s+)?(`{3,}|~{3,})")
 ISSUE_NUMBER_LIST = r"#\d+(?:[ \t]*,[ \t]*#\d+)*"
+# ghi-info tags each closed issue in a reading list with "(closed <date>)" after its number.
+READING_LIST_ENTRY = r"#\d+(?:[ \t]*\(closed[ \t]+\d{4}-\d{2}-\d{2}\))?"
+READING_LIST = READING_LIST_ENTRY + r"(?:[ \t]*,[ \t]*" + READING_LIST_ENTRY + r")*"
 # ghi-info's two reply shapes count only as whole lines, so a sentence that starts "Read #<n> before ..." is still read.
 PROGRAM_READ_LINE_PATTERN = re.compile(
     r"^\s*(?:(?:supports-issues|issue-marker):"
     r"|verdict:[ \t]*(?:(?:too-similar|related)[ \t]*" + ISSUE_NUMBER_LIST + r"|unrelated)[ \t]*$"
-    r"|read[ \t]+" + ISSUE_NUMBER_LIST + r"[ \t]*\.?[ \t]*$)",
+    r"|read[ \t]+" + READING_LIST + r"[ \t]*\.?[ \t]*$)",
     re.IGNORECASE)
 BLOCK_QUOTE_LINE_PATTERN = re.compile(r"^\s*>")
 INLINE_CODE_PATTERN = re.compile(r"(`+)(?:(?!\1).)+?\1")
@@ -182,17 +185,18 @@ def excerpt_around(line: str, start: int, end: int) -> str:
     return excerpt
 
 
-def name_follows(line: str, start: int, end: int) -> bool:
+def name_follows(line: str, masked_line: str, start: int, end: int) -> bool:
     """Whether the reference at line[start:end] is followed at once by its
     name: a complete quoted name or a complete Markdown link. A straight quote
     after an odd number of straight quotes closes a quotation, so it names
-    nothing."""
+    nothing; the quotes are counted in masked_line, so a quote inside a code
+    span does not count."""
     position = NAME_SEPARATOR_PATTERN.match(line, end).end()
     if MARKDOWN_LINK_PATTERN.match(line, position):
         return True
     if CURLY_QUOTED_NAME_PATTERN.match(line, position):
         return True
-    return (line.count('"', 0, start) % 2 == 0
+    return (masked_line.count('"', 0, start) % 2 == 0
             and STRAIGHT_QUOTED_NAME_PATTERN.match(line, position) is not None)
 
 
@@ -206,7 +210,7 @@ def bare_references_in(text: str, line_numbers_to_report=None):
         if line_numbers_to_report is not None and line_number not in line_numbers_to_report:
             continue
         for match in BARE_REFERENCE_PATTERN.finditer(line):
-            if name_follows(original_lines[index], match.start(), match.end()):
+            if name_follows(original_lines[index], line, match.start(), match.end()):
                 continue
             found.append(BareReference(
                 line_number, match.group(0),
