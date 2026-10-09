@@ -2034,6 +2034,8 @@ with tempfile.TemporaryDirectory() as scratch:
     darwin_module.sys = type(sys)("sys_on_darwin")
     darwin_module.sys.__dict__.update(sys.__dict__)
     darwin_module.sys.platform = "darwin"
+    # This case is about the lock, not the sandbox, and sandbox-exec exists only on macOS.
+    darwin_module.signal_sandbox = lambda *arguments, **keywords: ((), None)
     lock = root / "run.lock"
     darwin_arguments = ["--checkout", str(root / "repo"), "--log-dir", str(root / "logs"),
                         "--lock-file", str(lock),
