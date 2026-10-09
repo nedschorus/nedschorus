@@ -52,7 +52,7 @@ HTML_LONE_TAG_LINE_PATTERN = re.compile(
     r"|</[A-Za-z][A-Za-z0-9-]*\s*>)\s*$")
 # Blocks that end only at their terminator, blank lines inside them included: the
 # CommonMark raw HTML blocks (pre, script, style, textarea, comments, processing
-# instructions, declarations, CDATA) and display math between $$ lines.
+# instructions, declarations, CDATA) and display math between lines holding $$ alone.
 RAW_BLOCK_START_AND_END_PATTERNS = (
     (re.compile(r"^ {0,3}<(?:pre|script|style|textarea)(?=[\s>]|$)", re.IGNORECASE),
      re.compile(r"</(?:pre|script|style|textarea)>", re.IGNORECASE)),
@@ -60,7 +60,7 @@ RAW_BLOCK_START_AND_END_PATTERNS = (
     (re.compile(r"^ {0,3}<\?"), re.compile(r"\?>")),
     (re.compile(r"^ {0,3}<!\[CDATA\["), re.compile(r"\]\]>")),
     (re.compile(r"^ {0,3}<![A-Za-z]"), re.compile(r">")),
-    (re.compile(r"^ {0,3}\$\$"), re.compile(r"\$\$")),
+    (re.compile(r"^ {0,3}\$\$[ \t]*$"), re.compile(r"^[ \t]*\$\$[ \t]*$")),
 )
 THEMATIC_BREAK_PATTERN = re.compile(r"^ {0,3}([-*_])(?:[ \t]*\1){2,}[ \t]*$")
 # A fence indented four spaces or more is a line of an indented code block.
@@ -159,7 +159,8 @@ def first_hard_wrapped_paragraph_line_index(text: str):
     that begins after a blank line, an ATX heading, a thematic break, a closed
     fence, a closed raw block, front matter or the file's start. A raw block (see
     RAW_BLOCK_START_AND_END_PATTERNS) is skipped to its terminator, blank lines
-    inside it included. A fence line indented four spaces or more opens no fence:
+    inside it included. Any other HTML block is skipped to its next blank line,
+    whatever it holds. A fence line indented four spaces or more opens no fence:
     it is a line of an indented code block, so a fence nested that deep in a list
     item is not seen either, and its lines, being indented, are never prose. A run begun anywhere else continues some other block,
     such as a block quote, list item, HTML block or link reference definition, and
@@ -181,6 +182,7 @@ def first_hard_wrapped_paragraph_line_index(text: str):
     # may its closing line carry the quote's ">" markers.
     fence_inside_block_quote = False
     raw_block_end = None
+    inside_html_block = False
     run_start = None
     # Whether a paragraph may begin on the current line.
     paragraph_may_begin = True
@@ -201,7 +203,11 @@ def first_hard_wrapped_paragraph_line_index(text: str):
             if fence_inside_block_quote:
                 body = FENCE_LINE_PREFIX_PATTERN.sub("", line).rstrip()
             else:
-                body = line.strip()
+                # A closer may be indented at most three columns; a tab counts as four.
+                expanded = line.expandtabs(4)
+                body = expanded.strip()
+                if len(expanded) - len(expanded.lstrip(" ")) > FENCE_MAXIMUM_INDENTATION:
+                    body = ""
             if body.startswith(fence_character * fence_length) and set(body) == {fence_character}:
                 fence_character = None
                 paragraph_may_begin = True
@@ -211,6 +217,15 @@ def first_hard_wrapped_paragraph_line_index(text: str):
         if raw_block_end is not None:
             if raw_block_end.search(line):
                 raw_block_end = None
+                paragraph_may_begin = True
+            index += 1
+            continue
+
+        if inside_html_block:
+            # An HTML block that is not a raw block ends only at a blank line, so
+            # a comment closing or a ___ inside it lets no paragraph begin.
+            if not line.strip():
+                inside_html_block = False
                 paragraph_may_begin = True
             index += 1
             continue
@@ -244,6 +259,9 @@ def first_hard_wrapped_paragraph_line_index(text: str):
             fence_character = fence_match.group(1)[0]
             fence_length = len(fence_match.group(1))
             fence_inside_block_quote = ">" in line[:fence_match.start(1)]
+            paragraph_may_begin = False
+        elif starts_html_block(line):
+            inside_html_block = True
             paragraph_may_begin = False
         else:
             paragraph_may_begin = (not line.strip() or bool(ATX_HEADING_PATTERN.match(line))

@@ -105,6 +105,16 @@ BROKEN_CASES = (
      "_ _ _\nOne line\nand another.\n"),
     ("a broken paragraph that an HTML comment interrupts",
      "One line\nand another.\n<!-- note -->\n"),
+    ("a broken paragraph after an HTML block ends at its blank line",
+     "<div>\n<!-- note -->\n\nOne line\nand another.\n"),
+    ("a fence line indented by a tab inside a fence does not close it, so the fence closes later",
+     "```\n\t```\ncode\n```\nOne line\nand another.\n"),
+    ("a line starting $$ that does not hold $$ alone opens no math block",
+     "$$ x = y + z\n\nOne line\nand another.\n"),
+    ("a line holding $$x$$ and more text opens no math block",
+     "$$x$$ inline-ish\n\nOne line\nand another.\n"),
+    ("a broken paragraph after display math closed by $$ alone",
+     "$$\nx = 1\n$$\n\nOne line\nand another.\n"),
 )
 for case_name, text in BROKEN_CASES:
     check(f"fires: {case_name}", hook.markdown_has_hard_wrapped_paragraph(text) is True)
@@ -197,6 +207,18 @@ CLEAN_CASES = (
      "```\n> ```\nline one\nline two\n```\n"),
     ("a fence line in an indented code block opens no fence",
      "Intro.\n\n    ```\n    x\n\n```\nfirst code line\nsecond code line\n```\n"),
+    ("text after a one-line comment inside a div block (Codex finding 1)",
+     "<div>\n<!-- note -->\nfirst text line\nsecond text line\n</div>\n"),
+    ("text after a ___ inside a div block",
+     "<div>\n___\nfirst text line\nsecond text line\n</div>\n"),
+    ("a tab-indented fence line inside a fence does not close it (Codex finding 2)",
+     "```\n\t```\nfirst code line\nsecond code line\n```\n"),
+    ("a fence line indented four spaces inside a fence does not close it",
+     "```\n    ```\nfirst code line\nsecond code line\n```\n"),
+    ("a line holding $$ among other text does not close display math",
+     "$$\na $$ b\n\nfirst math line\nsecond math line\n$$\n"),
+    ("display math whose closing $$ line is indented by spaces",
+     "$$\nfirst math line\n\nsecond math line\nthird math line\n  $$\n"),
 )
 for case_name, text in CLEAN_CASES:
     check(f"silent: {case_name}", hook.markdown_has_hard_wrapped_paragraph(text) is False)
