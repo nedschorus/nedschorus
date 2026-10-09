@@ -976,7 +976,10 @@ with tempfile.TemporaryDirectory() as temporary:
                                                "the prompt", remote_control_name="prof")
         check("supervisor launch names the seat for cross-machine messaging",
               launched and launched[0][0] == ["claude", "--session-id", "abc-123",
-                                              "--remote-control", "prof", "the prompt"],
+                                              "--remote-control", "prof",
+                                              "--name", "prof",
+                                              "--remote-control-session-name-prefix", "prof",
+                                              "the prompt"],
               launched)
     finally:
         supervisor_module.subprocess.Popen = real_popen
