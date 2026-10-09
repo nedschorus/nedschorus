@@ -674,6 +674,18 @@ def run_cases():
         (control / "machine.lock").write_text(
             f"pid 99999, checkout /elsewhere, started 2026-10-04T00:00:00Z, "
             f"logs in {killed_run_logs}\n")
+        test_suite_runner = load_test_suite_runner()
+        if sys.platform.startswith("linux"):
+            # On Linux the runner keeps a record of each run; this one has ended.
+            ended = subprocess.Popen([sys.executable, "-c", "pass"])
+            ended_ticks = test_suite_runner.process_start_ticks(ended.pid)
+            ended.wait()
+            runs = test_suite_runner.runs_directory_for(control / "machine.lock")
+            runs.mkdir(parents=True, exist_ok=True)
+            (runs / f"{ended.pid}-{ended_ticks}.json").write_text(json.dumps({
+                "runner": {"pid": ended.pid, "start_ticks": ended_ticks},
+                "log_dir": str(killed_run_logs), "log_dir_is_temporary": False,
+                "started": "then", "finished": None, "suite_processes": []}))
         completed = run_script(repository, control, "--head", head, "--base", base,
                                "--cosmic-ray-venv", str(venv))
         check("taking the lock removes the traces a killed suite run left, as the runner would",

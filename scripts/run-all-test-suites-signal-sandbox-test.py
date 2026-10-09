@@ -223,17 +223,21 @@ if sys.platform.startswith("linux"):
         scratch = pathlib.Path(scratch_name)
         fake_bin = scratch / "bin"
         fake_bin.mkdir()
-        # Stands in for a working bwrap: skips the sandbox's own arguments, runs the suite.
+        # Stands in for a working bwrap: skips the sandbox's own arguments, names the
+        # suite's process on the status descriptor as bwrap does, and runs the suite.
         (fake_bin / "bwrap").write_text(
             "#!/bin/sh\n"
+            "status_fd=\n"
             "while [ $# -gt 0 ]; do\n"
             "  case \"$1\" in\n"
             "    --dev-bind|--setenv) shift 3 ;;\n"
             "    --proc) shift 2 ;;\n"
+            "    --json-status-fd) status_fd=$2; shift 2 ;;\n"
             "    --unshare-pid|--die-with-parent) shift ;;\n"
             "    *) break ;;\n"
             "  esac\n"
             "done\n"
+            "[ -n \"$status_fd\" ] && eval \"echo '{\\\"child-pid\\\": $$}' >&$status_fd\"\n"
             "exec \"$@\"\n")
         (fake_bin / "bwrap").chmod(0o755)
         repository = scratch_checkout(scratch, ["a-test.py", OUTSIDE_SUITE])

@@ -10,8 +10,8 @@ look at what the next run removes.
 This suite runs outside the signal sandbox (it is listed in
 SUITES_RUN_OUTSIDE_THE_SIGNAL_SANDBOX): it starts the runner, which starts
 bwrap, and bwrap cannot start inside bwrap. Outside the sandbox a signal sent
-to the wrong process can reach every process of this account, as one did on
-ned-box on 2026-10-04. So every signal this suite sends goes through
+to the wrong process can reach every process of this account, every agent
+included. So every signal this suite sends goes through
 signal_own_descendant, which signals only a live descendant of this process
 whose start time it has just checked, and the cases that test its refusals
 give it a recorder instead of the real os.kill. This process makes itself a

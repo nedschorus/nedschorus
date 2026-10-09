@@ -13,6 +13,7 @@ Run: python3 scripts/run-suite-in-signal-sandbox-test.py   (exit 0 = all passed)
 import contextlib
 import fcntl
 import io
+import json
 import importlib.util
 import marshal
 import py_compile
@@ -683,14 +684,24 @@ else:
               and "all cases passed" not in completed.stdout and unchanged(repository),
               (completed.returncode, completed.stdout))
 
-        # A killed run of scripts/run-all-test-suites.py named its logs in the lock file;
-        # taking the lock overwrites that, so this program removes the traces it left.
+        # A killed run of scripts/run-all-test-suites.py left traces; its run record
+        # shows nothing of it still runs, so this program removes them as that runner would.
         left_trace = scratch / "killed-run-logs" / "recorded-inputs" / "a-test.py.strace"
         left_trace.mkdir(parents=True)
         lock_path.write_text(f"pid 1, checkout elsewhere, started then, logs in "
                              f"{scratch / 'killed-run-logs'}\n")
+        ended = subprocess.Popen([sys.executable, "-c", "pass"])
+        ended_ticks = program.runner.process_start_ticks(ended.pid)
+        ended.wait()
+        runs = program.runner.runs_directory_for(lock_path)
+        runs.mkdir(parents=True, exist_ok=True)
+        (runs / f"{ended.pid}-{ended_ticks}.json").write_text(json.dumps({
+            "runner": {"pid": ended.pid, "start_ticks": ended_ticks},
+            "log_dir": str(scratch / "killed-run-logs"), "log_dir_is_temporary": False,
+            "started": "then", "finished": None, "suite_processes": []}))
         completed, last = run_program(scratch, repository, "doubling-test.py")
-        check("the strace directories a killed run named in the lock file are removed",
+        check("the strace directories a killed run left are removed once its record shows "
+              "it ended",
               completed.returncode == 0 and not left_trace.exists(),
               (completed.returncode, last, left_trace.exists()))
 
