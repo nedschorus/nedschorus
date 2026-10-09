@@ -45,14 +45,14 @@ Step 9, which changes to them go to the user:
 
 > "every change you applied that adds, alters or removes what a program or an agent does, must do or may do, or what the document decides or plans, and every finding you declined that would have made such a change. A correction of past events, of a citation or a reference, or of spelling or punctuation that leaves a sentence's meaning unchanged, does not go to the user. When you cannot tell, it goes to the user."
 
-In the example, the broken-link fix changes no such document in such a way, and no user-ruling needs to change, so the concern never reaches the user.
+In the example, the fix for the broken link changes no such document in such a way, and no user-ruling needs to change, so the concern never reaches the user.
 
 ## Reuse of design-to-main
 
 The design takes these rules from `docs/design-to-main/design-to-main-state-machine-design.md` on main:
 
 - §1: code routes and agents judge; "The state machine is code and holds no judgement." Rule 2's forked subagent is a stopgap until a program routes concerns.
-- §6.1: a reviewer's notes file, each material entry "a finding with a failure scenario"; the reviewer names the furthest-upstream artifact at fault, "since whatever is downstream of it is rewritten from the corrected version anyway" (rules 1 and 3).
+- §6.1: a reviewer's notes file, each material entry "a finding with a failure scenario"; the reviewer names the artifact at fault that is furthest upstream, "since whatever is downstream of it is rewritten from the corrected version anyway" (rules 1 and 3).
 - §6.1 and §6.5: a reviewer and the arbitrator prove before they rule, and the arbitrator, ruling `advance` on a reviewer's reject, closes it as unfounded (rule 5).
 - §6.6: the user is reached through one cold-read report, carrying prior user-rulings, delivered one item at a time, and only when he is needed (rule 7).
 - §7: implementation-writes and test-writes have a ceiling of three, and "A resume from an investigation zeroes the six per-version counters", so every agent gets its chance again after the user steps in (rule 4).
@@ -63,7 +63,7 @@ The design takes these rules from `docs/design-to-main/design-to-main-state-mach
 
 1. **The ghi-write-tool records concerns-files, not a comment and a label.** This replaces what PR [A ruling question from ghi-info no longer holds up the GHI write: the tool writes the issue and records the question on it](https://github.com/nedschorus/nedschorus/pull/983) merged, in one new pull request cut from main. The concerns-file's text and the tool's success message tell the agent to dispatch the concerns handler. Tracked on the reboot-test agent-seat's task list as task #128, "Replace main's comment-and-label ruling-question recording with concerns-files (new PR from main)". Everything below depends on it.
 2. **The concerns handler's instructions:** rules 3 to 7, in one file under `docs/agents/`.
-3. **The second-agent check for a false alarm** (rule 5): the instructions for the agreeing agent, and how its agreement is recorded so the deleting pull request can cite it.
+3. **The check by a second agent for a false alarm** (rule 5): the instructions for the agreeing agent, and how its agreement is recorded so the deleting pull request can cite it.
 4. **Later, a per-GHI launcher:** when the rebuild of GHI [An issue has one GHI-MD and many supporting documents, and the GHI write tool cannot tell them apart](https://github.com/nedschorus/nedschorus/issues/783) finds concerns-files on main, a program starts a concerns handler for that GHI, and for a concern that reaches the user opens a window on the Mac through the helper of PR [ned-box opens a window on the Mac through one forced command](https://github.com/nedschorus/nedschorus/pull/982).
 
 ## Next action
