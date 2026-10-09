@@ -5,9 +5,9 @@ Run: python3 scripts/markdown-edit-hard-wrapped-paragraph-reminder-hook-test.py
 Prints one line per case and exits non-zero if any case fails.
 
 The detector's cases call markdown_has_hard_wrapped_paragraph directly. The
-detector needs markdown-it-py; without it the cases that expect a reminder print
-SKIP lines, and one case checks that the hook stays silent when the package fails
-to import. The hook's
+detector needs markdown-it-py; without it the suite fails, naming the command that
+installs the package, and one case checks that the hook reports the missing
+package as a non-blocking error when the package fails to import. The hook's
 cases run the hook as Claude Code does, as a subprocess reading a PostToolUse
 payload on stdin, against a throwaway repository under a temporary directory
 with a .gitignore that ignores one directory.
@@ -147,19 +147,25 @@ BROKEN_CASES = (
      "$$\n\\begin{aligned}\nx\n\\end{aligned}$$\n\nOne line\nand another.\n"),
     ("a lone $$ with no closer hides nothing",
      "$$\nx = 1\n\nOne line\nand another.\n"),
+    ("a broken paragraph after display math opened by $$\\begin{aligned} (round 7 question)",
+     "$$\\begin{aligned}\nx\n\\end{aligned}$$\n\nOne line\nand another.\n"),
+    ("a broken paragraph after footnote definitions",
+     "[^a]: A footnote with spaces\n\nOne line\nand another.\n"),
+    ("a one-line $$x$$ opens no math block, so it hides nothing up to a later $$",
+     "$$x$$\n\nOne line\nand another.\n\n$$\n"),
 )
 try:
     import markdown_it  # noqa: F401
     PARSER_AVAILABLE = True
 except ImportError:
     PARSER_AVAILABLE = False
-PARSER_MISSING_REASON = "markdown-it-py is not installed, so the hook stays silent here"
+PARSER_INSTALL_COMMAND = "python3 -m pip install --user markdown-it-py"
+check("markdown-it-py is installed, so the reminder works on this machine",
+      PARSER_AVAILABLE, f"install it with: {PARSER_INSTALL_COMMAND}")
 
-for case_name, text in BROKEN_CASES:
-    if not PARSER_AVAILABLE:
-        print(f"SKIP  fires: {case_name}: {PARSER_MISSING_REASON}")
-        continue
-    check(f"fires: {case_name}", hook.markdown_has_hard_wrapped_paragraph(text) is True)
+if PARSER_AVAILABLE:
+    for case_name, text in BROKEN_CASES:
+        check(f"fires: {case_name}", hook.markdown_has_hard_wrapped_paragraph(text) is True)
 
 CLEAN_CASES = (
     ("one-line paragraphs separated by blank lines",
@@ -259,17 +265,27 @@ CLEAN_CASES = (
      "  <div>\nfirst text line\nsecond text line\n</div>\n"),
     ("a later top-level fence opener after a list-item fence (round 6, item 2)",
      "10. ```sh\n    x\n    ```\n\n```\nfirst code line\nsecond code line\n```\n"),
+    # Round 7.
+    ("consecutive footnote definitions, as in a Sources section (round 7, item 1)",
+     "## Sources\n\n[^google-canonical]: [Google Search Central: How to specify a canonical URL]"
+     "(https://developers.google.com/search/docs/crawling)\n"
+     "[^substack-domain]: [Substack: Set up a custom domain](https://support.substack.com/hc/en-us/articles/1)\n"),
+    ("a footnote definition with an indented continuation line (round 7, item 1)",
+     "[^a]: A footnote with spaces in it\n    and its indented continuation.\n"),
+    ("a footnote definition with two continuation lines indented two spaces",
+     "[^a]: A footnote with spaces in it\n  and one continuation\n  and another.\n"),
+    ("a $$ inside an HTML block does not close display math opened before it",
+     "$$\n<div>\n$$\n</div>\n\nline a\nline b\n$$\n"),
+    ("a $$ inside a fenced example does not pair with a later math opener (round 7, item 4)",
+     "```markdown\n$$\n```\n\n$$\nx = 1\n$$\n\n```\nfirst code line\nsecond code line\n```\n"),
+    ("a <br> then a tab at a line's end is a hard break (round 7, item 5)",
+     "First<br>\t\nsecond\n"),
+    ("display math opened by $$\\begin{aligned} and closed by a line ending in $$ (round 7 question)",
+     "$$\\begin{aligned}\nx = 1\ny = 2\n\\end{aligned}$$\n"),
 )
-for case_name, text in CLEAN_CASES:
-    check(f"silent: {case_name}", hook.markdown_has_hard_wrapped_paragraph(text) is False)
-
 if PARSER_AVAILABLE:
-    check("the index names the line that continues the paragraph",
-          hook.first_hard_wrapped_paragraph_line_index("# T\n\nFirst half\nsecond half.\n") == 3)
-    check("the index counts a hard break before the soft one",
-          hook.first_hard_wrapped_paragraph_line_index("First line  \nsecond line\nthird line\n") == 2)
-    check("the index is a line of the file when front matter was blanked",
-          hook.first_hard_wrapped_paragraph_line_index("---\nt: x\n---\n\nOne\ntwo\n") == 5)
+    for case_name, text in CLEAN_CASES:
+        check(f"silent: {case_name}", hook.markdown_has_hard_wrapped_paragraph(text) is False)
 
     large_text = ("One whole paragraph on one line.\n\n" * 50000)
     import time as _time
@@ -278,7 +294,7 @@ if PARSER_AVAILABLE:
     check("a 1.6 MB file is judged in under five seconds",
           _time.monotonic() - _started < 5.0)
 else:
-    print(f"SKIP  the line index and timing cases: {PARSER_MISSING_REASON}")
+    print("the detector's cases were not run: markdown-it-py is missing")
 
 # ---------------------------------------------------------------------------
 # The hook, run as a subprocess against a scratch repository.
@@ -362,8 +378,6 @@ with tempfile.TemporaryDirectory() as temporary_directory:
               agent_text(result).startswith("markdown-edit-hard-wrapped-paragraph-reminder: docs/edited.md"),
               result.stdout + result.stderr)
 
-    else:
-        print(f"SKIP  the hook's reminder cases: {PARSER_MISSING_REASON}")
 
     result = write_then_run(checkout, checkout / "docs" / "clean.md", CLEAN_TEXT)
     check("a Write leaving no broken paragraph outputs nothing", silent(result),
@@ -376,7 +390,8 @@ with tempfile.TemporaryDirectory() as temporary_directory:
               result.stdout + result.stderr)
 
     # A machine without markdown-it-py: a package of that name that fails to
-    # import stands in for the missing one, and the hook must stay silent.
+    # import stands in for the missing one, and the hook must say so on stderr
+    # with exit 1, a non-blocking error Claude Code shows, and give no reminder.
     blocked_packages = tmp / "blocked-packages"
     (blocked_packages / "markdown_it").mkdir(parents=True)
     (blocked_packages / "markdown_it" / "__init__.py").write_text(
@@ -388,8 +403,10 @@ with tempfile.TemporaryDirectory() as temporary_directory:
         [sys.executable, str(HOOK_PATH)],
         input=json.dumps(payload_for(checkout, "Write", blocked_file, {"content": BROKEN_TEXT})),
         capture_output=True, text=True, check=False, env=blocked_environment)
-    check("without markdown-it-py the hook is silent on a broken paragraph", silent(result),
-          result.stdout + result.stderr)
+    check("without markdown-it-py the hook reports the missing package and exits 1",
+          result.returncode == 1 and result.stdout.strip() == ""
+          and "markdown-it-py is not installed" in result.stderr,
+          f"exit {result.returncode}: {result.stdout + result.stderr}")
 
     result = write_then_run(checkout, checkout / "scripts" / "tool.txt",
                             "The first half of a sentence\nand the second half.\n")
