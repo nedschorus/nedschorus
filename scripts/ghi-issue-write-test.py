@@ -1331,7 +1331,10 @@ def run_cases(scratch: Path):
           in unnamed_comment[0][-1]
           and unnamed_lines[-1].startswith(
               "Issue 900: ghi-info thinks this edit conflicts with a ruling "
-              "of the user's"),
+              "of the user's")
+          and unnamed_lines[-1].endswith(
+              "\nghi-info's question: the ruling may not hold")
+          and "Follow that ruling" not in unnamed_lines[-1],
           (unnamed.calls, unnamed_lines))
 
     failing = Recorder({"gh issue comment": Completed(
@@ -1350,6 +1353,17 @@ def run_cases(scratch: Path):
                                           "question on it failed:")
               and "HTTP 502" in str(refusal)
               and "Tell the user that issue 900" in str(refusal),
+              str(refusal))
+        check("and says the filing is unfinished and a rerun finishes it, "
+              "without recording the question",
+              "the GHI-MD is not landed on main and the issue's body is not "
+              "yet the links to it" in str(refusal)
+              and "Rerun this command to land the GHI-MD and link the body"
+              in str(refusal)
+              and "files no second issue" in str(refusal)
+              and "The rerun does not ask ghi-info again, so it will not "
+              "record the question" in str(refusal)
+              and "Do not rerun" not in str(refusal),
               str(refusal))
 
     timing_out = Recorder({"gh issue comment": subprocess.TimeoutExpired(
@@ -2340,6 +2354,39 @@ def run_edit_cases(scratch: Path):
           and not conflicted.ran("gh pr create")
           and not conflicted.ran("gh issue edit"),
           str(conflicted.commands()))
+
+    # A draft the conflict refusal rejects must leave the issue as it was,
+    # ruling question or not: the refusals run before the question is
+    # recorded.
+    for case, extra in (
+            ("a file that moved on main", {}),
+            ("an earlier edit still open", {
+                "ghi-570-edit-*": Completed(
+                    f"abc123\trefs/heads/{EARLIER_EDIT_BRANCH}\n"),
+                f"--head {EARLIER_EDIT_BRANCH}": earlier_edit_pull_request(
+                    EDIT_RELATIVE)})):
+        # The case's own answers go first: the first prefix that matches
+        # answers the call.
+        rejected_with_question = Recorder({
+            **extra,
+            **conflicted.answers,
+            ASK: Completed("", returncode=3, stderr=(
+                "ghi-info found a ruling of the user's that it cannot tell "
+                "still applies: #46 closed issues are frozen\n")),
+            "gh issue view 46": Completed("Closed issues are frozen\n"),
+        })
+        rejected_case = (f"{case} with a ruling question refuses before "
+                         "labelling or commenting on the issue")
+        try:
+            tool.edit(source, REPO, scratch, rejected_with_question, quiet)
+            check(rejected_case, False, "it proceeded")
+        except tool.Refused as refusal:
+            check(rejected_case,
+                  refusal.code == 66
+                  and rejected_with_question.ran(ASK)
+                  and not rejected_with_question.ran("conflicts-with-a-ruling")
+                  and not rejected_with_question.ran("gh issue comment"),
+                  (refusal.code, rejected_with_question.commands()))
 
     # A move puts a second path under the same ruling: the author's path is
     # where the file lands, the moved-from path is where main's copy is

@@ -1068,10 +1068,14 @@ def record_ruling_conflict(repo: str, number: int, conflict, runner,
         raise Refused(
             f"Issue {number} was filed, but recording ghi-info's "
             f"ruling question on it failed: {failure}\n"
+            "The run stopped there: the GHI-MD is not landed on main and the "
+            "issue's body is not yet the links to it.\n"
             f"Tell the user that issue {number} may conflict with a ruling "
             f"of his: {conflict.sentence}\n"
-            "Do not rerun this command to record it; a rerun does not ask "
-            "ghi-info again.", 1)
+            "Rerun this command to land the GHI-MD and link the body; the "
+            f"rerun finds issue {number} and files no second issue.\n"
+            "The rerun does not ask ghi-info again, so it will not record "
+            "the question: telling the user is the only record of it.", 1)
     if conflict.ruling_issue is None:
         ruling = "a ruling of the user's (ghi-info named no issue)"
     else:
@@ -1083,9 +1087,13 @@ def record_ruling_conflict(repo: str, number: int, conflict, runner,
     else:
         done = (f"Filed issue {number}; ghi-info thinks it conflicts with "
                 f"{ruling}")
-    report(f"{done}; recorded on the issue for the user; "
+    if conflict.ruling_issue is None:
+        follow = f"ghi-info's question: {conflict.sentence}"
+    else:
+        follow = "Follow that ruling until the user changes it."
+    report(f"{done}; recorded on issue {number} for the user; "
            "the ruling stands until he changes it.\n"
-           "Follow that ruling until the user changes it.")
+           f"{follow}")
 
 
 def file_issue(repo: str, title: str, key: str, runner, report) -> int:
@@ -1972,8 +1980,9 @@ def edit_landing_state(number: int, staged: str, on_main,
     one run refused. Adjudication also consumes the reconsidered marker, so
     the marker the caller spent to pass the first run was already gone.
 
-    The conflict check in `land_edit` sits behind this same answer, for the
-    same reason: see the module docstring, THE ORDER MATTERS FOR RESUMING."""
+    The conflict check in `refuse_to_land_edit` sits behind this same
+    answer, for the same reason: see the module docstring, THE ORDER
+    MATTERS FOR RESUMING."""
     if on_main == staged:
         return EDIT_LANDING_ALREADY_ON_MAIN, None
     branch = edit_landing_branch_name(number, staged)
@@ -1984,6 +1993,20 @@ def edit_landing_state(number: int, staged: str, on_main,
     return EDIT_LANDING_NEW_CONTENT, branch
 
 
+def refuse_to_land_edit(repo: str, number: int, relative: str, on_main,
+                        moved_from, moved_from_on_main, branch,
+                        repository_root: Path, runner, report):
+    """The two refusals of an edit with new content to land, run before a
+    ruling question is recorded on the issue, so a draft they reject leaves
+    the issue untouched. The earlier-edit refusal comes first of the two:
+    where both would fire, the pull request it names is the thing to wait
+    for, and main's copy is what the author will find once it merges."""
+    refuse_on_an_earlier_edit_still_open(repo, number, relative, moved_from,
+                                         branch, repository_root, runner)
+    refuse_on_conflict(relative, on_main, moved_from, moved_from_on_main,
+                       repository_root, runner, report)
+
+
 def land_edit(repo: str, number: int, title: str, relative: str, staged: str,
               on_main, moved_from, moved_from_on_main, state, branch,
               repository_root: Path, runner, report) -> bool:
@@ -1991,13 +2014,12 @@ def land_edit(repo: str, number: int, title: str, relative: str, staged: str,
 
     `state` and `branch` are `edit_landing_state`'s answer, resolved by the
     caller before step 2 rather than taken here: which state this run is in
-    is what says whether step 2 is asked at all. The two refusals and the
-    push below are what the one state with new content to land does, and
-    the other two states return above them — see the module docstring, THE
-    ORDER MATTERS FOR RESUMING, for why no guard belongs in front of a run
-    that pushes nothing. The earlier-edit refusal comes first of the two:
-    where both would fire, the pull request it names is the thing to wait
-    for, and main's copy is what the author will find once it merges.
+    is what says whether step 2 is asked at all. The push below is what the
+    one state with new content to land does, and the other two states
+    return above it — see the module docstring, THE ORDER MATTERS FOR
+    RESUMING, for why no guard belongs in front of a run that pushes
+    nothing. That state's two refusals, `refuse_to_land_edit`, are run by
+    the caller before this, ahead of recording a ruling question.
 
     `moved_from` is the path main still holds this document at when the
     author moved it, and `moved_from_on_main` is main's copy there. Both are
@@ -2024,11 +2046,6 @@ def land_edit(repo: str, number: int, title: str, relative: str, staged: str,
                                                 repository_root, runner,
                                                 report)
         return True
-
-    refuse_on_an_earlier_edit_still_open(repo, number, relative, moved_from,
-                                         branch, repository_root, runner)
-    refuse_on_conflict(relative, on_main, moved_from, moved_from_on_main,
-                       repository_root, runner, report)
 
     worktree_parent = Path(tempfile.mkdtemp(prefix="ghi-issue-write-"))
     worktree = worktree_parent / "worktree"
@@ -2379,6 +2396,9 @@ def edit(path: Path, repo: str, repository_root: Path, runner, report):
         # see `edit_landing_state`.
         conflict = adjudicate(repo, title, text, repository_root, runner,
                               report, exclude_issue=number)
+        refuse_to_land_edit(repo, number, relative, on_main, moved_from,
+                            moved_from_on_main, branch, repository_root,
+                            runner, report)
         if conflict is not None:
             record_ruling_conflict(repo, number, conflict, runner, report,
                                    edit_not_yet_landed=True)
