@@ -16,8 +16,10 @@ You receive a list with one entry per line, in one of two forms:
 1. **Blind guess.** Run a separate `claude -p` call that is given only the name, so its reader has nothing else:
 
    ```
-   claude -p --model claude-haiku-4-5-20251001 "This name comes from a software project. In one sentence, say what kind of thing it names and what it does or holds. Name: <the name>" < /dev/null
+   cd "$(mktemp -d)" && claude -p --model claude-haiku-4-5-20251001 "This name comes from a software project. In one sentence, say what kind of thing it names and what it does or holds. Name: <the name>" < /dev/null
    ```
+
+   Run it from that empty folder: started inside the repository, `claude` reads the project's CLAUDE.md, glossary and hooks, so the guess is not blind, and the hooks can replace its answer.
 
 2. **Compare.** The guess matches when it names the same kind of thing and the same job as the sender's sentence. A guess that is vague where the sentence is specific does not match.
 
