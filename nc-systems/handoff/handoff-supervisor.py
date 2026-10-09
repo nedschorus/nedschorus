@@ -814,7 +814,7 @@ def sync_working_branch_with_main(working_directory: Path) -> str:
     marker = (checkout_freshness_catch_up.in_progress_marker(git_dir)
               if git_dir is not None else None)
     if marker is not None:
-        operation = checkout_freshness_catch_up.GIT_IN_PROGRESS_OPERATION_BY_MARKER[marker]
+        operation = checkout_freshness_catch_up.in_progress_operation(git_dir, marker)
         reasons.append(f"a {operation} in progress")
     if reasons:
         return f"branch sync: {branch} left as is — {'; '.join(reasons)}{fetch_note}"

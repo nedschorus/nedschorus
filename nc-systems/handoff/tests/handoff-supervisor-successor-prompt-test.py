@@ -926,6 +926,16 @@ def run_branch_sync_cases(workspace: Path):
           report)
     (home_git_dir / "BISECT_LOG").unlink()
 
+    # A tree whose status git cannot read is never fast-forwarded: nothing inspected it.
+    home_index = home_git_dir / "index"
+    saved_index = home_index.read_bytes()
+    home_index.write_bytes(b"not an index")
+    report = supervisor.sync_working_branch_with_main(home)
+    check("an unreadable git status leaves the checkout as it is, and the report says so",
+          report.startswith("branch sync: agent-branch left as is — git status unreadable"),
+          report)
+    home_index.write_bytes(saved_index)
+
     # A detached checkout with an untracked file is fast-forwarded too: an
     # agent-seat's own checkout sits detached.
     detached_home = root / "detached-agent-home"

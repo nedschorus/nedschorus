@@ -119,10 +119,15 @@ MERGE_TREE_OID_CHARACTERS = "0123456789abcdef"
 
 # In-progress operation markers in the git directory, each with the operation
 # it means: no fast-forward or rebase may run in a tree that is mid-anything.
+# A multi-commit cherry-pick or revert paused on a conflict that was resolved
+# with `--no-commit` leaves a clean index, no CHERRY_PICK_HEAD or REVERT_HEAD,
+# and only the sequencer directory; its todo file says which of the two it is.
 GIT_IN_PROGRESS_OPERATION_BY_MARKER = {
     "MERGE_HEAD": "merge", "CHERRY_PICK_HEAD": "cherry-pick", "REVERT_HEAD": "revert",
     "BISECT_LOG": "bisect", "rebase-merge": "rebase", "rebase-apply": "rebase",
+    "sequencer": "cherry-pick or revert",
 }
+GIT_SEQUENCER_OPERATION_BY_TODO_COMMAND = {"pick": "cherry-pick", "revert": "revert"}
 GIT_IN_PROGRESS_MARKERS = tuple(GIT_IN_PROGRESS_OPERATION_BY_MARKER)
 
 # What the agent is told to DO, decided by one fact: whether the branch has
@@ -616,6 +621,19 @@ def in_progress_marker(git_dir: Path):
     return None
 
 
+def in_progress_operation(git_dir: Path, marker: str) -> str:
+    """The operation a marker means, reading the sequencer's todo file to tell a
+    cherry-pick sequence from a revert sequence."""
+    if marker == "sequencer":
+        try:
+            words = (git_dir / "sequencer" / "todo").read_text().split()
+        except OSError:
+            words = []
+        if words and words[0] in GIT_SEQUENCER_OPERATION_BY_TODO_COMMAND:
+            return GIT_SEQUENCER_OPERATION_BY_TODO_COMMAND[words[0]]
+    return GIT_IN_PROGRESS_OPERATION_BY_MARKER[marker]
+
+
 def move_detached_checkout_forward(checkout: Path, git_dir: Path, ahead: int):
     """Fast-forward a detached HEAD to origin/main when it holds no work of its
     own and no operation is in progress, or say why not.
@@ -628,7 +646,7 @@ def move_detached_checkout_forward(checkout: Path, git_dir: Path, ahead: int):
     reasons, lines = [], []
     marker = in_progress_marker(git_dir)
     if marker is not None:
-        operation = GIT_IN_PROGRESS_OPERATION_BY_MARKER[marker]
+        operation = in_progress_operation(git_dir, marker)
         reasons.append(f"a {operation} in progress")
         lines.append(DETACHED_OPERATION_IN_PROGRESS_LINE.format(operation=operation))
     tracked_changes = uncommitted_tracked_change_count(checkout)

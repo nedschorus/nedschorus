@@ -659,6 +659,59 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     check("the same refusal is not sent to the user twice",
           display_text(result) == "", display_text(result))
     (locked_git_dir / "index.lock").unlink()
+    result = run_catch_up(["--cwd", str(locked)])
+    check("once the lock is gone, the next turn's end moves it forward",
+          head_of(locked) == main_tip() and detached_moved_text in agent_text(result),
+          agent_text(result))
+    commit_file(origin, "scripts/detached-relock-advance.py", "advance\n",
+                "advance after a detached checkout was moved")
+    (locked_git_dir / "index.lock").write_text("", encoding="utf-8")
+    result = run_catch_up(["--cwd", str(locked)])
+    check("after a move, the same refusal again is sent to the user again",
+          "could not fast-forward: " in display_text(result)
+          and "index.lock" in display_text(result), display_text(result))
+    (locked_git_dir / "index.lock").unlink()
+
+    unreadable = detached_worktree_behind_main("detached-unreadable-status-worktree")
+    unreadable_head = head_of(unreadable)
+    unreadable_index = Path(git(["rev-parse", "--absolute-git-dir"],
+                                unreadable).stdout.strip()) / "index"
+    saved_index = unreadable_index.read_bytes()
+    unreadable_index.write_bytes(b"not an index")
+    result = run_catch_up(["--cwd", str(unreadable)])
+    check("a detached HEAD whose git status cannot be read is not moved, and git is not asked",
+          head_of(unreadable) == unreadable_head
+          and "not moved forward: git status unreadable.\n" in agent_text(result)
+          and "Git refused the fast-forward" not in agent_text(result), agent_text(result))
+    unreadable_index.write_bytes(saved_index)
+
+    sequencing = detached_worktree_behind_main("detached-paused-sequence-worktree")
+    sequencing_head = head_of(sequencing)
+    sequence_base = head_of(sequencing)
+    commit_file(sequencing, "shared.txt", "sequence one\n", "sequence commit one")
+    commit_file(sequencing, "sequence-two.txt", "two\n", "sequence commit two")
+    picked = git(["rev-list", "--reverse", f"{sequence_base}..HEAD"], sequencing).stdout.split()
+    git(["checkout", "-q", "--detach", sequence_base], sequencing)
+    (sequencing / "shared.txt").write_text("a different line\n", encoding="utf-8")
+    git(["commit", "-qam", "a conflicting base"], sequencing)
+    sequencing_head = head_of(sequencing)
+    git(["cherry-pick", "--no-commit", *picked], sequencing)
+    git(["checkout", "--ours", "shared.txt"], sequencing)
+    git(["add", "shared.txt"], sequencing)
+    sequencing_git_dir = Path(git(["rev-parse", "--absolute-git-dir"], sequencing).stdout.strip())
+    check("the fixture is a paused sequence with a clean index and no CHERRY_PICK_HEAD",
+          (sequencing_git_dir / "sequencer").is_dir()
+          and not (sequencing_git_dir / "CHERRY_PICK_HEAD").exists()
+          and git(["status", "--porcelain", "--untracked-files=no"],
+                  sequencing).stdout.strip() == "",
+          git(["status"], sequencing).stdout)
+    result = run_catch_up(["--cwd", str(sequencing)])
+    check("a detached HEAD with a paused cherry-pick sequence is not moved, and is told so",
+          head_of(sequencing) == sequencing_head
+          and "not moved forward: a cherry-pick in progress" in agent_text(result)
+          and detached_bisect_line.replace("A bisect", "A cherry-pick") in agent_text(result),
+          agent_text(result))
+    git(["cherry-pick", "--abort"], sequencing)
 
     # The ghi-info shape (nedschorus#334): no commits of its own, far behind,
     # never pushed — so it is simply brought level, the same fast-forward the
