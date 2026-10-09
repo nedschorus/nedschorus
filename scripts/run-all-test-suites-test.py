@@ -1855,7 +1855,7 @@ with tempfile.TemporaryDirectory() as scratch:
 
 
 def reap_case(alive_pids, temporary=False, ages=(0,), finished_age=None, record_age=0,
-              unremovable_log_dir=False):
+              unremovable_log_dir=False, unremovable_trace=False):
     """Run remove_leftovers_of_ended_runs_named_in_run_records on one record whose runner
     is pid 1 and suite process pid 2, with liveness stubbed, once for each age in ages
     (seconds after the record was written); return (lines of the last run, trace left,
@@ -1877,8 +1877,8 @@ def reap_case(alive_pids, temporary=False, ages=(0,), finished_age=None, record_
             "log_dir_is_temporary": temporary, "started": "x", "finished": finished,
             "suite_processes": [{"pid": 2, "start_ticks": 200, "namespace_init": True}]}))
         os.utime(record, (written, written))
-        if unremovable_log_dir:
-            locked = log_dir / "kept-by-permissions"
+        if unremovable_log_dir or unremovable_trace:
+            locked = (trace if unremovable_trace else log_dir) / "kept-by-permissions"
             locked.mkdir()
             (locked / "file").write_text("x")
             locked.chmod(0o500)
@@ -1936,6 +1936,15 @@ if os.geteuid() != 0:
 else:
     print("SKIP  a log directory that cannot be removed keeps its record: running as root, "
           "who can remove any directory")
+if os.geteuid() != 0:
+    lines, trace_left, log_left, record_left, _ = reap_case(set(), unremovable_trace=True)
+    check("a caller-chosen log directory whose strace directory cannot be removed keeps its "
+          "run record, so a later run tries again, and the run says so",
+          trace_left and record_left and any("could not remove" in line for line in lines),
+          (lines, trace_left, record_left))
+else:
+    print("SKIP  a caller-chosen log directory whose strace directory cannot be removed keeps "
+          "its run record: running as root, who can remove any directory")
 
 ended_pid, ended_ticks = ended_process()
 check("a process recorded without a start time never counts as running",
