@@ -15,6 +15,7 @@ import io
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -425,15 +426,15 @@ def case_branch_check_failure_on_a_quiet_shell_call_is_told(root):
 def case_reminder_is_capped():
     hook = load_module("hook_for_cap_case", HOOK_PATH)
     many = [("a.md", "markdown-backquoted-name", f"listed-name-{index:02d}") for index in range(35)]
-    text = hook.reminder_text(many)
+    text = hook.reminder_text(many, Path("/checkout"))
     check("the reminder lists the first 30 names", "listed-name-29" in text and "listed-name-30" not in text, text)
     check("the reminder says how many more and how to see them",
           "and 5 more" in text and "new-shared-names-in-changed-files-list.py" in text, text)
     check("the more-names line gives a command that runs the lister with python3",
           "python3 scripts/new-shared-names-in-changed-files-list.py" in text, text)
-    few = hook.reminder_text(many[:3])
+    few = hook.reminder_text(many[:3], Path("/checkout"))
     check("a short reminder has no more-names line", " more," not in few, few)
-    exactly_at_cap = hook.reminder_text(many[:30])
+    exactly_at_cap = hook.reminder_text(many[:30], Path("/checkout"))
     check("a reminder of exactly 30 names has no more-names line", " more," not in exactly_at_cap, exactly_at_cap)
 
 
@@ -487,6 +488,13 @@ def case_hook_reports_once_per_worktree(root):
     check("the hook exits 0", code == 0)
     check("the hook names the new function", "shared_helper" in first, first)
     check("the hook names the naming fresh-agent", "new-name-propose-and-check-fresh-agent" in first)
+    codex_command = ("`codex exec -m gpt-6.1-sol -c model_reasoning_effort=medium --disable memories "
+                     "--sandbox workspace-write -c sandbox_workspace_write.network_access=true "
+                     f"-C {shlex.quote(str(clone))} \"Read .claude/agents/new-name-propose-and-check-fresh-agent.md "
+                     "and do exactly what it says, for these entries, one per line: "
+                     "<name>: <one sentence saying what it names>\" < /dev/null`")
+    check("the hook tells a subagent to run the check through Codex, in the real checkout, with stdin closed",
+          "If you are a subagent and cannot start one" in first and codex_command in first, first)
     _, second = run_hook(clone, state_root, {"tool_name": "Edit", "tool_input": {"file_path": "beta.py"}})
     check("the same names are not reported twice in one agent-session", second == "", second)
     git_directory = subprocess.run(["git", "rev-parse", "--absolute-git-dir"], cwd=str(clone), check=True,
