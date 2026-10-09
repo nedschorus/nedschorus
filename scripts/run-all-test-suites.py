@@ -455,13 +455,13 @@ SIGNAL_SANDBOX_MACOS_SANDBOX_EXEC = "/usr/bin/sandbox-exec"
 SIGNAL_SANDBOX_MACOS_PROFILE = (
     "(version 1)(allow default)(deny signal)(allow signal (target same-sandbox))")
 # The process outside the sandbox that a check inside it signals and must be refused by.
-SIGNAL_SANDBOX_OUTSIDE_PROCESS_VARIABLE = "RUN_ALL_TEST_SUITES_SIGNAL_SANDBOX_OUTSIDE_PROCESS_ID"
+SIGNAL_SANDBOX_TRIAL_SIGNAL_TARGET_PROCESS_VARIABLE = "RUN_ALL_TEST_SUITES_SIGNAL_SANDBOX_TRIAL_SIGNAL_TARGET_PROCESS_ID"
 # SIGWINCH, because a process that does not handle it ignores it: if the sandbox
 # lets the probe through, nothing outside is stopped.
 SIGNAL_SANDBOX_MACOS_PROBE_SIGNAL = signal.SIGWINCH
 SIGNAL_SANDBOX_MACOS_TRIAL_SOURCE = (
     "import os, signal, sys\n"
-    f"outside = int(os.environ[{SIGNAL_SANDBOX_OUTSIDE_PROCESS_VARIABLE!r}])\n"
+    f"outside = int(os.environ[{SIGNAL_SANDBOX_TRIAL_SIGNAL_TARGET_PROCESS_VARIABLE!r}])\n"
     "try:\n"
     f"    os.kill(outside, {int(SIGNAL_SANDBOX_MACOS_PROBE_SIGNAL)})\n"
     "except PermissionError:\n"
@@ -1036,7 +1036,7 @@ def macos_signal_sandbox(runner, sandbox_exec, outside_process_id):
         raise SignalSandboxCouldNotStart(f"{sandbox_exec} is not on this Mac")
     prefix = (sandbox_exec, "-p", SIGNAL_SANDBOX_MACOS_PROFILE, "/usr/bin/env",
               f"{SIGNAL_SANDBOX_INSIDE_VARIABLE}=1",
-              f"{SIGNAL_SANDBOX_OUTSIDE_PROCESS_VARIABLE}={outside_process_id}")
+              f"{SIGNAL_SANDBOX_TRIAL_SIGNAL_TARGET_PROCESS_VARIABLE}={outside_process_id}")
     trial_command = [*prefix, sys.executable, "-c", SIGNAL_SANDBOX_MACOS_TRIAL_SOURCE]
     try:
         trial = runner(trial_command, stdin=subprocess.DEVNULL, capture_output=True,
@@ -1050,7 +1050,7 @@ def macos_signal_sandbox(runner, sandbox_exec, outside_process_id):
     return prefix
 
 
-def sandbox_reports_signal_as_128_plus(prefix):
+def does_signal_sandbox_report_killed_suite_as_exit_code_128_plus_signal(prefix):
     """bwrap stays the suite's parent and exits 128+N for a suite killed by signal N."""
     return bool(prefix) and Path(prefix[0]).name == "bwrap"
 
@@ -1075,7 +1075,7 @@ def signal_sandbox_refusal(error, program=PROGRAM):
 
 
 def signal_sandbox_line(prefix, unconfined_because):
-    if sandbox_reports_signal_as_128_plus(prefix):
+    if does_signal_sandbox_report_killed_suite_as_exit_code_128_plus_signal(prefix):
         return f"each suite runs in its own PID namespace: {' '.join(prefix)}"
     if prefix:
         return (f"each suite runs in a sandbox that refuses its signals to any process "
@@ -1116,7 +1116,7 @@ def run_one_suite(top, interpreter, suite, log_dir, recorder=None, sandbox_prefi
                                    stderr=subprocess.STDOUT, check=False)
     exit_code = completed.returncode
     # bwrap exits 128+N when the suite is killed by signal N; report it as the signal, as unsandboxed runs do.
-    if sandbox_reports_signal_as_128_plus(sandbox_prefix) and \
+    if does_signal_sandbox_report_killed_suite_as_exit_code_128_plus_signal(sandbox_prefix) and \
             128 < exit_code <= 128 + SIGNAL_NUMBER_LIMIT:
         exit_code = -(exit_code - 128)
     return {

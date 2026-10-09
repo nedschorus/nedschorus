@@ -255,7 +255,7 @@ with tempfile.TemporaryDirectory() as scratch_name:
     unconfined_marker = scratch / "ran-unconfined-on-macos-check"
     completed = inside_check_in_child(
         scratch / "proof-macos-unconfined", unconfined_marker, "darwin",
-        environment={program.runner.SIGNAL_SANDBOX_OUTSIDE_PROCESS_VARIABLE: str(os.getpid())})
+        environment={program.runner.SIGNAL_SANDBOX_TRIAL_SIGNAL_TARGET_PROCESS_VARIABLE: str(os.getpid())})
     check("the macOS inside check, unconfined, refuses: its signal out was let through, "
           "no proof, the command not started",
           completed.returncode == program.EXIT_NOT_RUN
@@ -277,7 +277,7 @@ with tempfile.TemporaryDirectory() as scratch_name:
           program.expected_proof("linux") == program.PID_ONE_PROOF
           and program.expected_proof("darwin") == program.OUTSIDE_SIGNAL_REFUSED_PROOF)
 
-    variable = program.runner.SIGNAL_SANDBOX_OUTSIDE_PROCESS_VARIABLE
+    variable = program.runner.SIGNAL_SANDBOX_TRIAL_SIGNAL_TARGET_PROCESS_VARIABLE
     signalled = []
 
     def refusing_kill(pid, number):
@@ -348,6 +348,94 @@ else:
                     os.killpg(leader.pid, signal.SIGKILL)
                 leader.wait()
 
+class FakeLeader:
+    """Stands in for the suite's unreaped leader: records whether it was reaped."""
+    pid = 4242
+
+    def __init__(self):
+        self.reaped = False
+
+    def wait(self):
+        self.reaped = True
+
+
+def killpg_refused_as_on_macos(group_id, number):
+    raise PermissionError(1, "Operation not permitted")
+
+
+original_killpg = program.os.killpg
+program.os.killpg = killpg_refused_as_on_macos
+try:
+    leader = FakeLeader()
+    try:
+        program.stop_process_group_then_reap(leader, members_other_than_leader=lambda group: [])
+        raised = None
+    except Exception as error:  # noqa: BLE001 - any escape is the failure checked here
+        raised = error
+    check("when macOS refuses the group signal because only the zombie leader is left, "
+          "nothing is reported and the leader is reaped",
+          raised is None and leader.reaped, repr(raised))
+    leader = FakeLeader()
+    try:
+        program.stop_process_group_then_reap(leader, members_other_than_leader=lambda group: [977])
+        error_text = None
+    except program.NotRun as error:
+        error_text = str(error)
+    check("when the group signal is refused while another process is still in the group, "
+          "the run is NotRun naming it, and the leader is still reaped",
+          error_text is not None and "977" in error_text and leader.reaped, error_text)
+finally:
+    program.os.killpg = original_killpg
+
+
+def pgrep_answering(returncode, stdout, stderr=""):
+    def run(command, **keywords):
+        return subprocess.CompletedProcess(command, returncode, stdout, stderr)
+    return run
+
+
+check("pgrep -g listing only the leader means no other process is in the group",
+      program.process_group_members_other_than_leader(
+          4242, run=pgrep_answering(0, "4242\n")) == [])
+check("pgrep -g exiting 1 with nothing listed means no other process is in the group",
+      program.process_group_members_other_than_leader(4242, run=pgrep_answering(1, "")) == [])
+check("pgrep -g listing another process returns it",
+      program.process_group_members_other_than_leader(
+          4242, run=pgrep_answering(0, "4242\n977\n")) == [977])
+try:
+    program.process_group_members_other_than_leader(4242, run=pgrep_answering(2, "", "bad"))
+    pgrep_failure_refused = False
+except program.NotRun:
+    pgrep_failure_refused = True
+check("a pgrep that fails is reported, not read as an empty group", pgrep_failure_refused)
+
+# run_suite_confined on macOS must stop leftovers by process group, never through /proc.
+with tempfile.TemporaryDirectory() as scratch_name:
+    scratch = pathlib.Path(scratch_name)
+    (scratch / "quiet-test.py").write_text("pass\n")
+    stops = []
+    original_group_stop = program.stop_process_group_then_reap
+    original_descendants_stop = program.stop_descendants
+    program.stop_process_group_then_reap = lambda process: (stops.append("group"),
+                                                            process.wait())
+    program.stop_descendants = lambda: stops.append("descendants")
+    try:
+        for platform_name in ("darwin", "linux"):
+            stops.clear()
+            try:
+                program.run_suite_confined(
+                    scratch, "quiet-test.py", sys.executable,
+                    ("env", "RUN_ALL_TEST_SUITES_INSIDE_SIGNAL_SANDBOX="), scratch / "proof",
+                    platform=platform_name)
+            except program.NotRun:
+                pass
+            expected = ["group"] if platform_name == "darwin" else ["descendants"]
+            check(f"run_suite_confined on {platform_name} stops leftovers by "
+                  f"{expected[0]}", stops == expected, stops)
+    finally:
+        program.stop_process_group_then_reap = original_group_stop
+        program.stop_descendants = original_descendants_stop
+
 # --- Interruption handling ------------------------------------------------------
 
 program.install_interruption_handlers()
@@ -406,8 +494,13 @@ with tempfile.TemporaryDirectory() as scratch_name:
             ran.append((top, suite, interpreter, prefix, proof, platform))
             return 0
 
+        def become_child_subreaper_as_on_this_platform():
+            subreaper_calls.append(platform)
+            if platform == "darwin":
+                raise AttributeError("macOS's libc has no prctl")
+
         program.run_suite_confined = record_run
-        program.become_child_subreaper = lambda: None
+        program.become_child_subreaper = become_child_subreaper_as_on_this_platform
         if sandbox is not None:
             program.runner.signal_sandbox = lambda platform=None: sandbox
         if sandbox_function is not None:
@@ -428,6 +521,7 @@ with tempfile.TemporaryDirectory() as scratch_name:
             signal.signal(signal.SIGINT, signal.default_int_handler)
         return code, output.getvalue(), ran
 
+    subreaper_calls = []
     code, output, ran = main_with_nothing_run("freebsd14")
     check("on a platform other than Linux and macOS, nothing runs and the exit is 2",
           code == program.EXIT_NOT_RUN and ran == [] and "only on Linux and macOS" in output,
@@ -439,6 +533,18 @@ with tempfile.TemporaryDirectory() as scratch_name:
           code == program.EXIT_PASSED_OR_KILLED and len(ran) == 1
           and ran[0][3] == macos_prefix and ran[0][5] == "darwin",
           (code, output, ran))
+    check("on macOS, the program never tries to become the child subreaper, which "
+          "needs Linux's prctl", "darwin" not in subreaper_calls, subreaper_calls)
+    code, output, ran = main_with_nothing_run("darwin", sandbox=((), None))
+    check("on macOS inside a sandbox already, no second sandbox-exec is started: the suite "
+          "runs with no prefix, and the inside check still proves the inherited sandbox",
+          code == program.EXIT_PASSED_OR_KILLED and len(ran) == 1 and ran[0][3] == ()
+          and ran[0][5] == "darwin", (code, output, ran))
+    bwrap_prefix = ("/usr/bin/bwrap",)
+    code, output, ran = main_with_nothing_run("linux", sandbox=(bwrap_prefix, None))
+    check("on Linux, the program becomes the child subreaper before the suite runs",
+          code == program.EXIT_PASSED_OR_KILLED and "linux" in subreaper_calls,
+          (code, output, subreaper_calls))
 
     def sandbox_exec_missing(platform=None):
         raise program.runner.SignalSandboxCouldNotStart("/usr/bin/sandbox-exec is not on this Mac")

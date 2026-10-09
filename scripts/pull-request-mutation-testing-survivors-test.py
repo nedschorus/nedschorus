@@ -235,7 +235,7 @@ def run_cases():
         # On macOS the prefix names the process that built it, which differs between
         # this file and the script it runs.
         outside_process = re.compile(
-            re.escape(test_suite_runner.SIGNAL_SANDBOX_OUTSIDE_PROCESS_VARIABLE) + r"=\d+")
+            re.escape(test_suite_runner.SIGNAL_SANDBOX_TRIAL_SIGNAL_TARGET_PROCESS_VARIABLE) + r"=\d+")
         check("the config's test command runs the sibling suite through sh -c, "
               "because cosmic-ray runs it without a shell, inside the signal sandbox "
               "when this machine has one",

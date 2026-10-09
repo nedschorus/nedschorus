@@ -85,14 +85,14 @@ check("on macOS, the prefix is sandbox-exec with the signal-only profile, markin
       prefix[:3] == (sys.executable, "-p", runner.SIGNAL_SANDBOX_MACOS_PROFILE)
       and prefix[3] == "/usr/bin/env"
       and f"{runner.SIGNAL_SANDBOX_INSIDE_VARIABLE}=1" in prefix
-      and f"{runner.SIGNAL_SANDBOX_OUTSIDE_PROCESS_VARIABLE}=4242" in prefix and why is None,
+      and f"{runner.SIGNAL_SANDBOX_TRIAL_SIGNAL_TARGET_PROCESS_VARIABLE}=4242" in prefix and why is None,
       prefix)
 check("on macOS, the trial runs inside that prefix before any suite and signals the "
       "outside process",
       len(mac_trials) == 1 and mac_trials[0][:len(prefix)] == list(prefix)
       and mac_trials[0][-1] == runner.SIGNAL_SANDBOX_MACOS_TRIAL_SOURCE, mac_trials)
 check("on macOS, the outside process defaults to the program building the prefix",
-      f"{runner.SIGNAL_SANDBOX_OUTSIDE_PROCESS_VARIABLE}={os.getpid()}" in runner.signal_sandbox(
+      f"{runner.SIGNAL_SANDBOX_TRIAL_SIGNAL_TARGET_PROCESS_VARIABLE}={os.getpid()}" in runner.signal_sandbox(
           platform="darwin", environment={}, sandbox_exec=sys.executable,
           runner=lambda command, **options: Completed(0))[0])
 prefix, why = runner.signal_sandbox(
@@ -124,16 +124,16 @@ for case_name, options, expected in (
 trial = subprocess.run(
     [sys.executable, "-c", runner.SIGNAL_SANDBOX_MACOS_TRIAL_SOURCE], capture_output=True,
     text=True, check=False,
-    env={**os.environ, runner.SIGNAL_SANDBOX_OUTSIDE_PROCESS_VARIABLE: str(os.getpid())})
+    env={**os.environ, runner.SIGNAL_SANDBOX_TRIAL_SIGNAL_TARGET_PROCESS_VARIABLE: str(os.getpid())})
 check("unconfined, the trial's signal to the outside process gets through and the trial fails",
       trial.returncode != 0 and "reached process" in trial.stderr,
       (trial.returncode, trial.stderr))
 
 check("only bwrap reports a suite killed by signal N as exit 128+N",
-      runner.sandbox_reports_signal_as_128_plus(("/usr/bin/bwrap", "--unshare-pid"))
-      and not runner.sandbox_reports_signal_as_128_plus(
+      runner.does_signal_sandbox_report_killed_suite_as_exit_code_128_plus_signal(("/usr/bin/bwrap", "--unshare-pid"))
+      and not runner.does_signal_sandbox_report_killed_suite_as_exit_code_128_plus_signal(
           ("/usr/bin/sandbox-exec", "-p", runner.SIGNAL_SANDBOX_MACOS_PROFILE))
-      and not runner.sandbox_reports_signal_as_128_plus(()))
+      and not runner.does_signal_sandbox_report_killed_suite_as_exit_code_128_plus_signal(()))
 check("the report line for sandbox-exec does not claim a PID namespace",
       "PID namespace" not in runner.signal_sandbox_line(
           ("/usr/bin/sandbox-exec", "-p", "x"), None)
@@ -428,9 +428,68 @@ MACOS_PROBE = (
 
 if sys.platform != "darwin":
     print("SKIP  the end-to-end sandbox-exec case: sandbox-exec exists only on macOS")
-if sys.platform == "darwin":
-    # A fresh sandbox-exec, even when the runner already put this file in one: a
-    # process in a sandbox of its own may signal neither this file nor its sleeper.
+# Inside an inherited sandbox, the probe signals the process outside it that the
+# runner named, and this file's own process, which shares the sandbox, is allowed.
+MACOS_INHERITED_SANDBOX_PROBE = (
+    "import os, signal, subprocess, sys\n"
+    "try:\n"
+    "    os.kill(int(sys.argv[1]), signal.SIGWINCH)\n"
+    "except PermissionError:\n"
+    "    result = 'refused'\n"
+    "else:\n"
+    "    result = 'signalled'\n"
+    "child = subprocess.Popen(['/bin/sleep', '60'])\n"
+    "child.terminate()\n"
+    "print(result, 'own child stopped' if child.wait() == -signal.SIGTERM\n"
+    "      else 'own child not stopped')\n")
+
+
+def macos_case_inside_inherited_sandbox(environment, run=subprocess.run):
+    """Return (passed, detail) for the macOS case when the runner already confined this file.
+
+    macOS refuses a second sandbox-exec inside the first, so the case relies on the
+    sandbox it inherited and signals the outside process the runner named.
+    """
+    outside = environment.get(runner.SIGNAL_SANDBOX_TRIAL_SIGNAL_TARGET_PROCESS_VARIABLE, "")
+    if not outside.isdigit() or int(outside) <= 1:
+        return False, f"{runner.SIGNAL_SANDBOX_TRIAL_SIGNAL_TARGET_PROCESS_VARIABLE} is {outside!r}"
+    probed = run([sys.executable, "-c", MACOS_INHERITED_SANDBOX_PROBE, outside],
+                 capture_output=True, text=True, timeout=60, check=False)
+    return probed.stdout.strip() == "refused own child stopped", (probed.stdout, probed.stderr)
+
+
+def recorded_probe_run(stdout):
+    calls = []
+
+    def run(command, **keywords):
+        calls.append(command)
+        return subprocess.CompletedProcess(command, 0, stdout, "")
+    return run, calls
+
+
+run, calls = recorded_probe_run("refused own child stopped\n")
+passed, detail = macos_case_inside_inherited_sandbox(
+    {runner.SIGNAL_SANDBOX_TRIAL_SIGNAL_TARGET_PROCESS_VARIABLE: "4242"}, run=run)
+check("inside an inherited macOS sandbox, the case starts no second sandbox-exec and "
+      "signals the outside process the runner named",
+      passed and len(calls) == 1 and "sandbox-exec" not in " ".join(calls[0])
+      and calls[0][-1] == "4242", (passed, detail, calls))
+passed, detail = macos_case_inside_inherited_sandbox({}, run=recorded_probe_run("")[0])
+check("inside an inherited macOS sandbox with no outside process named, the case fails",
+      not passed, detail)
+passed, detail = macos_case_inside_inherited_sandbox(
+    {runner.SIGNAL_SANDBOX_TRIAL_SIGNAL_TARGET_PROCESS_VARIABLE: "4242"},
+    run=recorded_probe_run("signalled own child stopped\n")[0])
+check("inside an inherited macOS sandbox, a signal that reaches the outside process fails "
+      "the case", not passed, detail)
+
+if sys.platform == "darwin" and os.environ.get(runner.SIGNAL_SANDBOX_INSIDE_VARIABLE):
+    passed, detail = macos_case_inside_inherited_sandbox(os.environ)
+    check("on macOS, inside the runner's sandbox-exec, a signal to the runner outside it is "
+          "refused, while the probe stops its own child", passed, detail)
+elif sys.platform == "darwin":
+    # Not confined yet: a process in a fresh sandbox-exec may signal neither this
+    # file nor its sleeper.
     macos_prefix = runner.macos_signal_sandbox(
         subprocess.run, runner.SIGNAL_SANDBOX_MACOS_SANDBOX_EXEC, os.getpid())
     sleeper = subprocess.Popen(["sleep", "60"], stdin=subprocess.DEVNULL)

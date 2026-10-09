@@ -145,7 +145,7 @@ def outside_signal_refusal_failure(environment=None, kill=os.kill):
     program that started the sandbox sets to its own process id.
     """
     environment = os.environ if environment is None else environment
-    variable = runner.SIGNAL_SANDBOX_OUTSIDE_PROCESS_VARIABLE
+    variable = runner.SIGNAL_SANDBOX_TRIAL_SIGNAL_TARGET_PROCESS_VARIABLE
     try:
         outside = int(environment[variable])
     except (KeyError, ValueError):
@@ -349,16 +349,42 @@ def wait_without_reaping(process):
             continue
 
 
-def stop_process_group_then_reap(process):
+def process_group_members_other_than_leader(group_id, run=subprocess.run):
+    """Return the ids of processes in the group other than its leader, from macOS's pgrep -g."""
+    try:
+        listed = run(["pgrep", "-g", str(group_id)], stdin=subprocess.DEVNULL,
+                     capture_output=True, text=True, timeout=30, check=False)
+    except (OSError, subprocess.TimeoutExpired) as error:
+        raise NotRun(f"pgrep -g {group_id} could not run ({error}), so whether the suite "
+                     f"left processes behind is unknown") from error
+    # pgrep exits 1 when nothing matched and 0 when something did.
+    if listed.returncode not in (0, 1):
+        raise NotRun(f"pgrep -g {group_id} exited {listed.returncode}: "
+                     f"{listed.stderr.strip()}, so whether the suite left processes "
+                     f"behind is unknown")
+    return [int(word) for word in listed.stdout.split() if int(word) != group_id]
+
+
+def stop_process_group_then_reap(process, members_other_than_leader=None):
     """SIGKILL every process left in the suite's process group, then reap its leader.
 
     The leader is not yet reaped, so its process id, which is the group's id,
     cannot have passed to another process: the signal reaches only the suite's group.
+    macOS refuses a signal to a group whose only member is a zombie with EPERM,
+    so PermissionError means nothing is left only when the group holds no other process.
     """
     try:
         os.killpg(process.pid, signal.SIGKILL)
     except ProcessLookupError:
         pass
+    except PermissionError as error:
+        members_other_than_leader = (members_other_than_leader
+                                     or process_group_members_other_than_leader)
+        left = members_other_than_leader(process.pid)
+        if left:
+            process.wait()
+            raise NotRun(f"processes {', '.join(map(str, left))}, left in the suite's process "
+                         f"group, could not be stopped: {error}") from error
     process.wait()
 
 
@@ -405,7 +431,7 @@ def run_suite_confined(top, suite, interpreter, sandbox_prefix, proof_file, byte
         raise NotRun(f"the check inside the sandbox did not confirm the suite would be "
                      f"confined (exit {process.returncode}), so the suite was not started")
     exit_code = process.returncode
-    if runner.sandbox_reports_signal_as_128_plus(sandbox_prefix) and \
+    if runner.does_signal_sandbox_report_killed_suite_as_exit_code_128_plus_signal(sandbox_prefix) and \
             128 < exit_code <= 128 + runner.SIGNAL_NUMBER_LIMIT:
         exit_code = -(exit_code - 128)
     return exit_code
