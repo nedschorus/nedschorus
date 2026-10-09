@@ -44,6 +44,14 @@ Wired as a Stop hook, so it runs at every turn boundary. Each run:
      changed that it lacks — named, grouped by why they matter, computed from
      `git diff --name-only --no-renames HEAD...origin/main`, never assumed —
      and to leave the branch alone and cut its next topic from origin/main.
+  5b. If HEAD is detached and behind, and holds no commits of its own, no
+     uncommitted tracked change and no operation in progress, fast-forwards
+     it to origin/main and tells the agent which files moved: an agent-seat's
+     own checkout sits detached while its work happens in other worktrees,
+     and CLAUDE.md, the skills and the hooks load from it. Otherwise it is
+     not moved, and the agent is told why and what to do, once per update of
+     main; a refusal git gives for anything but an untracked file is also a
+     user line, once per distinct error.
   6. The machine's reference checkout — the main worktree of the same
      repository, parked on main — gets a fast-forward-only pull on the same
      rhythm, under its own stamp. Never a real merge there: the reference
@@ -109,12 +117,13 @@ MERGE_TREE_CONFLICT_EXIT_CODE = 1
 MERGE_TREE_OID_LENGTHS = (40, 64)  # sha1 and sha256 object ids
 MERGE_TREE_OID_CHARACTERS = "0123456789abcdef"
 
-# In-progress operation markers: the reference fast-forward must not run in
-# a tree that is mid-anything.
-GIT_IN_PROGRESS_MARKERS = (
-    "MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD", "BISECT_LOG",
-    "rebase-merge", "rebase-apply",
-)
+# In-progress operation markers in the git directory, each with the operation
+# it means: no fast-forward or rebase may run in a tree that is mid-anything.
+GIT_IN_PROGRESS_OPERATION_BY_MARKER = {
+    "MERGE_HEAD": "merge", "CHERRY_PICK_HEAD": "cherry-pick", "REVERT_HEAD": "revert",
+    "BISECT_LOG": "bisect", "rebase-merge": "rebase", "rebase-apply": "rebase",
+}
+GIT_IN_PROGRESS_MARKERS = tuple(GIT_IN_PROGRESS_OPERATION_BY_MARKER)
 
 # What the agent is told to DO, decided by one fact: whether the branch has
 # ever been pushed. A never-pushed branch is rebased by this hook
@@ -166,7 +175,43 @@ PUSHED_HISTORY_ADVICE = (
     "fix is a new commit on top. If it conflicts with main, clear the conflict with "
     "the hand-merge that scripts/branch-conflict-check.py describes."
 )
-DETACHED_ADVICE = "You are on a detached HEAD; check out your branch before working."
+# A detached HEAD with no work of its own is moved forward by this hook; these
+# are what the agent is told after a move (A) or when it could not be made (B).
+# CLAUDE.md, the skills and the hooks load from the checkout, so a stale one
+# runs the agent under stale instructions.
+DETACHED_MOVED_ADVICE = (
+    "This checkout's detached HEAD was moved forward to origin/main: it held no commits "
+    "of its own and no uncommitted tracked changes, so nothing was lost.\n"
+    "CLAUDE.md and the skills load from this checkout, so what you read from them earlier "
+    "in this session may be out of date; the hooks already run from the new files.\n"
+    "If CLAUDE.md is listed above, read it again before your next action.\n"
+    "If a skill you are following is listed above, read that skill's SKILL.md under "
+    ".claude/skills/ again before its next step."
+)
+DETACHED_NOT_MOVED_ADVICE = (
+    "This checkout's detached HEAD was not moved forward: {reason}.\n"
+    "CLAUDE.md, the skills and the hooks load from this checkout, so until it moves, the "
+    "files listed above stay older here than on main."
+)
+DETACHED_OPERATION_IN_PROGRESS_LINE = (
+    "A {operation} is in progress: finish it or abort it; the next turn's end moves the "
+    "checkout forward."
+)
+DETACHED_WORK_OF_ITS_OWN_LINE = (
+    "It holds work of its own: run `git switch -c <branch name>` to put that work on a "
+    "branch, and commit any uncommitted changes there; from then on the hook's rules for a "
+    "branch apply."
+)
+DETACHED_FAST_FORWARD_REFUSED_LINES = (
+    "Git refused the fast-forward: {error}\n"
+    "If git names an untracked file that main would overwrite, move that file out of the "
+    "way; the next turn's end moves the checkout forward.\n"
+    "If git names anything else, leave the checkout as it is: the refusal has been "
+    "reported to the user."
+)
+# Git's wording when a fast-forward would overwrite an untracked file: the one
+# refusal the agent can clear, so the one not sent to the user.
+GIT_UNTRACKED_FILE_WOULD_BE_OVERWRITTEN_TEXT = "untracked working tree files would be overwritten"
 UNKNOWN_ADVICE = ("Your head state could not be determined (a git command failed); nothing "
                   "was changed. Check `git status` before working.")
 AFTER_REBASE_ADVICE = f"Run `{SELECTIVE_TEST_RUN_COMMAND}`: your work now sits on newer code."
@@ -541,22 +586,67 @@ def merge_blockers(checkout: Path, git_dir: Path):
         blockers.append("detached HEAD")
     if branch == "main":
         blockers.append("parked on main (reference checkouts fast-forward only)")
+    tracked_changes = uncommitted_tracked_change_count(checkout)
+    if tracked_changes is None:
+        blockers.append("git status unreadable")
+    elif tracked_changes:
+        blockers.append(f"{tracked_changes} uncommitted tracked change(s)")
+    marker = in_progress_marker(git_dir)
+    if marker is not None:
+        blockers.append(f"a git operation in progress ({marker})")
+    return blockers, branch
+
+
+def uncommitted_tracked_change_count(checkout: Path):
+    """Staged or unstaged changes to tracked files, or None when git status
+    cannot be read. Untracked files are not counted: a fast-forward or rebase
+    refuses on its own to overwrite one, and names it."""
     status = run_git(["status", "--porcelain"], checkout, timeout=30)
     if status.returncode != 0:
-        # An unreadable tree must read as unsafe, never as clean — a status
-        # failure that passed for "no changes" would authorize a merge on
-        # exactly the tree nothing could inspect.
-        blockers.append("git status unreadable")
-    else:
-        tracked_changes = [line for line in status.stdout.splitlines()
-                           if not line.startswith("??")]
-        if tracked_changes:
-            blockers.append(f"{len(tracked_changes)} uncommitted tracked change(s)")
+        # An unreadable tree must read as unsafe, never as clean.
+        return None
+    return len([line for line in status.stdout.splitlines() if not line.startswith("??")])
+
+
+def in_progress_marker(git_dir: Path):
+    """The first in-progress operation marker present in the git directory, or None."""
     for marker in GIT_IN_PROGRESS_MARKERS:
         if (git_dir / marker).exists():
-            blockers.append(f"a git operation in progress ({marker})")
-            break
-    return blockers, branch
+            return marker
+    return None
+
+
+def move_detached_checkout_forward(checkout: Path, git_dir: Path, ahead: int):
+    """Fast-forward a detached HEAD to origin/main when it holds no work of its
+    own and no operation is in progress, or say why not.
+
+    Returns (outcome, reasons, condition_lines, error): "moved"; "blocked" with
+    every condition that holds and the line for each; or "refused" with git's
+    error, which is the only outcome where git was asked to move.
+    """
+    reasons, lines = [], []
+    marker = in_progress_marker(git_dir)
+    if marker is not None:
+        operation = GIT_IN_PROGRESS_OPERATION_BY_MARKER[marker]
+        reasons.append(f"a {operation} in progress")
+        lines.append(DETACHED_OPERATION_IN_PROGRESS_LINE.format(operation=operation))
+    tracked_changes = uncommitted_tracked_change_count(checkout)
+    if ahead:
+        reasons.append(f"{ahead} commit(s) of its own")
+    if tracked_changes is None:
+        reasons.append("git status unreadable")
+    elif tracked_changes:
+        reasons.append(f"{tracked_changes} uncommitted tracked change(s)")
+    if ahead or tracked_changes:
+        lines.append(DETACHED_WORK_OF_ITS_OWN_LINE)
+    if reasons:
+        return "blocked", reasons, lines, ""
+    moved = run_git(["merge", "--ff-only", "origin/main"], checkout, timeout=120)
+    if moved.returncode == 0:
+        return "moved", [], [], ""
+    # Every line, not the first: git names the untracked file on a later line.
+    error = "; ".join(line.strip() for line in moved.stderr.splitlines() if line.strip())
+    return "refused", ["git refused the fast-forward"], [], error or "no detail"
 
 
 def drift_facts(checkout: Path, stamp: dict, branch: str, state_key: str, state_text: str):
@@ -794,8 +884,10 @@ def catch_up_session_checkout(checkout: Path, interval_seconds: int) -> None:
          not reported to the user at all.
       2. Drift is counted. If none, every "already said" key is cleared.
       3. A never-pushed branch is REBASED onto origin/main here, and the agent
-         told what moved. A pushed branch is never moved; the agent is TOLD,
-         once per update of main, which files are stale and to leave it.
+         told what moved. A detached HEAD with nothing of its own is
+         fast-forwarded, and the agent told what moved. A pushed branch is
+         never moved; the agent is TOLD, once per update of main, which files
+         are stale and to leave it.
     """
     git_dir = git_directory(checkout)
     if git_dir is None:
@@ -901,11 +993,42 @@ def catch_up_session_checkout(checkout: Path, interval_seconds: int) -> None:
         write_stamp(stamp_path, stamp)
         return
 
-    # 3b. Pushed, or detached: never moved. Told once per update of main.
+    # 3b. Detached: moved forward when it holds nothing of its own. A move is
+    # ALWAYS told, since files changed under the agent; a block is told once
+    # per update of main, and attempted every turn end.
+    if state_key == "detached":
+        outcome, reasons, lines, error = move_detached_checkout_forward(
+            checkout, git_dir, parts["ahead"])
+        if outcome == "moved":
+            stamp["behind"], stamp["ahead"] = 0, 0
+            stamp["last_action"] = f"moved a detached HEAD forward {parts['behind']}"
+            stamp.pop("last_told", None)
+            stamp.pop("last_detached_refusal", None)
+            tell(f"{heading}{changed_on_main_clause}\n{DETACHED_MOVED_ADVICE}")
+            write_stamp(stamp_path, stamp)
+            return
+        if outcome == "refused":
+            stamp["last_action"] = f"detached fast-forward refused: {error}"
+            lines = [DETACHED_FAST_FORWARD_REFUSED_LINES.format(error=error)]
+            if (GIT_UNTRACKED_FILE_WOULD_BE_OVERWRITTEN_TEXT not in error
+                    and stamp.get("last_detached_refusal") != error):
+                report(f"catch-up: {checkout} is {parts['behind']} behind origin/main and "
+                       f"could not fast-forward: {error}")
+            stamp["last_detached_refusal"] = error
+        else:
+            stamp["last_action"] = f"detached HEAD not moved: {'; '.join(reasons)}"
+        if not already_told:
+            stamp["last_told"] = told
+            advice = DETACHED_NOT_MOVED_ADVICE.format(reason="; ".join(reasons))
+            tell(f"{heading}{changed_on_main_clause}{note}\n{advice}\n" + "\n".join(lines))
+        write_stamp(stamp_path, stamp)
+        return
+
+    # 3c. Pushed: never moved. Told once per update of main.
     stamp["last_action"] = "reported, not merged (ruled 2026-09-14)"
     if not already_told:
         stamp["last_told"] = told
-        advice = {"detached": DETACHED_ADVICE, "unknown": UNKNOWN_ADVICE,
+        advice = {"unknown": UNKNOWN_ADVICE,
                   "pushed-history": PUSHED_HISTORY_ADVICE}.get(state_key, LEAVE_IT_ADVICE)
         tell(f"{heading}{changed_on_main_clause}{note}\n{advice}")
     write_stamp(stamp_path, stamp)

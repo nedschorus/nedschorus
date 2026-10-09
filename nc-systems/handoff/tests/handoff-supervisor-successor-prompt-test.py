@@ -886,7 +886,8 @@ def run_branch_sync_cases(workspace: Path):
     check("the fast-forward really moved the files",
           (home / "README.md").read_text(encoding="utf-8") == "seed\nfrom main\n")
 
-    # Uncommitted work is never disturbed, however far behind the branch is.
+    # An untracked file does not stop the fast-forward: git refuses on its own
+    # to overwrite one, and this file is not one main adds.
     (seed / "README.md").write_text("seed\nfrom main\nfurther\n", encoding="utf-8")
     git_in(["add", "-A"], seed)
     git_in(["commit", "--quiet", "-m", "main moves again"], seed)
@@ -894,10 +895,67 @@ def run_branch_sync_cases(workspace: Path):
     (home / "work-in-progress.txt").write_text("half a thought\n", encoding="utf-8")
 
     report = supervisor.sync_working_branch_with_main(home)
-    check("a dirty tree is left exactly as it is", "left as is" in report, report)
-    check("the uncommitted file survives the sync", (home / "work-in-progress.txt").is_file())
-    check("a dirty tree is not fast-forwarded",
-          (home / "README.md").read_text(encoding="utf-8") == "seed\nfrom main\n")
+    check("a branch with only an untracked file fast-forwards",
+          "fast-forwarded to main" in report
+          and (home / "README.md").read_text(encoding="utf-8") == "seed\nfrom main\nfurther\n",
+          report)
+    check("the untracked file survives the fast-forward", (home / "work-in-progress.txt").is_file())
+
+    # A tracked change is never disturbed, however far behind the branch is.
+    (seed / "README.md").write_text("seed\nfrom main\nfurther\nagain\n", encoding="utf-8")
+    git_in(["add", "-A"], seed)
+    git_in(["commit", "--quiet", "-m", "main moves a third time"], seed)
+    git_in(["push", "--quiet", "origin", "main"], seed)
+    (home / "README.md").write_text("an edit of a tracked file\n", encoding="utf-8")
+
+    report = supervisor.sync_working_branch_with_main(home)
+    check("a tracked change leaves the branch as it is, and the report names it",
+          report.startswith("branch sync: agent-branch left as is — 1 uncommitted tracked "
+                            "change(s)"), report)
+    check("the tracked change survives the sync",
+          (home / "README.md").read_text(encoding="utf-8") == "an edit of a tracked file\n")
+    git_in(["checkout", "--quiet", "--", "README.md"], home)
+
+    # An operation in progress leaves the checkout as it is, and is named.
+    home_git_dir = Path(subprocess.run(["git", "rev-parse", "--absolute-git-dir"], cwd=home,
+                                       capture_output=True, text=True).stdout.strip())
+    (home_git_dir / "BISECT_LOG").write_text("git bisect start\n", encoding="utf-8")
+    report = supervisor.sync_working_branch_with_main(home)
+    check("an operation in progress leaves the checkout as it is, and the report names it",
+          report.startswith("branch sync: agent-branch left as is — a bisect in progress"),
+          report)
+    (home_git_dir / "BISECT_LOG").unlink()
+
+    # A detached checkout with an untracked file is fast-forwarded too: an
+    # agent-seat's own checkout sits detached.
+    detached_home = root / "detached-agent-home"
+    git_in(["clone", "--quiet", str(remote), str(detached_home)], root)
+    git_in(["checkout", "--quiet", "--detach", "HEAD~1"], detached_home)
+    (detached_home / "seat-draft.md").write_text("a draft\n", encoding="utf-8")
+    report = supervisor.sync_working_branch_with_main(detached_home)
+    check("a detached checkout with an untracked file fast-forwards",
+          report.startswith("branch sync: HEAD fast-forwarded to main")
+          and (detached_home / "seat-draft.md").is_file(), report)
+
+    # A fast-forward git refuses is reported with git's error.
+    (seed / "seat-collision.md").write_text("main's copy\n", encoding="utf-8")
+    git_in(["add", "-A"], seed)
+    git_in(["commit", "--quiet", "-m", "main adds a file a checkout holds untracked"], seed)
+    git_in(["push", "--quiet", "origin", "main"], seed)
+    (detached_home / "seat-collision.md").write_text("my copy\n", encoding="utf-8")
+    report = supervisor.sync_working_branch_with_main(detached_home)
+    check("a refused fast-forward leaves the checkout as it is, with git's error naming the file",
+          report.startswith("branch sync: HEAD left as is — ") and "seat-collision.md" in report
+          and (detached_home / "seat-collision.md").read_text(encoding="utf-8") == "my copy\n",
+          report)
+
+    # Bring the branch level, then put it one behind, for the diverged case.
+    supervisor.sync_working_branch_with_main(home)
+    (seed / "README.md").write_text("seed\nfrom main\nfurther\nagain\nonce more\n",
+                                    encoding="utf-8")
+    git_in(["add", "-A"], seed)
+    git_in(["commit", "--quiet", "-m", "main moves once more"], seed)
+    git_in(["push", "--quiet", "origin", "main"], seed)
 
     # A branch carrying its own commits is reported, never merged: a conflicted
     # merge waiting for an agent that has not woken up is worse than being behind.

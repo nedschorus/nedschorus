@@ -135,6 +135,11 @@ daily_overview_refresh_reminder_mark = importlib.util.module_from_spec(
 _daily_overview_refresh_reminder_mark_spec.loader.exec_module(
     daily_overview_refresh_reminder_mark)
 
+_checkout_freshness_catch_up_spec = importlib.util.spec_from_file_location(
+    "checkout_freshness_catch_up", SCRIPTS_DIRECTORY / "checkout-freshness-catch-up.py")
+checkout_freshness_catch_up = importlib.util.module_from_spec(_checkout_freshness_catch_up_spec)
+_checkout_freshness_catch_up_spec.loader.exec_module(checkout_freshness_catch_up)
+
 UNCOMMITTED_WORK_SNAPSHOTS_PATH = Path(__file__).resolve().with_name(
     "uncommitted-work-snapshots.py")
 _uncommitted_work_snapshots_spec = importlib.util.spec_from_file_location(
@@ -778,7 +783,10 @@ def run_git_here(arguments: list, working_directory: Path, timeout: int = 60):
 
 
 def sync_working_branch_with_main(working_directory: Path) -> str:
-    """Fast-forward a clean, strictly behind branch and return a report without raising."""
+    """Fast-forward a strictly behind checkout, on a branch or detached, that has no
+    uncommitted tracked change and no git operation in progress; return a report
+    without raising. Untracked files do not block: git refuses on its own to
+    overwrite one, and names it."""
     # Only call between sessions: syncing under a live agent invalidates its view of the tree.
     # Fast-forward only; resolving a conflict requires the agent's judgment.
     toplevel = run_git_here(["rev-parse", "--show-toplevel"], working_directory, timeout=15)
@@ -795,10 +803,21 @@ def sync_working_branch_with_main(working_directory: Path) -> str:
     branch = run_git_here(["rev-parse", "--abbrev-ref", "HEAD"],
                           working_directory, timeout=15).stdout.strip() or "HEAD"
 
-    dirty = run_git_here(["status", "--porcelain"], working_directory, timeout=30).stdout.strip()
-    if dirty:
-        return (f"branch sync: {branch} left as is — {len(dirty.splitlines())} uncommitted "
-                f"path(s) in the tree{fetch_note}")
+    reasons = []
+    tracked_changes = checkout_freshness_catch_up.uncommitted_tracked_change_count(
+        working_directory)
+    if tracked_changes is None:
+        reasons.append("git status unreadable")
+    elif tracked_changes:
+        reasons.append(f"{tracked_changes} uncommitted tracked change(s)")
+    git_dir = checkout_freshness_catch_up.git_directory(working_directory)
+    marker = (checkout_freshness_catch_up.in_progress_marker(git_dir)
+              if git_dir is not None else None)
+    if marker is not None:
+        operation = checkout_freshness_catch_up.GIT_IN_PROGRESS_OPERATION_BY_MARKER[marker]
+        reasons.append(f"a {operation} in progress")
+    if reasons:
+        return f"branch sync: {branch} left as is — {'; '.join(reasons)}{fetch_note}"
 
     if run_git_here(["merge-base", "--is-ancestor", "origin/main", "HEAD"],
                     working_directory, timeout=15).returncode == 0:
@@ -813,8 +832,9 @@ def sync_working_branch_with_main(working_directory: Path) -> str:
                     working_directory, timeout=15).returncode == 0:
         merged = run_git_here(["merge", "--ff-only", "origin/main"], working_directory)
         if merged.returncode != 0:
-            return (f"branch sync: {branch} could not fast-forward: "
-                    f"{merged.stderr.strip() or 'no detail'}{fetch_note}")
+            error = "; ".join(line.strip() for line in merged.stderr.splitlines()
+                              if line.strip())
+            return f"branch sync: {branch} left as is — {error or 'no detail'}{fetch_note}"
         tip = run_git_here(["rev-parse", "--short", "HEAD"],
                            working_directory, timeout=15).stdout.strip()
         return f"branch sync: {branch} fast-forwarded to main ({tip}){fetch_note}"
