@@ -1723,7 +1723,7 @@ def run_edit_cases(scratch: Path):
           reader.staged == staged, repr((reader.staged or "")[:140]))
 
     # --- What that issue line cites --------------------------------------
-    # The issue, by title, as CLAUDE.md says to cite one. It was built from
+    # The issue, by title, as the project's citation rule says to cite one. It was built from
     # the file's first HEADING, which is the title only in `create`, where
     # the issue is filed under the heading. Here the two part company on 25
     # of the 26 filed GHI-MDs on main, and each of an issue's files would

@@ -496,9 +496,9 @@ def run(arguments, platform):
         return (f"VERDICT: not run (lock held) — {arguments.lock_file} is held by {holder}; "
                 f"run again when that run has finished"), EXIT_LOCKED
     try:
-        # Taking the lock overwrote the description a killed run left; clean up after it
-        # here, as the run of scripts/run-all-test-suites.py that would have read it does.
-        runner.remove_traces_the_last_lock_holder_left(previous_holder)
+        # Clean up after earlier runs here, as scripts/run-all-test-suites.py does.
+        runner.clean_up_after_earlier_runs(Path(arguments.lock_file), previous_holder,
+                                           platform)
         if platform != "darwin":
             become_child_subreaper()
         with tempfile.TemporaryDirectory(prefix=f"{PROGRAM}-") as work_name:

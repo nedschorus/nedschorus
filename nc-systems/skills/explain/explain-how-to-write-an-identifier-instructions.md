@@ -1,6 +1,6 @@
 # How to write an identifier
 
-This file is the full form of CLAUDE.md's citation rule. Every identifier you
+This file is the project's citation rule in full. Every identifier you
 show him carries its ID-type and a name he can read, and where it has a link, it
 is a link. A number may appear, but never alone. Look names and links up: `gh pr
 view <n> --json title,url`, `gh issue view <n> --json title,url`, `git log -1
