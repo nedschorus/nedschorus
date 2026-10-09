@@ -139,6 +139,8 @@ BROKEN_CASES = (
      "-   ```\n    x\n    ```\n\nPara a\npara b\n"),
     # A $ or a footnote reference is not display math or a footnote definition.
     ("a dollar amount mid-paragraph", "One line costs $5\nand another.\n"),
+    ("a line starting with one $ is not display math",
+     "$ git status prints the branch\nand the files it changed.\n"),
     ("$$ in the middle of a line", "One line costs $$ more\nand another.\n"),
     ("a footnote reference, not a definition", "See the note[^a] here\nand more.\n"),
     ("a footnote label with no colon", "[^a] is a label\nand more.\n"),
@@ -433,6 +435,30 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     result = write_then_run(checkout, checkout / "ignored-notes" / "scratch.md", BROKEN_TEXT)
     check("a git-ignored Markdown file is silent", silent(result),
           result.stdout + result.stderr)
+
+    # git cannot answer: a .git file pointing nowhere makes check-ignore exit 128.
+    broken_checkout = tmp / "broken-checkout"
+    broken_checkout.mkdir()
+    (broken_checkout / ".git").write_text("gitdir: " + str(tmp / "no-such-git-directory") + "\n",
+                                          encoding="utf-8")
+    result = write_then_run(broken_checkout, broken_checkout / "notes.md", BROKEN_TEXT)
+    check("when git check-ignore exits 128 the hook reports git's failure and exits 1",
+          result.returncode == 1 and result.stdout.strip() == ""
+          and "git check-ignore exited 128" in result.stderr,
+          f"exit {result.returncode}: {result.stdout + result.stderr}")
+
+    # git missing from PATH: the hook runs by absolute path, so only git is absent.
+    missing_git_file = checkout / "docs" / "missing-git.md"
+    missing_git_file.write_text(BROKEN_TEXT, encoding="utf-8")
+    result = subprocess.run(
+        [sys.executable, str(HOOK_PATH)],
+        input=json.dumps(payload_for(checkout, "Write", missing_git_file, {"content": BROKEN_TEXT})),
+        capture_output=True, text=True, check=False,
+        env={**CLEAN_ENVIRONMENT, "PATH": str(tmp / "empty-path-directory")})
+    check("when git is missing the hook reports it and exits 1",
+          result.returncode == 1 and result.stdout.strip() == ""
+          and "git check-ignore could not run" in result.stderr,
+          f"exit {result.returncode}: {result.stdout + result.stderr}")
 
     outside_file = tmp / "outside" / "elsewhere.md"
     result = write_then_run(checkout, outside_file, BROKEN_TEXT)

@@ -60,6 +60,10 @@ PARSER_MISSING_MESSAGE = (
 class MarkdownParserMissing(Exception):
     """markdown-it-py cannot be imported."""
 
+
+class GitIgnoreCheckFailed(Exception):
+    """git check-ignore could not say whether the file is ignored."""
+
 def run_git(arguments, working_directory: Path):
     return subprocess.run(["git", *arguments], cwd=str(working_directory),
                           capture_output=True, text=True, encoding="utf-8",
@@ -91,8 +95,19 @@ def checkout_relative_path(file_path: str, working_directory: Path):
 
 
 def git_would_track(root: Path, relative_path: str) -> bool:
+    """Return whether git would track relative_path; raise GitIgnoreCheckFailed when git cannot say."""
     # check-ignore exits 0 for ignored, 1 for trackable, and 128 for failure; tracked files are never ignored.
-    return run_git(["check-ignore", "-q", "--", relative_path], root).returncode == 1
+    try:
+        completed = run_git(["check-ignore", "-q", "--", relative_path], root)
+    except (OSError, subprocess.SubprocessError) as error:
+        raise GitIgnoreCheckFailed(f"git check-ignore could not run: {error}") from error
+    if completed.returncode == 1:
+        return True
+    if completed.returncode == 0:
+        return False
+    detail = completed.stderr.strip().splitlines()
+    raise GitIgnoreCheckFailed(
+        f"git check-ignore exited {completed.returncode}" + (f": {detail[0]}" if detail else ""))
 
 
 def markdown_parser():
@@ -186,7 +201,13 @@ def main() -> int:
     if located is None:
         return 0
     root, relative_path = located
-    if not git_would_track(root, relative_path):
+    try:
+        trackable = git_would_track(root, relative_path)
+    except GitIgnoreCheckFailed as error:
+        print(f"markdown-edit-hard-wrapped-paragraph-reminder: {error}, so no reminder check was made.",
+              file=sys.stderr)
+        return 1
+    if not trackable:
         return 0
     try:
         text = Path(file_path).read_bytes().decode("utf-8")
