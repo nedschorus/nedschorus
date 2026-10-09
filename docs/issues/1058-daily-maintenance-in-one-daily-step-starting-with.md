@@ -33,6 +33,22 @@ Once a day, an agent-session reads every page under `docs/nedschorus-wiki/`, the
 
 The user also put another daily chore into this step, besides the wiki check: report agent-seats far behind main. For every agent-seat on both machines, count the commits its checkout is behind main, and list for the user each agent-seat more than 100 commits behind. A checkout falls behind only when its agent-seat stops reincarnating, so on most days the list is empty and the report says so in one line; on 2026-10-05, every agent-seat on both machines was within 8 commits of main.
 
+## A third job: a pending ned-box reboot or firmware update
+
+Ubuntu's unattended-upgrades installs ned-box's package updates every day by itself, but it neither reboots ned-box nor installs firmware, so a pending reboot or firmware update can wait with nobody told. On 2026-10-08 ned-box had been up 8 days; `/var/run/reboot-required` had said since 2026-10-02 that it needed a reboot, for a new kernel and `gnome-shell`; and `fwupdmgr get-updates` listed a UEFI dbx update, version 20260707. An agent found this only by checking. The user approved adding this job on 2026-10-08, as item 2 of the approval-walk merge-lane-2-waiting-on-user-walk-2026-10-07, whose minutes are at `nedlern@ned-box:/home/nedlern/nedschorus-logs/walk/merge-lane-2-waiting-on-user-walk-2026-10-07-minutes.md` once that approval-walk closes.
+
+Each day the daily step checks ned-box for two things, running the commands on ned-box, either directly or over ssh from the Mac; which machine runs the daily step is open question 2 below:
+
+- **A pending reboot:** the file `/var/run/reboot-required` exists. The file's modification time says since when; `/var/run/reboot-required.pkgs`, when present, names the packages that asked for the reboot.
+- **A pending firmware update:** `fwupdmgr get-updates` lists one or more updates.
+
+When either is pending, the daily step tells the user, in its message to him like its other jobs, what is pending and since when, and gives him the commands for what is pending, to run from his Mac, where he sits:
+
+- a firmware update: `ssh -t nedlern@ned-box 'sudo fwupdmgr update'`. Installing firmware may itself ask for a reboot, so when both are pending the firmware command comes first.
+- a reboot: `ssh -t nedlern@ned-box 'sudo reboot'`. The message also tells him that the reboot ends every agent-session on ned-box, and that `scripts/restart-live-seats-at-login.py`, which runs at ned-box's boot, brings back the agent-seats that were running.
+
+When nothing is pending, the message says so in one line. When the check itself fails, because ned-box cannot be reached or `fwupdmgr` fails, the message says what failed and never says nothing is pending.
+
 ## How a daily job is handed to the user and tracked (decided)
 
 The user ruled on this design on 2026-10-05, as item 9 of the approval-walk move-mechanical-agent-chores-into-programs-and-hooks-2026-10-04 in the reboot-test agent-seat, under chore 8 of GHI [Move mechanical agent chores into programs and hooks](https://github.com/nedschorus/nedschorus/issues/1036). He rejected a design in which the handoff-supervisor marks a daily reminder "started" by itself when it hands the reminder out, and approved the design below with "Y - make sure your notes are clear and complete." The walk-minutes, with his words in full, are at `nedlern@ned-box:/home/nedlern/nedschorus-logs/walk/move-mechanical-agent-chores-into-programs-and-hooks-2026-10-04-minutes.md` once that approval-walk closes.
@@ -64,4 +80,4 @@ The design:
 
 ## Next action
 
-Settle the six open questions above with the user, then build the second job of the daily step and the report of agent-seats far behind main, their tests, and the change to `memory_review_due_lines` or to the scheduled-jobs file that the first question decides.
+Settle the six open questions above with the user, then build the second job of the daily step, the report of agent-seats far behind main, and the check for a pending ned-box reboot or firmware update, their tests, and the change to `memory_review_due_lines` or to the scheduled-jobs file that the first question decides.
