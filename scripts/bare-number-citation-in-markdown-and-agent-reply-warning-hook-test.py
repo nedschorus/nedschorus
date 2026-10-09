@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Tests for bare-number-citation-note-hook.py.
+"""Tests for bare-number-citation-in-markdown-and-agent-reply-warning-hook.py.
 
-Run: python3 scripts/bare-number-citation-note-hook-test.py
+Run: python3 scripts/bare-number-citation-in-markdown-and-agent-reply-warning-hook-test.py
 Prints one line per case and exits non-zero if any case fails.
 
 The scanner's cases call bare_references_in() directly. The hook's cases run
@@ -32,7 +32,7 @@ _git_environment_fixture = importlib.util.module_from_spec(_git_environment_fixt
 _git_environment_fixture_spec.loader.exec_module(_git_environment_fixture)
 _git_environment_fixture.remove_git_redirecting_environment_variables_from_this_process()
 
-HOOK_PATH = Path(__file__).resolve().with_name("bare-number-citation-note-hook.py")
+HOOK_PATH = Path(__file__).resolve().with_name("bare-number-citation-in-markdown-and-agent-reply-warning-hook.py")
 
 # An attended session, as an agent-seat's own is; the headless cases override it.
 HOOK_ENVIRONMENT = {name: value for name, value in os.environ.items()
@@ -50,7 +50,7 @@ def check(case_name, condition, detail=""):
         failures.append(case_name)
 
 
-specification = importlib.util.spec_from_file_location("bare_number_citation_note_hook", HOOK_PATH)
+specification = importlib.util.spec_from_file_location("bare_number_citation_in_markdown_and_agent_reply_warning_hook", HOOK_PATH)
 hook = importlib.util.module_from_spec(specification)
 specification.loader.exec_module(hook)
 
@@ -157,7 +157,7 @@ def context_of(result):
     return output["hookSpecificOutput"]
 
 
-SCRATCH = Path(tempfile.mkdtemp(prefix="bare-number-citation-note-hook-test-"))
+SCRATCH = Path(tempfile.mkdtemp(prefix="bare-number-citation-in-markdown-and-agent-reply-warning-hook-test-"))
 atexit.register(shutil.rmtree, str(SCRATCH), True)
 REPOSITORY = SCRATCH / "repository"
 REPOSITORY.mkdir()

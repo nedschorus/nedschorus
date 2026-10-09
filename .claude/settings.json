@@ -46,7 +46,7 @@
           },
           {
             "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/scripts/bare-number-citation-note-hook.py",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/scripts/bare-number-citation-in-markdown-and-agent-reply-warning-hook.py",
             "timeout": 10
           }
         ]
@@ -128,7 +128,7 @@
           },
           {
             "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/scripts/bare-number-citation-note-hook.py",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/scripts/bare-number-citation-in-markdown-and-agent-reply-warning-hook.py",
             "timeout": 30
           }
         ]

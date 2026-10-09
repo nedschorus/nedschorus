@@ -66,7 +66,7 @@ MARKDOWN_LINK_PATTERN = re.compile(
 BARE_URL_PATTERN = re.compile(r"<?\b[a-z][a-z0-9+.-]*://[^\s>]+>?", re.IGNORECASE)
 
 MARKDOWN_OPENING_LINES = (
-    "bare-number-citation-note: the text just written to {path} cites {count} pull "
+    "bare-number-citation-in-markdown-and-agent-reply-warning-hook: the text just written to {path} cites {count} pull "
     "request(s), GitHub issue(s) or task(s) by a bare number. A number alone tells a "
     "reader almost nothing; a title and a link are what a reader can read and open.",
     "Cite each one by its ID-type and its name, as a clickable link where it can be "
@@ -76,7 +76,7 @@ MARKDOWN_OPENING_LINES = (
     "Where the number quotes the wrong form on purpose, leave it as written.",
 )
 LAST_MESSAGE_OPENING_LINES = (
-    "bare-number-citation-note: your last message cites {count} pull request(s), "
+    "bare-number-citation-in-markdown-and-agent-reply-warning-hook: your last message cites {count} pull request(s), "
     "GitHub issue(s) or task(s) by a bare number. A number alone tells a reader "
     "almost nothing; a title and a link are what a reader can read and open.",
     "Your message has already been shown. Send a short follow-up that gives each one "
