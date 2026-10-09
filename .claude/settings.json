@@ -136,6 +136,11 @@
             "type": "command",
             "command": "python3 \"$CLAUDE_PROJECT_DIR\"/scripts/bare-number-citation-in-markdown-and-agent-reply-warning-hook.py",
             "timeout": 30
+          },
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/scripts/markdown-edit-hard-wrapped-paragraph-reminder-hook.py",
+            "timeout": 30
           }
         ]
       },
