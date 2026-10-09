@@ -112,12 +112,6 @@ BROKEN_CASES = (
      "<div>\n<!-- note -->\n\nOne line\nand another.\n"),
     ("a fence line indented by a tab inside a fence does not close it, so the fence closes later",
      "```\n\t```\ncode\n```\nOne line\nand another.\n"),
-    ("a line starting $$ that does not hold $$ alone opens no math block",
-     "$$ x = y + z\n\nOne line\nand another.\n"),
-    ("a line holding $$x$$ and more text opens no math block",
-     "$$x$$ inline-ish\n\nOne line\nand another.\n"),
-    ("a broken paragraph after display math closed by $$ alone",
-     "$$\nx = 1\n$$\n\nOne line\nand another.\n"),
     # Cases the parser reads as wrapped paragraphs although an earlier hand
     # detector stayed silent on them: CommonMark makes each one a paragraph.
     ("a list item wrapped onto an indented line",
@@ -143,23 +137,19 @@ BROKEN_CASES = (
      "- outer\n  - ```sh\n    x\n    ```\n\nPara a\npara b\n"),
     ("a fence opened on a list line with a wide marker gap closes (round 6, item 1)",
      "-   ```\n    x\n    ```\n\nPara a\npara b\n"),
-    ("display math closed by a line ending in $$ (round 6 note)",
-     "$$\n\\begin{aligned}\nx\n\\end{aligned}$$\n\nOne line\nand another.\n"),
-    ("a lone $$ with no closer hides nothing",
-     "$$\nx = 1\n\nOne line\nand another.\n"),
-    ("a broken paragraph after display math opened by $$\\begin{aligned} (round 7 question)",
-     "$$\\begin{aligned}\nx\n\\end{aligned}$$\n\nOne line\nand another.\n"),
-    ("a broken paragraph after footnote definitions",
-     "[^a]: A footnote with spaces\n\nOne line\nand another.\n"),
-    ("a one-line $$x$$ opens no math block, so it hides nothing up to a later $$",
-     "$$x$$\n\nOne line\nand another.\n\n$$\n"),
+    # A $ or a footnote reference is not display math or a footnote definition.
+    ("a dollar amount mid-paragraph", "One line costs $5\nand another.\n"),
+    ("$$ in the middle of a line", "One line costs $$ more\nand another.\n"),
+    ("a footnote reference, not a definition", "See the note[^a] here\nand more.\n"),
+    ("a footnote label with no colon", "[^a] is a label\nand more.\n"),
 )
 try:
     import markdown_it  # noqa: F401
     PARSER_AVAILABLE = True
 except ImportError:
     PARSER_AVAILABLE = False
-PARSER_INSTALL_COMMAND = "python3 -m pip install --user markdown-it-py"
+PARSER_INSTALL_COMMAND = ("python3 -m pip install --user --break-system-packages markdown-it-py, "
+                          "run with the python3 that `command -v python3` finds in the shell Claude Code runs hooks from")
 check("markdown-it-py is installed, so the reminder works on this machine",
       PARSER_AVAILABLE, f"install it with: {PARSER_INSTALL_COMMAND}")
 
@@ -278,6 +268,34 @@ CLEAN_CASES = (
      "$$\n<div>\n$$\n</div>\n\nline a\nline b\n$$\n"),
     ("a $$ inside a fenced example does not pair with a later math opener (round 7, item 4)",
      "```markdown\n$$\n```\n\n$$\nx = 1\n$$\n\n```\nfirst code line\nsecond code line\n```\n"),
+    # Round 8: a file holding display math or a footnote definition gets no
+    # reminder at all; these were broken cases while the hook judged them.
+    ("a line starting $$ that does not hold $$ alone opens no math block",
+     "$$ x = y + z\n\nOne line\nand another.\n"),
+    ("a line holding $$x$$ and more text opens no math block",
+     "$$x$$ inline-ish\n\nOne line\nand another.\n"),
+    ("a broken paragraph after display math closed by $$ alone",
+     "$$\nx = 1\n$$\n\nOne line\nand another.\n"),
+    ("display math closed by a line ending in $$ (round 6 note)",
+     "$$\n\\begin{aligned}\nx\n\\end{aligned}$$\n\nOne line\nand another.\n"),
+    ("a lone $$ with no closer hides nothing",
+     "$$\nx = 1\n\nOne line\nand another.\n"),
+    ("a broken paragraph after display math opened by $$\\begin{aligned} (round 7 question)",
+     "$$\\begin{aligned}\nx\n\\end{aligned}$$\n\nOne line\nand another.\n"),
+    ("a broken paragraph after footnote definitions",
+     "[^a]: A footnote with spaces\n\nOne line\nand another.\n"),
+    ("a one-line $$x$$ opens no math block, so it hides nothing up to a later $$",
+     "$$x$$\n\nOne line\nand another.\n\n$$\n"),
+    ("display math indented in a list item (round 7, item 1)",
+     "10. item\n\n    $$\n    x = 1\n    y = 2\n    $$\n\nOne line\nand another.\n"),
+    ("display math opened inside a block quote",
+     "> $$\n> x\n\nOne line\nand another.\n"),
+    ("a table row without outer pipes that starts with a footnote label (round 7, item 3)",
+     "| a | b |\n|---|---|\n[^a]: note | A\nc | d\n\nOne line\nand another.\n"),
+    ("display math opened on a numbered list-item line, its other lines unmarked",
+     "10. $$\n    x = 1\n\nOne line\nand another.\n"),
+    ("display math opened on a list-item line",
+     "- $$\n  x\n  $$\n\nOne line\nand another.\n"),
     ("a <br> then a tab at a line's end is a hard break (round 7, item 5)",
      "First<br>\t\nsecond\n"),
     ("display math opened by $$\\begin{aligned} and closed by a line ending in $$ (round 7 question)",
