@@ -223,7 +223,8 @@ with tempfile.TemporaryDirectory() as scratch_name:
               completed.returncode == program.EXIT_NOT_RUN and proof.read_text() == ""
               and not ran_marker.exists(), (completed.returncode, completed.stderr))
 
-    def inside_check_in_child(proof, marker, platform, setup="", environment=None):
+    def inside_check_in_child(proof, marker, platform, setup="", environment=None,
+                              inside_variable="1"):
         """Run the inside check for `platform` in a child, because a passing check execs."""
         proof.write_text("")
         return subprocess.run(
@@ -237,7 +238,10 @@ with tempfile.TemporaryDirectory() as scratch_name:
              f"platform={platform!r}))\n",
              str(proof), "touch", str(marker)],
             capture_output=True, text=True, check=False,
-            env={**os.environ, "RUN_ALL_TEST_SUITES_INSIDE_SIGNAL_SANDBOX": "1",
+            env={**{name: value for name, value in os.environ.items()
+                    if name != "RUN_ALL_TEST_SUITES_INSIDE_SIGNAL_SANDBOX"},
+                 **({"RUN_ALL_TEST_SUITES_INSIDE_SIGNAL_SANDBOX": inside_variable}
+                    if inside_variable is not None else {}),
                  **(environment or {})})
 
     # Process 1 not bwrap and the inside variable leaked in: the suite must not start.
@@ -277,6 +281,38 @@ with tempfile.TemporaryDirectory() as scratch_name:
           "proof on macOS",
           program.expected_proof("linux") == program.PID_ONE_PROOF
           and program.expected_proof("darwin") == program.OUTSIDE_SIGNAL_REFUSED_PROOF)
+    inside = program.runner.SIGNAL_SANDBOX_INSIDE_VARIABLE
+    check("on macOS with no prefix, the expected proof is the refused-signal proof inside "
+          "this project's sandbox, and the inherited-sandbox proof outside it",
+          program.expected_proof("darwin", (), {inside: "1"})
+          == program.OUTSIDE_SIGNAL_REFUSED_PROOF
+          and program.expected_proof("darwin", (), {}) == program.MACOS_SANDBOX_INHERITED_PROOF
+          and program.expected_proof("darwin", ("sandbox-exec",), {})
+          == program.OUTSIDE_SIGNAL_REFUSED_PROOF
+          and program.expected_proof("linux", (), {}) == program.PID_ONE_PROOF)
+
+    # macOS, outside this project's sandbox: only a sandbox the run inherited confines it.
+    for case_name, stand_in, started, proof_text, message in (
+            ("the macOS inside check, in a sandbox the run inherited, writes the inherited "
+             "proof and starts the command",
+             "lambda: True", True, program.MACOS_SANDBOX_INHERITED_PROOF, ""),
+            ("the macOS inside check, in no sandbox at all, refuses: no proof, the command "
+             "not started",
+             "lambda: False", False, "", "no sandbox confines this process"),
+            ("the macOS inside check, when the check for a sandbox fails, refuses with the "
+             "failure",
+             "failing", False, "", "sandbox_check returned -1")):
+        marker = scratch / f"ran-inherited-{stand_in.replace(' ', '').replace(':', '')}"
+        proof_path = scratch / f"proof-inherited-{marker.name}"
+        setup = ("def failing():\n"
+                 "    raise program.runner.SignalSandboxCouldNotStart('sandbox_check returned -1')\n"
+                 f"program.runner.macos_process_is_sandboxed = {stand_in}\n")
+        completed = inside_check_in_child(proof_path, marker, "darwin", setup=setup,
+                                          inside_variable=None)
+        check(case_name,
+              (completed.returncode == 0) == started and marker.exists() == started
+              and proof_path.read_text().strip() == proof_text
+              and message in completed.stderr, (completed.returncode, completed.stderr))
 
     variable = program.runner.SIGNAL_SANDBOX_TRIAL_SIGNAL_TARGET_PROCESS_VARIABLE
     signalled = []

@@ -74,6 +74,7 @@ INSIDE_CHECK_OPTION = "--inside-signal-sandbox-check-pid-one-then-exec"
 PID_ONE_COMMAND_FILE = Path("/proc/1/comm")
 PID_ONE_PROOF = "process 1 is bwrap"
 OUTSIDE_SIGNAL_REFUSED_PROOF = "a signal to a process outside the sandbox was refused"
+MACOS_SANDBOX_INHERITED_PROOF = "macOS confines this process in a sandbox it inherited"
 INTERRUPTING_SIGNALS = (signal.SIGTERM, signal.SIGHUP, signal.SIGINT)
 PR_SET_CHILD_SUBREAPER = 36
 
@@ -164,6 +165,21 @@ def outside_signal_refusal_failure(environment=None, kill=os.kill):
 def inside_check_then_exec(proof_file, command, platform=None):
     """Inside the sandbox: write the proof and start the suite, or refuse without starting it."""
     platform = sys.platform if platform is None else platform
+    if platform == "darwin" and os.environ.get(runner.SIGNAL_SANDBOX_INSIDE_VARIABLE) != "1":
+        # No sandbox-exec was started because this run inherited a sandbox, such as
+        # Claude Code's, which runner.signal_sandbox found; the check repeats here.
+        try:
+            inherited = runner.macos_process_is_sandboxed()
+        except runner.SignalSandboxCouldNotStart as error:
+            print(f"{PROGRAM}: the suite was not started — {error}", file=sys.stderr)
+            return EXIT_NOT_RUN
+        if not inherited:
+            print(f"{PROGRAM}: the suite was not started — no sandbox confines this "
+                  f"process, so a signal from the suite could reach processes outside it.",
+                  file=sys.stderr)
+            return EXIT_NOT_RUN
+        Path(proof_file).write_text(MACOS_SANDBOX_INHERITED_PROOF + "\n")
+        os.execvp(command[0], command)
     if platform == "darwin":
         why_not = outside_signal_refusal_failure()
         if why_not is not None:
@@ -186,8 +202,18 @@ def inside_check_then_exec(proof_file, command, platform=None):
     os.execvp(command[0], command)
 
 
-def expected_proof(platform):
-    return OUTSIDE_SIGNAL_REFUSED_PROOF if platform == "darwin" else PID_ONE_PROOF
+def expected_proof(platform, sandbox_prefix=("sandbox",), environment=None):
+    """The proof the inside check writes for this prefix and this program's environment.
+
+    On macOS, with no prefix and outside this project's own sandbox, the run
+    relies on a sandbox it inherited, such as Claude Code's.
+    """
+    environment = os.environ if environment is None else environment
+    if platform != "darwin":
+        return PID_ONE_PROOF
+    if sandbox_prefix or environment.get(runner.SIGNAL_SANDBOX_INSIDE_VARIABLE) == "1":
+        return OUTSIDE_SIGNAL_REFUSED_PROOF
+    return MACOS_SANDBOX_INHERITED_PROOF
 
 
 def files_the_patch_changes(top, patch):
@@ -427,7 +453,7 @@ def run_suite_confined(top, suite, interpreter, sandbox_prefix, proof_file, byte
                 process.kill()
                 process.wait()
             stop_descendants()
-    if proof_file.read_text().strip() != expected_proof(platform):
+    if proof_file.read_text().strip() != expected_proof(platform, sandbox_prefix, environment):
         raise NotRun(f"the check inside the sandbox did not confirm the suite would be "
                      f"confined (exit {process.returncode}), so the suite was not started")
     exit_code = process.returncode

@@ -79,7 +79,8 @@ check("on a platform with no signal sandbox, suites run unconfined and the reaso
 mac_trials = []
 prefix, why = runner.signal_sandbox(
     platform="darwin", environment={}, sandbox_exec=sys.executable, outside_process_id=4242,
-    runner=lambda command, **options: mac_trials.append(command) or Completed(0))
+    runner=lambda command, **options: mac_trials.append(command) or Completed(0),
+    is_macos_process_sandboxed=lambda: False)
 check("on macOS, the prefix is sandbox-exec with the signal-only profile, marking the inside "
       "and naming the outside process",
       prefix[:3] == (sys.executable, "-p", runner.SIGNAL_SANDBOX_MACOS_PROFILE)
@@ -94,12 +95,91 @@ check("on macOS, the trial runs inside that prefix before any suite and signals 
 check("on macOS, the outside process defaults to the program building the prefix",
       f"{runner.SIGNAL_SANDBOX_TRIAL_SIGNAL_TARGET_PROCESS_VARIABLE}={os.getpid()}" in runner.signal_sandbox(
           platform="darwin", environment={}, sandbox_exec=sys.executable,
-          runner=lambda command, **options: Completed(0))[0])
+          runner=lambda command, **options: Completed(0),
+          is_macos_process_sandboxed=lambda: False)[0])
 prefix, why = runner.signal_sandbox(
     platform="darwin", environment={runner.SIGNAL_SANDBOX_INSIDE_VARIABLE: "1"},
     sandbox_exec="/no/such/sandbox-exec")
 check("on macOS inside a sandbox already, no second sandbox is started",
       prefix == () and why is None, (prefix, why))
+
+inherited_trials = []
+prefix, why = runner.signal_sandbox(
+    platform="darwin", environment={}, sandbox_exec=sys.executable,
+    runner=lambda command, **options: inherited_trials.append(command) or Completed(0),
+    is_macos_process_sandboxed=lambda: True)
+check("on macOS, when a sandbox such as Claude Code's already confines the run, no "
+      "sandbox-exec is started or tried, and the run is not called unconfined",
+      prefix == () and why is None and inherited_trials == [], (prefix, why, inherited_trials))
+
+
+def failing_confinement_check():
+    raise runner.SignalSandboxCouldNotStart("sandbox_check returned -1")
+
+
+try:
+    runner.signal_sandbox(platform="darwin", environment={}, sandbox_exec=sys.executable,
+                          runner=lambda command, **options: Completed(0),
+                          is_macos_process_sandboxed=failing_confinement_check)
+except runner.SignalSandboxCouldNotStart as error:
+    check("on macOS, a failed check for an inherited sandbox is an error, never a guess",
+          "returned -1" in str(error), str(error))
+else:
+    check("on macOS, a failed check for an inherited sandbox is an error, never a guess",
+          False, "no exception")
+
+
+class FakeLibSystem:
+    def __init__(self, result):
+        self.calls = []
+        self.result = result
+
+        def sandbox_check(*arguments):
+            self.calls.append(arguments)
+            return self.result
+        self.sandbox_check = sandbox_check
+
+
+def fake_library_loader(library):
+    loaded = []
+
+    def load(path, **options):
+        loaded.append(path)
+        return library
+    return load, loaded
+
+
+for result, expected in ((1, True), (0, False)):
+    library = FakeLibSystem(result)
+    load, loaded = fake_library_loader(library)
+    check(f"sandbox_check returning {result} means sandboxed is {expected}, asked about this "
+          f"process with no operation named",
+          runner.macos_process_is_sandboxed(load) is expected
+          and loaded == [runner.SIGNAL_SANDBOX_MACOS_LIBSYSTEM]
+          and library.calls == [(os.getpid(), None, 0)], (loaded, library.calls))
+
+
+def no_library(path, **options):
+    raise OSError(f"dlopen({path}): image not found")
+
+
+class LibSystemWithoutSandboxCheck:
+    pass
+
+
+for case_name, load, expected in (
+        ("sandbox_check returning -1 is an error naming the result",
+         fake_library_loader(FakeLibSystem(-1))[0], "returned -1"),
+        ("a libSystem that cannot be loaded is an error",
+         no_library, "image not found"),
+        ("a libSystem without sandbox_check is an error",
+         lambda path, **options: LibSystemWithoutSandboxCheck(), "could not be loaded")):
+    try:
+        runner.macos_process_is_sandboxed(load)
+    except runner.SignalSandboxCouldNotStart as error:
+        check(case_name, expected in str(error), str(error))
+    else:
+        check(case_name, False, "no exception")
 
 for case_name, options, expected in (
         ("on macOS, a missing sandbox-exec is an error, never an unconfined run",
@@ -113,7 +193,7 @@ for case_name, options, expected in (
          "Exec format error")):
     try:
         runner.signal_sandbox(platform="darwin", environment={}, outside_process_id=4242,
-                              **options)
+                              is_macos_process_sandboxed=lambda: False, **options)
     except runner.SignalSandboxCouldNotStart as error:
         check(case_name, expected in str(error), str(error))
     else:

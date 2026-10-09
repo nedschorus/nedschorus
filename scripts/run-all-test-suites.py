@@ -78,7 +78,11 @@ included, while the suite can still signal the processes it started. A
 process the suite leaves running is not stopped when the suite ends, as it is
 in a PID namespace. Before any suite runs, a trial process inside the sandbox
 signals this program; the run stops with exit 2 when sandbox-exec is missing,
-cannot start, or lets that signal through. A run started
+cannot start, or lets that signal through. A run that macOS already
+confines in a sandbox, such as one inside Claude Code's sandbox, starts no
+sandbox-exec: the sandbox it inherited already refuses signals to processes
+outside it, and `ps` cannot run inside a sandbox-exec nested in another
+sandbox. A run started
 inside the sandbox, such as one a suite of this program starts, does not
 start another: bwrap cannot start inside bwrap, and its suites are already
 confined. The suites listed in SUITES_RUN_OUTSIDE_THE_SIGNAL_SANDBOX cannot
@@ -424,6 +428,7 @@ import argparse
 import codecs
 import concurrent.futures
 import contextlib
+import ctypes
 import datetime
 import fcntl
 import functools
@@ -471,6 +476,7 @@ SIGNAL_SANDBOX_INSIDE_VARIABLE = "RUN_ALL_TEST_SUITES_INSIDE_SIGNAL_SANDBOX"
 SIGNAL_SANDBOX_START_TIMEOUT_SECONDS = 60
 # The profile the user's Mac run of the check passed on 2026-10-08 (macOS 26.6.2).
 SIGNAL_SANDBOX_MACOS_SANDBOX_EXEC = "/usr/bin/sandbox-exec"
+SIGNAL_SANDBOX_MACOS_LIBSYSTEM = "/usr/lib/libSystem.B.dylib"
 SIGNAL_SANDBOX_MACOS_PROFILE = (
     "(version 1)(allow default)(deny signal)(allow signal (target same-sandbox))")
 # The process outside the sandbox that a check inside it signals and must be refused by.
@@ -1266,14 +1272,39 @@ class SignalSandboxCouldNotStart(Exception):
     """The signal sandbox is expected here but could not start; the message says why."""
 
 
+def macos_process_is_sandboxed(load_library=ctypes.CDLL):
+    """Return whether macOS already confines this process in a sandbox.
+
+    Raises SignalSandboxCouldNotStart when the check cannot be made, since a
+    wrong answer either nests sandbox-exec or leaves the suites unconfined.
+    """
+    try:
+        sandbox_check = load_library(SIGNAL_SANDBOX_MACOS_LIBSYSTEM, use_errno=True).sandbox_check
+    except (OSError, AttributeError) as error:
+        raise SignalSandboxCouldNotStart(
+            f"sandbox_check could not be loaded from {SIGNAL_SANDBOX_MACOS_LIBSYSTEM}: "
+            f"{error}") from error
+    sandbox_check.argtypes = (ctypes.c_int, ctypes.c_char_p, ctypes.c_int)
+    sandbox_check.restype = ctypes.c_int
+    # No operation named: the answer is whether any sandbox applies to the process.
+    result = sandbox_check(os.getpid(), None, 0)
+    if result not in (0, 1):
+        raise SignalSandboxCouldNotStart(
+            f"sandbox_check({os.getpid()}, NULL, 0) returned {result}: "
+            f"{os.strerror(ctypes.get_errno())}")
+    return result == 1
+
+
 def signal_sandbox(platform=None, environment=None, which=shutil.which,
                    runner=subprocess.run, sandbox_exec=SIGNAL_SANDBOX_MACOS_SANDBOX_EXEC,
-                   outside_process_id=None):
+                   outside_process_id=None, is_macos_process_sandboxed=None):
     """Return (prefix, None) to put before a suite's command, or ((), why) when it runs unconfined.
 
     Raises SignalSandboxCouldNotStart when bwrap is on PATH but fails to start,
     or on macOS when sandbox-exec is missing, fails to start or lets a trial
     signal out, since running unconfined then would hide a broken sandbox.
+    On macOS, a process that a sandbox already confines gets ((), None), and a
+    failed check of that raises the same error.
     outside_process_id is the process outside the sandbox that checks inside it
     signal; default this process.
     """
@@ -1282,6 +1313,8 @@ def signal_sandbox(platform=None, environment=None, which=shutil.which,
     if environment.get(SIGNAL_SANDBOX_INSIDE_VARIABLE):
         return (), None
     if platform == "darwin":
+        if (is_macos_process_sandboxed or macos_process_is_sandboxed)():
+            return (), None
         return macos_signal_sandbox(
             runner, sandbox_exec,
             os.getpid() if outside_process_id is None else outside_process_id), None
@@ -1357,7 +1390,7 @@ def signal_sandbox_line(prefix, unconfined_because):
     if unconfined_because:
         return (f"suites run WITHOUT the signal sandbox, so a stray signal can reach "
                 f"any process of this account: {unconfined_because}")
-    return "suites run inside the signal sandbox this run was started in"
+    return "suites run inside the sandbox this run was started in"
 
 
 def suite_process_started(process, status_read, note_suite_process):
