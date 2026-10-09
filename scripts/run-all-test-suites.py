@@ -14,7 +14,9 @@ Usage:
   -j            how many suites run at once; default, the machine's core
                 count, or the number of suites to run when that is fewer
   --log-dir     where each suite's output and the report are written;
-                default, a new directory under the system temp directory
+                default, a new directory under the system temp directory,
+                removed two days after its run ends. Two runs cannot share
+                one --log-dir: the second exits 3
   --lock-file   the lock that keeps two runs on one machine apart; default
                 ~/.claude/.run-all-test-suites.lock
   --only-suites-whose-recorded-inputs-changed-since COMMIT
@@ -170,6 +172,23 @@ second run on the same machine exits 3 without running anything. The lock
 file names its holder (process id, checkout, start time), and the refusal
 prints it.
 
+RUN RECORDS, on Linux. Each run writes a record into the directory beside
+its lock file (<lock file>.runs): its own process id and start time, its
+log directory, and, for each suite, the process whose end ends the suite.
+In the signal sandbox that process is the init of the suite's PID
+namespace, which bwrap reports through --json-status-fd; when it ends, the
+kernel ends every process in the namespace. A run started next removes what
+an earlier run left (its strace traces, and its own temporary log
+directory two days after the run ended) only when that run's process and
+every suite process it recorded have ended. A suite of a killed run can
+still be writing its traces, and a run that cleaned up after the lock's
+last holder, as runs did before, could delete them while it wrote. A suite
+run outside the sandbox is recorded by its own process, so a process it
+started in a session of its own is not covered. The temporary log
+directories runs made before records existed are removed once nothing in
+them has changed for two days. macOS has no /proc to read start times
+from, so there a run still cleans up after the lock's last holder.
+
 CONCURRENCY. -j N runs N suites at once. The default is the machine's core
 count (4 when Python cannot tell), or the number of suites to run when that
 is fewer. Suites start longest first, by the seconds their recordings
@@ -245,8 +264,8 @@ suite depends on. Two recorders, whose findings are added together:
   calls traced, and -z writes only calls that succeeded; the trace is
   deleted once read, because the heaviest suites write hundreds of
   megabytes. A run killed before it deletes them leaves the traces of the
-  suites it was running; the next run to take the lock removes them, since
-  the lock file names its holder's log directory. Inside another strace (a
+  suites it was running; a later run removes them once nothing of the killed
+  run still runs (see RUN RECORDS below). Inside another strace (a
   full run that runs this program's own test) a second strace cannot
   attach, so the audit hook works alone there.
 
@@ -447,12 +466,18 @@ SUITES_RUN_OUTSIDE_THE_SIGNAL_SANDBOX = {
         "it starts the agy cell's own bwrap, which cannot start inside bwrap",
     "nc-systems/cold-read/tests/cold-read-fast-read-test.py":
         "it starts the agy cell's own bwrap, which cannot start inside bwrap",
+    "scripts/run-all-test-suites-cleanup-after-killed-runs-real-process-test.py":
+        "it starts this program, whose suites run in bwrap, which cannot start inside bwrap",
     "scripts/mac-window-opened-for-ned-box-forced-command-test.py":
         "it runs the real ssh, which refuses its root-owned config files because "
         "inside the sandbox's user namespace they show as owned by nobody",
 }
 
 DEFAULT_LOCK_FILE = Path.home() / ".claude" / ".run-all-test-suites.lock"
+RUN_RECORDS_DIRECTORY_SUFFIX = ".runs"
+# Long enough for whoever reads a run's report and failed-suite logs to read them.
+FINISHED_RUN_LOG_RETENTION_SECONDS = 2 * 24 * 3600
+LOG_DIRECTORY_LOCK_FILE_NAME = ".run-all-test-suites-log-directory.lock"
 REPORT_FILE_NAME = "report.txt"
 SUITES_RUN_AT_ONCE_WHEN_CORE_COUNT_UNKNOWN = 4
 
@@ -894,6 +919,255 @@ def remove_traces_the_last_lock_holder_left(previous_holder):
     return left
 
 
+def run_records_directory_for_lock_file(lock_file):
+    """The directory of run records that goes with a lock file."""
+    # Beside the lock, so a test that passes its own lock file also gets its own records.
+    return Path(f"{lock_file}{RUN_RECORDS_DIRECTORY_SUFFIX}")
+
+
+def process_start_ticks(pid, proc=Path("/proc")):
+    """The process's start time in clock ticks since boot, or None when it is gone or a zombie."""
+    try:
+        stat = (proc / str(pid) / "stat").read_text()
+    except (FileNotFoundError, ProcessLookupError):
+        return None
+    # The command name may hold spaces and ")", so split after its last ")".
+    fields = stat.rsplit(")", 1)[1].split()
+    if fields[0] == "Z":
+        return None
+    return int(fields[19])
+
+
+def process_alive(pid, start_ticks, proc=Path("/proc")):
+    """True while the process that had this pid and start time still runs.
+
+    A process recorded without a start time had ended before it could be read,
+    so it never counts as running."""
+    if start_ticks is None:
+        return False
+    return process_start_ticks(pid, proc) == start_ticks
+
+
+class RunRecord:
+    """This run's record in the runs directory, which a later run reads to know
+    whether this run, and every suite process it started, has ended."""
+
+    def __init__(self, runs_dir, log_dir, log_dir_is_temporary, proc=Path("/proc")):
+        runs_dir.mkdir(parents=True, exist_ok=True)
+        start_ticks = process_start_ticks(os.getpid(), proc)
+        self.path = runs_dir / f"{os.getpid()}-{start_ticks}.json"
+        self.content = {
+            "runner": {"pid": os.getpid(), "start_ticks": start_ticks},
+            "log_dir": str(log_dir),
+            "log_dir_is_temporary": log_dir_is_temporary,
+            "started": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            "suite_processes": [],
+            "finished": None,
+        }
+        self.proc = proc
+        self.lock = threading.Lock()
+        self.write()
+
+    def write(self):
+        temporary = self.path.with_name(f".{self.path.name}.{threading.get_ident()}")
+        temporary.write_text(json.dumps(self.content))
+        os.replace(temporary, self.path)
+
+    def note_suite_process(self, pid, namespace_init):
+        # Recorded the moment the process exists, so a run killed later still names it.
+        start_ticks = process_start_ticks(pid, self.proc)
+        if start_ticks is None:
+            return
+        with self.lock:
+            self.content["suite_processes"].append(
+                {"pid": pid, "start_ticks": start_ticks, "namespace_init": namespace_init})
+            self.write()
+
+    def finish(self):
+        with self.lock:
+            if not self.content["log_dir_is_temporary"]:
+                # A log directory the caller chose is the caller's to remove; nothing is left to reap.
+                self.path.unlink(missing_ok=True)
+                return
+            self.content["finished"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+            self.write()
+
+
+def remove_tree_or_say_why(path):
+    """Delete a directory tree; return None when it is gone, or the reason it is not."""
+    try:
+        shutil.rmtree(path)
+    except FileNotFoundError:
+        return None
+    except OSError as error:
+        return str(error)
+    return None
+
+
+def write_run_record(path, content):
+    temporary = path.with_name(f".{path.name}.{os.getpid()}.{threading.get_ident()}")
+    temporary.write_text(json.dumps(content))
+    os.replace(temporary, path)
+
+
+def first_confirmed_end(path, record, now):
+    """When this ended run was first seen ended, written into its record the first time.
+
+    A finished run ended when it wrote "finished". A killed run's end is known
+    only when a later run first finds all of its processes gone, so the time
+    that later run looked is recorded and the retention counts from it."""
+    if record.get("confirmed_ended") is not None:
+        return record["confirmed_ended"]
+    if record.get("finished"):
+        ended = datetime.datetime.fromisoformat(record["finished"]).timestamp()
+    else:
+        ended = now
+    record["confirmed_ended"] = ended
+    write_run_record(path, record)
+    return ended
+
+
+def remove_leftovers_of_ended_runs_named_in_run_records(
+        runs_dir, own_record=None, now=None, alive=process_alive,
+        retention_seconds=FINISHED_RUN_LOG_RETENTION_SECONDS):
+    """Remove what ended runs left behind; return one report line per run acted on or kept.
+
+    A run is ended only when its runner and every suite process it recorded are
+    gone: a suite process of a killed runner may still be writing its traces.
+    A run's temporary log directory goes once the run has been ended for
+    retention_seconds; its record goes only with it, so a directory that could
+    not be removed is tried again by the next run."""
+    now = time.time() if now is None else now
+    lines = []
+    for path in sorted(runs_dir.glob("*.json")) if runs_dir.is_dir() else []:
+        if own_record is not None and path == own_record.path:
+            continue
+        try:
+            record = json.loads(path.read_text())
+        except (OSError, ValueError) as error:
+            lines.append(f"run record {path} could not be read ({error}); it is kept")
+            continue
+        runner = record["runner"]
+        if alive(runner["pid"], runner["start_ticks"]):
+            continue
+        running = [process for process in record["suite_processes"]
+                   if alive(process["pid"], process["start_ticks"])]
+        log_dir = Path(record["log_dir"])
+        if running:
+            lines.append(f"the run that logged to {log_dir} has no runner, but "
+                         f"{len(running)} of its suite processes still run; its files are kept")
+            continue
+        traces = sorted((log_dir / "recorded-inputs").glob("*.strace"))
+        failures = [(trace_dir, why) for trace_dir in traces
+                    if (why := remove_tree_or_say_why(trace_dir)) is not None]
+        removed_traces = len(traces) - len(failures)
+        if removed_traces:
+            lines.append(f"removed {removed_traces} strace directories the ended run left in "
+                         f"{log_dir / 'recorded-inputs'}")
+        if not record["log_dir_is_temporary"]:
+            if not failures:
+                path.unlink(missing_ok=True)
+        else:
+            try:
+                ended = first_confirmed_end(path, record, now)
+            except (OSError, ValueError) as error:
+                lines.append(f"run record {path} could not be updated ({error}); it is kept")
+                continue
+            if not failures and now - ended >= retention_seconds:
+                why = remove_tree_or_say_why(log_dir)
+                if why is None:
+                    path.unlink(missing_ok=True)
+                    lines.append(f"removed the log directory {log_dir} of a run that ended "
+                                 f"more than {retention_seconds // 3600} hours ago")
+                else:
+                    failures.append((log_dir, why))
+        for failed, why in failures:
+            lines.append(f"could not remove {failed} ({why}); its run record {path} is kept, "
+                         f"so the next run tries again")
+    return lines
+
+
+def newest_modification_time_in_tree(directory):
+    """The newest modification time of the directory and everything under it."""
+    newest = directory.stat().st_mtime
+
+    def fail(error):
+        raise error
+    for parent, subdirectories, files in os.walk(directory, onerror=fail):
+        for name in subdirectories + files:
+            newest = max(newest, (Path(parent) / name).lstat().st_mtime)
+    return newest
+
+
+def remove_old_temporary_log_directories_without_run_records(
+        runs_dir, now=None, temp_dir=None,
+        retention_seconds=FINISHED_RUN_LOG_RETENTION_SECONDS):
+    """Remove old log directories that runs made before runs kept records.
+
+    Returns (removed, failures), failures being (directory, reason) pairs. A
+    directory a caller chose with --log-dir holds the log-directory lock file and
+    is the caller's to remove, so it is never touched. A directory counts as old
+    only when nothing anywhere under it changed for retention_seconds, because a
+    suite of an old run may still be appending to a trace deep inside it."""
+    now = time.time() if now is None else now
+    temp_dir = Path(tempfile.gettempdir() if temp_dir is None else temp_dir)
+    named = set()
+    for path in runs_dir.glob("*.json") if runs_dir.is_dir() else []:
+        with contextlib.suppress(OSError, ValueError, KeyError):
+            named.add(Path(json.loads(path.read_text())["log_dir"]))
+    removed, failures = [], []
+    for log_dir in sorted(temp_dir.glob(f"{PROGRAM}-*")):
+        if log_dir in named or not log_dir.is_dir():
+            continue
+        if (log_dir / LOG_DIRECTORY_LOCK_FILE_NAME).exists():
+            continue
+        try:
+            newest = newest_modification_time_in_tree(log_dir)
+        except OSError:
+            continue
+        if now - newest >= retention_seconds:
+            why = remove_tree_or_say_why(log_dir)
+            if why is None:
+                removed.append(log_dir)
+            else:
+                failures.append((log_dir, why))
+    return removed, failures
+
+
+def clean_up_after_earlier_runs(lock_file, previous_holder, platform=None):
+    """Remove what earlier runs left, once nothing of theirs still runs; return report lines.
+
+    On Linux every run keeps a record of its runner and suite processes. On
+    other platforms there is no /proc to read start times from, so the lock's
+    last holder is cleaned up after, as before."""
+    platform = sys.platform if platform is None else platform
+    if not platform.startswith("linux"):
+        left = remove_traces_the_last_lock_holder_left(previous_holder)
+        return ([f"removed {len(left)} strace directories the run before this one left "
+                 f"in {left[0].parent}"] if left else [])
+    runs_dir = run_records_directory_for_lock_file(lock_file)
+    lines = remove_leftovers_of_ended_runs_named_in_run_records(runs_dir)
+    if Path(lock_file) == DEFAULT_LOCK_FILE:
+        # Only the machine's own runs share the system temp directory with records this old.
+        removed, failures = remove_old_temporary_log_directories_without_run_records(runs_dir)
+        lines += [f"removed the log directory {log_dir}, left by a run from before run records"
+                  for log_dir in removed]
+        lines += [f"could not remove the log directory {log_dir}, left by a run from before "
+                  f"run records ({why})" for log_dir, why in failures]
+    return lines
+
+
+def lock_explicit_log_directory(log_dir):
+    """Hold the given log directory for this run, or return None when another run holds it."""
+    handle = open(log_dir / LOG_DIRECTORY_LOCK_FILE_NAME, "a")
+    try:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        handle.close()
+        return None
+    return handle
+
+
 def log_path_for(log_dir, suite):
     # Include the relative path to distinguish suites with the same filename.
     return log_dir / (suite.replace("/", "__") + ".log")
@@ -1018,7 +1292,25 @@ def signal_sandbox_line(prefix, unconfined_because):
     return "suites run inside the signal sandbox this run was started in"
 
 
-def run_one_suite(top, interpreter, suite, log_dir, recorder=None, sandbox_prefix=()):
+def suite_process_started(process, status_read, note_suite_process):
+    """Record the process whose end ends the suite: bwrap's namespace init, or the suite itself."""
+    if status_read is None:
+        note_suite_process(process.pid, namespace_init=False)
+        return
+    # bwrap's first status line names the init of the suite's PID namespace; when
+    # that init ends, the kernel ends every process inside it.
+    line = status_read.readline()
+    try:
+        init = json.loads(line)["child-pid"]
+    except (ValueError, KeyError, TypeError):
+        # bwrap failed before starting the suite; the outer bwrap is all there is.
+        note_suite_process(process.pid, namespace_init=False)
+        return
+    note_suite_process(init, namespace_init=True)
+
+
+def run_one_suite(top, interpreter, suite, log_dir, recorder=None, sandbox_prefix=(),
+                  note_suite_process=None):
     log_file = log_path_for(log_dir, suite)
     environment = environment_without_git_redirecting_variables()
     command = ["sh", suite] if is_shell_test_suite(suite) else [interpreter, "-u", suite]
@@ -1040,13 +1332,32 @@ def run_one_suite(top, interpreter, suite, log_dir, recorder=None, sandbox_prefi
                        "-o", str(strace_dir / "trace"), *command]
     if suite in SUITES_RUN_OUTSIDE_THE_SIGNAL_SANDBOX:
         sandbox_prefix = ()
+    status_read = status_write = None
+    if sandbox_prefix and note_suite_process is not None:
+        status_read_fd, status_write = os.pipe()
+        status_read = os.fdopen(status_read_fd, "r")
+        sandbox_prefix = (sandbox_prefix[0], "--json-status-fd", str(status_write),
+                          *sandbox_prefix[1:])
     command = [*sandbox_prefix, *command]
     started = time.monotonic()
-    with open(log_file, "wb") as log:
-        completed = subprocess.run(command, cwd=str(top), env=environment,
-                                   stdin=subprocess.DEVNULL, stdout=log,
-                                   stderr=subprocess.STDOUT, check=False)
-    exit_code = completed.returncode
+    try:
+        with open(log_file, "wb") as log:
+            process = subprocess.Popen(
+                command, cwd=str(top), env=environment, stdin=subprocess.DEVNULL,
+                stdout=log, stderr=subprocess.STDOUT,
+                pass_fds=(status_write,) if status_write is not None else ())
+            if status_write is not None:
+                os.close(status_write)
+                status_write = None
+            if note_suite_process is not None:
+                suite_process_started(process, status_read, note_suite_process)
+            exit_code = process.wait()
+    finally:
+        if status_write is not None:
+            os.close(status_write)
+        # Closed only after bwrap exits: bwrap writes its exit status to this pipe last.
+        if status_read is not None:
+            status_read.close()
     # bwrap exits 128+N when the suite is killed by signal N; report it as the signal, as unsandboxed runs do.
     if sandbox_prefix and 128 < exit_code <= 128 + SIGNAL_NUMBER_LIMIT:
         exit_code = -(exit_code - 128)
@@ -1580,14 +1891,24 @@ def main(argv=None):
               f"Run this again after that run has finished.", file=sys.stderr)
         return EXIT_LOCKED
 
+    log_dir_handle = run_record = None
     try:
         if arguments.log_dir:
             log_dir = Path(arguments.log_dir).resolve()
             log_dir.mkdir(parents=True, exist_ok=True)
+            log_dir_handle = lock_explicit_log_directory(log_dir)
+            if log_dir_handle is None:
+                print(f"{PROGRAM}: not run — another run is writing to the log directory "
+                      f"{log_dir}.\nRun this again with another --log-dir, or after that "
+                      f"run has finished.", file=sys.stderr)
+                return EXIT_LOCKED
         else:
             log_dir = Path(tempfile.mkdtemp(prefix=f"{PROGRAM}-"))
+        if sys.platform.startswith("linux"):
+            run_record = RunRecord(run_records_directory_for_lock_file(arguments.lock_file), log_dir,
+                                   log_dir_is_temporary=not arguments.log_dir)
         name_log_directory_in_lock(lock_handle, log_dir)
-        traces_removed = remove_traces_the_last_lock_holder_left(previous_holder)
+        clean_up_lines = clean_up_after_earlier_runs(Path(arguments.lock_file), previous_holder)
         commit, state = commit_and_state(top)
         recordings_dir = recordings_directory_for(arguments.recorded_inputs_directory, top)
         # Each recording is read once, so selection and starting order see the same one
@@ -1629,9 +1950,9 @@ def main(argv=None):
                 if suite in SUITES_RUN_OUTSIDE_THE_SIGNAL_SANDBOX:
                     report.line(f"{suite} runs WITHOUT the signal sandbox: "
                                 f"{SUITES_RUN_OUTSIDE_THE_SIGNAL_SANDBOX[suite]}")
-        if traces_removed:
-            report.line(f"removed {len(traces_removed)} strace directories the run before "
-                        f"this one left in {traces_removed[0].parent}")
+        for line in clean_up_lines:
+            report.line(line)
+        note_suite_process = run_record.note_suite_process if run_record else None
         if changed_since is not None:
             for suite, selected, why in selection:
                 report.line(f"{'SELECTED' if selected else 'NOT SELECTED'} {suite}: {why}")
@@ -1639,9 +1960,11 @@ def main(argv=None):
         def run_and_record(suite):
             if is_shell_test_suite(suite):
                 return run_one_suite(top, interpreter, suite, log_dir,
-                                     sandbox_prefix=sandbox_prefix)
+                                     sandbox_prefix=sandbox_prefix,
+                                     note_suite_process=note_suite_process)
             result = run_one_suite(top, interpreter, suite, log_dir, recorder,
-                                   sandbox_prefix=sandbox_prefix)
+                                   sandbox_prefix=sandbox_prefix,
+                                   note_suite_process=note_suite_process)
             try:
                 save_recording(recordings_dir, recording_of(
                     top, suite, result, recording_dir, files, commit, strace is not None))
@@ -1702,8 +2025,12 @@ def main(argv=None):
                     f"{len(results)} total; {skip_count} cases skipped in {len(skipping)} "
                     f"suites; {top.name} at {commit[:12]}; {version}{not_selected}")
         report.close()
+        if run_record is not None:
+            run_record.finish()
         return EXIT_SOME_FAILED if failed else EXIT_ALL_PASSED
     finally:
+        if log_dir_handle is not None:
+            log_dir_handle.close()
         lock_handle.close()
 
 

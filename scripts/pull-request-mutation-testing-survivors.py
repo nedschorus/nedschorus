@@ -385,9 +385,8 @@ def main(argv=None):
                   f"Otherwise, run this again after the run holding the lock has "
                   f"finished.", file=sys.stderr)
             return EXIT_LOCKED
-        # Taking the lock overwrites the holder's log directory, so a killed suite
-        # run's traces are removed here or never.
-        runner.remove_traces_the_last_lock_holder_left(previous_holder)
+        # Clean up after earlier runs here, as scripts/run-all-test-suites.py does.
+        runner.clean_up_after_earlier_runs(lock_file, previous_holder)
         with tempfile.TemporaryDirectory(prefix=f"{PROGRAM}-") as scratch_name:
             scratch = Path(scratch_name)
             worktree = scratch / "worktree"
