@@ -142,6 +142,9 @@ check("a quoted URL's closing quote still counts, so a named task after it is no
 link_text_quote = '[a "b](https://x.y/z) then task #244, "Fix parser".'
 check("a quote inside a link's text does not count when deciding whether a name follows",
       found(link_text_quote) == [], found(link_text_quote))
+for apostrophe_url in ("See https://example.org/Ned's-notes/#42 now.", "<https://example.com/what's-new/#12>"):
+    check("an apostrophe inside a URL does not end the URL: " + apostrophe_url,
+          found(apostrophe_url) == [], found(apostrophe_url))
 quoted_url_then_quoted_reference = 'Open "https://github.com/x/y" and "PR 931" "is open".'
 check("after a quoted URL, a reference inside a quotation is still reported",
       found(quoted_url_then_quoted_reference) == ["PR 931"], found(quoted_url_then_quoted_reference))

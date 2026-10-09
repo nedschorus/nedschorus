@@ -90,8 +90,8 @@ INLINE_CODE_PATTERN = re.compile(r"(`+)(?:(?!\1).)+?\1")
 MARKDOWN_LINK_PATTERN = re.compile(
     r"!?\[(?:[^\[\]\n]|\[[^\[\]\n]*\])*\]\((?:[^()\s]|\([^()\s]*\))*"
     r"(?:\s+(?:\"[^\"\n]*\"|'[^'\n]*'|\([^()\n]*\)))?\s*\)")
-# A quote ends a URL, so a quoted URL's closing quote stays in the line and is counted.
-BARE_URL_PATTERN = re.compile(r"<?\b[a-z][a-z0-9+.-]*://[^\s>\"']+>?", re.IGNORECASE)
+# A double quote ends a URL, so a quoted URL's closing double quote stays in the line and is counted; an apostrophe is legal inside a URL.
+BARE_URL_PATTERN = re.compile(r"<?\b[a-z][a-z0-9+.-]*://[^\s>\"]+>?", re.IGNORECASE)
 # What may stand between a reference and its name.
 NAME_SEPARATOR_PATTERN = re.compile(r"[ \t]*[,:\u2014\u2013-]?[ \t]*")
 STRAIGHT_QUOTED_NAME_PATTERN = re.compile(r"\"[^\"\n]+\"")
