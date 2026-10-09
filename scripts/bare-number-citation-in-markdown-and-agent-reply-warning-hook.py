@@ -15,8 +15,10 @@ One program, two hook events, told apart by the payload's hook_event_name:
       to the previous turn, read from transcript_path, and hand the note to
       the agent with the user's message. A Stop hook would have to start a
       turn of its own to deliver the note; this costs no turn. The prompt
-      being submitted may already be the transcript's last record, so the
-      reader skips it. Which records start a turn is decided by
+      being submitted is not yet in the transcript when the hook runs, so
+      the transcript's last turn is the previous one. A transcript file that
+      does not exist yet, at a session's first prompt, means no previous
+      reply. Which records start a turn is decided by
       is_human_or_parent_message() from absence-claim-locator-reminder-hook.py,
       so the two hooks agree on what a turn is.
 
@@ -28,20 +30,24 @@ matches. Not scanned: fenced code blocks, a block quote's included, inline
 code spans, a whole Markdown link `[text](target "title")` (its text included:
 a link is already a citation that can be opened), a bare URL, and a line a
 program reads: one that starts with `supports-issues:` or `issue-marker:`, or
-is one of ghi-info's replies, which ghi-info-ask.py parses (`verdict: ...`,
-`read #<n>, #<m>`). A skipped span is blanked to a barrier character no match
-can cross, so `PR [title](url) 2 hours` is not read as "PR 2". A reference
-already followed by its name, in quotes or as a link, as the project's
-citation form for a task gives it (task #<number>, "<subject>"), is not reported.
+is, whole, one of ghi-info's reply lines, which ghi-info-ask.py parses
+(`verdict: related #<n>,#<m>`, `read #<n>, #<m>`). A fence opened inside a
+block quote closes where the block quote ends. A skipped span is blanked to a
+barrier character no match can cross, so `PR [title](url) 2 hours` is not read
+as "PR 2". A reference followed at once by its name, a complete quoted name or
+a complete Markdown link, as the project's citation form for a task gives it
+(task #<number>, "<subject>"), is not reported; a quote that closes a quotation
+around the reference, or a bracket that starts no link, names nothing.
 
 OUTPUT is a note, never a refusal and never a blocked prompt:
 hookSpecificOutput.additionalContext with the hook's event name, listing up to
 HIT_LINES_LISTED_AT_MOST hits. The UserPromptSubmit half stays silent in a
 headless `claude -p` child, told apart as agent-seat-due-task-raise-hook.py
-does, where the prompt comes from a program, not from a reader of the reply. Nothing found: nothing printed, exit 0. A fault:
-one line naming it on stderr, nothing on stdout, exit 0; Claude Code keeps the
-write and the turn whatever a hook exits, so exit 0 is chosen only so the
-fault reads as a hook's report and not as the tool call failing.
+does, where the prompt comes from a program, not from a reader of the reply.
+Nothing found: nothing printed, exit 0. A fault: one line naming it on stderr,
+nothing on stdout, exit 1. Claude Code records a hook's exit 1 as a
+non-blocking error and keeps the write and the prompt; stderr after exit 0 is
+recorded nowhere, so a fault reported that way would read as "no bare numbers".
 """
 
 import importlib.util
@@ -68,17 +74,24 @@ BARE_REFERENCE_PATTERN = re.compile(
     ID_TYPE_WORD_FOLLOWED_BY_NUMBER + "|" + HASH_FOLLOWED_BY_TWO_TO_FIVE_DIGITS,
     re.IGNORECASE)
 FENCE_PATTERN = re.compile(r"^\s*(?:>\s?)*\s*(?:[-*+]\s+|\d+[.)]\s+)?(`{3,}|~{3,})")
+ISSUE_NUMBER_LIST = r"#\d+(?:[ \t]*,[ \t]*#\d+)*"
+# ghi-info's two reply shapes count only as whole lines, so a sentence that starts "Read #<n> before ..." is still read.
 PROGRAM_READ_LINE_PATTERN = re.compile(
-    r"^\s*(?:(?:supports-issues|issue-marker):|verdict:\s*(?:too-similar|related|unrelated)\b|read\s+#\d)",
+    r"^\s*(?:(?:supports-issues|issue-marker):"
+    r"|verdict:[ \t]*(?:(?:too-similar|related)[ \t]*" + ISSUE_NUMBER_LIST + r"|unrelated)[ \t]*$"
+    r"|read[ \t]+" + ISSUE_NUMBER_LIST + r"[ \t]*\.?[ \t]*$)",
     re.IGNORECASE)
+BLOCK_QUOTE_LINE_PATTERN = re.compile(r"^\s*>")
 INLINE_CODE_PATTERN = re.compile(r"(`+)(?:(?!\1).)+?\1")
 # Link text may hold one level of brackets, a target one level of parentheses, and a title any of the three quotings.
 MARKDOWN_LINK_PATTERN = re.compile(
     r"!?\[(?:[^\[\]\n]|\[[^\[\]\n]*\])*\]\((?:[^()\s]|\([^()\s]*\))*"
     r"(?:\s+(?:\"[^\"\n]*\"|'[^'\n]*'|\([^()\n]*\)))?\s*\)")
 BARE_URL_PATTERN = re.compile(r"<?\b[a-z][a-z0-9+.-]*://[^\s>]+>?", re.IGNORECASE)
-# What follows a reference that is already named: optional punctuation, then a quoted name or a link.
-NAME_FOLLOWS_PATTERN = re.compile(r"\s*[,:\u2014\u2013-]?\s*[\"\u201c\[]")
+# What may stand between a reference and its name.
+NAME_SEPARATOR_PATTERN = re.compile(r"[ \t]*[,:\u2014\u2013-]?[ \t]*")
+STRAIGHT_QUOTED_NAME_PATTERN = re.compile(r"\"[^\"\n]+\"")
+CURLY_QUOTED_NAME_PATTERN = re.compile(r"\u201c[^\u201d\n]+\u201d")
 # Not whitespace and not a word character, so no match can run across a skipped span.
 MASK_BARRIER_CHARACTER = "\x00"
 
@@ -90,7 +103,8 @@ MARKDOWN_OPENING_LINES = (
     "opened: PR [title](url), not a bare number.",
     "Look a title and link up with: gh pr view <number> --json title,url, or "
     "gh issue view <number> --json title,url. A task has no link: cite it by its "
-    "ID-type and its subject in quotes, task #<number>, \"<subject>\".",
+    "ID-type and its subject in quotes, task #<number>, \"<subject>\"; read its "
+    "subject from your task list, with TaskGet on the task's ID.",
     "Where the text shows the bare form as an example of what not to write, such "
     "as 'not PR #<number>', leave it as written.",
 )
@@ -99,12 +113,13 @@ PREVIOUS_REPLY_OPENING_LINES = (
     "request(s), GitHub issue(s) or task(s) by a bare number. A number alone tells a "
     "reader almost nothing; a title and a link are what a reader can read and open.",
     "From now on, cite each one by its ID-type and its name, as a clickable link where "
-    "it can be opened: PR [title](url), not a bare number. Where this reply mentions "
-    "one listed below, cite it in full.",
+    "it can be opened: PR [title](url), not a bare number. In your next reply, cite in "
+    "full each one listed below that you mention again.",
     "Look a title and link up with: gh pr view <number> --json title,url, or "
     "gh issue view <number> --json title,url. A task has no link: cite it by its "
-    "ID-type and its subject in quotes, task #<number>, \"<subject>\".",
-    "Where your reply showed the bare form as an example of what not to write, "
+    "ID-type and its subject in quotes, task #<number>, \"<subject>\"; read its "
+    "subject from your task list, with TaskGet on the task's ID.",
+    "Where your previous reply showed the bare form as an example of what not to write, "
     "such as 'not PR #<number>', nothing needs doing.",
 )
 WRITE_HIT_LINE = '{path}:{line}: "{reference}" in "{excerpt}"'
@@ -125,12 +140,16 @@ def _blank(match):
 
 
 def scannable_lines(text: str):
-    """Return the lines of text with every skipped part blanked to spaces, so
-    line numbers and columns still point into the original text."""
+    """Return the lines of text with every skipped part blanked to
+    MASK_BARRIER_CHARACTER, or a skipped line emptied, so line numbers and
+    columns still point into the original text."""
     lines = []
     fence = None
+    fence_inside_block_quote = False
     for line in text.split("\n"):
         fence_match = FENCE_PATTERN.match(line)
+        if fence is not None and fence_inside_block_quote and not BLOCK_QUOTE_LINE_PATTERN.match(line):
+            fence = None
         if fence is not None:
             if (fence_match and fence_match.group(1)[0] == fence[0]
                     and len(fence_match.group(1)) >= len(fence)):
@@ -139,6 +158,7 @@ def scannable_lines(text: str):
             continue
         if fence_match:
             fence = fence_match.group(1)
+            fence_inside_block_quote = bool(BLOCK_QUOTE_LINE_PATTERN.match(line))
             lines.append("")
             continue
         if PROGRAM_READ_LINE_PATTERN.match(line):
@@ -162,6 +182,20 @@ def excerpt_around(line: str, start: int, end: int) -> str:
     return excerpt
 
 
+def name_follows(line: str, start: int, end: int) -> bool:
+    """Whether the reference at line[start:end] is followed at once by its
+    name: a complete quoted name or a complete Markdown link. A straight quote
+    after an odd number of straight quotes closes a quotation, so it names
+    nothing."""
+    position = NAME_SEPARATOR_PATTERN.match(line, end).end()
+    if MARKDOWN_LINK_PATTERN.match(line, position):
+        return True
+    if CURLY_QUOTED_NAME_PATTERN.match(line, position):
+        return True
+    return (line.count('"', 0, start) % 2 == 0
+            and STRAIGHT_QUOTED_NAME_PATTERN.match(line, position) is not None)
+
+
 def bare_references_in(text: str, line_numbers_to_report=None):
     """Every bare reference in text, in reading order, numbering lines from 1.
     With line_numbers_to_report, only hits on those lines."""
@@ -172,7 +206,7 @@ def bare_references_in(text: str, line_numbers_to_report=None):
         if line_numbers_to_report is not None and line_number not in line_numbers_to_report:
             continue
         for match in BARE_REFERENCE_PATTERN.finditer(line):
-            if NAME_FOLLOWS_PATTERN.match(original_lines[index], match.end()):
+            if name_follows(original_lines[index], match.start(), match.end()):
                 continue
             found.append(BareReference(
                 line_number, match.group(0),
@@ -294,18 +328,10 @@ def _load_absence_claim_hook():
     return module
 
 
-def _message_text(record) -> str:
-    content = record.get("message", {}).get("content")
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        return "\n".join(block.get("text", "") for block in content
-                         if isinstance(block, dict) and block.get("type") == "text")
-    return ""
-
-
-def previous_reply(transcript_path: Path, prompt, is_turn_start) -> str:
-    """The text of the agent's last message in the turn before the prompt being submitted."""
+def previous_reply(transcript_path: Path, is_turn_start) -> str:
+    """The text of the agent's last message in the transcript's last turn,
+    which, while the prompt being submitted is not yet written, is the
+    previous turn."""
     records = []
     with open(transcript_path, encoding="utf-8") as transcript:
         for line in transcript:
@@ -316,10 +342,6 @@ def previous_reply(transcript_path: Path, prompt, is_turn_start) -> str:
             if isinstance(record, dict):
                 records.append(record)
     starts = [index for index, record in enumerate(records) if is_turn_start(record)]
-    if (starts and isinstance(prompt, str)
-            and _message_text(records[starts[-1]]).strip() == prompt.strip()):
-        records = records[:starts[-1]]
-        starts.pop()
     turn = records[starts[-1] + 1:] if starts else records
     last_text_message_id = None
     texts_by_message = {}
@@ -345,8 +367,10 @@ def previous_reply_note(payload: dict, environment):
     transcript_path = payload.get("transcript_path")
     if not isinstance(transcript_path, str) or not transcript_path:
         return None
-    reply = previous_reply(Path(transcript_path).expanduser(), payload.get("prompt"),
-                           _load_absence_claim_hook().is_human_or_parent_message)
+    transcript_file = Path(transcript_path).expanduser()
+    if not transcript_file.exists():
+        return None
+    reply = previous_reply(transcript_file, _load_absence_claim_hook().is_human_or_parent_message)
     if not reply.strip():
         return None
     references = bare_references_in(reply)
@@ -379,6 +403,7 @@ def main() -> int:
                   f"no check was made: {type(error).__name__}: {error}", file=sys.stderr)
         except Exception:
             pass
+        return 1
     return 0
 
 

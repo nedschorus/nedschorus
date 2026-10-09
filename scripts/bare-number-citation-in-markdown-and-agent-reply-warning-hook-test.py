@@ -132,11 +132,36 @@ for named in ('task #244, "the subject"', 'task #361 \u2014 "the subject"',
           found(named) == [], found(named))
 check("a reference followed by other words is still reported",
       found('task 361 is "done"') == ["task 361"], found('task 361 is "done"'))
-for protocol in ("verdict: related #216", "verdict: too-similar #12",
-                 "read #13, #24, #31"):
+for unnamed, expected in (('"Fix PR 931"', ["PR 931"]),
+                          ('"Fix PR 931" and "Fix PR 932"', ["PR 931", "PR 932"]),
+                          ("PR 931 [WIP]", ["PR 931"]),
+                          ("PR 931 - [ ]", ["PR 931"]),
+                          ("See PR 931 [not yet merged].", ["PR 931"]),
+                          ('task 361, "unclosed', ["task 361"]),
+                          ("task 361 \u201cunclosed", ["task 361"])):
+    check(f"a quote closing a quotation, a bracket starting no link, or an unclosed quote names nothing: {unnamed}",
+          found(unnamed) == expected, found(unnamed))
+for protocol in ("verdict: related #216", "verdict: related #216,#217",
+                 "verdict: too-similar #12", "verdict: unrelated",
+                 "read #13, #24, #31", "read #13."):
     check(f"a ghi-info reply line is skipped: {protocol}", found(protocol) == [], found(protocol))
 check("read followed by a number mid-sentence is still read",
       found("We read #13 later.") == ["#13"], found("We read #13 later."))
+for sentence, expected in (("Read #931 before making changes; PR 932 contains the fix.",
+                            ["#931", "PR 932"]),
+                           ("verdict: related #216 and PR 5 too", ["#216", "PR 5"]),
+                           ("verdict: unrelated, see PR 5", ["PR 5"])):
+    check(f"a sentence shaped like the start of a ghi-info reply is still read: {sentence}",
+          found(sentence) == expected, found(sentence))
+unclosed_quoted_fence = "> ~~~\n> code PR 1\n\nSee PR 931."
+check("a fence opened inside a block quote closes where the block quote ends",
+      found(unclosed_quoted_fence) == ["PR 931"], found(unclosed_quoted_fence))
+unclosed_quoted_fence_lazy = "> ~~~\n> code PR 1\nSee PR 931."
+check("a fence opened inside a block quote closes at the first line outside the quote",
+      found(unclosed_quoted_fence_lazy) == ["PR 931"], found(unclosed_quoted_fence_lazy))
+unquoted_fence = "~~~\n> PR 1\n\nPR 2\n~~~\nPR 3"
+check("a fence opened outside a block quote still runs to its closing fence",
+      found(unquoted_fence) == ["PR 3"], found(unquoted_fence))
 check("a hit outside a link on the same line as a link is found",
       found("[x](https://y.z/pull/1) and PR 2") == ["PR 2"],
       found("[x](https://y.z/pull/1) and PR 2"))
@@ -160,6 +185,14 @@ check("the note says how to cite instead",
       "ID-type and its name" in note and "PR [title](url), not a bare number" in note, note)
 check("the note says how to cite a task, which has no link",
       'task #<number>, "<subject>"' in note, note)
+check("the note says where a task's subject is",
+      "TaskGet" in note and "task list" in note, note)
+check("the note says the next reply is the one to fix, not the reply being read",
+      "In your next reply" in note and "previous reply" in note, note)
+markdown_note = hook.note_text(hook.MARKDOWN_OPENING_LINES, hook.bare_references_in("PR 1"),
+                               path="a.md")
+check("the Markdown note also says where a task's subject is",
+      "TaskGet" in markdown_note, markdown_note)
 
 
 # ---------------------------------------------------------------------------
@@ -306,12 +339,19 @@ check("UserPromptSubmit: a bare reference in the previous reply gets a note",
 check("UserPromptSubmit: the note never blocks the prompt",
       "decision" not in json.loads(result.stdout or "{}"), result.stdout)
 
-path = transcript(user("status?"), assistant("m1", text_block("Done: PR 931 merged.")),
-                  user("next question"))
-result = run_hook(prompt_payload(path))
+# Claude Code writes the prompt being submitted after the hook runs, so a prompt
+# that repeats the previous one must not make the hook step back a turn.
+path = transcript(user("status?"), assistant("m1", text_block("Nothing new.")),
+                  user("status?"), assistant("m2", text_block("Merged PR 931.")))
+result = run_hook(prompt_payload(path, prompt="status?"))
 context = context_of(result)
-check("UserPromptSubmit: the prompt being submitted, already in the transcript, is skipped",
+check("UserPromptSubmit: a prompt repeating the previous one still gets the previous reply's note",
       context is not None and '"PR 931"' in context["additionalContext"], result.stdout)
+path = transcript(user("y"), assistant("m1", text_block("See PR 12.")),
+                  user("y"), assistant("m2", text_block("All clear.")))
+result = run_hook(prompt_payload(path, prompt="y"))
+check("UserPromptSubmit: a prompt repeating the previous one does not scan an older turn",
+      result.returncode == 0 and result.stdout == "", result.stdout)
 
 path = transcript(user("first"), assistant("m1", text_block("See PR 12.")),
                   user("second"), assistant("m2", text_block("All clear.")))
@@ -325,6 +365,13 @@ result = run_hook(prompt_payload(path))
 check("UserPromptSubmit: only the last message with text is scanned",
       result.stdout == "", result.stdout)
 
+path = transcript(user("first"), assistant("m1", text_block("See PR 12.")),
+                  user("second"),
+                  assistant("m2", {"type": "tool_use", "name": "Bash", "input": {"command": "ls"}}))
+result = run_hook(prompt_payload(path))
+check("UserPromptSubmit: a previous turn with no text message gives no note from an older turn",
+      result.returncode == 0 and result.stdout == "", result.stdout)
+
 path = transcript(user("go"), assistant("m1", text_block("See PR 12.")))
 headless = dict(HOOK_ENVIRONMENT, CLAUDE_CODE_SESSION_ATTENDED="0")
 result = run_hook(prompt_payload(path), headless)
@@ -337,17 +384,24 @@ result = run_hook({"hook_event_name": "Stop", "transcript_path": str(path)})
 check("Stop is no longer handled", result.returncode == 0 and result.stdout == "", result.stdout)
 
 result = run_hook(prompt_payload(SCRATCH / "no-such-transcript.jsonl"))
-check("UserPromptSubmit: a missing transcript is reported on stderr, no note, exit 0",
-      result.returncode == 0 and result.stdout == ""
-      and "no check was made: FileNotFoundError" in result.stderr,
+check("UserPromptSubmit: no transcript yet, at a session's first prompt, is silent, exit 0",
+      result.returncode == 0 and result.stdout == "" and result.stderr == "",
+      (result.returncode, result.stdout, result.stderr))
+
+unreadable = SCRATCH / "transcript-is-a-directory.jsonl"
+unreadable.mkdir()
+result = run_hook(prompt_payload(unreadable))
+check("UserPromptSubmit: a transcript that cannot be read is reported on stderr, exit 1",
+      result.returncode == 1 and result.stdout == ""
+      and "no check was made: IsADirectoryError" in result.stderr,
       (result.returncode, result.stdout, result.stderr))
 
 
 # --- Fail open on bad input ---------------------------------------------------
 
 result = run_hook("{oops")
-check("stdin that is not JSON is reported on stderr, no note, exit 0",
-      result.returncode == 0 and result.stdout == ""
+check("stdin that is not JSON is reported on stderr, no note, exit 1",
+      result.returncode == 1 and result.stdout == ""
       and "no check was made: JSONDecodeError" in result.stderr,
       (result.returncode, result.stdout, result.stderr))
 
