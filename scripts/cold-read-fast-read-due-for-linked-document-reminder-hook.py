@@ -50,7 +50,8 @@ that directory; the log-store is its parent directory.
 
 OUTPUT: {"hookSpecificOutput": {"hookEventName": "Stop", "additionalContext": ...}},
 which continues the conversation with the text as the agent's next input.
-ON A FAULT, such as input that is not JSON or a module that will not load,
+ON A FAULT, such as input that is not JSON, a module that will not load, or
+a record directory it cannot read,
 the hook prints one line naming it on stderr and exits 1: Claude Code records
 a Stop hook's exit 1 as a non-blocking error and still ends the turn.
 """
@@ -292,8 +293,9 @@ def main():
     try:
         output = run(sys.stdin.read(), os.environ)
     except Exception as error:
-        print(f"cold-read-fast-read-due-for-linked-document-reminder-hook: "
-              f"no check was made: {error!r}", file=sys.stderr)
+        print(f"cold-read-fast-read-due-for-linked-document-reminder-hook: the hook failed, "
+              f"so it made no check of the documents the reply linked; the agent need not act: "
+              f"{error!r}", file=sys.stderr)
         return 1
     if output is not None:
         print(output)

@@ -17,6 +17,11 @@ RECORD_DATE_PATTERN = r"\d{4}-\d{2}-\d{2}"
 # report "<name>-fast-read.md".
 COMPLETED_REPORT_NAME_PATTERN = re.compile(
     r"^(?:.*--)?(?:(?:claude|codex|agy|gemini)-.*|(?:.*-)?fast-read)\.md$")
+# The marked copy of the cold-read-target that a fast read writes into its
+# record before its cell runs; for a target whose stem starts claude-, codex-,
+# agy- or gemini-, its name would otherwise match the pattern above.
+SENTENCE_ID_MARKED_COPY_SUFFIX = "-with-sentence-ids.md"
+GENERATED_INPUT_COPY_SUFFIXES = (SENTENCE_ID_MARKED_COPY_SUFFIX,)
 
 
 def frozen_target_path(
@@ -68,11 +73,10 @@ def frozen_target_candidate_paths(
 
 def record_holds_completed_report(record_dir: pathlib.Path) -> bool:
     """Whether a read finished into record_dir, rather than failing after it froze its target."""
-    try:
-        return any(entry.is_file() and COMPLETED_REPORT_NAME_PATTERN.match(entry.name)
-                   for entry in record_dir.iterdir())
-    except OSError:
-        return False
+    # An unreadable record directory raises OSError to the caller, which reports it as a fault.
+    return any(entry.is_file() and COMPLETED_REPORT_NAME_PATTERN.match(entry.name)
+               and not entry.name.endswith(GENERATED_INPUT_COPY_SUFFIXES)
+               for entry in record_dir.iterdir())
 
 
 def record_directory_name_for_target(

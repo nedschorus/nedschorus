@@ -132,7 +132,8 @@ OWNED_NAMES = frozenset({
     "record_directory_name_for_target", "fresh_record_directory",
     "frozen_target_path", "RECORDS_DIRECTORY_NAME", "RECORD_DATE_PATTERN",
     "COMPLETED_REPORT_NAME_PATTERN", "record_directory_name_pattern_for_target",
-    "frozen_target_candidate_paths", "record_holds_completed_report"})
+    "frozen_target_candidate_paths", "record_holds_completed_report",
+    "SENTENCE_ID_MARKED_COPY_SUFFIX", "GENERATED_INPUT_COPY_SUFFIXES"})
 # The constant whose join says a path is being built inside the frozen copy's
 # directory. Matched as an identifier, exactly: a program reaches it as
 # `FROZEN_TARGET_DIRECTORY_NAME` or as `<module>.FROZEN_TARGET_DIRECTORY_NAME`,

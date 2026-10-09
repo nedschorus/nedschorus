@@ -202,7 +202,7 @@ def main():
     completed = case.run("", stdin_text="not json {")
     check("input that is not JSON is a fault: exit 1, one stderr line, no output",
           completed.returncode == 1 and completed.stdout == ""
-          and "no check was made" in completed.stderr
+          and "made no check" in completed.stderr
           and len(completed.stderr.strip().splitlines()) == 1,
           f"exit {completed.returncode}, stdout {completed.stdout!r}, stderr {completed.stderr!r}")
     expect("a transcript that does not exist is silent",
@@ -264,6 +264,51 @@ def main():
     expect("a document linked twice is reported once",
            case.run(f"See docs/plan-of-record.md, or [the plan](file://{document})."),
            [document])
+
+    case = Case()
+    draft = case.document("docs/walk/claude-notes-draft.md", text="walk\n", modified=3_000_000)
+    record = case.record("claude-notes-draft-2026-10-08", 2_000_000,
+                         Path(*draft.resolve().parts[1:]), "walk\n",
+                         report_name="claude-notes-draft-with-sentence-ids.md")
+    expect("a failed cross-checkout walk read that left only its marked input copy does not count",
+           case.run("The walk-document is docs/walk/claude-notes-draft.md."), [draft])
+
+    case = Case()
+    document = case.document("docs/plan-of-record.md", modified=1_000_000)
+    case.record("plan-of-record-2026-09-20", 2_000_000, report_name="plan-of-record-fast-read.md")
+    expect("an older record holding only <name>-fast-read.md counts as a finished report",
+           case.run("See docs/plan-of-record.md."), None)
+
+    case = Case()
+    document = case.document("docs/plan-of-record.md", modified=1_000_000)
+    case.record("plan-of-record-2026-09-29", 2_000_000, report_name="codex-hunt-deep.md")
+    expect("a record holding only codex- reports counts as a finished report",
+           case.run("See docs/plan-of-record.md."), None)
+
+    case = Case()
+    document = case.document("docs/plan-of-record.md", modified=1_000_000)
+    session_checkout = case.root / "session-checkout"
+    subprocess.run(["git", "init", "-q", str(session_checkout)], check=True)
+    session_record = session_checkout / "cold-read-records" / "plan-of-record-2026-10-08"
+    session_record.mkdir(parents=True)
+    (session_record / "fast-read.md").write_text("findings\n")
+    os.utime(session_record / "fast-read.md", (2_000_000, 2_000_000))
+    expect("a record in the session checkout's cold-read-records counts for a document elsewhere",
+           case.run(f"Updated file://{document}.", {"cwd": str(session_checkout)}), None)
+
+    case = Case()
+    document = case.document("docs/plan-of-record.md", modified=1_000_000)
+    unreadable = case.record("plan-of-record-2026-10-08", 2_000_000)
+    unreadable.chmod(0)
+    try:
+        completed = case.run("See docs/plan-of-record.md.")
+    finally:
+        unreadable.chmod(0o755)
+    check("an unreadable record directory is a fault: exit 1, one stderr line, no output",
+          completed.returncode == 1 and completed.stdout == ""
+          and "made no check" in completed.stderr
+          and len(completed.stderr.strip().splitlines()) == 1,
+          f"exit {completed.returncode}, stdout {completed.stdout!r}, stderr {completed.stderr!r}")
 
     # The Mac mount maps to ned-box's /home/nedlern; point that prefix at a scratch directory.
     specification = importlib.util.spec_from_file_location("hook_under_test", HOOK_SCRIPT)

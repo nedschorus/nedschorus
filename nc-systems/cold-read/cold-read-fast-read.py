@@ -339,7 +339,7 @@ fresh_record_dir = record_names.fresh_record_directory
 # THE SPLIT IS MECHANICAL AND IMPERFECT, deliberately. A wrong boundary costs
 # one mismatched id; it never loses text, because every line of the original
 # is emitted unchanged apart from the inserted ids.
-SENTENCE_ID_MARKED_COPY_SUFFIX = "-with-sentence-ids.md"
+SENTENCE_ID_MARKED_COPY_SUFFIX = record_names.SENTENCE_ID_MARKED_COPY_SUFFIX
 SENTENCE_ID_PATTERN = re.compile(r"\[s(\d+)\]")
 
 # A sentence ends at . ! or ? plus any closing quote or bracket, then
