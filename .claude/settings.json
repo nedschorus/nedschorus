@@ -54,6 +54,11 @@
             "type": "command",
             "command": "python3 \"$CLAUDE_PROJECT_DIR\"/scripts/absence-claim-locator-reminder-hook.py",
             "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/scripts/cold-read-fast-read-due-for-linked-document-reminder-hook.py",
+            "timeout": 30
           }
         ]
       }
