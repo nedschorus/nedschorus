@@ -131,6 +131,7 @@ These are the present architectural decisions established by the human direction
 23. **An arbitrator is a node with two input connections**, counted in the graph between nodes rather than inside a composite node. A composite node is one that presents a single input and a single output to the graph while fanning out internally, as the cold read does across its several readers; what happens inside it is its own business and is not arbitration. Its package carries everything relevant, not only the two sides it is adjudicating, so it rules with more perspective than either producer had.
 24. **A reviewer may reject the implementation or the prose parent it was built from.** Tests descend from the design, so they are no oracle for a defect in the design that produced them.
 25. **A finding that touches text the human has already ruled is quoted with the ruling and not reported again.** Without this, fresh reviewers relitigate his own sentences, and in a bounded machine the pass counter climbs on rounds that were never about the work.
+26. **Evidence first; cost is a bound.** Choose the work that gives the strongest evidence that the code is good and maintainable; CPU time, tokens and storage limit that choice and do not rank it.
 
 ## Project organization
 
