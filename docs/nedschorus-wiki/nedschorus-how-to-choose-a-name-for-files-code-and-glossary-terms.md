@@ -76,6 +76,10 @@ This page sets no upper limit: some studies favour names of two to four words, a
 
 Generic words, such as `manager`, `handler`, `helper`, `common`, `data`, `info`, `record` or `check`, say almost nothing alone. As one word of a longer name whose other words say which one, they are fine: `nc-systems/cold-read/cold-read-cell-common.py` says it holds the code the cold-read-cells share. What fails is the bare word, or a name such as `seat-manager`, which leaves the reader asking what it does to which agent-seat.
 
+### Name a test file after what it tests
+
+A test file takes the name of the program it tests, with `-test` before the extension: `scripts/branch-conflict-check-test.py` tests `scripts/branch-conflict-check.py`. When one program has more than one test file, each adds the fewest words that tell it apart from the others, naming the behaviour it covers rather than every case inside it: `handoff-supervisor-successor-prompt-test.py` and `handoff-supervisor-session-launch-and-seat-lock-test.py` both test `nc-systems/handoff/handoff-supervisor.py`. A test file that lists every case it holds grows a name no one reads; one that covers so much that a few words cannot say what sets it apart is better split.
+
 ## Step 3: check the name you built against the names that exist
 
 Step 1 looked for an existing name for the thing. Now check that the name you built is not already used for something else, and does not sit too close to one that is.
