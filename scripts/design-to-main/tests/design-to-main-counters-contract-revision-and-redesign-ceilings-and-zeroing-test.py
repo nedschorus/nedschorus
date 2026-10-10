@@ -2,13 +2,13 @@
 """Section 7 of the design-to-main state-machine design: the counters,
 driven through the machine — the contract-revisions and redesigns
 ceilings and what happens there, and what a redesign, a resume and the
-user's `reset` zero.
+user-ruling `zero-all-run-counters-including-redesigns` zero.
 
 The counters cases are split over two files,
 design-to-main-counters-*-test.py, so that the suite runner runs them at
 the same time.
 
-Run: python3 scripts/design-to-main/tests/design-to-main-counters-contract-revisions-redesigns-and-resets-test.py
+Run: python3 scripts/design-to-main/tests/design-to-main-counters-contract-revision-and-redesign-ceilings-and-zeroing-test.py
 """
 
 import importlib.util
@@ -24,11 +24,11 @@ _fixture_spec.loader.exec_module(fixture)
 T = fixture.tables
 
 
-class ContractRevisionsRedesignsAndResetsDrivenThroughTheMachine(
+class ContractRevisionsRedesignsAndZeroingAllRunCountersDrivenThroughTheMachine(
         fixture.EachTestDrivesTheMachineOverItsOwnThrowawayRepository, unittest.TestCase):
     """The contract-revisions and redesigns ceilings reached by a scripted
     run, and what the machine does there; and what a redesign, a resume
-    and the user's reset zero."""
+    and the user-ruling zero-all-run-counters-including-redesigns zero."""
 
     def test_contract_revisions_the_user_sees_the_contract_before_a_second_revision(self):
         script = fixture.prefix_to_design_approved() + [
@@ -65,9 +65,10 @@ class ContractRevisionsRedesignsAndResetsDrivenThroughTheMachine(
             (T.CONTRACT_ACCEPTANCE_BY_AGENT, T.V_REJECT_CONTRACT, {}),        # row 8
         ]
 
-    def test_row_11_the_user_s_redesign_at_the_contract_check_opens_the_redesign_through_the_investigation(self):
+    def test_row_11_redesign_ordered_by_user_after_contract_failed_twice_opens_the_redesign_through_the_investigation(self):
         script = self.contract_reaches_the_user() + [
-            (T.CONTRACT_ACCEPTANCE_BY_USER, T.V_REDESIGN, {}),                # row 11
+            (T.CONTRACT_ACCEPTANCE_BY_USER,
+             T.V_REDESIGN_ORDERED_BY_USER_AFTER_CONTRACT_FAILED_TWICE, {}),  # row 11
         ]
         machine, run, _ = self.drive(script)
         self.assertEqual(machine.routed[-1][0].row, "11")
@@ -89,14 +90,14 @@ class ContractRevisionsRedesignsAndResetsDrivenThroughTheMachine(
 
     def test_row_11_at_the_redesigns_ceiling_the_resume_ends_the_run_failed(self):
         script = self.contract_reaches_the_user() + [
-            (T.CONTRACT_ACCEPTANCE_BY_USER, T.V_REDESIGN, {}),
+            (T.CONTRACT_ACCEPTANCE_BY_USER, T.V_REDESIGN_ORDERED_BY_USER_AFTER_CONTRACT_FAILED_TWICE, {}),
             (T.INVESTIGATE_WORKFLOW, T.V_RESUME, {}),
         ]
         machine, run, _ = self.drive(script)
         self.assertEqual(run.current_state, T.DESIGN_WRITING)
         run.counters.values["redesigns"] = 2        # as after two redesigns
         machine.launcher.script += self.contract_reaches_the_user()[1:] + [
-            (T.CONTRACT_ACCEPTANCE_BY_USER, T.V_REDESIGN, {}),
+            (T.CONTRACT_ACCEPTANCE_BY_USER, T.V_REDESIGN_ORDERED_BY_USER_AFTER_CONTRACT_FAILED_TWICE, {}),
             (T.INVESTIGATE_WORKFLOW, T.V_RESUME, {}),                          # row 73
         ]
         fixture.drive(machine, run)
@@ -153,8 +154,8 @@ class ContractRevisionsRedesignsAndResetsDrivenThroughTheMachine(
         # Section 7 and row 72 after the eighth walk (user-ruled
         # 2026-09-09, "if I intervene all the agents get their chance
         # again"): every resume zeroes the six per-version counters, as a
-        # redesign does; the redesigns counter still needs the user's
-        # explicit reset. The resume's commit trailer shows the zeroed
+        # redesign does; the redesigns counter still needs the user-ruling
+        # zero-all-run-counters-including-redesigns. The resume's commit trailer shows the zeroed
         # counters.
         script = fixture.prefix_to_test_writing() + [
             fixture.test_write(),
@@ -207,7 +208,7 @@ class ContractRevisionsRedesignsAndResetsDrivenThroughTheMachine(
         self.assertEqual(run.outcome, T.OUTCOME_FAILED)
         self.assertEqual(machine.routed[-1][0].row, "73")
 
-    def test_the_user_s_reset_lifts_the_redesigns_ceiling_and_is_recorded_as_a_ruling(self):
+    def test_zero_all_run_counters_including_redesigns_lifts_the_redesigns_ceiling_and_is_recorded_as_a_ruling(self):
         redesign_round = [
             (T.DESIGN_WRITING, T.V_EMITTED, {}),
             (T.CONTRACT_ACCEPTANCE_BY_PROGRAM, T.V_ADVANCE, {}),
@@ -219,14 +220,16 @@ class ContractRevisionsRedesignsAndResetsDrivenThroughTheMachine(
         script = [(T.INITIATE_DESIGN_TO_MAIN, T.V_INVOKED, {})] + redesign_round * 2
         script += redesign_round[:-1] + [
             (T.INVESTIGATE_WORKFLOW, T.V_RESUME,
-             {"destination": T.DESIGN_WRITING, "rulings": ("reset",)}),
+             {"destination": T.DESIGN_WRITING,
+              "rulings": (T.RULING_ZERO_ALL_RUN_COUNTERS_INCLUDING_REDESIGNS,)}),
         ]
         machine, run, record = self.drive(script)
         self.assertEqual(run.current_state, T.DESIGN_WRITING)
         self.assertEqual(run.design_version, 4)
         self.assertEqual(run.counters.value("redesigns"), 1)   # zeroed, then this redesign
         rulings = record.absolute(record.user_rulings_path).read_text()
-        self.assertIn("- reset (user-ruled 2026-09-08)", rulings)
+        self.assertIn("- %s (user-ruled 2026-09-08)" % T.RULING_ZERO_ALL_RUN_COUNTERS_INCLUDING_REDESIGNS,
+                      rulings)
 
     def test_contract_revisions_a_second_reject_from_any_state_goes_to_the_user_by_row_66(self):
         # Rows 22, 29, 33, 38, 45, 53 and 66 send a reject of the contract

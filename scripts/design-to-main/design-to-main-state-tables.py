@@ -75,7 +75,8 @@ V_REJECT_TEST_DESIGN = "reject test-design"
 # Rejecting both sibling artifacts re-enters both writers.
 V_REJECT_IMPLEMENTATION_AND_TESTS = "reject implementation and tests"
 V_DISCUSS = "discuss"
-V_REDESIGN = "redesign"          # only at contract-acceptance-by-user
+V_REDESIGN_ORDERED_BY_USER_AFTER_CONTRACT_FAILED_TWICE = (
+    "redesign-ordered-by-user-after-contract-failed-twice")  # only at contract-acceptance-by-user
 V_INPUT_QUICK_CHECK_FAILED = "input-quick-check-failed"
 V_ESCALATE_TO_USER = "escalate-to-user"
 V_PASS = "pass"
@@ -88,6 +89,9 @@ V_RESUME = "resume"
 V_ACCEPTED = "accepted"
 V_GATE_REJECTION = "gate-rejection"
 V_GATEKEEPER_REFUSAL = "gatekeeper-refusal"
+
+# The one user-ruling the machine acts on; every other user-ruling is only appended to the user-rulings file.
+RULING_ZERO_ALL_RUN_COUNTERS_INCLUDING_REDESIGNS = "zero-all-run-counters-including-redesigns"
 
 WRITER_COUNTER_FOR_VERDICT = {
     V_REJECT_IMPLEMENTATION: "implementation-writes",
@@ -123,7 +127,8 @@ STATE_TABLE = (
                   (CONTRACT_ACCEPTANCE_BY_PROGRAM, CONTRACT_ACCEPTANCE_BY_AGENT,
                    CONTRACT_ACCEPTANCE_BY_USER),
                   "the previous version and the notes, on a revision",
-                  (V_ADVANCE, V_REJECT_CONTRACT, V_DISCUSS, V_REDESIGN), "composite"),
+                  (V_ADVANCE, V_REJECT_CONTRACT, V_DISCUSS,
+                   V_REDESIGN_ORDERED_BY_USER_AFTER_CONTRACT_FAILED_TWICE), "composite"),
     StateTableRow(DESIGN_REVIEWING,
                   (DESIGN_ACCEPTANCE_BY_AGENT, DESIGN_ACCEPTANCE_BY_USER),
                   "on a second review, the previous reviewer's notes and the writer's notes",
@@ -294,7 +299,7 @@ ENTRY_REASON_DISCUSS_BY_USER = "discuss-by-user"
 ENTRY_REASON_ARBITRATOR_RULING = "arbitrator-ruling"
 ENTRY_REASON_CONTRACT_REVISION = "contract-revision"
 ENTRY_REASON_TEST_DESIGN_CORRECTION = "test-design-correction"
-ENTRY_REASON_REDESIGN = "redesign"
+ENTRY_REASON_DESIGN_CHANGED_UPSTREAM = "design-changed-upstream"
 ENTRY_REASON_USER_NAMED_DESTINATION = "user-named-destination"
 
 WRITING_STATE_ENTRY_REASON_TO_BUCKET = {
@@ -304,7 +309,7 @@ WRITING_STATE_ENTRY_REASON_TO_BUCKET = {
     ENTRY_REASON_ARBITRATOR_RULING: BUCKET_ARBITRATOR_RULED,
     ENTRY_REASON_CONTRACT_REVISION: BUCKET_UPSTREAM_DOCUMENT_CHANGED,
     ENTRY_REASON_TEST_DESIGN_CORRECTION: BUCKET_UPSTREAM_DOCUMENT_CHANGED,
-    ENTRY_REASON_REDESIGN: BUCKET_UPSTREAM_DOCUMENT_CHANGED,
+    ENTRY_REASON_DESIGN_CHANGED_UPSTREAM: BUCKET_UPSTREAM_DOCUMENT_CHANGED,
     # A writing state selected by the user on resume is uncounted.
     ENTRY_REASON_USER_NAMED_DESTINATION: BUCKET_UPSTREAM_DOCUMENT_CHANGED,
 }
@@ -470,7 +475,8 @@ TRANSITION_TABLE = (
     _row("10", CONTRACT_REVIEWING, V_DISCUSS, (G_FROM_CONTRACT_ACCEPTANCE_BY_USER,),
          CONTRACT_REVISING, counter_note="the user's own time",
          view=DIAGRAM_VIEW_NOT_DRAWN),
-    _row("11", CONTRACT_REVIEWING, V_REDESIGN, (G_FROM_CONTRACT_ACCEPTANCE_BY_USER,),
+    _row("11", CONTRACT_REVIEWING, V_REDESIGN_ORDERED_BY_USER_AFTER_CONTRACT_FAILED_TWICE,
+         (G_FROM_CONTRACT_ACCEPTANCE_BY_USER,),
          INVESTIGATE_WORKFLOW, investigation_focus=FOCUS_CONTRACT,
          counter_note="redesigns, on entry to design-writing",
          note="then design-writing as a redesign: the investigation holds design-writing "

@@ -56,7 +56,7 @@ class RunCounters:
             if rule.per_design_version:
                 self.values[rule.name] = 0
 
-    def reset_by_the_user(self):
+    def zero_all_run_counters_including_redesigns(self):
         for name in self.values:
             self.values[name] = 0
 

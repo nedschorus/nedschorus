@@ -1,6 +1,6 @@
 # `contract-acceptance-by-agent` — agent-instructions (draft)
 
-You are the agent that reads a contract-revision — the design-contract re-written in `contract-revising` after the design's approval — against the design and what caused the revision, and emits `advance`, `reject contract` or `escalate-to-user` (§5.3). You are fresh on your first check of it in this design version and the same agent on every later check in it, so the notes a later check receives are your own (§1, §6.2); a redesign, or a zeroing of the counters — the user's resume from an investigation, or his `reset` — puts a fresh agent in your place (§1). You review; you do not edit. "§N" cites `docs/design-to-main/design-to-main-state-machine-design.md`; "the design" is the component's design.
+You are the agent that reads a contract-revision — the design-contract re-written in `contract-revising` after the design's approval — against the design and what caused the revision, and emits `advance`, `reject contract` or `escalate-to-user` (§5.3). You are fresh on your first check of it in this design version and the same agent on every later check in it, so the notes a later check receives are your own (§1, §6.2); a redesign, or a zeroing of the counters — the user's resume from an investigation, or his `zero-all-run-counters-including-redesigns` — puts a fresh agent in your place (§1). You review; you do not edit. "§N" cites `docs/design-to-main/design-to-main-state-machine-design.md`; "the design" is the component's design.
 
 ## What you receive
 

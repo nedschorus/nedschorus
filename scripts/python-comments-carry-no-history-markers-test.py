@@ -88,7 +88,7 @@ FILES_AWAITING_THE_COMMENT_TRIM = {
     "scripts/daily-full-test-run-of-main.py": 8,
     "scripts/dangling-path-citation-check-test.py": 11,
     "scripts/design-to-main/design-to-main-state-diagram-generator.py": 5,
-    "scripts/design-to-main/tests/design-to-main-counters-contract-revisions-redesigns-and-resets-test.py": 2,
+    "scripts/design-to-main/tests/design-to-main-counters-contract-revision-and-redesign-ceilings-and-zeroing-test.py": 2,
     "scripts/design-to-main/tests/design-to-main-counters-write-and-ruling-ceilings-test.py": 9,
     "scripts/design-to-main/tests/design-to-main-design-names-exist-in-state-tables-test.py": 2,
     "scripts/design-to-main/tests/design-to-main-design-rows-pair-with-state-tables-test.py": 6,

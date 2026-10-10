@@ -459,27 +459,32 @@ class AStrayVerdictFromWithinAnInvestigation(unittest.TestCase):
                 self.assertEqual(machine.routed[-1][0].row, "72")
                 self.assertEqual(run.current_state, T.TEST_DESIGN_WRITING)
 
-    def test_a_reset_carried_on_a_malformed_resume_is_refused_with_the_whole_state_exit(self):
-        # Section 9 after the seventh walk (item 8): the reset is neither
+    def test_zero_all_run_counters_including_redesigns_carried_on_a_malformed_resume_is_refused_with_the_whole_state_exit(self):
+        # Section 9 after the seventh walk (item 8): the user-ruling
+        # zero-all-run-counters-including-redesigns is neither
         # applied to the counters nor written to the user-rulings file; the
         # user says it again on the correct resume.
         machine, run, record = self.open_investigation()
         run.counters.values["redesigns"] = 2                 # as after two redesigns
         self.stray_verdict_then_check_the_pause_is_unchanged(
             machine, run, record, verdict=T.V_RESUME,
-            fields={"destination": "desgin-writing", "rulings": ("reset",)})
+            fields={"destination": "desgin-writing",
+                    "rulings": (T.RULING_ZERO_ALL_RUN_COUNTERS_INCLUDING_REDESIGNS,)})
         self.assertEqual(run.counters.value("redesigns"), 2)
         self.assertFalse(record.absolute(record.user_rulings_path).exists())
-        # Without the reset a resume to design-writing is row 73; with it,
-        # said again on the correct resume, row 72.
+        # Without the user-ruling a resume to design-writing is row 73; with
+        # it, said again on the correct resume, row 72.
         machine.launcher.script.append(
-            (T.INVESTIGATE_WORKFLOW, T.V_RESUME, {"destination": T.DESIGN_WRITING, "rulings": ("reset",)}))
+            (T.INVESTIGATE_WORKFLOW, T.V_RESUME,
+             {"destination": T.DESIGN_WRITING,
+              "rulings": (T.RULING_ZERO_ALL_RUN_COUNTERS_INCLUDING_REDESIGNS,)}))
         fixture.drive(machine, run)
         self.assertEqual(machine.routed[-1][0].row, "72")
         self.assertEqual(run.current_state, T.DESIGN_WRITING)
         self.assertEqual(run.counters.value("redesigns"), 1)
         self.assertEqual(record.absolute(record.user_rulings_path).read_text(),
-                         "- reset (user-ruled 2026-09-08)\n")
+                         "- %s (user-ruled 2026-09-08)\n"
+                         % T.RULING_ZERO_ALL_RUN_COUNTERS_INCLUDING_REDESIGNS)
 
 
 if __name__ == "__main__":

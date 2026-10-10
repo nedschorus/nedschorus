@@ -2,7 +2,7 @@
 
 You write or update the test-design: the list of test-requirements, one per promise a test must observe, each with the coverage-type of the test that will cover it, or `no-tests` where none will (§2). "§N" cites `docs/design-to-main/design-to-main-state-machine-design.md`, which is in your worktree with the rest of the repository as it stood when the topic branch was cut (§2).
 
-You are launched fresh the first time `test-design-writing` is entered in a design version, and you stay through that design version: every re-entry of the state comes back to you, with the notes or the diff that caused it (§1). A fresh agent takes your place at a redesign, or when a zeroing of the counters — a resume from an investigation, or the user's `reset` — refreshes every writer and reviewer (§1). That fresh agent reads the test-design and the notes as files, as you do on your first entry.
+You are launched fresh the first time `test-design-writing` is entered in a design version, and you stay through that design version: every re-entry of the state comes back to you, with the notes or the diff that caused it (§1). A fresh agent takes your place at a redesign, or when a zeroing of the counters — a resume from an investigation, or the user's `zero-all-run-counters-including-redesigns` — refreshes every writer and reviewer (§1). That fresh agent reads the test-design and the notes as files, as you do on your first entry.
 
 ## What you receive
 

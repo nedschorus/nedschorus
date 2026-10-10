@@ -30,9 +30,8 @@ The state names of the machine are in the design, `docs/design-to-main/design-to
 - **no-tests-written** — a `no-tests` reason: a test could be written and was not, the sentence saying whether the code is trivial or the fixture, tool or environment does not exist yet.
 - **per-run-text** — what one agent writes during a run for another agent: a reviewer's notes, an input-quick-check-failed report, a contract-revision. The user does not review it, except a contract-revision at `contract-acceptance-by-user`.
 - **ready-for-test-suite** — the position a work-stream holds at when its last reviewing state has advanced and the other work-stream has not yet; recorded per work-stream in the run-state file.
-- **redesign** (verdict) — the user's verdict at `contract-acceptance-by-user` that the contract's trouble is the design's: opens the redesign through the investigation, counted against redesigns.
+- **redesign-ordered-by-user-after-contract-failed-twice** — the user's verdict at `contract-acceptance-by-user`, after the design-contract has failed review twice, that the trouble lies in the design itself: it opens a redesign through an investigation, counted against redesigns.
 - **refusal-clause-pair** — how a refusal is written in a design-contract: one `world-requires` clause and one `component-consumer-receives` clause sharing a number, with suffixes `a` and `b`.
-- **reset** — a user ruling, given in any dialog with him, that zeroes every counter of the run; recorded in the user-rulings file.
 - **standard-package** — the files every agent after the design receives in every state-package: the design, the design-contract, the component's user-rulings file, and on a re-entry the notes or failed-check report that caused it and the version being corrected.
 - **standing-agent-instructions** — agent-instructions that will be followed again and again: a skill, the instructions a state launches its agent with, an implementation or a test that is agent-instructions.
 - **state-exit** — the one structured record a state's work emits and the machine routes on: a verdict, a destination, and the commit of the state-package it was built from.
@@ -45,3 +44,4 @@ The state names of the machine are in the design, `docs/design-to-main/design-to
 - **world-changes** — the design-contract group holding the postconditions on what is different in the world after a run, per case.
 - **world-requires** — the design-contract group holding the preconditions on what must already be true in the world, each naming its refusal or declared `unchecked`. The world is everything outside the component and its component-consumers that the component does not itself create: the repository and its settings, the file system, GitHub, the network, the tools the component runs.
 - **world-unchanged** — the design-contract group holding the invariant: what in the world is the same after a run, and which runs it covers.
+- **zero-all-run-counters-including-redesigns** — a user-ruling, given in any dialog with him, that sets every counter to zero, the redesigns counter included, and is recorded in the user-rulings file.
