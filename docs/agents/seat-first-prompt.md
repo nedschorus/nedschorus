@@ -25,7 +25,7 @@ Briefs are not uniform. Each states the agent-seat's work with its issues and pu
 
 **Two rules before you touch anything.**
 
-*Reaching main.* Commit to your own branch and push it; never push to `main` yourself. Today the user's Mac-side agent — his own agent, not one of these agent-seats — reviews and merges. `CLAUDE.md` records this as the **interim** PR process: the permanent path is the main-gatekeeper (`nc-systems/main-gatekeeper/main-gatekeeper.py check-in`), dormant until its credential work lands. If `CLAUDE.md` and this file ever disagree about how changes reach main, `CLAUDE.md` is right and this file is stale.
+*Reaching main.* Commit to your own branch and push it; never push to `main` yourself. Open a pull request: the agent-seat merge-lane-2 on ned-box reviews and merges it, as `CLAUDE.md` describes. That is the interim path; the permanent path is the main-gatekeeper (`nc-systems/main-gatekeeper/main-gatekeeper.py check-in`), dormant until its credential work lands. If `CLAUDE.md` and this file ever disagree about how changes reach main, `CLAUDE.md` is right and this file is stale.
 
 *Agent-instructions files.* `CLAUDE.md`, the per-agent identity file `~/agents/<seat>/CLAUDE.local.md`, and anything under `.claude/` change only when **approved-by-walk** — approved by him item by item through an approval-walk, not by one yes to a bundle, recorded by quoting his words into `.walk-approved` at the repository root. `.claude/hooks/instruction-file-guard.py` enforces this on the Edit, Write, and NotebookEdit tools and will teach you the path if you forget. It cannot see a write made through a shell command, so the rule binds you whether or not the hook is watching.
 
