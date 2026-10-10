@@ -78,7 +78,8 @@ def run_program(scratch, helpers, specs, *extra):
 
 
 def main():
-    scratch = Path(tempfile.mkdtemp(prefix="merge-lane-brief-compose-test-"))
+    # Resolved, because macOS's mkdtemp path is a symlink and the program resolves its paths.
+    scratch = Path(tempfile.mkdtemp(prefix="merge-lane-brief-compose-test-")).resolve()
     try:
         repository = scratch / "main-checkout"
         subprocess.run(["git", "init", "-q", "-b", "main", str(repository)], check=True,

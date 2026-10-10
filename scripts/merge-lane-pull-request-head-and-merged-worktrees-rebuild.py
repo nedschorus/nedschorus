@@ -13,7 +13,8 @@ path is removed first, with any changes in it.
 Git runs in --review-tools-worktree-at-main. Every worktree of one repository shares its
 objects, so the fetched head commit is visible to the new worktrees.
 
-Exit codes: 0 both worktrees made; 1 a git step failed, named on stdout.
+Exit codes: 0 both worktrees made; 1 a git step failed, or the head conflicts
+with main, named on stdout.
 """
 
 import argparse
@@ -33,6 +34,10 @@ run_all_test_suites = common.run_all_test_suites
 
 
 class GitStepFailed(Exception):
+    pass
+
+
+class HeadConflictsWithMain(Exception):
     pass
 
 
@@ -74,11 +79,29 @@ def main(argv=None):
             arguments.head_commit)
         git(checkout, "worktree", "add", "-q", "--detach", str(merged_worktree),
             arguments.main_commit)
-        git(merged_worktree, *MERGE_COMMIT_IDENTITY, "merge", "-q", "--no-edit", "--no-ff",
-            arguments.head_commit)
+        try:
+            git(merged_worktree, *MERGE_COMMIT_IDENTITY, "merge", "-q", "--no-edit", "--no-ff",
+                arguments.head_commit)
+        except GitStepFailed:
+            conflicted = git(merged_worktree, "diff", "--name-only", "--diff-filter=U")
+            if not conflicted:
+                raise
+            git(merged_worktree, "merge", "--abort")
+            raise HeadConflictsWithMain(", ".join(conflicted.splitlines()))
         head_short = git(head_worktree, "rev-parse", "--short", "HEAD")
         merged_short = git(merged_worktree, "rev-parse", "--short", "HEAD")
         merged_tree = git(merged_worktree, "rev-parse", "HEAD^{tree}")
+    except HeadConflictsWithMain as conflict:
+        print(f"PR {number}: worktrees not rebuilt: head {arguments.head_commit[:8]} conflicts "
+              f"with main {arguments.main_commit[:8]} in: {conflict}\n"
+              f"The pull request's author clears a conflict with main, not merge-lane-2 and "
+              f"not the user.\n"
+              f"Confirm it: python3 scripts/branch-conflict-check.py --pull-request {number}\n"
+              f"If that reports VERDICT: CONFLICT, send pull request {number} back to its "
+              f"author for the hand-merge that report describes, and review it again after "
+              f"the author pushes.\n"
+              f"If it reports no conflict, run this again with the current main commit.")
+        return 1
     except GitStepFailed as failure:
         print(f"PR {number}: worktrees not rebuilt: {failure}\n"
               f"If the git error above names a cause you can fix, such as a wrong commit, fix "

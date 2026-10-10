@@ -141,6 +141,31 @@ def main():
               and "worktree add" in completed.stdout,
               f"exit {completed.returncode}\n{completed.stdout}{completed.stderr}")
 
+        author = scratch / "author"
+        git(author, "checkout", "-q", "-b", "conflicting", main_commit)
+        (author / "on-main.txt").write_text("the pull request's line\n")
+        git(author, "commit", "-q", "-am", "pull request 9 changes on-main.txt")
+        conflicting_head = git(author, "rev-parse", "HEAD")
+        git(author, "checkout", "-q", "main")
+        (author / "on-main.txt").write_text("main's later line\n")
+        git(author, "commit", "-q", "-am", "main changes on-main.txt")
+        later_main = git(author, "rev-parse", "HEAD")
+        git(author, "push", "-q", str(scratch / "origin.git"), "main:refs/heads/main",
+            "conflicting:refs/pull/9/head")
+        git(checkout, "fetch", "-q", "origin")
+        completed = run_program(helpers, checkout, "9", conflicting_head, later_main)
+        check("a head that conflicts with main exits 1, names the file and sends the "
+              "pull request back to its author",
+              completed.returncode == 1 and "conflicts with main" in completed.stdout
+              and "on-main.txt" in completed.stdout
+              and "branch-conflict-check.py --pull-request 9" in completed.stdout
+              and "back to its author" in completed.stdout,
+              f"exit {completed.returncode}\n{completed.stdout}{completed.stderr}")
+        check("the conflicted merge is aborted, leaving wt/pr<n>-merged clean at main",
+              git(helpers / "wt" / "pr9-merged", "status", "--porcelain") == ""
+              and git(helpers / "wt" / "pr9-merged", "rev-parse", "HEAD") == later_main,
+              git(helpers / "wt" / "pr9-merged", "status", "--porcelain"))
+
         completed = run_program(helpers, checkout, "8", head_commit, main_commit)
         check("a pull request origin does not have exits 1 at the fetch",
               completed.returncode == 1 and "git fetch" in completed.stdout,

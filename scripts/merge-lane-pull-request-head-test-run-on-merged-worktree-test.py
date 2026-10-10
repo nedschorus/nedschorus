@@ -130,6 +130,14 @@ def main():
               completed.returncode == 2 and calls == []
               and "tripwire-bin is missing" in completed.stdout,
               f"exit {completed.returncode}\n{completed.stdout}{completed.stderr}")
+
+        (helpers / "tripwire-bin").mkdir()
+        completed, calls = run_program(scratch, helpers, {}, "7",
+                                       review_tools=scratch / "no-such-checkout")
+        check("a review tools worktree without pull-request-head-test-run.py exits 2 before any run",
+              completed.returncode == 2 and calls == []
+              and "pull-request-head-test-run.py is missing" in completed.stdout,
+              f"exit {completed.returncode}\n{completed.stdout}{completed.stderr}")
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
 

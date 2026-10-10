@@ -59,6 +59,23 @@ def add_directory_options(parser, holds):
                              "<merge-lane-worktrees-and-outputs-directory>/wt/main)")
 
 
+def review_tool_missing_message(arguments, relative_path):
+    """Return None when the review tools worktree holds relative_path; else what to do."""
+    worktree = arguments.review_tools_worktree_at_main
+    tool = worktree / relative_path
+    if tool.is_file():
+        return None
+    # Without this check a missing tool surfaces as the interpreter's own exit
+    # code, which the callers' exit codes do not document.
+    return (f"{tool} is missing, so --review-tools-worktree-at-main, {worktree}, is not a "
+            f"checkout of main.\n"
+            f"If {worktree} exists, move it to main: git -C {worktree} fetch origin && "
+            f"git -C {worktree} checkout --detach origin/main\n"
+            f"If {worktree} does not exist, make it from any clone of this repository: "
+            f"git -C <clone> worktree add --detach {worktree} origin/main\n"
+            f"Then run this again.")
+
+
 def resolve_path_options(arguments):
     """Make every Path argument absolute, then default the review tools worktree."""
     for name, value in vars(arguments).items():

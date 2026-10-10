@@ -2,7 +2,8 @@
 """Tests for merge-lane-pull-request-merge-through-merge-gate-with-stacked-pull-request-retarget.py.
 
 The program is loaded by path and its main() is called in this process, with
-a fake scripts/merge-gate.sh in a scratch --review-tools-worktree-at-main, a
+a fake scripts/merge-gate.sh in a scratch --review-tools-worktree-at-main,
+a clone of a scratch origin repository at its origin/main, a
 fake `gh` first on PATH, and HOME pointing at a scratch home that holds the
 merge account's token file. The fake
 gate answers each run from a numbered output file and exit code the case
@@ -20,9 +21,17 @@ import io
 import json
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
+
+_git_environment_fixture_spec = importlib.util.spec_from_file_location(
+    "git_redirecting_environment_removal_test_fixture",
+    Path(__file__).resolve().with_name("git-redirecting-environment-removal-test-fixture.py"))
+_git_environment_fixture = importlib.util.module_from_spec(_git_environment_fixture_spec)
+_git_environment_fixture_spec.loader.exec_module(_git_environment_fixture)
+_git_environment_fixture.remove_git_redirecting_environment_variables_from_this_process()
 
 PROGRAM = Path(__file__).with_name("merge-lane-pull-request-merge-through-merge-gate-with-stacked-pull-request-retarget.py")
 _spec = importlib.util.spec_from_file_location("merge_lane_pull_request_merge", PROGRAM)
@@ -76,6 +85,25 @@ sys.exit(route.get("exit", 0))
 '''
 
 failures = []
+GIT_ENVIRONMENT = dict(os.environ)
+GIT_IDENTITY = ["-c", "user.name=merge-lane-test", "-c", "user.email=test@example.invalid"]
+
+
+def git(*arguments, cwd=None):
+    subprocess.run(["git", *GIT_IDENTITY, *arguments], cwd=cwd, env=GIT_ENVIRONMENT,
+                   check=True, capture_output=True, stdin=subprocess.DEVNULL)
+
+
+def origin_with_one_commit(scratch):
+    """Return a bare origin repository whose main has one commit."""
+    origin = scratch / "origin.git"
+    seed = scratch / "origin-seed"
+    git("init", "-q", "-b", "main", str(seed))
+    (seed / "README").write_text("seed\n")
+    git("add", "README", cwd=seed)
+    git("commit", "-q", "-m", "seed", cwd=seed)
+    git("clone", "-q", "--bare", str(seed), str(origin))
+    return origin
 
 
 def check(name, condition, detail=""):
@@ -101,17 +129,32 @@ STACKED_AND_NOT = [{"number": 20, "baseRefName": BRANCH},
                    {"number": 22, "baseRefName": "some-other-topic"}]
 
 
-def run_case(scratch, name, gate_answers, routes, token=TOKEN):
-    """Run main() once; return (exit code, output, gh calls, gate calls, waits)."""
+def run_case(scratch, name, gate_answers, routes, token=TOKEN, review_tools_state="at-main"):
+    """Run main() once; return (exit code, output, gh calls, gate calls, waits).
+
+    review_tools_state: "at-main", "behind-main" (origin/main moved on after the
+    clone), "no-origin" (the clone's origin is gone) or "no-gate".
+    """
     directory = scratch / name
     directory.mkdir()
     bin_directory = directory / "bin"
     bin_directory.mkdir()
     (bin_directory / "gh").write_text(FAKE_GH)
     (bin_directory / "gh").chmod(0o755)
+    origin = origin_with_one_commit(directory)
     review_tools = directory / "review-tools"
-    (review_tools / "scripts").mkdir(parents=True)
-    (review_tools / "scripts" / "merge-gate.sh").write_text(FAKE_GATE)
+    git("clone", "-q", str(origin), str(review_tools))
+    git("checkout", "-q", "--detach", "origin/main", cwd=review_tools)
+    if review_tools_state != "no-gate":
+        (review_tools / "scripts").mkdir(parents=True)
+        (review_tools / "scripts" / "merge-gate.sh").write_text(FAKE_GATE)
+    if review_tools_state == "behind-main":
+        seed = directory / "origin-seed"
+        (seed / "README").write_text("moved on\n")
+        git("commit", "-q", "-am", "main moves on", cwd=seed)
+        git("push", "-q", str(origin), "main", cwd=seed)
+    if review_tools_state == "no-origin":
+        shutil.rmtree(origin)
     for number, (output, exit_code) in enumerate(gate_answers, start=1):
         (directory / f"gate-{number}.out").write_text(output)
         (directory / f"gate-{number}.exit").write_text(str(exit_code))
@@ -159,7 +202,8 @@ def index_of(calls, prefix):
 
 
 def main():
-    scratch = Path(tempfile.mkdtemp(prefix="merge-lane-merge-test-"))
+    # Resolved, because macOS's mkdtemp path is a symlink and the program resolves its paths.
+    scratch = Path(tempfile.mkdtemp(prefix="merge-lane-merge-test-")).resolve()
     try:
         exit_code, output, gh_calls, gate_calls, waits = run_case(
             scratch, "stacked", [(GATE_PASSED, 0)], default_routes(STACKED_AND_NOT))
@@ -176,8 +220,6 @@ def main():
               index_of(calls, ["pr", "edit", "22"]) is None, json.dumps(calls))
         check("the merge runs exactly the command the gate printed",
               merge is not None and calls[merge] == EXPECTED_MERGE, json.dumps(calls))
-        check("the gate runs with the three arguments, once",
-              gate_calls == [f"{PULL_REQUEST} {HEAD} {SINCE}"], repr(gate_calls))
         check("the gate that runs is --review-tools-worktree-at-main's, not the one beside the program",
               gate_calls == [f"{PULL_REQUEST} {HEAD} {SINCE}"], repr(gate_calls))
         check("every gh call carries the merge account's token, read from the gate's own file",
@@ -278,6 +320,35 @@ def main():
         check("a token file holding only whitespace exits 2 before the gate or gh runs",
               exit_code == 2 and gate_calls == [] and gh_calls == []
               and "STOP: not merged" in output and "is empty" in output,
+              f"exit {exit_code}\n{output}")
+
+        exit_code, output, gh_calls, gate_calls, _ = run_case(
+            scratch, "review-tools-behind-main", [(GATE_PASSED, 0)],
+            default_routes(STACKED_AND_NOT), review_tools_state="behind-main")
+        check("a review tools worktree behind origin/main stops before the gate, exit 2",
+              exit_code == 2 and gate_calls == [] and gh_calls == []
+              and "not at origin/main" in output and "checkout --detach origin/main" in output,
+              f"exit {exit_code}\n{output}")
+
+        exit_code, output, gh_calls, gate_calls, _ = run_case(
+            scratch, "review-tools-fetch-fails", [(GATE_PASSED, 0)],
+            default_routes(STACKED_AND_NOT), review_tools_state="no-origin")
+        check("a review tools worktree that cannot fetch origin stops before the gate, exit 2",
+              exit_code == 2 and gate_calls == [] and gh_calls == []
+              and "could not fetch origin" in output, f"exit {exit_code}\n{output}")
+
+        exit_code, output, gh_calls, gate_calls, _ = run_case(
+            scratch, "no-gate", [(GATE_PASSED, 0)],
+            default_routes(STACKED_AND_NOT), review_tools_state="no-gate")
+        check("a review tools worktree without merge-gate.sh stops before any run, exit 2",
+              exit_code == 2 and gh_calls == [] and "merge-gate.sh is missing" in output,
+              f"exit {exit_code}\n{output}")
+
+        exit_code, output, gh_calls, _, _ = run_case(
+            scratch, "gate-undocumented-exit", [("bash: something broke\n", 127)],
+            default_routes(STACKED_AND_NOT))
+        check("a gate exit outside 0, 1 and 2 is reported as could-not-run, exit 2",
+              exit_code == 2 and gh_calls == [] and "exited 127" in output,
               f"exit {exit_code}\n{output}")
 
         routes = default_routes(STACKED_AND_NOT)

@@ -80,7 +80,8 @@ def run_program(scratch, helpers, extra_environment=None, home=None):
 
 
 def main():
-    scratch = Path(tempfile.mkdtemp(prefix="merge-lane-codex-test-"))
+    # Resolved, because macOS's mkdtemp path is a symlink and the program resolves its paths.
+    scratch = Path(tempfile.mkdtemp(prefix="merge-lane-codex-test-")).resolve()
     try:
         (scratch / "bin").mkdir()
         (scratch / "bin" / "gh").write_text(FAKE_GH)
@@ -144,6 +145,15 @@ def main():
         check("a token file holding only whitespace exits 2 before gh or the review runs",
               completed.returncode == 2 and gh_calls == [] and cell_calls == []
               and "is empty" in completed.stdout,
+              f"exit {completed.returncode}\n{completed.stdout}{completed.stderr}")
+
+        cell = scratch / "main-checkout" / "scripts" / "code-review-codex-cell.py"
+        cell.rename(cell.with_suffix(".away"))
+        completed, gh_calls, cell_calls = run_program(scratch, helpers)
+        cell.with_suffix(".away").rename(cell)
+        check("a review tools worktree without code-review-codex-cell.py exits 2 before gh runs",
+              completed.returncode == 2 and gh_calls == [] and cell_calls == []
+              and "code-review-codex-cell.py is missing" in completed.stdout,
               f"exit {completed.returncode}\n{completed.stdout}{completed.stderr}")
     finally:
         shutil.rmtree(scratch, ignore_errors=True)

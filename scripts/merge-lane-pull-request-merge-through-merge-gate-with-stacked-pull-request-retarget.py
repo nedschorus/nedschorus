@@ -23,9 +23,15 @@ Every gh call runs with GH_TOKEN read from the merge account's token file,
 the file merge-gate.sh reads, so the gate, the retargets and the merge use one
 token.
 
+Before the gate runs, this program fetches origin in
+--review-tools-worktree-at-main and refuses unless that worktree's HEAD is
+origin/main, so a stale worktree never lets an older gate decide a merge.
+
 Exit codes: 0 merged; 1 the gate refused, printed a merge command other than
-the expected one, or the merge failed; 2 the gate could not run, the token file
-could not be read or was empty, or a read or a retarget on GitHub failed, each
+the expected one, or the merge failed; 2 the token file could not be read or
+was empty, --review-tools-worktree-at-main has no scripts/merge-gate.sh, could
+not be fetched or is not at origin/main, the gate could not run or exited with
+a code it does not document, or a read or a retarget on GitHub failed, each
 before any merge.
 """
 
@@ -59,6 +65,8 @@ OPEN_PULL_REQUEST_LIST_LIMIT = 1000
 EXIT_MERGED = 0
 EXIT_REFUSED = 1
 EXIT_COULD_NOT_RUN = 2
+MERGE_GATE_DOCUMENTED_EXITS = (0, 1, 2)
+MERGE_GATE = Path("scripts") / "merge-gate.sh"
 
 
 def parse_arguments(argv):
@@ -87,7 +95,7 @@ def merge_gate_after_retries(arguments, environment, wait):
     """Return the last run of the gate, stdout and stderr together."""
     for attempt in range(1, MERGE_GATE_TRIES + 1):
         gate = subprocess.run(
-            ["bash", str(arguments.review_tools_worktree_at_main / "scripts" / "merge-gate.sh"),
+            ["bash", str(arguments.review_tools_worktree_at_main / MERGE_GATE),
              arguments.pull_request, arguments.head_commit,
              arguments.reviewed_since],
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=environment,
@@ -97,6 +105,33 @@ def merge_gate_after_retries(arguments, environment, wait):
             return gate
         print(f"try {attempt}: {MERGE_STATE_UNKNOWN_REFUSAL}", flush=True)
         wait(SECONDS_BETWEEN_MERGE_GATE_TRIES)
+
+
+def review_tools_worktree_not_at_main_message(worktree):
+    """Return None when worktree's HEAD is origin/main after a fetch; else what to do."""
+    environment = common.run_all_test_suites.environment_without_git_redirecting_variables()
+
+    def git(*arguments):
+        return subprocess.run(["git", "-C", str(worktree), *arguments], capture_output=True,
+                              text=True, env=environment, stdin=subprocess.DEVNULL)
+
+    fetch = git("fetch", "--quiet", "origin")
+    if fetch.returncode != 0:
+        return (f"could not fetch origin in {worktree}, so whether its merge-gate.sh is "
+                f"main's cannot be told: {fetch.stderr.strip()}\n"
+                f"Run this again once; if it fails the same way, tell the user this message.")
+    head = git("rev-parse", "HEAD")
+    main = git("rev-parse", "origin/main")
+    if head.returncode != 0 or main.returncode != 0:
+        return (f"could not read HEAD and origin/main in {worktree}: "
+                f"{(head.stderr or main.stderr).strip()}\n"
+                f"Tell the user this message.")
+    if head.stdout.strip() != main.stdout.strip():
+        return (f"{worktree} is at {head.stdout.strip()[:8]}, not at origin/main "
+                f"{main.stdout.strip()[:8]}, so its merge-gate.sh may not be main's.\n"
+                f"Move it to main: git -C {worktree} checkout --detach origin/main\n"
+                f"Then run this again.")
+    return None
 
 
 def printed_merge_command(gate_output):
@@ -160,8 +195,20 @@ def main(argv=None, wait=time.sleep):
         return EXIT_COULD_NOT_RUN
     environment = {**os.environ, "GH_TOKEN": token}
 
+    refusal = (common.review_tool_missing_message(arguments, MERGE_GATE)
+               or review_tools_worktree_not_at_main_message(
+                   arguments.review_tools_worktree_at_main))
+    if refusal:
+        print(f"STOP: not merged: {refusal}")
+        return EXIT_COULD_NOT_RUN
+
     gate = merge_gate_after_retries(arguments, environment, wait)
     print(gate.stdout, end="" if gate.stdout.endswith("\n") or not gate.stdout else "\n")
+    if gate.returncode not in MERGE_GATE_DOCUMENTED_EXITS:
+        print(f"STOP: not merged: merge-gate.sh exited {gate.returncode}, a code it never "
+              f"exits with on its own, so bash could not run it as written.\n"
+              f"Tell the user this message, with the output above.")
+        return EXIT_COULD_NOT_RUN
     if gate.returncode != 0:
         print(f"STOP: not merged: merge-gate.sh exited {gate.returncode}.\n"
               f"Follow the gate's own instructions, printed above.")

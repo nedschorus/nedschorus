@@ -19,7 +19,8 @@ nothing here retries.
 
 Prints one line per pull request with the run's exit code and SUMMARY line.
 Exit codes: 0 every run exited 0; otherwise the first nonzero exit code; 2
-also when tripwire-bin/ is missing, before any run.
+also when tripwire-bin/ or --review-tools-worktree-at-main's
+scripts/pull-request-head-test-run.py is missing, before any run.
 """
 
 import argparse
@@ -30,6 +31,7 @@ import sys
 from pathlib import Path
 
 SUMMARY_LINE_PREFIX = "SUMMARY:"
+HEAD_TEST_RUNNER = Path("scripts") / "pull-request-head-test-run.py"
 
 _common_spec = importlib.util.spec_from_file_location(
     "merge_lane_pull_request_helpers_common", Path(__file__).resolve().with_name(
@@ -60,6 +62,10 @@ def main(argv=None):
               f"Restore {tripwire} with a claude and a codex that exit 1, or pass the "
               f"--merge-lane-worktrees-and-outputs-directory that holds it.")
         return 2
+    missing = common.review_tool_missing_message(arguments, HEAD_TEST_RUNNER)
+    if missing:
+        print(f"not run: {missing}")
+        return 2
     environment = run_all_test_suites.environment_without_git_redirecting_variables()
     environment["PATH"] = f"{tripwire}{os.pathsep}{environment.get('PATH', '')}"
 
@@ -70,7 +76,7 @@ def main(argv=None):
         (outputs / "tmp").mkdir(parents=True, exist_ok=True)
         with open(outputs / "stdout", "w") as stdout, open(outputs / "stderr", "w") as stderr:
             completed = subprocess.run(
-                [sys.executable, str(review_tools_worktree / "scripts" / "pull-request-head-test-run.py"),
+                [sys.executable, str(review_tools_worktree / HEAD_TEST_RUNNER),
                  "--checkout", str(helpers / "wt" / f"pr{number}-merged"),
                  "--log-store-root", str(outputs / "log-store"),
                  "--temporary-directory", str(outputs / "tmp"),
