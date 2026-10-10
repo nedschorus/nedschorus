@@ -40,7 +40,7 @@ A term used by one system alone is defined in that system's glossary, not here. 
 - **ghi-write-tool** — `scripts/ghi-issue-write.py`, the program whose operations are create-GHI and edit-GHI.
 - **hand-merge** — a merge of main into a conflicting pull-request branch, with each conflict resolved by hand and nothing else changed, pushed on top of the frozen-head.
 - **handoff-supervisor** — the program `nc-systems/handoff/handoff-supervisor.py`, one per agent-seat, that launches an agent-session, replaces it when it writes a session-handoff, and exits when it ends without one.
-- **handoff-system** — the subsystem that replaces an agent-session with a fresh one, which continues from the session-handoff the old agent-session wrote. Overview: `docs/nedschorus-wiki/nedschorus-handoff-system-overview.md`.
+- **handoff-system** — the subsystem that replaces an agent-session with a fresh one, which continues from the session-handoff the old agent-session wrote. Overview: `docs/nedschorus-wiki/nedschorus-handoff-architecture-overview.md`.
 - **hard-block** — a refusal that nothing overrides.
 - **ID-type** — the kind of thing an identifier names, and the word written before its name in a citation: `GHI` for a GitHub issue, `PR` for a pull request, agent-seat for an agent-seat, and the ordinary word for a commit, task or session.
 - **initial-agent-instructions** — the agent-instructions in the prompt that starts an agent or a subagent.
