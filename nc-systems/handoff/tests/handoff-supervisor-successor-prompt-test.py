@@ -1123,9 +1123,9 @@ def gh_answering_no_open_pull_requests_first_on_path(directory: Path):
 
 def run_overview_check_git_output_cases(workspace: Path):
     """The one helper every git call of the overview refresh check goes through:
-    a failure, or empty output where output is required, raises an error naming
-    the call and its cause, which the check's except blocks print; so no failure
-    in the check is silent, and no call site needs a guard of its own."""
+    a failure raises an error naming the call and its cause, which the check's
+    except blocks print; so no failure in the check is silent, and no call site
+    needs a guard of its own."""
     helper = getattr(supervisor, "overview_check_git_output", None)
     failure = getattr(supervisor, "OverviewCheckGitFailure", None)
     check("the overview check has one git helper and its error",
@@ -1142,18 +1142,18 @@ def run_overview_check_git_output_cases(workspace: Path):
         except failure as error:
             return error
 
-    failed = raised_by(["ls-tree", "-d", "--name-only", "no-such-ref", "nc-systems/"],
-                       empty_is_failure=False)
+    failed = raised_by(["ls-tree", "-d", "--name-only", "no-such-ref", "nc-systems/"])
     check("a failing git call raises an error naming the call and its cause",
           isinstance(failed, failure) and str(failed).startswith(
               "git ls-tree -d --name-only no-such-ref nc-systems/ failed: "),
           repr(failed))
-    empty = raised_by(["rev-parse", "--verify", "--quiet", "no-such-ref"])
-    check("empty output where output is required raises",
-          isinstance(empty, failure)
-          and "git rev-parse --verify --quiet no-such-ref failed" in str(empty), repr(empty))
-    allowed = raised_by(["status", "--porcelain"], empty_is_failure=False)
-    check("empty output where empty is allowed is returned", allowed == "", repr(allowed))
+    quiet = raised_by(["rev-parse", "--verify", "--quiet", "no-such-ref"])
+    check("a failing git call that writes nothing to stderr raises, saying so",
+          isinstance(quiet, failure)
+          and str(quiet) == "git rev-parse --verify --quiet no-such-ref failed: no detail",
+          repr(quiet))
+    empty = raised_by(["status", "--porcelain"])
+    check("a successful git call with empty output returns it", empty == "", repr(empty))
 
     # At the call site: a failed ls-tree, the one call before the loop that may
     # return nothing, stops the check with a printed line and no launch error.

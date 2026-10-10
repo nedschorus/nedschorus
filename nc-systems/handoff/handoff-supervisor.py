@@ -853,11 +853,11 @@ class OverviewCheckGitFailure(Exception):
 
 
 def overview_check_git_output(arguments: list, working_directory: Path,
-                              timeout: int = 60, empty_is_failure: bool = True) -> str:
+                              timeout: int = 60) -> str:
     """Return git's stripped stdout, or raise OverviewCheckGitFailure naming the call and its cause."""
     result = run_git_here(arguments, working_directory, timeout=timeout)
     output = result.stdout.strip()
-    if result.returncode != 0 or (empty_is_failure and not output):
+    if result.returncode != 0:
         raise OverviewCheckGitFailure(
             f"git {' '.join(arguments)} failed: {result.stderr.strip() or 'no detail'}")
     return output
@@ -879,7 +879,7 @@ def overview_refresh_due_lines(working_directory: Path,
             ["rev-parse", "--short", main_commit_full], working_directory, timeout=timeout)
         listed = overview_check_git_output(
             ["ls-tree", "-d", "--name-only", main_commit_full, "nc-systems/"],
-            working_directory, timeout=timeout, empty_is_failure=False)
+            working_directory, timeout=timeout)
     except Exception as error:
         print(f"handoff-supervisor: overview check stopped: "
               f"{type(error).__name__}: {error}")
@@ -903,7 +903,7 @@ def overview_refresh_due_lines(working_directory: Path,
             pathspecs = [f"nc-systems/{system}/", f":(exclude)nc-systems/{system}/*.md"]
             moved = overview_check_git_output(
                 ["log", "--no-merges", "--format=%h", commit_range, "--", *pathspecs],
-                working_directory, empty_is_failure=False)
+                working_directory)
             count = len(moved.split())
             if not count:
                 continue
