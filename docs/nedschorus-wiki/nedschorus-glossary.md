@@ -56,7 +56,7 @@ A term used by one system alone is defined in that system's glossary, not here. 
 - **retire-seat** — to end an agent-seat for good so its name can be freed or reused; distinct from pausing it. The steps are in `docs/nedschorus-wiki/nedschorus-agent-seat-model.md`.
 - **SDLC-term** — a standard term of software engineering or of another computing field, such as operating systems, networking or databases, used with its standard meaning, as `flock` is; `docs/nedschorus-wiki/nedschorus-sdlc-terms.md` lists those this project relies on.
 - **seat-branch** — the long-lived git branch of one agent-seat, named for the agent-seat, that the handoff-supervisor's launcher creates; its agent-sessions work on topic branches cut from main.
-- **seat-brief** — `docs/agents/<seat>-instructions.md`, the file an agent-seat's occupant reads to learn its job.
+- **seat-brief** — the `CLAUDE.local.md` at the root of an agent-seat's checkout, which git does not track: the file an agent-seat's occupant reads to learn its job.
 - **session-handoff** — the act of transferring the key context and state of one agent-session to the next, and the file that carries it, `~/.claude/handoffs/<seat>-handoff.md`, on the agent-seat's machine only and never committed.
 - **soft-block** — a refusal the agent clears by writing its own reasoning into the marker the refusal names.
 - **system-term** — a term used by one system or subsystem alone, defined in that system's own glossary rather than here; a term used by more than one is a project-term, defined here and in no system glossary. The system glossaries are listed at the top of this page.
