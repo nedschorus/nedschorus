@@ -69,7 +69,7 @@ A fixed third of the cases of each kind is held out: never used while a change i
 
 ## Next action
 
-Build step 1: choose ten merged pull requests from the candidates for kind 1 listed in the log-store's `case-candidates.json`, build each case, run the four admission tests three times, and report which cases were admitted and why each other case was dropped.
+Build step 1: choose ten merged pull requests from the candidates for kind 1 listed in the log-store's `benchmark-candidate-case-pull-request-numbers-by-kind.json`, build each case, run the four admission tests three times, and report which cases were admitted and why each other case was dropped.
 
 ## Prior work
 
