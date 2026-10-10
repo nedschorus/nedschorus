@@ -1235,7 +1235,9 @@ def run_overview_refresh_due_cases(workspace: Path):
            "three systems land, none with a last line that counts")
     main = publish()
     expected = expected_widget_overview_refresh_due_line(landed, main, 1, git_in(["rev-parse", main], repository).stdout.strip())
-    due = overview_refresh_due_or_missing(repository)
+    console = io.StringIO()
+    with contextlib.redirect_stdout(console):
+        due = overview_refresh_due_or_missing(repository)
     check("systems whose overview has the old name and pinned line, or no overview "
           "at all, are skipped without error",
           due == (expected,), f"{due!r}\nexpected: {expected!r}")
@@ -1248,6 +1250,9 @@ def run_overview_refresh_due_cases(workspace: Path):
           absent_names_no_commit and due != "missing"
           and not any("gizmo" in line for line in due),
           repr(due))
+    check("that system is named on the console as passed over, never skipped silently",
+          "overview check for gizmo passed over" in console.getvalue(),
+          console.getvalue())
 
     # A refresh replaces the last line; a commit named earlier in the text is not the one checked against.
     commit({widget_overview: "# The widget: an overview\n\nIt widgets.\n\n"
@@ -1299,7 +1304,7 @@ def run_overview_refresh_due_cases(workspace: Path):
     stub_git.write_text(
         "#!/bin/sh\n"
         'case "$*" in\n'
-        '  *"show origin/main:docs/nedschorus-wiki/nedschorus-aardvark-architecture-overview.md"*)\n'
+        '  *"show "*":docs/nedschorus-wiki/nedschorus-aardvark-architecture-overview.md"*)\n'
         "    exec sleep 30 ;;\n"
         "esac\n"
         f'exec "{real_git}" "$@"\n',

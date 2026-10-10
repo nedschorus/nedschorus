@@ -868,8 +868,12 @@ def overview_refresh_due_lines(working_directory: Path,
         main_commit = shortened.stdout.strip()
         if shortened.returncode != 0 or not main_commit:
             return ()
-        listed = run_git_here(["ls-tree", "-d", "--name-only", "origin/main", "nc-systems/"],
+        listed = run_git_here(["ls-tree", "-d", "--name-only", main_commit_full, "nc-systems/"],
                               working_directory, timeout=timeout)
+        if listed.returncode != 0:
+            print(f"handoff-supervisor: overview check stopped: git ls-tree {main_commit} "
+                  f"failed: {listed.stderr.strip() or 'no detail'}")
+            return ()
     except Exception as error:
         print(f"handoff-supervisor: overview check stopped: "
               f"{type(error).__name__}: {error}")
@@ -880,7 +884,7 @@ def overview_refresh_due_lines(working_directory: Path,
         try:
             overview_path = SYSTEM_OVERVIEW_PATH_TEMPLATE.format(system=system)
             shown = subprocess.run(
-                ["git", "show", f"origin/main:{overview_path}"],
+                ["git", "show", f"{main_commit_full}:{overview_path}"],
                 cwd=str(working_directory), capture_output=True, check=False,
                 timeout=timeout)
             if shown.returncode != 0:
