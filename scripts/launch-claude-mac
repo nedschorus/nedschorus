@@ -587,13 +587,15 @@ cd '$QUOTED_AGENT_DIRECTORY'; exec \${SHELL:-/bin/sh}"
 # own buffer, which holds stale text from before tmux last redrew, and a reply
 # taller than the window loses its top. With mouse mode on, a mouse selection
 # is tmux's, so copy-command pipes it to pbcopy to reach the Mac clipboard.
+# One format for both paths below, so the attach and --no-attach titles cannot drift apart.
+SEAT_WINDOW_TITLE_FORMAT='[mac] #S'
 if [ "$ATTACH" = yes ]; then
     exec tmux -L "$SEAT_TMUX_SOCKET" new-session -A -s "$AGENT_NAME" -c "$AGENT_DIRECTORY" \
         "trap ':' INT QUIT; $SUPERVISOR_COMMAND; $AFTER_EXIT_COMMAND" \; \
-        set-option -g set-titles on \; set-option -g set-titles-string '[mac] #S' \; \
+        set-option -g set-titles on \; set-option -g set-titles-string "$SEAT_WINDOW_TITLE_FORMAT" \; \
         set-option -g mouse on \; set-option -s copy-command pbcopy
 fi
 tmux -L "$SEAT_TMUX_SOCKET" new-session -d -s "$AGENT_NAME" -c "$AGENT_DIRECTORY" "$SUPERVISOR_COMMAND" \; \
-        set-option -g set-titles on \; set-option -g set-titles-string '[mac] #S' \; \
+        set-option -g set-titles on \; set-option -g set-titles-string "$SEAT_WINDOW_TITLE_FORMAT" \; \
         set-option -g mouse on \; set-option -s copy-command pbcopy 2>/dev/null \
     || echo "launch-claude-mac: a tmux session named $AGENT_NAME already exists — a running seat, or its after-exit shell (attach with: launch-claude-mac $AGENT_NAME)"
