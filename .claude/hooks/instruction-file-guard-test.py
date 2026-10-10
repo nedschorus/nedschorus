@@ -269,7 +269,7 @@ with tempfile.TemporaryDirectory() as temporary_directory:
           "report the change to the agent that dispatched you instead."
           in result.stderr.splitlines(), result.stderr)
     check("the block is one instruction per line, the three route-around lines included",
-          len(result.stderr.strip().splitlines()) == 9, result.stderr)
+          len(result.stderr.strip().splitlines()) == 10, result.stderr)
     draft_places = [
         ("a draft in docs/agents/queue/", workspace / "docs" / "agents" / "queue" / "x.md"),
         ("a draft in docs/nedschorus-wiki/queue/", workspace / "docs" / "nedschorus-wiki" / "queue" / "x.md"),
@@ -455,6 +455,32 @@ with tempfile.TemporaryDirectory() as temporary_directory:
         check(f"the refusal for {label} ends with the three route-around lines",
               result.returncode == 2
               and result.stderr.strip().splitlines()[-3:] == route_around_lines,
+              result.stderr)
+
+    # Each approval refusal asks for a cold read of the change before it goes to the user.
+    cold_read_sentences = (
+        "Before you put the change to the user, write the changed text to a file in your "
+        "session's scratchpad and give it the cold read that step 2 of the /cold-read skill "
+        "names for it, a fast read for a change of one sentence; revise the text from the "
+        "findings once, then put the change to him. Skip this when the change only fixes an "
+        "obvious error `CLAUDE.md` lets you fix without asking.")
+    for label, target, asking_words in (
+            ("an instruction file", workspace / "CLAUDE.md", "State the proposed change"),
+            ("a reusable prompt", workspace / "docs" / "agents" / "some-seat-instructions.md",
+             "State the proposed change"),
+            # Here the cold read comes first, so no line falls between "If he has approved"
+            # and the lines that follow it up to "If he has not".
+            ("a reviewed document", workspace / "docs" / "nedschorus-wiki" / "a-page.md",
+             "If he has approved this exact change")):
+        result = run_hook(decoy, workspace, str(target))
+        check(f"the refusal for {label} asks for a cold read just before its steps for asking the user",
+              result.returncode == 2
+              and cold_read_sentences in result.stderr
+              and asking_words in result.stderr
+              and result.stderr.index(cold_read_sentences) + len(cold_read_sentences)
+              < result.stderr.index(asking_words)
+              and result.stderr[result.stderr.index(cold_read_sentences)
+                                + len(cold_read_sentences):result.stderr.index(asking_words)].strip() == "",
               result.stderr)
 
     # The session's own scratchpad is private to it and loaded by nothing.
