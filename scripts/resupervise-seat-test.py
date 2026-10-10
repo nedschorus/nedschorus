@@ -20,6 +20,7 @@ Run: python3 scripts/resupervise-seat-test.py
 import fcntl
 import json
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -283,14 +284,8 @@ def run_missing_launcher_case(workspace: Path):
     # which transcript is worth resuming from scripts/ (issue 242 change 5).
     # Both are resolved from the repository root, so the isolated copy needs
     # the repository's SHAPE around it rather than two files beside it.
-    # The supervisor also imports the agent-binary update lock from scripts/
-    # (2026-09-22), so that module is copied beside the first, and the
-    # pinned-line reader in stale-code-citation-check.py (2026-09-28). The
-    # daily memory review's mark program (2026-09-30) sits beside the
-    # supervisor, so it is copied beside the supervisor's copy, and so is the
-    # mark program of the day's overview refresh reminder (2026-10-01), and
-    # the work-snapshots module. The launch-time branch sync reads its
-    # tracked-change and in-progress checks from checkout-freshness-catch-up.py.
+    # The modules the supervisor loads from scripts/ are read from its own
+    # source, so a new import there needs no change here.
     supervisor_home = workspace / "nc-systems" / "handoff"
     supervisor_home.mkdir(parents=True)
     for supervisor_file in ("handoff-supervisor.py", "daily-memory-review-mark.py",
@@ -301,10 +296,9 @@ def run_missing_launcher_case(workspace: Path):
             encoding="utf-8")
     scripts_home = workspace / "scripts"
     scripts_home.mkdir(parents=True, exist_ok=True)
-    for supervisor_import in ("seat-transcript-worth-resuming.py",
-                              "agent-binary-update-under-lock.py",
-                              "stale-code-citation-check.py",
-                              "checkout-freshness-catch-up.py"):
+    for supervisor_import in re.findall(
+            r'SCRIPTS_DIRECTORY / "([\w-]+\.py)"\)',
+            SUPERVISOR_SCRIPT.read_text(encoding="utf-8")):
         (scripts_home / supervisor_import).write_text(
             RESUPERVISE_SCRIPT.with_name(supervisor_import)
             .read_text(encoding="utf-8"), encoding="utf-8")

@@ -181,14 +181,14 @@ def run_mark_cases(workspace: Path):
 
     refused = Fixture(workspace / "marks-refused")
     code, stdout, stderr, calls = refused.run(
-        ["docs/nedschorus-wiki/nedschorus-handoff-system-overview.md"])
+        ["docs/nedschorus-wiki/nedschorus-handoff-architecture-overview.md"])
     check("an overview's path in place of the system's name is refused, exit 2, with "
           "nothing written and no ssh",
           code == 2 and refused.mark_files() == [] and calls == [] and stdout == "",
           f"{code} {refused.mark_files()} {calls!r} {stdout!r}")
     check("the refusal says nothing was written, and what to pass",
           stderr == "daily-overview-refresh-reminder-mark: no daily-overview-refresh-reminder-"
-          "mark was written, because 'docs/nedschorus-wiki/nedschorus-handoff-system-"
+          "mark was written, because 'docs/nedschorus-wiki/nedschorus-handoff-architecture-"
           "overview.md' is not a system's name.\n"
           "Run this again with the name of the system's directory under nc-systems/, such "
           "as handoff.\n", stderr)

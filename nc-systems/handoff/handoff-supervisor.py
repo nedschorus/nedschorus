@@ -18,7 +18,7 @@ The cycle, per reincarnation:
   6. Launch the successor with the initial agent instructions. Beside the
      branch sync's line they carry, for agent-instructions-editor alone, one
      line per system whose code moved on
-     main past its overview's pinned commit, until the user has been shown
+     main past the commit its overview was checked against, until the user has been shown
      that overview's refresh that day (overview_refresh_due_lines), plus
      one line saying so when the day's reminder marks cannot be read,
      and, on the Mac from noon Pacific, one line when the day's memory review
@@ -114,12 +114,12 @@ agent_binary_update_under_lock = importlib.util.module_from_spec(
     _agent_binary_update_under_lock_spec)
 _agent_binary_update_under_lock_spec.loader.exec_module(agent_binary_update_under_lock)
 
-_stale_code_citation_check_spec = importlib.util.spec_from_file_location(
-    "stale_code_citation_check",
-    SCRIPTS_DIRECTORY / "stale-code-citation-check.py")
-stale_code_citation_check = importlib.util.module_from_spec(
-    _stale_code_citation_check_spec)
-_stale_code_citation_check_spec.loader.exec_module(stale_code_citation_check)
+_architecture_overview_path_template_and_checked_against_commit_reader_spec = importlib.util.spec_from_file_location(
+    "architecture_overview_path_template_and_checked_against_commit_reader",
+    SCRIPTS_DIRECTORY / "architecture-overview-path-template-and-checked-against-commit-reader.py")
+architecture_overview_path_template_and_checked_against_commit_reader = importlib.util.module_from_spec(
+    _architecture_overview_path_template_and_checked_against_commit_reader_spec)
+_architecture_overview_path_template_and_checked_against_commit_reader_spec.loader.exec_module(architecture_overview_path_template_and_checked_against_commit_reader)
 
 DAILY_MEMORY_REVIEW_MARK_PATH = Path(__file__).resolve().with_name("daily-memory-review-mark.py")
 _daily_memory_review_mark_spec = importlib.util.spec_from_file_location(
@@ -214,11 +214,11 @@ BRANCH_STATE_INSTRUCTION = (
 # Overview refreshes are this agent-seat's job; other agent-seats have jobs of their own.
 AGENT_SEAT_GIVEN_OVERVIEW_REFRESH_LINES = "agent-instructions-editor"
 
-SYSTEM_OVERVIEW_PATH_TEMPLATE = "docs/nedschorus-wiki/nedschorus-{system}-system-overview.md"
+SYSTEM_OVERVIEW_PATH_TEMPLATE = architecture_overview_path_template_and_checked_against_commit_reader.PATH_TEMPLATE
 
 # The draft suffix avoids a tracked-name collision; the queue permits drafting before overview approval.
 SYSTEM_OVERVIEW_DRAFT_PATH_TEMPLATE = (
-    "docs/nedschorus-wiki/queue/nedschorus-{system}-system-overview-draft.md")
+    "docs/nedschorus-wiki/queue/nedschorus-{system}-architecture-overview-draft.md")
 
 OVERVIEW_REFRESH_CHECK_GIT_TIMEOUT_SECONDS = 15
 
@@ -230,10 +230,8 @@ OVERVIEW_REFRESH_DUE_INSTRUCTION_TEMPLATE = (
     " — Dispatch a subagent to write {overview_draft_path}: a copy of "
     "{overview_path} refreshed against the commits "
     "`{commit_listing_command}` lists, as "
-    "docs/issues/670-refresh-design-when-a-system-s-code-lands.md defines a "
-    "refresh, with the pinned line "
-    "`{landing_pin_prefix}{main_commit}](<commit url>) on <YYYY-MM-DD> — "
-    "<what landed>` appended. When the subagent reports, show the user the "
+    "docs/nedschorus-wiki/nedschorus-how-to-write-an-architecture-overview.md "
+    "defines a refresh, ending in the line `{checked_against_line}`. When the subagent reports, show the user the "
     "diff between {overview_path} and {overview_draft_path}. Once the user "
     "has been shown the diff, run `python3 {reminder_mark_script} {system}`. "
     "When the user approves the diff, write {overview_path} from "
@@ -864,6 +862,9 @@ def overview_refresh_due_lines(working_directory: Path,
         main_commit = resolved.stdout.strip()
         if resolved.returncode != 0 or not main_commit:
             return ()
+        main_commit_full = run_git_here(
+            ["rev-parse", "--verify", "--quiet", "origin/main^{commit}"],
+            working_directory, timeout=timeout).stdout.strip()
         listed = run_git_here(["ls-tree", "-d", "--name-only", "origin/main", "nc-systems/"],
                               working_directory, timeout=timeout)
     except Exception as error:
@@ -881,12 +882,17 @@ def overview_refresh_due_lines(working_directory: Path,
                 timeout=timeout)
             if shown.returncode != 0:
                 continue
-            pinned_commits = stale_code_citation_check.landing_pin_commits(
-                shown.stdout.decode("utf-8", errors="replace"), working_directory)
-            if not pinned_commits:
+            checked_commit = architecture_overview_path_template_and_checked_against_commit_reader.checked_against_commit(
+                shown.stdout.decode("utf-8", errors="replace"))
+            if checked_commit is None:
                 continue
-            pinned_commit = pinned_commits[-1]
-            commit_range = f"{pinned_commit}..{main_commit}"
+            # A sha the repository does not hold would make the range below fail; treat it as no line.
+            known = run_git_here(
+                ["rev-parse", "--verify", "--quiet", f"{checked_commit}^{{commit}}"],
+                working_directory, timeout=timeout)
+            if known.returncode != 0:
+                continue
+            commit_range = f"{checked_commit}..{main_commit}"
             pathspecs = [f"nc-systems/{system}/", f":(exclude)nc-systems/{system}/*.md"]
             moved = run_git_here(["log", "--no-merges", "--format=%h", commit_range,
                                   "--", *pathspecs], working_directory)
@@ -905,14 +911,16 @@ def overview_refresh_due_lines(working_directory: Path,
             overview_draft_path = SYSTEM_OVERVIEW_DRAFT_PATH_TEMPLATE.format(system=system)
             due.append((system, overview_path,
                 f"overview refresh due: {system} — {count} commit(s) under "
-                f"nc-systems/{system}/ since its overview's pinned commit, in "
+                f"nc-systems/{system}/ since the commit its overview was checked "
+                f"against, in "
                 f"{commit_range}"
                 + OVERVIEW_REFRESH_DUE_INSTRUCTION_TEMPLATE.format(
                     overview_path=overview_path,
                     overview_draft_path=overview_draft_path,
                     commit_listing_command=commit_listing_command,
-                    landing_pin_prefix=stale_code_citation_check.LANDING_PIN_PREFIX,
-                    main_commit=main_commit,
+                    checked_against_line=(
+                        architecture_overview_path_template_and_checked_against_commit_reader.CHECKED_AGAINST_LINE_TEMPLATE.format(
+                            commit=main_commit_full)),
                     reminder_mark_script=DAILY_OVERVIEW_REFRESH_REMINDER_MARK_PATH,
                     system=system)))
         except Exception as error:
