@@ -611,7 +611,8 @@ class DesignToMainStateMachineFlow:
                     state_exit, self.git_record.test_design_text())
             if state_exit.verdict == tables.V_RESUME:
                 resume_destination = self.resolve_resume_destination(run, state_exit)
-            # Apply reset before guards read counter ceilings; defer disk writes until the state-exit is accepted.
+            # Apply zero-all-run-counters-including-redesigns before guards read counter ceilings;
+            # defer disk writes until the state-exit is accepted.
             self.apply_rulings_to_the_run(run, state_exit)
             row = find_legal_transition_row(run, state_exit, resume_destination)
             next_position, write_number = self.apply_transition_row(
@@ -675,8 +676,8 @@ class DesignToMainStateMachineFlow:
 
     def apply_rulings_to_the_run(self, run, state_exit):
         for ruling in state_exit.rulings:
-            if ruling == "reset":
-                run.counters.reset_by_the_user()
+            if ruling == tables.RULING_ZERO_ALL_RUN_COUNTERS_INCLUDING_REDESIGNS:
+                run.counters.zero_all_run_counters_including_redesigns()
 
     def write_rulings_to_the_record(self, run, state_exit):
         for ruling in state_exit.rulings:
@@ -849,7 +850,7 @@ class DesignToMainStateMachineFlow:
         if row.row == tables.ROW_DESIGN_APPROVED:
             run.design_approved = True
             self.enter_writing_state(run, tables.IMPLEMENTATION_WRITING, self.reason_for_advance(
-                run, tables.IMPLEMENTATION_WRITING, tables.ENTRY_REASON_REDESIGN))
+                run, tables.IMPLEMENTATION_WRITING, tables.ENTRY_REASON_DESIGN_CHANGED_UPSTREAM))
         if row.row == tables.ROW_TEST_DESIGN_APPROVED:
             run.test_design_approved = True
             self.enter_writing_state(run, tables.TEST_WRITING, self.reason_for_advance(
@@ -930,7 +931,8 @@ class DesignToMainStateMachineFlow:
     def upstream_reason_for_test_writing(self, run):
         # A test-design rewrite spends that upstream document's budget unless a still earlier document caused it.
         reason = run.writing_state_entry_reason.get(tables.TEST_DESIGN_WRITING)
-        if reason in (tables.ENTRY_REASON_CONTRACT_REVISION, tables.ENTRY_REASON_REDESIGN,
+        if reason in (tables.ENTRY_REASON_CONTRACT_REVISION,
+                      tables.ENTRY_REASON_DESIGN_CHANGED_UPSTREAM,
                       tables.ENTRY_REASON_USER_NAMED_DESTINATION):
             return reason
         return tables.ENTRY_REASON_TEST_DESIGN_CORRECTION

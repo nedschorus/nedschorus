@@ -744,12 +744,15 @@ class TheStateExitFile(unittest.TestCase):
                          "scripts/widget-counter/tests/b-prompt-test.md")))
         path = self.write({
             "state": T.INVESTIGATE_WORKFLOW, "verdict": T.V_RESUME, "package-commit": "b" * 40,
-            "held-ruling": T.V_REJECT_TESTS, "rulings": ["reset", "the exit status of a refusal is 3"],
+            "held-ruling": T.V_REJECT_TESTS,
+            "rulings": [T.RULING_ZERO_ALL_RUN_COUNTERS_INCLUDING_REDESIGNS,
+                        "the exit status of a refusal is 3"],
             "named-files": [],
         })
         record = M.state_exit_record_from_json_file(path)
         self.assertEqual(record.held_ruling, T.V_REJECT_TESTS)
-        self.assertEqual(record.rulings, ("reset", "the exit status of a refusal is 3"))
+        self.assertEqual(record.rulings, (T.RULING_ZERO_ALL_RUN_COUNTERS_INCLUDING_REDESIGNS,
+                                          "the exit status of a refusal is 3"))
         self.assertEqual(record.coverage_types, ())
         path = self.write({
             "state": T.IMPLEMENTATION_WRITING, "verdict": T.V_INPUT_QUICK_CHECK_FAILED,

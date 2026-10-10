@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Section 7 of the design-to-main state-machine design: the counters'
 table alone — every counter reaching its ceiling, the redesign reset and
-the user's `reset`; the three buckets — why a write was thrown out
+the user-ruling `zero-all-run-counters-including-redesigns`; the three buckets — why a write was thrown out
 decides which counter it spends; and, driven through the machine, the
 ceilings of the writers' counters and of arbitrator-rulings and what
 happens there.
@@ -89,9 +89,9 @@ class CounterCeilingsInIsolation(unittest.TestCase):
             if name != "redesigns":
                 self.assertEqual(counters.value(name), 0, name)
 
-    def test_the_user_s_reset_zeroes_every_counter_including_redesigns(self):
+    def test_zero_all_run_counters_including_redesigns_zeroes_every_counter_including_redesigns(self):
         counters = RunCounters({name: 2 for name in T.COUNTER_NAMES if name != "implementation-writes"})
-        counters.reset_by_the_user()
+        counters.zero_all_run_counters_including_redesigns()
         self.assertEqual(set(counters.as_dict().values()), {0})
 
 
@@ -116,7 +116,7 @@ class ThreeBuckets(unittest.TestCase):
 
     def test_an_upstream_change_spends_that_document_s_counter_and_nothing_else(self):
         for reason in (T.ENTRY_REASON_CONTRACT_REVISION, T.ENTRY_REASON_TEST_DESIGN_CORRECTION,
-                       T.ENTRY_REASON_REDESIGN):
+                       T.ENTRY_REASON_DESIGN_CHANGED_UPSTREAM):
             self.assertIsNone(write_counter_charged(T.IMPLEMENTATION_WRITING, reason), reason)
             self.assertIsNone(write_counter_charged(T.TEST_WRITING, reason), reason)
 
