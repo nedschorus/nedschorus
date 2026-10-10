@@ -234,6 +234,10 @@ def parse_arguments(argv):
                         help="report every pull request already open at the "
                              "first poll as OPENED, instead of taking them "
                              "as the silent baseline")
+    parser.add_argument("--exit-after-first-poll-with-events", action="store_true",
+                        help="exit 0 after the first poll that prints an "
+                             "OPENED or NEW-HEAD line, once every event of "
+                             "that poll is printed")
     return parser.parse_args(argv)
 
 
@@ -295,8 +299,11 @@ def main(argv=None):
             known_head_shas = ({} if arguments.from_start
                                else head_shas_by_number(pull_requests))
 
-        for line in events_for_poll(known_head_shas, pull_requests):
+        event_lines = events_for_poll(known_head_shas, pull_requests)
+        for line in event_lines:
             emit(line)
+        if event_lines and arguments.exit_after_first_poll_with_events:
+            return 0
         # Drop closed pull requests so reopening produces another OPENED event.
         known_head_shas = head_shas_by_number(pull_requests)
         time.sleep(arguments.poll_seconds)

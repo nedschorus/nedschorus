@@ -250,7 +250,7 @@ case "$decision" in
   *) fail "$DECISION_REFUSED" \
     "Read the pull request on GitHub; if it shows no reason a merge is refused, tell the user this message." ;;
 esac
-# The merge seat's wrapper retries while the output holds "mergeStateStatus is UNKNOWN":
+# scripts/merge-lane-pull-request-merge-through-merge-gate-with-stacked-pull-request-retarget.py retries while the output holds "mergeStateStatus is UNKNOWN":
 # the first line of each refusal below must keep that text.
 case "$merge_state" in
   CLEAN|UNSTABLE|HAS_HOOKS) : ;;

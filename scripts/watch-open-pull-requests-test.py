@@ -461,6 +461,33 @@ def run_subprocess_cases():
               not any("CLOSED" in line for line in lines), "\n".join(lines))
 
         # ------------------------------------------------------------------
+        # --exit-after-first-poll-with-events: polls on through a silent baseline, then
+        # prints every event of the first poll that has one and exits 0.
+        # ------------------------------------------------------------------
+        fake_gh = FakeGitHubCommand(scratch / "exit-after-first-poll-with-events")
+        fake_gh.answer(graphql_body([pull_request_node(145, "a" * 40, "open")]))
+        watcher = WatcherProcess("--exit-after-first-poll-with-events",
+                                 environment=fake_gh.environment(),
+                                 token_file=token_file)
+        wait_for_calls(fake_gh, 3)
+        check("--exit-after-first-poll-with-events keeps polling while no event comes",
+              watcher.process.poll() is None, "\n".join(watcher.lines))
+        fake_gh.answer(graphql_body([
+            pull_request_node(145, "d" * 40, "open"),
+            pull_request_node(147, "e" * 40, "opened with the move")]))
+        try:
+            exit_code = watcher.process.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            exit_code = None
+        lines = watcher.stop()
+        check("--exit-after-first-poll-with-events exits 0 after the first poll with an event",
+              exit_code == 0, f"exit {exit_code}\n" + "\n".join(lines))
+        check("--exit-after-first-poll-with-events prints every event of that poll",
+              any("PR #145 NEW-HEAD dddddddd" in line for line in lines)
+              and any("PR #147 OPENED eeeeeeee" in line for line in lines),
+              "\n".join(lines))
+
+        # ------------------------------------------------------------------
         # Blindness: announced once, recovery announced, and no event lost
         # while blind.
         # ------------------------------------------------------------------
