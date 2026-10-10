@@ -352,7 +352,7 @@ def passed_pinned_to(run, pr, sha):
 def case_a1_pass_control(gate):
     run = run_gate(gate, BASE_PR, BASE_HEAD, BASE_APPROVAL["submitted_at"], base_routes())
     sha = BASE_APPROVAL["commit_id"]
-    # The merge seat's wrapper takes the line after this one as the command, so
+    # merge-lane-pull-request-merge-through-merge-gate-with-stacked-pull-request-retarget.py takes the line after this one as the command, so
     # both lines are asserted whole.
     merge_lines = ("\nMERGE WITH THIS EXACT COMMAND:\n"
                    f"  gh pr merge {BASE_PR} --repo nedschorus/nedschorus --merge --delete-branch "
@@ -818,7 +818,7 @@ MERGE_STATE_LINES = {
 
 
 def merge_state_refused(run, merge_state):
-    # The first line stays whole: the merge seat's wrapper retries on its UNKNOWN form.
+    # The first line stays whole: merge-lane-pull-request-merge-through-merge-gate-with-stacked-pull-request-retarget.py retries on its UNKNOWN form.
     return refused_with(run, BASE_PR,
                         f"GATE REFUSED (#{BASE_PR}): mergeStateStatus is {merge_state}\n",
                         f"\n{MERGE_STATE_LINES[merge_state]}\n")
