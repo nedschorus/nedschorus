@@ -852,19 +852,22 @@ def overview_refresh_due_lines(working_directory: Path,
                                now: Optional[datetime] = None) -> tuple:
     """Return unsuppressed overview-refresh reminders, and a line for a reminder-marks read failure; never block launch."""
     # Read origin/main so unmerged seat work cannot trigger a refresh; Markdown-only refreshes must not trigger another.
-    # Pins may name merges, so compare the commit range rather than last-commit identity.
+    # The checked-against commit may name a merge, so compare the commit range rather than last-commit identity.
     timeout = OVERVIEW_REFRESH_CHECK_GIT_TIMEOUT_SECONDS
     try:
         # Resolve and verify together: an empty ref in the range would silently select HEAD.
+        # Resolve once, in full, so a fetch between two reads cannot make the range and the line name different commits.
         resolved = run_git_here(
-            ["rev-parse", "--verify", "--quiet", "--short", "origin/main^{commit}"],
-            working_directory, timeout=timeout)
-        main_commit = resolved.stdout.strip()
-        if resolved.returncode != 0 or not main_commit:
-            return ()
-        main_commit_full = run_git_here(
             ["rev-parse", "--verify", "--quiet", "origin/main^{commit}"],
-            working_directory, timeout=timeout).stdout.strip()
+            working_directory, timeout=timeout)
+        main_commit_full = resolved.stdout.strip()
+        if resolved.returncode != 0 or not main_commit_full:
+            return ()
+        shortened = run_git_here(["rev-parse", "--short", main_commit_full],
+                                 working_directory, timeout=timeout)
+        main_commit = shortened.stdout.strip()
+        if shortened.returncode != 0 or not main_commit:
+            return ()
         listed = run_git_here(["ls-tree", "-d", "--name-only", "origin/main", "nc-systems/"],
                               working_directory, timeout=timeout)
     except Exception as error:
@@ -885,12 +888,6 @@ def overview_refresh_due_lines(working_directory: Path,
             checked_commit = architecture_overview_path_template_and_checked_against_commit_reader.checked_against_commit(
                 shown.stdout.decode("utf-8", errors="replace"))
             if checked_commit is None:
-                continue
-            # A sha the repository does not hold would make the range below fail; treat it as no line.
-            known = run_git_here(
-                ["rev-parse", "--verify", "--quiet", f"{checked_commit}^{{commit}}"],
-                working_directory, timeout=timeout)
-            if known.returncode != 0:
                 continue
             commit_range = f"{checked_commit}..{main_commit}"
             pathspecs = [f"nc-systems/{system}/", f":(exclude)nc-systems/{system}/*.md"]
