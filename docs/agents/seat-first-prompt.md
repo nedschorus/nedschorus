@@ -15,7 +15,7 @@ If either check fails — not a checkout, empty output, or a branch that is not 
 
 **Step 3 — read your instructions, in this order,** from inside your checkout:
 
-1. `docs/agents/<seat>-instructions.md`, with `<seat>` exactly as Step 1 gave it — your brief. If that exact file does not exist, stop and ask the user; do not adopt a neighbouring agent-seat's brief, because that would mean adopting the wrong work.
+1. Your seat-brief: the `CLAUDE.local.md` at the root of your checkout, which Claude Code has already loaded into your context. If your checkout has no `CLAUDE.local.md`, stop and ask the user; do not adopt a neighbouring agent-seat's brief, because that would mean adopting the wrong work.
 2. `docs/nedschorus-wiki/nedschorus-agent-seat-model.md` — how agent-seats work. Then `docs/nedschorus-wiki/nedschorus-glossary.md` for the words your brief uses: approved-by-walk, build-slice, the C-numbers.
 3. `CLAUDE.md` at the repository root — the project's standing rules.
 
