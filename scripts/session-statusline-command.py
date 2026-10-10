@@ -38,7 +38,7 @@ SECONDS_PER_DAY = 86400
 
 # Claude Code keeps one record per running session here; a session with a Remote
 # Control connection has a bridgeSessionId in its record.
-CLAUDE_SESSION_RECORDS_DIRECTORY = Path.home() / ".claude" / "sessions"
+CLAUDE_CODE_LIVE_SESSION_REGISTRY_DIRECTORY = Path.home() / ".claude" / "sessions"
 
 
 def colored(text: str, color: str) -> str:
@@ -107,14 +107,14 @@ def freshness_suffix(working_directory: str) -> str:
     return ""
 
 
-def machine_name() -> str:
+def status_line_this_machine_short_name() -> str:
     if sys.platform == "darwin":
         return "Mac"
     return os.uname().nodename.split(".")[0]
 
 
 def location_segment(working_directory: str) -> str:
-    host = machine_name()
+    host = status_line_this_machine_short_name()
 
     pieces = []
     if host:
@@ -140,14 +140,14 @@ def model_segment(payload: dict) -> str:
     return "/".join(part for part in (model, effort) if part)
 
 
-def remote_control_segment(payload: dict,
-                           records_directory: Path | None = None) -> str:
+def status_line_remote_control_missing_warning_segment(payload: dict,
+        records_directory: Path | None = None) -> str:
     """Return a red No RC when this session's record shows no Remote Control connection."""
     # Without a record for the session the state is unknown, and nothing shows.
     session_id = payload.get("session_id")
     if not session_id:
         return ""
-    directory = records_directory or CLAUDE_SESSION_RECORDS_DIRECTORY
+    directory = records_directory or CLAUDE_CODE_LIVE_SESSION_REGISTRY_DIRECTORY
     try:
         record_paths = list(directory.glob("*.json"))
     except OSError:
@@ -244,7 +244,7 @@ def status_line_text(payload: dict) -> str:
         agent_segment(payload),
         model_segment(payload),
         consumption_segment(payload),
-        remote_control_segment(payload),
+        status_line_remote_control_missing_warning_segment(payload),
     ]
     return SEPARATOR.join(segment for segment in segments if segment)
 
