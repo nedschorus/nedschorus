@@ -82,6 +82,10 @@ The rule, and it costs nothing:
 
 This is rider 1 turned on the test harness itself. A mutation loop that cannot report a failure it would detect — because the file it is mutating is not the file under test — proves nothing, exactly as a test copied from its implementation proves nothing.
 
+## 2026-10-10: a failure-test rule held in CLAUDE.md until this build lands
+
+Pull request [CLAUDE.md "Before pushing": a test for each failure the change handles; the full-run explanation goes](https://github.com/nedschorus/nedschorus/pull/1171) puts this rule in CLAUDE.md's "Before pushing" bullet: "When you add code that handles a failure that a bad input or a failing stub can cause, such as an `except` block or a check of an exit code, add a test that causes that failure; check the test by removing that code for a moment, and a test must fail." The pull request that lands this build moves the rule into what the build produces and deletes it from CLAUDE.md. Removing the code for a moment is mutation testing done by hand, and it shows only that the failure path is exercised, not that the test's baseline is true, which the 2026-09-02 research pass found mutation testing cannot show.
+
 ## Next action
 
 One question comes before the build: whether write-test-plan is a skill at all.
