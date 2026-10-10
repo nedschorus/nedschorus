@@ -551,13 +551,15 @@ def merged_tree_against_origin_main(repository, head):
 
 def compute_pull_request_review_plan(arguments):
     repository = arguments.repository.resolve()
-    if run_git_in_repository(repository, "rev-parse", "--git-dir").returncode:
-        raise ReviewPlanRefusal(f"{repository} is not inside a git repository, so no plan can be read from it.\n"
-                                "To select a repository: pass its directory with --repository, then run this again.")
     # Git reads pathspecs relative to the -C directory, but every path here is
     # relative to the top level, so a subdirectory would silently empty the
-    # path-limited diffs and ls-tree.
-    repository = Path(required_git_output(repository, "rev-parse", "--show-toplevel"))
+    # path-limited diffs and ls-tree. --show-toplevel also fails outside any
+    # work tree, which covers a .git directory and a bare repository.
+    top_level = run_git_in_repository(repository, "rev-parse", "--show-toplevel")
+    if top_level.returncode:
+        raise ReviewPlanRefusal(f"{repository} is not inside a git repository, so no plan can be read from it.\n"
+                                "To select a repository: pass its directory with --repository, then run this again.")
+    repository = Path(top_level.stdout.strip())
     fetch_command = shlex.join(["git", "-C", str(repository), "fetch", "origin"])
     github_repository = arguments.github_repository
     number = arguments.pull_request

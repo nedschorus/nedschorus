@@ -685,6 +685,12 @@ def run_refusal_and_call_shape_cases(fixture):
     check("a nonpositive pull request is refused", refusal_has_expected_prefix(result), result.stderr)
     result = fixture.run_review_plan("--repository", str(fixture.control_directory))
     check("a directory outside git is refused", refusal_has_expected_prefix(result) and "not inside a git repository" in result.stderr, result.stderr)
+    result = fixture.run_review_plan("--repository", str(fixture.repository / ".git"))
+    check("a .git directory is refused as outside a checkout", refusal_has_expected_prefix(result) and "not inside a git repository" in result.stderr, result.stderr)
+    bare_repository = fixture.repository.parent / "bare-repository"
+    fixture.git_command("init", "-q", "--bare", str(bare_repository))
+    result = fixture.run_review_plan("--repository", str(bare_repository))
+    check("a bare repository is refused as outside a checkout", refusal_has_expected_prefix(result) and "not inside a git repository" in result.stderr, result.stderr)
     for control_name, stdout in [("pull-request.json", "not json"), ("reviews.json", "[{}]"),
                                  ("comments.json", '[[{"pull_request_review_id":"invalid"}]]'),
                                  ("branch.json", '{"commit":{}}')]:
