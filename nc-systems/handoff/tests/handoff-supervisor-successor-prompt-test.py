@@ -1123,38 +1123,69 @@ def gh_answering_no_open_pull_requests_first_on_path(directory: Path):
 
 def run_overview_check_git_output_cases(workspace: Path):
     """The one helper every git call of the overview refresh check goes through:
-    a failure, or empty output where output is required, prints a console line
-    naming the call and returns None, so no failure in the check is silent."""
+    a failure, or empty output where output is required, raises an error naming
+    the call and its cause, which the check's except blocks print; so no failure
+    in the check is silent, and no call site needs a guard of its own."""
     helper = getattr(supervisor, "overview_check_git_output", None)
-    check("the overview check has one git helper", helper is not None)
-    if helper is None:
+    failure = getattr(supervisor, "OverviewCheckGitFailure", None)
+    check("the overview check has one git helper and its error",
+          helper is not None and failure is not None)
+    if helper is None or failure is None:
         return
     repository = workspace / "overview-check-git-output"
     repository.mkdir()
     git_in(["init", "--quiet", "--initial-branch=main"], repository)
+
+    def raised_by(arguments, **options):
+        try:
+            return helper(arguments, repository, **options)
+        except failure as error:
+            return error
+
+    failed = raised_by(["ls-tree", "-d", "--name-only", "no-such-ref", "nc-systems/"],
+                       empty_is_failure=False)
+    check("a failing git call raises an error naming the call and its cause",
+          isinstance(failed, failure) and str(failed).startswith(
+              "git ls-tree -d --name-only no-such-ref nc-systems/ failed: "),
+          repr(failed))
+    empty = raised_by(["rev-parse", "--verify", "--quiet", "no-such-ref"])
+    check("empty output where output is required raises",
+          isinstance(empty, failure)
+          and "git rev-parse --verify --quiet no-such-ref failed" in str(empty), repr(empty))
+    allowed = raised_by(["status", "--porcelain"], empty_is_failure=False)
+    check("empty output where empty is allowed is returned", allowed == "", repr(allowed))
+
+    # At the call site: a failed ls-tree, the one call before the loop that may
+    # return nothing, stops the check with a printed line and no launch error.
+    repository_with_main = workspace / "overview-check-ls-tree-fails"
+    repository_with_main.mkdir()
+    git_in(["init", "--quiet", "--initial-branch=main"], repository_with_main)
+    git_in(["config", "user.name", "fixture"], repository_with_main)
+    git_in(["config", "user.email", "fixture@nedschorus.invalid"], repository_with_main)
+    (repository_with_main / "nc-systems" / "widget").mkdir(parents=True)
+    (repository_with_main / "nc-systems" / "widget" / "widget.py").write_text("print(1)\n")
+    git_in(["add", "-A"], repository_with_main)
+    git_in(["commit", "--quiet", "-m", "the widget lands"], repository_with_main)
+    git_in(["update-ref", "refs/remotes/origin/main", "HEAD"], repository_with_main)
+    real_run_git_here = supervisor.run_git_here
+
+    def run_git_here_where_ls_tree_fails(arguments, working_directory, timeout=60):
+        if arguments[0] == "ls-tree":
+            return subprocess.CompletedProcess(arguments, 128, "", "stub: ls-tree failed")
+        return real_run_git_here(arguments, working_directory, timeout=timeout)
+
+    supervisor.run_git_here = run_git_here_where_ls_tree_fails
     console = io.StringIO()
-    with contextlib.redirect_stdout(console):
-        failed = helper(["ls-tree", "-d", "--name-only", "no-such-ref", "nc-systems/"],
-                        repository, "overview check stopped", empty_is_failure=False)
-    check("a failing git call returns None and prints the call and its cause",
-          failed is None and console.getvalue().startswith(
-              "handoff-supervisor: overview check stopped: git ls-tree -d --name-only "
-              "no-such-ref nc-systems/ failed: "),
-          repr(failed) + "\n" + console.getvalue())
-    console = io.StringIO()
-    with contextlib.redirect_stdout(console):
-        empty = helper(["rev-parse", "--verify", "--quiet", "no-such-ref"], repository,
-                       "overview check stopped")
-    check("empty output where output is required counts as a failure and is printed",
-          empty is None and "git rev-parse --verify --quiet no-such-ref failed" in console.getvalue(),
-          console.getvalue())
-    console = io.StringIO()
-    with contextlib.redirect_stdout(console):
-        allowed = helper(["status", "--porcelain"], repository, "unused",
-                         empty_is_failure=False)
-    check("empty output where empty is allowed is returned, with nothing printed",
-          allowed == "" and console.getvalue() == "",
-          repr(allowed) + "\n" + console.getvalue())
+    try:
+        with contextlib.redirect_stdout(console):
+            due = overview_refresh_due_or_missing(repository_with_main)
+    finally:
+        supervisor.run_git_here = real_run_git_here
+    check("a failed ls-tree stops the check with a printed line naming it, and no line is due",
+          due == () and "handoff-supervisor: overview check stopped: OverviewCheckGitFailure: "
+          "git ls-tree -d --name-only " in console.getvalue()
+          and "stub: ls-tree failed" in console.getvalue(),
+          f"{due!r}\n{console.getvalue()}")
 
 
 def run_overview_refresh_due_cases(workspace: Path):
