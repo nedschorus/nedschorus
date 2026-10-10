@@ -16,7 +16,8 @@ The cycle, per reincarnation:
      the initial agent instructions (user-ruled 2026-08-29: "Also useless is the
      reminder there are files in the queues. Thats what queues are for.").
   6. Launch the successor with the initial agent instructions. Beside the
-     branch sync's line they carry one line per system whose code moved on
+     branch sync's line they carry, for agent-instructions-editor alone, one
+     line per system whose code moved on
      main past its overview's pinned commit, until the user has been shown
      that overview's refresh that day (overview_refresh_due_lines), plus
      one line saying so when the day's reminder marks cannot be read,
@@ -209,6 +210,9 @@ BRANCH_STATE_INSTRUCTION = (
     "one conflicts with main, clear the conflict with the hand-merge that "
     "scripts/branch-conflict-check.py describes."
 )
+
+# Overview refreshes are this agent-seat's job; other agent-seats have jobs of their own.
+AGENT_SEAT_GIVEN_OVERVIEW_REFRESH_LINES = "agent-instructions-editor"
 
 SYSTEM_OVERVIEW_PATH_TEMPLATE = "docs/nedschorus-wiki/nedschorus-{system}-system-overview.md"
 
@@ -1624,8 +1628,9 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
             print(f"handoff-supervisor: {branch_sync_report}")
             if ignition_plan is not None:
                 # Sync after the retiring session releases the tree; then compose the prompt using the fetched main.
-                overview_refresh_due = overview_refresh_due_lines(
-                    settings.working_directory)
+                overview_refresh_due = (
+                    overview_refresh_due_lines(settings.working_directory)
+                    if settings.agent == AGENT_SEAT_GIVEN_OVERVIEW_REFRESH_LINES else ())
                 for line in overview_refresh_due:
                     print(f"handoff-supervisor: {line}")
                 memory_review_due = memory_review_due_lines()

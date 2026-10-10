@@ -1984,7 +1984,8 @@ def run_overview_refresh_due_prompt_cases(workspace: Path):
               "repository are your whole context.) " + branch_state_line + " " + line),
           repr(boot_recovery_prompt))
 
-    # End to end: a supervisor igniting a seat whose checkout has a system due
+    # End to end: a supervisor igniting agent-instructions-editor, the one
+    # agent-seat given overview-refresh lines, in a checkout with a system due
     # hands the successor the line, after the branch-state instruction, and
     # prints it on its console.
     seat = workspace / "overview-refresh-due-seat"
@@ -2011,11 +2012,11 @@ def run_overview_refresh_due_prompt_cases(workspace: Path):
 
     handoff_directory = workspace / "overview-refresh-due-handoffs"
     handoff_directory.mkdir()
-    (handoff_directory / "refreshdue-handoff.md").write_text(
+    (handoff_directory / "agent-instructions-editor-handoff.md").write_text(
         "written-at: 2026-09-28T00:00:00Z\nnext-step: resume the audit\nrestart-counter: 5\n",
         encoding="utf-8")
     supervisor.write_supervisor_state(
-        handoff_directory / "refreshdue-supervisor-state.json",
+        handoff_directory / "agent-instructions-editor-supervisor-state.json",
         {"consumed_counter": 4, "launched_session_id": "no-such-session", "generation": 4})
     record_path = handoff_directory / "launch-record.txt"
     stub_agent = handoff_directory / "stub-agent"
@@ -2030,20 +2031,67 @@ def run_overview_refresh_due_prompt_cases(workspace: Path):
     no_open_pull_requests = write_gh_answering_no_open_pull_requests(
         handoff_directory / "gh-answering-no-open-pull-requests")
     result = subprocess.run(
-        [sys.executable, str(SCRIPT_PATH), "--agent", "refreshdue", "--cd", str(seat),
+        [sys.executable, str(SCRIPT_PATH), "--agent", "agent-instructions-editor",
+         "--cd", str(seat),
          "--handoff-dir", str(handoff_directory), "--agent-command", str(stub_agent),
          "--agent-update-timeout-seconds", "0"],
         capture_output=True, text=True, check=False, stdin=subprocess.DEVNULL, timeout=60,
         env={**os.environ,
              "PATH": f"{no_open_pull_requests}{os.pathsep}{os.environ.get('PATH', '')}"})
     launched = record_path.read_text(encoding="utf-8") if record_path.is_file() else ""
-    check("an ignited successor's prompt carries the overview-refresh-due line after "
-          "the branch-state instruction",
+    check("an ignited successor of agent-instructions-editor is given the "
+          "overview-refresh-due line after the branch-state instruction",
           expected in launched and "already pushed." in launched
           and launched.index("already pushed.") < launched.index(expected),
           f"{result.returncode} {launched[-900:]!r} {result.stdout[-600:]}")
     check("the supervisor prints the overview-refresh-due line on its console",
           f"handoff-supervisor: {expected}" in result.stdout, result.stdout[-900:])
+
+    # Any other agent-seat, igniting in the same checkout with the same system
+    # due: the overview check is never run, so its successor gets no
+    # overview-refresh line and the console shows none.
+    other_seat_directory = workspace / "overview-refresh-other-seat-handoffs"
+    other_seat_directory.mkdir()
+    other_seat_settings = supervisor.SupervisorSettings(
+        agent="merge-lane-2", working_directory=seat, handoff_directory=other_seat_directory,
+        agent_command="unused-stub-agent", first_prompt="")
+    other_seat_settings.handoff_path.write_text(
+        "written-at: 2026-09-28T00:00:00Z\nnext-step: resume the audit\nrestart-counter: 5\n",
+        encoding="utf-8")
+    supervisor.write_supervisor_state(
+        other_seat_settings.state_path,
+        {"consumed_counter": 4, "launched_session_id": "no-such-session", "generation": 4})
+    other_seat_launched_prompts = []
+    overview_check_calls = []
+
+    def launch_recording(agent_command, session_id, working_directory, prompt, **_):
+        other_seat_launched_prompts.append(prompt)
+        return StubLaunchedSession(0)
+
+    def overview_refresh_due_lines_recording(working_directory, now=None):
+        overview_check_calls.append(working_directory)
+        return (expected,)
+
+    console = io.StringIO()
+    with supervisor_names_replaced(
+            launch_agent_session=launch_recording,
+            sync_working_branch_with_main=lambda working_directory: (
+                "branch sync: fixture-branch is 3 commit(s) behind main"),
+            overview_refresh_due_lines=overview_refresh_due_lines_recording,
+            memory_review_due_lines=lambda: (),
+            stdin_isatty=False), contextlib.redirect_stdout(console):
+        supervisor.supervise_sessions(other_seat_settings)
+    check("an agent-seat other than agent-instructions-editor never runs the overview check",
+          overview_check_calls == [], repr(overview_check_calls))
+    check("an ignited successor of an agent-seat other than agent-instructions-editor "
+          "is given no overview-refresh line",
+          len(other_seat_launched_prompts) == 1
+          and other_seat_launched_prompts[0].startswith("resume the audit")
+          and "overview refresh due" not in other_seat_launched_prompts[0],
+          f"{other_seat_launched_prompts!r}\n{console.getvalue()[-900:]}")
+    check("the supervisor of an agent-seat other than agent-instructions-editor prints "
+          "no overview-refresh line",
+          "overview refresh due" not in console.getvalue(), console.getvalue()[-900:])
 
     # End to end, the marks unreadable: the successor is given the due line and,
     # after it, the line saying the marks could not be read, and the console
@@ -2052,11 +2100,11 @@ def run_overview_refresh_due_prompt_cases(workspace: Path):
     # on either machine.
     unread_directory = workspace / "overview-refresh-marks-unread-handoffs"
     unread_directory.mkdir()
-    (unread_directory / "marksunread-handoff.md").write_text(
+    (unread_directory / "agent-instructions-editor-handoff.md").write_text(
         "written-at: 2026-09-28T00:00:00Z\nnext-step: resume the audit\nrestart-counter: 5\n",
         encoding="utf-8")
     supervisor.write_supervisor_state(
-        unread_directory / "marksunread-supervisor-state.json",
+        unread_directory / "agent-instructions-editor-supervisor-state.json",
         {"consumed_counter": 4, "launched_session_id": "no-such-session", "generation": 4})
     unread_record_path = unread_directory / "launch-record.txt"
     unread_stub_agent = unread_directory / "stub-agent"
@@ -2073,7 +2121,8 @@ def run_overview_refresh_due_prompt_cases(workspace: Path):
             encoding="utf-8")
         (failing_read_directory / program).chmod(0o755)
     result = subprocess.run(
-        [sys.executable, str(SCRIPT_PATH), "--agent", "marksunread", "--cd", str(seat),
+        [sys.executable, str(SCRIPT_PATH), "--agent", "agent-instructions-editor",
+         "--cd", str(seat),
          "--handoff-dir", str(unread_directory), "--agent-command", str(unread_stub_agent),
          "--agent-update-timeout-seconds", "0"],
         capture_output=True, text=True, check=False, stdin=subprocess.DEVNULL, timeout=60,
@@ -2484,7 +2533,8 @@ def run_memory_review_due_prompt_cases(workspace: Path):
     handoff_directory = root / "handoffs"
     handoff_directory.mkdir()
     settings = supervisor.SupervisorSettings(
-        agent="memoryreviewdue", working_directory=root, handoff_directory=handoff_directory,
+        agent="agent-instructions-editor", working_directory=root,
+        handoff_directory=handoff_directory,
         agent_command="unused-stub-agent", first_prompt="")
     settings.handoff_path.write_text(
         "written-at: 2026-09-30T00:00:00Z\nnext-step: resume the audit\nrestart-counter: 5\n",
