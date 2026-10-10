@@ -79,6 +79,7 @@ def main(argv=None):
             arguments.head_commit)
         git(checkout, "worktree", "add", "-q", "--detach", str(merged_worktree),
             arguments.main_commit)
+        head_full = git(head_worktree, "rev-parse", "HEAD")
         try:
             git(merged_worktree, *MERGE_COMMIT_IDENTITY, "merge", "-q", "--no-edit", "--no-ff",
                 arguments.head_commit)
@@ -96,7 +97,10 @@ def main(argv=None):
               f"with main {arguments.main_commit[:8]} in: {conflict}\n"
               f"The pull request's author clears a conflict with main, not merge-lane-2 and "
               f"not the user.\n"
-              f"Confirm it: python3 scripts/branch-conflict-check.py --pull-request {number}\n"
+              f"Confirm it from {checkout}, which holds the head commit because this "
+              f"program just fetched it there:\n"
+              f"cd {checkout} && python3 scripts/branch-conflict-check.py --head {head_full} "
+              f"--pull-request {number}\n"
               f"If that reports VERDICT: CONFLICT, send pull request {number} back to its "
               f"author for the hand-merge that report describes, and review it again after "
               f"the author pushes.\n"

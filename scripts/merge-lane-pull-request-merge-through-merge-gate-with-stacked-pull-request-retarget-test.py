@@ -329,6 +329,19 @@ def main():
               exit_code == 2 and gate_calls == [] and gh_calls == []
               and "not at origin/main" in output and "checkout --detach origin/main" in output,
               f"exit {exit_code}\n{output}")
+        review_tools = scratch / "review-tools-behind-main" / "review-tools"
+        printed = [line.split("Move it to main:", 1)[1].strip() for line in output.splitlines()
+                   if "Move it to main:" in line]
+        moved = (subprocess.run(["bash", "-c", printed[0]], capture_output=True, text=True,
+                                env=GIT_ENVIRONMENT) if len(printed) == 1 else None)
+        head_and_main = subprocess.run(
+            ["git", "-C", str(review_tools), "rev-parse", "HEAD", "origin/main"],
+            capture_output=True, text=True, env=GIT_ENVIRONMENT).stdout.split()
+        at_main = (moved is not None and moved.returncode == 0 and len(head_and_main) == 2
+                   and head_and_main[0] == head_and_main[1])
+        check("the printed command to move the worktree, run as printed, puts it at origin/main",
+              at_main, "no single printed command" if moved is None
+              else f"exit {moved.returncode}\n{moved.stderr}")
 
         exit_code, output, gh_calls, gate_calls, _ = run_case(
             scratch, "review-tools-fetch-fails", [(GATE_PASSED, 0)],

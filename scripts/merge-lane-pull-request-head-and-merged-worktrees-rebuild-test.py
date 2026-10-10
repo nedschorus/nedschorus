@@ -29,6 +29,8 @@ _git_environment_fixture_spec.loader.exec_module(_git_environment_fixture)
 _git_environment_fixture.remove_git_redirecting_environment_variables_from_this_process()
 
 PROGRAM = Path(__file__).with_name("merge-lane-pull-request-head-and-merged-worktrees-rebuild.py")
+BRANCH_CONFLICT_CHECK = Path(__file__).resolve().with_name("branch-conflict-check.py")
+FAILING_GH = "#!/bin/sh\necho 'gh is not available in this test' >&2\nexit 1\n"
 GIT_ENVIRONMENT = {
     **{key: value for key, value in os.environ.items() if not key.startswith("GIT_")},
     "GIT_AUTHOR_NAME": "test", "GIT_AUTHOR_EMAIL": "test@example.invalid",
@@ -85,6 +87,27 @@ def run_program(helpers, checkout, *arguments, cwd=None):
         env={**{key: value for key, value in GIT_ENVIRONMENT.items()
                 if not key.startswith(("GIT_AUTHOR_", "GIT_COMMITTER_"))},
              "GIT_DIR": str(helpers / "no-such-git-directory")})
+
+
+def run_printed_conflict_check(output, scratch):
+    """Run the branch-conflict-check command the refusal printed, as printed.
+
+    Only the script's path is swapped for this checkout's copy, because the
+    fixture checkout holds no scripts/. gh fails, so the verdict is git's.
+    """
+    lines = [line for line in output.splitlines() if "branch-conflict-check.py" in line
+             and line.startswith("cd ")]
+    if len(lines) != 1:
+        return None
+    command = lines[0].replace("python3 scripts/branch-conflict-check.py",
+                               f"{sys.executable} {BRANCH_CONFLICT_CHECK}")
+    bin_directory = scratch / "failing-gh-bin"
+    bin_directory.mkdir(exist_ok=True)
+    (bin_directory / "gh").write_text(FAILING_GH)
+    (bin_directory / "gh").chmod(0o755)
+    return subprocess.run(
+        ["bash", "-c", command], capture_output=True, text=True,
+        env={**GIT_ENVIRONMENT, "PATH": f"{bin_directory}{os.pathsep}{os.environ['PATH']}"})
 
 
 def main():
@@ -158,13 +181,36 @@ def main():
               "pull request back to its author",
               completed.returncode == 1 and "conflicts with main" in completed.stdout
               and "on-main.txt" in completed.stdout
-              and "branch-conflict-check.py --pull-request 9" in completed.stdout
+              and f"branch-conflict-check.py --head {conflicting_head} --pull-request 9"
+              in completed.stdout
               and "back to its author" in completed.stdout,
               f"exit {completed.returncode}\n{completed.stdout}{completed.stderr}")
+        confirmed = run_printed_conflict_check(completed.stdout, scratch)
+        check("the printed branch-conflict-check command, run as printed, reports the conflict",
+              confirmed is not None and confirmed.returncode != 0
+              and "VERDICT: CONFLICT" in confirmed.stdout,
+              "no single printed command" if confirmed is None else
+              f"exit {confirmed.returncode}\n{confirmed.stdout}{confirmed.stderr}")
         check("the conflicted merge is aborted, leaving wt/pr<n>-merged clean at main",
               git(helpers / "wt" / "pr9-merged", "status", "--porcelain") == ""
               and git(helpers / "wt" / "pr9-merged", "rev-parse", "HEAD") == later_main,
               git(helpers / "wt" / "pr9-merged", "status", "--porcelain"))
+
+        git(author, "checkout", "-q", "--orphan", "unrelated")
+        git(author, "rm", "-q", "-rf", ".")
+        (author / "unrelated.txt").write_text("no shared history\n")
+        git(author, "add", ".")
+        git(author, "commit", "-q", "-m", "pull request 10 shares no history with main")
+        unrelated_head = git(author, "rev-parse", "HEAD")
+        git(author, "push", "-q", str(scratch / "origin.git"), "unrelated:refs/pull/10/head")
+        completed = run_program(helpers, checkout, "10", unrelated_head, later_main)
+        check("a merge that fails without a conflict exits 1 and reports the failed merge, "
+              "not a failed abort",
+              completed.returncode == 1 and "worktrees not rebuilt" in completed.stdout
+              and "unrelated histories" in completed.stdout
+              and "--abort" not in completed.stdout
+              and "conflicts with main" not in completed.stdout,
+              f"exit {completed.returncode}\n{completed.stdout}{completed.stderr}")
 
         completed = run_program(helpers, checkout, "8", head_commit, main_commit)
         check("a pull request origin does not have exits 1 at the fetch",
