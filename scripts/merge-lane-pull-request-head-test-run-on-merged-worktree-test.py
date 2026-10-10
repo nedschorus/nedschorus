@@ -48,14 +48,14 @@ def check(name, condition, detail=""):
             print("      " + detail.replace("\n", "\n      "))
 
 
-def run_program(scratch, helpers, exits, *pull_requests):
+def run_program(scratch, helpers, exits, *pull_requests, review_tools=None, cwd=None):
     log = scratch / "head-test-run-calls.log"
     log.unlink(missing_ok=True)
     completed = subprocess.run(
         [sys.executable, str(PROGRAM), *pull_requests,
          "--merge-lane-worktrees-and-outputs-directory", str(helpers),
-         "--review-tools-worktree-at-main", str(scratch / "main-checkout")],
-        capture_output=True, text=True,
+         "--review-tools-worktree-at-main", str(review_tools or scratch / "main-checkout")],
+        capture_output=True, text=True, cwd=cwd,
         env={**os.environ, "GIT_DIR": str(scratch / "no-such-git-directory"),
              "MERGE_LANE_HEAD_TEST_RUN_TEST_LOG": str(log),
              "MERGE_LANE_HEAD_TEST_RUN_TEST_EXITS": json.dumps(exits)})
@@ -65,7 +65,7 @@ def run_program(scratch, helpers, exits, *pull_requests):
 
 
 def main():
-    scratch = Path(tempfile.mkdtemp(prefix="merge-lane-head-test-run-test-"))
+    scratch = Path(tempfile.mkdtemp(prefix="merge-lane-head-test-run-test-")).resolve()
     try:
         (scratch / "main-checkout" / "scripts").mkdir(parents=True)
         (scratch / "main-checkout" / "scripts" / "pull-request-head-test-run.py").write_text(
@@ -113,6 +113,16 @@ def main():
         check("the first nonzero exit code is the program's",
               completed.returncode == 1
               and "PR 8 head test run: exit 4;" in completed.stdout, detail)
+
+        completed, calls = run_program(scratch, Path("merge-helpers"), {}, "7",
+                                       review_tools=Path("main-checkout"), cwd=scratch)
+        detail = f"exit {completed.returncode}\n{completed.stdout}{completed.stderr}"
+        check("relative directory options run main's runner on the right checkout",
+              completed.returncode == 0 and calls and calls[0]["argv"][:2] == [
+                  "--checkout", str(helpers / "wt" / "pr7-merged")], detail)
+        check("relative directory options still put an absolute tripwire-bin first on PATH",
+              calls and calls[0]["first_path_entry"] == str(helpers / "tripwire-bin"),
+              json.dumps(calls))
 
         shutil.rmtree(helpers / "tripwire-bin")
         completed, calls = run_program(scratch, helpers, {}, "7")

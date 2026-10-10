@@ -2,7 +2,9 @@
 """Tests for merge-lane-pull-request-merge-through-merge-gate-with-stacked-pull-request-retarget.py.
 
 The program is loaded by path and its main() is called in this process, with
-merge-gate.sh replaced by a fake gate and a fake `gh` first on PATH. The fake
+a fake scripts/merge-gate.sh in a scratch --review-tools-worktree-at-main, a
+fake `gh` first on PATH, and HOME pointing at a scratch home that holds the
+merge account's token file. The fake
 gate answers each run from a numbered output file and exit code the case
 writes. The fake `gh` logs every call with the GH_TOKEN it saw and answers
 from a routes file the case writes; it does not filter `gh pr list` by base
@@ -107,30 +109,36 @@ def run_case(scratch, name, gate_answers, routes, token=TOKEN):
     bin_directory.mkdir()
     (bin_directory / "gh").write_text(FAKE_GH)
     (bin_directory / "gh").chmod(0o755)
-    gate = directory / "merge-gate.sh"
-    gate.write_text(FAKE_GATE)
+    review_tools = directory / "review-tools"
+    (review_tools / "scripts").mkdir(parents=True)
+    (review_tools / "scripts" / "merge-gate.sh").write_text(FAKE_GATE)
     for number, (output, exit_code) in enumerate(gate_answers, start=1):
         (directory / f"gate-{number}.out").write_text(output)
         (directory / f"gate-{number}.exit").write_text(str(exit_code))
     (directory / "gate-last.out").write_text(gate_answers[-1][0])
     (directory / "gate-last.exit").write_text(str(gate_answers[-1][1]))
     (directory / "gh-routes.json").write_text(json.dumps(routes))
-    token_file = directory / "token"
+    home = directory / "home"
+    (home / ".config" / "nedschorus").mkdir(parents=True)
     if token is not None:
-        token_file.write_text(token + "\n")
+        (home / ".config" / "nedschorus" / "ned-review-merge.token").write_text(token + "\n")
 
     waits = []
-    saved_path, saved_gate = os.environ["PATH"], program.MERGE_GATE_SCRIPT
+    saved_path, saved_home = os.environ["PATH"], os.environ.get("HOME")
     os.environ["PATH"] = f"{bin_directory}{os.pathsep}{saved_path}"
+    os.environ["HOME"] = str(home)
     os.environ["MERGE_LANE_MERGE_TEST_DIRECTORY"] = str(directory)
-    program.MERGE_GATE_SCRIPT = gate
     output = io.StringIO()
     try:
         with contextlib.redirect_stdout(output):
-            exit_code = program.main([PULL_REQUEST, HEAD, SINCE, "--token-file", str(token_file)],
-                                     wait=waits.append)
+            exit_code = program.main([PULL_REQUEST, HEAD, SINCE, "--review-tools-worktree-at-main",
+                                      str(review_tools)], wait=waits.append)
     finally:
-        os.environ["PATH"], program.MERGE_GATE_SCRIPT = saved_path, saved_gate
+        os.environ["PATH"] = saved_path
+        if saved_home is None:
+            del os.environ["HOME"]
+        else:
+            os.environ["HOME"] = saved_home
     gh_log = directory / "gh-calls.log"
     gh_calls = ([json.loads(line) for line in gh_log.read_text().splitlines()]
                 if gh_log.exists() else [])
@@ -170,7 +178,9 @@ def main():
               merge is not None and calls[merge] == EXPECTED_MERGE, json.dumps(calls))
         check("the gate runs with the three arguments, once",
               gate_calls == [f"{PULL_REQUEST} {HEAD} {SINCE}"], repr(gate_calls))
-        check("every gh call carries the token file's token",
+        check("the gate that runs is --review-tools-worktree-at-main's, not the one beside the program",
+              gate_calls == [f"{PULL_REQUEST} {HEAD} {SINCE}"], repr(gate_calls))
+        check("every gh call carries the merge account's token, read from the gate's own file",
               gh_calls and all(call["gh_token"] == TOKEN for call in gh_calls),
               json.dumps(gh_calls))
         check("the retarget is printed with how to undo it",
@@ -225,7 +235,8 @@ def main():
         exit_code, output, gh_calls, _, _ = run_case(
             scratch, "unexpected-command", [(unexpected, 0)], default_routes(STACKED_AND_NOT))
         check("a merge command other than the expected one is refused, touching nothing",
-              exit_code == 1 and gh_calls == [] and "STOP: not merged" in output,
+              exit_code == 1 and gh_calls == [] and "STOP: not merged" in output
+              and "Do not merge, by either command." in output,
               f"exit {exit_code}\n{output}\n{json.dumps(gh_calls)}")
 
         exit_code, output, gh_calls, _, _ = run_case(
@@ -260,6 +271,25 @@ def main():
         check("an unreadable token file exits 2 before the gate or gh runs",
               exit_code == 2 and gate_calls == [] and gh_calls == [],
               f"exit {exit_code}\n{output}")
+
+        exit_code, output, gh_calls, gate_calls, _ = run_case(
+            scratch, "blank-token", [(GATE_PASSED, 0)], default_routes(STACKED_AND_NOT),
+            token=" \t ")
+        check("a token file holding only whitespace exits 2 before the gate or gh runs",
+              exit_code == 2 and gate_calls == [] and gh_calls == []
+              and "STOP: not merged" in output and "is empty" in output,
+              f"exit {exit_code}\n{output}")
+
+        routes = default_routes(STACKED_AND_NOT)
+        routes["view-branches"] = {"exit": 1, "stderr": "HTTP 503\n"}
+        exit_code, output, gh_calls, _, _ = run_case(
+            scratch, "view-branches-fails", [(GATE_PASSED, 0)], routes)
+        calls = argvs(gh_calls)
+        check("a pull request whose branches cannot be read stops before the merge, exit 2",
+              exit_code == 2 and index_of(calls, ["pr", "merge"]) is None
+              and index_of(calls, ["pr", "edit"]) is None
+              and "STOP: not merged: could not read pull request 10's branch" in output
+              and "HTTP 503" in output, f"exit {exit_code}\n{output}")
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
 

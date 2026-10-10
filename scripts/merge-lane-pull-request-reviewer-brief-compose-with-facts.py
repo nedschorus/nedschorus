@@ -29,18 +29,18 @@ import subprocess
 import sys
 from pathlib import Path
 
-DEFAULT_MERGE_LANE_WORKTREES_AND_OUTPUTS_DIRECTORY = Path(
-    "/home/nedlern/nedschorus-logs/seats/merge-lane-2/merge-helpers")
 DEFAULT_BRIEF_FILE = Path(
     "/home/nedlern/agents/merge-lane-2/walk-ledgers/mac-claude-reviewer-brief-standing-text.md")
 DEFAULT_NED_BOX_REVIEWER_BRIEF_ENVIRONMENT_ADDENDUM_FILE = Path(
     "/home/nedlern/agents/merge-lane-2/walk-ledgers/"
     "ned-box-reviewer-brief-environment-addendum.md")
 
-_runner_spec = importlib.util.spec_from_file_location(
-    "run_all_test_suites", Path(__file__).resolve().with_name("run-all-test-suites.py"))
-run_all_test_suites = importlib.util.module_from_spec(_runner_spec)
-_runner_spec.loader.exec_module(run_all_test_suites)
+_common_spec = importlib.util.spec_from_file_location(
+    "merge_lane_pull_request_helpers_common", Path(__file__).resolve().with_name(
+        "merge-lane-pull-request-helpers-common-options-paths-and-token.py"))
+common = importlib.util.module_from_spec(_common_spec)
+_common_spec.loader.exec_module(common)
+run_all_test_suites = common.run_all_test_suites
 
 
 class StepFailed(Exception):
@@ -53,13 +53,7 @@ def parse_arguments(argv):
                     "specifications file: standing text, ned-box addendum, then facts.")
     parser.add_argument("brief_specifications_file", type=Path,
                         help="a JSON list of brief specifications")
-    parser.add_argument("--merge-lane-worktrees-and-outputs-directory", type=Path,
-                        default=DEFAULT_MERGE_LANE_WORKTREES_AND_OUTPUTS_DIRECTORY,
-                        help=f"holds wt/; the briefs and scratch directories are written there "
-                             f"(default: {DEFAULT_MERGE_LANE_WORKTREES_AND_OUTPUTS_DIRECTORY})")
-    parser.add_argument("--review-tools-worktree-at-main", type=Path,
-                        help="the checkout at main whose composer and reviewing instructions "
-                             "are used (default: <merge-lane-worktrees-and-outputs-directory>/wt/main)")
+    common.add_directory_options(parser, "wt/; the briefs and scratch directories are written there")
     parser.add_argument("--brief-file", type=Path, default=DEFAULT_BRIEF_FILE,
                         help=f"the brief's standing text (default: {DEFAULT_BRIEF_FILE})")
     parser.add_argument("--ned-box-reviewer-brief-environment-addendum-file", type=Path,
@@ -69,7 +63,7 @@ def parse_arguments(argv):
     parser.add_argument("--instructions-file", type=Path,
                         help="the reviewing instructions inserted into the standing text "
                              "(default: <review-tools-worktree-at-main>/docs/agents/pr-reviewer-instructions.md)")
-    return parser.parse_args(argv)
+    return common.resolve_path_options(parser.parse_args(argv))
 
 
 def run(command):
@@ -145,8 +139,7 @@ def compose(spec, arguments, review_tools_worktree, instructions_file):
 
 def main(argv=None):
     arguments = parse_arguments(argv)
-    review_tools_worktree = (arguments.review_tools_worktree_at_main
-                     or arguments.merge_lane_worktrees_and_outputs_directory / "wt" / "main")
+    review_tools_worktree = arguments.review_tools_worktree_at_main
     instructions_file = (arguments.instructions_file
                          or review_tools_worktree / "docs" / "agents" / "pr-reviewer-instructions.md")
     try:
@@ -154,7 +147,11 @@ def main(argv=None):
         for spec in specs:
             compose(spec, arguments, review_tools_worktree, instructions_file)
     except (StepFailed, OSError, ValueError, KeyError) as failure:
-        print(f"brief not composed: {type(failure).__name__}: {failure}", file=sys.stderr)
+        print(f"brief not composed: {type(failure).__name__}: {failure}\n"
+              f"Briefs for entries before the failing one were written; none after it.\n"
+              f"If the error names an entry of the specifications file or a missing file, fix "
+              f"that and run this again.\n"
+              f"Otherwise, tell the user this message.", file=sys.stderr)
         return 1
     return 0
 

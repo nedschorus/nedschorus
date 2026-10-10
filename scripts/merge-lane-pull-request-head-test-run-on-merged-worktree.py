@@ -29,14 +29,14 @@ import subprocess
 import sys
 from pathlib import Path
 
-DEFAULT_MERGE_LANE_WORKTREES_AND_OUTPUTS_DIRECTORY = Path(
-    "/home/nedlern/nedschorus-logs/seats/merge-lane-2/merge-helpers")
 SUMMARY_LINE_PREFIX = "SUMMARY:"
 
-_runner_spec = importlib.util.spec_from_file_location(
-    "run_all_test_suites", Path(__file__).resolve().with_name("run-all-test-suites.py"))
-run_all_test_suites = importlib.util.module_from_spec(_runner_spec)
-_runner_spec.loader.exec_module(run_all_test_suites)
+_common_spec = importlib.util.spec_from_file_location(
+    "merge_lane_pull_request_helpers_common", Path(__file__).resolve().with_name(
+        "merge-lane-pull-request-helpers-common-options-paths-and-token.py"))
+common = importlib.util.module_from_spec(_common_spec)
+_common_spec.loader.exec_module(common)
+run_all_test_suites = common.run_all_test_suites
 
 
 def parse_arguments(argv):
@@ -45,20 +45,14 @@ def parse_arguments(argv):
                     "pull request, with its outputs under the worktrees and outputs directory.")
     parser.add_argument("pull_requests", type=int, nargs="+", metavar="pull_request",
                         help="a pull request's number")
-    parser.add_argument("--merge-lane-worktrees-and-outputs-directory", type=Path,
-                        default=DEFAULT_MERGE_LANE_WORKTREES_AND_OUTPUTS_DIRECTORY,
-                        help=f"holds wt/, hr/ and tripwire-bin/ "
-                             f"(default: {DEFAULT_MERGE_LANE_WORKTREES_AND_OUTPUTS_DIRECTORY})")
-    parser.add_argument("--review-tools-worktree-at-main", type=Path,
-                        help="the checkout at main whose scripts/pull-request-head-test-run.py "
-                             "runs (default: <merge-lane-worktrees-and-outputs-directory>/wt/main)")
-    return parser.parse_args(argv)
+    common.add_directory_options(parser, "wt/, hr/ and tripwire-bin/")
+    return common.resolve_path_options(parser.parse_args(argv))
 
 
 def main(argv=None):
     arguments = parse_arguments(argv)
     helpers = arguments.merge_lane_worktrees_and_outputs_directory
-    review_tools_worktree = arguments.review_tools_worktree_at_main or helpers / "wt" / "main"
+    review_tools_worktree = arguments.review_tools_worktree_at_main
     tripwire = helpers / "tripwire-bin"
     if not tripwire.is_dir():
         print(f"not run: {tripwire} is missing, and without it a suite could start a real "

@@ -77,18 +77,18 @@ def build_repositories(scratch):
     return checkout, main_commit, head_commit
 
 
-def run_program(helpers, checkout, *arguments):
+def run_program(helpers, checkout, *arguments, cwd=None):
     return subprocess.run(
         [sys.executable, str(PROGRAM), *arguments, "--merge-lane-worktrees-and-outputs-directory", str(helpers),
          "--review-tools-worktree-at-main", str(checkout)],
-        capture_output=True, text=True,
+        capture_output=True, text=True, cwd=cwd,
         env={**{key: value for key, value in GIT_ENVIRONMENT.items()
                 if not key.startswith(("GIT_AUTHOR_", "GIT_COMMITTER_"))},
              "GIT_DIR": str(helpers / "no-such-git-directory")})
 
 
 def main():
-    scratch = Path(tempfile.mkdtemp(prefix="merge-lane-worktrees-rebuild-test-"))
+    scratch = Path(tempfile.mkdtemp(prefix="merge-lane-worktrees-rebuild-test-")).resolve()
     try:
         checkout, main_commit, head_commit = build_repositories(scratch)
         helpers = scratch / "merge-helpers"
@@ -123,6 +123,17 @@ def main():
                   and not (head_worktree / "left-behind.txt").exists()
                   and git(head_worktree, "rev-parse", "HEAD") == head_commit,
                   f"exit {completed.returncode}\n{completed.stdout}{completed.stderr}")
+
+        relative_helpers = scratch / "relative-helpers"
+        completed = run_program(Path("relative-helpers"), Path("checkout"), "7", head_commit,
+                                main_commit, cwd=scratch)
+        check("relative directory options make the worktrees under the caller's directory, "
+              "not under the checkout git runs in",
+              completed.returncode == 0
+              and (relative_helpers / "wt" / "pr7-head").is_dir()
+              and (relative_helpers / "wt" / "pr7-merged").is_dir()
+              and not (checkout / "relative-helpers").exists(),
+              f"exit {completed.returncode}\n{completed.stdout}{completed.stderr}")
 
         completed = run_program(helpers, checkout, "7", "0" * 40, main_commit)
         check("a head commit git cannot find exits 1 and names the failed step",

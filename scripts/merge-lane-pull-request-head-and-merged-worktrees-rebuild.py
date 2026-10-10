@@ -22,14 +22,14 @@ import subprocess
 import sys
 from pathlib import Path
 
-DEFAULT_MERGE_LANE_WORKTREES_AND_OUTPUTS_DIRECTORY = Path(
-    "/home/nedlern/nedschorus-logs/seats/merge-lane-2/merge-helpers")
 MERGE_COMMIT_IDENTITY = ("-c", "user.name=merge-lane-2", "-c", "user.email=noreply@anthropic.com")
 
-_runner_spec = importlib.util.spec_from_file_location(
-    "run_all_test_suites", Path(__file__).resolve().with_name("run-all-test-suites.py"))
-run_all_test_suites = importlib.util.module_from_spec(_runner_spec)
-_runner_spec.loader.exec_module(run_all_test_suites)
+_common_spec = importlib.util.spec_from_file_location(
+    "merge_lane_pull_request_helpers_common", Path(__file__).resolve().with_name(
+        "merge-lane-pull-request-helpers-common-options-paths-and-token.py"))
+common = importlib.util.module_from_spec(_common_spec)
+_common_spec.loader.exec_module(common)
+run_all_test_suites = common.run_all_test_suites
 
 
 class GitStepFailed(Exception):
@@ -43,13 +43,8 @@ def parse_arguments(argv):
     parser.add_argument("pull_request", type=int, help="the pull request's number")
     parser.add_argument("head_commit", help="the pull request's head commit")
     parser.add_argument("main_commit", help="the main commit to merge the head commit onto")
-    parser.add_argument("--merge-lane-worktrees-and-outputs-directory", type=Path,
-                        default=DEFAULT_MERGE_LANE_WORKTREES_AND_OUTPUTS_DIRECTORY,
-                        help=f"holds wt/ (default: {DEFAULT_MERGE_LANE_WORKTREES_AND_OUTPUTS_DIRECTORY})")
-    parser.add_argument("--review-tools-worktree-at-main", type=Path,
-                        help="a checkout of the repository to run git in "
-                             "(default: <merge-lane-worktrees-and-outputs-directory>/wt/main)")
-    return parser.parse_args(argv)
+    common.add_directory_options(parser, "wt/")
+    return common.resolve_path_options(parser.parse_args(argv))
 
 
 def git(directory, *arguments):
@@ -67,7 +62,7 @@ def main(argv=None):
     arguments = parse_arguments(argv)
     number = arguments.pull_request
     worktrees = arguments.merge_lane_worktrees_and_outputs_directory / "wt"
-    checkout = arguments.review_tools_worktree_at_main or worktrees / "main"
+    checkout = arguments.review_tools_worktree_at_main
     head_worktree = worktrees / f"pr{number}-head"
     merged_worktree = worktrees / f"pr{number}-merged"
     try:
@@ -85,7 +80,10 @@ def main(argv=None):
         merged_short = git(merged_worktree, "rev-parse", "--short", "HEAD")
         merged_tree = git(merged_worktree, "rev-parse", "HEAD^{tree}")
     except GitStepFailed as failure:
-        print(f"PR {number}: worktrees not rebuilt: {failure}")
+        print(f"PR {number}: worktrees not rebuilt: {failure}\n"
+              f"If the git error above names a cause you can fix, such as a wrong commit, fix "
+              f"it and run this again.\n"
+              f"Otherwise, tell the user this message.")
         return 1
     print(f"PR {number}: head {head_short}, merged {merged_short} tree {merged_tree} "
           f"on main {arguments.main_commit[:8]}")

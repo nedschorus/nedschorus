@@ -61,15 +61,15 @@ def read_log(path):
     return [json.loads(line) for line in path.read_text().splitlines()] if path.exists() else []
 
 
-def run_program(scratch, helpers, extra_environment=None, token_file=None):
+def run_program(scratch, helpers, extra_environment=None, home=None):
     for log in ("gh.log", "cell.log"):
         (scratch / log).unlink(missing_ok=True)
     completed = subprocess.run(
         [sys.executable, str(PROGRAM), "7", BASE, "--merge-lane-worktrees-and-outputs-directory", str(helpers),
-         "--review-tools-worktree-at-main", str(scratch / "main-checkout"),
-         "--token-file", str(token_file or scratch / "token")],
+         "--review-tools-worktree-at-main", str(scratch / "main-checkout")],
         capture_output=True, text=True,
         env={**os.environ,
+             "HOME": str(home or scratch / "home"),
              "PATH": f"{scratch / 'bin'}{os.pathsep}{os.environ['PATH']}",
              "GIT_DIR": str(scratch / "no-such-git-directory"),
              "MERGE_LANE_CODEX_TEST_GH_LOG": str(scratch / "gh.log"),
@@ -88,13 +88,15 @@ def main():
         (scratch / "main-checkout" / "scripts").mkdir(parents=True)
         (scratch / "main-checkout" / "scripts" / "code-review-codex-cell.py").write_text(
             FAKE_CODEX_CELL)
-        (scratch / "token").write_text(TOKEN + "\n")
+        token_directory = scratch / "home" / ".config" / "nedschorus"
+        token_directory.mkdir(parents=True)
+        (token_directory / "ned-review-merge.token").write_text(TOKEN + "\n")
         helpers = scratch / "merge-helpers"
         outputs = helpers / "cx" / "pr7-01234567"
 
         completed, gh_calls, cell_calls = run_program(scratch, helpers)
         detail = f"exit {completed.returncode}\n{completed.stdout}{completed.stderr}"
-        check("the description is read from GitHub with the token file's token",
+        check("the description is read from GitHub with the merge account's token",
               gh_calls == [{"argv": ["pr", "view", "7", "--repo", "nedschorus/nedschorus",
                                      "--json", "body", "--jq", ".body"], "gh_token": TOKEN}],
               json.dumps(gh_calls))
@@ -130,9 +132,18 @@ def main():
               f"exit {completed.returncode}\n{completed.stdout}{completed.stderr}")
 
         completed, gh_calls, cell_calls = run_program(scratch, helpers,
-                                                      token_file=scratch / "no-such-token")
+                                                      home=scratch / "home-with-no-token")
         check("an unreadable token file exits 2 before gh or the review runs",
               completed.returncode == 2 and gh_calls == [] and cell_calls == [],
+              f"exit {completed.returncode}\n{completed.stdout}{completed.stderr}")
+
+        blank_home = scratch / "home-with-blank-token"
+        (blank_home / ".config" / "nedschorus").mkdir(parents=True)
+        (blank_home / ".config" / "nedschorus" / "ned-review-merge.token").write_text(" \n\t\n")
+        completed, gh_calls, cell_calls = run_program(scratch, helpers, home=blank_home)
+        check("a token file holding only whitespace exits 2 before gh or the review runs",
+              completed.returncode == 2 and gh_calls == [] and cell_calls == []
+              and "is empty" in completed.stdout,
               f"exit {completed.returncode}\n{completed.stdout}{completed.stderr}")
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
