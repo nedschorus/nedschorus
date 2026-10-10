@@ -8,7 +8,7 @@ One program, two hook events, told apart by the payload's hook_event_name:
       written, as style-guide-word-checker-markdown-edit-hook.py does. Edit
       scans new_string alone. Write scans only the lines HEAD does not already
       hold, so an edit to a file whose old bare numbers are kept on purpose
-      (the agent-only files the glossary's bare-number-sweep entry names) is
+      (agent-only files such as those under scripts/ and .claude/hooks/) is
       not reported for text it did not write. A file outside the session's
       checkout, or one git ignores, is not scanned.
   UserPromptSubmit: when the user sends a message, scan the agent's reply
