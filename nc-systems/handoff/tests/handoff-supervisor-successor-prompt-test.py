@@ -1121,6 +1121,42 @@ def gh_answering_no_open_pull_requests_first_on_path(directory: Path):
         os.environ["PATH"] = original_path
 
 
+def run_overview_check_git_output_cases(workspace: Path):
+    """The one helper every git call of the overview refresh check goes through:
+    a failure, or empty output where output is required, prints a console line
+    naming the call and returns None, so no failure in the check is silent."""
+    helper = getattr(supervisor, "overview_check_git_output", None)
+    check("the overview check has one git helper", helper is not None)
+    if helper is None:
+        return
+    repository = workspace / "overview-check-git-output"
+    repository.mkdir()
+    git_in(["init", "--quiet", "--initial-branch=main"], repository)
+    console = io.StringIO()
+    with contextlib.redirect_stdout(console):
+        failed = helper(["ls-tree", "-d", "--name-only", "no-such-ref", "nc-systems/"],
+                        repository, "overview check stopped", empty_is_failure=False)
+    check("a failing git call returns None and prints the call and its cause",
+          failed is None and console.getvalue().startswith(
+              "handoff-supervisor: overview check stopped: git ls-tree -d --name-only "
+              "no-such-ref nc-systems/ failed: "),
+          repr(failed) + "\n" + console.getvalue())
+    console = io.StringIO()
+    with contextlib.redirect_stdout(console):
+        empty = helper(["rev-parse", "--verify", "--quiet", "no-such-ref"], repository,
+                       "overview check stopped")
+    check("empty output where output is required counts as a failure and is printed",
+          empty is None and "git rev-parse --verify --quiet no-such-ref failed" in console.getvalue(),
+          console.getvalue())
+    console = io.StringIO()
+    with contextlib.redirect_stdout(console):
+        allowed = helper(["status", "--porcelain"], repository, "unused",
+                         empty_is_failure=False)
+    check("empty output where empty is allowed is returned, with nothing printed",
+          allowed == "" and console.getvalue() == "",
+          repr(allowed) + "\n" + console.getvalue())
+
+
 def run_overview_refresh_due_cases(workspace: Path):
     """overview_refresh_due_lines against real repositories, one fixture
     repository whose origin/main is moved by hand the way the branch sync's
@@ -2948,6 +2984,7 @@ with fixture.handoff_supervisor_suite_workspace() as workspace:
     run_branch_sync_cases(workspace)
     with gh_answering_no_open_pull_requests_first_on_path(
             workspace / "gh-answering-no-open-pull-requests"):
+        run_overview_check_git_output_cases(workspace)
         run_overview_refresh_due_cases(workspace)
     run_overview_refresh_withheld_while_pull_request_open_cases(workspace)
     run_overview_refresh_once_a_day_cases(workspace)

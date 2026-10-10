@@ -848,6 +848,18 @@ def sync_working_branch_with_main(working_directory: Path) -> str:
     return f"branch sync: {branch} is {ahead} ahead of main and {behind} behind{fetch_note}"
 
 
+def overview_check_git_output(arguments: list, working_directory: Path, failure_prefix: str,
+                              timeout: int = 60, empty_is_failure: bool = True):
+    """Return git's stripped stdout, or None after printing what failed; the overview check reports every git failure."""
+    result = run_git_here(arguments, working_directory, timeout=timeout)
+    output = result.stdout.strip()
+    if result.returncode != 0 or (empty_is_failure and not output):
+        print(f"handoff-supervisor: {failure_prefix}: git {' '.join(arguments)} failed: "
+              f"{result.stderr.strip() or 'no detail'}")
+        return None
+    return output
+
+
 def overview_refresh_due_lines(working_directory: Path,
                                now: Optional[datetime] = None) -> tuple:
     """Return unsuppressed overview-refresh reminders, and a line for a reminder-marks read failure; never block launch."""
@@ -857,29 +869,28 @@ def overview_refresh_due_lines(working_directory: Path,
     try:
         # Resolve and verify together: an empty ref in the range would silently select HEAD.
         # Resolve once, in full, so a fetch between two reads cannot make the range and the line name different commits.
-        resolved = run_git_here(
+        stopped = "overview check stopped"
+        main_commit_full = overview_check_git_output(
             ["rev-parse", "--verify", "--quiet", "origin/main^{commit}"],
-            working_directory, timeout=timeout)
-        main_commit_full = resolved.stdout.strip()
-        if resolved.returncode != 0 or not main_commit_full:
+            working_directory, stopped, timeout=timeout)
+        if main_commit_full is None:
             return ()
-        shortened = run_git_here(["rev-parse", "--short", main_commit_full],
-                                 working_directory, timeout=timeout)
-        main_commit = shortened.stdout.strip()
-        if shortened.returncode != 0 or not main_commit:
+        main_commit = overview_check_git_output(
+            ["rev-parse", "--short", main_commit_full], working_directory, stopped,
+            timeout=timeout)
+        if main_commit is None:
             return ()
-        listed = run_git_here(["ls-tree", "-d", "--name-only", main_commit_full, "nc-systems/"],
-                              working_directory, timeout=timeout)
-        if listed.returncode != 0:
-            print(f"handoff-supervisor: overview check stopped: git ls-tree {main_commit} "
-                  f"failed: {listed.stderr.strip() or 'no detail'}")
+        listed = overview_check_git_output(
+            ["ls-tree", "-d", "--name-only", main_commit_full, "nc-systems/"],
+            working_directory, stopped, timeout=timeout, empty_is_failure=False)
+        if listed is None:
             return ()
     except Exception as error:
         print(f"handoff-supervisor: overview check stopped: "
               f"{type(error).__name__}: {error}")
         return ()
     due = []
-    for system_directory in listed.stdout.splitlines():
+    for system_directory in listed.splitlines():
         system = system_directory.rsplit("/", 1)[-1]
         try:
             overview_path = SYSTEM_OVERVIEW_PATH_TEMPLATE.format(system=system)
@@ -895,14 +906,13 @@ def overview_refresh_due_lines(working_directory: Path,
                 continue
             commit_range = f"{checked_commit}..{main_commit}"
             pathspecs = [f"nc-systems/{system}/", f":(exclude)nc-systems/{system}/*.md"]
-            moved = run_git_here(["log", "--no-merges", "--format=%h", commit_range,
-                                  "--", *pathspecs], working_directory)
-            if moved.returncode != 0:
-                print(f"handoff-supervisor: overview check for {system} passed over: "
-                      f"git log {commit_range} failed: "
-                      f"{moved.stderr.strip() or 'no detail'}")
+            moved = overview_check_git_output(
+                ["log", "--no-merges", "--format=%h", commit_range, "--", *pathspecs],
+                working_directory, f"overview check for {system} passed over",
+                empty_is_failure=False)
+            if moved is None:
                 continue
-            count = len(moved.stdout.split())
+            count = len(moved.split())
             if not count:
                 continue
             commit_listing_command = (
