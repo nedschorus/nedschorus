@@ -123,6 +123,10 @@ grep -q -- "-L seat-okcase new-session" "$WORKSPACE/tmux-calls-okcase"
 check "the mac seat is created on its own tmux server (-L <name>)" $?
 grep -q -- "-L seat-okcase new-session .*; set-option -g set-titles on" "$WORKSPACE/tmux-calls-okcase"
 check "the mac launcher chains set-titles onto the seat's own server" $?
+# The window title starts with the machine, so a Mac seat's window cannot be
+# mistaken for a box seat's window with a similar name.
+grep -q -- "set-option -g set-titles-string \\[mac\\] #S" "$WORKSPACE/tmux-calls-okcase"
+check "the mac launcher's window title reads [mac] <seat>" $?
 
 # The rollout transition: a seat still running on the DEFAULT server
 # (launched before per-seat servers) must be reached there, not duplicated on
@@ -232,6 +236,10 @@ fi
 case "$box_command" in
     (*'\; set-option -g set-titles on'*) check "ubuntu box command chains set-titles onto the seat's server" 0 ;;
     (*) check "ubuntu box command chains set-titles onto the seat's server" 1 ;;
+esac
+case "$box_command" in
+    (*"\\; set-option -g set-titles-string '[box] #S'"*) check "ubuntu box command's window title reads [box] <seat>" 0 ;;
+    (*) check "ubuntu box command's window title reads [box] <seat>" 1 ;;
 esac
 
 # The after-exit prompt, both twins. When a supervisor exits, its shell offers
