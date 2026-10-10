@@ -116,9 +116,10 @@ def main():
               str(arguments.review_tools_worktree_at_main))
 
         arguments = parse([])
+        # Resolved, because macOS's /home is a symlink and the module resolves its paths.
         check("with no options the outputs directory is merge-lane-2's",
               arguments.merge_lane_worktrees_and_outputs_directory
-              == common.DEFAULT_MERGE_LANE_WORKTREES_AND_OUTPUTS_DIRECTORY,
+              == common.DEFAULT_MERGE_LANE_WORKTREES_AND_OUTPUTS_DIRECTORY.resolve(),
               str(arguments.merge_lane_worktrees_and_outputs_directory))
 
         home = scratch / "home"

@@ -56,7 +56,8 @@ GATE_REFUSED = "GATE REFUSED (#10): no APPROVED review found\n"
 FAKE_GATE = r'''#!/bin/bash
 directory=$MERGE_LANE_MERGE_TEST_DIRECTORY
 echo "$*" >> "$directory/gate-calls.log"
-count=$(wc -l < "$directory/gate-calls.log")
+# macOS's wc pads the count with spaces; the arithmetic expansion drops them.
+count=$(( $(wc -l < "$directory/gate-calls.log") ))
 [ -f "$directory/gate-$count.out" ] || count=last
 cat "$directory/gate-$count.out"
 exit "$(cat "$directory/gate-$count.exit")"
