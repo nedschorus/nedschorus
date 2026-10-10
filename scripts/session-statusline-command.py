@@ -11,6 +11,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -25,6 +26,7 @@ GREEN = "\033[32m"
 YELLOW = "\033[33m"
 RED = "\033[31m"
 RED_BOLD = "\033[01;31m"
+CYAN_BOLD = "\033[01;36m"
 
 # Warn shortly before the handoff trigger at roughly half the context used.
 COMFORTABLE_REMAINING_PERCENT = 55.0
@@ -33,6 +35,10 @@ TIGHT_REMAINING_PERCENT = 25.0
 SECONDS_PER_MINUTE = 60
 SECONDS_PER_HOUR = 3600
 SECONDS_PER_DAY = 86400
+
+# Claude Code keeps one record per running session here; a session with a Remote
+# Control connection has a bridgeSessionId in its record.
+CLAUDE_CODE_LIVE_SESSION_REGISTRY_DIRECTORY = Path.home() / ".claude" / "sessions"
 
 
 def colored(text: str, color: str) -> str:
@@ -101,8 +107,14 @@ def freshness_suffix(working_directory: str) -> str:
     return ""
 
 
+def status_line_this_machine_short_name() -> str:
+    if sys.platform == "darwin":
+        return "Mac"
+    return os.uname().nodename.split(".")[0]
+
+
 def location_segment(working_directory: str) -> str:
-    host = os.uname().nodename.split(".")[0]
+    host = status_line_this_machine_short_name()
 
     pieces = []
     if host:
@@ -112,7 +124,7 @@ def location_segment(working_directory: str) -> str:
         pieces.append(prefix + colored(working_directory_name(working_directory), BLUE_BOLD))
     freshness = freshness_suffix(working_directory)
     if freshness:
-        pieces.append(" " + colored(freshness, RED_BOLD))
+        pieces.append(" " + colored(freshness, CYAN_BOLD))
     return "".join(pieces)
 
 
@@ -121,9 +133,35 @@ def agent_segment(payload: dict) -> str:
 
 
 def model_segment(payload: dict) -> str:
-    model = payload.get("model", {}).get("display_name", "")
-    effort = payload.get("effort", {}).get("level", "")
-    return " · ".join(str(part) for part in (model, effort) if part)
+    """Return the model and effort as Opus5.5/medium, without the context size."""
+    model = str(payload.get("model", {}).get("display_name", "") or "")
+    model = re.sub(r"\s*\([^)]*\)", "", model).replace(" ", "")
+    effort = str(payload.get("effort", {}).get("level", "") or "")
+    return "/".join(part for part in (model, effort) if part)
+
+
+def status_line_remote_control_missing_warning_segment(payload: dict,
+        records_directory: Path | None = None) -> str:
+    """Return a red No RC when this session's record shows no Remote Control connection."""
+    # Without a record for the session the state is unknown, and nothing shows.
+    session_id = payload.get("session_id")
+    if not session_id:
+        return ""
+    directory = records_directory or CLAUDE_CODE_LIVE_SESSION_REGISTRY_DIRECTORY
+    try:
+        record_paths = list(directory.glob("*.json"))
+    except OSError:
+        return ""
+    for record_path in record_paths:
+        try:
+            record = json.loads(record_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if isinstance(record, dict) and record.get("sessionId") == session_id:
+            if record.get("bridgeSessionId"):
+                return ""
+            return colored("No RC", RED_BOLD)
+    return ""
 
 
 def time_until(reset_timestamp: str | int | float) -> str:
@@ -206,6 +244,7 @@ def status_line_text(payload: dict) -> str:
         agent_segment(payload),
         model_segment(payload),
         consumption_segment(payload),
+        status_line_remote_control_missing_warning_segment(payload),
     ]
     return SEPARATOR.join(segment for segment in segments if segment)
 
