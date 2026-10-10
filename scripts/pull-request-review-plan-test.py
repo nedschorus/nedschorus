@@ -642,6 +642,22 @@ def run_repository_and_output_cases(fixture):
                                         "scripts/tests/sibling-program-resume-test.py",
                                         "tests/sibling-program-parent-directory-test.py"], plan)
 
+    # Git reads a pathspec relative to the -C directory, so each path-limited
+    # git call needs a change here: a fenced Markdown block, agent-facing text
+    # and a split suite.
+    fixture.write_fixture_file("scripts/agent-messages.py", BASELINE_FILE_CONTENTS["scripts/agent-messages.py"].replace("Old", "New"))
+    fixture.write_fixture_file("docs/review-note.md", BASELINE_FILE_CONTENTS["docs/review-note.md"].replace("print('old')", "print('new')"))
+    head = fixture.commit_fixture_changes("changes that path-limited git calls must see")
+    fixture.configure_github_answers(head, live_base=main_with_a_split_suite)
+    top_level_plan = fixture.read_review_plan()
+    subdirectory_result = fixture.run_review_plan("--repository", str(fixture.repository / "scripts"))
+    check("a run from a subdirectory of the checkout gives the top-level run's plan, agent-facing text, tiers and split suites included",
+          subdirectory_result.returncode == 0 and json.loads(subdirectory_result.stdout) == top_level_plan
+          and "scripts/sibling-program-launch-test.py" in top_level_plan["test_files_to_run"]
+          and top_level_plan["agent_facing_text_whole_pull_request"]
+          and any(entry["path"] == "docs/review-note.md" and entry["tier"] == "seat-and-codex" for entry in top_level_plan["changed_files"]),
+          subdirectory_result.stdout or subdirectory_result.stderr)
+
 
 def run_refusal_and_call_shape_cases(fixture):
     fixture.reset_fixture_to_base()
