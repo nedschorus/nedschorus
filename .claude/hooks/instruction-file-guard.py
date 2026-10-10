@@ -56,10 +56,18 @@ ROUTE_AROUND_LINES = (
     "his exact words for this change with the session and time he wrote them."
 )
 
+COLD_READ_BEFORE_ASKING_SENTENCES = (
+    "Before you put the change to the user, write the changed text to a file in your "
+    "session's scratchpad and give it the cold read that step 2 of the /cold-read skill "
+    "names for it, a fast read for a change of one sentence; revise the text from the "
+    "findings once, then put the change to him. Skip this when the change only fixes an "
+    "obvious error `CLAUDE.md` lets you fix without asking."
+)
+
 REUSABLE_PROMPT_DENY_MESSAGE = (
     "Before modifying {path}, get the user's approval on your change: a reusable prompt, "
     "a file named -prompt.md or -instructions.md in a checkout, changes only through the "
-    "user's walk. State the proposed change to the user and walk it with him. If he has "
+    "user's walk. " + COLD_READ_BEFORE_ASKING_SENTENCES + " State the proposed change to the user and walk it with him. If he has "
     "already approved this exact change, quote his exact approval words into {marker} at "
     "the root of your session's own checkout, then resubmit your write or edit — the marker "
     "is consumed by the one call it approves. Create {marker} with the Write tool, not a "
@@ -73,6 +81,7 @@ REUSABLE_PROMPT_DENY_MESSAGE = (
 
 REVIEWED_DOCUMENT_DENY_MESSAGE = (
     "Get the user's approval before you change {path}; he reviews every change to a file here.\n"
+    + COLD_READ_BEFORE_ASKING_SENTENCES + "\n"
     "If he has approved this exact change, quote his exact approval words into {marker} at "
     "the root of your session's own checkout, then resubmit; the marker is used up by the "
     "one call it approves.\n"
@@ -103,7 +112,8 @@ MEMORY_WRITE_DENY_MESSAGE = (
 DENY_MESSAGE = (
     "Before modifying {path}, get the user's approval on your change: instruction files "
     "(CLAUDE.md, CLAUDE.local.md identity files, and .claude/ machinery) change only "
-    "through the user's walk, however clearly the edit would help. State the proposed "
+    "through the user's walk, however clearly the edit would help. "
+    + COLD_READ_BEFORE_ASKING_SENTENCES + " State the proposed "
     "change to the user and walk it with him. If he has already approved this exact "
     "change, quote his exact approval words into {marker} at the root of your session's "
     "own checkout, then resubmit your write or edit — the marker is consumed by the one "
