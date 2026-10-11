@@ -86,6 +86,15 @@ This is rider 1 turned on the test harness itself. A mutation loop that cannot r
 
 Pull request [CLAUDE.md "Before pushing": a test for each failure the change handles; the full-run explanation goes](https://github.com/nedschorus/nedschorus/pull/1171) puts this rule in CLAUDE.md's "Before pushing" bullet: "When you add code that handles a failure that a bad input or a failing stub can cause, such as an `except` block or a check of an exit code, add a test that causes that failure; check the test by removing that code for a moment, and a test must fail." The pull request that lands this build moves the rule into what the build produces and deletes it from CLAUDE.md. Removing the code for a moment is mutation testing done by hand, and it shows only that the failure path is exercised, not that the test's baseline is true, which the 2026-09-02 research pass found mutation testing cannot show.
 
+## 2026-10-10: three tiers of test run
+
+The user, in approval-walk daily-memory-review-2026-10-09: a smoke test, a comprehensive test, and a test in between, of what the change is thought to affect, each have value. A test plan says which tier runs each planned check:
+- smoke test: takes seconds; checks that the main paths still work; run after each edit;
+- the test in between, selective regression testing: the test suites the change can affect; run before push, and again by merge-lane-2 before it merges;
+- comprehensive, the full regression run: every test suite on main, each night on both machines.
+
+The cost of running a check decides which tier runs it, not whether the check is planned.
+
 ## Next action
 
 One question comes before the build: whether write-test-plan is a skill at all.
