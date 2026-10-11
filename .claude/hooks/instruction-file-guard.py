@@ -97,14 +97,14 @@ REVIEWED_DOCUMENT_DENY_MESSAGE = (
 
 MEMORY_WRITE_DENY_MESSAGE = (
     "Refusing to write {path}: it is in a Claude Code memory directory. Nothing makes a "
-    "later agent read a memory file at the moment it would matter, so what you meant to "
-    "save would sit there unread.\n"
-    "Instead, in your next message to the user, quote the text you meant to save, say you "
-    "think it is important, and recommend what it should become: a fix to an instruction "
-    "file now, which is best; a task on your task list; or a GitHub issue filed with "
-    "/ghi-write. Then ask the user what he wants done with it.\n"
-    "If you are a subagent, put all of this to the agent that dispatched you instead of to "
-    "the user.\n"
+    "later agent read a memory file at the moment it would matter, and a note read later, "
+    "without the conversation that produced it, often makes little sense or no longer fits "
+    "the situation.\n"
+    "If what you meant to save would change how agents work, propose to the user the exact "
+    "edit, with its wording, to the instruction file, skill or program where an agent would "
+    "meet it.\n"
+    "Otherwise drop it: do not show the note to the user.\n"
+    "If you are a subagent, put this to the agent that dispatched you instead.\n"
     "No {marker} marker lets a write into a memory directory through, so do not write one "
     "for this."
 )
