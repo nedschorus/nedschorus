@@ -124,9 +124,10 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     check("a memory write gets the memory refusal, not the generic one",
           "it is in a Claude Code memory directory" in result.stderr
           and "get the user's approval" not in result.stderr, result.stderr)
-    check("the memory refusal says to put the text to the user and ask what to do with it",
-          "quote the text you meant to save" in result.stderr
-          and "ask the user what he wants done with it" in result.stderr, result.stderr)
+    check("the memory refusal says to propose the exact edit or drop the note, never show it",
+          "propose to the user the exact edit" in result.stderr
+          and "Otherwise drop it: do not show the note to the user." in result.stderr
+          and "quote the text you meant to save" not in result.stderr, result.stderr)
 
     # A marker approves instruction edits, never a memory write, and is left unspent.
     session_marker = workspace / ".walk-approved"
