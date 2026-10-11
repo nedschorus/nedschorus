@@ -347,6 +347,42 @@ def write_then_run(cwd, file_path, content):
     return run_hook(payload_for(cwd, "Write", file_path, {"content": content}))
 
 
+def structured_patch(before, after):
+    """A structuredPatch in the shape Claude Code 2.1.296 puts in an Edit's
+    tool_response: one hunk per changed region with three lines of context,
+    newStart counted from 1, and each line prefixed " ", "-" or "+"."""
+    import difflib
+    old_lines, new_lines = before.splitlines(), after.splitlines()
+    hunks = []
+    for group in difflib.SequenceMatcher(None, old_lines, new_lines).get_grouped_opcodes(3):
+        lines = []
+        for tag, old_start, old_end, new_start, new_end in group:
+            if tag == "equal":
+                lines += [" " + line for line in old_lines[old_start:old_end]]
+                continue
+            lines += ["-" + line for line in old_lines[old_start:old_end]]
+            lines += ["+" + line for line in new_lines[new_start:new_end]]
+        hunks.append({"oldStart": group[0][1] + 1, "oldLines": group[-1][2] - group[0][1],
+                      "newStart": group[0][3] + 1, "newLines": group[-1][4] - group[0][3],
+                      "lines": lines})
+    return hunks
+
+
+def edit_then_run(cwd, file_path, before, old_string, new_string, replace_all=False):
+    """What the Edit tool leaves behind, then the hook that follows it, with the
+    tool_response keys a captured Claude Code 2.1.296 Edit payload carries."""
+    after = before.replace(old_string, new_string) if replace_all else before.replace(old_string, new_string, 1)
+    file_path.parent.mkdir(parents=True, exist_ok=True)
+    file_path.write_text(after, encoding="utf-8")
+    payload = payload_for(cwd, "Edit", file_path, {"old_string": old_string, "new_string": new_string,
+                                                   "replace_all": replace_all})
+    payload["tool_response"] = {"filePath": str(file_path), "oldString": old_string,
+                                "newString": new_string, "originalFile": before,
+                                "structuredPatch": structured_patch(before, after),
+                                "userModified": False, "replaceAll": replace_all}
+    return run_hook(payload)
+
+
 def silent(result):
     return result.returncode == 0 and result.stdout.strip() == "" and result.stderr.strip() == ""
 
@@ -390,31 +426,58 @@ with tempfile.TemporaryDirectory() as temporary_directory:
               ":3" not in text and "line 3" not in text, text)
 
         edited_file = checkout / "docs" / "edited.md"
+        reminded_prefix = "markdown-edit-hard-wrapped-paragraph-reminder: the text you just wrote in docs/edited.md"
+        broken_before = "# Notes\n\nThe first half of a sentence\nand the second part.\n"
+        result = edit_then_run(checkout, edited_file, broken_before, "the second part", "the second half")
+        check("an Edit that wrote into a broken paragraph gets the reminder",
+              agent_text(result).startswith(reminded_prefix), result.stdout + result.stderr)
+        result = edit_then_run(checkout, edited_file, broken_before, "The first half of a sentence",
+                               "The first part of a sentence")
+        check("an Edit of a broken paragraph's first line alone gets the reminder",
+              agent_text(result).startswith(reminded_prefix), result.stdout + result.stderr)
+        result = edit_then_run(checkout, edited_file, BROKEN_TEXT.replace("# Notes", "# Old"), "# Old", "# Notes")
+        check("an Edit that wrote only outside the broken paragraph gets no reminder",
+              silent(result), result.stdout + result.stderr)
+        result = edit_then_run(checkout, edited_file, "# Old\nThe first half\nand the second half.\n",
+                               "# Old\n", "# Heading\n")
+        check("an Edit of the heading directly above an untouched broken paragraph gets no reminder",
+              silent(result), result.stdout + result.stderr)
+        result = edit_then_run(checkout, edited_file, "The first half\nand the second half.\n# Old\n",
+                               "# Old", "# Heading")
+        check("an Edit of the heading directly below an untouched broken paragraph gets no reminder",
+              silent(result), result.stdout + result.stderr)
+        result = edit_then_run(checkout, edited_file,
+                               "# Title\n\nCats or dogs on one line.\n\nThe first half\nand the second half.\n",
+                               "Cats or dogs", "Cats and dogs")
+        check("an Edit whose new text also stands in an untouched broken paragraph gets no reminder",
+              silent(result), result.stdout + result.stderr)
+        result = edit_then_run(checkout, edited_file, "# Notes\n\nThe first half\nand the second half.\n",
+                               "# Notes\n\n", "")
+        check("an Edit that only deleted lines gets no reminder",
+              silent(result), result.stdout + result.stderr)
+        far_apart = ("A mark on one line.\n\n" + "".join(f"Filler {n} on one line.\n\n" for n in range(8))
+                     + "The first mark\nand the second half.\n")
+        result = edit_then_run(checkout, edited_file, far_apart, "mark", "Mark", replace_all=True)
+        check("a replace_all Edit whose second hunk wrote into a broken paragraph gets the reminder",
+              agent_text(result).startswith(reminded_prefix), result.stdout + result.stderr)
+
         edited_file.write_text(BROKEN_TEXT, encoding="utf-8")
         result = run_hook(payload_for(checkout, "Edit", edited_file,
                                       {"old_string": "x", "new_string": "the second half",
                                        "replace_all": False}))
-        check("an Edit that wrote into a broken paragraph gets the reminder",
-              agent_text(result).startswith(
-                  "markdown-edit-hard-wrapped-paragraph-reminder: the text you just wrote in docs/edited.md"),
+        check("an Edit whose payload has no structuredPatch is reported as a check not made, exit 1",
+              result.returncode == 1 and result.stdout == ""
+              and "carries no tool_response.structuredPatch" in result.stderr,
               result.stdout + result.stderr)
-        result = run_hook(payload_for(checkout, "Edit", edited_file,
-                                      {"old_string": "x", "new_string": "# Notes",
-                                       "replace_all": False}))
-        check("an Edit that wrote only outside the broken paragraph gets no reminder",
-              silent(result), result.stdout + result.stderr)
-        result = run_hook(payload_for(checkout, "Edit", edited_file,
-                                      {"old_string": "x", "new_string": "",
-                                       "replace_all": False}))
-        check("an Edit whose new_string is empty gets no reminder",
-              silent(result), result.stdout + result.stderr)
-        result = run_hook(payload_for(checkout, "Edit", edited_file,
-                                      {"old_string": "x", "new_string": "first half of a sentence\nand the",
-                                       "replace_all": False}))
-        check("an Edit whose new_string spans the broken line gets the reminder",
-              agent_text(result).startswith(
-                  "markdown-edit-hard-wrapped-paragraph-reminder: the text you just wrote in docs/edited.md"),
-              result.stdout + result.stderr)
+        payload = payload_for(checkout, "Edit", edited_file, {"old_string": "x", "new_string": "y"})
+        payload["tool_response"] = {"structuredPatch": [{"oldStart": 1, "lines": ["+y"]}]}
+        result = run_hook(payload)
+        check("a structuredPatch hunk without newStart is reported as a check not made, exit 1",
+              result.returncode == 1 and "has no newStart" in result.stderr, result.stdout + result.stderr)
+        payload["tool_response"] = {"structuredPatch": [{"newStart": 1, "lines": [7]}]}
+        result = run_hook(payload)
+        check("a structuredPatch line that is not text is reported as a check not made, exit 1",
+              result.returncode == 1 and "not text" in result.stderr, result.stdout + result.stderr)
 
 
     result = write_then_run(checkout, checkout / "docs" / "clean.md", CLEAN_TEXT)

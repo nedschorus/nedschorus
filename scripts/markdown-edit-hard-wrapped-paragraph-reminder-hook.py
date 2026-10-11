@@ -8,10 +8,14 @@ Read cwd from the payload; CLAUDE_PROJECT_DIR can name a different checkout in a
 The whole file is read from disk after the tool ran, for Edit as for Write, so an
 Edit inside a fenced code block is judged with the fence visible. Only a broken
 paragraph the tool wrote is reported: for a Write, any in the file; for an Edit, one
-whose lines overlap a place where the Edit's new_string now stands. A broken
-paragraph the agent did not touch is left alone, because in a file the
+whose lines overlap a line the Edit added, read from the payload's
+tool_response.structuredPatch (each hunk's "+" lines, counted from its newStart; a
+search for new_string in the file would also find copies the Edit did not write). A
+broken paragraph the agent did not touch is left alone, because in a file the
 instruction-file guard protects, rejoining it would need the user's approval for
-whitespace. An Edit whose new_string is empty or no longer found gets no reminder.
+whitespace. An Edit that only deleted lines adds none and gets no reminder. An Edit
+whose payload carries no structuredPatch list gets one line on stderr and exit 1, a
+non-blocking hook error, so the agent is told the check was not made.
 The reminder carries no line numbers: the agent is to rejoin each broken
 paragraph it wrote, and to write later Markdown files the same way.
 
@@ -160,7 +164,13 @@ def counts_as_line_break(children, position: int) -> bool:
 
 def markdown_broken_paragraph_line_ranges(text: str) -> list:
     """The [start, end) line ranges of the paragraphs holding a soft line break
-    the author did not choose, as markdown_has_hard_wrapped_paragraph judges them.
+    the author did not choose.
+
+    A paragraph is what the CommonMark parser calls one, at the top level or in a
+    list item. A paragraph inside a block quote is left alone: a quote often keeps
+    the line breaks of the text it quotes. Hard breaks, two trailing spaces, a
+    trailing backslash or a trailing <br>, are breaks the author chose. A file
+    holding display math or a footnote definition is never reported.
     Raises MarkdownParserMissing when markdown-it-py cannot be imported."""
     parser = markdown_parser()
     if holds_math_or_footnote_definition(text):
@@ -182,45 +192,36 @@ def markdown_broken_paragraph_line_ranges(text: str) -> list:
     return ranges
 
 
-def edited_line_ranges(text: str, new_string: str) -> list:
-    """The [start, end) line ranges where new_string stands in text."""
-    ranges = []
-    if not new_string:
-        return ranges
-    start = text.find(new_string)
-    while start != -1:
-        first_line = text.count("\n", 0, start)
-        ranges.append((first_line, first_line + new_string.count("\n") + 1))
-        start = text.find(new_string, start + 1)
-    return ranges
+class EditedLinesUnknown(Exception):
+    pass
+
+
+def edit_added_line_numbers(tool_response) -> set:
+    """The 0-based line numbers, in the file after the Edit, of the lines the Edit
+    added, from tool_response.structuredPatch; raise EditedLinesUnknown without one."""
+    patch = tool_response.get("structuredPatch") if isinstance(tool_response, dict) else None
+    if not isinstance(patch, list):
+        raise EditedLinesUnknown("the Edit's payload carries no tool_response.structuredPatch")
+    added = set()
+    for hunk in patch:
+        if not isinstance(hunk, dict) or not isinstance(hunk.get("newStart"), int):
+            raise EditedLinesUnknown("a structuredPatch hunk has no newStart")
+        line_number = hunk["newStart"] - 1
+        for line in hunk.get("lines") or []:
+            if not isinstance(line, str):
+                raise EditedLinesUnknown("a structuredPatch hunk holds a line that is not text")
+            if line.startswith("+"):
+                added.add(line_number)
+                line_number += 1
+            elif line.startswith(" "):
+                line_number += 1
+    return added
 
 
 def markdown_has_hard_wrapped_paragraph(text: str) -> bool:
-    """True when a paragraph holds a soft line break the author did not choose.
-
-    A paragraph is what the CommonMark parser calls one, at the top level or in a
-    list item. A paragraph inside a block quote is left alone: a quote often keeps
-    the line breaks of the text it quotes. Hard breaks, two trailing spaces, a
-    trailing backslash or a trailing <br>, are breaks the author chose. A file
-    holding display math or a footnote definition is never reported.
+    """True when the file holds a paragraph markdown_broken_paragraph_line_ranges reports.
     Raises MarkdownParserMissing when markdown-it-py cannot be imported."""
-    parser = markdown_parser()
-    if holds_math_or_footnote_definition(text):
-        return False
-    tokens = parser.parse(front_matter_blanked(text))
-    block_quote_depth = 0
-    for position, token in enumerate(tokens):
-        if token.type == "blockquote_open":
-            block_quote_depth += 1
-        elif token.type == "blockquote_close":
-            block_quote_depth -= 1
-        elif (token.type == "inline" and block_quote_depth == 0
-                and position > 0 and tokens[position - 1].type == "paragraph_open"):
-            children = token.children or []
-            for child_position, child in enumerate(children):
-                if child.type == "softbreak" and counts_as_line_break(children, child_position):
-                    return True
-    return False
+    return bool(markdown_broken_paragraph_line_ranges(text))
 
 def main() -> int:
     try:
@@ -261,12 +262,15 @@ def main() -> int:
     except MarkdownParserMissing:
         print(PARSER_MISSING_MESSAGE, file=sys.stderr)
         return 1
-    if tool_name == "Edit":
-        new_string = tool_input.get("new_string")
-        edited = edited_line_ranges(text, new_string if isinstance(new_string, str) else "")
+    if tool_name == "Edit" and broken_ranges:
+        try:
+            added = edit_added_line_numbers(payload.get("tool_response"))
+        except EditedLinesUnknown as error:
+            print(f"markdown-edit-hard-wrapped-paragraph-reminder: {error}, so no reminder check was made.",
+                  file=sys.stderr)
+            return 1
         broken_ranges = [(start, end) for start, end in broken_ranges
-                         if any(start < edit_end and edit_start < end
-                                for edit_start, edit_end in edited)]
+                         if any(start <= line < end for line in added)]
     if not broken_ranges:
         return 0
 
