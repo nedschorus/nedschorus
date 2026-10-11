@@ -383,7 +383,7 @@ with tempfile.TemporaryDirectory() as temporary_directory:
         check("a Write leaving a broken paragraph gets one PostToolUse reminder, exit 0",
               result.returncode == 0 and result.stderr == ""
               and reply.get("hookSpecificOutput", {}).get("hookEventName") == "PostToolUse"
-              and text.startswith("markdown-edit-hard-wrapped-paragraph-reminder: docs/broken.md holds")
+              and text.startswith("markdown-edit-hard-wrapped-paragraph-reminder: the text you just wrote in docs/broken.md holds")
               and "every Markdown file you write from now on" in text,
               result.stdout + result.stderr)
         check("the reminder names no line number",
@@ -392,10 +392,28 @@ with tempfile.TemporaryDirectory() as temporary_directory:
         edited_file = checkout / "docs" / "edited.md"
         edited_file.write_text(BROKEN_TEXT, encoding="utf-8")
         result = run_hook(payload_for(checkout, "Edit", edited_file,
-                                      {"old_string": "x", "new_string": "Notes",
+                                      {"old_string": "x", "new_string": "the second half",
                                        "replace_all": False}))
-        check("an Edit is judged on the whole file on disk, not its new_string",
-              agent_text(result).startswith("markdown-edit-hard-wrapped-paragraph-reminder: docs/edited.md"),
+        check("an Edit that wrote into a broken paragraph gets the reminder",
+              agent_text(result).startswith(
+                  "markdown-edit-hard-wrapped-paragraph-reminder: the text you just wrote in docs/edited.md"),
+              result.stdout + result.stderr)
+        result = run_hook(payload_for(checkout, "Edit", edited_file,
+                                      {"old_string": "x", "new_string": "# Notes",
+                                       "replace_all": False}))
+        check("an Edit that wrote only outside the broken paragraph gets no reminder",
+              silent(result), result.stdout + result.stderr)
+        result = run_hook(payload_for(checkout, "Edit", edited_file,
+                                      {"old_string": "x", "new_string": "",
+                                       "replace_all": False}))
+        check("an Edit whose new_string is empty gets no reminder",
+              silent(result), result.stdout + result.stderr)
+        result = run_hook(payload_for(checkout, "Edit", edited_file,
+                                      {"old_string": "x", "new_string": "first half of a sentence\nand the",
+                                       "replace_all": False}))
+        check("an Edit whose new_string spans the broken line gets the reminder",
+              agent_text(result).startswith(
+                  "markdown-edit-hard-wrapped-paragraph-reminder: the text you just wrote in docs/edited.md"),
               result.stdout + result.stderr)
 
 
@@ -406,7 +424,7 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     if PARSER_AVAILABLE:
         result = write_then_run(checkout, checkout / "notes.markdown", BROKEN_TEXT)
         check("a .markdown file is checked too",
-              agent_text(result).startswith("markdown-edit-hard-wrapped-paragraph-reminder: notes.markdown"),
+              agent_text(result).startswith("markdown-edit-hard-wrapped-paragraph-reminder: the text you just wrote in notes.markdown"),
               result.stdout + result.stderr)
 
     # A machine without markdown-it-py: a package of that name that fails to

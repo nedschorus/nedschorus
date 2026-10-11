@@ -6,9 +6,14 @@ Use hookSpecificOutput.additionalContext: successful PostToolUse plain stdout re
 Read cwd from the payload; CLAUDE_PROJECT_DIR can name a different checkout in a forked session.
 
 The whole file is read from disk after the tool ran, for Edit as for Write, so an
-Edit inside a fenced code block is judged with the fence visible.
-The reminder carries no line numbers: the agent is to rejoin every broken
-paragraph in the file, and to write later Markdown files the same way.
+Edit inside a fenced code block is judged with the fence visible. Only a broken
+paragraph the tool wrote is reported: for a Write, any in the file; for an Edit, one
+whose lines overlap a place where the Edit's new_string now stands. A broken
+paragraph the agent did not touch is left alone, because in a file the
+instruction-file guard protects, rejoining it would need the user's approval for
+whitespace. An Edit whose new_string is empty or no longer found gets no reminder.
+The reminder carries no line numbers: the agent is to rejoin each broken
+paragraph it wrote, and to write later Markdown files the same way.
 
 Which lines form a paragraph is decided by markdown-it-py's CommonMark parser, not
 by this file: a paragraph, in a list item or at the top level, is broken when its
@@ -34,11 +39,12 @@ MARKDOWN_SUFFIXES = (".md", ".markdown")
 GIT_TIMEOUT_SECONDS = 10
 
 REMINDER_MESSAGE = (
-    "markdown-edit-hard-wrapped-paragraph-reminder: {path} holds a paragraph or list item broken "
-    "across lines. A line break inside a paragraph, list item or table row is extra "
-    "whitespace to a reader whose editor wraps lines to the screen's width, and makes "
-    "the text hard to edit.\n"
-    "In {path}, join the lines of each broken paragraph and list item into one line.\n"
+    "markdown-edit-hard-wrapped-paragraph-reminder: the text you just wrote in {path} holds a "
+    "paragraph or list item broken across lines. A line break inside a paragraph, list item "
+    "or table row is extra whitespace to a reader whose editor wraps lines to the screen's "
+    "width, and makes the text hard to edit.\n"
+    "In {path}, join the lines of each broken paragraph and list item you wrote into one "
+    "line; leave the paragraphs you did not touch as they are.\n"
     "In every Markdown file you write from now on, write each paragraph, list item and "
     "table row as one line, however long; break lines only where Markdown needs a break."
 )
@@ -152,6 +158,43 @@ def counts_as_line_break(children, position: int) -> bool:
     return True
 
 
+def markdown_broken_paragraph_line_ranges(text: str) -> list:
+    """The [start, end) line ranges of the paragraphs holding a soft line break
+    the author did not choose, as markdown_has_hard_wrapped_paragraph judges them.
+    Raises MarkdownParserMissing when markdown-it-py cannot be imported."""
+    parser = markdown_parser()
+    if holds_math_or_footnote_definition(text):
+        return []
+    tokens = parser.parse(front_matter_blanked(text))
+    ranges = []
+    block_quote_depth = 0
+    for position, token in enumerate(tokens):
+        if token.type == "blockquote_open":
+            block_quote_depth += 1
+        elif token.type == "blockquote_close":
+            block_quote_depth -= 1
+        elif (token.type == "inline" and block_quote_depth == 0
+                and position > 0 and tokens[position - 1].type == "paragraph_open"):
+            children = token.children or []
+            if any(child.type == "softbreak" and counts_as_line_break(children, child_position)
+                   for child_position, child in enumerate(children)):
+                ranges.append(tuple(tokens[position - 1].map))
+    return ranges
+
+
+def edited_line_ranges(text: str, new_string: str) -> list:
+    """The [start, end) line ranges where new_string stands in text."""
+    ranges = []
+    if not new_string:
+        return ranges
+    start = text.find(new_string)
+    while start != -1:
+        first_line = text.count("\n", 0, start)
+        ranges.append((first_line, first_line + new_string.count("\n") + 1))
+        start = text.find(new_string, start + 1)
+    return ranges
+
+
 def markdown_has_hard_wrapped_paragraph(text: str) -> bool:
     """True when a paragraph holds a soft line break the author did not choose.
 
@@ -214,11 +257,17 @@ def main() -> int:
     except (OSError, UnicodeDecodeError):
         return 0
     try:
-        broken = markdown_has_hard_wrapped_paragraph(text)
+        broken_ranges = markdown_broken_paragraph_line_ranges(text)
     except MarkdownParserMissing:
         print(PARSER_MISSING_MESSAGE, file=sys.stderr)
         return 1
-    if not broken:
+    if tool_name == "Edit":
+        new_string = tool_input.get("new_string")
+        edited = edited_line_ranges(text, new_string if isinstance(new_string, str) else "")
+        broken_ranges = [(start, end) for start, end in broken_ranges
+                         if any(start < edit_end and edit_start < end
+                                for edit_start, edit_end in edited)]
+    if not broken_ranges:
         return 0
 
     print(json.dumps({"hookSpecificOutput": {
