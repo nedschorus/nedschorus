@@ -448,7 +448,7 @@ with tempfile.TemporaryDirectory() as temporary_directory:
               silent(result), result.stdout + result.stderr)
         result = edit_then_run(checkout, edited_file,
                                "# Title\n\nCats or dogs on one line.\n\nThe first half\nand the second half.\n",
-                               "Cats or dogs", "Cats and dogs")
+                               "or", "and")
         check("an Edit whose new text also stands in an untouched broken paragraph gets no reminder",
               silent(result), result.stdout + result.stderr)
         result = edit_then_run(checkout, edited_file, "# Notes\n\nThe first half\nand the second half.\n",
@@ -460,6 +460,13 @@ with tempfile.TemporaryDirectory() as temporary_directory:
         result = edit_then_run(checkout, edited_file, far_apart, "mark", "Mark", replace_all=True)
         check("a replace_all Edit whose second hunk wrote into a broken paragraph gets the reminder",
               agent_text(result).startswith(reminded_prefix), result.stdout + result.stderr)
+
+        edited_file.write_text(CLEAN_TEXT, encoding="utf-8")
+        result = run_hook(payload_for(checkout, "Edit", edited_file,
+                                      {"old_string": "x", "new_string": "A whole paragraph",
+                                       "replace_all": False}))
+        check("an Edit of a file holding no broken paragraph needs no structuredPatch: silent, exit 0",
+              silent(result), result.stdout + result.stderr)
 
         edited_file.write_text(BROKEN_TEXT, encoding="utf-8")
         result = run_hook(payload_for(checkout, "Edit", edited_file,

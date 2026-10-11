@@ -14,8 +14,10 @@ search for new_string in the file would also find copies the Edit did not write)
 broken paragraph the agent did not touch is left alone, because in a file the
 instruction-file guard protects, rejoining it would need the user's approval for
 whitespace. An Edit that only deleted lines adds none and gets no reminder. An Edit
-whose payload carries no structuredPatch list gets one line on stderr and exit 1, a
-non-blocking hook error, so the agent is told the check was not made.
+of a file holding a broken paragraph, whose payload carries no structuredPatch list,
+gets one line on stderr and exit 1, a non-blocking hook error, so the agent is told the
+check was not made. An Edit of a file holding no broken paragraph needs no patch to be
+judged, so a missing patch there is not reported.
 The reminder carries no line numbers: the agent is to rejoin each broken
 paragraph it wrote, and to write later Markdown files the same way.
 
