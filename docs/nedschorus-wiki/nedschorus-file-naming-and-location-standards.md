@@ -24,7 +24,7 @@ A file in a queue directory is named as it will be at its canonical location, ap
   - **Naming:** `<what it does>.py`, such as `instruction-file-guard.py` or `ghi-issue-write-redirect.py`
 - **Tests, test-designs, design-contracts**
   - **Location:** a test goes in a `tests/` subdirectory when the code sits in a directory of its own, such as `nc-systems/main-gatekeeper/tests/` or `scripts/design-to-main/tests/`; beside the script it tests when the script sits loose in `scripts/` or `.claude/hooks/`, for example `scripts/dangling-path-citation-check-test.py`.
-  - **Test Names:** `<multi-part-name>-test.<extension>`, for example `scripts/dangling-path-citation-check-test.py`
+  - **Test Names:** `<name of the program tested>-test.<extension>`, for example `scripts/dangling-path-citation-check-test.py`; when one program has several test files, see "Name a test file after what it tests" in `docs/nedschorus-wiki/nedschorus-how-to-choose-a-name-for-files-code-and-glossary-terms.md`
   - **Test-Design Name:** `<multi-part-name>-test-design.md`
   - **Test-Design Location:** beside its design
   - **Design-contract Name:** its design's name with `-design.md` replaced by `-contract.md`, beside its design
