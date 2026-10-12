@@ -991,8 +991,14 @@ def case_hook_fingerprint_sees_an_untracked_file_whose_name_is_not_utf8(root):
     clone = make_clone(root, BASE_MAIN_FILES)
     hook = load_module("new_shared_names_reminder_hook", HOOK_PATH)
     name = os.fsencode(clone) + b"/caf\xe9.md"
-    with open(name, "wb") as handle:
-        handle.write(b"first\n")
+    try:
+        with open(name, "wb") as handle:
+            handle.write(b"first\n")
+    except OSError as error:
+        # The Mac's APFS refuses a file name that is not valid UTF-8.
+        print(f"SKIP  an untracked file whose name is not UTF-8: this file system refuses "
+              f"the name ({error.strerror})")
+        return
     before = hook.worktree_fingerprint(clone)
     time.sleep(0.01)
     with open(name, "wb") as handle:
@@ -1000,6 +1006,11 @@ def case_hook_fingerprint_sees_an_untracked_file_whose_name_is_not_utf8(root):
     after = hook.worktree_fingerprint(clone)
     check("an untracked file whose name is not UTF-8 keeps the fingerprint, and its rewrite changes it",
           before is not None and before != after, f"{before} {after}")
+    finished = subprocess.run([sys.executable, str(LISTER_PATH), "--checkout", str(clone)],
+                              capture_output=True, check=False)
+    check("the lister prints a changed file whose name is not UTF-8 by its own bytes",
+          finished.returncode == 0 and b"caf\xe9.md\tfile-path\t" in finished.stdout,
+          f"exit {finished.returncode}: {finished.stdout[:300]!r} {finished.stderr[:300]!r}")
 
 def case_hook_reports_failure_once(root):
     lonely = root / "lonely"

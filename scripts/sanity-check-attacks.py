@@ -828,7 +828,7 @@ def worktree_snapshot(repo_root: pathlib.Path = REPO_ROOT) -> dict:
     """
     completed = subprocess.run(
         ["git", "status", "--porcelain", "-z", "-uall"], cwd=repo_root,
-        stdout=subprocess.PIPE, text=True, check=False,
+        stdout=subprocess.PIPE, text=True, errors="surrogateescape", check=False,
     )
     snapshot = {}
     for entry in git_output.status_entries(completed.stdout):
@@ -875,7 +875,7 @@ def tracked_files_corpus(checkout: pathlib.Path = None) -> tuple:
     checkout = checkout or REPO_ROOT
     listed = subprocess.run(
         ["git", "ls-files", "-z"], cwd=checkout,
-        stdout=subprocess.PIPE, text=True, check=False,
+        stdout=subprocess.PIPE, text=True, errors="surrogateescape", check=False,
     )
     pieces = []
     for name in git_output.nul_separated_fields(listed.stdout):
@@ -1093,11 +1093,11 @@ def uncommitted_review_paths(paths: list, repo_root: pathlib.Path) -> list:
     if inside:
         listed = subprocess.run(
             ["git", "ls-files", "-z", "--", *inside], cwd=repo_root,
-            stdout=subprocess.PIPE, text=True, check=False)
+            stdout=subprocess.PIPE, text=True, errors="surrogateescape", check=False)
         tracked = set(git_output.nul_separated_fields(listed.stdout))
         status = subprocess.run(
             ["git", "status", "--porcelain", "-z", "-uall", "--", *inside],
-            cwd=repo_root, stdout=subprocess.PIPE, text=True, check=False)
+            cwd=repo_root, stdout=subprocess.PIPE, text=True, errors="surrogateescape", check=False)
         changed = {entry.path for entry in git_output.status_entries(status.stdout)}
     return [path for path, name in git_names.items()
             if name is None or name not in tracked or name in changed]
@@ -1980,4 +1980,6 @@ def print_run_completion(out_dir: pathlib.Path, ship=None) -> None:
 
 
 if __name__ == "__main__":
+    # A path git gave that is not UTF-8 is held with surrogates; print its own bytes back.
+    sys.stdout.reconfigure(errors="surrogateescape")
     sys.exit(main())

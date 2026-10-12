@@ -70,7 +70,7 @@ class TopicBranchGitRecord:
     def git(self, *args, check=True):
         return subprocess.run(
             ["git", "-C", str(self.repository_dir)] + list(args),
-            check=check, capture_output=True, text=True)
+            check=check, capture_output=True, text=True, errors="surrogateescape")
 
     def head_commit(self):
         return self.git("rev-parse", "HEAD").stdout.strip()

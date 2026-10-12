@@ -149,6 +149,9 @@ def tree_and_grep_cases(repository):
     newline_path = git_output.grep_matches(b"nl\nname.txt\x002\x00needle\nb.md\x001\x00x\n")
     check("grep: a path holding a newline is read whole",
           newline_path == [("nl\nname.txt", 2, "needle"), ("b.md", 1, "x")], newline_path)
+    unended = git_output.grep_matches(b"notes.md\x007\x00last line")
+    check("grep: output that ends without a newline still gives its last match",
+          unended == [("notes.md", 7, "last line")], unended)
     colon = git_output.grep_matches(b"a:b.md\x003\x00text: with colon\n")
     check("grep: a colon in the path or the text does not split it",
           colon == [("a:b.md", 3, "text: with colon")], colon)

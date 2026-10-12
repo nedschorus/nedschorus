@@ -104,7 +104,7 @@ def changed_lines_by_file(merge_base: str, repository_root: pathlib.Path) -> dic
     """Return {repository-relative path: added or altered line numbers}."""
     diff = subprocess.run(
         ["git", "diff", "--unified=0", "--no-color", "--no-ext-diff", f"{merge_base}..HEAD"],
-        cwd=repository_root, capture_output=True, text=True, check=False)
+        cwd=repository_root, capture_output=True, text=True, errors="surrogateescape", check=False)
     if diff.returncode != 0:
         fail_bad_invocation(f"git diff against {merge_base} failed: "
                             f"{diff.stderr.strip() or diff.returncode}")
@@ -153,7 +153,7 @@ def plain_path_citations(line: str, root_directories: tuple, lint):
 def file_at_merge_base(relative: str, merge_base: str, repository_root: pathlib.Path) -> str:
     """Return the file's merge-base text, or "" if absent."""
     shown = subprocess.run(["git", "show", f"{merge_base}:{relative}"],
-                           cwd=repository_root, capture_output=True, text=True, check=False)
+                           cwd=repository_root, capture_output=True, text=True, errors="surrogateescape", check=False)
     return shown.stdout if shown.returncode == 0 else ""
 
 
@@ -384,4 +384,6 @@ def main(argv=None) -> int:
 
 
 if __name__ == "__main__":
+    # A path git gave that is not UTF-8 is held with surrogates; print its own bytes back.
+    sys.stdout.reconfigure(errors="surrogateescape")
     sys.exit(main())

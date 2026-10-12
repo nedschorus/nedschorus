@@ -448,7 +448,7 @@ def run(arguments, timeout=GH_TIMEOUT_SECONDS, cwd=None, check=True):
     """Every subprocess this program makes goes through here, so a test can
     replace one function rather than patching subprocess itself."""
     completed = subprocess.run(
-        arguments, cwd=cwd, capture_output=True, text=True, timeout=timeout,
+        arguments, cwd=cwd, capture_output=True, text=True, errors="surrogateescape", timeout=timeout,
         check=False)
     if check and completed.returncode != 0:
         raise Refused(

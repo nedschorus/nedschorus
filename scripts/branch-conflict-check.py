@@ -35,7 +35,7 @@ MERGE_TREE_CONFLICT = 1
 def run(command):
     """Return (exit status, stripped stdout) without raising."""
     try:
-        done = subprocess.run(command, capture_output=True, text=True)
+        done = subprocess.run(command, capture_output=True, text=True, errors="surrogateescape")
     except (OSError, ValueError) as exc:
         return 127, str(exc)
     return done.returncode, done.stdout.strip()
@@ -430,4 +430,6 @@ def main(argv=None):
 
 
 if __name__ == "__main__":
+    # A path git gave that is not UTF-8 is held with surrogates; print its own bytes back.
+    sys.stdout.reconfigure(errors="surrogateescape")
     sys.exit(main())
