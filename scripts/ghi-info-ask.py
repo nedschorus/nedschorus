@@ -670,7 +670,7 @@ def fast_forward_seat_checkout(seat_dir: Path) -> str:
         # reads git's refusal prose into an operator-facing line.
         try:
             return subprocess.run(["git", *arguments], cwd=str(seat_dir),
-                                  capture_output=True, text=True, errors="surrogateescape", check=False,
+                                  capture_output=True, text=True, check=False,
                                   timeout=timeout, env={**os.environ, "LC_ALL": "C"})
         except (OSError, subprocess.SubprocessError) as error:
             return subprocess.CompletedProcess(

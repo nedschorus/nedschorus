@@ -428,7 +428,7 @@ def run_command(argv, timeout=SHORT_TIMEOUT_SECONDS, cwd=None):
         return 124, "", "timed out after %ss: %s" % (timeout, " ".join(argv))
     return (
         completed.returncode,
-        completed.stdout.decode("utf-8", "surrogateescape"),
+        completed.stdout.decode("utf-8", "replace"),
         completed.stderr.decode("utf-8", "replace"),
     )
 
@@ -1818,6 +1818,4 @@ def exit_status(reports):
 
 
 if __name__ == "__main__":
-    # A path git gave that is not UTF-8 is held with surrogates; print its own bytes back.
-    sys.stdout.reconfigure(errors="surrogateescape")
     sys.exit(main())

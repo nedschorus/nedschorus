@@ -60,7 +60,7 @@ def parse_arguments(argv):
 
 def git(directory, *arguments):
     completed = subprocess.run(
-        ["git", "-C", str(directory), *arguments], capture_output=True, text=True, errors="surrogateescape",
+        ["git", "-C", str(directory), *arguments], capture_output=True, text=True,
         stdin=subprocess.DEVNULL,
         env=run_all_test_suites.environment_without_git_redirecting_variables())
     if completed.returncode != 0:
@@ -125,6 +125,4 @@ def main(argv=None):
 
 
 if __name__ == "__main__":
-    # A path git gave that is not UTF-8 is held with surrogates; print its own bytes back.
-    sys.stdout.reconfigure(errors="surrogateescape")
     sys.exit(main())

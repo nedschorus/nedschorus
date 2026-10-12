@@ -74,7 +74,7 @@ def parse_arguments(argv):
 
 def run(command):
     completed = subprocess.run(
-        command, capture_output=True, text=True, errors="surrogateescape", stdin=subprocess.DEVNULL,
+        command, capture_output=True, text=True, stdin=subprocess.DEVNULL,
         env=run_all_test_suites.environment_without_git_redirecting_variables())
     if completed.returncode != 0:
         raise StepFailed(f"{' '.join(command)} exited {completed.returncode}: "
@@ -169,6 +169,4 @@ def main(argv=None):
 
 
 if __name__ == "__main__":
-    # A path git gave that is not UTF-8 is held with surrogates; print its own bytes back.
-    sys.stdout.reconfigure(errors="surrogateescape")
     sys.exit(main())

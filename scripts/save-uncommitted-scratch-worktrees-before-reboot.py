@@ -119,7 +119,7 @@ def git(arguments, cwd, binary=False):
     if completed.returncode != 0:
         raise SaveFailed(f"git {' '.join(arguments)} in {cwd} exited {completed.returncode}: "
                          f"{completed.stderr.decode(errors='replace').strip()}")
-    return completed.stdout if binary else completed.stdout.decode(errors="surrogateescape")
+    return completed.stdout if binary else completed.stdout.decode(errors="replace")
 
 
 def registered_worktrees(clone):
@@ -330,6 +330,4 @@ def main():
 
 
 if __name__ == "__main__":
-    # A path git gave that is not UTF-8 is held with surrogates; print its own bytes back.
-    sys.stdout.reconfigure(errors="surrogateescape")
     sys.exit(main())

@@ -147,7 +147,7 @@ AGENT_WORKTREE_NAME_PREFIX = "agent-"
 def run_git(repo, *arguments):
     return subprocess.run(
         ["git", "-C", str(repo), *arguments],
-        capture_output=True, text=True, errors="surrogateescape", check=False,
+        capture_output=True, text=True, check=False,
     )
 
 
@@ -420,6 +420,4 @@ def main(argv=None):
 
 
 if __name__ == "__main__":
-    # A path git gave that is not UTF-8 is held with surrogates; print its own bytes back.
-    sys.stdout.reconfigure(errors="surrogateescape")
     sys.exit(main())

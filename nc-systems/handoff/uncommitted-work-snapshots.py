@@ -76,7 +76,7 @@ _git_machine_readable_output_spec.loader.exec_module(git_machine_readable_output
 def run_git(directory, *arguments, environment=None, input_text=None):
     return subprocess.run(
         ["git", "-C", str(directory), *arguments],
-        capture_output=True, text=True, errors="surrogateescape", check=False,
+        capture_output=True, text=True, check=False,
         env=environment, input=input_text,
     )
 
@@ -799,6 +799,4 @@ def main(argv=None):
 
 
 if __name__ == "__main__":
-    # A path git gave that is not UTF-8 is held with surrogates; print its own bytes back.
-    sys.stdout.reconfigure(errors="surrogateescape")
     sys.exit(main())

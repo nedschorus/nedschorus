@@ -1006,11 +1006,16 @@ def case_hook_fingerprint_sees_an_untracked_file_whose_name_is_not_utf8(root):
     after = hook.worktree_fingerprint(clone)
     check("an untracked file whose name is not UTF-8 keeps the fingerprint, and its rewrite changes it",
           before is not None and before != after, f"{before} {after}")
-    finished = subprocess.run([sys.executable, str(LISTER_PATH), "--checkout", str(clone)],
-                              capture_output=True, check=False)
-    check("the lister prints a changed file whose name is not UTF-8 by its own bytes",
-          finished.returncode == 0 and b"caf\xe9.md\tfile-path\t" in finished.stdout,
-          f"exit {finished.returncode}: {finished.stdout[:300]!r} {finished.stderr[:300]!r}")
+    state_root = root / "state-not-utf8"
+    state_root.mkdir()
+    code, context = run_hook(clone, state_root, {"tool_name": "Write", "tool_input": {"file_path": "alpha.md"}})
+    check("with an untracked file whose name is not UTF-8, the hook exits 0 and says the check failed",
+          code == 0 and "failed" in context, f"exit {code}: {context[:300]}")
+    os.remove(name)
+    write(clone, "alpha.md", "A `name-after-the-odd-file-is-gone` here.\n")
+    code, context = run_hook(clone, state_root, {"tool_name": "Write", "tool_input": {"file_path": "alpha.md"}})
+    check("once that file is gone, the hook reports new names again",
+          code == 0 and "name-after-the-odd-file-is-gone" in context, f"exit {code}: {context[:300]}")
 
 def case_hook_reports_failure_once(root):
     lonely = root / "lonely"

@@ -75,7 +75,7 @@ def git_failure_text(subcommand: str, outcome: str, stderr: str = "") -> str:
 def git(arguments, checkout: Path, allowed_exit_codes=(0,)) -> str:
     try:
         finished = subprocess.run(["git", *arguments], cwd=str(checkout), capture_output=True,
-                                  text=True, errors="surrogateescape", check=False, timeout=GIT_CALL_TIMEOUT_SECONDS)
+                                  text=True, check=False, timeout=GIT_CALL_TIMEOUT_SECONDS)
     except subprocess.TimeoutExpired as error:
         raise GitFailure(git_failure_text(arguments[0], "timed out")) from error
     except OSError as error:
@@ -304,6 +304,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    # A path git gave that is not UTF-8 is held with surrogates; print its own bytes back.
-    sys.stdout.reconfigure(errors="surrogateescape")
     sys.exit(main())

@@ -897,23 +897,6 @@ with tempfile.TemporaryDirectory() as scratch:
           [path for path, reason in dead] == [str(gone_path)] and dead[0][1] != "no reason given",
           str(dead))
 
-# A path that is not UTF-8, from a git stub: the Mac's APFS refuses to create one.
-with tempfile.TemporaryDirectory() as stub_directory:
-    stub = Path(stub_directory) / "git"
-    stub.write_bytes(b"#!/bin/sh\nprintf '?? caf\\351.md\\000'\n")
-    stub.chmod(0o755)
-    saved_path = os.environ["PATH"]
-    os.environ["PATH"] = f"{stub_directory}{os.pathsep}{saved_path}"
-    try:
-        discarded, failure = load_clean_worktrees_module().files_a_removal_discards(Path(stub_directory))
-    except UnicodeDecodeError as error:
-        discarded, failure = None, f"UnicodeDecodeError: {error}"
-    finally:
-        os.environ["PATH"] = saved_path
-    check("an uncommitted file whose name is not UTF-8 is listed by its own bytes",
-          failure is None and [os.fsencode(path) for path in discarded] == [b"caf\xe9.md"],
-          f"{discarded} {failure}")
-
 print()
 if failures:
     print(f"{len(failures)} case(s) failed: {', '.join(failures)}")
