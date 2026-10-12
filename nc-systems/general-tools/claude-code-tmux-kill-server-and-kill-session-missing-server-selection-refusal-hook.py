@@ -36,6 +36,10 @@ COMMAND_RUNNING_PREFIXES = ("env", "command", "exec", "nohup", "nice", "time",
                             "timeout")
 PREFIX_VALUE_OPTIONS = {"-u", "--unset", "-n", "-s", "--signal", "-k",
                         "--kill-after"}
+# A word the shell would expand; the tokenizer has dropped its quotes, so the
+# hook cannot rebuild the word exactly and gives no suggested command for it.
+SHELL_EXPANSION_PATTERN = re.compile(r"[$`*?\[]")
+SAFE_SESSION_COMMAND_WORD_PATTERN = re.compile(r"[A-Za-z0-9_.:@%=+-]+")
 ENVIRONMENT_ASSIGNMENT_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 REDIRECTION_WORD_PATTERN = re.compile(r"^[0-9]*(?:>>|>&|>|<<<|<>|<)")
 
@@ -78,17 +82,17 @@ REFUSAL_WITHOUT_COMMAND_MESSAGE = (
 
 
 SESSION_REFUSAL_TEMPLATE = (
-    "Refused on purpose: `tmux {kill} -t {target}` names no tmux server, so "
+    "Refused on purpose: `tmux {command}` names no tmux server, so "
     "tmux looks for {target} on the server in $TMUX, which is the tmux server "
     "of the agent-seat you run in (or, with $TMUX unset, the default server, "
     "which holds other sessions). Killing the wrong session there can end "
     "that agent-seat, its supervisor and every agent under it, you included.\n"
     "If you started {target} on a tmux server of your own, run the command "
-    "with that server named, as in: tmux -L <name> {kill} -t {target}\n"
+    "with that server named, as in: tmux -L <name> {command}\n"
     "If you started {target} with a tmux command that named no server, it is "
     "on your agent-seat's server. Check that it is not your agent-seat's own "
     "session, whose name `tmux display-message -p '#S'` prints, and then run: "
-    "tmux -S \"${{TMUX%%,*}}\" {kill} -t {target}\n"
+    "tmux -S \"${{TMUX%%,*}}\" {command}\n"
     "From now on, name the server in every tmux command you run, with "
     "-S <socket path> or -L <name> right after tmux, from the command that "
     "starts the server to the one that kills it."
@@ -193,18 +197,19 @@ def refusal_for(command):
         kill_word = unnamed_server_kill(arguments)
         if kill_word is None:
             continue
+        kept = words_without_redirections(arguments)
         if (tmux_tmpdir and "$" not in tmux_tmpdir and "`" not in tmux_tmpdir
-                and ";" not in arguments):
+                and ";" not in arguments
+                and not any(SHELL_EXPANSION_PATTERN.search(word) for word in kept)):
             socket_path = f"{tmux_tmpdir.rstrip('/')}/tmux-{os.getuid()}/default"
-            kept = words_without_redirections(arguments)
             suggested = " ".join(["tmux", "-S", shlex.quote(socket_path)]
                                  + [shlex.quote(word) for word in kept])
             return REFUSAL_WITH_COMMAND_TEMPLATE.format(
                 kill=f"tmux {kill_word}", tmpdir=tmux_tmpdir, command=suggested)
         target = session_target(arguments)
         if (kill_word.startswith("kill-ses") and target and ";" not in arguments
-                and re.fullmatch(r"[A-Za-z0-9_.:@%=+-]+", target)):
-            return SESSION_REFUSAL_TEMPLATE.format(kill=kill_word, target=target)
+                and all(SAFE_SESSION_COMMAND_WORD_PATTERN.fullmatch(word) for word in kept)):
+            return SESSION_REFUSAL_TEMPLATE.format(command=" ".join(kept), target=target)
         return REFUSAL_WITHOUT_COMMAND_MESSAGE
     return None
 

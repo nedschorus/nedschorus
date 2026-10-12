@@ -99,6 +99,10 @@ def refusal_cases():
         "second tmux command after \\;": "tmux new-session -d -s a \\; kill-server",
         "inside a command substitution": "echo $(tmux kill-server)",
         "after a timeout prefix": "timeout 5 tmux kill-server",
+        "heredoc ended early by a body line EOF, then a bare kill":
+            "cat > probes.txt <<'EOF'\necho a\ncat <<EOF\nEOF\ntmux kill-server\nEOF\n",
+        "heredoc ended early, then env -u TMUX kill":
+            "cat > probes.txt <<'EOF'\ncat <<EOF\ntmux kill-server\nEOF\nenv -u TMUX tmux kill-server\nEOF\n",
     }
     for name, command in refused.items():
         reason = run_main(command)
@@ -114,6 +118,8 @@ def allow_cases():
         "-S after -f": "tmux -f /dev/null -S /tmp/s kill-server",
         "another tmux command": "tmux list-sessions",
         "kill-pane is not a server or session kill": "tmux kill-pane -t x",
+        "kill-server inside a heredoc body that ends at its own delimiter":
+            "cat > probes.txt <<'EOF'\ntmux kill-server\nEOF\n",
         "quoted prose": 'echo "never run tmux kill-server bare"',
         "unquoted echo": "echo tmux kill-server",
         "prose in an argument": 'printf "%s" "note: tmux kill-server"',
@@ -136,6 +142,25 @@ def message_cases():
           session is not None
           and 'tmux -S "${TMUX%%,*}" kill-session -t build-check' in session
           and "display-message -p '#S'" in session, repr(session))
+    kept_flags = run_main("tmux kill-session -a -t keep")
+    check("kill-session: the suggestion keeps -a, which spares the target",
+          kept_flags is not None
+          and 'tmux -S "${TMUX%%,*}" kill-session -a -t keep' in kept_flags
+          and "tmux -L <name> kill-session -a -t keep" in kept_flags, repr(kept_flags))
+    kept_clear = run_main("TMUX_TMPDIR=/tmp/a tmux kill-session -C -t keep")
+    check("kill-session with TMUX_TMPDIR: the exact command keeps -C",
+          kept_clear is not None and f"\ntmux -S /tmp/a/tmux-{os.getuid()}/default kill-session -C -t keep\n" in kept_clear,
+          repr(kept_clear))
+    expanding = run_main('TMUX_TMPDIR=/tmp/a tmux kill-session -t "$session"')
+    check("kill-session with a $variable target: no command that quotes it literally",
+          expanding == guard.REFUSAL_WITHOUT_COMMAND_MESSAGE and "'$session'" not in expanding,
+          repr(expanding))
+    expanding_plain = run_main('tmux kill-session -t "$session"')
+    check("kill-session with a $variable target and no TMUX_TMPDIR: no suggested command",
+          expanding_plain == guard.REFUSAL_WITHOUT_COMMAND_MESSAGE, repr(expanding_plain))
+    odd_word = run_main("tmux kill-session -t keep -a '$x'")
+    check("kill-session with an expanding word besides the target: no suggested command",
+          odd_word == guard.REFUSAL_WITHOUT_COMMAND_MESSAGE, repr(odd_word))
     suggested = 'tmux -S "${TMUX%%,*}" kill-session -t build-check'
     check("kill-session: the suggested command passes the guard", run_main(suggested) is None)
     bare = run_main("tmux kill-server")
