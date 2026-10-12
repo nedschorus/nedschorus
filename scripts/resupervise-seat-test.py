@@ -36,6 +36,18 @@ SUPERVISOR_SCRIPT = (RESUPERVISE_SCRIPT.resolve().parent.parent
 
 failures = []
 
+# Variables Claude Code sets for an agent-session's commands, and one supervisor variable naming
+# the calling agent-seat. TMUX is left out: the script reads it to find the session it runs in.
+CALLING_AGENT_SESSION_TEST_VARIABLES = {
+    "CLAUDECODE": "1",
+    "CLAUDE_CODE_SESSION_ID": "calling-session",
+    "CLAUDE_CODE_CHILD_SESSION": "1",
+    "CLAUDE_CODE_MESSAGING_SOCKET": "/run/user/1000/cc-socks/calling.sock",
+    "CLAUDE_CODE_MESSAGING_TOKEN": "calling-token",
+    "CLAUDE_CODE_SESSION_ATTENDED": "0",
+    "NEDSCHORUS_HANDOFF_SUPERVISOR_AGENT_NAME": "calling-seat",
+}
+
 # Set by isolate_tmux_for_this_run(): an empty config file every server this suite starts reads.
 PRIVATE_TMUX_CONFIG = None
 
@@ -370,9 +382,11 @@ def run_end_to_end_case(workspace: Path):
     isolated = workspace / "isolated"
     copied = isolated / "resupervise-seat.py"
     launcher_record = workspace / "launcher-ran.txt"
+    launcher_environment_record = workspace / "launcher-environment.txt"
     stub_launcher = isolated / "launch-claude-mac"
     stub_launcher.write_text(
-        f'#!/bin/sh\necho "ran $1" >> {launcher_record}\n', encoding="utf-8"
+        f'#!/bin/sh\necho "ran $1" >> {launcher_record}\n'
+        f'env > {launcher_environment_record}\n', encoding="utf-8"
     )
     stub_launcher.chmod(0o755)
 
@@ -409,14 +423,23 @@ def run_end_to_end_case(workspace: Path):
         return
 
     try:
+        # Run as from another agent-session's shell, whose variables must not reach the seat.
         result = subprocess.run(
             [sys.executable, str(copied), session,
              "--handoff-dir", str(workspace), "--agents-root", str(workspace / "agents")],
             capture_output=True, text=True, check=False,
+            env={**os.environ, **CALLING_AGENT_SESSION_TEST_VARIABLES},
         )
         check("the proceed path runs the launcher",
               launcher_record.is_file() and session in launcher_record.read_text(),
               result.stdout + result.stderr)
+        launcher_environment = {
+            line.split("=", 1)[0] for line in (
+                launcher_environment_record.read_text().splitlines()
+                if launcher_environment_record.is_file() else [])}
+        leaked = sorted(set(CALLING_AGENT_SESSION_TEST_VARIABLES) & launcher_environment)
+        check("the launcher gets none of the calling agent-session's variables",
+              launcher_environment_record.is_file() and not leaked, leaked)
         still_there = subprocess.run(
             ["tmux", "-L", "default", "has-session", "-t", f"={session}"],
             capture_output=True, text=True, check=False,
