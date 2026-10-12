@@ -123,7 +123,8 @@ REMOVE_THE_VARIABLES_ANOTHER_WAY = {
 # to read another file fails its "exits 0" case until the file is listed.
 SUITES_RUN_WITH_GIT_DIR = {
     "scripts/dangling-path-citation-check-test.py": (
-        "scripts/dangling-path-citation-check.py", "scripts/md-drift-lint.py"),
+        "scripts/dangling-path-citation-check.py", "scripts/md-drift-lint.py",
+        "nc-systems/general-tools/git-machine-readable-output-runner-and-parser-common.py"),
 }
 SUITE_RUN_WITH_EVERY_VARIABLE = "scripts/code-review-codex-cell-test.py"
 FILES_THE_SUITE_RUN_WITH_EVERY_VARIABLE_READS = (
