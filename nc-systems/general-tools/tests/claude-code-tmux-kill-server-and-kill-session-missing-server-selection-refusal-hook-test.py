@@ -103,6 +103,23 @@ def refusal_cases():
             "cat > probes.txt <<'EOF'\necho a\ncat <<EOF\nEOF\ntmux kill-server\nEOF\n",
         "heredoc ended early, then env -u TMUX kill":
             "cat > probes.txt <<'EOF'\ncat <<EOF\ntmux kill-server\nEOF\nenv -u TMUX tmux kill-server\nEOF\n",
+        "after do, as a real agent typed it": 'for s in a b; do tmux kill-session -t "$s"; done',
+        "after then": "if true; then TMUX_TMPDIR=/tmp/a tmux kill-server; fi",
+        "after else": "if false; then :; else tmux kill-server; fi",
+        "after !": "! tmux kill-server",
+        "inside { }": "{ tmux kill-server; }",
+        "inside ( )": "( tmux kill-server )",
+        "after time": "time tmux kill-server",
+        "after sudo": "sudo tmux kill-server",
+        "after xargs": "printf '%s\\n' a | xargs tmux kill-session -t",
+        "after env -C and its value": "env -C /tmp tmux kill-server",
+        "a full path to tmux": "/usr/bin/tmux kill-server",
+        "a value flag skipped before the command": "tmux -f /dev/null kill-server",
+        "a grouped flag whose last letter takes a value": "tmux -2f /dev/null kill-server",
+        "a redirection before the command": "tmux 2>/dev/null kill-server",
+        "a redirection written apart, before the command": "tmux 2> /dev/null kill-server",
+        "a later command after a word ending in ;": "tmux new -d -s a x\\; kill-server",
+        "a later command after a quoted word ending in ;": "tmux new -d 'sleep 1;' kill-server",
     }
     for name, command in refused.items():
         reason = run_main(command)
@@ -116,6 +133,12 @@ def allow_cases():
         "-S names the server": "tmux -S /tmp/s kill-server",
         "-S joined to its value": "tmux -S/tmp/s kill-session -t a",
         "-S after -f": "tmux -f /dev/null -S /tmp/s kill-server",
+        "-L inside a group of flags": "tmux -vL x kill-server",
+        "-L joined in a group": "tmux -vLx kill-server",
+        "-L after a redirection": "tmux 2>/dev/null -L x kill-server",
+        "-S after env -u TMUX": "env -u TMUX tmux -S /tmp/s kill-server",
+        "a session whose name starts with kill": "tmux -L x new -d -s kill-session-demo",
+        "kill-server as the value of -f": "tmux -f kill-server list-sessions",
         "another tmux command": "tmux list-sessions",
         "kill-pane is not a server or session kill": "tmux kill-pane -t x",
         "kill-server inside a heredoc body that ends at its own delimiter":
@@ -123,8 +146,6 @@ def allow_cases():
         "quoted prose": 'echo "never run tmux kill-server bare"',
         "unquoted echo": "echo tmux kill-server",
         "prose in an argument": 'printf "%s" "note: tmux kill-server"',
-        "the session command the refusal suggests":
-            'tmux -S "${TMUX%%,*}" kill-session -t build-check',
     }
     for name, command in allowed.items():
         reason = run_main(command)
@@ -138,34 +159,53 @@ def message_cases():
     check("with TMUX_TMPDIR: gives the exact command, without the redirection",
           with_tmpdir is not None and f"\n{expected}\n" in with_tmpdir, repr(with_tmpdir))
     session = run_main("tmux kill-session -t build-check")
-    check("kill-session: names the target and the command on the agent-seat's server",
-          session is not None
-          and 'tmux -S "${TMUX%%,*}" kill-session -t build-check' in session
-          and "display-message -p '#S'" in session, repr(session))
-    kept_flags = run_main("tmux kill-session -a -t keep")
-    check("kill-session: the suggestion keeps -a, which spares the target",
-          kept_flags is not None
-          and 'tmux -S "${TMUX%%,*}" kill-session -a -t keep' in kept_flags
-          and "tmux -L <name> kill-session -a -t keep" in kept_flags, repr(kept_flags))
+    check("kill-session with no TMUX_TMPDIR: no command aimed at the agent-seat's own server",
+          session == guard.REFUSAL_WITHOUT_COMMAND_MESSAGE and "TMUX%%" not in session,
+          repr(session))
+    all_but = run_main("tmux kill-session -a -t keep")
+    check("kill-session -a: no suggested command, since -a kills every other session there",
+          all_but == guard.REFUSAL_WITHOUT_COMMAND_MESSAGE, repr(all_but))
     kept_clear = run_main("TMUX_TMPDIR=/tmp/a tmux kill-session -C -t keep")
     check("kill-session with TMUX_TMPDIR: the exact command keeps -C",
           kept_clear is not None and f"\ntmux -S /tmp/a/tmux-{os.getuid()}/default kill-session -C -t keep\n" in kept_clear,
           repr(kept_clear))
+    kept_all = run_main("TMUX_TMPDIR=/tmp/a tmux kill-session -a -t keep")
+    check("kill-session -a with TMUX_TMPDIR: the exact command names the private server and keeps -a",
+          kept_all is not None and f"\ntmux -S /tmp/a/tmux-{os.getuid()}/default kill-session -a -t keep\n" in kept_all,
+          repr(kept_all))
     expanding = run_main('TMUX_TMPDIR=/tmp/a tmux kill-session -t "$session"')
     check("kill-session with a $variable target: no command that quotes it literally",
           expanding == guard.REFUSAL_WITHOUT_COMMAND_MESSAGE and "'$session'" not in expanding,
           repr(expanding))
-    expanding_plain = run_main('tmux kill-session -t "$session"')
-    check("kill-session with a $variable target and no TMUX_TMPDIR: no suggested command",
-          expanding_plain == guard.REFUSAL_WITHOUT_COMMAND_MESSAGE, repr(expanding_plain))
-    odd_word = run_main("tmux kill-session -t keep -a '$x'")
+    odd_word = run_main("TMUX_TMPDIR=/tmp/a tmux kill-session -t keep -a '$x'")
     check("kill-session with an expanding word besides the target: no suggested command",
           odd_word == guard.REFUSAL_WITHOUT_COMMAND_MESSAGE, repr(odd_word))
-    suggested = 'tmux -S "${TMUX%%,*}" kill-session -t build-check'
-    check("kill-session: the suggested command passes the guard", run_main(suggested) is None)
+    through_env = run_main("env TMUX_TMPDIR=/tmp/a tmux kill-server")
+    check("TMUX_TMPDIR set through env: gives the exact command",
+          through_env is not None and f"\ntmux -S /tmp/a/tmux-{os.getuid()}/default kill-server\n" in through_env,
+          repr(through_env))
+    apart = run_main("TMUX_TMPDIR=/tmp/a tmux kill-server 2> /dev/null")
+    check("a redirection written apart from its target is left out of the exact command",
+          apart is not None and f"\ntmux -S /tmp/a/tmux-{os.getuid()}/default kill-server\n" in apart
+          and "/dev/null" not in apart, repr(apart))
+    dollar = run_main("TMUX_TMPDIR=$HOME/x tmux kill-server")
+    check("TMUX_TMPDIR holding $: no exact command",
+          dollar == guard.REFUSAL_WITHOUT_COMMAND_MESSAGE, repr(dollar))
+    backtick = run_main("TMUX_TMPDIR=`pwd`/x tmux kill-server")
+    check("TMUX_TMPDIR holding a backtick: no exact command",
+          backtick == guard.REFUSAL_WITHOUT_COMMAND_MESSAGE, repr(backtick))
+    unknown_user = run_main("TMUX_TMPDIR=~no-such-user-tkg/x tmux kill-server")
+    check("TMUX_TMPDIR with a ~user the hook cannot expand: no exact command",
+          unknown_user == guard.REFUSAL_WITHOUT_COMMAND_MESSAGE, repr(unknown_user))
+    tilde = run_main("TMUX_TMPDIR=~/x tmux kill-server")
+    expanded = os.path.expanduser("~/x")
+    check("TMUX_TMPDIR starting with ~: the exact command holds the expanded path, not a quoted ~",
+          tilde is not None and f"\ntmux -S {expanded}/tmux-{os.getuid()}/default kill-server\n" in tilde
+          and "'~" not in tilde, repr(tilde))
     bare = run_main("tmux kill-server")
     for line in ("If you started a tmux server of your own",
-                 "If you started no tmux server of your own",
+                 "If you started a session with a tmux command that named no server",
+                 "If you started no tmux server or session of your own",
                  "From now on, name the server in every tmux command"):
         check(f"bare kill-server: carries the line {line!r}",
               bare is not None and line in bare, repr(bare))
