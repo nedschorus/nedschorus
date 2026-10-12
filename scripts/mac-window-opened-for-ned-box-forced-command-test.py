@@ -196,6 +196,24 @@ check("through the real opener's dry run, the AppleScript runs ssh back to ned-b
       result.returncode == 0 and "open-iterm-window-running-command ssh -t -- nedlern@ned-box tmux attach -t merge-lane-2" in result.stdout,
       result.stdout + result.stderr)
 
+result, opened, log = run_program("open-agent-seat-window merge-lane-2")
+check("an open-agent-seat-window request exits 0", result.returncode == 0, result.stderr)
+check("an open-agent-seat-window request hands the opener this checkout's launch-claude-ubuntu and the seat",
+      opened == [str(PROGRAM_PATH.with_name("launch-claude-ubuntu")), "merge-lane-2"], opened)
+check("an open-agent-seat-window request is logged before its window opens",
+      log.index(" accepted 'open-agent-seat-window merge-lane-2'") < log.index(" opened "), log)
+
+for request in ["open-agent-seat-window", "open-agent-seat-window a b", "open-agent-seat-window -v",
+                "open-agent-seat-window .hidden", "open-agent-seat-window a;b", "open-agent-seat-window " + "a" * 65]:
+    result, opened, log = run_program(request)
+    check(f"a refused open-agent-seat-window request opens nothing, exits 2, and names --agent-seat: {request[:40]!r}",
+          opened is None and result.returncode == 2 and "no window was opened, because" in result.stderr
+          and "open-mac-window-from-ned-box.py --agent-seat <seat>, naming one agent-seat" in result.stderr
+          and "Send a request of the form" not in result.stderr,
+          (result.returncode, opened, result.stderr))
+check("a refused window request names the --agent-seat form too",
+      "open-mac-window-from-ned-box.py --agent-seat <seat>" in run_program("open-windowx tmux")[0].stderr)
+
 result, opened, log = run_program("open-in-typora tmux")
 check("an open-in-typora request opens no window", opened is None, opened)
 check("a window request that is refused names the open-in-typora form too",

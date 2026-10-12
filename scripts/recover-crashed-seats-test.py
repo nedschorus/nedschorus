@@ -52,6 +52,17 @@ recovery.agents_root_is_movable_on_this_machine = lambda: True
 # one through --checkout.
 recovery.durable_checkout = SCRIPT_PATH.resolve().parent.parent
 
+# A real run on ned-box opens a window on the user's Mac after each seat it brings
+# up. No case may reach the Mac: every case records its window requests here, the
+# "MAC WINDOW:" cases put the real opener back on purpose behind a stub opener, and
+# an ssh that reaches the real opener anyway is a program that always fails.
+real_agent_seat_mac_window_open_unless_tmux_client_already_attached = (
+    recovery.agent_seat_mac_window_open_unless_tmux_client_already_attached)
+mac_window_requests = []
+recovery.agent_seat_mac_window_open_unless_tmux_client_already_attached = (
+    lambda name: mac_window_requests.append(name) or (True, "a window onto it opened on the Mac"))
+os.environ["NEDSCHORUS_SSH_PROGRAM"] = "false"
+
 failures = []
 
 # What Claude Code 2.1.296 sets for an agent-session's commands, plus the tmux and supervisor
@@ -191,6 +202,15 @@ def real_subprocess_run_help():
 
 def patch(monkey_target, value):
     setattr(recovery, monkey_target, value)
+
+
+def as_main_reports_it(line: str, name: str = "seat-a") -> str:
+    """A line recover_seat returns, as main reports it: on ned-box main puts the window
+    clause from the suite's stub opener before the reach clause."""
+    reach = recovery.reach_clause_for_a_running_seat(name)
+    if recovery.launcher_path() is not None or not line.endswith(reach):
+        return line
+    return line[:-len(reach)] + "; a window onto it opened on the Mac" + reach
 
 
 def all_dead():
@@ -525,8 +545,8 @@ def run_reach_clause_cases(root: Path):
     machines = [
         ("the Mac", lambda: mac_launcher, "; reach it with: launch-claude-mac seat-a"),
         ("ned-box", lambda: None,
-         "; reach it with: launch-claude-ubuntu seat-a from the Mac, "
-         "or tmux -L seat-a attach -t seat-a here"),
+         "; reach it with: /Users/el/Projects/nedschorus/scripts/launch-claude-ubuntu seat-a "
+         "from the Mac, or tmux -L seat-a attach -t seat-a here"),
     ]
     try:
         for machine, launcher, expected_clause in machines:
@@ -606,6 +626,224 @@ def run_seat_listing_cases(root: Path):
     check("the seat listing leaves out a directory that never held a seat, and keeps one with a "
           "supervisor state, a handoff or transcripts",
           listed == ["had-a-handoff", "had-a-supervisor", "had-transcripts"], repr(listed))
+
+
+def run_mac_window_cases(root: Path):
+    """On ned-box, a seat a run brings up gets a window on the user's Mac attached to it."""
+    real_launcher_path = recovery.launcher_path
+    real_run_tmux = recovery.run_tmux
+    real_subprocess_run = recovery.subprocess.run
+    real_seat_supervisor_confirmed_by_ps = recovery.seat_supervisor_confirmed_by_ps
+    reach = ("; reach it with: /Users/el/Projects/nedschorus/scripts/launch-claude-ubuntu seat-a "
+             "from the Mac, or tmux -L seat-a attach -t seat-a here")
+    opener_commands = []
+
+    def tmux_reports_clients(client_lines, returncode=0, error_text="", cannot_answer=False):
+        def fake_run_tmux(*arguments, socket_name=None, environment=None):
+            if arguments[:1] == ("list-clients",):
+                if cannot_answer:
+                    return None
+                return subprocess.CompletedProcess(["tmux"], returncode, stdout=client_lines,
+                                                   stderr=error_text)
+            return real_run_tmux(*arguments, socket_name=socket_name, environment=environment)
+        return fake_run_tmux
+
+    def opener_answers(returncode, output="", error=None, error_output=""):
+        def fake_run(command, **_):
+            opener_commands.append(command)
+            if error is not None:
+                raise error
+            return subprocess.CompletedProcess(command, returncode, stdout=output,
+                                               stderr=error_output)
+        return fake_run
+
+    def recover_through_main(workspace, *extra):
+        output = io.StringIO()
+        with redirect_stdout(output), redirect_stderr(io.StringIO()):
+            exit_code = recovery.main([workspace.name, *extra,
+                                       "--agents-root", str(workspace.agents_root),
+                                       "--handoff-dir", str(workspace.handoffs),
+                                       "--projects-root", str(workspace.projects)])
+        return exit_code, output.getvalue()
+
+    try:
+        recovery.launcher_path = lambda: None
+        patch("agent_seat_mac_window_open_unless_tmux_client_already_attached",
+              real_agent_seat_mac_window_open_unless_tmux_client_already_attached)
+
+        # A restart that came up: the window opens, the report says so, the reach
+        # clause stays last, and the run exits 0.
+        workspace = Workspace(root / "mac-window-opened")
+        all_dead()
+        capture_launches(workspace)
+        write_transcript(workspace.project_directory(), "crashed-session", "real work", records=6)
+        patch("run_tmux", tmux_reports_clients(""))
+        recovery.subprocess.run = opener_answers(0)
+        opener_commands.clear()
+        exit_code, output = recover_through_main(workspace)
+        recovery.subprocess.run = real_subprocess_run
+        check("MAC WINDOW: after a restart that came up, the opener is asked for the seat's "
+              "reconnecting launch-claude-ubuntu window",
+              len(opener_commands) == 1
+              and opener_commands[0][1] == str(recovery.WINDOW_SENDER_PATH)
+              and opener_commands[0][2:] == ["--agent-seat", "seat-a"],
+              opener_commands)
+        check("MAC WINDOW: the report says the window opened, keeps the reach clause last, "
+              "and the run exits 0",
+              exit_code == 0 and "; a window onto it opened on the Mac" + reach in output
+              and output.rstrip().endswith(reach), (exit_code, output))
+
+        # The opener fails: the restart still counts, the report names the failure,
+        # the opener's last line and the by-hand command, and the run exits 3.
+        workspace = Workspace(root / "mac-window-not-opened")
+        all_dead()
+        capture_launches(workspace)
+        write_transcript(workspace.project_directory(), "crashed-session", "real work", records=6)
+        patch("run_tmux", tmux_reports_clients(""))
+        recovery.subprocess.run = opener_answers(
+            1, "open-mac-window-from-ned-box: could not reach the Mac at el@mac, so no window "
+               "was opened: ssh: connect to host mac port 22: Operation timed out.\n"
+               "Tell the user what this says, and the command you wanted shown, so he can "
+               "run it himself.\n")
+        exit_code, output = recover_through_main(workspace)
+        recovery.subprocess.run = real_subprocess_run
+        log_text = (workspace.handoffs / "recover-crashed-seats-log.txt").read_text(
+            encoding="utf-8") if (workspace.handoffs / "recover-crashed-seats-log.txt").exists() else ""
+        check("MAC WINDOW: an opener failure leaves the restart counted, names WINDOW NOT "
+              "OPENED, the opener's cause line and the Mac command, and exits 3",
+              exit_code == recovery.ALL_AGENT_SEATS_RECOVERED_BUT_MAC_WINDOW_OPEN_FAILED_EXIT_STATUS == 3
+              and "relaunched resuming crashed-session" in output
+              and "WINDOW NOT OPENED on the Mac" in output
+              and ("exited 1: open-mac-window-from-ned-box: could not reach the Mac at el@mac, "
+                   "so no window was opened: ssh: connect to host mac port 22: Operation timed "
+                   "out. The seat is running") in output
+              and "Tell the user what this says" not in output
+              and "/Users/el/Projects/nedschorus/scripts/launch-claude-ubuntu seat-a" in output
+              and output.count("/Users/el/Projects/nedschorus/scripts/launch-claude-ubuntu seat-a") == 1
+              and (f"open the seat's window by running on ned-box `python3 "
+                   f"{recovery.WINDOW_SENDER_PATH} --agent-seat seat-a`"
+                   in output)
+              and output.rstrip().endswith(reach)
+              and "WINDOW NOT OPENED" in log_text,
+              (exit_code, output, log_text))
+        check("MAC WINDOW: a window failure is not counted as a seat left down",
+              not any(marker in output for marker in recovery.SEAT_NOT_RECOVERED_REPORT_MARKERS),
+              output)
+
+        # The opener cannot be run at all: reported the same way.
+        workspace = Workspace(root / "mac-window-opener-missing")
+        all_dead()
+        capture_launches(workspace)
+        patch("run_tmux", tmux_reports_clients(""))
+        recovery.subprocess.run = opener_answers(0, error=OSError("no such file"))
+        exit_code, output = recover_through_main(workspace)
+        recovery.subprocess.run = real_subprocess_run
+        check("MAC WINDOW: an opener that cannot run is reported, and the run exits 3",
+              exit_code == 3 and "WINDOW NOT OPENED" in output and "no such file" in output,
+              (exit_code, output))
+
+        # The Mac opened the window but warned on stderr: the warning stays in the report.
+        workspace = Workspace(root / "mac-window-opened-with-warning")
+        all_dead()
+        capture_launches(workspace)
+        patch("run_tmux", tmux_reports_clients(""))
+        recovery.subprocess.run = opener_answers(
+            0, "opened\n", error_output="mac-window-opened-for-ned-box-forced-command: the window "
+            "opened, but its outcome could not be added to the request log: disk full\n")
+        exit_code, output = recover_through_main(workspace)
+        recovery.subprocess.run = real_subprocess_run
+        check("MAC WINDOW: a window the Mac opened with a warning keeps the warning in the "
+              "report, and the run exits 0",
+              exit_code == 0 and "a window onto it opened on the Mac, which also reported: "
+              "mac-window-opened-for-ned-box-forced-command: the window opened, but its outcome "
+              "could not be added to the request log: disk full" + reach in output,
+              (exit_code, output))
+
+        # tmux cannot say whether a window is attached: no window, reported, exit 3.
+        for case_name, fake in (
+                ("tmux cannot answer", tmux_reports_clients("", cannot_answer=True)),
+                ("list-clients fails", tmux_reports_clients("", returncode=1,
+                                                            error_text="no server running"))):
+            workspace = Workspace(root / f"mac-window-probe-failed-{case_name.split()[0]}")
+            all_dead()
+            capture_launches(workspace)
+            patch("run_tmux", fake)
+            recovery.subprocess.run = opener_answers(0)
+            opener_commands.clear()
+            exit_code, output = recover_through_main(workspace)
+            recovery.subprocess.run = real_subprocess_run
+            check(f"MAC WINDOW: when {case_name}, no window is opened, the report says why, "
+                  "and the run exits 3",
+                  exit_code == 3 and not opener_commands
+                  and "WINDOW NOT OPENED on the Mac — no window was opened, because whether one "
+                      "is already attached is unknown" in output
+                  and (case_name != "list-clients fails" or "no server running" in output),
+                  (exit_code, opener_commands, output))
+
+        # A window already attached: no second window.
+        workspace = Workspace(root / "mac-window-already-attached")
+        all_dead()
+        capture_launches(workspace)
+        patch("run_tmux", tmux_reports_clients("/dev/pts/7\n"))
+        recovery.subprocess.run = opener_answers(0)
+        opener_commands.clear()
+        exit_code, output = recover_through_main(workspace)
+        recovery.subprocess.run = real_subprocess_run
+        check("MAC WINDOW: a seat with a window already attached gets no second window",
+              exit_code == 0 and not opener_commands
+              and "a window was already attached to it, so no other was opened" in output,
+              (exit_code, opener_commands, output))
+
+        # A seat that did not come up, a seat already running, a dry run, and the Mac:
+        # no window is asked for.
+        patch("agent_seat_mac_window_open_unless_tmux_client_already_attached",
+              lambda name: mac_window_requests.append(name) or (True, "a window onto it opened on the Mac"))
+        workspace = Workspace(root / "mac-window-did-not-come-up")
+        all_dead()
+        capture_launches(workspace)
+        seat_comes_up(False, "a supervisor started and stopped again within 6s")
+        mac_window_requests.clear()
+        exit_code, output = recover_through_main(workspace)
+        check("MAC WINDOW: a seat that did not come up gets no window",
+              exit_code == 1 and not mac_window_requests
+              and "LAUNCHED BUT DID NOT COME UP" in output, (exit_code, output))
+
+        workspace = Workspace(root / "mac-window-already-running")
+        patch("tmux_session_alive_anywhere", lambda name: (True, "tmux session 'seat-a' is alive"))
+        patch("seat_supervisor_confirmed_by_ps",
+              lambda name, lock_path: (recovery.SUPERVISOR_CONFIRMED_BY_PS, "it is the supervisor"))
+        capture_launches(workspace)
+        mac_window_requests.clear()
+        exit_code, output = recover_through_main(workspace)
+        check("MAC WINDOW: a seat already running gets no window from recovery",
+              not mac_window_requests and "relaunched" not in output, (exit_code, output))
+
+        patch("seat_supervisor_confirmed_by_ps", real_seat_supervisor_confirmed_by_ps)
+        workspace = Workspace(root / "mac-window-dry-run")
+        all_dead()
+        capture_launches(workspace)
+        mac_window_requests.clear()
+        exit_code, output = recover_through_main(workspace, "--dry-run")
+        check("MAC WINDOW: a dry run asks for no window",
+              not mac_window_requests and ": would " in output, (exit_code, output))
+
+        recovery.launcher_path = lambda: Path("/fake/scripts/launch-claude-mac")
+        workspace = Workspace(root / "mac-window-on-the-mac")
+        all_dead()
+        capture_launches(workspace)
+        mac_window_requests.clear()
+        exit_code, output = recover_through_main(workspace)
+        check("MAC WINDOW: on the Mac recovery asks ned-box's opener for nothing",
+              exit_code == 0 and not mac_window_requests, (exit_code, output))
+    finally:
+        recovery.launcher_path = real_launcher_path
+        recovery.subprocess.run = real_subprocess_run
+        patch("run_tmux", real_run_tmux)
+        patch("seat_supervisor_confirmed_by_ps", real_seat_supervisor_confirmed_by_ps)
+        all_dead()
+        patch("agent_seat_mac_window_open_unless_tmux_client_already_attached",
+              lambda name: mac_window_requests.append(name) or (True, "a window onto it opened on the Mac"))
+        seat_comes_up()
 
 
 def run_came_up_cases(root: Path):
@@ -1779,11 +2017,17 @@ with tempfile.TemporaryDirectory() as temporary:
               and window_launches[-1][1] == "--resume-session-id main-window",
               window_launches[-1])
 
-        # The Ubuntu box is headless and has no iTerm2 or launch-claude-mac:
-        # refused with the reason, never silently downgraded to detached.
+        # On ned-box every seat a run brings up gets a window on the Mac, so the
+        # flag is accepted there and changes nothing: the seat launches detached
+        # and its window on the Mac is requested after it comes up.
         recovery.launcher_path = lambda: None
-        errors = io.StringIO()
-        with redirect_stderr(errors):
+        workspace = Workspace(root / "window-main-ned-box")
+        all_dead()
+        write_transcript(workspace.project_directory(), "main-window-box",
+                         "real work", records=5)
+        detached_before, windows_before = len(detached_launches), len(window_launches)
+        mac_window_requests.clear()
+        with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
             try:
                 exit_code = recovery.main([workspace.name, "--open-iterm-window-per-seat",
                                            "--agents-root", str(workspace.agents_root),
@@ -1791,9 +2035,13 @@ with tempfile.TemporaryDirectory() as temporary:
                                            "--projects-root", str(workspace.projects)])
             except SystemExit as stop_request:
                 exit_code = stop_request.code
-        check("WINDOW: refused off macOS, with the reason",
-              exit_code == 2 and "macOS" in errors.getvalue(),
-              (exit_code, errors.getvalue()))
+        check("WINDOW: on ned-box the flag is accepted, the seat launches detached and "
+              "its window on the Mac is requested",
+              exit_code == 0 and len(detached_launches) == detached_before + 1
+              and len(window_launches) == windows_before
+              and mac_window_requests == [workspace.name],
+              (exit_code, detached_launches[detached_before:],
+               window_launches[windows_before:], mac_window_requests))
 
         # iTerm2's parser takes one level of quoting and has no POSIX '\''
         # escape (measured 2026-09-02, open-iterm-window-running-command), so
@@ -2616,6 +2864,7 @@ with tempfile.TemporaryDirectory() as temporary:
     run_came_up_cases(root)
     run_reach_clause_cases(root)
     run_seat_listing_cases(root)
+    run_mac_window_cases(root)
 
     # The same thing through recover_seat, on each path that can offer the
     # degraded restart and on one that cannot.
@@ -3626,7 +3875,7 @@ with tempfile.TemporaryDirectory() as temporary:
               ("two-seats-second", "--resume-session-id resume-two-seats-second")]
           and exit_code == 1 and len(logged_lines) == 2
           and "two-seats-first: NOT RELAUNCHED AFTER A RECORDED EXIT" in logged_lines[0]
-          and logged_lines[1].endswith(
+          and logged_lines[1].endswith(as_main_reports_it(
               "two-seats-second: relaunched resuming resume-two-seats-second after its "
               "supervisor recorded at "
               + recovery.supervisor.read_supervisor_state(
@@ -3634,7 +3883,8 @@ with tempfile.TemporaryDirectory() as temporary:
                   recovery.supervisor.AGENT_EXIT_RECORDED_AT_STATE_KEY]
               + " that its agent exited with exit code 1"
               + the_operator_said_to_restart_it_and_nothing_was_closed
-              + recovery.reach_clause_for_a_running_seat("two-seats-second")),
+              + recovery.reach_clause_for_a_running_seat("two-seats-second"),
+              "two-seats-second")),
           (workspace.launches, exit_code, logged_lines))
 
     # --- the leftover idle shell is a question, not a refusal ---------------
@@ -4307,8 +4557,9 @@ with tempfile.TemporaryDirectory() as temporary:
           and [launch[:2] for launch in workspace.launches] == [
               ("seat-a", "--resume-session-id resume-me")]
           and printed[-1:] == [
-              "recover-crashed-seats: seat-a: relaunched resuming resume-me (0KB transcript) "
-              + the_operator_said_to_restart_it]
+              "recover-crashed-seats: " + as_main_reports_it(
+                  "seat-a: relaunched resuming resume-me (0KB transcript) "
+                  + the_operator_said_to_restart_it)]
           and exit_code == 0,
           (events, workspace.launches, printed, exit_code))
 
@@ -4327,8 +4578,9 @@ with tempfile.TemporaryDirectory() as temporary:
           and [launch[:2] for launch in workspace.launches] == [
               ("seat-a", "--resume-session-id resume-me")]
           and printed[-1:] == [
-              "recover-crashed-seats: seat-a: relaunched resuming resume-me (0KB transcript) "
-              + the_operator_said_to_restart_it]
+              "recover-crashed-seats: " + as_main_reports_it(
+                  "seat-a: relaunched resuming resume-me (0KB transcript) "
+                  + the_operator_said_to_restart_it)]
           and exit_code == 0,
           (events, workspace.launches, printed, exit_code))
 
@@ -4409,6 +4661,8 @@ with tempfile.TemporaryDirectory() as temporary:
         "seat-a: relaunched resuming resume-me (0KB transcript) (the operator said to restart "
         "it, so the leftover shell was closed first: the leftover shell was already gone when "
         "it was retired)" + recovery.reach_clause_for_a_running_seat("seat-a"))
+    relaunched_after_the_session_was_gone = as_main_reports_it(
+        relaunched_after_the_session_was_gone)
     check("LEFTOVER SHELL: a session gone while the question waited is not refused: the retire "
           "finds nothing, and the seat is relaunched, its line byte for byte",
           events == ["proof", "question", "proof", "retire"]

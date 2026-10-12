@@ -63,13 +63,15 @@ class Harness:
     """A Watcher's outside world: verdicts to hand out, and every call recorded."""
 
     def __init__(self, log_directory, recovery_result=(0, "merge-lane-2: relaunched resuming x"),
-                 window_exit_codes=None):
+                 window_exit_codes=None, seat_window_results=None):
         self.log_directory = log_directory
         self.state = watcher_module.read_state(log_directory / "no-state-yet.json")
         self.verdicts = {}
         self.assessment_errors = {}
         self.recovery_result = recovery_result
         self.window_exit_codes = list(window_exit_codes or [])
+        self.seat_window_results = list(seat_window_results or [])
+        self.seat_windows = []
         self.recoveries = []
         self.windows = []
         self.died_at = DIED_AT
@@ -93,6 +95,12 @@ class Harness:
         exit_code = self.window_exit_codes.pop(0) if self.window_exit_codes else 0
         return exit_code, "" if exit_code == 0 else "the Mac cannot be reached"
 
+    def open_seat_window(self, seat):
+        self.seat_windows.append(seat)
+        opened = self.seat_window_results.pop(0) if self.seat_window_results else True
+        return opened, ("a window onto it opened on the Mac" if opened
+                        else "open-mac-window-from-ned-box.py exited 1: the Mac cannot be reached")
+
     def run(self, now, seats=("merge-lane-2",)):
         watcher = watcher_module.Watcher(
             state=self.state, now=now, boot_at=BOOT, log_directory=self.log_directory,
@@ -102,7 +110,8 @@ class Harness:
             show_notice_words=lambda path: ["/usr/bin/python3", str(SCRIPT_PATH),
                                             "--show-notice", path],
             stopped_on_purpose=lambda seat, detail: self.on_purpose,
-            recorded_exit_question=recovery_module.restart_question_for_a_seat_with_a_recorded_exit)
+            recorded_exit_question=recovery_module.restart_question_for_a_seat_with_a_recorded_exit,
+            open_seat_window=self.open_seat_window)
         watcher.run(list(seats))
 
     def decisions(self):
@@ -134,9 +143,11 @@ def run_decision_cases(root: Path):
           harness.recoveries == ["merge-lane-2"], repr(harness.recoveries))
     check("a restart the watcher carried out shows the user no notice",
           harness.notices() == [], repr(harness.notices()))
-    check("a restart opens a window on the Mac attached straight to the seat's session",
-          harness.windows == [["tmux", "-L", "merge-lane-2", "attach", "-t", "merge-lane-2"]],
-          repr(harness.windows))
+    check("a restart recovery reports with exit 0 opens no window of the watcher's own: "
+          "recovery opened it",
+          harness.windows == [] and harness.seat_windows == []
+          and harness.state["pending_notices"] == [],
+          repr((harness.windows, harness.seat_windows, harness.state["pending_notices"])))
     check("the restart is logged with the recovery's output",
           any(entry["decision"] == "restarted" and "relaunched" in entry["recovery_output"]
               for entry in harness.decisions()), repr(harness.decisions()))
@@ -270,24 +281,59 @@ def run_decision_cases(root: Path):
           and not harness.state["seats"]["merge-lane-2"].get("recovery_attempts"),
           repr(harness.state))
 
-    harness = Harness(root / "mac-unreachable", window_exit_codes=[1, 1])
+    check("the watcher's window-not-opened exit status is recovery's",
+          watcher_module.RECOVERY_WINDOW_NOT_OPENED_EXIT_STATUS
+          == recovery_module.ALL_AGENT_SEATS_RECOVERED_BUT_MAC_WINDOW_OPEN_FAILED_EXIT_STATUS)
+    window_not_opened = (watcher_module.RECOVERY_WINDOW_NOT_OPENED_EXIT_STATUS,
+                         "merge-lane-2: relaunched resuming x; WINDOW NOT OPENED on the Mac")
+    harness = Harness(root / "mac-unreachable", recovery_result=window_not_opened,
+                      seat_window_results=[False, False])
     crash_after_running(harness)
+    check("a restart whose window recovery could not open counts as a restart, not a failure",
+          any(entry["decision"] == "restarted" for entry in harness.decisions())
+          and not any(entry["decision"].startswith("recovery failed")
+                      for entry in harness.decisions())
+          and harness.state["seats"]["merge-lane-2"]["recovery_attempts"][-1]["outcome"]
+          == "restarted", repr(harness.decisions()))
     check("a restarted seat's window the Mac cannot be reached for stays pending, "
           "and is not turned into a notice",
           harness.state["pending_notices"] == [{"attach_seat": "merge-lane-2"}]
-          and harness.notices() == [], repr(harness.state["pending_notices"]))
+          and harness.notices() == [] and harness.seat_windows == ["merge-lane-2"],
+          repr(harness.state["pending_notices"]))
     harness.verdicts["merge-lane-2"] = ("seat-already-running", "restarted")
     harness.run(SEEN_RUNNING + timedelta(minutes=17))
     unopened = [entry for entry in harness.decisions()
                 if entry["decision"].startswith("window not opened")]
     check("the unreachable Mac is logged once, not on every retry",
-          len(unopened) == 1 and len(harness.windows) == 2, repr(harness.decisions()))
+          len(unopened) == 1 and len(harness.seat_windows) == 2, repr(harness.decisions()))
     harness.run(SEEN_RUNNING + timedelta(minutes=18))
-    check("a pending window is opened once the Mac answers, and leaves the pending list",
-          harness.state["pending_notices"] == [] and len(harness.windows) == 3
-          and harness.windows[-1][:2] == ["tmux", "-L"]
+    check("a pending window is opened through recovery's opener once the Mac answers, "
+          "and leaves the pending list",
+          harness.state["pending_notices"] == [] and harness.seat_windows == ["merge-lane-2"] * 3
+          and harness.windows == []
           and any(entry["decision"] == "pending window shown" for entry in harness.decisions()),
           repr(harness.state["pending_notices"]))
+
+    harness = Harness(root / "window-already-attached", recovery_result=window_not_opened,
+                      seat_window_results=[False, None])
+    crash_after_running(harness)
+    harness.verdicts["merge-lane-2"] = ("seat-already-running", "restarted")
+    harness.run(SEEN_RUNNING + timedelta(minutes=17))
+    check("a pending window leaves the list when a window is found already attached",
+          harness.state["pending_notices"] == [], repr(harness.state["pending_notices"]))
+
+    harness = Harness(root / "no-seat-window-opener", recovery_result=window_not_opened)
+    crash_after_running(harness)
+    watcher = watcher_module.Watcher(
+        state=harness.state, now=SEEN_RUNNING + timedelta(minutes=17), boot_at=BOOT,
+        log_directory=harness.log_directory, assess=None, died_at_about=None,
+        transcripts_directory=None, recover=None, open_window=harness.open_window,
+        show_notice_words=None)
+    shown = watcher.show({"attach_seat": "merge-lane-2"})
+    check("a run with no seat-window opener, such as a failed run's report, leaves the "
+          "restarted seat's window pending",
+          shown is False and harness.state["pending_notices"] == [{"attach_seat": "merge-lane-2"}]
+          and harness.windows == [], repr(harness.state["pending_notices"]))
 
     harness = Harness(root / "mac-unreachable-for-a-notice",
                       recovery_result=(1, "merge-lane-2: REFUSED — the durable checkout is missing"),
@@ -560,16 +606,14 @@ def run_window_words_cases(root: Path):
     check("the notice window's words are the interpreter, this program, --show-notice and the notice",
           built_words[2:] == notice_words[2:] and len(built_words) == len(notice_words),
           repr(built_words))
-    attach_words = [word.format(seat="merge-lane-2") for word in watcher_module.ATTACH_COMMAND]
-    for name, words in (("a notice window", notice_words), ("a restarted seat's window", attach_words)):
-        request = " ".join([forced_command.REQUEST_VERB, *words])
-        try:
-            received = forced_command.window_command_words(request)
-            refused = None
-        except forced_command.RequestRefused as error:
-            received, refused = None, str(error)
-        check(f"the Mac's forced command accepts the words of {name}",
-              received == words, refused or repr(received))
+    request = " ".join([forced_command.REQUEST_VERB, *notice_words])
+    try:
+        received = forced_command.window_command_words(request)
+        refused = None
+    except forced_command.RequestRefused as error:
+        received, refused = None, str(error)
+    check("the Mac's forced command accepts the words of a notice window",
+          received == notice_words, refused or repr(received))
 
 
 def run_command_line_cases(root: Path):
@@ -729,7 +773,63 @@ def run_state_cases(root: Path):
           watcher_module.read_state(state_path) == state, state_path.read_text(encoding="utf-8"))
 
 
+def run_watch_wiring_cases(root: Path):
+    """watch() hands the Watcher recovery's seat-window opener, so exit-3 windows are retried."""
+    class FakeRecovery:
+        @staticmethod
+        def default_agents_root():
+            return root / "agents"
+
+        @staticmethod
+        def default_handoff_directory():
+            return root / "handoffs"
+
+        @staticmethod
+        def restart_question_for_a_seat_with_a_recorded_exit(*arguments):
+            return None
+
+        @staticmethod
+        def agent_seat_mac_window_open_unless_tmux_client_already_attached(name):
+            return True, "opened"
+
+        @staticmethod
+        def list_agent_seat_names_with_agent_session_records(*arguments):
+            return []
+
+    class FakeLoginRestart:
+        recovery = FakeRecovery
+        supervisor = object()
+
+        @staticmethod
+        def machine_boot_time():
+            return datetime(2026, 10, 12, tzinfo=timezone.utc)
+
+    built = []
+
+    class RecordingWatcher:
+        def __init__(self, **keyword_arguments):
+            built.append(keyword_arguments)
+
+        def run(self, seat_names):
+            pass
+
+    real_load_module, real_watcher = watcher_module.load_module, watcher_module.Watcher
+    # Stand-ins, so this case reaches no real agent-seat and no window on the Mac.
+    watcher_module.load_module = lambda name, path: FakeLoginRestart
+    watcher_module.Watcher = RecordingWatcher
+    try:
+        (root / "watch-wiring-state").mkdir()
+        watcher_module.watch({}, root / "watch-wiring-state", root / "watch-wiring-log")
+    finally:
+        watcher_module.load_module, watcher_module.Watcher = real_load_module, real_watcher
+    check("watch() passes recovery's seat-window opener to the Watcher as open_seat_window",
+          len(built) == 1 and built[0].get("open_seat_window")
+          is FakeRecovery.agent_seat_mac_window_open_unless_tmux_client_already_attached,
+          repr(built))
+
+
 with tempfile.TemporaryDirectory() as temporary_directory:
+    run_watch_wiring_cases(Path(temporary_directory))
     run_decision_cases(Path(temporary_directory))
     run_handled_crash_cases(Path(temporary_directory))
     run_handled_death_key_cases(Path(temporary_directory))
