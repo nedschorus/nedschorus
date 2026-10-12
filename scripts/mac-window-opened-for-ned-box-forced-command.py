@@ -45,8 +45,10 @@ THE SECOND ACCEPTED SHAPE, a window onto one of ned-box's agent-seats:
     open-agent-seat-window <seat>
 
 - The verb is exactly `open-agent-seat-window`, followed by exactly one word,
-  the agent-seat's name, matching AGENT_SEAT_NAME_PATTERN: letters, digits and
-  `_ . -`, not starting with `-` or `.`, at most 64 characters.
+  the agent-seat's name, matching AGENT_SEAT_NAME_PATTERN: letters, digits,
+  `_` and `-`, not starting with `-`, at most 64 characters. These are the
+  names launch-claude-ubuntu accepts, so no request opens a window that its
+  launcher refuses at once.
 - The window runs this checkout's scripts/launch-claude-ubuntu <seat>, the
   same window the Mac's login restore opens onto each live box seat. That
   launcher reconnects when the ssh connection drops, which a window running
@@ -99,7 +101,8 @@ from pathlib import Path
 PROGRAM = "mac-window-opened-for-ned-box-forced-command"
 REQUEST_VERB = "open-window"
 AGENT_SEAT_WINDOW_VERB = "open-agent-seat-window"
-AGENT_SEAT_NAME_PATTERN = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.-]{0,63}")
+# launch-claude-ubuntu refuses any other seat name; its test checks the two rules agree.
+AGENT_SEAT_NAME_PATTERN = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_-]{0,63}")
 LAUNCH_CLAUDE_UBUNTU_PATH = Path(__file__).with_name("launch-claude-ubuntu")
 SAFE_WORD_PATTERN = re.compile(r"[A-Za-z0-9_./:=@%+,-]+")
 MAXIMUM_WORD_COUNT = 32
@@ -173,8 +176,8 @@ def agent_seat_window_seat_name(request):
             f"{AGENT_SEAT_WINDOW_VERB} takes exactly one agent-seat name, and the request has {len(words) - 1} words after the verb")
     if not AGENT_SEAT_NAME_PATTERN.fullmatch(words[1]):
         raise RequestRefused(
-            "the agent-seat name is empty, over 64 characters, starts with '-' or '.', "
-            "or holds a character outside letters, digits and _ . -")
+            "the agent-seat name is empty, over 64 characters, starts with '-', "
+            "or holds a character other than letters, digits, _ and -")
     return words[1]
 
 

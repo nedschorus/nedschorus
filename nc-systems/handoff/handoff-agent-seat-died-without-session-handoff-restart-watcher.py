@@ -243,7 +243,8 @@ class Watcher:
 
     def __init__(self, *, state, now, boot_at, log_directory, assess, died_at_about,
                  transcripts_directory, recover, open_window, show_notice_words,
-                 stopped_on_purpose=None, recorded_exit_question=None, open_seat_window=None):
+                 stopped_on_purpose=None, recorded_exit_question=None, open_seat_window=None,
+                 seat_session_alive=None):
         self.state = state
         self.stopped_on_purpose = stopped_on_purpose or (lambda seat, detail: False)
         self.recorded_exit_question = recorded_exit_question or (
@@ -260,6 +261,9 @@ class Watcher:
         # recover-crashed-seats.py's opener, which returns (opened, detail), opened None when a
         # window is already attached; None leaves a restarted seat's window pending.
         self.open_seat_window = open_seat_window
+        # recover-crashed-seats.py's tmux_session_alive_anywhere, which returns (alive, detail),
+        # alive None when tmux cannot answer.
+        self.seat_session_alive = seat_session_alive
 
     @property
     def decisions_path(self) -> Path:
@@ -301,6 +305,14 @@ class Watcher:
             else:
                 result, output = self.open_seat_window(window["attach_seat"])
                 opened, exit_code = result is not False, None
+        if not opened and "attach_seat" in window and self.seat_session_gone(window["attach_seat"]):
+            # A window has nothing to attach to; a seat that died is the restart path's to handle.
+            if window in self.state["pending_notices"]:
+                self.state["pending_notices"].remove(window)
+            self.log(window["attach_seat"], "pending window dropped: the seat's tmux session is gone",
+                     window=what, opener_output=output,
+                     next_step="none here: this watcher's crash check restarts the seat if it died")
+            return False
         if opened:
             if window in self.state["pending_notices"]:
                 self.state["pending_notices"].remove(window)
@@ -312,6 +324,13 @@ class Watcher:
             self.log(None, "window not opened on the Mac; retried on every run",
                      window=what, exit_code=exit_code, opener_output=output)
         return False
+
+    def seat_session_gone(self, seat) -> bool:
+        """True only when tmux answered that the seat's session does not exist."""
+        if self.seat_session_alive is None:
+            return False
+        alive, _detail = self.seat_session_alive(seat)
+        return alive is False
 
     def run(self, seat_names):
         for notice in list(self.state["pending_notices"]):
@@ -626,7 +645,8 @@ def watch(environment, state_directory: Path, log_directory: Path) -> int:
         open_window=open_mac_window, show_notice_words=show_notice_words_for_window,
         stopped_on_purpose=stopped_on_purpose_predicate(supervisor, handoff_directory),
         recorded_exit_question=recovery.restart_question_for_a_seat_with_a_recorded_exit,
-        open_seat_window=recovery.agent_seat_mac_window_open_unless_tmux_client_already_attached)
+        open_seat_window=recovery.agent_seat_mac_window_open_unless_tmux_client_already_attached,
+        seat_session_alive=recovery.tmux_session_alive_anywhere)
     try:
         watcher.run(recovery.list_agent_seat_names_with_agent_session_records(
             agents_root, handoff_directory, projects_root))
