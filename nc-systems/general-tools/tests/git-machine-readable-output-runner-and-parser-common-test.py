@@ -146,6 +146,14 @@ def tree_and_grep_cases(repository):
     except ValueError as error:
         check("grep: a line with no path and line number is refused",
               "Binary file picture.png matches" in str(error), error)
+    for unreadable in (b"notes.md\x007", b"notes.md matches\n"):
+        try:
+            git_output.grep_matches(unreadable)
+            check(f"grep: a record without its path and line-number NULs is refused: {unreadable!r}",
+                  False, "no exception")
+        except ValueError as error:
+            check(f"grep: a record without its path and line-number NULs is refused: {unreadable!r}",
+                  "ends without a path and line number" in str(error), error)
     newline_path = git_output.grep_matches(b"nl\nname.txt\x002\x00needle\nb.md\x001\x00x\n")
     check("grep: a path holding a newline is read whole",
           newline_path == [("nl\nname.txt", 2, "needle"), ("b.md", 1, "x")], newline_path)
