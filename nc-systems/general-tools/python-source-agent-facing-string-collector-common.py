@@ -3,11 +3,15 @@
 files are tests.
 
 An agent-facing-message is recognized by its form alone: a string printed or
-written to sys.stdout or sys.stderr, a string in a raise statement, a string
-assigned to a name ending in one of AGENT_STRING_NAME_SUFFIXES, and the module
-docstring of a file that mentions __doc__, which argparse prints for --help.
-A message built any other way, such as text put straight into a hook's JSON
-output, is not found.
+written to sys.stdout or sys.stderr; a string in a raise statement; a string
+assigned to a name ending in one of AGENT_STRING_NAME_SUFFIXES, or in one of
+them followed by S; the value, in a dict literal, of one of
+AGENT_FACING_HOOK_OUTPUT_KEYS, the keys through which a Claude Code hook's JSON
+output reaches the agent, when that value is a string, an f-string or a name
+assigned a string once at module level; and the module docstring of a file
+that mentions __doc__, which argparse prints for --help. A message held in a
+local variable, or built any other way, is not found. "systemMessage" is not
+among the keys: Claude Code shows that text to the user, not to the agent.
 
 A test file's strings are not agent-facing-messages: a test's copy of an
 expected message is not handed to an agent.
@@ -20,7 +24,14 @@ cannot import a hyphenated file name by name.
 
 import ast
 
-AGENT_STRING_NAME_SUFFIXES = ("_ADVICE", "_MESSAGE", "_TEMPLATE", "_LINE", "_LINES", "_REFUSAL")
+AGENT_STRING_NAME_SUFFIXES = ("_ADVICE", "_INSTRUCTION", "_LINE", "_MESSAGE", "_NOTICE", "_REASON",
+                              "_REFUSAL", "_TEMPLATE")
+AGENT_FACING_HOOK_OUTPUT_KEYS = ("additionalContext", "permissionDecisionReason", "reason", "stopReason")
+
+
+def variable_name_has_agent_facing_message_suffix(name):
+    stem = name[:-1] if name.endswith("S") else name
+    return stem.endswith(AGENT_STRING_NAME_SUFFIXES)
 
 
 def path_is_test_file(path):
@@ -40,10 +51,12 @@ def string_nodes_without_f_string_parts(expression):
 class AgentFacingStringNodeCollector(ast.NodeVisitor):
     """Record string spans and their call, assignment or exception context."""
 
-    def __init__(self):
+    def __init__(self, module_string_values=None):
         self.enclosing_names = []
         self.string_entries = []
         self.seen_node_contexts = set()
+        # Name -> the string expression assigned to the name, once, at module level.
+        self.module_string_values = module_string_values or {}
 
     def collect_expression_strings(self, expression, label):
         if expression is None:
@@ -81,13 +94,50 @@ class AgentFacingStringNodeCollector(ast.NodeVisitor):
     def visit_assignment_value(self, node):
         targets = node.targets if isinstance(node, ast.Assign) else [node.target]
         for target in targets:
-            if isinstance(target, ast.Name) and target.id.endswith(AGENT_STRING_NAME_SUFFIXES):
+            if isinstance(target, ast.Name) and variable_name_has_agent_facing_message_suffix(target.id):
                 self.collect_expression_strings(node.value, f"{target.id} =")
         self.generic_visit(node)
 
     visit_Assign = visit_assignment_value
     visit_AnnAssign = visit_assignment_value
     visit_AugAssign = visit_assignment_value
+
+    def visit_Dict(self, node):
+        for key, value in zip(node.keys, node.values):
+            if not (isinstance(key, ast.Constant) and key.value in AGENT_FACING_HOOK_OUTPUT_KEYS):
+                continue
+            label = f'"{key.value}" value'
+            if isinstance(value, ast.Name):
+                # A name ending in a suffix is collected already, at its assignment.
+                if value.id in self.module_string_values and not variable_name_has_agent_facing_message_suffix(value.id):
+                    self.collect_expression_strings(self.module_string_values[value.id],
+                                                    f"{label} {value.id} =")
+            elif is_string_expression(value):
+                self.collect_expression_strings(value, label)
+        self.generic_visit(node)
+
+
+def is_string_expression(expression):
+    """A string literal, an f-string, or a + of such expressions."""
+    if isinstance(expression, ast.BinOp) and isinstance(expression.op, ast.Add):
+        return is_string_expression(expression.left) and is_string_expression(expression.right)
+    return isinstance(expression, ast.JoinedStr) or (
+        isinstance(expression, ast.Constant) and isinstance(expression.value, str))
+
+
+def module_level_string_values(tree):
+    """Each name assigned a string expression exactly once at module level, and
+    no other way there, mapped to that expression."""
+    assignments = {}
+    for statement in tree.body:
+        targets = (statement.targets if isinstance(statement, ast.Assign)
+                   else [statement.target] if isinstance(statement, (ast.AnnAssign, ast.AugAssign)) else [])
+        for target in targets:
+            if isinstance(target, ast.Name):
+                value = statement.value if not isinstance(statement, ast.AugAssign) else None
+                assignments.setdefault(target.id, []).append(value)
+    return {name: values[0] for name, values in assignments.items()
+            if len(values) == 1 and values[0] is not None and is_string_expression(values[0])}
 
 
 def agent_facing_string_nodes_in_source(source):
@@ -99,7 +149,7 @@ def agent_facing_string_nodes_in_source(source):
         tree = ast.parse(source)
     except (SyntaxError, ValueError):
         return []
-    collector = AgentFacingStringNodeCollector()
+    collector = AgentFacingStringNodeCollector(module_level_string_values(tree))
     if ("__doc__" in source and tree.body and isinstance(tree.body[0], ast.Expr)
             and isinstance(tree.body[0].value, ast.Constant)
             and isinstance(tree.body[0].value.value, str)):

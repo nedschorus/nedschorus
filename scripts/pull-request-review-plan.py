@@ -19,8 +19,13 @@ unrelated files should not decide the delta tier. All applicable reasons
 remain listed.
 
 Rule 3: list changed agent-facing strings, with their context and old text.
-Tests are excluded: a test's copy of an expected message is not handed to
-an agent. F-string placeholders survive in the listing.
+Which strings are agent-facing, and which files are tests, is decided by
+nc-systems/general-tools/python-source-agent-facing-string-collector-common.py:
+printed, written or raised strings, strings assigned to names with a message
+suffix, string values of a hook's agent-facing JSON output keys in a dict
+literal, and a module docstring printed through __doc__. Tests are excluded:
+a test's copy of an expected message is not handed to an agent. F-string
+placeholders survive in the listing.
 
 Merged pull requests use the merge commit's first parent as the diff base:
 the current base branch already contains the head and would hide the change.

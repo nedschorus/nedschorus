@@ -6,7 +6,9 @@ CLAUDE.md keeps quotations of the user, rulings, dates and citations out of the
 text a program hands an agent: the agent needs the reason and the instruction,
 and a citation only says who decided and when. The suite reads the hooks
 .claude/settings.json registers, and in each the module-level string
-constants, or tuples of strings, whose names end in one of MESSAGE_NAME_ENDINGS.
+constants, or tuples of strings, whose names are in capitals and end in one
+of the suffixes the agent-facing-message collector recognizes,
+nc-systems/general-tools/python-source-agent-facing-string-collector-common.py.
 It reads only those: across all programs and tests a citation pattern also
 matches dates and issue numbers that are data, while in hook messages every
 match so far was a citation.
@@ -30,8 +32,11 @@ _date_pattern_spec.loader.exec_module(_date_pattern)
 REPOSITORY = Path(__file__).resolve().parent.parent
 SETTINGS = REPOSITORY / ".claude" / "settings.json"
 
-MESSAGE_NAME_ENDINGS = ("_REASON", "_MESSAGE", "_REFUSAL", "_ADVICE", "_NOTICE",
-                        "_INSTRUCTION", "_TEMPLATE", "_LINE")
+_collector_spec = importlib.util.spec_from_file_location(
+    "python_source_agent_facing_string_collector_common",
+    REPOSITORY / "nc-systems" / "general-tools" / "python-source-agent-facing-string-collector-common.py")
+collector = importlib.util.module_from_spec(_collector_spec)
+_collector_spec.loader.exec_module(collector)
 
 CITATION_PATTERNS = {
     "date": _date_pattern.DATE_MARKER_PATTERN,
@@ -71,10 +76,7 @@ def registered_hook_paths():
 
 
 def is_message_name(name):
-    if not name.isupper():
-        return False
-    stem = name[:-1] if name.endswith("S") else name
-    return stem.endswith(MESSAGE_NAME_ENDINGS)
+    return name.isupper() and collector.variable_name_has_agent_facing_message_suffix(name)
 
 
 def message_texts(module):
@@ -134,7 +136,7 @@ for relative_path in hook_paths:
         continue
     texts = message_texts(module)
     check(f"{relative_path} declares its messages as named constants", texts != {},
-          f"no module-level constant ending in one of {MESSAGE_NAME_ENDINGS}")
+          f"no module-level constant ending in one of {collector.AGENT_STRING_NAME_SUFFIXES}")
     for name, text in sorted(texts.items()):
         if (relative_path, name) in EXEMPTIONS:
             continue

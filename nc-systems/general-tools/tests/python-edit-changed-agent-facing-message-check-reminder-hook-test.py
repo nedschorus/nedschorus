@@ -124,13 +124,14 @@ print("last line message")
 
 # The lines every reminder must carry, each an instruction the agent acts on.
 REMINDER_INSTRUCTION_LINES = (
+    "This hook changed nothing: your edit stands as you wrote it.",
     "Read that page now, unless you have already read the page in this agent-session, and "
     "check each message listed above against the page.",
     "If a message fails the page, rewrite that message in this turn, and update any test "
     "that asserts the message's text.",
     "If every listed message passes, carry on; nothing needs saying to the user.",
-    "If your edit changed a message built another way, such as text put straight into a "
-    "hook's JSON output, check that message against the page too.",
+    "If your edit changed a message held in a local variable or built any other way, check "
+    "that message against the page too.",
     "Before you write or change an agent-facing-message from now on, read the page first.",
 )
 
@@ -163,8 +164,9 @@ with tempfile.TemporaryDirectory() as temporary:
     check("the reminder names the page by path", PAGE_PATH in text, text)
     for line in REMINDER_INSTRUCTION_LINES:
         check(f"the reminder carries the instruction line: {line[:60]}", line in text.split("\n"), text)
-    check("the reminder names every name suffix the collector recognizes",
-          "_ADVICE, _MESSAGE, _TEMPLATE, _LINE, _LINES or _REFUSAL" in text, text)
+    check("the reminder names every name suffix and hook output key the collector recognizes",
+          "_ADVICE, _INSTRUCTION, _LINE, _MESSAGE, _NOTICE, _REASON, _REFUSAL or _TEMPLATE" in text
+          and "additionalContext, permissionDecisionReason, reason or stopReason" in text, text)
 
     reset()
     result = edit_then_run(repository, program, COMMITTED_SOURCE, '"first message to the agent"',

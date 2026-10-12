@@ -60,16 +60,16 @@ REMINDER_MESSAGE_TEMPLATE = (
     "{listing}\n"
     "An agent that meets one of these messages has only the message to go on, so each "
     "message must follow " + PAGE_PATH + ".\n"
+    "This hook changed nothing: your edit stands as you wrote it.\n"
     "Read that page now, unless you have already read the page in this agent-session, and "
     "check each message listed above against the page.\n"
     "If a message fails the page, rewrite that message in this turn, and update any test "
     "that asserts the message's text.\n"
     "If every listed message passes, carry on; nothing needs saying to the user.\n"
     "This hook finds only strings that are printed, written to sys.stdout or sys.stderr, "
-    "raised, or assigned to a name ending in {suffixes}.\n"
-    "If your edit changed a message "
-    "built another way, such as text put straight into a hook's JSON output, check that "
-    "message against the page too.\n"
+    "raised, assigned to a name ending in {suffixes}, or given in a dict literal as {keys}.\n"
+    "If your edit changed a message held in a local variable or built any other way, check "
+    "that message against the page too.\n"
     "Before you write or change an agent-facing-message from now on, read the page first."
 )
 LISTING_LINE_TEMPLATE = "  {path}:{line}  {first_line}"
@@ -206,9 +206,14 @@ def reminder_text(tool_name, relative_path, entries):
     if len(entries) > LISTED_MESSAGE_LIMIT:
         listing.append(MORE_NOT_LISTED_LINE_TEMPLATE.format(
             more=len(entries) - LISTED_MESSAGE_LIMIT, path=relative_path))
-    suffixes = ", ".join(collector.AGENT_STRING_NAME_SUFFIXES[:-1]) + " or " + collector.AGENT_STRING_NAME_SUFFIXES[-1]
-    return REMINDER_MESSAGE_TEMPLATE.format(tool=tool_name, path=relative_path, count=len(entries),
-                                            listing="\n".join(listing), suffixes=suffixes)
+    return REMINDER_MESSAGE_TEMPLATE.format(
+        tool=tool_name, path=relative_path, count=len(entries), listing="\n".join(listing),
+        suffixes=words_joined_with_or(collector.AGENT_STRING_NAME_SUFFIXES),
+        keys=words_joined_with_or(collector.AGENT_FACING_HOOK_OUTPUT_KEYS))
+
+
+def words_joined_with_or(words):
+    return ", ".join(words[:-1]) + " or " + words[-1]
 
 
 def inspection_text(payload, relative_path):
