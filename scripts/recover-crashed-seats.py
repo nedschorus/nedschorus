@@ -556,38 +556,45 @@ def current_recovery_report_confirms_agent_seat_launched_and_running(name: str, 
     return report.endswith(reach_clause_for_a_running_seat(name))
 
 
-def ned_box_agent_seat_tmux_attach_command_words_for_mac_window(name: str) -> list:
-    """Return the words a window on the Mac runs on ned-box to attach to the seat."""
-    return ["tmux", "-L", name, "attach", "-t", name]
-
-
 def agent_seat_tmux_session_has_attached_client(name: str):
-    """Return True or False, or None when tmux cannot answer."""
+    """Return (True or False, ""), or (None, why) when tmux cannot answer."""
     completed = run_tmux("list-clients", "-t", f"={name}", "-F", "#{client_tty}",
                          socket_name=name)
-    if completed is None or completed.returncode != 0:
-        return None
-    return bool(completed.stdout.strip())
+    if completed is None:
+        return None, "tmux could not be run or did not answer within 30s"
+    if completed.returncode != 0:
+        return None, (f"tmux list-clients exited {completed.returncode}: "
+                      f"{completed.stderr.strip() or '(no error text)'}")
+    return bool(completed.stdout.strip()), ""
 
 
 def agent_seat_mac_window_open_unless_tmux_client_already_attached(name: str):
     """Return (opened, detail): opened is None when a window was already attached."""
     # A seat this run launched is a new tmux session, so any client on it is a live window.
-    if agent_seat_tmux_session_has_attached_client(name):
+    attached, why_unknown = agent_seat_tmux_session_has_attached_client(name)
+    if attached is None:
+        # Opening anyway could give the seat a second window; not opening is reported, and retried.
+        return False, f"no window was opened, because whether one is already attached is unknown: {why_unknown}"
+    if attached:
         return None, "a window was already attached to it, so no other was opened"
     try:
         completed = subprocess.run(
-            [sys.executable, str(WINDOW_SENDER_PATH),
-             *ned_box_agent_seat_tmux_attach_command_words_for_mac_window(name)],
+            [sys.executable, str(WINDOW_SENDER_PATH), "--agent-seat", name],
             capture_output=True, text=True, check=False)
     except OSError as error:
         return False, f"could not run {WINDOW_SENDER_PATH.name}: {error}"
     output_lines = [line.strip() for line in (completed.stdout + completed.stderr).splitlines()
                     if line.strip()]
+    if completed.returncode == 0:
+        # The Mac opens the window and only then logs it; a failed log write is reported on stderr.
+        warnings = [line.strip() for line in completed.stderr.splitlines() if line.strip()]
+        if warnings:
+            reported = " ".join(line if line.endswith((".", ":")) else line + "."
+                                for line in warnings).rstrip(".")
+            return True, f"a window onto it opened on the Mac, which also reported: {reported}"
+        return True, "a window onto it opened on the Mac"
     # The opener prints the failure's cause first and an instruction to its own caller after it.
     cause_line = output_lines[0].rstrip(".") if output_lines else "(it printed nothing)"
-    if completed.returncode == 0:
-        return True, "a window onto it opened on the Mac"
     return False, (f"{WINDOW_SENDER_PATH.name} exited {completed.returncode}: "
                    f"{cause_line}")
 
@@ -596,11 +603,10 @@ def window_clause_for_a_seat_left_running(name: str):
     """Return (report clause, window_failed) after opening the seat's window on the Mac."""
     opened, detail = agent_seat_mac_window_open_unless_tmux_client_already_attached(name)
     if opened is False:
-        attach = " ".join(ned_box_agent_seat_tmux_attach_command_words_for_mac_window(name))
         return (f"; {AGENT_SEAT_MAC_WINDOW_NOT_OPENED_REPORT_TEXT} on the Mac — {detail}. The seat is "
                 "running, and rerunning this recovery opens no window for a running seat. "
-                f"Once the Mac answers, open the seat's window from ned-box with: python3 "
-                f"{WINDOW_SENDER_PATH} {attach}"), True
+                f"Once the cause above is cleared, open the seat's window by running on ned-box "
+                f"`python3 {WINDOW_SENDER_PATH} --agent-seat {name}`"), True
     return f"; {detail}", False
 
 

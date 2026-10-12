@@ -638,19 +638,23 @@ def run_mac_window_cases(root: Path):
              "from the Mac, or tmux -L seat-a attach -t seat-a here")
     opener_commands = []
 
-    def tmux_reports_clients(client_lines):
+    def tmux_reports_clients(client_lines, returncode=0, error_text="", cannot_answer=False):
         def fake_run_tmux(*arguments, socket_name=None, environment=None):
             if arguments[:1] == ("list-clients",):
-                return subprocess.CompletedProcess(["tmux"], 0, stdout=client_lines, stderr="")
+                if cannot_answer:
+                    return None
+                return subprocess.CompletedProcess(["tmux"], returncode, stdout=client_lines,
+                                                   stderr=error_text)
             return real_run_tmux(*arguments, socket_name=socket_name, environment=environment)
         return fake_run_tmux
 
-    def opener_answers(returncode, output="", error=None):
+    def opener_answers(returncode, output="", error=None, error_output=""):
         def fake_run(command, **_):
             opener_commands.append(command)
             if error is not None:
                 raise error
-            return subprocess.CompletedProcess(command, returncode, stdout=output, stderr="")
+            return subprocess.CompletedProcess(command, returncode, stdout=output,
+                                               stderr=error_output)
         return fake_run
 
     def recover_through_main(workspace, *extra):
@@ -667,12 +671,6 @@ def run_mac_window_cases(root: Path):
         patch("agent_seat_mac_window_open_unless_tmux_client_already_attached",
               real_agent_seat_mac_window_open_unless_tmux_client_already_attached)
 
-        # The words the window runs are the reach clause's own attach command.
-        check("MAC WINDOW: the window runs tmux -L <seat> attach -t <seat> on ned-box",
-              recovery.ned_box_agent_seat_tmux_attach_command_words_for_mac_window("seat-a")
-              == ["tmux", "-L", "seat-a", "attach", "-t", "seat-a"],
-              recovery.ned_box_agent_seat_tmux_attach_command_words_for_mac_window("seat-a"))
-
         # A restart that came up: the window opens, the report says so, the reach
         # clause stays last, and the run exits 0.
         workspace = Workspace(root / "mac-window-opened")
@@ -684,11 +682,11 @@ def run_mac_window_cases(root: Path):
         opener_commands.clear()
         exit_code, output = recover_through_main(workspace)
         recovery.subprocess.run = real_subprocess_run
-        check("MAC WINDOW: after a restart that came up, the opener is asked for one window "
-              "attached to the seat",
+        check("MAC WINDOW: after a restart that came up, the opener is asked for the seat's "
+              "reconnecting launch-claude-ubuntu window",
               len(opener_commands) == 1
               and opener_commands[0][1] == str(recovery.WINDOW_SENDER_PATH)
-              and opener_commands[0][2:] == ["tmux", "-L", "seat-a", "attach", "-t", "seat-a"],
+              and opener_commands[0][2:] == ["--agent-seat", "seat-a"],
               opener_commands)
         check("MAC WINDOW: the report says the window opened, keeps the reach clause last, "
               "and the run exits 0",
@@ -722,8 +720,8 @@ def run_mac_window_cases(root: Path):
               and "Tell the user what this says" not in output
               and "/Users/el/Projects/nedschorus/scripts/launch-claude-ubuntu seat-a" in output
               and output.count("/Users/el/Projects/nedschorus/scripts/launch-claude-ubuntu seat-a") == 1
-              and (f"open the seat's window from ned-box with: python3 "
-                   f"{recovery.WINDOW_SENDER_PATH} tmux -L seat-a attach -t seat-a"
+              and (f"open the seat's window by running on ned-box `python3 "
+                   f"{recovery.WINDOW_SENDER_PATH} --agent-seat seat-a`"
                    in output)
               and output.rstrip().endswith(reach)
               and "WINDOW NOT OPENED" in log_text,
@@ -743,6 +741,44 @@ def run_mac_window_cases(root: Path):
         check("MAC WINDOW: an opener that cannot run is reported, and the run exits 3",
               exit_code == 3 and "WINDOW NOT OPENED" in output and "no such file" in output,
               (exit_code, output))
+
+        # The Mac opened the window but warned on stderr: the warning stays in the report.
+        workspace = Workspace(root / "mac-window-opened-with-warning")
+        all_dead()
+        capture_launches(workspace)
+        patch("run_tmux", tmux_reports_clients(""))
+        recovery.subprocess.run = opener_answers(
+            0, "opened\n", error_output="mac-window-opened-for-ned-box-forced-command: the window "
+            "opened, but its outcome could not be added to the request log: disk full\n")
+        exit_code, output = recover_through_main(workspace)
+        recovery.subprocess.run = real_subprocess_run
+        check("MAC WINDOW: a window the Mac opened with a warning keeps the warning in the "
+              "report, and the run exits 0",
+              exit_code == 0 and "a window onto it opened on the Mac, which also reported: "
+              "mac-window-opened-for-ned-box-forced-command: the window opened, but its outcome "
+              "could not be added to the request log: disk full" + reach in output,
+              (exit_code, output))
+
+        # tmux cannot say whether a window is attached: no window, reported, exit 3.
+        for case_name, fake in (
+                ("tmux cannot answer", tmux_reports_clients("", cannot_answer=True)),
+                ("list-clients fails", tmux_reports_clients("", returncode=1,
+                                                            error_text="no server running"))):
+            workspace = Workspace(root / f"mac-window-probe-failed-{case_name.split()[0]}")
+            all_dead()
+            capture_launches(workspace)
+            patch("run_tmux", fake)
+            recovery.subprocess.run = opener_answers(0)
+            opener_commands.clear()
+            exit_code, output = recover_through_main(workspace)
+            recovery.subprocess.run = real_subprocess_run
+            check(f"MAC WINDOW: when {case_name}, no window is opened, the report says why, "
+                  "and the run exits 3",
+                  exit_code == 3 and not opener_commands
+                  and "WINDOW NOT OPENED on the Mac — no window was opened, because whether one "
+                      "is already attached is unknown" in output
+                  and (case_name != "list-clients fails" or "no server running" in output),
+                  (exit_code, opener_commands, output))
 
         # A window already attached: no second window.
         workspace = Workspace(root / "mac-window-already-attached")

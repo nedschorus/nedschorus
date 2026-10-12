@@ -606,17 +606,14 @@ def run_window_words_cases(root: Path):
     check("the notice window's words are the interpreter, this program, --show-notice and the notice",
           built_words[2:] == notice_words[2:] and len(built_words) == len(notice_words),
           repr(built_words))
-    attach_words = recovery_module.ned_box_agent_seat_tmux_attach_command_words_for_mac_window(
-        "merge-lane-2")
-    for name, words in (("a notice window", notice_words), ("a restarted seat's window", attach_words)):
-        request = " ".join([forced_command.REQUEST_VERB, *words])
-        try:
-            received = forced_command.window_command_words(request)
-            refused = None
-        except forced_command.RequestRefused as error:
-            received, refused = None, str(error)
-        check(f"the Mac's forced command accepts the words of {name}",
-              received == words, refused or repr(received))
+    request = " ".join([forced_command.REQUEST_VERB, *notice_words])
+    try:
+        received = forced_command.window_command_words(request)
+        refused = None
+    except forced_command.RequestRefused as error:
+        received, refused = None, str(error)
+    check("the Mac's forced command accepts the words of a notice window",
+          received == notice_words, refused or repr(received))
 
 
 def run_command_line_cases(root: Path):
@@ -776,7 +773,63 @@ def run_state_cases(root: Path):
           watcher_module.read_state(state_path) == state, state_path.read_text(encoding="utf-8"))
 
 
+def run_watch_wiring_cases(root: Path):
+    """watch() hands the Watcher recovery's seat-window opener, so exit-3 windows are retried."""
+    class FakeRecovery:
+        @staticmethod
+        def default_agents_root():
+            return root / "agents"
+
+        @staticmethod
+        def default_handoff_directory():
+            return root / "handoffs"
+
+        @staticmethod
+        def restart_question_for_a_seat_with_a_recorded_exit(*arguments):
+            return None
+
+        @staticmethod
+        def agent_seat_mac_window_open_unless_tmux_client_already_attached(name):
+            return True, "opened"
+
+        @staticmethod
+        def list_agent_seat_names_with_agent_session_records(*arguments):
+            return []
+
+    class FakeLoginRestart:
+        recovery = FakeRecovery
+        supervisor = object()
+
+        @staticmethod
+        def machine_boot_time():
+            return datetime(2026, 10, 12, tzinfo=timezone.utc)
+
+    built = []
+
+    class RecordingWatcher:
+        def __init__(self, **keyword_arguments):
+            built.append(keyword_arguments)
+
+        def run(self, seat_names):
+            pass
+
+    real_load_module, real_watcher = watcher_module.load_module, watcher_module.Watcher
+    # Stand-ins, so this case reaches no real agent-seat and no window on the Mac.
+    watcher_module.load_module = lambda name, path: FakeLoginRestart
+    watcher_module.Watcher = RecordingWatcher
+    try:
+        (root / "watch-wiring-state").mkdir()
+        watcher_module.watch({}, root / "watch-wiring-state", root / "watch-wiring-log")
+    finally:
+        watcher_module.load_module, watcher_module.Watcher = real_load_module, real_watcher
+    check("watch() passes recovery's seat-window opener to the Watcher as open_seat_window",
+          len(built) == 1 and built[0].get("open_seat_window")
+          is FakeRecovery.agent_seat_mac_window_open_unless_tmux_client_already_attached,
+          repr(built))
+
+
 with tempfile.TemporaryDirectory() as temporary_directory:
+    run_watch_wiring_cases(Path(temporary_directory))
     run_decision_cases(Path(temporary_directory))
     run_handled_crash_cases(Path(temporary_directory))
     run_handled_death_key_cases(Path(temporary_directory))

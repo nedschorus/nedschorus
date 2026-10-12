@@ -431,8 +431,9 @@ def main(argv=None) -> int:
         elif not box_windows["seats"] and not box_windows["already_attached"]:
             print(f"  box {box}: no live seats, so no windows to open")
         elif arguments.dry_run:
-            print(f"  box {box}: would open a window onto each live seat: "
-                  + ", ".join(box_windows["seats"]))
+            if box_windows["seats"]:
+                print(f"  box {box}: would open a window onto each live seat: "
+                      + ", ".join(box_windows["seats"]))
         else:
             for seat, opened, detail in box_windows["reports"]:
                 if opened:

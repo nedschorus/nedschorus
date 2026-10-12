@@ -39,6 +39,49 @@ _spec.loader.exec_module(restart)
 failures = []
 
 
+def run_listing_command_against_fake_tmux(mac_booted_at_epoch_seconds, clients_by_seat):
+    """Run the box listing under bash with a fake tmux; return its output lines.
+
+    Each seat gets a real unix socket in a scratch TMUX_TMPDIR, as tmux makes one per
+    seat server; a seat with a home under the scratch HOME's agents/ is a seat."""
+    import shutil
+    import socket
+    scratch = Path(tempfile.mkdtemp(prefix="lst"))
+    try:
+        socket_directory = scratch / f"tmux-{os.getuid()}"
+        socket_directory.mkdir()
+        bin_directory = scratch / "bin"
+        bin_directory.mkdir()
+        listeners = []
+        for seat, created in clients_by_seat.items():
+            listener = socket.socket(socket.AF_UNIX)
+            listener.bind(str(socket_directory / seat))
+            listeners.append(listener)
+            (scratch / f"{seat}.clients").write_text("".join(f"{c}\n" for c in created))
+            if seat != "fleet-anchor":
+                (scratch / "home" / "agents" / seat).mkdir(parents=True)
+        fake_tmux = bin_directory / "tmux"
+        fake_tmux.write_text(
+            "#!/bin/sh\n"
+            'seat=$(basename "$2")\n'
+            'case "$3" in\n'
+            '  list-sessions) echo "$seat" ;;\n'
+            f'  list-clients) cat "{scratch}/$seat.clients" ;;\n'
+            "esac\n")
+        fake_tmux.chmod(0o755)
+        environment = {"PATH": f"{bin_directory}:/usr/bin:/bin", "HOME": str(scratch / "home"),
+                       "TMUX_TMPDIR": str(scratch)}
+        completed = subprocess.run(
+            ["bash", "-c", restart.ned_box_running_agent_seats_list_command_marking_clients_attached_since_mac_boot(
+                mac_booted_at_epoch_seconds)],
+            capture_output=True, text=True, env=environment, check=False)
+        for listener in listeners:
+            listener.close()
+        return completed.stdout.splitlines()
+    finally:
+        shutil.rmtree(scratch)
+
+
 def check(case_name, condition, detail=""):
     if condition:
         print(f"PASS  {case_name}")
@@ -1034,6 +1077,15 @@ with tempfile.TemporaryDirectory() as temporary:
           "list-clients" in listing_command and "#{client_created}" in listing_command
           and '-ge 1760000000' in listing_command
           and 'echo "$seat_name attached"' in listing_command, listing_command)
+    check("the remote listing, run under bash against a fake tmux, marks a seat whose newest "
+          "client attached at or after the Mac's boot, and only that seat",
+          run_listing_command_against_fake_tmux(2000, {
+              "seat-a": ["1000", "2500"], "seat-b": ["1500"], "seat-c": [],
+              "fleet-anchor": ["2600"]})
+          == ["seat-a attached", "seat-b", "seat-c"],
+          run_listing_command_against_fake_tmux(2000, {
+              "seat-a": ["1000", "2500"], "seat-b": ["1500"], "seat-c": [],
+              "fleet-anchor": ["2600"]}))
     # User-ruled 2026-09-28T16:37:05Z: a box seat's home is always
     # ~/agents/<name>, since launch-claude-ubuntu reads no agents-root
     # variable (user-ruled 2026-09-22), so the box listing reads none either.
@@ -1138,6 +1190,11 @@ with tempfile.TemporaryDirectory() as temporary:
           exit_code == 0 and len(box.queries) == 1 and box.windows == []
           and "would open a window onto each live seat: gatekeeper, prof" in report,
           (exit_code, box.commands, report))
+    box = BoxStub(answers=[(0, "gatekeeper attached\n", "")])
+    exit_code, report, errors = run_main(["--dry-run", "--handoff-dir", str(handoffs)], box=box)
+    check("--dry-run with every live seat already attached prints no empty would-open list",
+          exit_code == 0 and "would open a window onto each live seat" not in report
+          and "gatekeeper already has a window attached" in report, report)
     box = BoxStub(answers=[(255, "", "down")])
     exit_code, report, errors = run_main(["--dry-run", "--handoff-dir", str(handoffs)], box=box)
     check("--dry-run does not wait on a box that is down: one attempt, reported",
