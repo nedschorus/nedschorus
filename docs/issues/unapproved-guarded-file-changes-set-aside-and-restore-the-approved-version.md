@@ -29,15 +29,15 @@ The user approved merging them into this GHI on 2026-10-11, as item 2 of the app
 
 ### When it runs, and how fast
 
-It is a PostToolUse hook for every tool, and does not run at Stop (user-ruled 2026-10-11). A command started in the background that writes after its tool call returns is caught at the next tool call; if no tool call follows, it is caught in the next turn, or listed under "Known gaps".
+It is a hook for every tool, registered under PostToolUse and PostToolUseFailure, and does not run at Stop (user-ruled 2026-10-11): PostToolUse runs only after a tool call that succeeds, and Claude Code's hooks reference says to register the same hook under PostToolUseFailure for calls that fail. A command started in the background that writes after its tool call returns is caught at the next tool call that checks that file, and not before.
 
-When nothing has changed, it takes under 100 ms per tool call on ned-box (user-ruled 2026-10-11). For each file it checks it compares the stat data it stored at its previous run (the change time, the modification time, the size and the inode) and hashes only a file whose stat data differs. The change time is compared because an agent's `touch -d` can set the modification time back but not the change time. The list of guarded files inside the checkout is cached, and recomputed only when the output of `git ls-files --cached --others --exclude-standard` changes: that one git call, about 6 ms, is cheaper than applying the guard's rules to every file, about 60 ms. A throwaway prototype measured on 2026-10-11 took about 40 ms per run on ned-box, most of it Python's start-up and that one git call.
+When nothing has changed, it takes under 100 ms per tool call on ned-box (user-ruled 2026-10-11). For each file it checks it compares the stat data it stored at its previous run (the change time, the modification time, the size and the inode) and hashes only a file whose stat data differs, as git hashes it (`git hash-object --path`), so a line-ending conversion is not a change. The change time is compared because an agent's `touch -d` can set the modification time back but not the change time. The list of guarded files inside the checkout is cached, and recomputed only when the output of `git ls-files --cached --others --exclude-standard` changes: that one git call, about 6 ms, is cheaper than applying the guard's rules to every file, about 60 ms. A throwaway prototype measured on 2026-10-11 took about 40 ms per run on ned-box, most of it Python's start-up and that one git call.
 
 ### Which files the hook checks
 
 The hook checks two sets:
 
-- **In the checkout of the tool call's working directory** (the payload's `cwd`): the guarded files git tracks, and those git does not ignore, plus `CLAUDE.local.md`, which git ignores. Other files git ignores, such as the compiled Python files under `.claude/hooks/__pycache__/`, are not checked. A subagent working in another worktree has that worktree checked.
+- **In the checkout of the tool call's working directory** (the payload's `cwd`): the guarded files git tracks, and those git does not ignore, plus `CLAUDE.local.md`, which git ignores. Other files git ignores, such as the compiled Python files under `.claude/hooks/__pycache__/`, are not checked. The hook decides which files are guarded with the guard's own functions, `is_protected`, `is_reusable_prompt` and `is_reviewed_document`, imported from `.claude/hooks/instruction-file-guard.py`, so the two hooks cannot disagree. A subagent working in another worktree has that worktree checked.
 - **Outside every checkout:** `~/.claude/CLAUDE.md`, `~/.claude/settings.json`, and the files in every Claude Code memory directory (`~/.claude/projects/*/memory/`), listed at each run, since new memory directories appear.
 
 It does not check another checkout; otherwise one session could undo another's approved edit in the moment before that session's own check records it.
@@ -46,7 +46,7 @@ It does not check another checkout; otherwise one session could undo another's a
 
 A checked file's content is approved when it equals one of these (user-ruled 2026-10-11):
 
-1. **The version in the current commit (HEAD), unless a `git commit` run since the hook's previous run in this checkout put it there.** The hook stores the length of HEAD's reflog at each run, and reads the entries added since. A branch switch, a reset, a merge, a pull, a rebase, a cherry-pick or a revert is git's own work: it builds HEAD from commits that already exist. A `git commit`, including `--amend`, commits the agent's own content and is not. One exception: the commit that finishes a merge, cherry-pick or revert that stopped on a conflict (reflog `commit (merge)`, or the `--continue` of the operation) counts as git's own work, so the hand-merge `CLAUDE.md` prescribes is not undone. A shell command that edits `CLAUDE.md` and commits it in the same command is caught.
+1. **The version in the current commit (HEAD), unless a `git commit` run since the hook's previous run in this checkout put it there.** The hook stores the length of HEAD's reflog at each run, and reads the entries added since. A branch switch, a reset, a merge, a pull, a rebase, a cherry-pick or a revert is git's own work: it builds HEAD from commits that already exist. A `git commit`, including `--amend`, commits the agent's own content and is not: a version that a `git commit` entry since the previous run put into a commit is unapproved, whatever reflog entries follow it, so an edit committed and then rebased or merged in the same command is caught too. One exception: the commit that finishes a merge, cherry-pick or revert that stopped on a conflict counts as git's own work, so the hand-merge `CLAUDE.md` prescribes is not undone. The reflog does not always mark that commit: a revert finished with `git revert --continue` logs a plain `commit:` entry. A shell command that edits `CLAUDE.md` and commits it in the same command is caught.
 2. **A version written by an Edit, Write or NotebookEdit call that spent an approval marker file.** The guard deletes the marker before the write, so when it spends a marker it also writes a note naming the file, the session and the tool call's id (`tool_use_id`, which both hook events receive). For a file in a checkout, the note goes in that checkout's git directory; for a file outside every checkout, in the save directory. The hook run after that tool call approves the version the write produced and deletes the note. A note from another tool call approves nothing, with one exception: when the hook's run after the approved write failed, the next run accepts that note and says so.
 3. **For a checked file git does not track** (`CLAUDE.local.md`, `~/.claude/CLAUDE.md`, `~/.claude/settings.json`, a memory file, an uncommitted new guarded file): the copy saved the first time the hook checks that path, or at the file's last approved write. After the first time the hook checks a checkout, a new guarded file that appears in it has no approved version unless rule 2 gives it one.
 
@@ -76,7 +76,7 @@ The hook tells the agent through `additionalContext`, one message for all the fi
 
 ### The save directory
 
-One directory per machine, `~/guarded-file-approved-versions-and-set-aside-changes/`, the backup directory of the user's design (user-ruled 2026-10-11), outside every checkout and outside `~/.claude/`; under `~/.claude/` the guard would protect the directory's own files, and the hook would set aside its own writes. It holds:
+One directory per machine, `~/guarded-file-approved-versions-and-set-aside-changes/`, the backup directory of the user's design (user-ruled 2026-10-11), outside every checkout and outside `~/.claude/`; under `~/.claude/` the guard would protect the directory's own files. It holds:
 
 - approved versions git does not hold: those of checked files git does not track, and those approved by rule 2 and not yet committed, each kept under its hash, with an index from path to hash;
 - an entry for each changed version the hook set aside: the copy, the session, the time, the file's path, and whether the entry is open or closed;
@@ -91,18 +91,19 @@ Rules that keep sessions from damaging each other's records:
 
 ### When something fails
 
-The hook never puts a file back before its saved copy is written. It puts a file back by writing the approved version to a temporary file beside it and moving that into place with `os.replace`, keeping the file's permission bits, so a failed restore leaves the changed version where it was. If anything fails, it puts nothing more back, exits 0, and tells the agent through `additionalContext` what failed and which files are left changed, as `scripts/uncommitted-work-snapshot-hook.py` reports its failures.
+The hook never puts a file back before its saved copy is written. It puts a file back by writing the approved version to a temporary file beside it and moving that into place with `os.replace`, keeping the file's permission bits, so a failed restore leaves the changed version where it was. Just before the move it hashes the file again; if the file changed after its copy was saved, it puts nothing back in this run and handles the newer version at the next one, so a write that lands between the save and the restore is not overwritten unsaved. If anything fails, it puts nothing more back, exits 0, and tells the agent through `additionalContext` what failed and which files are left changed, as `scripts/uncommitted-work-snapshot-hook.py` reports its failures.
 
 ### Checking a quotation of the user
 
-The guard also checks a quotation of the user in a marker file against the transcripts, and refuses a marker whose quoted words the user never typed (user-ruled 2026-10-03). The check applies to the text in double quotation marks; the agent's own framing around it is not checked. A marker that begins "Obvious fix under CLAUDE.md's standing approval:" is not checked, as `CLAUDE.md` allows. The check searches the session's own transcript and, for a subagent, its parent's; when the marker names another session, as the guard's refusal text asks for an approval quoted from elsewhere, it searches that session's transcript in the log-store's `transcripts/` copy. It reads queued inputs too: a message the user types while the agent is working is stored as a `queue-operation` record and a `queued_command` attachment whose `origin.kind` is `"human"`, not as a `"type":"user"` record; on 2026-09-21 two agents missed a queued "y" that way and retracted a real approval for 49 minutes (`nedlern@ned-box:/home/nedlern/nedschorus-logs/seats/MD-skills/approval-problems-transcript-trawl-2026-10-03/answer.md`). When the log-store copy of the named session's transcript ends before the quotation's time, the guard lets the write through and says the quotation could not be checked. The check shows that the user typed the words, not that they approve this change; that the words fit the change stays the agent's responsibility.
+The guard also checks a quotation of the user in a marker file against the transcripts, and refuses a marker whose quoted words the user never typed (user-ruled 2026-10-03). The check applies to the text in double quotation marks; the agent's own framing around it is not checked. A marker that begins "Obvious fix under CLAUDE.md's standing approval:" is not checked, as `CLAUDE.md` allows. The check searches the session's own transcript and, for a subagent, its parent's; when the marker names another session, as the guard's refusal text asks for an approval quoted from elsewhere, it searches that session's transcript in the log-store's `transcripts/` copy. It reads the user's words with the functions `typed_by_user` and `queued_by_user` of `scripts/search-user-messages-in-transcripts.py`, which already count a message the user typed while the agent was working; on 2026-09-21 two agents missed such a queued "y" and retracted a real approval for 49 minutes (`nedlern@ned-box:/home/nedlern/nedschorus-logs/seats/MD-skills/approval-problems-transcript-trawl-2026-10-03/answer.md`). When the log-store copy of the named session's transcript ends before the quotation's time, the guard lets the write through and says the quotation could not be checked. The check shows that the user typed the words, not that they approve this change; that the words fit the change stays the agent's responsibility.
 
 ## Tests the build must include
 
 Run in a throwaway repository unless stated:
 
 - a shell command that edits `CLAUDE.md` and commits it in the same command is caught, set aside and put back;
-- the files a rebase, a merge that is not a fast-forward, a pull, a cherry-pick and a revert change are not put back, nor those of a merge finished with `git commit` after a conflict;
+- a shell command that edits `CLAUDE.md`, commits it and then rebases onto main, or merges with `--no-ff`, in the same command is caught;
+- the files a rebase, a merge that is not a fast-forward, a pull, a cherry-pick and a revert change are not put back, nor those of a merge finished with `git commit` after a conflict, a revert finished with `git revert --continue` or `git commit` after a conflict, or a cherry-pick finished after a conflict;
 - an approved Edit is not put back, including by another session's tool call made at the same moment, for a file in a checkout and for `~/.claude/CLAUDE.md`;
 - a note left by an Edit that another hook then refused approves nothing;
 - the user's own edit is caught, saved, and written back by Edit after his approval, and the written-back version is not set aside again;
@@ -118,10 +119,17 @@ The quotation check's tests: a marker quoting words the user typed passes; a mar
 
 ## Known gaps
 
+- **A background write after the last tool call** is not caught until a tool call that checks the file runs. Claude Code's FileChanged event fires for such a write, but its hook cannot tell the agent anything.
+- **Versions overwritten within one tool call:** a command that writes a guarded file twice leaves only the last version for the hook to save.
+- **An unapproved commit rebased over a main that changed the same file** can come out as a version no `git commit` entry made, which rule 1 approves.
+- **A Codex session** runs no Claude Code hooks; its write to a guarded file is caught at the next tool call of a Claude Code session that checks the file.
+- **A checkout whose branch predates the hook** runs without it until the branch takes in main.
 - **A pushed unapproved version.** Once an unapproved version has been pushed, the other machine and the agent-seat merge-lane-2 receive it as git's own work and approve it. The commit on top that the hook's message asks for corrects the file; the unapproved version stays in the pushed history.
 - **A change committed in a checkout no session checks,** such as a scratch worktree, arrives in a checked checkout as git's own work and is approved.
 - **A shell edit made while a rebase, merge, cherry-pick or revert is stopped** is approved when the operation finishes.
-- **A shell command that returns a file to a version rule 2 approved earlier** is approved, because rule 2's approvals stay in the index; this is also what lets `git stash` and `git stash pop` of an approved, uncommitted edit through.
+- **A shell command that returns a file to a version rule 2 approved earlier** is approved, because rule 2's approvals stay in the index; this is also what lets `git stash` and `git stash pop` of an approved, uncommitted edit through, when the pop restores it unchanged.
+- **A `git stash pop` that merges an approved edit with a newer commit** makes a version no rule approves, and the hook sets it aside.
+- **A write that lands in the moment between the hook's last hash and its restore** is overwritten without a saved copy.
 - **A change made by the first tool call in a checkout the hook has never checked** becomes that checkout's first approved copy for files git does not track.
 - **A hook switched off in `~/.claude/settings.json`** stays off until the user answers, because that file is reported, not put back; and if no session with the hook runs after the change, nobody reports it. The project's own `.claude/settings.json` is tracked and is put back.
 - **`.claude/settings.local.json`** is ignored by git in the ned-box clone (`.git/info/exclude`), so the hook does not check it, although it can switch hooks off.
@@ -134,7 +142,7 @@ The agent-seat MD-skills recorded, on 2026-10-03, a wish to check quotations of 
 
 ## Next action
 
-Build the hook and the guard's note on one topic branch, with the tests above; the hook goes in `.claude/hooks/` as `guarded-file-unapproved-change-set-aside-and-restore-hook.py`. First check whether Claude Code runs a PostToolUse hook after a tool call that fails, and if not, which hook event covers it. Build the quotation check on its own topic branch: it changes the instruction-file guard and works without the hook.
+Build the hook and the guard's note on one topic branch, with the tests above; the hook goes in `.claude/hooks/` as `guarded-file-unapproved-change-set-aside-and-restore-hook.py`. Confirm with a failing Bash command that writes `CLAUDE.md` that the PostToolUseFailure registration catches it. Build the quotation check on its own topic branch: it changes the instruction-file guard and works without the hook.
 
 ## Search receipt
 
