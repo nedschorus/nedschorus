@@ -254,7 +254,7 @@ printed, errors = io.StringIO(), io.StringIO()
 stub = MachineStub()
 with redirect_stdout(printed), redirect_stderr(errors):
     exit_code = installer.main(["--print"], platform="linux", home=Path("/home/nedlern"), run=stub)
-check("--print as ned-box prints ned-box's four cron lines from the real table and runs nothing",
+check("--print as ned-box prints ned-box's five cron lines from the real table and runs nothing",
       exit_code == 0 and stub.commands == []
       and printed.getvalue().splitlines() == [
           "machine: ned-box (linux, /home/nedlern)",

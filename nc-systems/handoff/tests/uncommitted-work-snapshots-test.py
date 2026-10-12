@@ -144,6 +144,11 @@ def add_worktree(main, path, branch):
     return Path(path).resolve()
 
 
+# Above the largest process id Linux or macOS hands out.
+FAKE_HOOK_PARENT_PROCESS_ID = 2_000_000_001
+FAKE_HOOK_PROCESS_ID = 2_000_000_002
+
+
 class FakeProcessTreeClaude:
     """Runs the clone's hook through its main(), in this process, as a session's claude would.
 
@@ -166,15 +171,20 @@ class FakeProcessTreeClaude:
         self.helper = subprocess.Popen([sys.executable, "-c", "import sys; sys.stdin.read()"],
                                        stdin=subprocess.PIPE)
         self.proc_root = SCRATCH / f"fake-proc-session-{FakeProcessTreeClaude.started}"
+        # The hook starts its walk at os.getppid(), which is 1 inside a test
+        # sandbox with its own process-ID space, where the walk would stop at
+        # once. So the fake tree stands that parent and this process in with
+        # ids above any real one.
         fake_proc(self.proc_root, "0" * 32, {
-            os.getppid(): ("python3", os.getpid(), 1),
-            os.getpid(): ("bash", self.helper.pid, 1),
+            FAKE_HOOK_PARENT_PROCESS_ID: ("python3", FAKE_HOOK_PROCESS_ID, 1),
+            FAKE_HOOK_PROCESS_ID: ("bash", self.helper.pid, 1),
             self.helper.pid: ("claude", 1, 1)})
         self.hook = load(main / HOOK_RELATIVE, f"hook_of_session_{FakeProcessTreeClaude.started}")
         module = self.hook.load_snapshots_module()
         real_walk = module.claude_owner_process_id
-        module.claude_owner_process_id = (
-            lambda start: real_walk(start, str(self.proc_root), "linux"))
+        module.claude_owner_process_id = lambda start: real_walk(
+            FAKE_HOOK_PARENT_PROCESS_ID if start == os.getppid() else start,
+            str(self.proc_root), "linux")
         self.hook.load_snapshots_module = lambda: module
         self.owner_key = snapshots.owner_key_of_process(self.helper.pid)
 
@@ -510,6 +520,36 @@ def test_module_load_failure_is_reported():
 class FakePs:
     def __init__(self, returncode, stdout="", stderr=""):
         self.returncode, self.stdout, self.stderr = returncode, stdout, stderr
+
+
+def test_macos_owner_walk_reads_ps():
+    real_run_ps = snapshots.run_ps
+    tree = {300: "  200 /usr/bin/python3\n", 200: "  100 -bash\n",
+            100: "    1 /Users/el/.local/bin/claude\n"}
+    asked = []
+
+    def fake_run_ps(arguments):
+        asked.append(arguments)
+        process_id = int(arguments[-1])
+        return FakePs(0, tree[process_id]) if process_id in tree else FakePs(1)
+
+    try:
+        snapshots.run_ps = fake_run_ps
+        owner = snapshots.claude_owner_process_id(300, platform="darwin")
+        check(owner == 100 and asked[0] == ["-o", "ppid=,comm=", "-p", "300"],
+              "on macOS the owner walk reads each parent and command name from ps",
+              f"{owner} {asked}")
+        tree[200] = "  1 -bash\n"
+        check(snapshots.claude_owner_process_id(300, platform="darwin") is None,
+              "on macOS a walk that reaches process 1 without a claude finds no owner")
+        del tree[200]
+        try:
+            outcome = f"returned {snapshots.claude_owner_process_id(300, platform='darwin')}"
+        except snapshots.WorkSnapshotError:
+            outcome = "raised"
+        check(outcome == "raised", "on macOS a ps that cannot read a process raises", outcome)
+    finally:
+        snapshots.run_ps = real_run_ps
 
 
 def test_macos_ps_failure_is_not_a_dead_owner():
@@ -1238,6 +1278,7 @@ def main():
                      test_worktree_discovery_failure_is_reported,
                      test_names_read_from_git_are_the_files_as_stored,
                      test_module_load_failure_is_reported, test_owner_liveness,
+                     test_macos_owner_walk_reads_ps,
                      test_macos_ps_failure_is_not_a_dead_owner,
                      test_live_and_dead_owners_listed, test_list_caps_and_failure,
                      test_supervisor_appends_the_list, test_restore_a_subset, test_cleaner,
