@@ -433,9 +433,8 @@ def record_agent_exit_in_supervisor_state(state_path: Path, state: dict, exit_co
     state[AGENT_EXIT_CODE_STATE_KEY] = exit_code
     state[AGENT_EXIT_RECORDED_AT_STATE_KEY] = datetime.now(timezone.utc).isoformat(
         timespec="seconds")
-    if reason is None:
-        state.pop(AGENT_EXIT_REASON_STATE_KEY, None)
-    else:
+    # No reason to clear when reason is None: every launch and adoption clears it first.
+    if reason is not None:
         state[AGENT_EXIT_REASON_STATE_KEY] = reason
     write_supervisor_state(state_path, state)
 

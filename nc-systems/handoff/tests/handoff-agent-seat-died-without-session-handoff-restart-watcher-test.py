@@ -99,9 +99,8 @@ class Harness:
             assess=self.assess, died_at_about=lambda seat: self.died_at,
             transcripts_directory=lambda seat: Path(f"/home/nedlern/.claude/projects/-{seat}"),
             recover=self.recover, open_window=self.open_window,
-            show_notice_words=lambda path, seat: (
-                ["/usr/bin/python3", str(SCRIPT_PATH), "--show-notice", path]
-                + (["--then-attach", seat] if seat else [])),
+            show_notice_words=lambda path: ["/usr/bin/python3", str(SCRIPT_PATH),
+                                            "--show-notice", path],
             stopped_on_purpose=lambda seat, detail: self.on_purpose,
             recorded_exit_question=recovery_module.restart_question_for_a_seat_with_a_recorded_exit)
         watcher.run(list(seats))
@@ -131,16 +130,12 @@ def crash_after_running(harness, seat="merge-lane-2", start=SEEN_RUNNING):
 def run_decision_cases(root: Path):
     harness = Harness(root / "restarted")
     crash_after_running(harness)
-    notices = harness.notices()
-    notice_text = notices[0].read_text(encoding="utf-8") if notices else ""
     check("a seat seen running, then crashed on two runs a minute apart, is restarted once",
           harness.recoveries == ["merge-lane-2"], repr(harness.recoveries))
-    check("the restart notice names the seat, both times and the record",
-          len(notices) == 1 and "merge-lane-2 was restarted at 2026-10-12 03:16 UTC" in notice_text
-          and "stopped at about 2026-10-12 03:14 UTC" in notice_text
-          and str(root / "restarted" / "decisions.jsonl") in notice_text, notice_text)
-    check("the restart window shows the notice and then attaches to the seat",
-          len(harness.windows) == 1 and harness.windows[0][-2:] == ["--then-attach", "merge-lane-2"],
+    check("a restart the watcher carried out shows the user no notice",
+          harness.notices() == [], repr(harness.notices()))
+    check("a restart opens a window on the Mac attached straight to the seat's session",
+          harness.windows == [["tmux", "-L", "merge-lane-2", "attach", "-t", "merge-lane-2"]],
           repr(harness.windows))
     check("the restart is logged with the recovery's output",
           any(entry["decision"] == "restarted" and "relaunched" in entry["recovery_output"]
@@ -217,7 +212,10 @@ def run_decision_cases(root: Path):
     check("the second-crash notice names the transcripts by their path on the Mac",
           "/Volumes/nedhome/.claude/projects/-merge-lane-2" in text, text)
     check("the second-crash window shows the notice and does not attach",
-          "--then-attach" not in harness.windows[-1], repr(harness.windows[-1]))
+          harness.windows[-1][-2] == "--show-notice" and "attach" not in harness.windows[-1],
+          repr(harness.windows[-1]))
+    check("a notice gives the record's path on the Mac and on ned-box",
+          f"(on ned-box: {root / 'second-crash' / 'decisions.jsonl'})" in text, text)
 
     harness = Harness(root / "after-the-hour")
     first_restart = crash_after_running(harness)
@@ -268,19 +266,34 @@ def run_decision_cases(root: Path):
 
     harness = Harness(root / "mac-unreachable", window_exit_codes=[1, 1])
     crash_after_running(harness)
-    check("a notice the Mac cannot be reached for stays pending",
-          len(harness.state["pending_notices"]) == 1, repr(harness.state["pending_notices"]))
+    check("a restarted seat's window the Mac cannot be reached for stays pending, "
+          "and is not turned into a notice",
+          harness.state["pending_notices"] == [{"attach_seat": "merge-lane-2"}]
+          and harness.notices() == [], repr(harness.state["pending_notices"]))
     harness.verdicts["merge-lane-2"] = ("seat-already-running", "restarted")
     harness.run(SEEN_RUNNING + timedelta(minutes=17))
-    unshown = [entry for entry in harness.decisions()
-               if entry["decision"].startswith("notice not shown")]
+    unopened = [entry for entry in harness.decisions()
+                if entry["decision"].startswith("window not opened")]
     check("the unreachable Mac is logged once, not on every retry",
-          len(unshown) == 1 and len(harness.windows) == 2, repr(harness.decisions()))
+          len(unopened) == 1 and len(harness.windows) == 2, repr(harness.decisions()))
     harness.run(SEEN_RUNNING + timedelta(minutes=18))
-    check("a pending notice is shown once the Mac answers, and leaves the pending list",
+    check("a pending window is opened once the Mac answers, and leaves the pending list",
           harness.state["pending_notices"] == [] and len(harness.windows) == 3
-          and any(entry["decision"] == "pending notice shown" for entry in harness.decisions()),
+          and harness.windows[-1][:2] == ["tmux", "-L"]
+          and any(entry["decision"] == "pending window shown" for entry in harness.decisions()),
           repr(harness.state["pending_notices"]))
+
+    harness = Harness(root / "mac-unreachable-for-a-notice",
+                      recovery_result=(1, "merge-lane-2: REFUSED — the durable checkout is missing"),
+                      window_exit_codes=[1])
+    crash_after_running(harness)
+    pending = harness.state["pending_notices"]
+    check("a notice the Mac cannot be reached for stays pending",
+          len(pending) == 1 and "recovery-failed" in pending[0].get("path", ""), repr(pending))
+    harness.run(SEEN_RUNNING + timedelta(minutes=17))
+    check("a pending notice is shown once the Mac answers",
+          harness.state["pending_notices"] == []
+          and harness.windows[-1][-2] == "--show-notice", repr(harness.windows))
 
     harness = Harness(root / "assessment-failed")
     harness.assessment_errors["merge-lane-2"] = OSError("Permission denied: '/home/nedlern/agents'")
@@ -338,8 +351,9 @@ def run_handled_crash_cases(root: Path):
                   for entry in harness.decisions()), repr(harness.decisions()))
     check("that second-crash notice says the earlier attempt failed",
           "had tried to restart it at 2026-10-12 03:16 UTC" in text
-          and "and that attempt failed; merge-lane-2 then ran again, started by hand or by "
-              "another program" in text, text)
+          and "recovery reported that attempt as failed; merge-lane-2 then ran again, "
+              "either because that attempt came up late or because it was started by hand or "
+              "by another program" in text, text)
     harness.died_at = failed_at + timedelta(hours=1, minutes=10, microseconds=1)
     for minutes in (71, 72, 73):
         harness.run(failed_at + timedelta(minutes=minutes))
@@ -447,6 +461,9 @@ def run_down_for_the_user_cases(root: Path):
           and "ssh -t nedlern@ned-box" in text
           and 'It asks "merge-lane-2 stopped with exit code 1. Restart it? y/n"; answer y, '
               "and it resumes merge-lane-2's last conversation" in text, text)
+    check("the recorded-exit notice says what answering n does",
+          "answer n, and it starts nothing and prints the commands to bring merge-lane-2 "
+          "back by hand later" in text, text)
 
 
 def run_stopped_on_purpose_cases(root: Path):
@@ -519,38 +536,34 @@ def run_environment_cases():
 
 def run_window_words_cases(root: Path):
     notice = (watcher_module.LOG_DIRECTORY / "notices"
-              / "20261012T031600Z-merge-lane-2-restarted.txt")
-    words = ["/usr/bin/python3",
-             "/home/nedlern/Projects/nedschorus/nc-systems/handoff/"
-             "handoff-agent-seat-died-without-session-handoff-restart-watcher.py",
-             "--show-notice", str(notice), "--then-attach", "merge-lane-2"]
-    request = " ".join([forced_command.REQUEST_VERB, *words])
-    try:
-        received = forced_command.window_command_words(request)
-        refused = None
-    except forced_command.RequestRefused as error:
-        received, refused = None, str(error)
-    check("the Mac's forced command accepts the window words the watcher sends",
-          received == words, refused or repr(received))
+              / "20261012T031600Z-merge-lane-2-recovery-failed.txt")
+    notice_words = ["/usr/bin/python3",
+                    "/home/nedlern/Projects/nedschorus/nc-systems/handoff/"
+                    "handoff-agent-seat-died-without-session-handoff-restart-watcher.py",
+                    "--show-notice", str(notice)]
+    attach_words = [word.format(seat="merge-lane-2") for word in watcher_module.ATTACH_COMMAND]
+    for name, words in (("a notice window", notice_words), ("a restarted seat's window", attach_words)):
+        request = " ".join([forced_command.REQUEST_VERB, *words])
+        try:
+            received = forced_command.window_command_words(request)
+            refused = None
+        except forced_command.RequestRefused as error:
+            received, refused = None, str(error)
+        check(f"the Mac's forced command accepts the words of {name}",
+              received == words, refused or repr(received))
 
 
 def run_command_line_cases(root: Path):
     notice = root / "notice.txt"
-    notice.write_text("merge-lane-2 was restarted at 2026-10-12 03:16 UTC.\n", encoding="utf-8")
+    notice.write_text("merge-lane-2 is down: the crash watcher could not restart it.\n",
+                      encoding="utf-8")
     completed = subprocess.run(
         [sys.executable, str(SCRIPT_PATH), "--show-notice", str(notice)],
         stdin=subprocess.DEVNULL, capture_output=True, text=True, check=False)
     check("--show-notice prints the notice and the close prompt, and exits 0",
-          completed.returncode == 0 and "merge-lane-2 was restarted" in completed.stdout
+          completed.returncode == 0 and "merge-lane-2 is down" in completed.stdout
           and watcher_module.SHOW_NOTICE_CLOSE_PROMPT in completed.stdout,
           f"{completed.returncode} {completed.stdout!r} {completed.stderr!r}")
-
-    completed = subprocess.run(
-        [sys.executable, str(SCRIPT_PATH), "--then-attach", "merge-lane-2"],
-        capture_output=True, text=True, check=False)
-    check("--then-attach without --show-notice is a usage error",
-          completed.returncode == 2 and "--then-attach needs --show-notice" in completed.stderr,
-          completed.stderr)
 
     state_directory = root / "locked-state"
     state_directory.mkdir()
@@ -637,7 +650,7 @@ def run_run_failure_cases(root: Path):
         state=saved, now=SEEN_RUNNING, boot_at=BOOT, log_directory=root / "healed-log",
         assess=None, died_at_about=lambda seat: None, transcripts_directory=None,
         recover=None, open_window=lambda words: healthy_windows.append(words) or (0, ""),
-        show_notice_words=lambda path, seat: ["--show-notice", path])
+        show_notice_words=lambda path: ["--show-notice", path])
     watcher.run([])
     check("a healthy run shows the failed run's notice and clears it",
           len(healthy_windows) == 1 and saved["pending_notices"] == []

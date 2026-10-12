@@ -4,9 +4,9 @@
 Usage, on ned-box:
   nc-systems/handoff/handoff-agent-seat-died-without-session-handoff-restart-watcher.py
       one run: assess every agent-seat and act. Cron runs this once a minute.
-  nc-systems/handoff/handoff-agent-seat-died-without-session-handoff-restart-watcher.py --show-notice FILE [--then-attach SEAT]
-      what the window it opens on the user's Mac runs: print FILE, wait for
-      Enter, then attach to SEAT's tmux session or close.
+  nc-systems/handoff/handoff-agent-seat-died-without-session-handoff-restart-watcher.py --show-notice FILE
+      what a notice window on the user's Mac runs: print FILE, then wait for
+      Enter and close.
 
 Each run assesses every agent-seat under ~/agents with the assessment
 scripts/recover-crashed-seats.py makes (assess_seat), and:
@@ -36,11 +36,15 @@ carries microseconds. A restart that succeeded counts as a sighting of the
 seat running; after a failed attempt the poll is recorded again, so the
 attempt's own brief run is part of the death it was handling.
 
-Each restart and each failure becomes a notice for the user, shown in a window
-the program opens on his Mac with scripts/open-mac-window-from-ned-box.py. A
-notice the Mac cannot be reached for stays pending and is tried again on every
-run. Every decision is appended to decisions.jsonl in LOG_DIRECTORY; the
-notices are kept beside it.
+The user hears from the watcher only when it cannot do its job of restarting:
+each case it does not or cannot restart, and each failure, becomes a notice
+shown in a window the program opens on his Mac with
+scripts/open-mac-window-from-ned-box.py. A restart it carries out shows no
+notice: it opens a window on the Mac attached to the restarted seat's tmux
+session. A window the Mac cannot be reached for, a notice's or a restart's,
+stays pending and is tried again on every run. Every decision, each restart
+included, is appended to decisions.jsonl in LOG_DIRECTORY; the notices are
+kept beside it.
 
 Off ned-box the program refuses: the agents root it reads is ned-box's.
 
@@ -95,16 +99,9 @@ NED_BOX_HOME_ON_THE_MAC = "/Volumes/nedhome"
 # launch-claude-ubuntu is not on the Mac's PATH; the Mac's checkout holds it.
 MAC_LAUNCHER = "/Users/el/Projects/nedschorus/scripts/launch-claude-ubuntu"
 
-# Words the user's window runs, for the attach step after a restart.
+# Words the window on the Mac runs after a restart: the command recover-crashed-seats.py
+# prints to reach a running seat.
 ATTACH_COMMAND = ("tmux", "-L", "{seat}", "attach", "-t", "{seat}")
-
-RESTARTED_NOTICE_TEMPLATE = (
-    "{seat} was restarted at {restarted_at}.\n"
-    "Its agent-session stopped at about {died_at} without writing a handoff, so the "
-    "crash watcher resumed its last conversation under a new supervisor. {seat} goes on "
-    "with the work it was doing; nothing is needed from you.\n"
-    "Record: {record}\n"
-)
 
 SECOND_CRASH_NOTICE_TEMPLATE = (
     "{seat} is down. Its agent-session stopped again at about {died_at} without writing "
@@ -173,14 +170,14 @@ RECORDED_EXIT_NOTICE_TEMPLATE = (
     "Recommendation: read the end of its last conversation, the newest .jsonl file in "
     "{transcripts}, before you restart it.\n"
     "To restart it, run in a Terminal on your Mac. It asks \"{question}\"; answer y, and "
-    "it {restart_effect}:\n"
+    "it {restart_effect}; answer n, and it starts nothing and prints the commands to "
+    "bring {seat} back by hand later:\n"
     "  ssh -t nedlern@ned-box 'cd ~/Projects/nedschorus && python3 scripts/recover-crashed-seats.py {seat}'\n"
     "then open its window, also in a Terminal on your Mac, with:\n"
     "  {mac_launcher} {seat}\n"
     "Record: {record}\n"
 )
 
-SHOW_NOTICE_ATTACH_PROMPT ="Press Enter to open {seat}'s session in this window."
 SHOW_NOTICE_CLOSE_PROMPT = "Press Enter to close this window."
 
 
@@ -271,30 +268,40 @@ class Watcher:
         stamp = self.now.astimezone(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
         return self.log_directory / "notices" / f"{stamp}-{seat}-{kind}.txt"
 
-    def write_notice(self, seat, kind, template, attach_seat=None, **fields) -> dict:
+    def write_notice(self, seat, kind, template, **fields) -> dict:
         path = self.notice_path(seat, kind)
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(template.format(seat=seat, record=path_on_the_mac(self.decisions_path),
-                                        mac_launcher=MAC_LAUNCHER, **fields),
+        # The user may hand a notice to an agent on ned-box, which needs the ned-box path.
+        record = (f"{path_on_the_mac(self.decisions_path)} "
+                  f"(on ned-box: {self.decisions_path})")
+        path.write_text(template.format(seat=seat, record=record, mac_launcher=MAC_LAUNCHER,
+                                        **fields),
                         encoding="utf-8")
-        notice = {"path": str(path), "attach_seat": attach_seat}
+        notice = {"path": str(path)}
         self.show(notice)
         return notice
 
-    def show(self, notice) -> bool:
-        exit_code, output = self.open_window(
-            self.show_notice_words(notice["path"], notice.get("attach_seat")))
+    def open_restarted_seat_window(self, seat):
+        self.show({"attach_seat": seat})
+
+    def show(self, window) -> bool:
+        """Open a pending window on the Mac: a notice ({"path"}) or a restarted seat ({"attach_seat"})."""
+        if "path" in window:
+            words, what = self.show_notice_words(window["path"]), window["path"]
+        else:
+            words = [word.format(seat=window["attach_seat"]) for word in ATTACH_COMMAND]
+            what = f"{window['attach_seat']}'s session"
+        exit_code, output = self.open_window(words)
         if exit_code == 0:
-            if notice in self.state["pending_notices"]:
-                self.state["pending_notices"].remove(notice)
-                self.log(None, "pending notice shown", notice=notice["path"])
+            if window in self.state["pending_notices"]:
+                self.state["pending_notices"].remove(window)
+                self.log(None, "pending window shown", window=what)
             return True
-        if notice not in self.state["pending_notices"]:
-            # Logged once per notice; later runs retry quietly until the Mac answers.
-            self.state["pending_notices"].append(notice)
-            self.log(None, "notice not shown: the window on the Mac did not open; "
-                     "retried on every run", notice=notice["path"], exit_code=exit_code,
-                     opener_output=output)
+        if window not in self.state["pending_notices"]:
+            # Logged once per window; later runs retry quietly until the Mac answers.
+            self.state["pending_notices"].append(window)
+            self.log(None, "window not opened on the Mac; retried on every run",
+                     window=what, exit_code=exit_code, opener_output=output)
         return False
 
     def run(self, seat_names):
@@ -412,11 +419,12 @@ class Watcher:
             earlier_attempt = (
                 f"had restarted it at {earlier_attempted_at}, after it stopped at about "
                 f"{earlier_died_at}" if earlier["outcome"] == "restarted"
-                # A failed attempt's own brief run is part of the death it handled, so a new
-                # death after it means someone else started the seat in between.
+                # Recovery gives up on a launch after its deadline, but that launch's own
+                # supervisor may still come up late; either way the seat ran again since.
                 else f"had tried to restart it at {earlier_attempted_at}, after it stopped at "
-                     f"about {earlier_died_at}, and that attempt failed; {seat} then ran again, "
-                     f"started by hand or by another program")
+                     f"about {earlier_died_at}, and recovery reported that attempt as failed; "
+                     f"{seat} then ran again, either because that attempt came up late or "
+                     f"because it was started by hand or by another program")
             self.log(seat, "not restarted: a restart was attempted less than an hour ago; "
                      "user told", died_at_about=timestamp(died_at), earlier_attempt=earlier)
             self.write_notice(
@@ -431,8 +439,7 @@ class Watcher:
             self.record_recovery_attempt(record, died_at, "restarted")
             self.log(seat, "restarted", died_at_about=timestamp(died_at),
                      recovery_output=output)
-            self.write_notice(seat, "restarted", RESTARTED_NOTICE_TEMPLATE, attach_seat=seat,
-                              restarted_at=clock_text(self.now), died_at=clock_text(died_at))
+            self.open_restarted_seat_window(seat)
             return
         if exit_code == 0:
             self.mark_seen_running(record, self.now)
@@ -483,18 +490,13 @@ def recover_seat_in_clean_environment(seat, environment, run=run_command):
     return run([sys.executable, str(RECOVERY_PROGRAM), seat], environment)
 
 
-def show_notice(path: str, attach_seat):
-    """What the user's window runs: the notice, then the seat's session or nothing."""
+def show_notice(path: str):
+    """What a notice window on the Mac runs: the notice, then Enter closes it."""
     sys.stdout.write(Path(path).read_text(encoding="utf-8"))
-    prompt = (SHOW_NOTICE_ATTACH_PROMPT.format(seat=attach_seat) if attach_seat
-              else SHOW_NOTICE_CLOSE_PROMPT)
     try:
-        input(f"\n{prompt}")
+        input(f"\n{SHOW_NOTICE_CLOSE_PROMPT}")
     except EOFError:
         pass
-    if attach_seat:
-        words = [word.format(seat=attach_seat) for word in ATTACH_COMMAND]
-        os.execvp(words[0], words)
     return 0
 
 
@@ -562,9 +564,8 @@ def open_mac_window(words):
     return run_command([sys.executable, str(MAC_WINDOW_OPENER_PROGRAM), *words])
 
 
-def show_notice_words_for_window(path, attach_seat):
-    words = [sys.executable, str(Path(__file__).resolve()), "--show-notice", path]
-    return words + (["--then-attach", attach_seat] if attach_seat else [])
+def show_notice_words_for_window(path):
+    return [sys.executable, str(Path(__file__).resolve()), "--show-notice", path]
 
 
 def stopped_on_purpose_predicate(supervisor, handoff_directory: Path):
@@ -625,12 +626,9 @@ def watch(environment, state_directory: Path, log_directory: Path) -> int:
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(prog=PROGRAM, description=__doc__.splitlines()[0])
     parser.add_argument("--show-notice", metavar="FILE")
-    parser.add_argument("--then-attach", metavar="SEAT")
     arguments = parser.parse_args(argv)
     if arguments.show_notice:
-        return show_notice(arguments.show_notice, arguments.then_attach)
-    if arguments.then_attach:
-        parser.error("--then-attach needs --show-notice")
+        return show_notice(arguments.show_notice)
     if sys.platform != "linux":
         print(f"{PROGRAM}: refused: this program watches ned-box's agent-seats and runs only "
               "on ned-box, where cron starts it.", file=sys.stderr)
