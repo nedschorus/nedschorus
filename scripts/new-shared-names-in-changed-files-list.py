@@ -208,7 +208,7 @@ def names_used_in_other_files(names_and_files, checkout: Path):
     """Return the names that some file other than the files defining them mentions."""
     if not names_and_files:
         return set()
-    arguments = ["grep", "-z", "--untracked", "-n", "-o", "-w", "-F"]
+    arguments = ["grep", "-z", "--untracked", "-I", "-n", "-o", "-w", "-F"]
     for name in sorted({name for name, _ in names_and_files}):
         arguments += ["-e", name]
     found = git(arguments, checkout, allowed_exit_codes=(0, 1))
