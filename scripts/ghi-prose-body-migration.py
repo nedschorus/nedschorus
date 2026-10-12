@@ -81,10 +81,9 @@ def files_on_main_holding(body: str, paths, repository_root: Path, runner):
 
 
 def tracked_file_names(repository_root: Path, runner):
-    listed = runner(["git", "ls-tree", "-r", "--name-only", "origin/main"],
+    listed = runner(["git", "ls-tree", "-r", "--name-only", "-z", "origin/main"],
                     cwd=str(repository_root))
-    return {Path(line).name for line in (listed.stdout or "").splitlines()
-            if line}
+    return {Path(path).name for path in tool.git_output.nul_separated_fields(listed.stdout or "")}
 
 
 def write_files(repo: str, repository_root: Path, runner, report,

@@ -15,7 +15,7 @@ guard removed, and failed there, before it was kept. The shapes the world
 answers with were read from nedschorus/nedschorus and origin/main on
 2026-09-24: `gh issue list --json number,title,body` gives bodies with no
 trailing newline, `git show <rev>:<path>` exits 128 at a path the revision
-lacks, and `git ls-tree -r --name-only` lists blobs one per line.
+lacks, and `git ls-tree -r --name-only -z` lists blobs each ended by a NUL.
 """
 
 import contextlib
@@ -90,11 +90,12 @@ class World:
         if words[:2] == ["git", "fetch"]:
             return Completed()
         if words[:2] == ["git", "ls-tree"]:
-            prefixes = [w for w in words[5:]]
+            prefixes = [w for w in words[2:] if not w.startswith("-")][1:]
             listed = [path for path in sorted(self.main)
                       if not prefixes
                       or any(path.startswith(p) for p in prefixes)]
-            return Completed("".join(f"{path}\n" for path in listed))
+            end = "\0" if "-z" in words else "\n"
+            return Completed("".join(f"{path}{end}" for path in listed))
         if words[:2] == ["git", "show"]:
             path = words[2].split(":", 1)[1]
             if path in self.main:

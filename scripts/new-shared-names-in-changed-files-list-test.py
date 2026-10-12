@@ -294,6 +294,30 @@ def case_file_only_main_has_counts_as_on_main(root):
     check("a path main has only as a file is not listed", "tools/quiet-tool-file.py" not in names, str(listed))
 
 
+def case_paths_git_would_quote_are_read_whole(root):
+    clone = make_clone(root, BASE_MAIN_FILES)
+    write(clone, "notes/né.md", "A `accented-file-only-name` here.\n")
+    write(clone, "alpha.py", "def colon_path_helper():\n    return 1\n")
+    write(clone, "beta:gamma.py", "from alpha import colon_path_helper\ncolon_path_helper()\n")
+    _, listed, _ = run_lister(clone)
+    check("a changed file with a non-ASCII name is scanned",
+          ("notes/né.md", "file-path", "notes/né.md") in listed
+          and "accented-file-only-name" in names_only(listed), str(listed))
+    check("a use in a file whose name holds a colon counts as a use",
+          ("alpha.py", "python-function", "colon_path_helper") in listed, str(listed))
+
+
+
+def case_binary_file_naming_a_candidate_does_not_hide_other_uses(root):
+    clone = make_clone(root, BASE_MAIN_FILES)
+    write(clone, "alpha.py", "def binary_neighbour_helper():\n    return 1\n")
+    write(clone, "beta.py", "from alpha import binary_neighbour_helper\nbinary_neighbour_helper()\n")
+    (clone / "aa-picture.bin").write_bytes(b"\0binary_neighbour_helper\0")
+    code, listed, _ = run_lister(clone)
+    check("a binary file that mentions a name neither breaks the lister nor hides a real use",
+          ("alpha.py", "python-function", "binary_neighbour_helper") in listed,
+          f"exit {code}: {listed}")
+
 def state_file_bytes(state_root: Path, session_id: str) -> bytes:
     return (state_root / "new-shared-names-reminder-hook-state" / f"{session_id}.json").read_bytes()
 
@@ -950,6 +974,49 @@ def case_hook_shell_commands(root):
     check("a shell edit to an untracked file already scanned is scanned again", "second-shell-name" in rewritten, rewritten)
 
 
+def case_hook_fingerprint_sees_a_rewritten_untracked_file_git_would_quote(root):
+    clone = make_clone(root, BASE_MAIN_FILES)
+    hook = load_module("new_shared_names_reminder_hook", HOOK_PATH)
+    write(clone, "café notes.md", "first\n")
+    before = hook.worktree_fingerprint(clone)
+    time.sleep(0.01)
+    write(clone, "café notes.md", "second text\n")
+    after = hook.worktree_fingerprint(clone)
+    check("rewriting an untracked file with a non-ASCII name changes the worktree fingerprint",
+          before is not None and before != after, f"{before} {after}")
+
+
+
+def case_hook_fingerprint_sees_an_untracked_file_whose_name_is_not_utf8(root):
+    clone = make_clone(root, BASE_MAIN_FILES)
+    hook = load_module("new_shared_names_reminder_hook", HOOK_PATH)
+    name = os.fsencode(clone) + b"/caf\xe9.md"
+    try:
+        with open(name, "wb") as handle:
+            handle.write(b"first\n")
+    except OSError as error:
+        # The Mac's APFS refuses a file name that is not valid UTF-8.
+        print(f"SKIP  an untracked file whose name is not UTF-8: this file system refuses "
+              f"the name ({error.strerror})")
+        return
+    before = hook.worktree_fingerprint(clone)
+    time.sleep(0.01)
+    with open(name, "wb") as handle:
+        handle.write(b"second text\n")
+    after = hook.worktree_fingerprint(clone)
+    check("an untracked file whose name is not UTF-8 keeps the fingerprint, and its rewrite changes it",
+          before is not None and before != after, f"{before} {after}")
+    state_root = root / "state-not-utf8"
+    state_root.mkdir()
+    code, context = run_hook(clone, state_root, {"tool_name": "Write", "tool_input": {"file_path": "alpha.md"}})
+    check("with an untracked file whose name is not UTF-8, the hook exits 0 and says the check failed",
+          code == 0 and "failed" in context, f"exit {code}: {context[:300]}")
+    os.remove(name)
+    write(clone, "alpha.md", "A `name-after-the-odd-file-is-gone` here.\n")
+    code, context = run_hook(clone, state_root, {"tool_name": "Write", "tool_input": {"file_path": "alpha.md"}})
+    check("once that file is gone, the hook reports new names again",
+          code == 0 and "name-after-the-odd-file-is-gone" in context, f"exit {code}: {context[:300]}")
+
 def case_hook_reports_failure_once(root):
     lonely = root / "lonely"
     git(["init", "-q", "-b", "main", str(lonely)], root)
@@ -989,6 +1056,8 @@ def main() -> int:
              case_same_name_defined_in_two_files_is_not_a_use, case_one_word_constant_used_elsewhere_is_listed,
              case_markdown_names, case_exemptions, case_new_glossary_entry, case_branch_name,
              case_nothing_new_is_silent, case_git_failure_exits_nonzero, case_file_cache, case_file_only_main_has_counts_as_on_main,
+             case_paths_git_would_quote_are_read_whole,
+             case_binary_file_naming_a_candidate_does_not_hide_other_uses,
              case_timeout_failure_text_is_stable, case_hook_shows_names_past_the_cap_later,
              case_hook_reports_this_worktrees_new_branch, case_two_worktrees_each_report_their_own_branch,
              case_branch_origin_already_has_is_not_reported,
@@ -1012,6 +1081,8 @@ def main() -> int:
              case_same_branch_name_recreated_is_told_names_again, case_switch_to_a_branch_origin_has_lists_its_names,
              case_overlapping_writers_never_leave_invalid_json_and_keep_every_name,
              case_hook_shell_commands,
+             case_hook_fingerprint_sees_a_rewritten_untracked_file_git_would_quote,
+             case_hook_fingerprint_sees_an_untracked_file_whose_name_is_not_utf8,
              case_hook_reports_failure_once, case_hook_ignores_other_input]
     for case in cases:
         with tempfile.TemporaryDirectory() as directory:

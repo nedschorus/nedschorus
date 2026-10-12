@@ -294,6 +294,12 @@ _common_spec = importlib.util.spec_from_file_location(
     "cold_read_cell_common", REPO_ROOT / "nc-systems" / "cold-read" / "cold-read-cell-common.py")
 common = importlib.util.module_from_spec(_common_spec)
 _common_spec.loader.exec_module(common)
+_git_output_spec = importlib.util.spec_from_file_location(
+    "git_machine_readable_output_runner_and_parser_common",
+    REPO_ROOT / "nc-systems" / "general-tools"
+    / "git-machine-readable-output-runner-and-parser-common.py")
+git_output = importlib.util.module_from_spec(_git_output_spec)
+_git_output_spec.loader.exec_module(git_output)
 # The Codex cells' permission profile, as it appears in their sessions.
 CODEX_CREDENTIAL_DENYING_PERMISSION_PROFILE = "sanity-check-no-credentials"
 
@@ -825,20 +831,8 @@ def worktree_snapshot(repo_root: pathlib.Path = REPO_ROOT) -> dict:
         stdout=subprocess.PIPE, text=True, check=False,
     )
     snapshot = {}
-    fields = completed.stdout.split("\0")
-    index = 0
-    while index < len(fields):
-        entry = fields[index]
-        index += 1
-        if not entry:
-            continue
-        status, path = entry[:2], entry[3:]
-        # Under -z a rename or copy carries its origin path as the following
-        # field instead of as ` -> origin` inside this one; skipping it keeps
-        # the walk aligned with the entries that follow.
-        if status[0] in ("R", "C"):
-            index += 1
-        snapshot[path] = (status, file_fingerprint(repo_root / path))
+    for entry in git_output.status_entries(completed.stdout):
+        snapshot[entry.path] = (entry.code, file_fingerprint(repo_root / entry.path))
     for watched in IGNORED_PATHS_WATCHED_FOR_WRITES:
         watched_root = repo_root / watched
         candidates = (sorted(watched_root.rglob("*")) if watched_root.is_dir()
@@ -880,11 +874,11 @@ def tracked_files_corpus(checkout: pathlib.Path = None) -> tuple:
     the cells read. Built once per run, before the cells launch."""
     checkout = checkout or REPO_ROOT
     listed = subprocess.run(
-        ["git", "ls-files"], cwd=checkout,
+        ["git", "ls-files", "-z"], cwd=checkout,
         stdout=subprocess.PIPE, text=True, check=False,
     )
     pieces = []
-    for name in listed.stdout.splitlines():
+    for name in git_output.nul_separated_fields(listed.stdout):
         path = checkout / name
         try:
             pieces.append(normalized_for_quote_match(path.read_text(encoding="utf-8")))
@@ -1100,22 +1094,11 @@ def uncommitted_review_paths(paths: list, repo_root: pathlib.Path) -> list:
         listed = subprocess.run(
             ["git", "ls-files", "-z", "--", *inside], cwd=repo_root,
             stdout=subprocess.PIPE, text=True, check=False)
-        tracked = set(filter(None, listed.stdout.split("\0")))
+        tracked = set(git_output.nul_separated_fields(listed.stdout))
         status = subprocess.run(
             ["git", "status", "--porcelain", "-z", "-uall", "--", *inside],
             cwd=repo_root, stdout=subprocess.PIPE, text=True, check=False)
-        fields = status.stdout.split("\0")
-        index = 0
-        while index < len(fields):
-            entry = fields[index]
-            index += 1
-            if not entry:
-                continue
-            # A rename's origin path follows as its own field, as in
-            # worktree_snapshot.
-            if entry[0] in ("R", "C"):
-                index += 1
-            changed.add(entry[3:])
+        changed = {entry.path for entry in git_output.status_entries(status.stdout)}
     return [path for path, name in git_names.items()
             if name is None or name not in tracked or name in changed]
 

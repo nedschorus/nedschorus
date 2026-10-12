@@ -51,6 +51,10 @@ try:
     daily_memory_review_mark = daily_full_test_run_of_main.daily_memory_review_mark
     run_all_test_suites = daily_full_test_run_of_main.run_all_test_suites
     EXIT_CHECKOUT_REFUSED = run_all_test_suites.EXIT_COULD_NOT_RUN
+    git_output = module_loaded_by_path(
+        "git_machine_readable_output_runner_and_parser_common",
+        REPOSITORY_ROOT / "nc-systems" / "general-tools"
+        / "git-machine-readable-output-runner-and-parser-common.py")
 except Exception:
     if __name__ != "__main__":
         raise
@@ -112,12 +116,13 @@ def runner_named_for_the_record(runner: Path) -> str:
 def first_tracked_file_that_differs(checkout: Path):
     """Return (first differing tracked file or None, git status failure or None)."""
     changed = daily_full_test_run_of_main.git(
-        checkout, "status", "--porcelain", "--untracked-files=no")
+        checkout, "status", "--porcelain", "-z", "--untracked-files=no")
     if changed.returncode != 0:
         return None, daily_full_test_run_of_main.first_stderr_line_or_no_detail(
             changed.stderr)
-    if changed.stdout.strip():
-        return changed.stdout.splitlines()[0][3:], None
+    entries = git_output.status_entries(changed.stdout)
+    if entries:
+        return entries[0].path, None
     return None, None
 
 

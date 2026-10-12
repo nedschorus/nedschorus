@@ -514,6 +514,18 @@ with tempfile.TemporaryDirectory() as temporary_directory:
           "1 commit(s) on origin/main have changed since this checkout's merge base with origin/main"
           in renamed_warning, renamed_warning)
 
+    # A path git would C-quote without -z: main changes "docs/café.md".
+    commit_file(origin, "docs/café.md", "main's copy\n", "main adds a non-ASCII path")
+    git(["fetch", "-q", "origin"], checkout)
+    non_ascii_file = checkout / "docs/café.md"
+    non_ascii_file.parent.mkdir(parents=True, exist_ok=True)
+    non_ascii_file.write_text("the branch's copy\n", encoding="utf-8")
+    result = run_hook(hook_payload(checkout, non_ascii_file, tool_name="Write"),
+                      path_prefix=recording_git_directory)
+    check("editing a non-ASCII path main changed warns the agent, the path read from -z output",
+          "docs/café.md" in agent_text(result), result.stdout + result.stderr)
+    non_ascii_file.unlink()
+
     # A checkout with no origin/main — a repository, but nothing to compare to.
     lonely = tmp / "no-origin-main-repo"
     lonely.mkdir()

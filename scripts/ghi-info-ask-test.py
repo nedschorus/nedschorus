@@ -830,6 +830,15 @@ with tempfile.TemporaryDirectory() as temporary:
     check("and that work is untouched",
           (seat / "shared.txt").read_text(encoding="utf-8") == "edit in progress\n")
 
+    origin, seat = _make_origin_and_seat(root, "ff-renamed")
+    _commit(seat, "café notes.md", "notes\n", "a file git would quote")
+    _commit(origin, "design.md", "new design\n", "a design lands on main")
+    _git(["mv", "café notes.md", "renamed notes.md"], seat)
+    line = ghi_ask.fast_forward_seat_checkout(seat)
+    check("a staged rename of a file git would quote is one uncommitted tracked change",
+          "has 1 uncommitted tracked change(s)" in line
+          and not (seat / "design.md").exists(), line)
+
     # ghi-info commits its own document-side link repairs, so a checkout
     # carrying a commit main does not have is a real state, not debris.
     origin, seat = _make_origin_and_seat(root, "ff-diverged")

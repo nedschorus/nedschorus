@@ -1101,5 +1101,27 @@ class AReInvocationFromAFinishedRunsCheckout(unittest.TestCase):
         self.assertEqual(fixture.git(checkout, "rev-parse", "HEAD"), head_before)
 
 
+
+class ThePathsChangedSinceACommitAreTheFilesAsStored(unittest.TestCase):
+    """git without -z C-quotes a non-ASCII name and the old split on any
+    whitespace cut a name with a space in two, so the resume destination and
+    the files handed to `git add -A --` named files that do not exist."""
+
+    def test_a_name_with_a_space_and_a_non_ascii_name_come_back_whole(self):
+        repository = fixture.ThrowawayRepository()
+        try:
+            checkout = repository.checkout
+            (checkout / "café.md").write_text("one\n")
+            fixture.git(checkout, "add", "-A")
+            fixture.git(checkout, "commit", "-q", "-m", "add café.md")
+            base = fixture.git(checkout, "rev-parse", "HEAD").strip()
+            (checkout / "café.md").write_text("two\n")
+            (checkout / "my notes.md").write_text("untracked\n")
+            record = G.TopicBranchGitRecord(
+                checkout, fixture.COMPONENT, fixture.COMPONENT_DIRECTORY, fixture.DESIGN_PATH)
+            self.assertEqual(record.paths_changed_since(base), ["café.md", "my notes.md"])
+        finally:
+            repository.remove()
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

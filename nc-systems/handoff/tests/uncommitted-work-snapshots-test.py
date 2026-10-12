@@ -48,6 +48,8 @@ _fixture.remove_git_redirecting_environment_variables_from_this_process()
 MODULE_RELATIVE = Path("nc-systems/handoff/uncommitted-work-snapshots.py")
 HOOK_RELATIVE = Path("scripts/uncommitted-work-snapshot-hook.py")
 CLEANER_RELATIVE = Path("scripts/clean-worktrees.py")
+GIT_OUTPUT_MODULE_RELATIVE = Path(
+    "nc-systems/general-tools/git-machine-readable-output-runner-and-parser-common.py")
 
 
 def load(path, name):
@@ -317,7 +319,8 @@ def new_clone():
     git(SCRATCH, "init", "-q", "--bare", str(origin))
     main = base / "main"
     git(SCRATCH, "clone", "-q", str(origin), str(main))
-    for relative in (MODULE_RELATIVE, HOOK_RELATIVE, CLEANER_RELATIVE):
+    for relative in (MODULE_RELATIVE, HOOK_RELATIVE, CLEANER_RELATIVE,
+                     GIT_OUTPUT_MODULE_RELATIVE):
         (main / relative).parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(REPOSITORY_ROOT / relative, main / relative)
     (main / "tracked.txt").write_text("one\n")
@@ -620,6 +623,45 @@ def test_other_repository_is_untouched():
                      snapshots.WORK_SNAPSHOT_REF_PREFIX).split()
     check(other_refs == [] and refs_of(main) == [] and message is None, name,
           (other_refs, refs_of(main), message))
+
+
+def test_names_read_from_git_are_the_files_as_stored():
+    name = "changed files and repository discovery read git's output as stored, in any locale"
+    main = new_clone()
+    (main / "café notes.md").write_text("new\n")
+    git(main, "add", "-A")
+    git(main, "commit", "-q", "-m", "add the notes")
+    files = snapshots.changed_files(main, "HEAD")
+    check(files == [("A", "café notes.md")],
+          "changed_files names a non-ASCII path with a space as stored", files)
+    # A git that translates its messages unless LC_ALL=C, as git does where a
+    # translation is installed; ned-box has none installed.
+    stub_directory = SCRATCH / "translating-git-bin"
+    stub_directory.mkdir(exist_ok=True)
+    stub = stub_directory / "git"
+    stub.write_text("#!/bin/sh\n"
+                    f'if [ "$LC_ALL" = C ]; then exec {shutil.which("git")} "$@"; fi\n'
+                    f'{shutil.which("git")} "$@" 2>"{stub_directory}/stderr"\n'
+                    "code=$?\n"
+                    f"sed 's/not a git repository/kein Git-Repository/' \"{stub_directory}/stderr\" >&2\n"
+                    'exit "$code"\n')
+    stub.chmod(0o755)
+    outside = SCRATCH / "outside-every-repository-translated"
+    outside.mkdir(exist_ok=True)
+    path_before = os.environ["PATH"]
+    os.environ["PATH"] = f"{stub_directory}{os.pathsep}{path_before}"
+    try:
+        try:
+            found = snapshots.worktree_containing(outside)
+        except snapshots.WorkSnapshotError as error:
+            found = error
+        prompt = snapshots.first_prompt_text(outside, "seat-locale", SCRATCH / "handoffs-locale")
+    finally:
+        os.environ["PATH"] = path_before
+    check(found is None, "worktree_containing gives None outside any repository under a translating git",
+          found)
+    check(prompt == "", "first_prompt_text is empty outside any clone under a translating git",
+          prompt)
 
 
 def test_worktree_discovery_failure_is_reported():
@@ -1536,6 +1578,7 @@ def main():
                      test_overlapping_runs_end_on_the_final_state, test_operation_trailer,
                      test_hook_failure_is_reported, test_other_repository_is_untouched,
                      test_worktree_discovery_failure_is_reported,
+                     test_names_read_from_git_are_the_files_as_stored,
                      test_module_load_failure_is_reported, test_owner_liveness,
                      test_macos_ps_failure_is_not_a_dead_owner,
                      test_live_and_dead_owners_listed, test_list_caps_and_failure,

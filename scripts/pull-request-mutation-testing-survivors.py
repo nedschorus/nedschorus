@@ -64,6 +64,13 @@ DEFAULT_MUTANT_TIMEOUT_SECONDS = 300.0
 
 TEST_SUITE_RUNNER_PATH = Path(__file__).resolve().with_name("run-all-test-suites.py")
 
+_git_output_spec = importlib.util.spec_from_file_location(
+    "git_machine_readable_output_runner_and_parser_common",
+    Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+    / "git-machine-readable-output-runner-and-parser-common.py")
+git_output = importlib.util.module_from_spec(_git_output_spec)
+_git_output_spec.loader.exec_module(git_output)
+
 
 def load_test_suite_runner():
     spec = importlib.util.spec_from_file_location("run_all_test_suites",
@@ -131,10 +138,18 @@ def changed_python_files_to_mutate(checkout, merge_base, head, environment):
     # R keeps a renamed-and-changed file, which --name-only lists by its new
     # name, the name cr-filter-git's own rename-detecting diff uses.
     listed = run_or_raise(
-        ["git", "diff", "--name-only", "--diff-filter=AMR", merge_base, head,
+        ["git", "diff", "-z", "--name-only", "--diff-filter=AMR", merge_base, head,
          "--", "*.py"], checkout, environment, what="git diff --name-only")
-    return [path for path in listed.splitlines()
-            if path and not path.endswith("-test.py")]
+    return [path for path in git_output.nul_separated_fields(listed)
+            if not path.endswith("-test.py")]
+
+
+def suites_at_head(checkout, head, environment):
+    """The test suites git tracks at head."""
+    listed = run_or_raise(["git", "ls-tree", "-r", "-z", "--name-only", head], checkout,
+                          environment, what="git ls-tree")
+    return [path for path in git_output.nul_separated_fields(listed)
+            if path.endswith(("-test.py", "-test.sh"))]
 
 
 def suites_for_file(path, suites_at_head, recordings_directory, runner):
@@ -360,10 +375,7 @@ def main(argv=None):
         recordings_directory = runner.recordings_directory_for(
             arguments.recorded_inputs_directory
             or runner.DEFAULT_RECORDED_INPUTS_DIRECTORY, checkout)
-        suites_at_head = [path for path in run_or_raise(
-            ["git", "ls-tree", "-r", "--name-only", head], checkout,
-            environment, what="git ls-tree").splitlines()
-            if path.endswith(("-test.py", "-test.sh"))]
+        suites_listed_at_head = suites_at_head(checkout, head, environment)
 
         try:
             sandbox_prefix, unconfined_because = runner.signal_sandbox()
@@ -397,7 +409,7 @@ def main(argv=None):
                                   head], checkout, environment,
                                  what=f"git worktree add at {head}")
                     for path in files:
-                        suites = suites_for_file(path, suites_at_head,
+                        suites = suites_for_file(path, suites_listed_at_head,
                                                  recordings_directory, runner)
                         if not suites:
                             untested.append(path)

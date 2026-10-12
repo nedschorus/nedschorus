@@ -817,6 +817,26 @@ def run_cases():
         print("SKIP  the signal sandbox cases: bwrap is used only on Linux")
 
     # ------------------------------------------------------------------
+    # Path listings: names git would C-quote without -z come back as stored.
+    # ------------------------------------------------------------------
+    spec = importlib.util.spec_from_file_location("pull_request_mutation_testing_survivors",
+                                                  SCRIPT)
+    survivors = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(survivors)
+    with tempfile.TemporaryDirectory() as scratch_name:
+        repository, base, head = scratch_repository(scratch_name, {
+            "scripts/tést.py": "VALUE = 1\n",
+            'scripts/say "hi".py': "VALUE = 2\n",
+            "scripts/tést-test.py": "import sys\nsys.exit(0)\n",
+        })
+        files = survivors.changed_python_files_to_mutate(repository, base, head, None)
+        check("the files to mutate are named as stored, a non-ASCII name and a quote included",
+              sorted(files) == ['scripts/say "hi".py', "scripts/tést.py"], files)
+        suites = survivors.suites_at_head(repository, head, None)
+        check("the suites at head are named as stored",
+              suites == ["scripts/tést-test.py"], suites)
+
+    # ------------------------------------------------------------------
     # Bad invocations.
     # ------------------------------------------------------------------
     completed = subprocess.run([sys.executable, str(SCRIPT), "--head", "abc"],

@@ -325,7 +325,7 @@ def worktrees_listed_by(git_dir):
     # Git records worktree paths with symbolic links resolved.
     try:
         result = subprocess.run(
-            ["git", "--git-dir", git_dir, "worktree", "list", "--porcelain"],
+            ["git", "--git-dir", git_dir, "worktree", "list", "--porcelain", "-z"],
             capture_output=True,
             env=environment_without_git_redirecting_variables(),
             timeout=LOCAL_COMMAND_TIMEOUT_SECONDS)
@@ -334,9 +334,9 @@ def worktrees_listed_by(git_dir):
     if result.returncode != 0:
         lines = result.stderr.decode("utf-8", "replace").strip().splitlines()
         return [], lines[-1] if lines else "no message"
-    return [line[len("worktree "):] for line in
-            result.stdout.decode("utf-8", "surrogateescape").splitlines()
-            if line.startswith("worktree ")], None
+    # Parsed here, not by the shared git-output module: this file is sent over ssh alone.
+    return [os.fsdecode(field[len(b"worktree "):]) for field in result.stdout.split(b"\0")
+            if field.startswith(b"worktree ")], None
 
 
 def listed_worktrees_outside(layout, surfaces):

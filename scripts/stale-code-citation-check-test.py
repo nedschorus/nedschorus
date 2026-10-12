@@ -35,6 +35,8 @@ _git_environment_fixture.remove_git_redirecting_environment_variables_from_this_
 SCRIPTS = Path(__file__).resolve().parent
 PROGRAM = SCRIPTS / "stale-code-citation-check.py"
 LINT = SCRIPTS / "md-drift-lint.py"
+GIT_OUTPUT_MODULE = (SCRIPTS.parent / "nc-systems" / "general-tools"
+                     / "git-machine-readable-output-runner-and-parser-common.py")
 
 failures = []
 
@@ -70,6 +72,8 @@ def new_repository(workspace: str) -> Path:
     (root / "scripts").mkdir()
     shutil.copy(PROGRAM, root / "scripts" / PROGRAM.name)
     shutil.copy(LINT, root / "scripts" / LINT.name)
+    (root / "nc-systems" / "general-tools").mkdir(parents=True)
+    shutil.copy(GIT_OUTPUT_MODULE, root / "nc-systems" / "general-tools" / GIT_OUTPUT_MODULE.name)
     git(root, "init", "-q", "-b", "main")
     git(root, "add", "-A")
     git(root, "commit", "-q", "-m", "scripts", date="2026-01-01")
@@ -706,6 +710,23 @@ with tempfile.TemporaryDirectory() as workspace:
     check("the same text outside that directory is still reported",
           code == 1 and "lines 20-24" in out, f"{code} {out}")
 
+
+# --- A changed path git would C-quote without -z ---------------------------
+with tempfile.TemporaryDirectory() as workspace:
+    root = new_repository(workspace)
+    write_code(root, "scripts/naïve.py", CODE, date="2026-04-01")
+    write_document(root, "docs/design.md", document(
+        body="The test is `scripts/naïve.py` lines 20-24."), date="2026-05-02")
+    base = git(root, "rev-parse", "HEAD")
+    write_code(root, "scripts/naïve.py", CODE + "a new line\n", date="2026-06-01")
+    code, out, err = run(root, "--base", base)
+    check("a committed change to a non-ASCII path is read by its real name",
+          code == 1 and "scripts/naïve.py changed" in out, f"{code} {out} {err}")
+    base = git(root, "rev-parse", "HEAD")
+    (root / "scripts" / "naïve.py").write_text(CODE + "edited\n", encoding="utf-8")
+    code, out, err = run(root, "--base", base)
+    check("an uncommitted edit to a non-ASCII path is read by its real name",
+          code == 1 and "scripts/naïve.py changed" in out, f"{code} {out} {err}")
 
 print()
 if failures:

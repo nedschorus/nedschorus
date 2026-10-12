@@ -41,6 +41,12 @@ _common_spec = importlib.util.spec_from_file_location(
 common = importlib.util.module_from_spec(_common_spec)
 _common_spec.loader.exec_module(common)
 run_all_test_suites = common.run_all_test_suites
+_git_output_spec = importlib.util.spec_from_file_location(
+    "git_machine_readable_output_runner_and_parser_common",
+    Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+    / "git-machine-readable-output-runner-and-parser-common.py")
+git_output = importlib.util.module_from_spec(_git_output_spec)
+_git_output_spec.loader.exec_module(git_output)
 
 
 class StepFailed(Exception):
@@ -80,12 +86,19 @@ def git(directory, *arguments):
     return run(["git", "-C", str(directory), *arguments]).strip()
 
 
-def numstat(review_tools_worktree, base, head):
-    rows = []
-    for line in git(review_tools_worktree, "diff", "--numstat", base, head).splitlines():
-        added, removed, path = line.split("\t")
-        rows.append((path, added, removed))
-    return rows
+def files_touched_text(review_tools_worktree, base, head):
+    """The files changed between base and head, each with its line counts, for the brief."""
+    entries = git_output.numstat_entries(
+        run(["git", "-C", str(review_tools_worktree), "diff", "-z", "--numstat", base, head]))
+    texts = []
+    for entry in entries:
+        counts = ("binary" if entry.added is None
+                  else f"+{entry.added}/-{entry.deleted}")
+        if entry.origin_path is not None:
+            texts.append(f"`{entry.path}` (renamed from `{entry.origin_path}`, {counts})")
+        else:
+            texts.append(f"`{entry.path}` ({counts})")
+    return ", ".join(texts)
 
 
 def compose(spec, arguments, review_tools_worktree, instructions_file):
@@ -109,19 +122,18 @@ def compose(spec, arguments, review_tools_worktree, instructions_file):
              f"- Merged tree (head merged onto main by merge-lane-2): `{merged_tree}`.",
              f"- Your scratch directory: `{scratch}`. Use it as `<your scratchpad>`."]
     if "reviewed_before" in spec:
-        rows = numstat(review_tools_worktree, spec["reviewed_before"], head)
         facts.append(f"- This head commit is a fix-round. Head commit reviewed before: "
                      f"`{spec['reviewed_before']}` ({spec['previous_reviews']}). "
                      f"{spec['new_commits']}")
         facts.append("- Files the new commit touches: "
-                     + ", ".join(f"`{p}` (+{a}/-{r})" for p, a, r in rows) + ".")
+                     + files_touched_text(review_tools_worktree, spec["reviewed_before"], head)
+                     + ".")
         facts.append(f"- The author's answer to each finding: {spec['answer']}")
         facts.append("- Test files the whole pull request touches: "
                      + ", ".join(f"`{t}`" for t in spec["tests"]) + ".")
     else:
-        rows = numstat(review_tools_worktree, merge_base, head)
         facts.append("- Files the change touches: "
-                     + ", ".join(f"`{p}` (+{a}/-{r})" for p, a, r in rows) + ".")
+                     + files_touched_text(review_tools_worktree, merge_base, head) + ".")
         facts.append("- Test files the change touches: "
                      + ", ".join(f"`{t}`" for t in spec["tests"]) + ".")
         facts.append("- First round: no head commit was reviewed before.")
