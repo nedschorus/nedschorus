@@ -166,12 +166,17 @@ def refresh_all(root: pathlib.Path, failures_only: bool) -> int:
     extractor, extractor_sha256 = load_extractor()
     dialogs_directory = root / SESSION_DIALOGS_DIRECTORY_NAME
     extractor_sha256_file = dialogs_directory / EXTRACTOR_SHA256_FILE_NAME
+    written = current = failed = 0
     try:
         extractor_unchanged = extractor_sha256_file.read_text(encoding="utf-8").strip() == extractor_sha256
-    except OSError:
-        # Unknown counts as changed: every dialog is rewritten, and the write below reports a file it cannot keep.
+    except FileNotFoundError:
         extractor_unchanged = False
-    written = current = failed = 0
+    except OSError as error:
+        # Unknown counts as changed, so every dialog is rewritten; failed also withholds the write below.
+        extractor_unchanged = False
+        failed += 1
+        print(f"FAILED: cannot read {extractor_sha256_file}, so every dialog is rewritten on every pass — "
+              f"{type(error).__name__}: {error}; make it a file readable and writable by this user, or remove it")
     unreadable = []
     for machine, project_key, transcript in session_transcripts(transcripts_directory, unreadable):
         dialog = dialogs_directory / machine / project_key / f"{transcript.stem}{SESSION_DIALOG_SUFFIX}"
@@ -187,7 +192,7 @@ def refresh_all(root: pathlib.Path, failures_only: bool) -> int:
     for path, error in unreadable:
         failed += 1
         print(f"FAILED: cannot read {path}, so the sessions under it get no dialog — "
-              f"{type(error).__name__}: {error}; make it readable and searchable by this user")
+              f"{type(error).__name__}: {error}; make it readable by this user, and each directory on its path searchable")
     if not failed and not extractor_unchanged:
         # Kept only after a pass with no failure, so a dialog the new extractor could not write is retried.
         try:
@@ -195,7 +200,9 @@ def refresh_all(root: pathlib.Path, failures_only: bool) -> int:
         except OSError as error:
             failed += 1
             print(f"FAILED: could not record the extractor's sha256 in {extractor_sha256_file}, so the next "
-                  f"pass rewrites every dialog again — {type(error).__name__}: {error}")
+                  f"pass rewrites every dialog again — {type(error).__name__}: {error}; "
+                  f"make {dialogs_directory} writable by this user, and remove anything at that path that is "
+                  "not a file")
     if not failures_only:
         print(f"{PROGRAM}: wrote {written} session dialogs, {current} already current, "
               f"{failed} failed, under {dialogs_directory}")

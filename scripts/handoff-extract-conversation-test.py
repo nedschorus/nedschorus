@@ -717,8 +717,7 @@ with tempfile.TemporaryDirectory() as workspace:
     check("without the flag the reply after a notification is still an acknowledgement",
           "Both fixed; merging." not in [turn["text"] for turn in acknowledged_turns],
           [turn["text"] for turn in acknowledged_turns])
-    rendered_task = "".join(extractor.render_turn(turns[1], extractor.ExtractionReport(
-        "s", path, "", 0, len(turns), {})))
+    rendered_task = "".join(extractor.render_turn(turns[1]))
     check("a task's heading names the description, and its facts line the agent and how it ran",
           "## Subagent task — Background review" in rendered_task
           and "(agent a3333333333333333, fork, background, isolation worktree)" in rendered_task,
@@ -843,13 +842,8 @@ with tempfile.TemporaryDirectory() as workspace:
           kept[4:] == [("task", "Second", "", "", "export const meta = { description: 'Second' }"),
                        ("report", "Second", "", "completed", '"not JSON after all')],
           kept)
-    workflow_report = turns[[turn["text"] for turn in turns].index("NO_SHELL_TOOL\nEdit")]
-    check("a workflow's own transcripts are found under subagents/workflows/<run id>/",
-          extractor.subagent_transcript_path(workflow_report["subagent"], extractor.ExtractionReport(
-              "s", path, "", 0, 0, {})) == path.with_suffix("") / "subagents" / "workflows" / "wf_1"
-          / "journal.jsonl")
 
-    # The tail cuts a long subagent text and says where the whole is; the complete dialog keeps it whole.
+    # The tail leaves every subagent text out; the complete dialog keeps each one whole.
     long_report = "\n".join(f"line {number} " + "word " * 9 for number in range(400))
     long_session = [user_record("opening question"), assistant_record(" ".join(["ancient"] * 1200)),
                     user_record("first question"), assistant_record(" ".join(["early"] * 1200)),
@@ -867,27 +861,47 @@ with tempfile.TemporaryDirectory() as workspace:
           "for the dialog it needs",
           exit_code == 0 and "early early" in tail_text and "ancient" not in tail_text,
           tail_text[:600])
-    check("the tail cuts a subagent text over the limit and names the session's and the "
-          "subagent's transcripts",
-          "line 399" not in tail_text and "[Cut here: " in tail_text and str(path) in tail_text
-          and str(path.with_suffix("") / "subagents" / "agent-a9999999999999999.jsonl") in tail_text,
-          tail_text[-900:])
-    check("the complete dialog keeps the long subagent text whole",
-          "line 399" in complete_text and "[Cut here" not in complete_text)
-    check("both files count the subagent turns apart from the words, and point at the "
+    check("the tail carries no subagent task or report, and no note or pointer about them",
+          "line 0 " not in tail_text and "Do the long job." not in tail_text
+          and "## Subagent" not in tail_text and "subagent" not in tail_text.replace(
+              "every subagent task and report", ""),
+          tail_text)
+    check("the complete dialog keeps the subagent's task and its long report whole",
+          "Do the long job." in complete_text and "line 0 " in complete_text and "line 399" in complete_text)
+    check("the complete dialog counts the subagent turns apart from the words, and points at the "
           "subagents' transcripts",
-          "2 subagent turns, not counted in the words" in tail_text
-          and "2 subagent turns, not counted in the words" in complete_text
-          and "/subagents/agent-<agent id>.jsonl" in tail_text
+          "2 subagent turns, not counted in the words" in complete_text
           and "/subagents/agent-<agent id>.jsonl" in complete_text,
-          tail_text[:500])
+          complete_text[:500])
+
+    # A session whose whole two-voice dialog fits the tail still gets its complete dialog for its subagent texts.
+    short_session = [user_record("dispatch it"), agent_call("toolu_short", "Short job", "Do the short job."),
+                     launched("toolu_short", "a9898989898989898"),
+                     *every_copy_of(notification("a9898989898989898", "toolu_short", "Short job", "Done.")),
+                     assistant_record(" ".join(["closing"] * 80))]
+    path = write_transcript(workspace, "sub-short.jsonl", short_session)
+    output_path = Path(workspace) / "seat-dialog-0008.md"
+    exit_code = extractor.main(["--transcript-path", str(path), "--output", str(output_path)])
+    tail_text = output_path.read_text(encoding="utf-8")
+    complete_path = output_path.with_name("seat-dialog-0008-complete.md")
+    check("a tail that holds the whole two-voice dialog still points at a complete dialog holding the "
+          "subagent texts",
+          exit_code == 0 and "Turns carried: 2 of 2" in tail_text and "Do the short job." not in tail_text
+          and str(complete_path) in tail_text and complete_path.is_file()
+          and "Do the short job." in complete_path.read_text(encoding="utf-8"),
+          tail_text)
+
+    # A session with subagent turns and no user or agent turn has no dialog to hand over.
+    path = write_transcript(workspace, "sub-only.jsonl", [agent_call("toolu_only", "Only", "Only a task.")])
+    check("a transcript whose only turns are subagent turns is refused like an empty one",
+          extractor.main(["--transcript-path", str(path), "--output", str(Path(workspace) / "only.md")]) == 4)
 
     # The rolling session dialog renders even a transcript with no dialog in it.
     path = write_transcript(workspace, "no-dialog.jsonl", [{"type": "system", "content": "x"}])
     check("the complete dialog of a transcript with no dialog says it holds no turns",
           "All 0 dialog turns" in extractor.render_complete_dialog_of_transcript_as_markdown(path))
 
-# Fix-round cases: a repeated report after a SendMessage, the interim notice, and the tail's shared budget.
+# Fix-round cases: a repeated report after a SendMessage, late copies, and the interim notice.
 with tempfile.TemporaryDirectory() as workspace:
     # Two reviews by one agent, the second after a SendMessage, that both report the same words.
     repeated = [
@@ -928,6 +942,52 @@ with tempfile.TemporaryDirectory() as workspace:
           [kind for kind, *_ in subagent_turns_of(turns)] == ["task", "report", "follow-up"],
           subagent_turns_of(turns))
 
+    # The harness stamps an attachment copy up to a few milliseconds off its enqueue's time.
+    skewed = [dict(record) for record in late_copies]
+    skewed[6] = {"type": "attachment", "timestamp": "2026-09-11T23:30:36.981Z",
+                 "attachment": {"type": "queued_command", "prompt": approved,
+                                "commandMode": "task-notification", "timestamp": "2026-09-11T23:30:36.981Z"}}
+    path = write_transcript(workspace, "sub-late-copies-skewed.jsonl", skewed)
+    turns, _ = extractor.read_dialog_turns(path, include_subagent_tasks_and_reports=True)
+    check("a late attachment copy whose time is 1 ms off its enqueue's is not a second report",
+          [kind for kind, *_ in subagent_turns_of(turns)] == ["task", "report", "follow-up"],
+          subagent_turns_of(turns))
+
+    # A second copy of one kind with no enqueue left to match is a delivery of its own.
+    again = notification("a1515151515151515", "toolu_twice", "Review", "Still clean.")
+    twice = [
+        user_record("review it"),
+        agent_call("toolu_twice", "Review", "Review the change."),
+        launched("toolu_twice", "a1515151515151515"),
+        {"type": "queue-operation", "operation": "enqueue", "content": again},
+        {"type": "user", "origin": {"kind": "task-notification"}, "message": {"content": again}},
+        tool_call("toolu_recheck", "SendMessage", {"to": "a1515151515151515", "message": "Check again."}),
+        {"type": "user", "origin": {"kind": "task-notification"}, "message": {"content": again}},
+        assistant_record("Clean twice."),
+    ]
+    path = write_transcript(workspace, "sub-second-copy-of-one-kind.jsonl", twice)
+    turns, _ = extractor.read_dialog_turns(path, include_subagent_tasks_and_reports=True)
+    check("a second user-record copy after a SendMessage, with no enqueue of its own, is a new report",
+          [kind for kind, *_ in subagent_turns_of(turns)] == ["task", "report", "follow-up", "report"],
+          subagent_turns_of(turns))
+
+    # A hand-back whose user-record copy lands after a SendMessage to its sender is one report.
+    handback = handback_copies("a1616161616161616", "No findings in the fix.")
+    late_handback = [
+        user_record("review the fix"),
+        agent_call("toolu_hb", "Review the fix", "Review it."),
+        launched("toolu_hb", "a1616161616161616"),
+        handback[0],
+        tool_call("toolu_hb_more", "SendMessage", {"to": "a1616161616161616", "message": "One more file."}),
+        handback[1], handback[2], handback[3],
+        assistant_record("Waiting for the last file."),
+    ]
+    path = write_transcript(workspace, "sub-late-handback-copy.jsonl", late_handback)
+    turns, _ = extractor.read_dialog_turns(path, include_subagent_tasks_and_reports=True)
+    check("a hand-back's copies written after a SendMessage to its sender are not a second report",
+          [kind for kind, *_ in subagent_turns_of(turns)] == ["task", "report", "follow-up"],
+          subagent_turns_of(turns))
+
     # A subagent waiting on its own background work: the interim notice is not its report.
     interim = ("This agent has not reported yet: it is waiting on its own background work and will "
                "deliver its report through SubagentHandback when that finishes.")
@@ -948,31 +1008,6 @@ with tempfile.TemporaryDirectory() as workspace:
     check("the agent's reply to an interim notice is kept, not dropped as an acknowledgement",
           "Waiting." in [turn["text"] for turn in turns] and skips["acknowledgement"] == 0,
           ([turn["text"] for turn in turns], skips))
-
-    # The tail's subagent texts share one budget, newest first; each keeps at least the minimum.
-    def words(label, count):
-        return " ".join([label] * count)
-    budget_session = [user_record("dispatch three"),
-                      agent_call("toolu_b1", "First", words("first", 900)),
-                      agent_call("toolu_b2", "Second", words("second", 900)),
-                      agent_call("toolu_b3", "Third", words("third", 300)),
-                      assistant_record(words("closing", 80))]
-    path = write_transcript(workspace, "sub-budget.jsonl", budget_session)
-    turns, skips = extractor.read_dialog_turns(path, include_subagent_tasks_and_reports=True)
-    tail_text = extractor.render_extraction(turns, extractor.ExtractionReport(
-        "s", path, "", 0, len(turns), skips))
-    check("the newest subagent text in the tail is whole, the next takes what the budget leaves, "
-          "and the oldest keeps the minimum, each cut one saying where the whole text is",
-          tail_text.count("third") == 300
-          and tail_text.count("second") == extractor.SUBAGENT_TAIL_WORDS_IN_ALL - 300
-          and tail_text.count("first") == extractor.MINIMUM_SUBAGENT_TAIL_WORDS
-          and tail_text.count("[Cut here: ") == 2,
-          (tail_text.count("third"), tail_text.count("second"), tail_text.count("first")))
-    complete_text = extractor.render_companion(turns, extractor.ExtractionReport(
-        "s", path, "", 0, len(turns), skips))
-    check("the complete dialog keeps every subagent text whole",
-          complete_text.count("first") == 900 and complete_text.count("second") == 900
-          and "[Cut here" not in complete_text)
 
 print()
 if failures:

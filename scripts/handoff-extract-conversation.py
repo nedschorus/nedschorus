@@ -48,12 +48,11 @@ result only says the report came as a hand-back or will come later. The
 copies of one report are carried once; a report repeated after a SendMessage
 to the same subagent is a new report, carried again. Because a report answers
 the session, the agent's short reply to one is kept, not dropped as an
-acknowledgement. Subagent turns do not count toward the word floor. In the
-tail, which the successor reads first, the subagent texts share
-SUBAGENT_TAIL_WORDS_IN_ALL, newest first, and each keeps at least
-MINIMUM_SUBAGENT_TAIL_WORDS; a text cut there carries a note saying where the
-whole text is. The complete dialog keeps every one whole. read_dialog_turns returns subagent turns only when asked, so its
-other callers keep the two voices they expect.
+acknowledgement. Subagent turns go in the complete dialog only, every one
+whole: the tail, which the successor reads first, carries the user's and the
+agent's turns alone, so a handoff writes the complete dialog whenever the
+session has a subagent turn. read_dialog_turns returns subagent turns only when
+asked, so its other callers keep the two voices they expect.
 
 Alongside the extraction, when it leaves turns behind, the complete filtered
 dialog is written as a sibling file: the tail is the successor's working set,
@@ -108,11 +107,6 @@ REPORT_SENT_AS_HANDBACK_PREFIX = "This agent's report was delivered to you as a 
 REPORT_NOT_YET_SENT_PREFIX = "This agent has not reported yet"
 RESULTS_THAT_ARE_NOT_REPORTS = (REPORT_SENT_AS_HANDBACK_PREFIX, REPORT_NOT_YET_SENT_PREFIX)
 LAUNCH_NOTICE_PREFIXES = ("Async agent launched", "Workflow launched")
-# Measured on the 379 transcripts with subagent turns in the log-store's mirror: with 3,000 words
-# for each text one tail reached 50,616 words; with these, the longest is 14,602 and the 90th
-# percentile 6,342, against 13,039 and 4,704 for the same tails without subagent turns.
-SUBAGENT_TAIL_WORDS_IN_ALL = 1000
-MINIMUM_SUBAGENT_TAIL_WORDS = 50
 
 
 class TranscriptProblem(Exception):
@@ -316,8 +310,7 @@ class SubagentTracker:
     Each turn returned has voice SUBAGENT_VOICE, text, kind ("task", "follow-up",
     "report" or "message"), and "subagent": a dict shared by every turn of one
     subagent, which later records fill in, holding "description", "agent_id",
-    "details" (type, model, background, isolation) and, for a workflow,
-    "workflow_run_id". A report turn also holds "status".
+    "details" (type, model, background, isolation). A report turn also holds "status".
     """
 
     def __init__(self):
@@ -422,7 +415,6 @@ class SubagentTracker:
                 earlier["details"] = earlier["details"] or subagent["details"]
         if result.get("workflowName") or result.get("runId"):
             subagent["description"] = str(result.get("summary") or result.get("workflowName") or "")
-            subagent["workflow_run_id"] = str(result.get("runId") or "")
         if block.get("is_error"):
             return [self.turn(subagent, "report", text, status="error")], True
         status = result.get("status") or ""
@@ -439,21 +431,18 @@ class SubagentTracker:
         """Return the follow-up counts as they stood when the delivery this copy of block belongs to was enqueued.
 
         The harness writes one delivery as an enqueue, then as a remove, a queued_command attachment or a
-        user record, and those later copies can land after a SendMessage to the same agent. Each later copy
-        is matched to the oldest enqueue of the same block that has no copy of its kind yet; the attachment
-        carries its enqueue's time and is matched by it. A copy with no enqueue counts as a delivery of its own.
+        user record, and those later copies can land after a SendMessage to the same agent. The queue drains
+        in order and writes each kind of copy once per enqueue, so each later copy is matched to the oldest
+        enqueue of the same block that has no copy of its kind yet. A copy with no enqueue left to match
+        counts as a delivery of its own.
         """
         deliveries = self.deliveries_by_block.setdefault(block, [])
         record_type = record.get("type")
         if record_type == "queue-operation" and record.get("operation") == "enqueue":
-            deliveries.append({"enqueued": record.get("timestamp"), "copies": set(),
-                               "follow_ups": dict(self.follow_ups_sent_by_agent_id)})
+            deliveries.append({"copies": set(), "follow_ups": dict(self.follow_ups_sent_by_agent_id)})
             return deliveries[-1]["follow_ups"]
         copy_kind = record.get("operation") if record_type == "queue-operation" else record_type
         unmatched = [delivery for delivery in deliveries if copy_kind not in delivery["copies"]]
-        if record_type == "attachment":
-            enqueued = (record.get("attachment") or {}).get("timestamp")
-            unmatched = [delivery for delivery in unmatched if delivery["enqueued"] == enqueued]
         if not unmatched:
             return self.follow_ups_sent_by_agent_id
         unmatched[0]["copies"].add(copy_kind)
@@ -673,7 +662,8 @@ def render_pointers(report: ExtractionReport) -> list:
     lines = []
     if report.companion_path:
         lines.append(
-            f"Earlier dialog, complete and noise-free: {report.companion_path}."
+            f"The complete dialog, noise-free, with every earlier turn and every subagent task "
+            f"and report: {report.companion_path}."
         )
     lines.append(
         f"The full transcript is at {report.transcript_path} — every tool call "
@@ -698,12 +688,6 @@ def subagent_turns_note(turns) -> str:
     return f"; {count} subagent turns, not counted in the words" if count else ""
 
 
-def subagent_transcript_path(subagent, report: ExtractionReport) -> Path:
-    if subagent.get("workflow_run_id"):
-        return subagent_directory(report) / "workflows" / subagent["workflow_run_id"] / "journal.jsonl"
-    return subagent_directory(report) / f"agent-{subagent.get('agent_id') or '<agent id>'}.jsonl"
-
-
 SUBAGENT_HEADINGS = {
     "task": "Subagent task",
     "follow-up": "Subagent task, continued",
@@ -712,38 +696,8 @@ SUBAGENT_HEADINGS = {
 }
 
 
-def text_within_word_limit(text: str, maximum_words: int):
-    """Return (the whole lines of text that fit maximum_words, or the first line cut to it, and the number of words left out)."""
-    kept_lines = []
-    kept_words = 0
-    for line in text.split("\n"):
-        line_words = len(line.split())
-        if kept_words + line_words > maximum_words:
-            if not kept_words:
-                # A first line longer than the limit is cut at the limit, so the text never shows empty.
-                kept_lines.append(" ".join(line.split()[:maximum_words]))
-                kept_words = maximum_words
-            break
-        kept_lines.append(line)
-        kept_words += line_words
-    return "\n".join(kept_lines).rstrip(), len(text.split()) - kept_words
-
-
-def subagent_tail_word_limits(turns) -> dict:
-    """Return each subagent turn's word limit in the tail, by index: newest first, from one shared budget."""
-    limits = {}
-    budget = SUBAGENT_TAIL_WORDS_IN_ALL
-    for index in range(len(turns) - 1, -1, -1):
-        if turns[index]["voice"] != SUBAGENT_VOICE:
-            continue
-        limit = max(MINIMUM_SUBAGENT_TAIL_WORDS, budget)
-        limits[index] = limit
-        budget = max(0, budget - len(turns[index]["text"].split()))
-    return limits
-
-
-def render_turn(turn, report: ExtractionReport, maximum_subagent_words=None) -> list:
-    """Return the Markdown lines of one turn; a subagent text over maximum_subagent_words is cut."""
+def render_turn(turn) -> list:
+    """Return the Markdown lines of one turn."""
     if turn["voice"] != SUBAGENT_VOICE:
         speaker = "User" if turn["voice"] == "user" else "Agent"
         return [f"## {speaker}", "", turn["text"], ""]
@@ -761,13 +715,7 @@ def render_turn(turn, report: ExtractionReport, maximum_subagent_words=None) -> 
     lines = [f"## {heading}", ""]
     if facts:
         lines += [f"({', '.join(facts)})", ""]
-    text = turn["text"] or "(no text)"
-    if maximum_subagent_words is not None and len(text.split()) > maximum_subagent_words:
-        text, left_out = text_within_word_limit(text, maximum_subagent_words)
-        text += (f"\n\n[Cut here: {left_out} more words. The whole text is in the session "
-                 f"transcript, {report.transcript_path}; the subagent's own transcript is "
-                 f"{subagent_transcript_path(subagent, report)}.]")
-    return lines + [text, ""]
+    return lines + [turn["text"] or "(no text)", ""]
 
 
 def render_extraction(turns, report: ExtractionReport) -> str:
@@ -776,7 +724,7 @@ def render_extraction(turns, report: ExtractionReport) -> str:
         "",
         f"Boundary: {report.boundary_note}",
         f"Turns carried: {len(turns)} of {report.total_turns} "
-        f"({word_count(turns)} words{subagent_turns_note(turns)}). Turn counts are dialog only — "
+        f"({word_count(turns)} words). Turn counts are dialog only — "
         f"harness-injected records and their acknowledgements are filtered out.",
     ]
 
@@ -797,14 +745,11 @@ def render_extraction(turns, report: ExtractionReport) -> str:
 
     lines += ["", "---", ""]
 
-    limits = subagent_tail_word_limits(turns)
-    for index, turn in enumerate(turns):
-        lines += render_turn(turn, report, limits.get(index))
+    for turn in turns:
+        lines += render_turn(turn)
 
     lines += ["---", "", "Need more than this?"]
     lines += render_pointers(report)
-    if subagent_turn_count(turns):
-        lines.append(subagent_transcripts_pointer(report))
     lines.append("")
     return "\n".join(lines)
 
@@ -823,7 +768,7 @@ def render_companion(turns, report: ExtractionReport) -> str:
         lines.append(subagent_transcripts_pointer(report))
     lines += ["", "---", ""]
     for turn in turns:
-        lines += render_turn(turn, report)
+        lines += render_turn(turn)
     return "\n".join(lines)
 
 
@@ -892,7 +837,8 @@ def main(argv=None) -> int:
 
     try:
         turns, skip_counts = read_dialog_turns(transcript_path, include_subagent_tasks_and_reports=True)
-        if not turns:
+        dialog = [turn for turn in turns if turn["voice"] != SUBAGENT_VOICE]
+        if not dialog:
             raise TranscriptProblem(
                 f"{transcript_path} yielded no dialog turns "
                 f"(skipped: {skip_counts}) — refusing to write an empty extraction"
@@ -900,7 +846,7 @@ def main(argv=None) -> int:
 
         if arguments.boundary_quote:
             selected, start_index, quoted_index = select_turns_from_boundary(
-                turns, arguments.boundary_quote, arguments.minimum_words
+                dialog, arguments.boundary_quote, arguments.minimum_words
             )
             boundary_note = (
                 f"the prompt quoted as {arguments.boundary_quote.strip()!r} "
@@ -912,11 +858,11 @@ def main(argv=None) -> int:
                     f"{arguments.minimum_words}-word floor"
                 )
         elif arguments.last_turns:
-            start_index = max(0, len(turns) - arguments.last_turns)
-            selected = turns[start_index:]
+            start_index = max(0, len(dialog) - arguments.last_turns)
+            selected = dialog[start_index:]
             boundary_note = f"final {len(selected)} turns (explicit turn count)"
         else:
-            selected, start_index = select_tail_clearing_floor(turns, arguments.minimum_words)
+            selected, start_index = select_tail_clearing_floor(dialog, arguments.minimum_words)
             boundary_note = (
                 f"the tail of the conversation clearing {arguments.minimum_words} words, "
                 f"opening at the user prompt on turn {start_index + 1}"
@@ -930,12 +876,13 @@ def main(argv=None) -> int:
         transcript_path=transcript_path,
         boundary_note=boundary_note,
         turns_left_behind=start_index,
-        total_turns=len(turns),
+        total_turns=len(dialog),
         skip_counts=skip_counts,
     )
 
     if arguments.output:
         output_path = Path(arguments.output).expanduser()
+        # The tail leaves out every subagent turn, so a session with one also gets its complete dialog.
         if len(selected) < len(turns):
             report.companion_path = output_path.with_name(
                 f"{output_path.stem}-complete{output_path.suffix}"

@@ -133,6 +133,16 @@ with tempfile.TemporaryDirectory() as workspace:
               store, "mac", "-Users-someone-project", "s-old-times").read_text(encoding="utf-8"),
           (late.returncode, late.stdout))
 
+    # A mirrored transcript replaced by an older-dated copy has a time that goes backwards.
+    with old_times.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps({"type": "user", "message": {"content": "an older copy"}}) + "\n")
+    os.utime(old_times, (1_000_000_500, 1_000_000_500))
+    backwards = run(store, "--failures-only")
+    check("a transcript whose time goes backwards is written again",
+          backwards.returncode == 0 and "an older copy" in dialog_path(
+              store, "mac", "-Users-someone-project", "s-old-times").read_text(encoding="utf-8"),
+          (backwards.returncode, backwards.stdout))
+
     # A machine directory without projects/, and a file other than a transcript, are passed over quietly.
     (store / "transcripts" / "recovered").mkdir()
     (mac_transcript.parent / "settings.json").write_text("{}", encoding="utf-8")
@@ -252,14 +262,46 @@ with tempfile.TemporaryDirectory() as workspace:
               stuck.returncode == 1 and "wrote 0 session dialogs" not in retried.stdout,
               (stuck.stdout, retried.stdout))
 
-    # The extractor's digest that cannot be kept is a failure: the next pass would rewrite every dialog.
+    # A digest that cannot be read or kept is a failure: otherwise every pass would rewrite every dialog unseen.
     digest_store = Path(workspace) / "digest-store"
     write_transcript(digest_store, "mac", "-Users-someone-project", "s-digest", conversation("digest"))
-    (digest_store / "session-dialogs" / ".dialogs-written-by-extractor-sha256").mkdir(parents=True)
+    digest_file = digest_store / "session-dialogs" / ".dialogs-written-by-extractor-sha256"
+    digest_file.mkdir(parents=True)
     undigested = run(digest_store, "--failures-only")
-    check("an extractor digest that cannot be written prints a FAILED line, and the pass exits 1",
-          undigested.returncode == 1 and "FAILED: could not record the extractor's sha256" in undigested.stdout,
+    check("a directory where the extractor digest belongs prints a FAILED line naming it, and the pass exits 1",
+          undigested.returncode == 1 and f"FAILED: cannot read {digest_file}" in undigested.stdout,
           (undigested.returncode, undigested.stdout, undigested.stderr))
+    digest_file.rmdir()
+    recorded = run(digest_store, "--failures-only")
+    digest_file.chmod(0o200)
+    try:
+        unreadable_digest = run(digest_store, "--failures-only")
+        unreadable_again = run(digest_store, "--failures-only")
+    finally:
+        digest_file.chmod(0o644)
+    if os.geteuid() == 0:
+        print("SKIP  an extractor digest that cannot be read: root reads every file")
+    else:
+        check("an extractor digest that cannot be read prints a FAILED line under --failures-only on every pass, "
+              "exit 1",
+              recorded.returncode == 0 and unreadable_digest.returncode == 1
+              and f"FAILED: cannot read {digest_file}" in unreadable_digest.stdout
+              and unreadable_again.returncode == 1
+              and f"FAILED: cannot read {digest_file}" in unreadable_again.stdout,
+              (recorded.stdout, unreadable_digest.stdout, unreadable_again.stdout))
+    digest_file.unlink()
+    digest_file.parent.chmod(0o555)
+    try:
+        unwritable_digest = run(digest_store, "--failures-only")
+    finally:
+        digest_file.parent.chmod(0o755)
+    if os.geteuid() == 0:
+        print("SKIP  an extractor digest that cannot be written: root writes every directory")
+    else:
+        check("an extractor digest that cannot be written prints a FAILED line, and the pass exits 1",
+              unwritable_digest.returncode == 1
+              and "FAILED: could not record the extractor's sha256" in unwritable_digest.stdout,
+              (unwritable_digest.returncode, unwritable_digest.stdout, unwritable_digest.stderr))
 
     no_transcripts = Path(workspace) / "empty-store"
     no_transcripts.mkdir()
