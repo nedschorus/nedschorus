@@ -66,11 +66,11 @@ CREDENTIAL_DIRECTORIES in nc-systems/cold-read/cold-read-cell-common.py).
 under a named permission profile instead: it extends Codex's `:workspace`
 profile, which writes where workspace-write did, and denies the credential
 directories and file names. Those writable roots are the checkout and the
-temporary directories, so the cell also adds the report's own directory with
-`--add-dir`: a report in another checkout, such as a walk draft's suggestions
-in a topic worktree, is otherwise refused with "Operation not permitted". That whole
-directory becomes writable, so when it lies outside the checkout the shared module
-fingerprints its files too, where `git status` does not look. Codex refuses the two together, so `--sandbox`
+temporary directories, so a report outside the checkout, such as a walk draft's
+suggestions in another checkout, would be refused with "Operation not permitted".
+The reviewer writes such a report into a fresh, empty temporary directory, added
+with `--add-dir`, and the shared module moves it to its destination after the
+run; the documents beside the destination never become writable. Codex refuses the two together, so `--sandbox`
 is gone. Measured 2026-09-28 with canary files, on both machines: under
 workspace-write the reviewer read all three canaries; under the profile it
 read none, still read README.md, and wrote its report. Codex expands a deny
@@ -169,7 +169,7 @@ def credential_denying_permission_profile_arguments(platform: str = sys.platform
         CREDENTIAL_DENYING_PERMISSION_PROFILE, ":workspace", platform, network=True)
 
 
-def invocation_builder(effort: str, report: pathlib.Path = None):
+def invocation_builder(effort: str, report_staging_directory: pathlib.Path = None):
     """Return a callback producing (argv, stdin text) for each model and prompt."""
     # Codex takes a positional prompt; None tells the runner to close stdin explicitly.
     def build_invocation(model: str, prompt: str):
@@ -179,10 +179,8 @@ def invocation_builder(effort: str, report: pathlib.Path = None):
             "--disable", "memories",
             "-C", str(common.REPO_ROOT),
         ]
-        # The profile's writable roots are the checkout and the temporary
-        # directories; a report anywhere else needs its own directory added.
-        if report is not None:
-            command += ["--add-dir", str(report.parent)]
+        if report_staging_directory is not None:
+            command += ["--add-dir", str(report_staging_directory)]
         if model:
             command += ["-m", model]
         command += ["-c", f"model_reasoning_effort={effort}"]
@@ -213,6 +211,7 @@ def main() -> int:
         tier_to_effort=TIER_TO_REASONING_EFFORT,
         invocation_builder=invocation_builder,
         recognised_failure_texts_for_model=recognised_failure_texts_for_model,
+        stage_report_outside_checkout=True,
     )
 
 

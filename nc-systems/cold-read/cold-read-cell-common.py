@@ -12,6 +12,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 import typing
 
@@ -396,35 +397,10 @@ def repo_relative_name(path) -> str:
         return ""
 
 
-def report_directory_state(report) -> set:
-    """Return absolute paths and fingerprints of the files under a report directory outside the checkout."""
-    # The Codex cell makes the report's directory writable with --add-dir. Inside the
-    # checkout that directory was writable already; outside it, such as a walk draft's
-    # docs/walk in another checkout, git status never looks, and the document under
-    # review may sit there beside the report.
-    if report is None:
-        return set()
-    directory = pathlib.Path(report).resolve().parent
-    if directory == REPO_ROOT or REPO_ROOT in directory.parents or not directory.is_dir():
-        return set()
-    try:
-        files = [path for path in directory.rglob("*") if path.is_file()]
-    except OSError as error:
-        raise WriteDetectorUnavailable(f"could not list {directory}: {error}") from error
-    return {(str(path), path_content_fingerprint(path)) for path in files}
-
-
 def stray_writes_since(baseline: set, own_report_path=None) -> list[str]:
     """Return paths changed since the baseline, excluding the requested report."""
-    current = working_tree_state() | report_directory_state(own_report_path)
-    changed = {name for name, _fingerprint in current - baseline}
-    # A file deleted from the report's directory leaves only its baseline entry; git
-    # status names its own deletions, and its names are relative.
-    changed |= {name for name, _fingerprint in baseline - current
-                if pathlib.Path(name).is_absolute()}
+    changed = {name for name, _fingerprint in working_tree_state() - baseline}
     changed.discard(repo_relative_name(own_report_path))
-    if own_report_path is not None:
-        changed.discard(str(pathlib.Path(own_report_path).resolve()))
     return sorted(changed)
 
 
@@ -716,6 +692,7 @@ def run_cell(
     *, program: str, runtime: str, description: str, model_help: str,
     tier_to_model_chain: dict, tier_to_effort: dict, invocation_builder,
     recover_report_from_stdout=None, recognised_failure_texts_for_model=None,
+    stage_report_outside_checkout: bool = False,
 ) -> int:
     # Include failed attempts in the cell's total cost.
     cell_started_at = time.time()
@@ -732,41 +709,71 @@ def run_cell(
               "stray writes will not be checked for this run.", file=sys.stderr)
 
     report = None
+    staging_root = staging_directory = None
     try:
         validate_cell(args.cell, args.prompt_file)
         target = resolve_target(args.target)
         report = resolve_report_path(args.report)
         prompt_file = (
             resolve_prompt_file(args.prompt_file) if args.prompt_file else None)
-        prompt = compose_prompt(args.cell, target, report, prompt_file,
-                                resolve_target_origin(args.target_origin))
+        target_origin = resolve_target_origin(args.target_origin)
+        # A sandboxed reviewer writes only inside the checkout and the temporary
+        # directories; granting a report's own directory elsewhere would also make
+        # the documents beside it writable, where git status does not look.
+        # The near-miss recovery searches the report directory's parent, so the
+        # report directory sits inside a fresh root rather than in the temporary
+        # directory itself.
+        if stage_report_outside_checkout and REPO_ROOT not in report.resolve().parents:
+            staging_root = pathlib.Path(tempfile.mkdtemp(prefix="cold-read-report-"))
+            staging_directory = staging_root / "report"
+            staging_directory.mkdir()
+        reviewer_report = (
+            staging_directory / report.name if staging_directory else report)
+        prompt = compose_prompt(args.cell, target, reviewer_report, prompt_file,
+                                target_origin)
     except CellRefusal as refusal:
         print(f"{program}: {refusal}", file=sys.stderr)
         report_stray_writes(program, baseline, report)
+        if staging_root is not None:
+            shutil.rmtree(staging_root, ignore_errors=True)
         return refusal.exit_code
-
-    if baseline is not None:
-        try:
-            baseline = baseline | report_directory_state(report)
-        except WriteDetectorUnavailable as error:
-            baseline = None
-            print(f"{program}: could not snapshot the report's directory ({error}); "
-                  "stray writes will not be checked for this run.", file=sys.stderr)
 
     # An explicit model must not silently fall back to a different model.
     chain = (args.model,) if args.model else tier_to_model_chain[args.tier]
     effort = args.effort or tier_to_effort[args.tier]
+    build_invocation = (invocation_builder(effort, staging_directory)
+                        if stage_report_outside_checkout else invocation_builder(effort))
 
-    return run_model_chain(
-        program=program, runtime=runtime, chain=chain, effort=effort,
-        build_invocation=invocation_builder(effort, report), prompt=prompt,
-        report=report, cell=args.cell, tier=args.tier,
-        target_argument=args.target, baseline=baseline,
-        cell_started_at=cell_started_at,
-        prompt_file_argument=args.prompt_file or "",
-        recover_report_from_stdout=recover_report_from_stdout,
-        recognised_failure_texts_for_model=recognised_failure_texts_for_model,
-    )
+    try:
+        exit_code = run_model_chain(
+            program=program, runtime=runtime, chain=chain, effort=effort,
+            build_invocation=build_invocation, prompt=prompt,
+            report=reviewer_report, cell=args.cell, tier=args.tier,
+            target_argument=args.target, baseline=baseline,
+            cell_started_at=cell_started_at,
+            prompt_file_argument=args.prompt_file or "",
+            recover_report_from_stdout=recover_report_from_stdout,
+            recognised_failure_texts_for_model=recognised_failure_texts_for_model,
+        )
+        if exit_code == 0 and staging_directory is not None:
+            exit_code = move_staged_report(program, reviewer_report, report)
+        return exit_code
+    finally:
+        # A report that could not be moved stays where the failure message says it is.
+        if staging_root is not None and not reviewer_report.exists():
+            shutil.rmtree(staging_root, ignore_errors=True)
+
+
+def move_staged_report(program: str, staged: pathlib.Path, report: pathlib.Path) -> int:
+    """Move a report written in a staging directory to its destination; 1 if it cannot be moved."""
+    try:
+        shutil.move(str(staged), str(report))
+    except OSError as error:
+        print(f"{program}: the report could not be moved from {staged} to {report} "
+              f"({error}); it is left at {staged}.", file=sys.stderr)
+        return 1
+    print(f"{program}: report moved to {report}", file=sys.stderr)
+    return 0
 
 
 def report_stray_writes(program: str, baseline, own_report_path=None) -> None:

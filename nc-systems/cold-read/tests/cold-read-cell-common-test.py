@@ -259,8 +259,6 @@ if "edit" in step:
     edited_path, added_text = step["edit"]
     with open(edited_path, "a", encoding="utf-8") as handle:
         handle.write(added_text)
-if "delete" in step:
-    pathlib.Path(step["delete"]).unlink()
 if "break_git" in step:
     git_directory = pathlib.Path(step["break_git"])
     git_directory.rename(git_directory.with_name(".git-renamed-by-the-stub"))
@@ -1285,6 +1283,10 @@ with tempfile.TemporaryDirectory() as scratch:
           result.returncode == 0, f"exit {result.returncode}; stderr={result.stderr!r}")
     check("the Codex cell runs under no --sandbox, which Codex will not combine with a profile",
           "--sandbox" not in codex_argv, repr(codex_argv))
+    # Only a report outside the checkout is staged in a temporary directory;
+    # this one lies inside it, where the profile already lets codex write.
+    check("a Codex report inside the checkout is written in place, with no --add-dir",
+          "--add-dir" not in codex_argv and report.is_file(), repr(codex_argv))
     check("the Codex cell selects the credential-denying profile, extending :workspace",
           'default_permissions="cold-read-no-credentials"' in codex_overrides
           and 'permissions.cold-read-no-credentials.extends=":workspace"' in codex_overrides,
@@ -1762,47 +1764,6 @@ with tempfile.TemporaryDirectory() as scratch:
           TARGET_RELATIVE_PATH in stray_write_warning(result.stderr), repr(result.stderr))
     check("the Codex cell still succeeds — writes are detected, not blocked",
           result.returncode == 0, f"exit {result.returncode}; stderr={result.stderr!r}")
-
-    # --- The report's directory outside the checkout is watched too ---------
-    # The Codex cell's --add-dir makes the report's whole directory writable. A
-    # walk draft's suggestions file goes beside the draft, in docs/walk of the
-    # draft's own checkout, which may be another checkout git status never sees;
-    # the draft under review sits in that directory.
-    beside_directory = scratch / "other-checkout" / "docs" / "walk"
-    shutil.rmtree(beside_directory.parent.parent, ignore_errors=True)
-    beside_directory.mkdir(parents=True)
-    beside_draft = beside_directory / "a-walk-draft.md"
-    beside_draft.write_text("# A walk draft\n", encoding="utf-8")
-    beside_report = beside_directory / "a-walk-suggestions.md"
-    result = run_codex_cell(
-        repository, stubs,
-        {"*": {"report": "STUB REVIEW: one restatement\n",
-               "edit": [str(beside_draft), "The reviewer's own edit.\n"]}},
-        beside_report,
-    )
-    check("an edit beside a report outside the checkout is reported as a stray write",
-          str(beside_draft.resolve()) in stray_write_warning(result.stderr),
-          repr(result.stderr))
-    check("the report outside the checkout is not itself reported",
-          str(beside_report.resolve()) not in stray_write_warning(result.stderr),
-          repr(result.stderr))
-
-    beside_draft.write_text("# A walk draft\n", encoding="utf-8")
-    result = run_codex_cell(
-        repository, stubs, {"*": {"report": "STUB REVIEW: one restatement\n"}},
-        beside_report,
-    )
-    check("a run that touched only its report outside the checkout reports no stray write",
-          "a-walk" not in stray_write_warning(result.stderr), repr(result.stderr))
-
-    result = run_codex_cell(
-        repository, stubs,
-        {"*": {"report": "STUB REVIEW: one restatement\n", "delete": str(beside_draft)}},
-        beside_report,
-    )
-    check("a file deleted beside a report outside the checkout is reported as a stray write",
-          str(beside_draft.resolve()) in stray_write_warning(result.stderr),
-          repr(result.stderr))
 
 
 # --- What the cell docstrings promise about the detector -------------------

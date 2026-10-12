@@ -65,6 +65,7 @@ import importlib.util
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -94,8 +95,17 @@ if os.environ.get("COLD_READ_CODEX_CELL_TEST_STUB_ARGV_PATH"):
     with open(os.environ["COLD_READ_CODEX_CELL_TEST_STUB_ARGV_PATH"], "w",
               encoding="utf-8") as argv_handle:
         json.dump(sys.argv, argv_handle)
-with open(os.environ["COLD_READ_CODEX_CELL_TEST_STUB_REPORT_PATH"], "w",
-          encoding="utf-8") as handle:
+report_path = os.environ["COLD_READ_CODEX_CELL_TEST_STUB_REPORT_PATH"]
+# A report outside the checkout is written into the directory the cell adds.
+if "--add-dir" in sys.argv:
+    added_directory = sys.argv[sys.argv.index("--add-dir") + 1]
+    if os.environ.get("COLD_READ_CODEX_CELL_TEST_STUB_ADDED_LISTING_PATH"):
+        import json
+        with open(os.environ["COLD_READ_CODEX_CELL_TEST_STUB_ADDED_LISTING_PATH"], "w",
+                  encoding="utf-8") as listing_handle:
+            json.dump(sorted(os.listdir(added_directory)), listing_handle)
+    report_path = os.path.join(added_directory, os.path.basename(report_path))
+with open(report_path, "w", encoding="utf-8") as handle:
     handle.write("STUB CODEX CELL REPORT\\n")
 sys.exit(0)
 """
@@ -123,7 +133,8 @@ def check(case_name, condition, detail=""):
         failures.append(case_name)
 
 
-def run_cell(stub_directory, stub_body, report_path, *arguments, argv_path=None):
+def run_cell(stub_directory, stub_body, report_path, *arguments, argv_path=None,
+             added_listing_path=None):
     """Run the cell as a subprocess with a stub codex first on PATH.
 
     A subprocess, not an import of main(): the exit code is the subject
@@ -142,6 +153,8 @@ def run_cell(stub_directory, stub_body, report_path, *arguments, argv_path=None)
     environment["COLD_READ_CODEX_CELL_TEST_STUB_REPORT_PATH"] = str(report_path)
     if argv_path is not None:
         environment["COLD_READ_CODEX_CELL_TEST_STUB_ARGV_PATH"] = str(argv_path)
+    if added_listing_path is not None:
+        environment["COLD_READ_CODEX_CELL_TEST_STUB_ADDED_LISTING_PATH"] = str(added_listing_path)
     return subprocess.run(
         [sys.executable, str(CELL_SCRIPT), "--report", str(report_path), *arguments],
         capture_output=True, text=True, check=False, env=environment,
@@ -293,9 +306,10 @@ with tempfile.TemporaryDirectory() as scratch:
     # --- The successful path, which must keep working ----------------------
     report.unlink(missing_ok=True)
     argv_dump = scratch / "successful-cell-argv.json"
+    added_listing_dump = scratch / "successful-cell-added-directory-listing.json"
     result = run_cell(stubs, STUB_CODEX_WRITES_REPORT, report,
                       "--cell", "restate", "--tier", "deep", "--target", str(target),
-                      argv_path=argv_dump)
+                      argv_path=argv_dump, added_listing_path=added_listing_dump)
     check("a cell whose codex succeeds exits 0",
           result.returncode == 0, f"exit {result.returncode}; stderr={result.stderr!r}")
     report_text = report.read_text(encoding="utf-8") if report.is_file() else ""
@@ -334,14 +348,51 @@ with tempfile.TemporaryDirectory() as scratch:
                            and received_argv[index + 1].startswith("web_search=")]
     check("the cell asks codex for live web search",
           web_search_settings == ['web_search="live"'], repr(web_search_settings))
-    # The profile's writable roots are the checkout and the temporary
-    # directories; a report elsewhere is written only through --add-dir.
+    # The scratch report lies outside the checkout, so the reviewer writes it
+    # into a fresh, empty temporary directory and the cell moves it; the
+    # report's own directory, with whatever sits beside the report, is never
+    # made writable.
     added_directories = [received_argv[index + 1]
                          for index, argument in enumerate(received_argv[:-1])
                          if argument == "--add-dir"]
-    check("the cell makes the report's own directory writable with --add-dir",
-          [Path(directory).resolve() for directory in added_directories]
-          == [report.parent.resolve()], repr(added_directories))
+    check("the cell adds one directory with --add-dir, not the report's own",
+          len(added_directories) == 1
+          and Path(added_directories[0]).resolve() != report.parent.resolve(),
+          repr(added_directories))
+    added_listing = (json.loads(added_listing_dump.read_text(encoding="utf-8"))
+                     if added_listing_dump.is_file() else None)
+    check("the added directory is empty when codex starts",
+          added_listing == [], repr(added_listing))
+    check("the added directory is removed after the report is moved",
+          bool(added_directories) and not Path(added_directories[0]).exists(),
+          repr(added_directories))
+
+    # --- A report that cannot be moved to its destination fails the cell ----
+    locked_directory = scratch / "a-directory-the-cell-cannot-write"
+    locked_directory.mkdir()
+    locked_report = locked_directory / "a-report.md"
+    locked_directory.chmod(0o555)
+    try:
+        argv_dump.unlink(missing_ok=True)
+        result = run_cell(stubs, STUB_CODEX_WRITES_REPORT, locked_report,
+                          "--cell", "restate", "--tier", "deep", "--target", str(target),
+                          argv_path=argv_dump)
+    finally:
+        locked_directory.chmod(0o755)
+    received_argv = (json.loads(argv_dump.read_text(encoding="utf-8"))
+                     if argv_dump.is_file() else [])
+    staged_report = (Path(received_argv[received_argv.index("--add-dir") + 1])
+                     / locked_report.name if "--add-dir" in received_argv else None)
+    check("a report that cannot be moved leaves the cell exiting 1",
+          result.returncode == 1, f"exit {result.returncode}; stderr={result.stderr!r}")
+    check("the cell says the report could not be moved, and where it was left",
+          "the report could not be moved" in result.stderr
+          and staged_report is not None and f"it is left at {staged_report}" in result.stderr,
+          repr(result.stderr[-600:]))
+    check("the report that could not be moved is kept where the message says",
+          staged_report is not None and staged_report.is_file(), repr(staged_report))
+    if staged_report is not None:
+        shutil.rmtree(staged_report.parent.parent, ignore_errors=True)
 
     # --- A reviewer that exits 0 without a report says why ------------------
     report.unlink(missing_ok=True)
