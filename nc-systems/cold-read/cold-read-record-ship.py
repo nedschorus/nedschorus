@@ -268,7 +268,8 @@ in the nedschorus repository, which this machine also clones:
   `scripts/sanity-check-record-ship.py`
 - `walk/` -- approval-walk files, named by the walk-me-through skill, shipped
   by `scripts/walk-files-ship.py`
-- `transcripts/` -- session transcripts, mirrored by
+- `transcripts/` -- each machine's session transcripts, handoffs, task
+  lists, seat-briefs and global CLAUDE.md, mirrored by
   `scripts/transcript-mirror-to-log-store.py`
 - `seats/` -- a seat's shared files, shipped by
   `scripts/seat-shared-file-ship.py`
