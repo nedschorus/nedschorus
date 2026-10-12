@@ -23,9 +23,9 @@ Rules 3 to 5 bind a check: a program or hook that inspects what an agent has jus
 
 The user accepted rule 1 on 2026-10-02. On 2026-10-06, when he paused the first approval-walk on this GHI, he said that checks must be "as preventive as possible", must "run as quickly as possible to the write/edit", must "handle say 50 files with 100 things to check or correct", and "if parsing is required, it better be super accurate or we'll introduce errors"; rules 2 to 5 restate those words.
 
-## The four programs to build
+## The five programs to build
 
-Checked against main at commit 01b413b5 on 2026-10-10 (UTC). The user-rulings are from two approval-walks, whose walk-minutes are in the log-store: `nedlern@ned-box:/home/nedlern/nedschorus-logs/walk/move-mechanical-agent-chores-into-programs-and-hooks-2026-10-04-minutes.md` and `nedlern@ned-box:/home/nedlern/nedschorus-logs/walk/move-mechanical-agent-chores-rework-decisions-2026-10-09-minutes.md`. Build the four in the order of the headings below, each as a build-slice on its own topic branch and pull request. Once each build-slice is merged, run an acceptance test of it: use it in the agents' real work, confirm it does what its section says, and tell the user the result.
+Checked against main at commit 01b413b5 on 2026-10-10 (UTC). The user-rulings are from two approval-walks, whose walk-minutes are in the log-store: `nedlern@ned-box:/home/nedlern/nedschorus-logs/walk/move-mechanical-agent-chores-into-programs-and-hooks-2026-10-04-minutes.md` and `nedlern@ned-box:/home/nedlern/nedschorus-logs/walk/move-mechanical-agent-chores-rework-decisions-2026-10-09-minutes.md`. Build the five in the order of the headings below, each as a build-slice on its own topic branch and pull request. Once each build-slice is merged, run an acceptance test of it: use it in the agents' real work, confirm it does what its section says, and tell the user the result.
 
 ### Chore 3: the session-handoff's next-step text goes in on standard input
 
@@ -67,6 +67,12 @@ To build, on its own topic branch: when create-GHI has opened its pull request, 
 
 The rerun of create-GHI after the merge, which links the GHI's body to the merged file, stays the author's step, as the /ghi-write skill says. GHI [An issue has one GHI-MD and many supporting documents, and the GHI write tool cannot tell them apart](https://github.com/nedschorus/nedschorus/issues/783) has merge-lane-2 rebuild GHI bodies after each merge it makes; its design keeps the author's rerun as the fallback for a merge the rebuild did not cover.
 
+### Chore 12: a reply that promises later work creates a task in the same turn
+
+When an agent tells the user that something will happen soon, later or next, or that it goes on the list, the agent creates a task for it in the same turn, so the promise is not forgotten when the agent-session ends or is compacted.
+
+To build, on its own topic branch: a Stop hook and a SubagentStop hook, modelled on `scripts/absence-claim-locator-reminder-hook.py`, that reads the agent's last reply. When the reply promises later work in those words and the turn made no TaskCreate call, the hook reminds the agent to create the task now and to tell the user the task exists. The hook never blocks. The task lists themselves are already copied to the log-store by the transcript mirror (PR [transcript mirror: also copy task lists, seat-briefs and ~/.claude/CLAUDE.md to the log-store](https://github.com/nedschorus/nedschorus/pull/1182)). The user approved this chore on 2026-10-11, in agent-seat cold-read-research's approval-walk daily-memory-review-2026-10-09, item 7.
+
 ## The seven chores settled
 
 - **Chore 1, the tests before a push: dropped.** merge-lane-2 runs the same selection of test suites on each pull request's head commit merged onto main before merging, and `scripts/daily-full-test-run-of-main.py` is scheduled to run every suite on main each night. A pre-push hook could add minutes to any push that changes a suite's recorded inputs, the ghi-write-tool's pushes included. CLAUDE.md's "Before pushing" line stays.
@@ -83,4 +89,4 @@ GHI [Three mechanical checks agents keep forgetting to run: file-overlap before 
 
 ## Next action
 
-Build chore 3, then chores 4, 2 and 5, in the order of the headings above.
+Build chore 3, then chores 4, 2, 5 and 12, in the order of the headings above.
