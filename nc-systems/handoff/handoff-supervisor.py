@@ -421,13 +421,22 @@ def stamp_heartbeat(state_path: Path, state: dict) -> None:
 # Record presence distinguishes a supervised exit from a crash, even when the exit code is unknown.
 AGENT_EXIT_CODE_STATE_KEY = "agent_exit_code"
 AGENT_EXIT_RECORDED_AT_STATE_KEY = "agent_exit_recorded_at"
+# Set only when the supervisor stood the seat down at a dont-restart handoff, so a reader
+# can tell that stop from a later session's failure; the handoff file outlives both.
+AGENT_EXIT_REASON_STATE_KEY = "agent_exit_reason"
+AGENT_EXIT_REASON_STOPPED_AT_A_DONT_RESTART_HANDOFF = "dont-restart"
 
 
-def record_agent_exit_in_supervisor_state(state_path: Path, state: dict, exit_code) -> None:
+def record_agent_exit_in_supervisor_state(state_path: Path, state: dict, exit_code,
+                                          reason=None) -> None:
     # A signal exit code is negative; an adopted session's unknown code is None.
     state[AGENT_EXIT_CODE_STATE_KEY] = exit_code
     state[AGENT_EXIT_RECORDED_AT_STATE_KEY] = datetime.now(timezone.utc).isoformat(
         timespec="seconds")
+    if reason is None:
+        state.pop(AGENT_EXIT_REASON_STATE_KEY, None)
+    else:
+        state[AGENT_EXIT_REASON_STATE_KEY] = reason
     write_supervisor_state(state_path, state)
 
 
@@ -435,6 +444,11 @@ def clear_agent_exit_record_from_supervisor_state(state: dict) -> None:
     # Clear before launch or adoption so an old clean exit cannot mask a later crash.
     state.pop(AGENT_EXIT_CODE_STATE_KEY, None)
     state.pop(AGENT_EXIT_RECORDED_AT_STATE_KEY, None)
+    state.pop(AGENT_EXIT_REASON_STATE_KEY, None)
+
+
+def agent_exit_record_is_a_stop_at_a_dont_restart_handoff(state: dict) -> bool:
+    return state.get(AGENT_EXIT_REASON_STATE_KEY) == AGENT_EXIT_REASON_STOPPED_AT_A_DONT_RESTART_HANDOFF
 
 
 def agent_exit_record_from_supervisor_state(state: dict):
@@ -1615,12 +1629,14 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
                 if not sys.stdin.isatty():
                     print("handoff-supervisor: dont-restart, and no terminal to ask on; stopping")
                     state["consumed_counter"] = boot_counter
-                    record_agent_exit_in_supervisor_state(settings.state_path, state, None)
+                    record_agent_exit_in_supervisor_state(
+                        settings.state_path, state, None, reason=AGENT_EXIT_REASON_STOPPED_AT_A_DONT_RESTART_HANDOFF)
                     return 0
                 if input("handoff-supervisor: restart? y/n ").strip().lower() != "y":
                     print("handoff-supervisor: stopping at the agent's request")
                     state["consumed_counter"] = boot_counter
-                    record_agent_exit_in_supervisor_state(settings.state_path, state, None)
+                    record_agent_exit_in_supervisor_state(
+                        settings.state_path, state, None, reason=AGENT_EXIT_REASON_STOPPED_AT_A_DONT_RESTART_HANDOFF)
                     return 0
             generation += 1
             retiring_session_id = state.get(LAUNCHED_SESSION_ID_STATE_KEY)
@@ -1780,7 +1796,8 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
                 print("handoff-supervisor: stopping at the agent's request")
                 state["consumed_counter"] = counter_from(handoff_fields)
                 record_agent_exit_in_supervisor_state(settings.state_path, state,
-                                                      process.returncode)
+                                                      process.returncode,
+                                                      reason=AGENT_EXIT_REASON_STOPPED_AT_A_DONT_RESTART_HANDOFF)
                 return 0
 
         successor_session_id, ignition_plan = carry_over_to_successor(

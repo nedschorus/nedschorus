@@ -46,7 +46,9 @@ failures = []
 
 BOOT = datetime(2026, 10, 12, 0, 0, tzinfo=timezone.utc)
 SEEN_RUNNING = datetime(2026, 10, 12, 3, 0, tzinfo=timezone.utc)
-DIED_AT = datetime(2026, 10, 12, 3, 14, 18, tzinfo=timezone.utc)
+# The supervisor's last_poll_at carries microseconds (stamp_heartbeat writes
+# datetime.now(timezone.utc).isoformat()), so the fixture's must too.
+DIED_AT = datetime(2026, 10, 12, 3, 14, 18, 437512, tzinfo=timezone.utc)
 
 
 def check(case_name, condition, detail=""):
@@ -71,6 +73,8 @@ class Harness:
         self.recoveries = []
         self.windows = []
         self.died_at = DIED_AT
+        # A launch that does not come up polls before it dies: its heartbeat moves.
+        self.died_at_after_recovery = None
         self.on_purpose = False
 
     def assess(self, seat):
@@ -80,6 +84,8 @@ class Harness:
 
     def recover(self, seat):
         self.recoveries.append(seat)
+        if self.died_at_after_recovery is not None:
+            self.died_at = self.died_at_after_recovery
         return self.recovery_result
 
     def open_window(self, words):
@@ -207,7 +213,9 @@ def run_decision_cases(root: Path):
     check("the second-crash notice gives both crashes, the earlier restart and the command",
           "merge-lane-2 is down" in text and "had restarted it at 2026-10-12 03:16 UTC" in text
           and "python3 scripts/recover-crashed-seats.py merge-lane-2" in text
-          and "launch-claude-ubuntu merge-lane-2" in text, text)
+          and f"  {watcher_module.MAC_LAUNCHER} merge-lane-2\n" in text, text)
+    check("the second-crash notice names the transcripts by their path on the Mac",
+          "/Volumes/nedhome/.claude/projects/-merge-lane-2" in text, text)
     check("the second-crash window shows the notice and does not attach",
           "--then-attach" not in harness.windows[-1], repr(harness.windows[-1]))
 
@@ -225,6 +233,24 @@ def run_decision_cases(root: Path):
     check("a failed recovery reaches the user with its exit code and its words",
           "exited 1" in text and "REFUSED — the durable checkout is missing" in text
           and "launch-claude-ubuntu merge-lane-2" in text, text)
+    check("the failed-recovery notice gives the next step when recovery only says why it refused",
+          "If it says only why recovery refused, ask an agent on ned-box" in text, text)
+
+    harness = Harness(root / "recovery-failed-last-line",
+                      recovery_result=(1, "merge-lane-2: checking the seat\n"
+                                          "merge-lane-2: REFUSED — the seat directory is in use\n\n"))
+    crash_after_running(harness)
+    failed = [path for path in harness.notices() if "recovery-failed" in path.name]
+    text = failed[0].read_text(encoding="utf-8") if failed else ""
+    check("the failed-recovery notice quotes recovery's last line, not its earlier ones",
+          "Its last line was:\n  merge-lane-2: REFUSED — the seat directory is in use\n" in text
+          and "checking the seat" not in text, text)
+    harness = Harness(root / "recovery-failed-silent", recovery_result=(1, ""))
+    crash_after_running(harness)
+    failed = [path for path in harness.notices() if "recovery-failed" in path.name]
+    text = failed[0].read_text(encoding="utf-8") if failed else ""
+    check("a recovery that printed nothing is said to have printed nothing",
+          "Its last line was:\n  (it printed nothing)\n" in text, text)
     check("a failed recovery is logged",
           any(entry["decision"].startswith("recovery failed") for entry in harness.decisions()),
           repr(harness.decisions()))
@@ -237,7 +263,7 @@ def run_decision_cases(root: Path):
     crash_after_running(harness)
     check("a seat already running again when recovery runs gets no notice and no restart record",
           harness.notices() == []
-          and not harness.state["seats"]["merge-lane-2"].get("restarts"),
+          and not harness.state["seats"]["merge-lane-2"].get("recovery_attempts"),
           repr(harness.state))
 
     harness = Harness(root / "mac-unreachable", window_exit_codes=[1, 1])
@@ -300,14 +326,26 @@ def run_handled_crash_cases(root: Path):
                       recovery_result=(1, "merge-lane-2: LAUNCH FAILED (exit 1)"))
     failed_at = crash_after_running(harness)
     harness.recovery_result = (0, "merge-lane-2: relaunched resuming x")
-    harness.died_at = failed_at + timedelta(minutes=3)
+    harness.died_at = failed_at + timedelta(minutes=3, microseconds=250001)
     for minutes in (4, 5, 6):
         harness.run(failed_at + timedelta(minutes=minutes))
-    check("a seat that ran again after a handled crash, shown by a later supervisor poll, "
-          "is watched as a new crash and restarted",
-          harness.recoveries == ["merge-lane-2", "merge-lane-2"]
+    second = [path for path in harness.notices() if "second-crash" in path.name]
+    text = second[0].read_text(encoding="utf-8") if second else ""
+    check("a seat restarted by hand after a failed attempt, which dies within the hour, "
+          "is watched as a new crash and reaches the user, not restarted",
+          harness.recoveries == ["merge-lane-2"] and len(second) == 1
           and any(entry["decision"].startswith("ran again since")
                   for entry in harness.decisions()), repr(harness.decisions()))
+    check("that second-crash notice says the earlier attempt failed",
+          "had tried to restart it at 2026-10-12 03:16 UTC" in text
+          and "and that attempt failed; merge-lane-2 then ran again, started by hand or by "
+              "another program" in text, text)
+    harness.died_at = failed_at + timedelta(hours=1, minutes=10, microseconds=1)
+    for minutes in (71, 72, 73):
+        harness.run(failed_at + timedelta(minutes=minutes))
+    check("a seat restarted by hand that dies more than an hour after the failed attempt "
+          "is restarted",
+          harness.recoveries == ["merge-lane-2", "merge-lane-2"], repr(harness.recoveries))
 
     harness = Harness(root / "handled-and-still-down")
     harness.recovery_result = (1, "merge-lane-2: LAUNCH FAILED (exit 1)")
@@ -316,6 +354,62 @@ def run_handled_crash_cases(root: Path):
         harness.run(failed_at + timedelta(minutes=minutes))
     check("a handled crash with no later supervisor poll is not acted on again",
           harness.recoveries == ["merge-lane-2"] and len(harness.notices()) == 1,
+          repr((harness.recoveries, harness.notices())))
+
+
+def run_handled_death_key_cases(root: Path):
+    """The one rule for a handled death: the supervisor's last poll, at full precision."""
+    harness = Harness(root / "microsecond-poll-recovery-failed",
+                      recovery_result=(1, "merge-lane-2: LAUNCH FAILED (exit 1)"))
+    failed_at = crash_after_running(harness)
+    for minutes in range(1, 21):
+        harness.run(failed_at + timedelta(minutes=minutes))
+    check("a failed recovery under a poll with microseconds is attempted once and told once "
+          "in twenty runs",
+          harness.recoveries == ["merge-lane-2"] and len(harness.notices()) == 1,
+          repr((harness.recoveries, harness.notices())))
+    record = harness.state["seats"]["merge-lane-2"]
+    check("the handled poll is stored at the supervisor's own precision",
+          record.get("handled_at_supervisor_last_poll") == DIED_AT.isoformat(), repr(record))
+
+    for verdict, detail in (("defer-to-boot-ignition", "an unconsumed handoff waits"),
+                            ("offer-after-recorded-exit", (1, "2026-10-12T03:14:20+00:00", "s"))):
+        harness = Harness(root / f"microsecond-poll-{verdict}")
+        harness.verdicts["merge-lane-2"] = ("seat-already-running", "")
+        harness.run(SEEN_RUNNING)
+        harness.verdicts["merge-lane-2"] = (verdict, detail)
+        for minutes in range(15, 35):
+            harness.run(SEEN_RUNNING + timedelta(minutes=minutes))
+        check(f"a seat down with verdict {verdict} under a poll with microseconds is told once "
+              "in twenty runs",
+              len(harness.notices()) == 1 and harness.recoveries == [], repr(harness.notices()))
+
+    harness = Harness(root / "startup-crash-loop",
+                      recovery_result=(1, "merge-lane-2: LAUNCHED BUT DID NOT COME UP — the "
+                                          "supervisor exited during the settle"))
+    harness.died_at_after_recovery = DIED_AT + timedelta(minutes=2, microseconds=125)
+    failed_at = crash_after_running(harness)
+    for minutes in range(1, 31):
+        harness.run(failed_at + timedelta(minutes=minutes))
+    attempts = harness.state["seats"]["merge-lane-2"].get("recovery_attempts", [])
+    check("a launch that did not come up, whose supervisor polled before it died, is not "
+          "relaunched every two minutes",
+          harness.recoveries == ["merge-lane-2"] and len(harness.notices()) == 1,
+          repr((harness.recoveries, harness.notices())))
+    check("the failed attempt is recorded and counts against the hourly limit",
+          [attempt["outcome"] for attempt in attempts] == ["failed"]
+          and harness.state["seats"]["merge-lane-2"].get("handled_at_supervisor_last_poll")
+          == harness.died_at_after_recovery.isoformat(), repr(harness.state["seats"]))
+
+    harness = Harness(root / "second-crash-never-ran-again")
+    first_restart = crash_after_running(harness)
+    harness.died_at = first_restart + timedelta(minutes=2, microseconds=660000)
+    for minutes in range(3, 90):
+        harness.run(first_restart + timedelta(minutes=minutes))
+    second = [path for path in harness.notices() if "second-crash" in path.name]
+    check("a second crash left down is told once, and the seat that never ran again is not "
+          "restarted once the hour has passed",
+          harness.recoveries == ["merge-lane-2"] and len(second) == 1,
           repr((harness.recoveries, harness.notices())))
 
 
@@ -330,9 +424,11 @@ def run_down_for_the_user_cases(root: Path):
     text = notices[0].read_text(encoding="utf-8") if notices else ""
     check("a seat down with a waiting handoff is not restarted, and the user is told once",
           harness.recoveries == [] and len(notices) == 1, repr(harness.notices()))
-    check("the waiting-handoff notice names the seat, the state and the command",
+    check("the waiting-handoff notice names the seat, the state and the one command, by the "
+          "launcher's path on the Mac",
           "merge-lane-2 is down" in text and "a handoff it had not acted on was waiting" in text
-          and "python3 scripts/recover-crashed-seats.py merge-lane-2" in text, text)
+          and f"  {watcher_module.MAC_LAUNCHER} merge-lane-2\n" in text
+          and "recover-crashed-seats.py" not in text and "left to you" not in text, text)
 
     harness = Harness(root / "recorded-exit")
     harness.verdicts["merge-lane-2"] = ("seat-already-running", "")
@@ -366,17 +462,42 @@ def run_stopped_on_purpose_cases(root: Path):
     check("a clean exit is a stop on purpose", predicate("seat-a", (0, "t", None)))
     check("an exit with an error code and no handoff is not a stop on purpose",
           not predicate("seat-a", (1, "t", None)))
+    state_path = supervisor.supervisor_state_path(handoff_directory, "seat-a")
     supervisor.handoff_file_path(handoff_directory, "seat-a").write_text(
         "restart-counter: 7\ndont-restart: the user asked to be consulted before a relaunch\n"
         "next-step: stop\n", encoding="utf-8")
-    supervisor.supervisor_state_path(handoff_directory, "seat-a").write_text(
-        json.dumps({"consumed_counter": 7}), encoding="utf-8")
-    check("a dont-restart handoff its supervisor consumed is a stop on purpose",
-          predicate("seat-a", (None, "t", None)))
-    supervisor.supervisor_state_path(handoff_directory, "seat-a").write_text(
-        json.dumps({"consumed_counter": 6}), encoding="utf-8")
-    check("a dont-restart handoff not yet consumed is not counted as a stop on purpose here",
-          not predicate("seat-a", (None, "t", None)))
+    supervisor.record_agent_exit_in_supervisor_state(
+        state_path, {"consumed_counter": 7}, None,
+        reason=supervisor.AGENT_EXIT_REASON_STOPPED_AT_A_DONT_RESTART_HANDOFF)
+    check("an exit its supervisor recorded as a stop at a dont-restart handoff is a stop on "
+          "purpose", predicate("seat-a", (None, "t", None)))
+    # The user answered y: the handoff stays on disk, consumed, and its successor later
+    # failed and used up its resumes, so the supervisor recorded that exit with no reason.
+    supervisor.record_agent_exit_in_supervisor_state(state_path, {"consumed_counter": 7}, -15)
+    check("a later failure of the successor of a dont-restart handoff answered y is not a "
+          "stop on purpose, though the consumed handoff is still on disk",
+          not predicate("seat-a", (-15, "t", None)))
+
+
+def run_path_on_the_mac_cases():
+    check("a ned-box home path is given in the form the Mac mounts",
+          watcher_module.path_on_the_mac(
+              "/home/nedlern/nedschorus-logs/x/decisions.jsonl")
+          == "/Volumes/nedhome/nedschorus-logs/x/decisions.jsonl")
+    check("a path outside ned-box's home is left as it is",
+          watcher_module.path_on_the_mac("/tmp/x/decisions.jsonl") == "/tmp/x/decisions.jsonl")
+    check("a path that only starts with the same letters as the home is left as it is",
+          watcher_module.path_on_the_mac("/home/nedlernx/y") == "/home/nedlernx/y")
+    harness = Harness(Path("/nonexistent-never-written"))
+    harness.log_directory = None
+    watcher = watcher_module.Watcher(
+        state=harness.state, now=SEEN_RUNNING, boot_at=BOOT,
+        log_directory=Path("/home/nedlern/nedschorus-logs") / watcher_module.PROGRAM,
+        assess=None, died_at_about=None, transcripts_directory=None, recover=None,
+        open_window=None, show_notice_words=None)
+    check("the record a notice names is the Mac's form of the log-store path",
+          watcher_module.path_on_the_mac(watcher.decisions_path).startswith(
+              "/Volumes/nedhome/nedschorus-logs/"), str(watcher.decisions_path))
 
 
 def run_environment_cases():
@@ -577,8 +698,10 @@ def run_state_cases(root: Path):
 with tempfile.TemporaryDirectory() as temporary_directory:
     run_decision_cases(Path(temporary_directory))
     run_handled_crash_cases(Path(temporary_directory))
+    run_handled_death_key_cases(Path(temporary_directory))
     run_down_for_the_user_cases(Path(temporary_directory))
     run_stopped_on_purpose_cases(Path(temporary_directory))
+    run_path_on_the_mac_cases()
     run_environment_cases()
     run_window_words_cases(Path(temporary_directory))
     run_command_line_cases(Path(temporary_directory))

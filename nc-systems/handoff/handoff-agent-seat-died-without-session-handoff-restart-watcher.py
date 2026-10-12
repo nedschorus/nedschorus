@@ -19,17 +19,22 @@ scripts/recover-crashed-seats.py makes (assess_seat), and:
   that is now down in a state only he should restart from: a handoff waiting
   that no supervisor acted on, or an exit its supervisor recorded without
   resuming, other than a stop on purpose;
-- leaves every other agent-seat alone: a stop on purpose (a clean exit, or a
-  dont-restart handoff its supervisor consumed), a refusal, and an agent-seat
-  not seen running since the machine booted, which the login restart or the
-  user brings back;
-- restarts an agent-seat at most once in RESTART_LIMIT_SECONDS; a second crash
-  inside that time leaves it down and tells the user.
+- leaves every other agent-seat alone: a stop on purpose (a clean exit, or an
+  exit its supervisor recorded as a stop at a dont-restart handoff), a refusal,
+  and an agent-seat not seen running since the machine booted, which the login
+  restart or the user brings back;
+- tries to restart an agent-seat at most once in RESTART_LIMIT_SECONDS, a
+  failed attempt included; a second crash inside that time leaves it down and
+  tells the user.
 
-A crash the watcher has handled stays handled only while the seat stays down:
-a restart that succeeded counts as a sighting of the seat running, and a
-supervisor poll later than the handled crash shows the seat ran again, so its
-next death is watched as a new crash.
+One rule says whether a death is already handled (death_already_handled): the
+watcher records the seat supervisor's last poll when it handles a death, and
+the death stays handled until that supervisor, or a new one, polls later. A
+later poll shows the seat ran again, so its next death is a new crash. Times
+are compared as parsed moments at the supervisor's own precision, which
+carries microseconds. A restart that succeeded counts as a sighting of the
+seat running; after a failed attempt the poll is recorded again, so the
+attempt's own brief run is part of the death it was handling.
 
 Each restart and each failure becomes a notice for the user, shown in a window
 the program opens on his Mac with scripts/open-mac-window-from-ned-box.py. A
@@ -84,6 +89,12 @@ RECORDED_EXIT_VERDICT = "offer-after-recorded-exit"
 CRASH_CONFIRMATION_SECONDS = 50
 RESTART_LIMIT_SECONDS = 3600
 
+# The Mac mounts ned-box's home here, so a path in a notice is one the user can open there.
+NED_BOX_HOME = "/home/nedlern"
+NED_BOX_HOME_ON_THE_MAC = "/Volumes/nedhome"
+# launch-claude-ubuntu is not on the Mac's PATH; the Mac's checkout holds it.
+MAC_LAUNCHER = "/Users/el/Projects/nedschorus/scripts/launch-claude-ubuntu"
+
 # Words the user's window runs, for the attach step after a restart.
 ATTACH_COMMAND = ("tmux", "-L", "{seat}", "attach", "-t", "{seat}")
 
@@ -97,59 +108,60 @@ RESTARTED_NOTICE_TEMPLATE = (
 
 SECOND_CRASH_NOTICE_TEMPLATE = (
     "{seat} is down. Its agent-session stopped again at about {died_at} without writing "
-    "a handoff. The crash watcher had restarted it at {earlier_restarted_at}, after it "
-    "stopped at about {earlier_died_at}.\n"
-    "The watcher restarts an agent-seat at most once an hour, so it left {seat} down: an "
-    "agent-seat that stops twice within an hour is likely to stop again.\n"
+    "a handoff. The crash watcher {earlier_attempt}.\n"
+    "The watcher tries to restart an agent-seat at most once an hour, so it left {seat} "
+    "down: an agent-seat that stops twice within an hour is likely to stop again.\n"
     "Recommendation: find out why it stopped before you restart it. Its last "
     "conversation is the newest .jsonl file in {transcripts}.\n"
     "To restart it, run in a Terminal on your Mac:\n"
     "  ssh nedlern@ned-box 'cd ~/Projects/nedschorus && python3 scripts/recover-crashed-seats.py {seat}'\n"
-    "then open its window with:\n"
-    "  launch-claude-ubuntu {seat}\n"
+    "then open its window, also in a Terminal on your Mac, with:\n"
+    "  {mac_launcher} {seat}\n"
     "Record: {record}\n"
 )
 
 RECOVERY_FAILED_NOTICE_TEMPLATE = (
     "{seat} is down: the crash watcher could not restart it. Its agent-session stopped "
     "at about {died_at} without writing a handoff, and "
-    "scripts/recover-crashed-seats.py {seat} exited {exit_code}. It said:\n"
-    "{recovery_output}\n"
-    "The watcher does not try again for this crash. Follow what recover-crashed-seats.py "
-    "said above. To retry by hand, run in a Terminal on your Mac:\n"
+    "scripts/recover-crashed-seats.py {seat} exited {exit_code}. Its last line was:\n"
+    "  {recovery_last_line}\n"
+    "Its whole output is in the record named below.\n"
+    "The watcher does not try again for this crash.\n"
+    "If that line says what to do, do it first. If it says only why recovery refused, "
+    "ask an agent on ned-box to find out why and fix it, giving it this notice.\n"
+    "Then restart {seat} by running in a Terminal on your Mac:\n"
     "  ssh nedlern@ned-box 'cd ~/Projects/nedschorus && python3 scripts/recover-crashed-seats.py {seat}'\n"
-    "then open its window with:\n"
-    "  launch-claude-ubuntu {seat}\n"
+    "and open its window, also in a Terminal on your Mac, with:\n"
+    "  {mac_launcher} {seat}\n"
     "Record: {record}\n"
 )
 
 ASSESSMENT_FAILED_NOTICE_TEMPLATE = (
     "The crash watcher could not check {seat}: {error}\n"
-    "Until this is fixed the watcher cannot restart {seat} if it crashes. It will not "
-    "tell you about this error again. Ask an agent on ned-box to fix it, giving it this "
-    "notice.\n"
+    "Until this is fixed the watcher cannot restart {seat} if it crashes. It tells you "
+    "again only if the error changes; until then each run writes it to the record. Ask "
+    "an agent on ned-box to fix it, giving it this notice.\n"
     "Record: {record}\n"
 )
 
 RUN_FAILED_NOTICE_TEMPLATE = (
     "The crash watcher on ned-box failed and is watching no agent-seat: {error}\n"
-    "Until this is fixed, an agent-seat that crashes is not restarted. The watcher will "
-    "not tell you about this error again. Ask an agent on ned-box to fix it, giving it "
-    "this notice.\n"
+    "Until this is fixed, an agent-seat that crashes is not restarted. The watcher tells "
+    "you again only if the error changes; until then each failed run writes it to the "
+    "record. Ask an agent on ned-box to fix it, giving it this notice.\n"
     "Record: {record}\n"
 )
 
 WAITING_HANDOFF_NOTICE_TEMPLATE = (
     "{seat} is down, and the crash watcher did not restart it. Its supervisor stopped "
     "at about {died_at} while a handoff it had not acted on was waiting, so no successor "
-    "started. The watcher restarts only an agent-session that crashed; a waiting handoff "
-    "is the agent's own request for a successor, so it is left to you.\n"
-    "To start {seat}'s successor from that handoff, run in a Terminal on your Mac (it "
-    "starts the successor the handoff asks for, and does nothing if {seat} is already "
-    "running):\n"
-    "  ssh nedlern@ned-box 'cd ~/Projects/nedschorus && python3 scripts/recover-crashed-seats.py {seat}'\n"
-    "then open its window with:\n"
-    "  launch-claude-ubuntu {seat}\n"
+    "started. The watcher restarts only an agent-session that crashed, and a waiting "
+    "handoff is the agent's own request for a successor, so the watcher does not start "
+    "it.\n"
+    "To start {seat}'s successor from that handoff, run in a Terminal on your Mac:\n"
+    "  {mac_launcher} {seat}\n"
+    "It starts {seat}'s supervisor, which starts the successor the handoff asks for, and "
+    "opens {seat}'s window; if {seat} is already running, it only opens the window.\n"
     "Record: {record}\n"
 )
 
@@ -163,8 +175,8 @@ RECORDED_EXIT_NOTICE_TEMPLATE = (
     "To restart it, run in a Terminal on your Mac. It asks \"{question}\"; answer y, and "
     "it {restart_effect}:\n"
     "  ssh -t nedlern@ned-box 'cd ~/Projects/nedschorus && python3 scripts/recover-crashed-seats.py {seat}'\n"
-    "then open its window with:\n"
-    "  launch-claude-ubuntu {seat}\n"
+    "then open its window, also in a Terminal on your Mac, with:\n"
+    "  {mac_launcher} {seat}\n"
     "Record: {record}\n"
 )
 
@@ -180,7 +192,9 @@ def load_module(name: str, path: Path):
 
 
 def timestamp(moment: datetime) -> str:
-    return moment.astimezone(timezone.utc).isoformat(timespec="seconds")
+    # Full precision: a handled death is matched against the supervisor's last_poll_at,
+    # which carries microseconds; rounding would make every later run see a newer poll.
+    return moment.astimezone(timezone.utc).isoformat()
 
 
 def parse_timestamp(text):
@@ -191,6 +205,14 @@ def parse_timestamp(text):
     except ValueError:
         return None
     return moment if moment.tzinfo else moment.replace(tzinfo=timezone.utc)
+
+
+def path_on_the_mac(path) -> str:
+    """The form of a ned-box path the user can open on his Mac, where ned-box's home is mounted."""
+    text = str(path)
+    if text == NED_BOX_HOME or text.startswith(NED_BOX_HOME + "/"):
+        return NED_BOX_HOME_ON_THE_MAC + text[len(NED_BOX_HOME):]
+    return text
 
 
 def clock_text(moment: datetime) -> str:
@@ -252,7 +274,8 @@ class Watcher:
     def write_notice(self, seat, kind, template, attach_seat=None, **fields) -> dict:
         path = self.notice_path(seat, kind)
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(template.format(seat=seat, record=self.decisions_path, **fields),
+        path.write_text(template.format(seat=seat, record=path_on_the_mac(self.decisions_path),
+                                        mac_launcher=MAC_LAUNCHER, **fields),
                         encoding="utf-8")
         notice = {"path": str(path), "attach_seat": attach_seat}
         self.show(notice)
@@ -306,25 +329,44 @@ class Watcher:
 
     def mark_seen_running(self, record, moment):
         record["last_seen_running_at"] = timestamp(moment)
-        for key in ("first_seen_crashed_at", "crash_handled", "handled_death_at"):
+        for key in ("first_seen_crashed_at", "crash_handled", "handled_at_supervisor_last_poll"):
             record.pop(key, None)
 
-    def ran_again_since_the_handled_death(self, seat, record) -> bool:
-        """A supervisor poll later than the handled death shows the seat ran again."""
-        handled = parse_timestamp(record.get("handled_death_at"))
-        latest_poll = self.died_at_about(seat)
-        if handled is None or latest_poll is None or latest_poll <= handled:
+    def death_already_handled(self, seat, record) -> bool:
+        """Return True while the death the watcher handled is still the seat's latest one.
+
+        The key is the seat supervisor's last poll when the death was handled. A later
+        poll shows a supervisor ran the seat again: the handled death is over, the seat
+        counts as seen running at that poll, and its present death is a new one.
+        """
+        if not record.get("crash_handled"):
             return False
+        handled = parse_timestamp(record.get("handled_at_supervisor_last_poll"))
+        latest_poll = self.died_at_about(seat)
+        if latest_poll is None or (handled is not None and latest_poll <= handled):
+            return True
         self.mark_seen_running(record, latest_poll)
         self.log(seat, "ran again since its last handled crash; watching this one as a new crash",
                  supervisor_last_poll_at=timestamp(latest_poll))
-        return True
+        return False
 
     def mark_handled(self, seat, record):
+        """Record that the seat's present death is handled, keyed by its supervisor's last poll."""
         record["crash_handled"] = True
         latest_poll = self.died_at_about(seat)
-        if latest_poll is not None:
-            record["handled_death_at"] = timestamp(latest_poll)
+        record["handled_at_supervisor_last_poll"] = (
+            timestamp(latest_poll) if latest_poll is not None else None)
+
+    def record_recovery_attempt(self, record, died_at, outcome):
+        record.setdefault("recovery_attempts", []).append(
+            {"attempted_at": timestamp(self.now), "died_at_about": timestamp(died_at),
+             "outcome": outcome})
+        record["recovery_attempts"] = record["recovery_attempts"][-5:]
+
+    def recent_recovery_attempts(self, record):
+        return [attempt for attempt in record.get("recovery_attempts", [])
+                if (self.now - parse_timestamp(attempt["attempted_at"])).total_seconds()
+                < RESTART_LIMIT_SECONDS]
 
     def decide(self, seat, verdict, detail):
         record = self.state["seats"].setdefault(seat, {})
@@ -341,7 +383,7 @@ class Watcher:
                          verdict=verdict, detail=str(detail))
             return
         record.pop("left_alone_verdict", None)
-        if record.get("crash_handled") and not self.ran_again_since_the_handled_death(seat, record):
+        if self.death_already_handled(seat, record):
             return
         last_seen_running = parse_timestamp(record.get("last_seen_running_at"))
         if last_seen_running is None or last_seen_running < self.boot_at:
@@ -362,27 +404,31 @@ class Watcher:
         if kind == "for-the-user":
             self.report_down_for_the_user(seat, verdict, detail, died_at)
             return
-        recent = [restart for restart in record.get("restarts", [])
-                  if (self.now - parse_timestamp(restart["restarted_at"])).total_seconds()
-                  < RESTART_LIMIT_SECONDS]
+        recent = self.recent_recovery_attempts(record)
         if recent:
             earlier = recent[-1]
-            self.log(seat, "not restarted: restarted less than an hour ago; user told",
-                     died_at_about=timestamp(died_at), earlier_restart=earlier)
+            earlier_attempted_at = clock_text(parse_timestamp(earlier["attempted_at"]))
+            earlier_died_at = clock_text(parse_timestamp(earlier["died_at_about"]))
+            earlier_attempt = (
+                f"had restarted it at {earlier_attempted_at}, after it stopped at about "
+                f"{earlier_died_at}" if earlier["outcome"] == "restarted"
+                # A failed attempt's own brief run is part of the death it handled, so a new
+                # death after it means someone else started the seat in between.
+                else f"had tried to restart it at {earlier_attempted_at}, after it stopped at "
+                     f"about {earlier_died_at}, and that attempt failed; {seat} then ran again, "
+                     f"started by hand or by another program")
+            self.log(seat, "not restarted: a restart was attempted less than an hour ago; "
+                     "user told", died_at_about=timestamp(died_at), earlier_attempt=earlier)
             self.write_notice(
                 seat, "second-crash", SECOND_CRASH_NOTICE_TEMPLATE,
-                died_at=clock_text(died_at),
-                earlier_restarted_at=clock_text(parse_timestamp(earlier["restarted_at"])),
-                earlier_died_at=clock_text(parse_timestamp(earlier["died_at_about"])),
-                transcripts=self.transcripts_directory(seat))
+                died_at=clock_text(died_at), earlier_attempt=earlier_attempt,
+                transcripts=path_on_the_mac(self.transcripts_directory(seat)))
             return
         exit_code, output = self.recover(seat)
         if exit_code == 0 and "ALREADY RUNNING" not in output:
             # Recovery exits 0 only once the seat's supervisor survived its settle: a sighting.
             self.mark_seen_running(record, self.now)
-            record.setdefault("restarts", []).append(
-                {"restarted_at": timestamp(self.now), "died_at_about": timestamp(died_at)})
-            record["restarts"] = record["restarts"][-5:]
+            self.record_recovery_attempt(record, died_at, "restarted")
             self.log(seat, "restarted", died_at_about=timestamp(died_at),
                      recovery_output=output)
             self.write_notice(seat, "restarted", RESTARTED_NOTICE_TEMPLATE, attach_seat=seat,
@@ -393,11 +439,17 @@ class Watcher:
             self.log(seat, "not restarted: running again by the time recovery ran",
                      recovery_output=output)
             return
+        # A launch that did not come up may have polled before it died; that brief run
+        # belongs to this death, so the handled poll moves past it.
+        self.mark_handled(seat, record)
+        self.record_recovery_attempt(record, died_at, "failed")
         self.log(seat, "recovery failed; user told", exit_code=exit_code,
                  died_at_about=timestamp(died_at), recovery_output=output)
+        output_lines = [line for line in output.strip().splitlines() if line.strip()]
         self.write_notice(seat, "recovery-failed", RECOVERY_FAILED_NOTICE_TEMPLATE,
                           died_at=clock_text(died_at), exit_code=exit_code,
-                          recovery_output=output.strip() or "(nothing)")
+                          recovery_last_line=(output_lines[-1].strip() if output_lines
+                                              else "(it printed nothing)"))
 
     def report_down_for_the_user(self, seat, verdict, detail, died_at):
         if verdict == WAITING_HANDOFF_VERDICT:
@@ -413,7 +465,7 @@ class Watcher:
                  "user told", exit_code=exit_code, recorded_at=timestamp(recorded_at))
         self.write_notice(seat, "recorded-exit", RECORDED_EXIT_NOTICE_TEMPLATE,
                           died_at=clock_text(recorded_at), exit_description=exit_description,
-                          transcripts=self.transcripts_directory(seat),
+                          transcripts=path_on_the_mac(self.transcripts_directory(seat)),
                           question=self.recorded_exit_question(seat, exit_code),
                           restart_effect=(f"resumes {seat}'s last conversation" if session_id
                                           else f"starts {seat} as a fresh session"))
@@ -516,18 +568,18 @@ def show_notice_words_for_window(path, attach_seat):
 
 
 def stopped_on_purpose_predicate(supervisor, handoff_directory: Path):
-    """Return a test of a recorded exit: a clean exit, or a dont-restart handoff its supervisor consumed."""
+    """Return a test of a recorded exit: a clean exit, or one its supervisor recorded as a
+    stop at a dont-restart handoff.
+
+    The supervisor's own record of why it stopped decides, not the handoff file: a
+    dont-restart handoff answered y stays on disk, consumed, while its successor runs,
+    and that successor's later failure must still reach the user.
+    """
     def stopped_on_purpose(seat, detail):
         if detail[0] == 0:
             return True
-        handoff_path = supervisor.handoff_file_path(handoff_directory, seat)
-        if not handoff_path.is_file():
-            return False
-        fields = supervisor.parse_handoff_file(handoff_path)
-        counter = supervisor.counter_from(fields)
-        consumed = supervisor.read_supervisor_state(
-            supervisor.supervisor_state_path(handoff_directory, seat)).get("consumed_counter")
-        return bool(fields.get("dont-restart")) and counter is not None and counter == consumed
+        return supervisor.agent_exit_record_is_a_stop_at_a_dont_restart_handoff(supervisor.read_supervisor_state(
+            supervisor.supervisor_state_path(handoff_directory, seat)))
     return stopped_on_purpose
 
 
