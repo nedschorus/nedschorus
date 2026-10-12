@@ -69,6 +69,8 @@ CALLING_AGENT_SESSION_TEST_VARIABLES = {
     "TMUX": "/tmp/tmux-1000/calling-seat,1,0",
     "TMUX_PANE": "%0",
     "NEDSCHORUS_HANDOFF_SUPERVISOR_AGENT_NAME": "calling-seat",
+    "NEDSCHORUS_HANDOFF_SUPERVISOR_WORKING_DIRECTORY": "/calling/seat/directory",
+    "NEDSCHORUS_HANDOFF_SUPERVISOR_SESSION_ID": "calling-supervisor-session",
 }
 skips = []
 passes = []
@@ -1020,7 +1022,9 @@ with tempfile.TemporaryDirectory() as temporary:
             else:
                 os.environ[name] = value
     started = started_environments[0] if started_environments else {}
-    seat_owned = ("TMUX", "TMUX_PANE", "NEDSCHORUS_HANDOFF_SUPERVISOR_AGENT_NAME")
+    seat_owned = ("TMUX", "TMUX_PANE", "NEDSCHORUS_HANDOFF_SUPERVISOR_AGENT_NAME",
+                  "NEDSCHORUS_HANDOFF_SUPERVISOR_WORKING_DIRECTORY",
+                  "NEDSCHORUS_HANDOFF_SUPERVISOR_SESSION_ID")
     leaked = sorted(name for name in CALLING_AGENT_SESSION_TEST_VARIABLES
                     if name not in seat_owned and name in started)
     check("the supervisor starts claude without the calling agent-session's variables",
@@ -2085,6 +2089,22 @@ with tempfile.TemporaryDirectory() as temporary:
         check(f"the {branch} launch branch keeps the rest of the caller's environment",
               handed_on.get("NEDSCHORUS_TEST_SEAT_KEEPS_THIS") == "kept" and "PATH" in handed_on,
               sorted(handed_on))
+
+    # run_tmux itself must pass the environment it is given to tmux, or the filtered environment
+    # never reaches the tmux server that copies it into the seat's windows.
+    tmux_run_keywords = []
+    def recording_subprocess_run(command, **keywords):
+        tmux_run_keywords.append(keywords)
+        return subprocess.CompletedProcess(command, 0, "", "")
+    handed_to_tmux = {"ONLY_FOR_THE_SEAT": "yes"}
+    recovery.subprocess.run = recording_subprocess_run
+    try:
+        real_run_tmux("new-session", "-d", socket_name="seat", environment=handed_to_tmux)
+    finally:
+        recovery.subprocess.run = real_run
+    check("run_tmux gives tmux the environment it was given",
+          bool(tmux_run_keywords) and tmux_run_keywords[0].get("env") == handed_to_tmux,
+          tmux_run_keywords)
     # nedschorus#141 review F2: this branch composes the supervisor command
     # itself instead of running the launcher, so it must carry the seat
     # environment the launcher would have set. Without it a recovered box

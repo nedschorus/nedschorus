@@ -264,8 +264,7 @@ def resupervise_box_seat(arguments) -> int:
     sys.stdout.flush()  # exec discards buffered output
     sys.stderr.flush()
     # Forward the checked host and handoff directory so launch targets the seat just prepared.
-    environment = {**supervisor.agent_seat_launch_environment_without_calling_agent_session_tmux_and_supervisor_variables(os.environ),
-                   "NEDSCHORUS_AGENT_BOX": arguments.agent_box}
+    environment = {**os.environ, "NEDSCHORUS_AGENT_BOX": arguments.agent_box}
     if arguments.handoff_dir:
         environment["LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS"] = (
             f"--handoff-dir {shlex.quote(arguments.handoff_dir)}")
