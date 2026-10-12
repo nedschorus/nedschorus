@@ -337,6 +337,7 @@ and the way past it is to let that merge and fold it in.
 
 import argparse
 import hashlib
+import importlib.util
 import json
 import re
 import shutil
@@ -344,6 +345,13 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+
+_git_output_spec = importlib.util.spec_from_file_location(
+    "git_machine_readable_output_runner_and_parser_common",
+    Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+    / "git-machine-readable-output-runner-and-parser-common.py")
+git_output = importlib.util.module_from_spec(_git_output_spec)
+_git_output_spec.loader.exec_module(git_output)
 
 DEFAULT_REPO = "nedschorus/nedschorus"
 GHI_MD_DIRECTORY = "docs/issues"
@@ -513,13 +521,13 @@ def tracked_paths_at_head(repository_root: Path, runner) -> list:
     found this docstring promising "let through" while a timeout stopped
     the run."""
     try:
-        completed = runner(["git", "ls-tree", "-r", "--name-only", "HEAD"],
+        completed = runner(["git", "ls-tree", "-r", "--name-only", "-z", "HEAD"],
                            timeout=30, cwd=str(repository_root), check=False)
     except subprocess.TimeoutExpired:
         return []
     if completed.returncode != 0:
         return []
-    return completed.stdout.splitlines()
+    return git_output.nul_separated_fields(completed.stdout)
 
 
 def date_or_file_path_in_heading(heading: str, tracked_paths) -> str:
@@ -1155,9 +1163,9 @@ def ghi_md_paths_on_main(revision: str, repository_root: Path, runner):
     is where
     that reasoning and the real-repository measurement behind it are
     written."""
-    listed = runner(["git", "ls-tree", "-r", "--name-only", revision,
+    listed = runner(["git", "ls-tree", "-r", "--name-only", "-z", revision,
                      f"{GHI_MD_DIRECTORY}/"], cwd=str(repository_root))
-    return [line for line in (listed.stdout or "").splitlines()
+    return [line for line in git_output.nul_separated_fields(listed.stdout or "")
             if str(Path(line).parent) == GHI_MD_DIRECTORY
             and issue_number_in_file_name(Path(line)) is not None]
 
@@ -1233,9 +1241,9 @@ def landed_designs_on_main(revision: str, repository_root: Path, runner):
     code has landed. Their names carry no number, so the caller reads each
     one's `issue:` line to learn its issue. Raises on a failed list for the
     reason ghi_md_paths_for_issue does."""
-    listed = runner(["git", "ls-tree", "-r", "--name-only", revision,
+    listed = runner(["git", "ls-tree", "-r", "--name-only", "-z", revision,
                      f"{SYSTEM_DIRECTORY}/"], cwd=str(repository_root))
-    return [line for line in (listed.stdout or "").splitlines()
+    return [line for line in git_output.nul_separated_fields(listed.stdout or "")
             if landed_design_relative_path(line)]
 
 
@@ -1434,12 +1442,12 @@ def ghi_md_paths_for_issue(number: int, repository_root: Path, runner):
     real failure — a bad revision or a path outside the checkout, both
     128 — and never means "nothing there"."""
     listed = runner(
-        ["git", "ls-tree", "-r", "--name-only", "origin/main",
+        ["git", "ls-tree", "-r", "--name-only", "-z", "origin/main",
          f"{GHI_MD_DIRECTORY}/", f"{SYSTEM_DIRECTORY}/"],
         cwd=str(repository_root))
     prefix = f"{number}-"
     selected = []
-    for line in (listed.stdout or "").splitlines():
+    for line in git_output.nul_separated_fields(listed.stdout or ""):
         if Path(line).name.startswith(prefix):
             # The depth is read off the path rather than left to git: `-r`
             # is what reaches a system's own directory at all, and it also
