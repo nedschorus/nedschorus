@@ -6,119 +6,111 @@ This GHI-MD is pending approval and has not been filed as a GHI yet. When the us
 
 A change to `CLAUDE.md`, a skill, a prompt or a hook is judged today by reading the change and by its own tests; its effect on the work agents do is not measured. The user wants changes judged on the quality of the work agents produce. Agents' outputs vary from one invocation to the next, so measuring that needs many tasks with known right answers, run repeatedly. Those of the project's merged bug fixes that came with a regression test are such tasks.
 
-Whether such tasks can be built from this project's history, and whether agents' invocations on them can be read and scored, is not known. The earlier design of the full benchmark, in this GHI-MD's previous text, went through five cold-read-full-runs and one /sanity-check run; in each cold-read-full-run, each reviewer that hunted defects reported about fifty, nearly all gaps in rules for a program nobody had built. This GHI-MD builds three tasks and runs them, so that the second GHI-MD, for the full benchmark, rests on what happened.
+Whether such tasks can be built from this project's history, and whether agents' invocations on them can be read and scored, is not known. This GHI-MD's earlier design of the full benchmark went through five cold-read-full-runs and one /sanity-check run, and each reviewer hunting defects found about fifty gaps in rules for a program nobody had built. This GHI-MD builds three tasks and runs them, so that the second GHI-MD, for the full benchmark, rests on what happened.
 
 ## Words used here
 
-- A **case** is one task built from one merged pull request that fixed a bug and added or changed a regression test for it. A single test inside a test suite is a **test case**, the test runner's word, never a case.
+- A **case** is one task built from one merged pull request that fixed a bug and added or changed a regression test for it; a single test inside a test suite is a test case.
 - The **pre-fix tree** of a case is the files of the first parent of the pull request's merge commit: main as it stood just before the fix merged.
-- A **test file** is a file named `*-test.py`, `*-test.sh` or `*-test-fixture.py`, or any file under a directory named `tests` or whose name contains `-test-`. A **test suite** is a test file that `scripts/run-all-test-suites.py`, the test runner, runs: one named `*-test.py` or `*-test.sh`.
+- A **test file** is a file named `*-test.py` or `*-test.sh`, or any file under a directory named `tests`. A **test suite** is a test file that `scripts/run-all-test-suites.py`, the test runner, runs: one named `*-test.py` or `*-test.sh`.
 - The **hidden tests** of a case are the test files the pull request added or changed, as they stand at its merge commit.
 - An **arm** is one version of the agent-instructions and hooks the agent works under.
-- An arm's **instruction package** is a directory holding `CLAUDE.md`, `AGENTS.md`, `.claude/`, `docs/agents/`, every program a hook in that `.claude/settings.json` runs, and every project file those programs read when they run.
+- An arm's **instruction package** is a directory holding `CLAUDE.md`, `AGENTS.md`, `.claude/`, `docs/agents/`, every program a hook in that `.claude/settings.json` runs, and every project file those programs import or open.
 - The **evaluation harness** is the program this GHI-MD's work builds to construct cases, run the pilot and print the pilot report.
 - cold-read-full-run and sanity-check-record are defined in `.claude/skills/skills-glossary.md`.
 
 ## What the history supplies
 
-A count made on 2026-10-09 covered the 971 merged pull requests numbered 1 to 1160: 79 change a program and a test file and have a title that reads as a fix. The count, its program and the list of 79 are in `nedlern@ned-box:/home/nedlern/nedschorus-logs/seats/prime-intellect/benchmark-case-count-2026-10-09/`. 37 of the 79 merged after PR [Every test suite runs from one committed program, judged by its exit code](https://github.com/nedschorus/nedschorus/pull/618) added the test runner, at 2026-09-22T01:43Z, by the `mergedAt` times in that directory's `merged-pull-requests.json`: 628, 656, 688, 691, 695, 699, 701, 702, 708, 714, 728, 762, 771, 776, 800, 803, 822, 838, 881, 943, 960, 969, 971, 978, 985, 992, 1007, 1021, 1023, 1031, 1032, 1068, 1087, 1096, 1109, 1120 and 1160. The pilot takes only these, because an agent that follows `CLAUDE.md` runs the test runner, which an older tree lacks. Checked on 2026-10-12: each of the 37 merge commits has two parents, so its first parent is main just before the fix, and none of the 37 deleted or renamed a test file.
+A count made on 2026-10-09 covered the 971 merged pull requests numbered 1 to 1160: 79 change a program and a test file and have a title that reads as a fix. The count, its program and the list of 79 are in `nedlern@ned-box:/home/nedlern/nedschorus-logs/seats/prime-intellect/benchmark-case-count-2026-10-09/`. 37 of the 79 merged after PR [Every test suite runs from one committed program, judged by its exit code](https://github.com/nedschorus/nedschorus/pull/618) added the test runner, at 2026-09-22T01:43Z: 628, 656, 688, 691, 695, 699, 701, 702, 708, 714, 728, 762, 771, 776, 800, 803, 822, 838, 881, 943, 960, 969, 971, 978, 985, 992, 1007, 1021, 1023, 1031, 1032, 1068, 1087, 1096, 1109, 1120 and 1160. Each merge commit has two parents, and none deleted or renamed a test file.
 
 Building a case by reverting the fix on today's main was tried and rejected: on main of 2026-10-10 the revert applied cleanly for only 11 or 12 of the 79, and main takes 20 to 65 merges a day. On the pre-fix tree of 8 sampled pull requests (72, 102, 200, 307, 416, 584, 822 and 1160), the merged regression test failed before the fix and passed after it in all 8. Both trials are in `fresh-eyes-claude.md` of the sanity-check-record `nedlern@ned-box:/home/nedlern/nedschorus-logs/sanity-check-records/2026-10-10-agent-instructions-and-hooks-change-benchmark-built-from-project-history/`.
 
-## When the pilot starts
-
-The pilot starts when the user gives his go on the sandbox probe. At that moment the evaluation harness cuts the first arm's instruction package from main, and takes the test runner it uses for admission and scoring from the same commit; both stay fixed until the pilot report.
-
 ## Step 1: the sandbox probe
 
-Each invocation of the agent, and of the bug report writer in Step 2, happens inside one bubblewrap sandbox that the evaluation harness starts with its own process namespace, so that ending the sandbox ends every process inside it. The sandbox shows only what this list names; everything else on ned-box, every other checkout, the log-store, other agent-sessions' transcripts and GitHub's credentials among it, is absent:
+Each invocation of the agent and of the bug report writer happens inside one bubblewrap sandbox, with its own process namespace, that the evaluation harness starts. The sandbox shows only:
 
 - the case tree and its bare `origin` repository, read and write;
 - the arm's instruction package, read only;
 - the system's programs and libraries, `claude` among them, read only;
-- a private home directory, made new for each invocation and kept by the evaluation harness afterward, holding: `~/.claude/CLAUDE.md`; the user's `~/.claude/settings.json` with Remote Control and cross-session messages turned off, so that the agent can reach no other agent-session; the programs that settings file runs; and `~/.claude.json`. The login file `~/.claude/.credentials.json` is the real one, shown read and write, so that a login refresh inside the sandbox reaches the file every other `claude` on ned-box uses;
+- a private home directory, made new for each invocation, holding copies of `~/.claude/CLAUDE.md`, `~/.claude/settings.json` with Remote Control and cross-session messages turned off, the programs that settings file runs, and `~/.claude/.credentials.json`, the login file `claude` needs;
 - a private temporary directory.
 
-Network access stays open, because the model needs it. The repository is public, so an agent can read the merged fix on GitHub without credentials; Step 4 reports every such read.
+Other checkouts, the log-store, other agent-sessions' transcripts and GitHub's credentials are absent. Network access stays open, because the model needs it.
 
-On ned-box a second bubblewrap sandbox cannot start inside a first (`kernel.apparmor_restrict_unprivileged_userns = 1`), and the test runner runs each test suite in a bubblewrap sandbox of its own. So the sandbox sets `RUN_ALL_TEST_SUITES_INSIDE_SIGNAL_SANDBOX`, under which the test runner runs its suites without starting another, and Claude Code's own sandbox stays off. Run that way inside one bubblewrap sandbox, the test runner passed the 15 suites that `--only-suites-whose-recorded-inputs-changed-since HEAD~1` selected, on 2026-10-10: `nedlern@ned-box:/home/nedlern/nedschorus-logs/seats/prime-intellect/benchmark-sandbox-nesting-probe-2026-10-10.md`. The test runner gained its own bubblewrap sandbox and that variable in the same commit, cf2b3cae of 2026-10-05, so a pre-fix tree's test runner either starts no bubblewrap sandbox or honours the variable. Four suites start a bubblewrap sandbox themselves, the ones the test runner's `SUITES_RUN_OUTSIDE_THE_SIGNAL_SANDBOX` names, and fail inside the sandbox wherever a tree holds them.
+On ned-box a second bubblewrap sandbox cannot start inside a first (`kernel.apparmor_restrict_unprivileged_userns = 1`), and the test runner runs each test suite in a bubblewrap sandbox of its own. So the sandbox sets `RUN_ALL_TEST_SUITES_INSIDE_SIGNAL_SANDBOX`, under which the test runner runs its suites without starting another, and Claude Code's own sandbox stays off. Run that way inside one bubblewrap sandbox, the test runner passed the 15 suites that `--only-suites-whose-recorded-inputs-changed-since HEAD~1` selected, on 2026-10-10: `nedlern@ned-box:/home/nedlern/nedschorus-logs/seats/prime-intellect/benchmark-sandbox-nesting-probe-2026-10-10.md`. The four suites that the test runner's `SUITES_RUN_OUTSIDE_THE_SIGNAL_SANDBOX` names start a bubblewrap sandbox themselves, and fail inside the sandbox.
 
-The probe uses main's files at the pilot's start as the case tree and the first arm, and checks four things:
-
-1. `claude -p` logs in inside the sandbox and answers.
-2. Claude Code runs a hook: the transcript shows the output of the arm's SessionStart hook.
-3. Every hook command in the arm's `.claude/settings.json` exits without error when the evaluation harness hands it a sample event inside the sandbox. The evaluation harness runs each one under `strace` and adds every project file the hook opened to the instruction package. A hook that fails is listed with its error. A hook program that finds its repository from its own location, as `scripts/uncommitted-work-snapshot-hook.py` does, acts on the instruction package and not on the case tree, and is listed too.
-4. The test runner, run inside the sandbox, passes every test suite but the four above.
-
-The probe spends usage, so it waits for the user's go. The user reads its results, including the instruction package's file list and the hooks listed in check 3, and decides whether the pilot goes on, and whether both arms drop any listed hook.
+The probe starts `claude -p` inside such a sandbox, on main's files with the first arm laid over them, both taken from main when the user gives his go on the probe, the pilot's start, and checks three things: `claude` logs in, a hook runs, and the test runner passes every test suite but those four inside the sandbox. It spends usage, so it waits for the user's go. If any of the three fails, the user decides how to go on.
 
 ## Step 2: three cases
 
-The evaluation harness takes the 37 candidate pull requests newest first, by merge time, and builds cases until three are admitted and confirmed. A candidate is left out when its pull request changed a file that either arm's instruction package holds: the arm either replaces that file in the case tree or runs its own copy of it as a hook, and the agent can read the instruction package, so the fixed version would be in front of the agent.
+The evaluation harness takes the 37 candidate pull requests newest first, by merge time, and builds cases until three are admitted and confirmed. A candidate is left out when its pull request changed a file that either arm's instruction package holds, because the fixed version would then be in the case tree or in the instruction package, which the agent can read and the hooks run. The evaluation harness computes that set from both arms' `.claude/settings.json`, following each hook program to the project files it imports or opens, by a scan that is approximate and says so.
 
-- **Case tree**, built fresh for every invocation and every test run: the files of the pre-fix tree, with the arm laid over them when an agent works in the tree, committed on branch `main` as the only commit of a new git repository in a new directory, with the commit's author and committer dates set to the date of the merge commit's first parent, so that `git log` shows nothing later. The case tree's `origin` is a bare repository whose `main` is that same commit, so hooks that fetch or rebase onto `origin/main` find nothing newer.
-- **The arm laid over the case tree**: before that commit, the evaluation harness replaces the pre-fix tree's `CLAUDE.md`, `AGENTS.md`, `.claude/` and `docs/agents/` with the arm's copies, and rewrites every hook command in `.claude/settings.json` to an absolute path into the arm's instruction package. Because the arm is in the commit, `git status` shows a clean tree and `git diff` shows nothing of the pre-fix instruction files. The case tree's own `scripts/` and `nc-systems/` are not touched: they hold the code the agent fixes.
+- **Case tree**, built fresh for every invocation of the agent and every test run: the files of the pre-fix tree, with the arm laid over them when an agent works in the tree, committed on branch `main` as the only commit of a new git repository in a new directory, with the commit's author and committer dates set to the date of the merge commit's first parent, so that `git log` shows nothing later. The case tree's `origin` is a bare repository whose `main` is that same commit, so hooks that fetch or rebase onto `origin/main` find nothing newer.
+- **The arm laid over the case tree**: before that commit, the evaluation harness replaces the pre-fix tree's `CLAUDE.md`, `AGENTS.md`, `.claude/` and `docs/agents/` with the arm's copies, and rewrites every hook command in `.claude/settings.json` to an absolute path into the arm's instruction package, so git shows no trace of the pre-fix instruction files. The case tree's own `scripts/` and `nc-systems/` are not touched: they hold the code the agent fixes.
 - **Hidden tests**: kept outside the case tree. Before any test run of the evaluation harness, they are copied in and staged with `git add -f`, because the test runner runs tracked suites only and `-f` stages a path the tree's `.gitignore` would skip.
 
-**Admission.** The evaluation harness runs each of the two tests below three times, each time on a freshly built tree with the tree's own instruction files and no arm, with the test runner of the pilot's start and `--checkout <tree>`, outside the sandbox, so that the test runner uses its own:
+**Admission.** Each test below runs three times, on a case tree without an arm, with the test runner of main at the pilot's start and `--checkout <tree>`, outside the sandbox. Every test run of admission and scoring takes the test runner's default lock and has one time limit, counted from then; a stopped admission test run rejects the candidate, a stopped scoring test run is unsolved.
 
 1. On the case tree with the hidden tests, at least one hidden test suite exits with a failure, and every test suite that is not a hidden test passes.
 2. On a tree built the same way from the merge commit's files, with the hidden tests, every test suite passes.
 
-A candidate is not admitted when a test suite passes in one of the three test runs of a test and fails in another, a flaky test suite. Every test run takes the test runner's default lock. When the test runner exits 3, because another test run on ned-box holds the lock, the evaluation harness waits a minute and starts the test run again. A test run still going 30 minutes after it started is stopped, and its candidate is not admitted; a full test run of main took about two minutes on 2026-10-12. When the test runner exits 2, it could not start: the evaluation harness stops and prints what the test runner printed.
+A candidate is not admitted when a test suite passes in one of a test's three test runs and fails in another.
 
-**Bug report**, written for each admitted case by a `claude -p` agent in the sandbox, with the case tree, the hidden tests and the output of admission test 1 copied in, and never the fix or the pull request's description. Its prompt tells it not to look the case up on GitHub; the pilot report lists any network read it made. The bug report says what goes wrong and what should happen instead, and states every name, flag, message and exit status the hidden tests check. It reveals the fix if it says how the code should change: which function or line, or the approach of the fix's diff. Naming the behavior a hidden test checks does not reveal the fix.
+**Bug report**, written for each admitted case by a `claude -p` agent inside the sandbox, which sees the hidden tests, the output of admission test 1 and the pre-fix tree, and never the fix or the pull request's description. The bug report says what goes wrong and what should happen instead, and states every name, flag, message and exit status the hidden tests check. It reveals the fix if it says how the code should change; naming the behavior a test checks does not.
 
-**Confirmation.** The user reads each bug report beside its hidden tests and the fix's diff, and confirms three things: the pull request fixed a bug, the bug report states what the hidden tests require, and it does not reveal the fix. A bug report he rejects is written once more with his reason; a second rejection replaces the case with the next candidate. If the 37 candidates run out before three cases are admitted and confirmed, the user decides how to go on.
+The user then reads each of the three bug reports beside its hidden tests and the fix's diff, and confirms that it states what the tests require and does not reveal the fix. A bug report he rejects is written once more with his reason; a second rejection replaces the case with the next candidate. If the 37 candidates run out before three cases are admitted and confirmed, the user decides how to go on.
 
 ## Step 3: two arms, each case once in each
 
-The two arms are the instruction package cut from main when the pilot starts, and the same package with `CLAUDE.md` empty. The second is expected to make agents worse. It is the cheapest change that exercises laying an arm over the case tree. With one invocation per case and arm, the pilot cannot measure an arm's effect: it shows whether the evaluation harness works and what an invocation in each arm looks like.
+The two arms are an instruction package cut from main at the pilot's start, and the same package with `CLAUDE.md` empty. The second is expected to make agents worse; it is the cheapest change that exercises laying an arm over the case tree. With one invocation per case and arm, the pilot cannot measure an arm's effect; it shows whether the evaluation harness works and what an invocation in each arm looks like.
 
-Each case runs once in each arm, six invocations in all, one at a time on the machine: `claude -p --permission-mode bypassPermissions`, on the user's Claude subscription, inside the sandbox, with initial-agent-instructions that give the bug report, tell the agent to work only in the case tree, to finish by saying what it did or what is missing, and not to push. After 30 minutes the evaluation harness ends the sandbox and the case is scored as it stands.
+Each case runs once in each arm, one invocation of the agent at a time on the machine: `claude -p --permission-mode bypassPermissions`, on the user's Claude subscription, inside the sandbox, with initial-agent-instructions that give the bug report, tell the agent to work only in the case tree, to finish by saying what it did or what is missing, and not to push. After 30 minutes the evaluation harness ends the sandbox, and the case is scored as it stands.
 
-**Scoring.** The evaluation harness builds a fresh case tree with the tree's own instruction files and no arm, copies into it the files the agent changed or added in its case tree, and deletes the files the agent deleted, leaving out `CLAUDE.md`, `AGENTS.md`, `.claude/`, `docs/agents/` and test files. It then copies in and stages the hidden tests and runs the test runner of the pilot's start, with `--checkout <that tree>`, outside the sandbox, under the same lock and 30-minute rules as admission. The case is solved when the test runner exits 0. A scoring test run stopped at 30 minutes is unsolved.
+**Scoring.** The evaluation harness puts back the pre-fix tree's own `CLAUDE.md`, `AGENTS.md`, `.claude/` and `docs/agents/`, discards the agent's changes to those paths and to test files, copies in and stages the hidden tests, and runs the test runner of main at the pilot's start, with `--checkout <case tree>`, outside the agent's sandbox, so the test runner uses its own. The case is solved when the test runner exits 0.
 
 ## Step 4: the pilot report, and a stop
 
-The evaluation harness keeps, in a directory of the log-store that the pilot report names, each case's hidden tests and bug report, each invocation's private home with its Claude Code transcript, the agent's changed files, and each scoring test run's report. The pilot report shows, for each case and arm:
+The evaluation harness keeps each invocation's private home, which holds its Claude Code transcript, in the log-store. The pilot report shows, for each case and arm:
 
 - the bug report the agent got;
-- what the agent did: the commands it ran and the files it changed, from the transcript and the case tree;
-- its last reply, or that the evaluation harness ended the sandbox at 30 minutes;
-- the scoring verdict, solved or unsolved, and the verdict of every test suite, hidden and not, with the test cases each suite skipped;
-- every command or tool call in the transcript that reached the network other than through the model, such as `curl`, `wget`, `git clone`, `gh`, WebFetch or WebSearch;
-- the model, the effort level and the version of `claude` the invocation ran with;
-- any fault of the evaluation setup: a hook that fails or refuses because it runs in the sandbox, not a guard refusing what it exists to refuse; a hook writing outside the case tree, the private home and the private temporary directory; a sandbox path the agent needed and lacked; a usage limit or a logged-out `claude` that ended the invocation; and a read of the project's pull requests, GHIs or repository on GitHub.
+- what the agent did: the commands it ran and the files it changed;
+- its last reply;
+- the scoring verdict, solved or unsolved, and which test suites failed;
+- anything that broke: a hook that fails because it runs in the sandbox, a hook writing outside the case tree, the private home and the private temporary directory, a sandbox path the agent needed and lacked.
 
-The evaluation harness lists what it can find of these; the reader of the transcript decides. An invocation with a fault of the evaluation setup is reported as invalid and is not counted as solved or unsolved. When a usage limit or a logged-out `claude` ends an invocation, the evaluation harness stops and tells the user what `claude` printed.
-
-Every transcript is read, by the user or by the agent-seat prime-intellect, which wrote this GHI-MD, and the pilot report says who read each one. The user then decides from the pilot report whether the second GHI-MD, for the full benchmark, is written.
+A guard refusing what it exists to refuse has not broken. The reader of the transcript decides what broke; an invocation in which something broke is reported as broken and is not counted as solved or unsolved. Every transcript is read, by the user or by the agent-seat prime-intellect. The user then decides from the pilot report whether the second GHI-MD, for the full benchmark, is written.
 
 ## Decided by the user; to be specified from the pilot's evidence
 
 The user decided these in the approval-walks on the /sanity-check run of the earlier design, `nedlern@ned-box:/home/nedlern/nedschorus-logs/walk/agent-instructions-and-hooks-change-benchmark-sanity-check-triage-2026-10-10-minutes.md` and `nedlern@ned-box:/home/nedlern/nedschorus-logs/walk/benchmark-walk-items-10-and-11-and-cold-read-triage-sentence-2026-10-10-minutes.md`, except where a line says otherwise. If the user decides to write the second GHI-MD, for the full benchmark, it specifies them, with what the pilot shows; the full benchmark starts with ten cases.
 
 - Each measurement request names its primary metric, its repetitions and its noninferiority margin, the drop in solved cases still accepted as no harm, and says which result counts as unclear; an unclear result is measured once more, with new repetitions, and the second result decides.
-- Results per case and overall by a two-sided sign test, with the minimum detectable effect for ten cases. This line comes from the earlier design, not from an approval-walk item.
-- The measure of false claims, claims of done or of passing tests that no complete test run after the agent's last change supports: the time of the last change taken from the files as well as from Claude Code's edit tools, and a test run counted only when its suites ran to the end.
+- Results per case and overall by a two-sided sign test, with the minimum detectable effect for ten cases; from the earlier design, not an approval-walk item.
+- The measure of false claims, claims of done or of passing tests with no complete test run after the last change: the last change found from the files as well as the edit tools.
 - Whether a Claude Code Stop hook that refuses a claim of done or passing tests, when no test ran after the last change, reduces false claims without costing solved cases.
-- Whether a separate agent that checks a task's inputs before the agent starts catches insufficient inputs better than the agent does: the demonstrated gain that standing decision 21 of `docs/nedschorus-wiki/nedschorus-ai-native-software-development-objective.md` asks for before an input check is split off, measured under decision 26, "Evidence first; cost is a bound". This line rests on the user's statement of 2026-10-09, not on an approval-walk item.
+- Whether a separate agent that checks a task's inputs before the agent starts catches insufficient inputs better than the agent does, the demonstrated gain that standing decision 21 of `docs/nedschorus-wiki/nedschorus-ai-native-software-development-objective.md` requires; from the user's statement of 2026-10-09, not an approval-walk item.
 - Underspecified variants, cases whose bug report lacks one fact the hidden tests need, built after the first ten cases: the missing fact picked from a list code makes, checked absent from the pre-fix tree with `git grep -F`.
 - LLM judges answer in fixed formats that code checks.
 - Admitted cases frozen: a comparison of their git hashes with the recorded ones, a command that retires a case, and the directory holding them listed in `FROZEN_MEASURED_DATA_DIRECTORIES` of `scripts/md-drift-lint.py`.
 - Candidates listed from GitHub by the evaluation harness.
 - No held-out cases until the benchmark runs on every pull request.
 - `claude` only; Codex later.
+- A transcript check for network commands, such as `curl` and `wget`, and reads of the project on GitHub (item 2 of `finding-dispositions.md`).
+- The test runs' time limit, and what follows the test runner's exit 3 (lock held) or exit 2 (could not start).
+- The probe running each hook alone and recording the files it opens; hooks that find their repository from their own location, as `scripts/uncommitted-work-snapshot-hook.py` does.
+- Test files outside the naming pattern, such as the captured responses under `scripts/merge-gate-test-captured-github-responses/` that PR [The merge gate enters the repository, with a test for every refusal](https://github.com/nedschorus/nedschorus/pull/691) changed.
+- A usage limit or a logged-out `claude` during an invocation.
+- The pilot report's further fields: skipped test cases, model, effort level and `claude` version, the 30-minute end, who read each transcript.
+- The user confirming that each candidate fixed a bug.
 
 ## Known limits
 
-- A bug report written from a test is more exact than most real bug reports.
+- A bug report written from a test is more exact than most real bug reports; SWE-smith (arXiv 2504.21798) found that task text showing a failing test leaks what the tests check.
 - The pre-fix tree holds the old version of a changed test file beside the code; the agent may read it.
-- The repository is public, so a model may have learned a fix from training data, and an agent can read the fix on GitHub; the pilot report lists such reads.
+- The repository is public: a model may have learned a fix in training, and an agent can read it on GitHub.
 - The pilot's agents have no GitHub credentials, no other checkouts and no long conversation, unlike real agent-seats.
-- The agent reads main's `CLAUDE.md` beside the pre-fix tree's wiki pages and programs. An instruction that names something an older tree lacks fails there, such as the test runner's `--only-suites-whose-recorded-inputs-changed-since` flag before 2026-09-30. In the arm with `CLAUDE.md` empty, `scripts/pr-reviewer-instructions-copies-test.py` fails in the agent's own test runs on a tree that holds it, because that test compares `CLAUDE.md` with `docs/agents/pr-reviewer-instructions.md`; scoring restores the tree's own `CLAUDE.md`, so scoring is not affected.
-- A hook program that reads its files through `CLAUDE_PROJECT_DIR` or its working directory, rather than its own location, reads the case tree's pre-fix versions.
+- A login refresh inside the sandbox reaches only the copy of the login file.
+- Main's `CLAUDE.md` may name programs or flags an older pre-fix tree lacks.
 
 ## Other agent work to measure later, and what is not covered
 
