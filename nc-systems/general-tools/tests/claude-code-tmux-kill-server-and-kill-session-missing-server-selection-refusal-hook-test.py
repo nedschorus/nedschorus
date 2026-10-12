@@ -116,7 +116,11 @@ def refusal_cases():
         "a full path to tmux": "/usr/bin/tmux kill-server",
         "a value flag skipped before the command": "tmux -f /dev/null kill-server",
         "a value joined to -f": "tmux -f/tmp/x.conf kill-server",
-        "a value joined to -c": "tmux -c/bin/sh kill-server",
+        # tmux rejects -c together with a command (it prints its usage and
+        # exits 1), so this command kills nothing; the case checks only that
+        # -c's joined value is read as a value, and the refusal is harmless.
+        "-c's joined value read as a value (tmux itself rejects this command)":
+            "tmux -c/bin/sh kill-server",
         "a value joined to -T": "tmux -TRGB kill-server",
         "-- before the command": "tmux -- kill-server",
         "a grouped flag whose last letter takes a value": "tmux -2f /dev/null kill-server",
