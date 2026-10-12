@@ -248,11 +248,11 @@ def obsolete_path_set(freshness, checkout: Path, git_directory: Path,
     # git is missing or the timeout expires, so one non-zero test covers a
     # failed diff, an absent binary and a hung one alike.
     listed = freshness.run_git(
-        ["diff", "--name-only", "--no-renames", "HEAD...origin/main"],
+        ["diff", "-z", "--name-only", "--no-renames", "HEAD...origin/main"],
         checkout, timeout=OBSOLETE_DIFF_TIMEOUT_SECONDS)
     if listed.returncode != 0:
         return None
-    paths = set(line.strip() for line in listed.stdout.splitlines() if line.strip())
+    paths = set(freshness.git_output.nul_separated_fields(listed.stdout))
     freshness.write_stamp(cache_path, {"head": head_sha, "main_tip": main_sha,
                                        "paths": sorted(paths)})
     return paths
