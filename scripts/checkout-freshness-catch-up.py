@@ -87,12 +87,20 @@ because launchers read them on a terminal):
 """
 
 import argparse
+import importlib.util
 import json
 import os
 import subprocess
 import sys
 import time
 from pathlib import Path
+
+_git_output_spec = importlib.util.spec_from_file_location(
+    "git_machine_readable_output_runner_and_parser_common",
+    Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+    / "git-machine-readable-output-runner-and-parser-common.py")
+git_output = importlib.util.module_from_spec(_git_output_spec)
+_git_output_spec.loader.exec_module(git_output)
 
 STAMP_FILE_NAME = "checkout-freshness-stamp.json"
 
@@ -214,9 +222,6 @@ DETACHED_FAST_FORWARD_REFUSED_LINES = (
     "If git names anything else, leave the checkout as it is: the refusal has been "
     "reported to the user."
 )
-# Git's wording when a fast-forward would overwrite an untracked file: the one
-# refusal the agent can clear, so the one not sent to the user.
-GIT_UNTRACKED_FILE_WOULD_BE_OVERWRITTEN_TEXT = "untracked working tree files would be overwritten"
 UNKNOWN_ADVICE = ("Your head state could not be determined (a git command failed); nothing "
                   "was changed. Check `git status` before working.")
 AFTER_REBASE_ADVICE = f"Run `{SELECTIVE_TEST_RUN_COMMAND}`: your work now sits on newer code."
@@ -286,11 +291,11 @@ def obsolete_files_by_category(checkout: Path):
     for the same reason, is in obsolete-file-edit-warning-hook.py's
     obsolete_path_set(), so both programs run the same diff.
     """
-    listed = run_git(["diff", "--name-only", "--no-renames", "HEAD...origin/main"],
+    listed = run_git(["diff", "-z", "--name-only", "--no-renames", "HEAD...origin/main"],
                      checkout, timeout=30)
     if listed.returncode != 0:
         return []
-    paths = sorted(line.strip() for line in listed.stdout.splitlines() if line.strip())
+    paths = sorted(git_output.nul_separated_fields(listed.stdout))
     if not paths:
         return []
 
@@ -370,16 +375,16 @@ def flush_hook_output() -> None:
 def run_git(arguments, working_directory: Path, timeout: int = 60):
     """Run git somewhere; never raise, whatever goes wrong.
 
-    LC_ALL=C because this script READS git's prose: the reference
-    fast-forward reports git's own refusal text, and a word matched in a
-    translated message can be missed. Forcing the C locale keeps every
-    message stable, whatever the host is configured for.
+    LC_ALL=C because this script passes git's own refusal text on, and the
+    merge path reads git's prose; forcing the C locale keeps every message
+    stable, whatever the host is configured for. surrogateescape because -z
+    output carries each path's bytes as stored, which need not be UTF-8.
     """
     try:
         return subprocess.run(
             ["git", *arguments], cwd=str(working_directory),
-            capture_output=True, text=True, check=False, timeout=timeout,
-            env={**os.environ, "LC_ALL": "C"},
+            capture_output=True, text=True, errors="surrogateescape", check=False,
+            timeout=timeout, env={**os.environ, "LC_ALL": "C"},
         )
     except (OSError, subprocess.SubprocessError) as error:
         return subprocess.CompletedProcess(arguments, GIT_DID_NOT_RUN, "",
@@ -606,11 +611,26 @@ def uncommitted_tracked_change_count(checkout: Path):
     """Staged or unstaged changes to tracked files, or None when git status
     cannot be read. Untracked files are not counted: a fast-forward or rebase
     refuses on its own to overwrite one, and names it."""
-    status = run_git(["status", "--porcelain"], checkout, timeout=30)
+    status = run_git(["status", "--porcelain", "-z"], checkout, timeout=30)
     if status.returncode != 0:
         # An unreadable tree must read as unsafe, never as clean.
         return None
-    return len([line for line in status.stdout.splitlines() if not line.startswith("??")])
+    return len([entry for entry in git_output.status_entries(status.stdout)
+                if entry.code != "??"])
+
+
+def untracked_paths_main_would_overwrite(checkout: Path):
+    """Untracked, not ignored files at paths that differ between HEAD and
+    origin/main: the files a fast-forward to origin/main refuses to overwrite.
+    Empty when there are none or git cannot list them."""
+    untracked = run_git(["ls-files", "-z", "--others", "--exclude-standard"], checkout,
+                        timeout=30)
+    changed = run_git(["diff", "-z", "--name-only", "--no-renames", "HEAD", "origin/main"],
+                      checkout, timeout=30)
+    if untracked.returncode != 0 or changed.returncode != 0:
+        return set()
+    return (set(git_output.nul_separated_fields(untracked.stdout))
+            & set(git_output.nul_separated_fields(changed.stdout)))
 
 
 def in_progress_marker(git_dir: Path):
@@ -872,8 +892,9 @@ def rebase_never_pushed_branch(checkout: Path, git_dir: Path):
         # every turn end, about a tree git never entered.
         detail = "; ".join(line.strip() for line in rebased.stderr.splitlines() if line.strip())
         return "refused", detail or "no detail"
-    conflicting = run_git(["diff", "--name-only", "--diff-filter=U"], checkout,
-                          timeout=15).stdout.split()
+    conflicting = git_output.nul_separated_fields(
+        run_git(["diff", "-z", "--name-only", "--diff-filter=U"], checkout,
+                timeout=15).stdout)
     aborted = run_git(["rebase", "--abort"], checkout, timeout=30)
     # Whether the abort worked is decided by whether rebase state REMAINS, never
     # by the abort's exit code: the state on disk is the truth about the tree.
@@ -1031,7 +1052,9 @@ def catch_up_session_checkout(checkout: Path, interval_seconds: int) -> None:
         if outcome == "refused":
             stamp["last_action"] = f"detached fast-forward refused: {error}"
             lines = [DETACHED_FAST_FORWARD_REFUSED_LINES.format(error=error)]
-            if (GIT_UNTRACKED_FILE_WOULD_BE_OVERWRITTEN_TEXT not in error
+            # An untracked file in main's way is the one refusal the agent
+            # can clear, so the one not sent to the user.
+            if (not untracked_paths_main_would_overwrite(checkout)
                     and stamp.get("last_detached_refusal") != error):
                 report(f"catch-up: {checkout} is {parts['behind']} behind origin/main and "
                        f"could not fast-forward: {error}")
@@ -1057,13 +1080,11 @@ def catch_up_session_checkout(checkout: Path, interval_seconds: int) -> None:
 
 def reference_checkout_of(checkout: Path):
     """The main worktree of the same repository — the machine's reference copy."""
-    listing = run_git(["worktree", "list", "--porcelain"], checkout, timeout=15)
+    listing = run_git(["worktree", "list", "--porcelain", "-z"], checkout, timeout=15)
     if listing.returncode != 0:
         return None
-    for line in listing.stdout.splitlines():
-        if line.startswith("worktree "):
-            return Path(line.split(" ", 1)[1])
-    return None
+    records = git_output.worktree_records(listing.stdout)
+    return Path(records[0].path) if records else None
 
 
 def fast_forward_reference_checkout(reference: Path, interval_seconds: int,

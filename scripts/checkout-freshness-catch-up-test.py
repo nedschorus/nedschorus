@@ -1757,6 +1757,81 @@ with tempfile.TemporaryDirectory() as exception_scratch:
               str(combination_result.returncode))
 
 
+# ---------------------------------------------------------------------------
+# git output read in its -z form: real paths, never C-quoted or split
+# ---------------------------------------------------------------------------
+with tempfile.TemporaryDirectory() as z_scratch:
+    z_scratch = Path(z_scratch)
+    z_origin = z_scratch / "origin-repo"
+    z_origin.mkdir()
+    git(["init", "-q", "-b", "main"], z_origin)
+    configure_identity(z_origin)
+    commit_file(z_origin, "my notes.md", "first\n", "first commit")
+    # A main worktree whose path holds a newline: one porcelain record, not two lines.
+    z_reference = z_scratch / "reference\nclone"
+    git(["clone", "-q", str(z_origin), str(z_reference)], z_scratch)
+    configure_identity(z_reference)
+    z_seat = z_scratch / "z-seat"
+    git(["worktree", "add", "-q", "-b", "z-seat", str(z_seat), "main"], z_reference)
+    check("the reference checkout of a worktree is the main worktree, a newline in its path kept",
+          catch_up_module.reference_checkout_of(z_seat) == z_reference,
+          repr(catch_up_module.reference_checkout_of(z_seat)))
+
+    commit_file(z_origin, "docs/café.md", "main's\n", "main adds a non-ASCII path")
+    commit_file(z_origin, "my notes.md", "main's line\n", "main changes a path with a space")
+    git(["fetch", "--quiet", "origin"], z_seat)
+    z_listing = catch_up_module.obsolete_files_by_category(z_seat)
+    check("files main moved are listed by their real names, not C-quoted",
+          z_listing == [("documents you may cite", ["docs/café.md"]),
+                        ("other files", ["my notes.md"])], str(z_listing))
+
+    commit_file(z_seat, "my notes.md", "the branch's line\n", "the branch changes it too")
+    z_git_dir = Path(git(["rev-parse", "--absolute-git-dir"], z_seat).stdout.strip())
+    z_outcome = catch_up_module.rebase_never_pushed_branch(z_seat, z_git_dir)
+    check("a rebase conflict on a path with a space names the path whole",
+          z_outcome == ("conflict", "my notes.md"), str(z_outcome))
+
+    git(["mv", "my notes.md", "renamed notes.md"], z_seat)
+    check("a staged rename is one uncommitted tracked change",
+          catch_up_module.uncommitted_tracked_change_count(z_seat) == 1,
+          str(catch_up_module.uncommitted_tracked_change_count(z_seat)))
+    git(["reset", "-q", "--hard"], z_seat)
+
+    # The refusal over an untracked file is told apart by what git lists, not
+    # by git's wording: a git whose merge refusal reads differently still
+    # keeps that refusal from the user, and any other refusal still reaches him.
+    real_git = shutil.which("git")
+    reworded_directory = z_scratch / "reworded-git"
+    reworded_directory.mkdir()
+    (reworded_directory / "git").write_text(
+        "#!/bin/sh\n"
+        'if [ "$1" = merge ]; then echo "error: reworded refusal" >&2; exit 1; fi\n'
+        f'exec "{real_git}" "$@"\n', encoding="utf-8")
+    (reworded_directory / "git").chmod(0o755)
+    commit_file(z_origin, "scripts/in-the-way.py", "main's copy\n", "main adds a file")
+    git(["fetch", "--quiet", "origin"], z_reference)
+    in_the_way = z_scratch / "detached-in-the-way"
+    git(["worktree", "add", "-q", "--detach", str(in_the_way), "origin/main~1"], z_reference)
+    (in_the_way / "scripts").mkdir()
+    (in_the_way / "scripts/in-the-way.py").write_text("my copy\n", encoding="utf-8")
+    check("untracked paths main would overwrite are listed from git's file lists",
+          catch_up_module.untracked_paths_main_would_overwrite(in_the_way)
+          == {"scripts/in-the-way.py"},
+          str(catch_up_module.untracked_paths_main_would_overwrite(in_the_way)))
+    result = run_catch_up(["--cwd", str(in_the_way)], path_prefix=str(reworded_directory))
+    check("a refusal over an untracked file, in any wording, is not sent to the user",
+          "reworded refusal" in agent_text(result)
+          and str(in_the_way) not in display_text(result),
+          display_text(result))
+    nothing_in_the_way = z_scratch / "detached-nothing-in-the-way"
+    git(["worktree", "add", "-q", "--detach", str(nothing_in_the_way), "origin/main~1"],
+        z_reference)
+    result = run_catch_up(["--cwd", str(nothing_in_the_way)],
+                          path_prefix=str(reworded_directory))
+    check("a refusal with no untracked file in the way is sent to the user",
+          f"{nothing_in_the_way} is 1 behind origin/main and could not fast-forward: "
+          "error: reworded refusal" in display_text(result), display_text(result))
+
 print()
 if failures:
     print(f"{len(failures)} case(s) failed: {', '.join(failures)}")
