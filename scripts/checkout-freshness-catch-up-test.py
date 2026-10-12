@@ -1761,7 +1761,9 @@ with tempfile.TemporaryDirectory() as exception_scratch:
 # git output read in its -z form: real paths, never C-quoted or split
 # ---------------------------------------------------------------------------
 with tempfile.TemporaryDirectory() as z_scratch:
-    z_scratch = Path(z_scratch)
+    # git reports a worktree's resolved path; macOS's temporary directory sits
+    # under the /var -> /private/var link, so compare against the resolved one.
+    z_scratch = Path(z_scratch).resolve()
     z_origin = z_scratch / "origin-repo"
     z_origin.mkdir()
     git(["init", "-q", "-b", "main"], z_origin)
