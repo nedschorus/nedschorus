@@ -44,9 +44,9 @@ with scripts/open-mac-window-from-ned-box.py. The cases it leaves alone stay
 silent, logged only: a stop on purpose, a seat assessed refuse,
 ask-to-close-the-leftover-idle-shell or seat-asked-to-be-consulted, and a seat
 not seen running since the machine booted. A restart it carries out shows no
-notice: it opens a window on the Mac attached to the restarted seat's tmux
-session. A window the Mac cannot be reached for, a notice's or a restart's,
-stays pending and is tried again on every run. Every decision, each restart
+notice: recover-crashed-seats.py opens a window on the Mac attached to the
+restarted seat's tmux session. A window the Mac cannot be reached for, a
+notice's or a restarted seat's, stays pending and is tried again on every run. Every decision, each restart
 included, is appended to decisions.jsonl in LOG_DIRECTORY; the notices are
 kept beside it.
 
@@ -103,9 +103,9 @@ NED_BOX_HOME_ON_THE_MAC = "/Volumes/nedhome"
 # launch-claude-ubuntu is not on the Mac's PATH; the Mac's checkout holds it.
 MAC_LAUNCHER = "/Users/el/Projects/nedschorus/scripts/launch-claude-ubuntu"
 
-# Words the window on the Mac runs after a restart: the command recover-crashed-seats.py
-# prints to reach a running seat.
-ATTACH_COMMAND = ("tmux", "-L", "{seat}", "attach", "-t", "{seat}")
+# recover-crashed-seats.py's ALL_AGENT_SEATS_RECOVERED_BUT_MAC_WINDOW_OPEN_FAILED_EXIT_STATUS:
+# the seat came up, but its window on the Mac did not open.
+RECOVERY_WINDOW_NOT_OPENED_EXIT_STATUS = 3
 
 SECOND_CRASH_NOTICE_TEMPLATE = (
     "{seat} is down. Its agent-session stopped again at about {died_at} without writing "
@@ -243,7 +243,7 @@ class Watcher:
 
     def __init__(self, *, state, now, boot_at, log_directory, assess, died_at_about,
                  transcripts_directory, recover, open_window, show_notice_words,
-                 stopped_on_purpose=None, recorded_exit_question=None):
+                 stopped_on_purpose=None, recorded_exit_question=None, open_seat_window=None):
         self.state = state
         self.stopped_on_purpose = stopped_on_purpose or (lambda seat, detail: False)
         self.recorded_exit_question = recorded_exit_question or (
@@ -257,6 +257,9 @@ class Watcher:
         self.recover = recover
         self.open_window = open_window
         self.show_notice_words = show_notice_words
+        # recover-crashed-seats.py's opener, which returns (opened, detail), opened None when a
+        # window is already attached; None leaves a restarted seat's window pending.
+        self.open_seat_window = open_seat_window
 
     @property
     def decisions_path(self) -> Path:
@@ -285,18 +288,20 @@ class Watcher:
         self.show(notice)
         return notice
 
-    def open_restarted_seat_window(self, seat):
-        self.show({"attach_seat": seat})
-
     def show(self, window) -> bool:
         """Open a pending window on the Mac: a notice ({"path"}) or a restarted seat ({"attach_seat"})."""
         if "path" in window:
-            words, what = self.show_notice_words(window["path"]), window["path"]
+            what = window["path"]
+            exit_code, output = self.open_window(self.show_notice_words(window["path"]))
+            opened = exit_code == 0
         else:
-            words = [word.format(seat=window["attach_seat"]) for word in ATTACH_COMMAND]
             what = f"{window['attach_seat']}'s session"
-        exit_code, output = self.open_window(words)
-        if exit_code == 0:
+            if self.open_seat_window is None:
+                opened, exit_code, output = False, None, "no window opener in this run"
+            else:
+                result, output = self.open_seat_window(window["attach_seat"])
+                opened, exit_code = result is not False, None
+        if opened:
             if window in self.state["pending_notices"]:
                 self.state["pending_notices"].remove(window)
                 self.log(None, "pending window shown", window=what)
@@ -437,13 +442,15 @@ class Watcher:
                 transcripts=path_on_the_mac(self.transcripts_directory(seat)))
             return
         exit_code, output = self.recover(seat)
-        if exit_code == 0 and "ALREADY RUNNING" not in output:
-            # Recovery exits 0 only once the seat's supervisor survived its settle: a sighting.
+        if (exit_code in (0, RECOVERY_WINDOW_NOT_OPENED_EXIT_STATUS)
+                and "ALREADY RUNNING" not in output):
+            # Recovery exits 0 or 3 only once the seat's supervisor survived its settle: a sighting.
             self.mark_seen_running(record, self.now)
             self.record_recovery_attempt(record, died_at, "restarted")
             self.log(seat, "restarted", died_at_about=timestamp(died_at),
                      recovery_output=output)
-            self.open_restarted_seat_window(seat)
+            if exit_code == RECOVERY_WINDOW_NOT_OPENED_EXIT_STATUS:
+                self.show({"attach_seat": seat})
             return
         if exit_code == 0:
             self.mark_seen_running(record, self.now)
@@ -618,7 +625,8 @@ def watch(environment, state_directory: Path, log_directory: Path) -> int:
         transcripts_directory=transcripts_directory, recover=recover,
         open_window=open_mac_window, show_notice_words=show_notice_words_for_window,
         stopped_on_purpose=stopped_on_purpose_predicate(supervisor, handoff_directory),
-        recorded_exit_question=recovery.restart_question_for_a_seat_with_a_recorded_exit)
+        recorded_exit_question=recovery.restart_question_for_a_seat_with_a_recorded_exit,
+        open_seat_window=recovery.agent_seat_mac_window_open_unless_tmux_client_already_attached)
     try:
         watcher.run(recovery.list_agent_seat_names_with_agent_session_records(
             agents_root, handoff_directory, projects_root))
