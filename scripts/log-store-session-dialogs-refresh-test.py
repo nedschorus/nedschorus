@@ -120,6 +120,29 @@ with tempfile.TemporaryDirectory() as workspace:
           and "a later question" in mac_dialog.read_text(encoding="utf-8"),
           third.stdout + third.stderr)
 
+    # Growth that reaches the mirror late keeps the Mac's time, which can be older than the extractor's.
+    old_times = write_transcript(store, "mac", "-Users-someone-project", "s-old-times", conversation("first"))
+    os.utime(old_times, (1_000_000_000, 1_000_000_000))
+    run(store, "--failures-only")
+    with old_times.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps({"type": "user", "message": {"content": "mirrored late"}}) + "\n")
+    os.utime(old_times, (1_000_001_000, 1_000_001_000))
+    late = run(store, "--failures-only")
+    check("a transcript whose growth carries a time older than the extractor's is written again",
+          late.returncode == 0 and "mirrored late" in dialog_path(
+              store, "mac", "-Users-someone-project", "s-old-times").read_text(encoding="utf-8"),
+          (late.returncode, late.stdout))
+
+    # A machine directory without projects/, and a file other than a transcript, are passed over quietly.
+    (store / "transcripts" / "recovered").mkdir()
+    (mac_transcript.parent / "settings.json").write_text("{}", encoding="utf-8")
+    quiet = run(store)
+    check("a machine directory with no projects/ and a non-.jsonl file in a project are passed over, exit 0",
+          quiet.returncode == 0 and "FAILED" not in quiet.stdout
+          and not (store / "session-dialogs" / "recovered").exists()
+          and not dialog_path(store, "mac", "-Users-someone-project", "settings").exists(),
+          (quiet.returncode, quiet.stdout))
+
     # A transcript that cannot be read fails alone: the others are still written.
     unreadable = write_transcript(store, "mac", "-Users-someone-project", "s-unreadable", conversation("hidden"))
     unreadable.chmod(0)
@@ -169,8 +192,28 @@ with tempfile.TemporaryDirectory() as workspace:
     else:
         check("a directory of transcripts that cannot be listed prints a FAILED line naming it, "
               "and the pass exits 1",
-              unlistable.returncode == 1 and f"FAILED: cannot list {hidden_project}" in unlistable.stdout,
+              unlistable.returncode == 1 and f"FAILED: cannot read {hidden_project}" in unlistable.stdout,
               (unlistable.returncode, unlistable.stdout, unlistable.stderr))
+
+    # A directory that can be listed but not searched, at each level, and a machine directory with no access.
+    mac_directory = store / "transcripts" / "mac"
+    for blocked_path, mode, named in (
+            (mac_directory, 0o000, mac_directory / "projects"),
+            (mac_directory, 0o644, mac_directory / "projects"),
+            (mac_directory / "projects", 0o644, mac_directory / "projects" / "-Users-hidden-project"),
+            (hidden_project, 0o644, hidden_project / "s-hidden.jsonl")):
+        blocked_path.chmod(mode)
+        try:
+            unsearchable = run(store, "--failures-only")
+        finally:
+            blocked_path.chmod(0o755)
+        if os.geteuid() == 0:
+            print(f"SKIP  {blocked_path.name} at {mode:o}: root searches every directory")
+            continue
+        check(f"{blocked_path.relative_to(store)} at mode {mode:o} prints a FAILED line naming {named.name}, "
+              "and the pass exits 1",
+              unsearchable.returncode == 1 and f"FAILED: cannot read {named}" in unsearchable.stdout,
+              (unsearchable.returncode, unsearchable.stdout, unsearchable.stderr))
 
     # A change to the extractor rewrites every dialog once, even of a transcript that never changes again.
     programs = Path(workspace) / "programs"
@@ -179,14 +222,44 @@ with tempfile.TemporaryDirectory() as workspace:
     shutil.copy2(SCRIPT_PATH, script_copy)
     shutil.copy2(EXTRACTOR_PATH, programs / EXTRACTOR_PATH.name)
     settled = run(store, "--failures-only", script_path=script_copy)
-    newer = LATER_THAN_THE_EXTRACTOR + 5000
-    os.utime(programs / EXTRACTOR_PATH.name, (newer, newer))
+    touched = run(store, script_path=script_copy)
+    with (programs / EXTRACTOR_PATH.name).open("a", encoding="utf-8") as handle:
+        handle.write("# changed\n")
     rewritten = run(store, script_path=script_copy)
-    check("after the extractor changes, a pass rewrites the dialogs of unchanged transcripts",
-          settled.returncode == 0 and rewritten.returncode == 0
-          and "wrote 0 session dialogs" not in rewritten.stdout
-          and box_dialog.stat().st_mtime_ns == newer * 1_000_000_000,
-          (settled.stdout, rewritten.stdout, box_dialog.stat().st_mtime_ns))
+    after = run(store, script_path=script_copy)
+    check("after the extractor's bytes change, one pass rewrites the dialogs of unchanged transcripts, "
+          "and the next writes none",
+          settled.returncode == 0 and "wrote 0 session dialogs" in touched.stdout
+          and rewritten.returncode == 0 and "wrote 0 session dialogs" not in rewritten.stdout
+          and "wrote 0 session dialogs" in after.stdout
+          and box_dialog.stat().st_mtime_ns == box_transcript.stat().st_mtime_ns,
+          (settled.stdout, touched.stdout, rewritten.stdout, after.stdout))
+
+    # A dialog the changed extractor could not rewrite is rewritten by a later pass.
+    box_dialogs = box_dialog.parent
+    with (programs / EXTRACTOR_PATH.name).open("a", encoding="utf-8") as handle:
+        handle.write("# changed again\n")
+    box_dialogs.chmod(0o555)
+    try:
+        stuck = run(store, script_path=script_copy)
+    finally:
+        box_dialogs.chmod(0o755)
+    retried = run(store, script_path=script_copy)
+    if os.geteuid() == 0:
+        print("SKIP  a dialog the changed extractor could not rewrite: root writes every directory")
+    else:
+        check("a dialog the changed extractor could not rewrite is rewritten by the next pass",
+              stuck.returncode == 1 and "wrote 0 session dialogs" not in retried.stdout,
+              (stuck.stdout, retried.stdout))
+
+    # The extractor's digest that cannot be kept is a failure: the next pass would rewrite every dialog.
+    digest_store = Path(workspace) / "digest-store"
+    write_transcript(digest_store, "mac", "-Users-someone-project", "s-digest", conversation("digest"))
+    (digest_store / "session-dialogs" / ".dialogs-written-by-extractor-sha256").mkdir(parents=True)
+    undigested = run(digest_store, "--failures-only")
+    check("an extractor digest that cannot be written prints a FAILED line, and the pass exits 1",
+          undigested.returncode == 1 and "FAILED: could not record the extractor's sha256" in undigested.stdout,
+          (undigested.returncode, undigested.stdout, undigested.stderr))
 
     no_transcripts = Path(workspace) / "empty-store"
     no_transcripts.mkdir()

@@ -906,6 +906,28 @@ with tempfile.TemporaryDirectory() as workspace:
           [kind for kind, *_ in subagent_turns_of(turns)] == ["task", "report", "follow-up", "report"],
           subagent_turns_of(turns))
 
+    # One delivery whose later copies the harness writes after a SendMessage to the same agent.
+    approved = notification("a1414141414141414", "toolu_late", "Review", "APPROVED.")
+    late_copies = [
+        user_record("review it"),
+        agent_call("toolu_late", "Review", "Review the change."),
+        launched("toolu_late", "a1414141414141414"),
+        {"type": "queue-operation", "operation": "enqueue", "timestamp": "2026-09-11T23:30:36.982Z",
+         "content": approved},
+        tool_call("toolu_moved", "SendMessage", {"to": "a1414141414141414", "message": "The head moved."}),
+        {"type": "queue-operation", "operation": "remove", "timestamp": "2026-09-11T23:31:01.310Z",
+         "reason": "absorbed_mid_turn", "content": approved},
+        {"type": "attachment", "timestamp": "2026-09-11T23:30:36.982Z",
+         "attachment": {"type": "queued_command", "prompt": approved, "commandMode": "task-notification",
+                        "timestamp": "2026-09-11T23:30:36.982Z"}},
+        assistant_record("Waiting for the re-review."),
+    ]
+    path = write_transcript(workspace, "sub-late-copies.jsonl", late_copies)
+    turns, _ = extractor.read_dialog_turns(path, include_subagent_tasks_and_reports=True)
+    check("copies of one delivery written after a SendMessage to the same agent are not a second report",
+          [kind for kind, *_ in subagent_turns_of(turns)] == ["task", "report", "follow-up"],
+          subagent_turns_of(turns))
+
     # A subagent waiting on its own background work: the interim notice is not its report.
     interim = ("This agent has not reported yet: it is waiting on its own background work and will "
                "deliver its report through SubagentHandback when that finishes.")

@@ -326,6 +326,7 @@ class SubagentTracker:
         self.skill_by_tool_use_id = {}
         self.carried_report_keys = set()
         self.follow_ups_sent_by_agent_id = {}
+        self.deliveries_by_block = {}
 
     def subagent_for_agent_id(self, agent_id: str) -> dict:
         subagent = self.subagent_by_agent_id.get(agent_id)
@@ -434,11 +435,36 @@ class SubagentTracker:
             text = tool_result_text({"content": result["content"]})
         return self.report_turns(subagent, text, status or "completed"), True
 
+    def follow_ups_when_enqueued(self, block: str, record) -> dict:
+        """Return the follow-up counts as they stood when the delivery this copy of block belongs to was enqueued.
+
+        The harness writes one delivery as an enqueue, then as a remove, a queued_command attachment or a
+        user record, and those later copies can land after a SendMessage to the same agent. Each later copy
+        is matched to the oldest enqueue of the same block that has no copy of its kind yet; the attachment
+        carries its enqueue's time and is matched by it. A copy with no enqueue counts as a delivery of its own.
+        """
+        deliveries = self.deliveries_by_block.setdefault(block, [])
+        record_type = record.get("type")
+        if record_type == "queue-operation" and record.get("operation") == "enqueue":
+            deliveries.append({"enqueued": record.get("timestamp"), "copies": set(),
+                               "follow_ups": dict(self.follow_ups_sent_by_agent_id)})
+            return deliveries[-1]["follow_ups"]
+        copy_kind = record.get("operation") if record_type == "queue-operation" else record_type
+        unmatched = [delivery for delivery in deliveries if copy_kind not in delivery["copies"]]
+        if record_type == "attachment":
+            enqueued = (record.get("attachment") or {}).get("timestamp")
+            unmatched = [delivery for delivery in unmatched if delivery["enqueued"] == enqueued]
+        if not unmatched:
+            return self.follow_ups_sent_by_agent_id
+        unmatched[0]["copies"].add(copy_kind)
+        return unmatched[0]["follow_ups"]
+
     def turns_from_harness_text(self, text: str, record):
         turns = []
         carried_report = False
         for match in re.finditer(r"<task-notification>(.*?)</task-notification>", text, re.S):
             body = match.group(1)
+            follow_ups = self.follow_ups_when_enqueued(match.group(0), record)
             summary = notification_tag(body, "summary")
             task_ids = re.findall(r"<task-id>(.*?)</task-id>", body, re.S)
             tool_use_id = notification_tag(body, "tool-use-id")
@@ -467,28 +493,34 @@ class SubagentTracker:
                     decoded = None
                 if isinstance(decoded, str):
                     report = decoded
-            turns += self.report_turns(subagent, report, status)
+            turns += self.report_turns(subagent, report, status, follow_ups)
         if "<agent-message" in text:
             origin = record.get("origin") if isinstance(record.get("origin"), dict) else {}
             for match in re.finditer(r'<agent-message from="([^"]*)">\n?(.*?)(?:</agent-message>|\Z)', text, re.S):
                 sender, body = match.group(1), match.group(2)
                 if origin.get("from") == sender and isinstance(origin.get("body"), str):
                     body = origin["body"]
+                # A user record's copy runs on past the message, so the block is the sender and body alone.
+                follow_ups = self.follow_ups_when_enqueued(f"{sender}\n{body.strip()}", record)
                 if body.lstrip().startswith(HANDBACK_FRAME_OPENING):
                     carried_report = True
                     turns += self.report_turns(self.subagent_for_agent_id(sender),
-                                               handback_report_text(body), "completed")
+                                               handback_report_text(body), "completed", follow_ups)
                 elif sender in self.subagent_by_agent_id:
                     carried_report = True
                     turns += self.report_turns(self.subagent_by_agent_id[sender], body.strip(),
-                                               "", kind="message")
+                                               "", follow_ups, kind="message")
         return turns, carried_report
 
-    def report_turns(self, subagent, text: str, status: str, kind="report"):
-        """Return the report as a turn, or no turn when an earlier copy of the same delivery was carried."""
+    def report_turns(self, subagent, text: str, status: str, follow_ups=None, kind="report"):
+        """Return the report as a turn, or no turn when an earlier copy of the same delivery was carried.
+
+        follow_ups is the follow-up counts as they stood when the delivery was enqueued; by default, now.
+        """
         agent_id = subagent.get("agent_id")
         # The harness copies one delivery up to four times; a SendMessage starts a new delivery.
-        key = (agent_id or id(subagent), self.follow_ups_sent_by_agent_id.get(agent_id, 0),
+        follow_ups = self.follow_ups_sent_by_agent_id if follow_ups is None else follow_ups
+        key = (agent_id or id(subagent), follow_ups.get(agent_id, 0),
                kind, " ".join(text.split()), status)
         if key in self.carried_report_keys:
             return []
@@ -706,7 +738,7 @@ def subagent_tail_word_limits(turns) -> dict:
             continue
         limit = max(MINIMUM_SUBAGENT_TAIL_WORDS, budget)
         limits[index] = limit
-        budget = max(0, budget - min(limit, len(turns[index]["text"].split())))
+        budget = max(0, budget - len(turns[index]["text"].split()))
     return limits
 
 
