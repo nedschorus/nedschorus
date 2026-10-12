@@ -301,6 +301,9 @@ def python_3_9_cases():
 
 def main():
     with tempfile.TemporaryDirectory() as parent:
+        # git reports a worktree's resolved path; macOS's temporary directory sits
+        # under the /var -> /private/var link, so compare against the resolved one.
+        parent = str(Path(parent).resolve())
         repository = scratch_repository(parent)
         status_cases(repository)
         path_list_cases(repository)

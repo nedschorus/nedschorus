@@ -867,7 +867,9 @@ with tempfile.TemporaryDirectory() as scratch:
 # git worktree list without -z ends each attribute at a newline, so a newline
 # in a worktree path or a lock reason was read as the start of another line.
 with tempfile.TemporaryDirectory() as scratch:
-    scratch = Path(scratch)
+    # git reports a worktree's resolved path; macOS's temporary directory sits
+    # under the /var -> /private/var link, so compare against the resolved one.
+    scratch = Path(scratch).resolve()
     checkout = scratch / "checkout"
     checkout.mkdir()
     git(checkout, "init", "-b", "main")
