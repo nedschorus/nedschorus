@@ -1167,22 +1167,23 @@ def run_overview_check_git_output_cases(workspace: Path):
     git_in(["add", "-A"], repository_with_main)
     git_in(["commit", "--quiet", "-m", "the widget lands"], repository_with_main)
     git_in(["update-ref", "refs/remotes/origin/main", "HEAD"], repository_with_main)
-    real_run_git_here = supervisor.run_git_here
+    git_output = supervisor.git_machine_readable_output
+    real_run_git = git_output.run_git
 
-    def run_git_here_where_ls_tree_fails(arguments, working_directory, timeout=60):
+    def run_git_where_ls_tree_fails(directory, arguments, **options):
         if arguments[0] == "ls-tree":
-            return subprocess.CompletedProcess(arguments, 128, "", "stub: ls-tree failed")
-        return real_run_git_here(arguments, working_directory, timeout=timeout)
+            raise git_output.GitCommandFailed(arguments, directory, 128, "stub: ls-tree failed")
+        return real_run_git(directory, arguments, **options)
 
-    supervisor.run_git_here = run_git_here_where_ls_tree_fails
+    git_output.run_git = run_git_where_ls_tree_fails
     console = io.StringIO()
     try:
         with contextlib.redirect_stdout(console):
             due = overview_refresh_due_or_missing(repository_with_main)
     finally:
-        supervisor.run_git_here = real_run_git_here
+        git_output.run_git = real_run_git
     check("a failed ls-tree stops the check with a printed line naming it, and no line is due",
-          due == () and "handoff-supervisor: overview check stopped: OverviewCheckGitFailure: "
+          due == () and "handoff-supervisor: overview check stopped: GitCommandFailed: "
           "git ls-tree -z -d --name-only " in console.getvalue()
           and "stub: ls-tree failed" in console.getvalue(),
           f"{due!r}\n{console.getvalue()}")
@@ -1419,10 +1420,13 @@ def run_overview_refresh_due_cases(workspace: Path):
           in console.getvalue(), console.getvalue())
 
 
-def run_overview_refresh_non_ascii_system_case(workspace: Path):
-    """A system directory whose name git would C-quote without -z is listed by
-    its real name, so its moved code still makes its overview due."""
-    repository = workspace / "overview-refresh-non-ascii-system"
+def run_overview_refresh_unusable_system_name_cases(workspace: Path):
+    """A system directory whose name the reminder's commands cannot take is
+    passed over by name on the console, and the systems beside it are still
+    checked: a name the mark script refuses (café), one that would break the
+    unquoted git log command (o'brien), and one that is not valid UTF-8, which
+    the tree holds although no file system on either machine need allow it."""
+    repository = workspace / "overview-refresh-unusable-system-names"
     repository.mkdir()
     git_in(["init", "--quiet", "--initial-branch=main"], repository)
     git_in(["config", "user.name", "fixture"], repository)
@@ -1437,18 +1441,57 @@ def run_overview_refresh_non_ascii_system_case(workspace: Path):
         git_in(["commit", "--quiet", "-m", message], repository)
         return git_in(["rev-parse", "HEAD"], repository).stdout.strip()
 
-    landed = commit({"nc-systems/café/café.py": "print('café')\n"}, "café lands")
-    commit({"docs/nedschorus-wiki/nedschorus-café-architecture-overview.md":
-            "# Café: an overview\n\n**Checked against:** commit "
-            f"[{landed}](https://github.com/nedschorus/nedschorus/commit/{landed})\n"},
-           "café's overview, checked")
-    commit({"nc-systems/café/café.py": "print('café, grown')\n"}, "café grows")
-    git_in(["update-ref", "refs/remotes/origin/main", "HEAD"], repository)
-    due = overview_refresh_due_or_missing(repository)
-    check("a system whose directory name is not ASCII is listed by its real name and made due",
+    def checked_line(sha):
+        return (f"**Checked against:** commit "
+                f"[{sha}](https://github.com/nedschorus/nedschorus/commit/{sha})\n")
+
+    systems = ("café", "o'brien", "widget")
+    landed = commit({f"nc-systems/{system}/main.py": "print(1)\n" for system in systems},
+                    "three systems land")
+    commit({f"docs/nedschorus-wiki/nedschorus-{system}-architecture-overview.md":
+            f"# {system}\n\n" + checked_line(landed) for system in systems},
+           "their overviews, checked")
+    commit({f"nc-systems/{system}/main.py": "print(2)\n" for system in systems},
+           "all three grow")
+    # A tree entry named with the byte 0xff, written without the file system.
+    # Plumbing never decodes: the name stays bytes from mktree to the commit.
+    blob = subprocess.run(["git", "hash-object", "-w", "--stdin"], cwd=str(repository),
+                          input=b"print(3)\n", capture_output=True, check=True).stdout.strip()
+
+    def tree_from(entries: bytes) -> bytes:
+        return subprocess.run(["git", "mktree", "-z"], cwd=str(repository), input=entries,
+                              capture_output=True, check=True).stdout.strip()
+
+    bad_system = tree_from(b"100644 blob " + blob + b"\tmain.py\0")
+    old_nc_systems = subprocess.run(["git", "rev-parse", "HEAD:nc-systems"], cwd=str(repository),
+                                    capture_output=True, check=True).stdout.strip()
+    listed = subprocess.run(["git", "ls-tree", "-z", old_nc_systems], cwd=str(repository),
+                            capture_output=True, check=True).stdout
+    nc_systems = tree_from(listed + b"040000 tree " + bad_system + b"\tbad\xff\0")
+    root_listed = subprocess.run(["git", "ls-tree", "-z", "HEAD"], cwd=str(repository),
+                                 capture_output=True, check=True).stdout
+    root_entries = b"".join(
+        entry + b"\0" for entry in root_listed.split(b"\0")
+        if entry and not entry.endswith(b"\tnc-systems"))
+    root = tree_from(root_entries + b"040000 tree " + nc_systems + b"\tnc-systems\0")
+    head = subprocess.run(["git", "commit-tree", root.decode(), "-p", "HEAD", "-m", "bad name"],
+                          cwd=str(repository), capture_output=True, check=True).stdout.strip()
+    git_in(["update-ref", "refs/remotes/origin/main", head.decode()], repository)
+    console = io.StringIO()
+    with contextlib.redirect_stdout(console):
+        due = overview_refresh_due_or_missing(repository)
+    printed = console.getvalue()
+    check("only the system whose name the reminder's commands take is made due",
           isinstance(due, tuple) and len(due) == 1
-          and due[0].startswith("overview refresh due: café — 1 commit(s) under nc-systems/café/"),
-          repr(due))
+          and due[0].startswith("overview refresh due: widget — "),
+          f"{due!r}\n{printed}")
+    check("a name the mark script refuses is passed over by its real name on the console",
+          "overview check for café passed over: the name does not match" in printed, printed)
+    check("a name holding a quote is passed over by its real name on the console",
+          "overview check for o'brien passed over: the name does not match" in printed, printed)
+    check("a name that is not valid UTF-8 is passed over, printed with its byte escaped",
+          "overview check for bad\\xff passed over: the name does not match" in printed
+          and "overview check stopped" not in printed, printed)
 
 
 def run_overview_refresh_withheld_while_pull_request_open_cases(workspace: Path):
@@ -3049,7 +3092,7 @@ with fixture.handoff_supervisor_suite_workspace() as workspace:
             workspace / "gh-answering-no-open-pull-requests"):
         run_overview_check_git_output_cases(workspace)
         run_overview_refresh_due_cases(workspace)
-        run_overview_refresh_non_ascii_system_case(workspace)
+        run_overview_refresh_unusable_system_name_cases(workspace)
     run_overview_refresh_withheld_while_pull_request_open_cases(workspace)
     run_overview_refresh_once_a_day_cases(workspace)
     run_overview_refresh_due_prompt_cases(workspace)

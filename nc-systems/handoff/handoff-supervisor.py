@@ -937,9 +937,11 @@ def overview_refresh_due_lines(working_directory: Path,
             working_directory, timeout=timeout)
         main_commit = overview_check_git_output(
             ["rev-parse", "--short", main_commit_full], working_directory, timeout=timeout)
-        listed = overview_check_git_output(
+        # Bytes, so a directory name that is not valid UTF-8 is passed over below rather than stopping every system's check.
+        listed = git_machine_readable_output.run_git(
+            working_directory,
             ["ls-tree", "-z", "-d", "--name-only", main_commit_full, "nc-systems/"],
-            working_directory, timeout=timeout)
+            timeout_seconds=timeout)
     except Exception as error:
         print(f"handoff-supervisor: overview check stopped: "
               f"{type(error).__name__}: {error}")
@@ -947,6 +949,13 @@ def overview_refresh_due_lines(working_directory: Path,
     due = []
     for system_directory in git_machine_readable_output.nul_separated_fields(listed):
         system = system_directory.rsplit("/", 1)[-1]
+        # The reminder's commands take the name unquoted, and the mark script refuses any other name.
+        if not re.fullmatch(daily_overview_refresh_reminder_mark.SYSTEM_NAME_PATTERN, system):
+            printable = system.encode("utf-8", "surrogateescape").decode("utf-8", "backslashreplace")
+            print(f"handoff-supervisor: overview check for {printable} passed over: "
+                  f"the name does not match {daily_overview_refresh_reminder_mark.SYSTEM_NAME_PATTERN}, "
+                  f"the pattern daily-overview-refresh-reminder-mark.py accepts")
+            continue
         try:
             overview_path = SYSTEM_OVERVIEW_PATH_TEMPLATE.format(system=system)
             shown = subprocess.run(
