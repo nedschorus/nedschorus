@@ -1822,6 +1822,20 @@ with scratch() as directory:
           and "NOT searched" not in result.stdout,
           f"exit {result.returncode}\n{result.stdout}{result.stderr}")
 
+# Without -z, git worktree list ends each attribute at a newline, so a
+# worktree path holding a newline was listed cut short.
+with scratch() as directory:
+    base = pathlib.Path(directory).resolve()
+    clone = base / "newline-clone"
+    commit_files(clone, {"README.md": "a clone"}, "Start")
+    newline_worktree = base / "two\nlines-wt"
+    git(clone, "worktree", "add", "-q", "-b", "newline-topic", str(newline_worktree))
+    worktrees, listing_failure = program.worktrees_listed_by(str(clone / ".git"))
+    check("a worktree path holding a newline is listed whole",
+          listing_failure is None
+          and sorted(worktrees) == sorted([str(clone), str(newline_worktree)]),
+          (worktrees, listing_failure))
+
 # --- A printed read-it command reads its clone, whatever the caller's shell sets ---
 # The command runs later in the caller's own shell, which this program never
 # cleans, so it unsets the variables in its own text. `--git-dir` overrides
