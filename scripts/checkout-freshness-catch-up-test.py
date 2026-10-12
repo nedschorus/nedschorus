@@ -1797,41 +1797,6 @@ with tempfile.TemporaryDirectory() as z_scratch:
           str(catch_up_module.uncommitted_tracked_change_count(z_seat)))
     git(["reset", "-q", "--hard"], z_seat)
 
-    # The refusal over an untracked file is told apart by what git lists, not
-    # by git's wording: a git whose merge refusal reads differently still
-    # keeps that refusal from the user, and any other refusal still reaches him.
-    real_git = shutil.which("git")
-    reworded_directory = z_scratch / "reworded-git"
-    reworded_directory.mkdir()
-    (reworded_directory / "git").write_text(
-        "#!/bin/sh\n"
-        'if [ "$1" = merge ]; then echo "error: reworded refusal" >&2; exit 1; fi\n'
-        f'exec "{real_git}" "$@"\n', encoding="utf-8")
-    (reworded_directory / "git").chmod(0o755)
-    commit_file(z_origin, "scripts/in-the-way.py", "main's copy\n", "main adds a file")
-    git(["fetch", "--quiet", "origin"], z_reference)
-    in_the_way = z_scratch / "detached-in-the-way"
-    git(["worktree", "add", "-q", "--detach", str(in_the_way), "origin/main~1"], z_reference)
-    (in_the_way / "scripts").mkdir()
-    (in_the_way / "scripts/in-the-way.py").write_text("my copy\n", encoding="utf-8")
-    check("untracked paths main would overwrite are listed from git's file lists",
-          catch_up_module.untracked_paths_main_would_overwrite(in_the_way)
-          == {"scripts/in-the-way.py"},
-          str(catch_up_module.untracked_paths_main_would_overwrite(in_the_way)))
-    result = run_catch_up(["--cwd", str(in_the_way)], path_prefix=str(reworded_directory))
-    check("a refusal over an untracked file, in any wording, is not sent to the user",
-          "reworded refusal" in agent_text(result)
-          and str(in_the_way) not in display_text(result),
-          display_text(result))
-    nothing_in_the_way = z_scratch / "detached-nothing-in-the-way"
-    git(["worktree", "add", "-q", "--detach", str(nothing_in_the_way), "origin/main~1"],
-        z_reference)
-    result = run_catch_up(["--cwd", str(nothing_in_the_way)],
-                          path_prefix=str(reworded_directory))
-    check("a refusal with no untracked file in the way is sent to the user",
-          f"{nothing_in_the_way} is 1 behind origin/main and could not fast-forward: "
-          "error: reworded refusal" in display_text(result), display_text(result))
-
 print()
 if failures:
     print(f"{len(failures)} case(s) failed: {', '.join(failures)}")

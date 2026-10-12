@@ -222,6 +222,9 @@ DETACHED_FAST_FORWARD_REFUSED_LINES = (
     "If git names anything else, leave the checkout as it is: the refusal has been "
     "reported to the user."
 )
+# Git's wording when a fast-forward would overwrite an untracked file: the one
+# refusal the agent can clear, so the one not sent to the user.
+GIT_UNTRACKED_FILE_WOULD_BE_OVERWRITTEN_TEXT = "untracked working tree files would be overwritten"
 UNKNOWN_ADVICE = ("Your head state could not be determined (a git command failed); nothing "
                   "was changed. Check `git status` before working.")
 AFTER_REBASE_ADVICE = f"Run `{SELECTIVE_TEST_RUN_COMMAND}`: your work now sits on newer code."
@@ -375,10 +378,12 @@ def flush_hook_output() -> None:
 def run_git(arguments, working_directory: Path, timeout: int = 60):
     """Run git somewhere; never raise, whatever goes wrong.
 
-    LC_ALL=C because this script passes git's own refusal text on, and the
-    merge path reads git's prose; forcing the C locale keeps every message
-    stable, whatever the host is configured for. surrogateescape because -z
-    output carries each path's bytes as stored, which need not be UTF-8.
+    LC_ALL=C because this script READS git's prose: the reference
+    fast-forward reports git's own refusal text, and a word matched in a
+    translated message can be missed. Forcing the C locale keeps every
+    message stable, whatever the host is configured for. surrogateescape
+    because -z output carries each path's bytes as stored, which need not be
+    UTF-8.
     """
     try:
         return subprocess.run(
@@ -617,20 +622,6 @@ def uncommitted_tracked_change_count(checkout: Path):
         return None
     return len([entry for entry in git_output.status_entries(status.stdout)
                 if entry.code != "??"])
-
-
-def untracked_paths_main_would_overwrite(checkout: Path):
-    """Untracked, not ignored files at paths that differ between HEAD and
-    origin/main: the files a fast-forward to origin/main refuses to overwrite.
-    Empty when there are none or git cannot list them."""
-    untracked = run_git(["ls-files", "-z", "--others", "--exclude-standard"], checkout,
-                        timeout=30)
-    changed = run_git(["diff", "-z", "--name-only", "--no-renames", "HEAD", "origin/main"],
-                      checkout, timeout=30)
-    if untracked.returncode != 0 or changed.returncode != 0:
-        return set()
-    return (set(git_output.nul_separated_fields(untracked.stdout))
-            & set(git_output.nul_separated_fields(changed.stdout)))
 
 
 def in_progress_marker(git_dir: Path):
@@ -1052,9 +1043,7 @@ def catch_up_session_checkout(checkout: Path, interval_seconds: int) -> None:
         if outcome == "refused":
             stamp["last_action"] = f"detached fast-forward refused: {error}"
             lines = [DETACHED_FAST_FORWARD_REFUSED_LINES.format(error=error)]
-            # An untracked file in main's way is the one refusal the agent
-            # can clear, so the one not sent to the user.
-            if (not untracked_paths_main_would_overwrite(checkout)
+            if (GIT_UNTRACKED_FILE_WOULD_BE_OVERWRITTEN_TEXT not in error
                     and stamp.get("last_detached_refusal") != error):
                 report(f"catch-up: {checkout} is {parts['behind']} behind origin/main and "
                        f"could not fast-forward: {error}")

@@ -1094,7 +1094,7 @@ def uncommitted_review_paths(paths: list, repo_root: pathlib.Path) -> list:
         listed = subprocess.run(
             ["git", "ls-files", "-z", "--", *inside], cwd=repo_root,
             stdout=subprocess.PIPE, text=True, check=False)
-        tracked = set(filter(None, listed.stdout.split("\0")))
+        tracked = set(git_output.nul_separated_fields(listed.stdout))
         status = subprocess.run(
             ["git", "status", "--porcelain", "-z", "-uall", "--", *inside],
             cwd=repo_root, stdout=subprocess.PIPE, text=True, check=False)
