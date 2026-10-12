@@ -52,6 +52,15 @@
         },
         "ned-box": {"scheduler": "cron", "schedule": "30 6 * * *"}
       }
+    },
+    {
+      "name": "handoff-agent-seat-died-without-session-handoff-restart-watcher",
+      "program": "nc-systems/handoff/handoff-agent-seat-died-without-session-handoff-restart-watcher.py",
+      "arguments": [],
+      "output": ".claude/handoff-agent-seat-died-without-session-handoff-restart-watcher.log",
+      "on": {
+        "ned-box": {"scheduler": "cron", "schedule": "* * * * *"}
+      }
     }
   ]
 }
