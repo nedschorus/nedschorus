@@ -303,6 +303,34 @@ def main():
         check("a write after a staged rename is still detected",
               "zz-last.md" in found, f"stray list was {found}; baseline was {baseline}")
 
+    # Case 6b: a rename in the worktree column, which `git add -N` of a moved
+    # file produces. Its origin path is a field of its own too, and a walk
+    # that looked only at the index column read it as an entry.
+    with tempfile.TemporaryDirectory() as scratch:
+        repo = new_repo(pathlib.Path(scratch))
+        (repo / "zz-last.md").write_text("tail\n", encoding="utf-8")
+        git(repo, "add", "-A")
+        git(repo, "commit", "-qm", "add tail file")
+        (repo / "tracked.md").rename(repo / "moved.md")
+        git(repo, "add", "-N", "moved.md")
+        baseline = snapshot(repo)
+        check("a worktree-column rename leaves no origin path read as an entry",
+              set(baseline) == {"moved.md"}, f"baseline was {baseline}")
+        uncommitted = runner.uncommitted_review_paths(["moved.md", "zz-last.md"], repo)
+        check("uncommitted_review_paths after a worktree-column rename",
+              uncommitted == ["moved.md"], f"returned {uncommitted}")
+
+    # Case 6c: the quote corpus reads a tracked file whose name git would
+    # C-quote without -z.
+    with tempfile.TemporaryDirectory() as scratch:
+        repo = new_repo(pathlib.Path(scratch))
+        (repo / "café notes.md").write_text("the quick brown fox jumps\n", encoding="utf-8")
+        git(repo, "add", "-A")
+        git(repo, "commit", "-qm", "add a non-ASCII name")
+        corpus = runner.tracked_files_corpus(repo)
+        check("the quote corpus reads a file with a non-ASCII name",
+              "the quick brown fox jumps" in corpus, f"corpus was {corpus}")
+
     # Case 7: a cell writing to an ignored path. `git status` never reports an
     # ignored path in any form, so a write there was invisible to the detector
     # no matter how the porcelain was parsed. The record directory is the
