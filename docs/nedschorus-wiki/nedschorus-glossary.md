@@ -16,6 +16,7 @@ A term used by one system alone is defined in that system's glossary, not here. 
 - **-draft** — the filename suffix of a document still being written and not yet put to review, such as `docs/drafts/<subject>-draft.md`.
 - **agent-arbitrator** — a fresh-agent, used to resolve conflicts between agents.
 - **agent-binary** — the installed program a cold-read-cell or a sanity-check-cell runs its model through, `claude` or `codex`.
+- **agent-facing-message** — text that a program in this repository writes for an agent to read and act on, such as a hook's refusal, warning or reminder, or the error a script prints. Its source is in the repository, so every agent-facing-message can be found, cold-read, tested and rewritten. Text that the agent-binary, `claude` or `codex`, adds on its own, such as Claude Code's "hook error" label, is not part of an agent-facing-message. An agent-facing-message that never reaches the agent is a defect of the program that writes it.
 - **agent-home** — the directory an agent-seat works in, `~/agents/<seat name>` on the agent-seat's machine: a git worktree on the agent-seat's seat-branch.
 - **agent-instructions** — prompts or Markdown files that instruct agents, wherever an agent reads them, such as CLAUDE.md, a skill, a seat-brief or AGENTS.md.
 - **agent-seat** — a named, long-lived agent identity with its own worktree, seat-branch and seat-brief, held by a series of agent-sessions joined by session-handoffs.
