@@ -704,6 +704,15 @@ def run_cases_on_ned_box(workspace: Path):
               f"{fixture.checkout} differs from its commit {fixture.head}: "
               "a-file-added-to-the-index.txt\n"), repr(result))
     fixture_git(fixture.checkout, "reset", "-q", "--hard", fixture.head)
+    fixture_git(fixture.checkout, "mv", "a-change.txt", "côté renamed.txt")
+    result = fixture.run()
+    check("a staged rename is refused naming the new path as stored",
+          result.code == 2 and result.runner_calls == []
+          and result.stderr.startswith(
+              "pull-request-head-test-run: not run — a tracked file in "
+              f"{fixture.checkout} differs from its commit {fixture.head}: "
+              "côté renamed.txt\n"), repr(result))
+    fixture_git(fixture.checkout, "reset", "-q", "--hard", fixture.head)
     (fixture.checkout / "an-untracked-file.txt").write_text("not tracked\n", encoding="utf-8")
     result = fixture.run()
     (fixture.checkout / "an-untracked-file.txt").unlink()
