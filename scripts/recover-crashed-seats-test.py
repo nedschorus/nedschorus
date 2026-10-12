@@ -545,8 +545,8 @@ def run_reach_clause_cases(root: Path):
     machines = [
         ("the Mac", lambda: mac_launcher, "; reach it with: launch-claude-mac seat-a"),
         ("ned-box", lambda: None,
-         "; reach it with: launch-claude-ubuntu seat-a from the Mac, "
-         "or tmux -L seat-a attach -t seat-a here"),
+         "; reach it with: /Users/el/Projects/nedschorus/scripts/launch-claude-ubuntu seat-a "
+         "from the Mac, or tmux -L seat-a attach -t seat-a here"),
     ]
     try:
         for machine, launcher, expected_clause in machines:
@@ -634,8 +634,8 @@ def run_mac_window_cases(root: Path):
     real_run_tmux = recovery.run_tmux
     real_subprocess_run = recovery.subprocess.run
     real_seat_supervisor_confirmed_by_ps = recovery.seat_supervisor_confirmed_by_ps
-    reach = ("; reach it with: launch-claude-ubuntu seat-a from the Mac, "
-             "or tmux -L seat-a attach -t seat-a here")
+    reach = ("; reach it with: /Users/el/Projects/nedschorus/scripts/launch-claude-ubuntu seat-a "
+             "from the Mac, or tmux -L seat-a attach -t seat-a here")
     opener_commands = []
 
     def tmux_reports_clients(client_lines):
@@ -703,20 +703,26 @@ def run_mac_window_cases(root: Path):
         write_transcript(workspace.project_directory(), "crashed-session", "real work", records=6)
         patch("run_tmux", tmux_reports_clients(""))
         recovery.subprocess.run = opener_answers(
-            1, "open-mac-window-from-ned-box: no window was opened, because ned-box could "
-               "not reach the Mac\n")
+            1, "open-mac-window-from-ned-box: could not reach the Mac at el@mac, so no window "
+               "was opened: ssh: connect to host mac port 22: Operation timed out.\n"
+               "Tell the user what this says, and the command you wanted shown, so he can "
+               "run it himself.\n")
         exit_code, output = recover_through_main(workspace)
         recovery.subprocess.run = real_subprocess_run
         log_text = (workspace.handoffs / "recover-crashed-seats-log.txt").read_text(
             encoding="utf-8") if (workspace.handoffs / "recover-crashed-seats-log.txt").exists() else ""
         check("MAC WINDOW: an opener failure leaves the restart counted, names WINDOW NOT "
-              "OPENED, the opener's last line and the Mac command, and exits 3",
+              "OPENED, the opener's cause line and the Mac command, and exits 3",
               exit_code == recovery.ALL_AGENT_SEATS_RECOVERED_BUT_MAC_WINDOW_OPEN_FAILED_EXIT_STATUS == 3
               and "relaunched resuming crashed-session" in output
               and "WINDOW NOT OPENED on the Mac" in output
-              and "ned-box could not reach the Mac" in output
+              and ("exited 1: open-mac-window-from-ned-box: could not reach the Mac at el@mac, "
+                   "so no window was opened: ssh: connect to host mac port 22: Operation timed "
+                   "out. The seat is running") in output
+              and "Tell the user what this says" not in output
               and "/Users/el/Projects/nedschorus/scripts/launch-claude-ubuntu seat-a" in output
-              and (f"open its window from ned-box with: python3 "
+              and output.count("/Users/el/Projects/nedschorus/scripts/launch-claude-ubuntu seat-a") == 1
+              and (f"open the seat's window from ned-box with: python3 "
                    f"{recovery.WINDOW_SENDER_PATH} tmux -L seat-a attach -t seat-a"
                    in output)
               and output.rstrip().endswith(reach)

@@ -537,8 +537,8 @@ def reach_clause_for_a_running_seat(name: str) -> str:
     # Recovery launches detached on the seat's own tmux socket, where a plain `tmux attach` finds nothing.
     if launcher_path() is not None:
         return f"; reach it with: launch-claude-mac {name}"
-    return (f"; reach it with: launch-claude-ubuntu {name} from the Mac, "
-            f"or tmux -L {name} attach -t {name} here")
+    return (f"; reach it with: {LAUNCH_CLAUDE_UBUNTU_SCRIPT_PATH_IN_MAC_REPOSITORY_CLONE} {name} "
+            f"from the Mac, or tmux -L {name} attach -t {name} here")
 
 
 WINDOW_SENDER_PATH = Path(__file__).resolve().with_name(
@@ -584,11 +584,12 @@ def agent_seat_mac_window_open_unless_tmux_client_already_attached(name: str):
         return False, f"could not run {WINDOW_SENDER_PATH.name}: {error}"
     output_lines = [line.strip() for line in (completed.stdout + completed.stderr).splitlines()
                     if line.strip()]
-    last_line = output_lines[-1] if output_lines else "(it printed nothing)"
+    # The opener prints the failure's cause first and an instruction to its own caller after it.
+    cause_line = output_lines[0].rstrip(".") if output_lines else "(it printed nothing)"
     if completed.returncode == 0:
         return True, "a window onto it opened on the Mac"
     return False, (f"{WINDOW_SENDER_PATH.name} exited {completed.returncode}: "
-                   f"{last_line}")
+                   f"{cause_line}")
 
 
 def window_clause_for_a_seat_left_running(name: str):
@@ -598,9 +599,8 @@ def window_clause_for_a_seat_left_running(name: str):
         attach = " ".join(ned_box_agent_seat_tmux_attach_command_words_for_mac_window(name))
         return (f"; {AGENT_SEAT_MAC_WINDOW_NOT_OPENED_REPORT_TEXT} on the Mac — {detail}. The seat is "
                 "running, and rerunning this recovery opens no window for a running seat. "
-                "Once the Mac answers, open its window from ned-box with: python3 "
-                f"{WINDOW_SENDER_PATH} {attach}; or in a Terminal on the Mac run: "
-                f"{LAUNCH_CLAUDE_UBUNTU_SCRIPT_PATH_IN_MAC_REPOSITORY_CLONE} {name}"), True
+                f"Once the Mac answers, open the seat's window from ned-box with: python3 "
+                f"{WINDOW_SENDER_PATH} {attach}"), True
     return f"; {detail}", False
 
 
