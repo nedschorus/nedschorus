@@ -13,6 +13,7 @@ from this process before any git runs.
 import difflib
 import importlib.util
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -30,7 +31,9 @@ _git_environment_fixture.remove_git_redirecting_environment_variables_from_this_
 
 HOOK_PATH = GENERAL_TOOLS / "python-edit-changed-agent-facing-message-check-reminder-hook.py"
 PAGE_PATH = ("docs/nedschorus-wiki/"
-             "nedschorus-how-to-write-the-refusal-warning-or-reminder-a-program-hands-an-agent.md")
+             "nedschorus-how-to-write-an-agent-facing-message-such-as-a-hook-refusal-or-script-error.md")
+FAST_READ_TARGET_DIRECTORY_NAME = "agent-facing-message-fast-read-targets"
+hook_temporary_directory = None
 
 failures = []
 
@@ -47,9 +50,10 @@ def git(repository, *arguments):
     subprocess.run(["git", *arguments], cwd=str(repository), check=True, capture_output=True, text=True)
 
 
-def run_hook(payload):
+def run_hook(payload, temporary_directory=None):
+    environment = dict(os.environ, TMPDIR=str(temporary_directory or hook_temporary_directory))
     return subprocess.run([sys.executable, str(HOOK_PATH)], input=json.dumps(payload),
-                          capture_output=True, text=True, timeout=60)
+                          capture_output=True, text=True, timeout=60, env=environment)
 
 
 def structured_patch(before, after):
@@ -129,6 +133,12 @@ REMINDER_INSTRUCTION_LINES = (
     "check each message listed above against the page.",
     "If a message fails the page, rewrite that message in this turn, and update any test "
     "that asserts the message's text.",
+    "Each command prints the path of its report; the report's directory under "
+    "cold-read-records/ is that message's cold-read-record.",
+    "If a report shows the message misread, rewrite the message and run its command again.",
+    "Name each message's cold-read-record in the pull request's description; the merge lane "
+    "runs its own cold-read-fast-read only on a message the description names no "
+    "cold-read-record for.",
     "If every listed message passes, carry on; nothing needs saying to the user.",
     "If your edit changed a message held in a local variable or built any other way, check "
     "that message against the page too.",
@@ -136,6 +146,8 @@ REMINDER_INSTRUCTION_LINES = (
 )
 
 with tempfile.TemporaryDirectory() as temporary:
+    hook_temporary_directory = Path(temporary) / "hook-tmp"
+    hook_temporary_directory.mkdir()
     repository = Path(temporary) / "repository"
     repository.mkdir()
     git(repository, "init", "-q")
@@ -164,6 +176,17 @@ with tempfile.TemporaryDirectory() as temporary:
     check("the reminder names the page by path", PAGE_PATH in text, text)
     for line in REMINDER_INSTRUCTION_LINES:
         check(f"the reminder carries the instruction line: {line[:60]}", line in text.split("\n"), text)
+    target = hook_temporary_directory / FAST_READ_TARGET_DIRECTORY_NAME / \
+        "scripts-tool-line-8-agent-facing-message.md"
+    check("the reminder gives the changed message's cold-read-fast-read command",
+          "  python3 nc-systems/cold-read/cold-read-fast-read.py --target " + str(target)
+          in text.split("\n"), text)
+    check("the command's file holds the changed message's text",
+          target.is_file() and target.read_text(encoding="utf-8") == "first message, reworded\n",
+          target)
+    check("the reminder says why each message gets its cold-read-fast-read",
+          "because a fresh reader shows whether an agent with only the message understands it"
+          in text, text)
     check("the reminder names every name suffix and hook output key the collector recognizes",
           "_ADVICE, _INSTRUCTION, _LINE, _MESSAGE, _NOTICE, _REASON, _REFUSAL or _TEMPLATE" in text
           and "additionalContext, permissionDecisionReason, reason or stopReason" in text, text)
@@ -268,6 +291,22 @@ with tempfile.TemporaryDirectory() as temporary:
     text = agent_text(result)
     check("the reminder stays under Claude Code's 10,000-character cut, first lines truncated",
           0 < len(text) < 10000 and ("x" * 100 + "...") in text, len(text))
+
+    reset()
+    not_a_directory = Path(temporary) / "tmp-whose-target-directory-is-a-file"
+    not_a_directory.mkdir()
+    (not_a_directory / FAST_READ_TARGET_DIRECTORY_NAME).write_text("", encoding="utf-8")
+    after = COMMITTED_SOURCE.replace('"first message to the agent"', '"first message, again"', 1)
+    program.write_text(after, encoding="utf-8")
+    result = run_hook({"session_id": "test", "cwd": str(repository), "hook_event_name": "PostToolUse",
+                       "tool_name": "Write", "tool_input": {"file_path": str(program), "content": after},
+                       "tool_response": {}}, temporary_directory=not_a_directory)
+    text = agent_text(result)
+    check("a message file that cannot be written still lists the message, and says how to fast-read it, exit 0",
+          result.returncode == 0 and "scripts/tool.py:8  first message, again" in text
+          and "could not write the listed messages to files for their cold-read-fast-read" in text
+          and "python3 nc-systems/cold-read/cold-read-fast-read.py --target <that file>" in text, result)
+    reset()
 
     (repository / ".git" / "HEAD").write_text("not a reference\n", encoding="utf-8")
     result = write_then_run(repository, program,

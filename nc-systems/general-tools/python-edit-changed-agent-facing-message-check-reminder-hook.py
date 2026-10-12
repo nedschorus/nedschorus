@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 """After an agent's Edit, MultiEdit or Write of a Python file in the repository,
-list the agent-facing-messages the tool call added or changed, and tell the
-agent to check each against the page on writing them.
+list the agent-facing-messages the tool call added or changed, tell the agent
+to check each against the page on writing them, and give each listed message
+its cold-read-fast-read command: the hook writes each message's text to a file
+of its own under the temporary directory, because cold-read-fast-read.py reads
+only files, and the file's name becomes the cold-read-record's name.
 
 A PostToolUse hook: the act has happened, and the agent rewrites any message
 that fails the page. The reminder goes in hookSpecificOutput.additionalContext,
@@ -34,8 +37,10 @@ checkout is compared with that worktree's HEAD.
 import ast
 import importlib.util
 import json
+import re
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 _collector_spec = importlib.util.spec_from_file_location(
@@ -46,7 +51,9 @@ _collector_spec.loader.exec_module(collector)
 
 HOOK_NAME = "python-edit-changed-agent-facing-message-check-reminder"
 PAGE_PATH = ("docs/nedschorus-wiki/"
-             "nedschorus-how-to-write-the-refusal-warning-or-reminder-a-program-hands-an-agent.md")
+             "nedschorus-how-to-write-an-agent-facing-message-such-as-a-hook-refusal-or-script-error.md")
+FAST_READ_COMMAND = "python3 nc-systems/cold-read/cold-read-fast-read.py --target {target}"
+FAST_READ_TARGET_DIRECTORY_NAME = "agent-facing-message-fast-read-targets"
 EDIT_TOOL_NAMES = ("Edit", "MultiEdit")
 INSPECTED_TOOL_NAMES = (*EDIT_TOOL_NAMES, "Write")
 LISTED_MESSAGE_LIMIT = 20
@@ -65,12 +72,36 @@ REMINDER_MESSAGE_TEMPLATE = (
     "check each message listed above against the page.\n"
     "If a message fails the page, rewrite that message in this turn, and update any test "
     "that asserts the message's text.\n"
+    "{fast_read}\n"
     "If every listed message passes, carry on; nothing needs saying to the user.\n"
     "This hook finds only strings that are printed, written to sys.stdout or sys.stderr, "
     "raised, assigned to a name ending in {suffixes}, or given in a dict literal as {keys}.\n"
     "If your edit changed a message held in a local variable or built any other way, check "
     "that message against the page too.\n"
     "Before you write or change an agent-facing-message from now on, read the page first."
+)
+FAST_READ_MESSAGE_TEMPLATE = (
+    "Give each listed message its cold-read-fast-read before you open the pull request, "
+    "because a fresh reader shows whether an agent with only the message understands it. "
+    "This hook wrote the text of each listed message to its own file; run each command "
+    "below from your checkout once the message passes the page:\n"
+    "{commands}\n"
+    "Each command prints the path of its report; the report's directory under "
+    "cold-read-records/ is that message's cold-read-record.\n"
+    "If a report shows the message misread, rewrite the message and run its command again.\n"
+    "Name each message's cold-read-record in the pull request's description; the merge lane "
+    "runs its own cold-read-fast-read only on a message the description names no "
+    "cold-read-record for."
+)
+FAST_READ_FILES_NOT_WRITTEN_TEMPLATE = (
+    "This hook could not write the listed messages to files for their cold-read-fast-read, "
+    "because {reason}.\n"
+    "Before you open the pull request, write each listed message's text to a file of its "
+    "own and run " + FAST_READ_COMMAND.format(target="<that file>") + " from your checkout "
+    "on each.\n"
+    "Name each message's cold-read-record, the report's directory under cold-read-records/, "
+    "in the pull request's description; the merge lane runs its own cold-read-fast-read "
+    "only on a message the description names no cold-read-record for."
 )
 LISTING_LINE_TEMPLATE = "  {path}:{line}  {first_line}"
 MORE_NOT_LISTED_LINE_TEMPLATE = (
@@ -199,6 +230,28 @@ def changed_message_entries(payload, file_path: Path, source: str):
     return changed
 
 
+def fast_read_target_path(directory: Path, relative_path: str, line: int) -> Path:
+    """The file for one message; its name becomes the cold-read-record's name."""
+    slug = re.sub(r"[^A-Za-z0-9]+", "-", relative_path.removesuffix(".py")).strip("-")
+    return directory / f"{slug}-line-{line}-agent-facing-message.md"
+
+
+def fast_read_text(relative_path, entries):
+    """The fast-read instruction, after writing each message's text to its own file."""
+    directory = Path(tempfile.gettempdir()) / FAST_READ_TARGET_DIRECTORY_NAME
+    try:
+        directory.mkdir(parents=True, exist_ok=True)
+        commands = []
+        for entry in entries:
+            target = fast_read_target_path(directory, relative_path, entry["line"])
+            target.write_text(entry["text"].rstrip("\n") + "\n", encoding="utf-8")
+            commands.append("  " + FAST_READ_COMMAND.format(target=target))
+    except OSError as error:
+        return FAST_READ_FILES_NOT_WRITTEN_TEMPLATE.format(
+            reason=f"{type(error).__name__}: {error}"[:REASON_CHARACTER_LIMIT])
+    return FAST_READ_MESSAGE_TEMPLATE.format(commands="\n".join(commands))
+
+
 def reminder_text(tool_name, relative_path, entries):
     listing = [LISTING_LINE_TEMPLATE.format(path=relative_path, line=entry["line"],
                                             first_line=first_line_of(entry["text"]))
@@ -208,6 +261,7 @@ def reminder_text(tool_name, relative_path, entries):
             more=len(entries) - LISTED_MESSAGE_LIMIT, path=relative_path))
     return REMINDER_MESSAGE_TEMPLATE.format(
         tool=tool_name, path=relative_path, count=len(entries), listing="\n".join(listing),
+        fast_read=fast_read_text(relative_path, entries[:LISTED_MESSAGE_LIMIT]),
         suffixes=words_joined_with_or(collector.AGENT_STRING_NAME_SUFFIXES),
         keys=words_joined_with_or(collector.AGENT_FACING_HOOK_OUTPUT_KEYS))
 
