@@ -202,8 +202,9 @@ def run_main(arguments, boot_at=BOOT_AT, recovery=None, box=None):
             lambda decisions, handoff_directory: real_launch(
                 decisions, handoff_directory, run=recovery))
         restart.restore_box_windows = (
-            lambda dry_run: real_restore(dry_run, platform=box.platform, run=box,
-                                         sleep=box.sleep, monotonic=box.monotonic))
+            lambda dry_run, mac_booted_at: real_restore(
+                dry_run, mac_booted_at, platform=box.platform, run=box,
+                sleep=box.sleep, monotonic=box.monotonic))
         with redirect_stdout(printed), redirect_stderr(errors):
             try:
                 exit_code = restart.main(arguments)
@@ -795,6 +796,34 @@ with tempfile.TemporaryDirectory() as temporary:
     check("the seats that came up are reported so",
           report.count("came up: recover-crashed-seats") == 2, report)
 
+    # On ned-box, recovery opens each restarted seat's window on the Mac. A window
+    # that did not open leaves the seat counted as come up, but the run exits 1
+    # and names it, so the run log of the boot shows the missing window.
+    check("recovery's exit 3, a seat up whose window on the Mac did not open, is a seat "
+          "that came up",
+          restart.seat_came_up(3, "recover-crashed-seats: s: relaunched fresh; WINDOW NOT "
+                                  "OPENED on the Mac — the Mac could not be reached") is True)
+    check("any other nonzero exit is still a seat that did not",
+          restart.seat_came_up(2, "recover-crashed-seats: s: relaunched fresh") is False)
+    handoffs = root / "run-log-main-window-not-opened"
+    write_state(handoffs, "A-windowless", STOP)
+    window_not_opened_report = (
+        "recover-crashed-seats: A-windowless: relaunched resuming A-session (12KB "
+        "transcript); WINDOW NOT OPENED on the Mac — open-mac-window-from-ned-box.py "
+        "exited 1: ned-box could not reach the Mac. The seat is running; to open its "
+        "window, run in a Terminal on the Mac: "
+        "/Users/el/Projects/nedschorus/scripts/launch-claude-ubuntu A-windowless")
+    recovery = RecoveryToolStub(outcomes={"A-windowless": (3, window_not_opened_report)})
+    exit_code, report, errors = run_main(["--handoff-dir", str(handoffs)], recovery=recovery,
+                                         box=BoxStub(platform="linux"))
+    check("a restarted seat whose window did not open is reported come up, named in the "
+          "summary, and the run exits 1",
+          exit_code == 1 and "came up: " + window_not_opened_report in report
+          and "1 box window(s) could not be opened: A-windowless" in report
+          and "did not come back" not in report
+          and run_log_lines(handoffs)[0]["launched"] == ["A-windowless"],
+          (exit_code, report))
+
     # A recovery tool that cannot be run at all — the interpreter or the
     # script missing under launchd's bare environment — fails every seat,
     # each reported by name, and the run log still records that none came up.
@@ -965,7 +994,9 @@ with tempfile.TemporaryDirectory() as temporary:
           len(box.queries) == 1
           and box.queries[0][:5] == ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10"]
           and box.queries[0][5] == restart.agent_box()
-          and box.queries[0][6] == restart.LIST_LIVE_BOX_SEATS_REMOTE_COMMAND,
+          and box.queries[0][6]
+          == restart.ned_box_running_agent_seats_list_command_marking_clients_attached_since_mac_boot(
+              int(BOOT_AT.timestamp())),
           box.queries)
     check("a window is opened onto each live box seat through the opener, running the "
           "launcher by absolute path",
@@ -982,9 +1013,9 @@ with tempfile.TemporaryDirectory() as temporary:
           (report, run_log_lines(handoffs)))
     real_box = os.environ.pop("NEDSCHORUS_AGENT_BOX", None)
     try:
-        default_alias = restart.box_seat_query_command()[5]
+        default_alias = restart.box_seat_query_command(BOOT_AT)[5]
         os.environ["NEDSCHORUS_AGENT_BOX"] = "ned-wifi"
-        overridden_alias = restart.box_seat_query_command()[5]
+        overridden_alias = restart.box_seat_query_command(BOOT_AT)[5]
     finally:
         os.environ.pop("NEDSCHORUS_AGENT_BOX", None)
         if real_box is not None:
@@ -992,16 +1023,45 @@ with tempfile.TemporaryDirectory() as temporary:
     check("the box alias is the launcher's: ned by default, NEDSCHORUS_AGENT_BOX when set",
           default_alias == "ned" and overridden_alias == "ned-wifi",
           (default_alias, overridden_alias))
+    listing_command = (
+        restart.ned_box_running_agent_seats_list_command_marking_clients_attached_since_mac_boot(
+            1760000000))
     check("the remote listing keeps only names with a seat home, so fleet-anchor is not a seat",
-          "list-sessions" in restart.LIST_LIVE_BOX_SEATS_REMOTE_COMMAND
-          and '[ -d "$HOME/agents/$seat_name" ]'
-          in restart.LIST_LIVE_BOX_SEATS_REMOTE_COMMAND)
+          "list-sessions" in listing_command
+          and '[ -d "$HOME/agents/$seat_name" ]' in listing_command)
+    check("the remote listing marks a seat whose newest client attached at or after the "
+          "Mac's boot",
+          "list-clients" in listing_command and "#{client_created}" in listing_command
+          and '-ge 1760000000' in listing_command
+          and 'echo "$seat_name attached"' in listing_command, listing_command)
     # User-ruled 2026-09-28T16:37:05Z: a box seat's home is always
     # ~/agents/<name>, since launch-claude-ubuntu reads no agents-root
     # variable (user-ruled 2026-09-22), so the box listing reads none either.
     check("the remote listing reads no agents-root variable: a box seat home is ~/agents",
-          "NEDSCHORUS_AGENTS_ROOT" not in restart.LIST_LIVE_BOX_SEATS_REMOTE_COMMAND,
-          restart.LIST_LIVE_BOX_SEATS_REMOTE_COMMAND)
+          "NEDSCHORUS_AGENTS_ROOT" not in listing_command, listing_command)
+
+    # Recovery on the box opens a window on the Mac after each seat it brings up,
+    # so a seat may already have one from this login: it gets no second window.
+    handoffs = root / "box-window-already-attached"
+    write_state(handoffs, "mac-seat", STOP - timedelta(days=3))
+    box = BoxStub(answers=[(0, "gatekeeper attached\nprof\n", "")])
+    exit_code, report, errors = run_main(["--handoff-dir", str(handoffs)], box=box)
+    check("a box seat already attached since the Mac booted gets no second window",
+          exit_code == 0 and [command[-1] for command in box.windows] == ["prof"]
+          and "gatekeeper already has a window attached since this Mac booted" in report,
+          (exit_code, box.windows, report))
+    parse_listing = (
+        restart.ned_box_agent_seat_listing_parse_into_needing_window_and_attached_since_mac_boot)
+    check("the listing reads a seat as attached when any socket lists it attached",
+          parse_listing("a attached\na\nb\n\nc attached\n") == (["b"], ["a", "c"]),
+          parse_listing("a attached\na\nb\n\nc attached\n"))
+    handoffs = root / "box-every-seat-already-attached"
+    write_state(handoffs, "mac-seat", STOP - timedelta(days=3))
+    box = BoxStub(answers=[(0, "gatekeeper attached\n", "")])
+    exit_code, report, errors = run_main(["--handoff-dir", str(handoffs)], box=box)
+    check("a box whose every live seat has a window opens nothing and does not call it empty",
+          exit_code == 0 and box.windows == [] and "no live seats" not in report
+          and "gatekeeper already has a window attached" in report, (exit_code, report))
 
     handoffs = root / "box-no-live-seats"
     write_state(handoffs, "mac-seat", STOP - timedelta(days=3))
