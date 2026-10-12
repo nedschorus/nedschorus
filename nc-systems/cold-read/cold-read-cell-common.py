@@ -396,10 +396,35 @@ def repo_relative_name(path) -> str:
         return ""
 
 
+def report_directory_state(report) -> set:
+    """Return absolute paths and fingerprints of the files under a report directory outside the checkout."""
+    # The Codex cell makes the report's directory writable with --add-dir. Inside the
+    # checkout that directory was writable already; outside it, such as a walk draft's
+    # docs/walk in another checkout, git status never looks, and the document under
+    # review may sit there beside the report.
+    if report is None:
+        return set()
+    directory = pathlib.Path(report).resolve().parent
+    if directory == REPO_ROOT or REPO_ROOT in directory.parents or not directory.is_dir():
+        return set()
+    try:
+        files = [path for path in directory.rglob("*") if path.is_file()]
+    except OSError as error:
+        raise WriteDetectorUnavailable(f"could not list {directory}: {error}") from error
+    return {(str(path), path_content_fingerprint(path)) for path in files}
+
+
 def stray_writes_since(baseline: set, own_report_path=None) -> list[str]:
     """Return paths changed since the baseline, excluding the requested report."""
-    changed = {name for name, _fingerprint in working_tree_state() - baseline}
+    current = working_tree_state() | report_directory_state(own_report_path)
+    changed = {name for name, _fingerprint in current - baseline}
+    # A file deleted from the report's directory leaves only its baseline entry; git
+    # status names its own deletions, and its names are relative.
+    changed |= {name for name, _fingerprint in baseline - current
+                if pathlib.Path(name).is_absolute()}
     changed.discard(repo_relative_name(own_report_path))
+    if own_report_path is not None:
+        changed.discard(str(pathlib.Path(own_report_path).resolve()))
     return sorted(changed)
 
 
@@ -719,6 +744,14 @@ def run_cell(
         print(f"{program}: {refusal}", file=sys.stderr)
         report_stray_writes(program, baseline, report)
         return refusal.exit_code
+
+    if baseline is not None:
+        try:
+            baseline = baseline | report_directory_state(report)
+        except WriteDetectorUnavailable as error:
+            baseline = None
+            print(f"{program}: could not snapshot the report's directory ({error}); "
+                  "stray writes will not be checked for this run.", file=sys.stderr)
 
     # An explicit model must not silently fall back to a different model.
     chain = (args.model,) if args.model else tier_to_model_chain[args.tier]

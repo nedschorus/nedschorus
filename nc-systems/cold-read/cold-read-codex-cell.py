@@ -68,7 +68,9 @@ profile, which writes where workspace-write did, and denies the credential
 directories and file names. Those writable roots are the checkout and the
 temporary directories, so the cell also adds the report's own directory with
 `--add-dir`: a report in another checkout, such as a walk draft's suggestions
-in a topic worktree, is otherwise refused with "Operation not permitted". Codex refuses the two together, so `--sandbox`
+in a topic worktree, is otherwise refused with "Operation not permitted". That whole
+directory becomes writable, so when it lies outside the checkout the shared module
+fingerprints its files too, where `git status` does not look. Codex refuses the two together, so `--sandbox`
 is gone. Measured 2026-09-28 with canary files, on both machines: under
 workspace-write the reviewer read all three canaries; under the profile it
 read none, still read README.md, and wrote its report. Codex expands a deny
