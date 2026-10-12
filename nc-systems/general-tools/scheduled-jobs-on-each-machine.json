@@ -52,6 +52,20 @@
         },
         "ned-box": {"scheduler": "cron", "schedule": "30 6 * * *"}
       }
+    },
+    {
+      "name": "weekly-uncommitted-work-snapshot-hook-real-claude-session-owner-check",
+      "program": "nc-systems/handoff/uncommitted-work-snapshot-hook-real-claude-session-weekly-owner-check.py",
+      "arguments": [],
+      "output": ".claude/weekly-uncommitted-work-snapshot-hook-real-claude-session-owner-check.log",
+      "on": {
+        "mac": {
+          "scheduler": "launchd",
+          "label": "com.nedschorus.weekly-uncommitted-work-snapshot-hook-real-claude-session-owner-check",
+          "launchd_keys": {"StartCalendarInterval": {"Weekday": 0, "Hour": 4, "Minute": 30}}
+        },
+        "ned-box": {"scheduler": "cron", "schedule": "30 4 * * 0"}
+      }
     }
   ]
 }
