@@ -16,11 +16,19 @@ exit 2, naming the git command, when git cannot answer.
 import argparse
 import ast
 import hashlib
+import importlib.util
 import re
 import subprocess
 import sys
 import tempfile
 from pathlib import Path, PurePosixPath
+
+_git_output_spec = importlib.util.spec_from_file_location(
+    "git_machine_readable_output_runner_and_parser_common",
+    Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+    / "git-machine-readable-output-runner-and-parser-common.py")
+git_output = importlib.util.module_from_spec(_git_output_spec)
+_git_output_spec.loader.exec_module(git_output)
 
 GIT_CALL_TIMEOUT_SECONDS = 20
 MAIN_REF = "origin/main"
@@ -78,12 +86,12 @@ def git(arguments, checkout: Path, allowed_exit_codes=(0,)) -> str:
 
 
 def changed_files(checkout: Path, merge_base: str):
-    committed = git(["diff", "--name-only", "--diff-filter=AMR", merge_base, "HEAD"], checkout)
-    uncommitted = git(["diff", "--name-only", "--diff-filter=AMR", "HEAD"], checkout)
-    untracked = git(["ls-files", "--others", "--exclude-standard"], checkout)
+    committed = git(["diff", "-z", "--name-only", "--diff-filter=AMR", merge_base, "HEAD"], checkout)
+    uncommitted = git(["diff", "-z", "--name-only", "--diff-filter=AMR", "HEAD"], checkout)
+    untracked = git(["ls-files", "-z", "--others", "--exclude-standard"], checkout)
     names = set()
     for listing in (committed, uncommitted, untracked):
-        names.update(line for line in listing.splitlines() if line)
+        names.update(git_output.nul_separated_fields(listing))
     return sorted(path for path in names if (checkout / path).is_file())
 
 
@@ -94,14 +102,10 @@ def main_token_set(checkout: Path, main_commit: str):
         return set(cache_path.read_text().split("\n"))
     except OSError:
         pass
-    listing = git(["ls-tree", "-r", "-l", main_commit], checkout)
-    blob_ids = []
-    for line in listing.splitlines():
-        metadata, _, _ = line.partition("\t")
-        fields = metadata.split()
-        if len(fields) == 4 and fields[1] == "blob" and fields[3].isdigit() \
-                and int(fields[3]) <= MAIN_BLOB_SIZE_LIMIT_BYTES:
-            blob_ids.append(fields[2])
+    entries = git_output.tree_entries(git(["ls-tree", "-r", "-l", "-z", main_commit], checkout))
+    blob_ids = [entry.object_name for entry in entries
+                if entry.object_type == "blob" and entry.size is not None
+                and entry.size <= MAIN_BLOB_SIZE_LIMIT_BYTES]
     try:
         finished = subprocess.run(["git", "cat-file", "--batch"], cwd=str(checkout),
                                   input=("\n".join(blob_ids) + "\n").encode(),
@@ -115,11 +119,9 @@ def main_token_set(checkout: Path, main_commit: str):
                                           finished.stderr.decode(errors="replace")))
     tokens = {token.decode("ascii") for token in MAIN_TOKEN_PATTERN.findall(finished.stdout)}
     # A file main only has as a file, named in none of its texts, is still on main: add each path and its parts.
-    for line in listing.splitlines():
-        if "\t" in line:
-            main_path = line.split("\t", 1)[1]
-            tokens.add(main_path)
-            tokens.update(PurePosixPath(main_path).parts)
+    for entry in entries:
+        tokens.add(entry.path)
+        tokens.update(PurePosixPath(entry.path).parts)
     try:
         MAIN_TOKEN_CACHE_DIRECTORY.mkdir(parents=True, exist_ok=True)
         for stale in MAIN_TOKEN_CACHE_DIRECTORY.glob("*.txt"):
@@ -170,7 +172,8 @@ def glossary_terms(text: str):
 
 def every_glossary_term(checkout: Path):
     terms = set()
-    for path in git(["ls-files", f"*{GLOSSARY_FILE_SUFFIX}"], checkout).splitlines():
+    for path in git_output.nul_separated_fields(
+            git(["ls-files", "-z", f"*{GLOSSARY_FILE_SUFFIX}"], checkout)):
         try:
             terms.update(term.lower() for term in glossary_terms((checkout / path).read_text()))
         except OSError:
@@ -205,15 +208,13 @@ def names_used_in_other_files(names_and_files, checkout: Path):
     """Return the names that some file other than the files defining them mentions."""
     if not names_and_files:
         return set()
-    arguments = ["grep", "--untracked", "-n", "-o", "-w", "-F"]
+    arguments = ["grep", "-z", "--untracked", "-n", "-o", "-w", "-F"]
     for name in sorted({name for name, _ in names_and_files}):
         arguments += ["-e", name]
     found = git(arguments, checkout, allowed_exit_codes=(0, 1))
     files_mentioning = {}
-    for line in found.splitlines():
-        path, _, rest = line.partition(":")
-        _, _, name = rest.partition(":")
-        files_mentioning.setdefault(name, set()).add(path)
+    for match in git_output.grep_matches(found):
+        files_mentioning.setdefault(match.text, set()).add(match.path)
     # A file that defines the same name itself, such as its own LOG_PATH, is not a user of this one.
     defining_files = {}
     for name, defining_file in names_and_files:
@@ -233,7 +234,8 @@ def new_shared_names(checkout: Path, branch_names=(), already_reported=frozenset
     file_cache = {} if file_cache is None else file_cache
     main_commit = git(["rev-parse", MAIN_REF], checkout).strip()
     merge_base = git(["merge-base", "HEAD", MAIN_REF], checkout).strip()
-    main_paths = set(git(["ls-tree", "-r", "--name-only", main_commit], checkout).splitlines())
+    main_paths = set(git_output.nul_separated_fields(
+        git(["ls-tree", "-r", "--name-only", "-z", main_commit], checkout)))
     known_terms = every_glossary_term(checkout)
     exempt_phrases = ordinary_hyphenated_words(checkout)
     paths = changed_files(checkout, merge_base)
