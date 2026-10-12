@@ -586,6 +586,28 @@ def run_reach_clause_cases(root: Path):
         recovery.launcher_path = real_launcher_path
 
 
+def run_seat_listing_cases(root: Path):
+    """--all and the crash watcher list only directories that ever held a seat."""
+    agents_root = root / "listing-agents"
+    handoff_directory = root / "listing-handoffs"
+    projects_root = root / "listing-projects"
+    for directory in (agents_root / "never-ran", agents_root / "had-a-supervisor",
+                      agents_root / "had-a-handoff", agents_root / "had-transcripts",
+                      handoff_directory, projects_root):
+        directory.mkdir(parents=True, exist_ok=True)
+    recovery.supervisor.supervisor_state_path(handoff_directory, "had-a-supervisor").write_text(
+        "{}", encoding="utf-8")
+    recovery.supervisor.handoff_file_path(handoff_directory, "had-a-handoff").write_text(
+        "restart-counter: 1\n", encoding="utf-8")
+    recovery.harness_project_directory(agents_root / "had-transcripts", projects_root).mkdir(
+        parents=True)
+    listed = recovery.list_agent_seat_names_with_agent_session_records(
+        agents_root, handoff_directory, projects_root)
+    check("the seat listing leaves out a directory that never held a seat, and keeps one with a "
+          "supervisor state, a handoff or transcripts",
+          listed == ["had-a-handoff", "had-a-supervisor", "had-transcripts"], repr(listed))
+
+
 def run_came_up_cases(root: Path):
     """nedschorus#242 change 4: a launch exiting zero says the launcher ran, not
     that the seat came back. A resume whose session dies inside Claude leaves the
@@ -2588,6 +2610,7 @@ with tempfile.TemporaryDirectory() as temporary:
 
     run_came_up_cases(root)
     run_reach_clause_cases(root)
+    run_seat_listing_cases(root)
 
     # The same thing through recover_seat, on each path that can offer the
     # degraded restart and on one that cannot.

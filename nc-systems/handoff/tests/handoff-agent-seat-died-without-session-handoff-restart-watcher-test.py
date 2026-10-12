@@ -37,6 +37,11 @@ _forced_spec = importlib.util.spec_from_file_location(
 forced_command = importlib.util.module_from_spec(_forced_spec)
 _forced_spec.loader.exec_module(forced_command)
 
+_recovery_spec = importlib.util.spec_from_file_location(
+    "recover_crashed_seats", REPOSITORY / "scripts" / "recover-crashed-seats.py")
+recovery_module = importlib.util.module_from_spec(_recovery_spec)
+_recovery_spec.loader.exec_module(recovery_module)
+
 failures = []
 
 BOOT = datetime(2026, 10, 12, 0, 0, tzinfo=timezone.utc)
@@ -65,6 +70,8 @@ class Harness:
         self.window_exit_codes = list(window_exit_codes or [])
         self.recoveries = []
         self.windows = []
+        self.died_at = DIED_AT
+        self.on_purpose = False
 
     def assess(self, seat):
         if seat in self.assessment_errors:
@@ -83,12 +90,14 @@ class Harness:
     def run(self, now, seats=("merge-lane-2",)):
         watcher = watcher_module.Watcher(
             state=self.state, now=now, boot_at=BOOT, log_directory=self.log_directory,
-            assess=self.assess, died_at_about=lambda seat: DIED_AT,
+            assess=self.assess, died_at_about=lambda seat: self.died_at,
             transcripts_directory=lambda seat: Path(f"/home/nedlern/.claude/projects/-{seat}"),
             recover=self.recover, open_window=self.open_window,
             show_notice_words=lambda path, seat: (
                 ["/usr/bin/python3", str(SCRIPT_PATH), "--show-notice", path]
-                + (["--then-attach", seat] if seat else [])))
+                + (["--then-attach", seat] if seat else [])),
+            stopped_on_purpose=lambda seat, detail: self.on_purpose,
+            recorded_exit_question=recovery_module.restart_question_for_a_seat_with_a_recorded_exit)
         watcher.run(list(seats))
 
     def decisions(self):
@@ -141,7 +150,7 @@ def run_decision_cases(root: Path):
     harness.run(SEEN_RUNNING + timedelta(minutes=1))
     check("a seat found crashed on one run only is not restarted yet",
           harness.recoveries == [] and any(
-              entry["decision"].startswith("found crashed") for entry in harness.decisions()),
+              entry["decision"].startswith("found down") for entry in harness.decisions()),
           repr(harness.decisions()))
     harness.run(SEEN_RUNNING + timedelta(minutes=1, seconds=20))
     check("a second sighting sooner than the confirmation time does not restart it",
@@ -153,18 +162,20 @@ def run_decision_cases(root: Path):
     check("a seat seen running again between two crashed sightings starts its confirmation over",
           harness.recoveries == [], repr(harness.recoveries))
 
-    for verdict in ("defer-to-boot-ignition", "seat-asked-to-be-consulted",
-                    "offer-after-recorded-exit", "refuse",
+    for verdict in ("seat-asked-to-be-consulted", "offer-after-recorded-exit", "refuse",
                     "ask-to-close-the-leftover-idle-shell"):
         harness = Harness(root / f"left-alone-{verdict}")
+        harness.on_purpose = True
         harness.verdicts["merge-lane-2"] = ("seat-already-running", "")
         harness.run(SEEN_RUNNING)
-        harness.verdicts["merge-lane-2"] = (verdict, "detail")
+        harness.verdicts["merge-lane-2"] = (
+            verdict, (0, "2026-10-12T03:05:00+00:00", "s") if verdict == "offer-after-recorded-exit"
+            else "detail")
         for minutes in (5, 6, 7):
             harness.run(SEEN_RUNNING + timedelta(minutes=minutes))
         left_alone = [entry for entry in harness.decisions()
                       if entry["decision"].startswith("left alone")]
-        check(f"a seat whose verdict is {verdict} is left alone, logged once",
+        check(f"a seat whose verdict is {verdict}, stopped on purpose, is left alone, logged once",
               harness.recoveries == [] and harness.windows == [] and len(left_alone) == 1,
               repr(harness.decisions()))
 
@@ -233,6 +244,7 @@ def run_decision_cases(root: Path):
     crash_after_running(harness)
     check("a notice the Mac cannot be reached for stays pending",
           len(harness.state["pending_notices"]) == 1, repr(harness.state["pending_notices"]))
+    harness.verdicts["merge-lane-2"] = ("seat-already-running", "restarted")
     harness.run(SEEN_RUNNING + timedelta(minutes=17))
     unshown = [entry for entry in harness.decisions()
                if entry["decision"].startswith("notice not shown")]
@@ -262,6 +274,111 @@ def run_decision_cases(root: Path):
           "merge-lane-2" in harness.state["seats"], repr(harness.state))
 
 
+def run_handled_crash_cases(root: Path):
+    harness = Harness(root / "dies-again-after-restart")
+    restarted_at = crash_after_running(harness)
+    for minutes in range(2, 10):
+        harness.run(restarted_at + timedelta(minutes=minutes))
+    second = [path for path in harness.notices() if "second-crash" in path.name]
+    check("a seat that dies again after a restart, before a run sees it running, "
+          "reaches the user as a second crash",
+          harness.recoveries == ["merge-lane-2"] and len(second) == 1,
+          repr((harness.recoveries, harness.notices())))
+    check("a restart that succeeded counts as a sighting of the seat running",
+          harness.state["seats"]["merge-lane-2"]["last_seen_running_at"]
+          == watcher_module.timestamp(restarted_at), repr(harness.state["seats"]))
+
+    harness = Harness(root / "already-running-sighting",
+                      recovery_result=(0, "merge-lane-2: ALREADY RUNNING — a supervisor is watching"))
+    confirmed = crash_after_running(harness)
+    record = harness.state["seats"]["merge-lane-2"]
+    check("a seat already running when recovery runs counts as a sighting",
+          record.get("last_seen_running_at") == watcher_module.timestamp(confirmed)
+          and not record.get("crash_handled"), repr(record))
+
+    harness = Harness(root / "restarted-by-hand-then-died",
+                      recovery_result=(1, "merge-lane-2: LAUNCH FAILED (exit 1)"))
+    failed_at = crash_after_running(harness)
+    harness.recovery_result = (0, "merge-lane-2: relaunched resuming x")
+    harness.died_at = failed_at + timedelta(minutes=3)
+    for minutes in (4, 5, 6):
+        harness.run(failed_at + timedelta(minutes=minutes))
+    check("a seat that ran again after a handled crash, shown by a later supervisor poll, "
+          "is watched as a new crash and restarted",
+          harness.recoveries == ["merge-lane-2", "merge-lane-2"]
+          and any(entry["decision"].startswith("ran again since")
+                  for entry in harness.decisions()), repr(harness.decisions()))
+
+    harness = Harness(root / "handled-and-still-down")
+    harness.recovery_result = (1, "merge-lane-2: LAUNCH FAILED (exit 1)")
+    failed_at = crash_after_running(harness)
+    for minutes in range(1, 6):
+        harness.run(failed_at + timedelta(minutes=minutes))
+    check("a handled crash with no later supervisor poll is not acted on again",
+          harness.recoveries == ["merge-lane-2"] and len(harness.notices()) == 1,
+          repr((harness.recoveries, harness.notices())))
+
+
+def run_down_for_the_user_cases(root: Path):
+    harness = Harness(root / "waiting-handoff")
+    harness.verdicts["merge-lane-2"] = ("seat-already-running", "")
+    harness.run(SEEN_RUNNING)
+    harness.verdicts["merge-lane-2"] = ("defer-to-boot-ignition", "an unconsumed handoff waits")
+    for minutes in (5, 6, 7, 8):
+        harness.run(SEEN_RUNNING + timedelta(minutes=minutes))
+    notices = [path for path in harness.notices() if "waiting-handoff" in path.name]
+    text = notices[0].read_text(encoding="utf-8") if notices else ""
+    check("a seat down with a waiting handoff is not restarted, and the user is told once",
+          harness.recoveries == [] and len(notices) == 1, repr(harness.notices()))
+    check("the waiting-handoff notice names the seat, the state and the command",
+          "merge-lane-2 is down" in text and "a handoff it had not acted on was waiting" in text
+          and "python3 scripts/recover-crashed-seats.py merge-lane-2" in text, text)
+
+    harness = Harness(root / "recorded-exit")
+    harness.verdicts["merge-lane-2"] = ("seat-already-running", "")
+    harness.run(SEEN_RUNNING)
+    harness.verdicts["merge-lane-2"] = ("offer-after-recorded-exit",
+                                        (1, "2026-10-12T03:04:00+00:00", "session"))
+    for minutes in (5, 6, 7, 8):
+        harness.run(SEEN_RUNNING + timedelta(minutes=minutes))
+    notices = [path for path in harness.notices() if "recorded-exit" in path.name]
+    text = notices[0].read_text(encoding="utf-8") if notices else ""
+    check("a seat whose supervisor recorded an exit without resuming is not restarted, "
+          "and the user is told once",
+          harness.recoveries == [] and len(notices) == 1, repr(harness.notices()))
+    check("the recorded-exit notice gives the exit code, the time and the ssh -t command",
+          "exit code 1" in text and "2026-10-12 03:04 UTC" in text
+          and "ssh -t nedlern@ned-box" in text
+          and 'It asks "merge-lane-2 stopped with exit code 1. Restart it? y/n"; answer y, '
+              "and it resumes merge-lane-2's last conversation" in text, text)
+
+
+def run_stopped_on_purpose_cases(root: Path):
+    """The real predicate watch() builds, on fixture handoff and supervisor files."""
+    agents_root = root / "purpose-agents"
+    handoff_directory = root / "purpose-handoffs"
+    for directory in (agents_root / "seat-a", handoff_directory):
+        directory.mkdir(parents=True, exist_ok=True)
+    login_restart = watcher_module.load_module(
+        "restart_live_seats_at_login_for_tests", watcher_module.LOGIN_RESTART_PROGRAM)
+    supervisor = login_restart.supervisor
+    predicate = watcher_module.stopped_on_purpose_predicate(supervisor, handoff_directory)
+    check("a clean exit is a stop on purpose", predicate("seat-a", (0, "t", None)))
+    check("an exit with an error code and no handoff is not a stop on purpose",
+          not predicate("seat-a", (1, "t", None)))
+    supervisor.handoff_file_path(handoff_directory, "seat-a").write_text(
+        "restart-counter: 7\ndont-restart: the user asked to be consulted before a relaunch\n"
+        "next-step: stop\n", encoding="utf-8")
+    supervisor.supervisor_state_path(handoff_directory, "seat-a").write_text(
+        json.dumps({"consumed_counter": 7}), encoding="utf-8")
+    check("a dont-restart handoff its supervisor consumed is a stop on purpose",
+          predicate("seat-a", (None, "t", None)))
+    supervisor.supervisor_state_path(handoff_directory, "seat-a").write_text(
+        json.dumps({"consumed_counter": 6}), encoding="utf-8")
+    check("a dont-restart handoff not yet consumed is not counted as a stop on purpose here",
+          not predicate("seat-a", (None, "t", None)))
+
+
 def run_environment_cases():
     environment = {"PATH": "/usr/bin:/bin", "HOME": "/home/nedlern", "GH_TOKEN": "token",
                    "TMUX": "/tmp/tmux-1000/fleet-restart-at-login,1,0", "TMUX_PANE": "%0",
@@ -275,13 +392,8 @@ def run_environment_cases():
     command, passed = calls[0] if calls else ([], {})
     check("the recovery is recover-crashed-seats.py <seat>",
           command[1:] == [str(watcher_module.RECOVERY_PROGRAM), "merge-lane-2"], repr(calls))
-    check("the recovery gets no TMUX, TMUX_PANE, CLAUDECODE or CLAUDE_CODE_* identity variable",
-          not any(name in passed for name in ("TMUX", "TMUX_PANE", "CLAUDECODE",
-                                               "CLAUDE_CODE_SESSION_ID", "CLAUDE_CODE_CHILD_SESSION",
-                                               "CLAUDE_CODE_MESSAGING_SOCKET")), repr(passed))
-    check("the recovery keeps PATH, HOME and GH_TOKEN",
-          all(passed.get(name) == environment[name] for name in ("PATH", "HOME", "GH_TOKEN")),
-          repr(passed))
+    check("the recovery gets the watcher's environment, which launch_seat cleans before a seat starts",
+          passed == environment, repr(passed))
 
 
 def run_window_words_cases(root: Path):
@@ -323,23 +435,32 @@ def run_command_line_cases(root: Path):
     state_directory.mkdir()
     environment = {watcher_module.STATE_DIRECTORY_ENVIRONMENT_VARIABLE: str(state_directory),
                    watcher_module.LOG_DIRECTORY_ENVIRONMENT_VARIABLE: str(root / "locked-log")}
-    with (state_directory / f"{watcher_module.PROGRAM}.lock").open("w") as held:
-        fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        exit_code = watcher_module.run_once(environment)
+    watched = []
+    real_watch = watcher_module.watch
+    # A stand-in, so a broken lock reaches no real agent-seat and no window on the Mac.
+    watcher_module.watch = lambda *arguments: watched.append(arguments) or 0
+    try:
+        with (state_directory / f"{watcher_module.PROGRAM}.lock").open("w") as held:
+            fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            exit_code = watcher_module.run_once(environment)
+    finally:
+        watcher_module.watch = real_watch
     check("a run that finds another run holding the lock does nothing and exits 0",
-          exit_code == 0
-          and not (state_directory / f"{watcher_module.PROGRAM}-state.json").exists(),
-          repr(list(state_directory.iterdir())))
+          exit_code == 0 and watched == [], repr(watched))
 
     run_run_failure_cases(root)
 
-    real_platform = sys.platform
+    real_platform, real_run_once = sys.platform, watcher_module.run_once
+    ran = []
+    # A stand-in, so a broken platform check reaches no real agent-seat and no window on the Mac.
+    watcher_module.run_once = lambda environment: ran.append(environment) or 0
     try:
         sys.platform = "darwin"
         exit_code = watcher_module.main([])
     finally:
-        sys.platform = real_platform
-    check("off ned-box the watcher refuses with exit 2", exit_code == 2, repr(exit_code))
+        sys.platform, watcher_module.run_once = real_platform, real_run_once
+    check("off ned-box the watcher refuses with exit 2, and runs nothing",
+          exit_code == 2 and ran == [], f"exit {exit_code}, runs started: {len(ran)}")
 
 
 def run_run_failure_cases(root: Path):
@@ -371,6 +492,78 @@ def run_run_failure_cases(root: Path):
     check("a failed run's notice is retried while the Mac cannot be reached, then shown once",
           len(windows) == 2, repr(windows))
 
+    environment = {watcher_module.STATE_DIRECTORY_ENVIRONMENT_VARIABLE: str(root / "healed-state"),
+                   watcher_module.LOG_DIRECTORY_ENVIRONMENT_VARIABLE: str(root / "healed-log")}
+    window_exit_codes = [1]
+    windows.clear()
+    watcher_module.LOGIN_RESTART_PROGRAM = root / "no-such-login-restart.py"
+    watcher_module.open_mac_window = lambda words: (
+        windows.append(words) or ((window_exit_codes.pop(0), "unreachable") if window_exit_codes
+                                  else (0, "")))
+    try:
+        try:
+            watcher_module.run_once(environment)
+        except Exception:  # noqa: BLE001 - the failing run is the setup
+            pass
+    finally:
+        watcher_module.LOGIN_RESTART_PROGRAM, watcher_module.open_mac_window = real_program, real_opener
+    state_path = root / "healed-state" / f"{watcher_module.PROGRAM}-state.json"
+    saved = watcher_module.read_state(state_path)
+    check("a failed run's notice the Mac missed waits in the state every run reads",
+          len(saved["pending_notices"]) == 1, repr(saved))
+    healthy_windows = []
+    watcher = watcher_module.Watcher(
+        state=saved, now=SEEN_RUNNING, boot_at=BOOT, log_directory=root / "healed-log",
+        assess=None, died_at_about=lambda seat: None, transcripts_directory=None,
+        recover=None, open_window=lambda words: healthy_windows.append(words) or (0, ""),
+        show_notice_words=lambda path, seat: ["--show-notice", path])
+    watcher.run([])
+    check("a healthy run shows the failed run's notice and clears it",
+          len(healthy_windows) == 1 and saved["pending_notices"] == []
+          and "run-failed" in healthy_windows[0][-1], repr(healthy_windows))
+
+
+def run_report_run_failure_state_cases(root: Path):
+    """report_run_failure when the state it would queue a notice in cannot be read or saved."""
+    real_opener = watcher_module.open_mac_window
+    windows = []
+    watcher_module.open_mac_window = lambda words: windows.append(words) or (1, "unreachable")
+    try:
+        corrupt = root / "corrupt-state"
+        corrupt.mkdir()
+        (corrupt / f"{watcher_module.PROGRAM}-state.json").write_text("{not json", encoding="utf-8")
+        raised = None
+        try:
+            watcher_module.report_run_failure("ValueError: bad state", corrupt, root / "corrupt-log")
+        except Exception as error:  # noqa: BLE001 - the case checks that nothing escapes
+            raised = error
+        reported = corrupt / f"{watcher_module.PROGRAM}-reported-run-failures.txt"
+        check("an unreadable state still lets a failed run write its notice and try the Mac",
+              raised is None and len(windows) == 1
+              and list((root / "corrupt-log" / "notices").glob("*run-failed.txt")),
+              repr((raised, windows)))
+        check("with an unreadable state, a notice the Mac missed is left for the next failing run",
+              not reported.exists(), reported.read_text(encoding="utf-8") if reported.exists() else "")
+
+        locked = root / "unsavable-state"
+        locked.mkdir()
+        (locked / f"{watcher_module.PROGRAM}-state.json").write_text("{}", encoding="utf-8")
+        locked.chmod(0o555)
+        raised = None
+        try:
+            watcher_module.report_run_failure("OSError: disk", locked, root / "unsavable-log")
+        except Exception as error:  # noqa: BLE001 - the case checks that nothing escapes
+            raised = error
+        finally:
+            locked.chmod(0o755)
+        decisions = (root / "unsavable-log" / "decisions.jsonl").read_text(encoding="utf-8")
+        check("a state that cannot be saved is logged, and the error is not marked as reported",
+              raised is None and "could not save the watcher's state" in decisions
+              and not (locked / f"{watcher_module.PROGRAM}-reported-run-failures.txt").exists(),
+              repr(raised))
+    finally:
+        watcher_module.open_mac_window = real_opener
+
 
 def run_state_cases(root: Path):
     state_path = root / "state" / "watcher-state.json"
@@ -383,9 +576,13 @@ def run_state_cases(root: Path):
 
 with tempfile.TemporaryDirectory() as temporary_directory:
     run_decision_cases(Path(temporary_directory))
+    run_handled_crash_cases(Path(temporary_directory))
+    run_down_for_the_user_cases(Path(temporary_directory))
+    run_stopped_on_purpose_cases(Path(temporary_directory))
     run_environment_cases()
     run_window_words_cases(Path(temporary_directory))
     run_command_line_cases(Path(temporary_directory))
+    run_report_run_failure_state_cases(Path(temporary_directory))
     run_state_cases(Path(temporary_directory))
 
 if failures:
