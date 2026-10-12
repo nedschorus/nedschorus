@@ -8,14 +8,11 @@ program that splits such output on newlines or whitespace gets a name that is
 no file. Every reader here takes the -z form, where each path is a NUL-ended
 field, exactly as stored.
 
-Two layers, so a program keeps its own way of running git (its timeout, its
-environment, how it reports a failure) and still shares the parsing:
-
-  * Parsers take the stdout of a -z command, as bytes or str, and return
-    values. They run nothing.
-  * Runners run `git -C <directory> ...` with -z already in place, raise
-    GitCommandFailed when git fails, does not start or does not finish, and
-    return what the matching parser returns.
+The parsers take the stdout of a -z command, as bytes or str, and return
+values; they run nothing, so a program keeps its own way of running git (its
+timeout, its environment, how it reports a failure). run_git_unless_outside_a_repository
+runs git itself, because telling "not a repository" from other failures needs
+git's message read in one fixed locale.
 
 Load it by path, under the snake_case form of its file name:
 
@@ -178,15 +175,24 @@ def tree_entries(output):
 
 
 def grep_matches(output):
-    """Parse `git grep -z -n` output, with or without -o, into GitGrepMatch values."""
+    """Parse `git grep -z -n -I` output, with or without -o, into GitGrepMatch values.
+
+    Raises ValueError on a line it cannot read, such as the "Binary file ...
+    matches" line git prints without -I.
+    """
     # With -z the path and the line number each end at a NUL; the text ends at
     # the newline, and only the text can hold neither.
     text = _text(output)
     matches = []
     position = 0
     while position < len(text):
-        path_end = text.index("\0", position)
-        number_end = text.index("\0", path_end + 1)
+        path_end = text.find("\0", position)
+        number_end = text.find("\0", path_end + 1) if path_end != -1 else -1
+        record_end = text.find("\n", position)
+        if number_end == -1 or (record_end != -1 and record_end < number_end):
+            # git prints "Binary file <path> matches" with no NUL; callers pass -I.
+            raise ValueError(f"git grep -z -n output has a line with no path and line "
+                             f"number: {text[position:record_end if record_end != -1 else None]!r}")
         line_end = text.find("\n", number_end + 1)
         if line_end == -1:
             line_end = len(text)
@@ -254,7 +260,7 @@ def patch_header_path(text):
     with C escapes, and ends an unquoted path holding a space with a tab.
     """
     if len(text) >= 2 and text.startswith('"') and text.endswith('"'):
-        raw, _ = codecs.escape_decode(text[1:-1].encode("ascii", "backslashreplace"))
+        raw, _ = codecs.escape_decode(text[1:-1].encode("utf-8", "surrogateescape"))
         return os.fsdecode(raw)
     return text[:-1] if text.endswith("\t") else text
 
@@ -277,57 +283,6 @@ def run_git(directory, arguments, *, accepted_exit_codes=(0,),
         raise GitCommandFailed(arguments, directory, result.returncode,
                                os.fsdecode(result.stderr))
     return result.stdout
-
-
-def _with_nul_separator(subcommand, arguments):
-    return [subcommand, "-z", *arguments]
-
-
-def git_paths(directory, subcommand, *arguments, **run_options):
-    """Run a git subcommand that lists paths, such as `diff --name-only` or
-    `ls-files`, with -z, and return the paths in git's order.
-
-    Give the subcommand and its options without -z: `git_paths(top, "diff",
-    "--name-only", "HEAD")`.
-    """
-    return nul_separated_fields(
-        run_git(directory, _with_nul_separator(subcommand, arguments), **run_options))
-
-
-def git_status(directory, *arguments, **run_options):
-    """Run `git status --porcelain -z <arguments>` and return GitStatusEntry values."""
-    return status_entries(run_git(directory, ["status", "--porcelain", "-z", *arguments],
-                                  **run_options))
-
-
-def git_name_status(directory, subcommand, *arguments, **run_options):
-    """Run `git <diff or diff-tree> -z --name-status <arguments>` and return GitNameStatusEntry values."""
-    return name_status_entries(run_git(
-        directory, _with_nul_separator(subcommand, ["--name-status", *arguments]),
-        **run_options))
-
-
-def git_numstat(directory, *arguments, **run_options):
-    """Run `git diff -z --numstat <arguments>` and return GitNumstatEntry values."""
-    return numstat_entries(run_git(directory, ["diff", "-z", "--numstat", *arguments],
-                                   **run_options))
-
-
-def git_tree_entries(directory, *arguments, **run_options):
-    """Run `git ls-tree -z <arguments>` and return GitTreeEntry values."""
-    return tree_entries(run_git(directory, ["ls-tree", "-z", *arguments], **run_options))
-
-
-def git_grep_matches(directory, *arguments, **run_options):
-    """Run `git grep -z -n <arguments>` and return GitGrepMatch values; no match is []."""
-    run_options.setdefault("accepted_exit_codes", (0, 1))
-    return grep_matches(run_git(directory, ["grep", "-z", "-n", *arguments], **run_options))
-
-
-def git_worktrees(directory, **run_options):
-    """Run `git worktree list --porcelain -z` and return GitWorktreeRecord values."""
-    return worktree_records(run_git(directory, ["worktree", "list", "--porcelain", "-z"],
-                                    **run_options))
 
 
 def run_git_unless_outside_a_repository(directory, arguments, **run_options):

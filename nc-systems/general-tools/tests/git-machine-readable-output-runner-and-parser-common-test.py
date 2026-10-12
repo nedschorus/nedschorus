@@ -48,6 +48,10 @@ def git(directory, *arguments):
                    capture_output=True)
 
 
+def output(directory, *arguments):
+    return git_output.run_git(directory, list(arguments))
+
+
 def scratch_repository(parent):
     """Commit one, then leave a staged rename, a worktree-column rename, a
     modified file with a space and an untracked file with a quote."""
@@ -70,7 +74,7 @@ def scratch_repository(parent):
 
 
 def status_cases(repository):
-    entries = git_output.git_status(repository, "--untracked-files=all")
+    entries = git_output.status_entries(output(repository, "status", "--porcelain", "-z", "--untracked-files=all"))
     by_path = {entry.path: entry for entry in entries}
     check("status: a staged rename gives the new path and its origin",
           by_path.get("moved-a.txt") == ("R ", "moved-a.txt", "a.txt"), entries)
@@ -84,29 +88,33 @@ def status_cases(repository):
 
 
 def path_list_cases(repository):
-    tracked = git_output.git_paths(repository, "ls-files")
+    tracked = git_output.nul_separated_fields(output(repository, "ls-files", "-z"))
     check("ls-files: the non-ASCII path is the real name",
           "café.md" in tracked and "my notes.md" in tracked, tracked)
-    untracked = git_output.git_paths(repository, "ls-files", "--others", "--exclude-standard")
+    untracked = git_output.nul_separated_fields(
+        output(repository, "ls-files", "-z", "--others", "--exclude-standard"))
     check("ls-files --others: the quoted name comes back as stored",
           untracked == ['new "q".txt'], untracked)
-    names = git_output.git_paths(repository, "diff", "--name-only", "--no-renames", "HEAD")
+    names = git_output.nul_separated_fields(
+        output(repository, "diff", "-z", "--name-only", "--no-renames", "HEAD"))
     check("diff --name-only: every path exactly as stored",
           sorted(names) == sorted(["a.txt", "moved-a.txt", "café.md", "cafe2.md", "my notes.md"]),
           names)
-    at_head = git_output.git_paths(repository, "ls-tree", "-r", "--name-only", "HEAD")
+    at_head = git_output.nul_separated_fields(
+        output(repository, "ls-tree", "-z", "-r", "--name-only", "HEAD"))
     check("ls-tree --name-only: real names", sorted(at_head) == ["a.txt", "café.md", "my notes.md"],
           at_head)
 
 
 def name_status_and_numstat_cases(repository):
-    entries = git_output.git_name_status(repository, "diff", "-M", "HEAD")
+    entries = git_output.name_status_entries(
+        output(repository, "diff", "-z", "--name-status", "-M", "HEAD"))
     by_path = {entry.path: entry for entry in entries}
     check("name-status: a rename gives its score, new path and old path",
           by_path.get("moved-a.txt") == ("R100", "moved-a.txt", "a.txt"), entries)
     check("name-status: a modification has no origin",
           by_path.get("my notes.md") == ("M", "my notes.md", None), entries)
-    counts = git_output.git_numstat(repository, "-M", "HEAD")
+    counts = git_output.numstat_entries(output(repository, "diff", "-z", "--numstat", "-M", "HEAD"))
     by_path = {entry.path: entry for entry in counts}
     check("numstat: a rename's empty path field is followed by old and new",
           by_path.get("moved-a.txt") == (0, 0, "moved-a.txt", "a.txt"), counts)
@@ -118,18 +126,25 @@ def name_status_and_numstat_cases(repository):
 
 
 def tree_and_grep_cases(repository):
-    entries = git_output.git_tree_entries(repository, "-r", "-l", "HEAD")
+    entries = git_output.tree_entries(output(repository, "ls-tree", "-z", "-r", "-l", "HEAD"))
     by_path = {entry.path: entry for entry in entries}
     check("ls-tree -l: size and real name",
           by_path.get("café.md") is not None and by_path["café.md"].size == 2
           and by_path["café.md"].object_type == "blob", entries)
     directories = git_output.tree_entries(b"040000 tree 0123abc\tdocs\0")
     check("ls-tree: a tree entry has no size", directories[0].size is None, directories)
-    matches = git_output.git_grep_matches(repository, "-o", "-w", "-F", "-e", "y", "-e", "x")
+    matches = git_output.grep_matches(
+        output(repository, "grep", "-z", "-n", "-I", "-o", "-w", "-F", "-e", "y", "-e", "x"))
     check("grep -z -n -o: path, line number and the matched text",
           sorted(matches) == [("my notes.md", 1, "x"), ("my notes.md", 2, "y")], matches)
-    check("grep: no match is an empty list, not a failure",
-          git_output.git_grep_matches(repository, "-F", "-e", "absent-text") == [])
+    check("grep: no output is no match",
+          git_output.grep_matches(b"") == [])
+    try:
+        git_output.grep_matches(b"Binary file picture.png matches\nnotes.md\x001\x00x\n")
+        check("grep: a line with no path and line number is refused", False, "no exception")
+    except ValueError as error:
+        check("grep: a line with no path and line number is refused",
+              "Binary file picture.png matches" in str(error), error)
     colon = git_output.grep_matches(b"a:b.md\x003\x00text: with colon\n")
     check("grep: a colon in the path or the text does not split it",
           colon == [("a:b.md", 3, "text: with colon")], colon)
@@ -148,6 +163,9 @@ def patch_header_cases(repository):
     quoted = git_output.patch_header_path('"b/caf\\303\\251 \\"q\\"\\t\\\\.md"')
     check("patch header: octal bytes, a quote, a tab and a backslash",
           quoted == 'b/café "q"\t\\.md', repr(quoted))
+    raw_utf8 = git_output.patch_header_path('"b/café \\"q\\".md"')
+    check("patch header: raw UTF-8 inside quotes (core.quotePath=false) stays UTF-8",
+          raw_utf8 == 'b/café "q".md', repr(raw_utf8))
     check("patch header: an unquoted path is left alone",
           git_output.patch_header_path("b/plain.md") == "b/plain.md")
 
@@ -156,7 +174,7 @@ def worktree_cases(repository, parent):
     other = Path(parent) / "other worktree"
     git(repository, "worktree", "add", "-q", "-b", "side", str(other), "HEAD")
     git(repository, "worktree", "lock", "--reason", "two\nlines", str(other))
-    records = git_output.git_worktrees(repository)
+    records = git_output.worktree_records(output(repository, "worktree", "list", "--porcelain", "-z"))
     check("worktree list: two records", len(records) == 2, records)
     side = [record for record in records if record.branch == "refs/heads/side"]
     check("worktree list: a path with a space and a lock reason with a newline",
@@ -196,7 +214,7 @@ def failure_cases(parent):
     outside = Path(parent) / "not a repository"
     outside.mkdir()
     try:
-        git_output.git_paths(outside, "ls-files")
+        git_output.run_git(outside, ["ls-files", "-z"])
         check("a failed git raises GitCommandFailed", False, "no exception")
     except git_output.GitCommandFailed as failure:
         check("a failed git raises GitCommandFailed with its exit code and stderr",
