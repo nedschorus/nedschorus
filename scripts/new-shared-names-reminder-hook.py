@@ -82,7 +82,8 @@ def load_lister():
 def git_output(arguments, cwd: Path):
     try:
         finished = subprocess.run(["git", *arguments], cwd=str(cwd), capture_output=True,
-                                  text=True, check=False, timeout=GIT_CALL_TIMEOUT_SECONDS)
+                                  text=True, errors="surrogateescape", check=False,
+                                  timeout=GIT_CALL_TIMEOUT_SECONDS)
     except (OSError, ValueError, subprocess.TimeoutExpired):
         return None
     if finished.returncode != 0:
@@ -278,7 +279,7 @@ def worktree_fingerprint(checkout: Path):
         except OSError:
             continue
         parts.append(f"{path}\0{details.st_size}\0{details.st_mtime_ns}")
-    return hashlib.sha256("\n".join(parts).encode()).hexdigest()
+    return hashlib.sha256("\n".join(parts).encode("utf-8", "surrogateescape")).hexdigest()
 
 
 class BranchCheckFailure(Exception):

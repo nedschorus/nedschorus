@@ -986,6 +986,21 @@ def case_hook_fingerprint_sees_a_rewritten_untracked_file_git_would_quote(root):
           before is not None and before != after, f"{before} {after}")
 
 
+
+def case_hook_fingerprint_sees_an_untracked_file_whose_name_is_not_utf8(root):
+    clone = make_clone(root, BASE_MAIN_FILES)
+    hook = load_module("new_shared_names_reminder_hook", HOOK_PATH)
+    name = os.fsencode(clone) + b"/caf\xe9.md"
+    with open(name, "wb") as handle:
+        handle.write(b"first\n")
+    before = hook.worktree_fingerprint(clone)
+    time.sleep(0.01)
+    with open(name, "wb") as handle:
+        handle.write(b"second text\n")
+    after = hook.worktree_fingerprint(clone)
+    check("an untracked file whose name is not UTF-8 keeps the fingerprint, and its rewrite changes it",
+          before is not None and before != after, f"{before} {after}")
+
 def case_hook_reports_failure_once(root):
     lonely = root / "lonely"
     git(["init", "-q", "-b", "main", str(lonely)], root)
@@ -1051,6 +1066,7 @@ def main() -> int:
              case_overlapping_writers_never_leave_invalid_json_and_keep_every_name,
              case_hook_shell_commands,
              case_hook_fingerprint_sees_a_rewritten_untracked_file_git_would_quote,
+             case_hook_fingerprint_sees_an_untracked_file_whose_name_is_not_utf8,
              case_hook_reports_failure_once, case_hook_ignores_other_input]
     for case in cases:
         with tempfile.TemporaryDirectory() as directory:

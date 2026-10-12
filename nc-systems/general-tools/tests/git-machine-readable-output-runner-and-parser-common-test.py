@@ -10,6 +10,7 @@ Run: python3 nc-systems/general-tools/tests/git-machine-readable-output-runner-a
 Prints one line per case and exits non-zero if any case fails.
 """
 
+import ast
 import importlib.util
 import os
 import subprocess
@@ -145,6 +146,9 @@ def tree_and_grep_cases(repository):
     except ValueError as error:
         check("grep: a line with no path and line number is refused",
               "Binary file picture.png matches" in str(error), error)
+    newline_path = git_output.grep_matches(b"nl\nname.txt\x002\x00needle\nb.md\x001\x00x\n")
+    check("grep: a path holding a newline is read whole",
+          newline_path == [("nl\nname.txt", 2, "needle"), ("b.md", 1, "x")], newline_path)
     colon = git_output.grep_matches(b"a:b.md\x003\x00text: with colon\n")
     check("grep: a colon in the path or the text does not split it",
           colon == [("a:b.md", 3, "text: with colon")], colon)
@@ -166,6 +170,9 @@ def patch_header_cases(repository):
     raw_utf8 = git_output.patch_header_path('"b/café \\"q\\".md"')
     check("patch header: raw UTF-8 inside quotes (core.quotePath=false) stays UTF-8",
           raw_utf8 == 'b/café "q".md', repr(raw_utf8))
+    quoted_with_space = git_output.patch_header_path('"b/docs/caf\\303\\251 notes.md"\t')
+    check("patch header: a quoted path holding a space, followed by git's tab",
+          quoted_with_space == "b/docs/café notes.md", repr(quoted_with_space))
     check("patch header: an unquoted path is left alone",
           git_output.patch_header_path("b/plain.md") == "b/plain.md")
 
@@ -180,6 +187,13 @@ def worktree_cases(repository, parent):
     check("worktree list: a path with a space and a lock reason with a newline",
           len(side) == 1 and side[0].path == str(other) and side[0].locked_reason == "two\nlines"
           and not side[0].detached and side[0].prunable_reason is None, records)
+    gone = Path(parent) / "gone worktree"
+    git(repository, "worktree", "add", "-q", "--detach", str(gone), "HEAD")
+    subprocess.run(["rm", "-rf", str(gone)], check=True)
+    pruned = [record for record in git_output.worktree_records(
+        output(repository, "worktree", "list", "--porcelain", "-z")) if record.path == str(gone)]
+    check("worktree list: a removed worktree carries git's prunable reason",
+          len(pruned) == 1 and bool(pruned[0].prunable_reason), pruned)
     detached = git_output.worktree_records(b"worktree /w\0HEAD abc\0detached\0locked\0\0")
     check("worktree list: detached, and locked without a reason",
           detached == [("/w", "abc", None, False, True, "", None)], detached)
@@ -258,6 +272,22 @@ def failure_cases(parent):
               failure.returncode is None and "did not finish" in failure.stderr, failure)
 
 
+def python_3_9_cases():
+    # The Mac's system Python is 3.9: an annotation written X | None is
+    # evaluated when a NamedTuple class is made, unless annotations are deferred.
+    source = Path(_spec.origin).read_text(encoding="utf-8")
+    tree = ast.parse(source, feature_version=(3, 9))
+    deferred = any(isinstance(node, ast.ImportFrom) and node.module == "__future__"
+                   and any(alias.name == "annotations" for alias in node.names)
+                   for node in tree.body)
+    union_annotations = [node for node in ast.walk(tree)
+                         if isinstance(node, ast.AnnAssign)
+                         and isinstance(node.annotation, ast.BinOp)
+                         and isinstance(node.annotation.op, ast.BitOr)]
+    check("the module parses as Python 3.9, and its X | None annotations are deferred",
+          deferred or not union_annotations, f"{len(union_annotations)} undeferred")
+
+
 def main():
     with tempfile.TemporaryDirectory() as parent:
         repository = scratch_repository(parent)
@@ -269,6 +299,7 @@ def main():
         worktree_cases(repository, parent)
         merge_tree_cases(parent)
         failure_cases(parent)
+    python_3_9_cases()
     if failures:
         print(f"{len(failures)} case(s) failed")
         return 1

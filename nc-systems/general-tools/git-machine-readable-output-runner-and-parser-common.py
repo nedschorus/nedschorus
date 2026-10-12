@@ -20,6 +20,9 @@ Load it by path, under the snake_case form of its file name:
         "git_machine_readable_output_runner_and_parser_common", <path>)
 """
 
+# Deferred annotations let the module load on the Mac's system Python 3.9.
+from __future__ import annotations
+
 import codecs
 import os
 import subprocess
@@ -177,28 +180,33 @@ def tree_entries(output):
 def grep_matches(output):
     """Parse `git grep -z -n -I` output, with or without -o, into GitGrepMatch values.
 
-    Raises ValueError on a line it cannot read, such as the "Binary file ...
-    matches" line git prints without -I.
+    A path may hold a newline. Raises ValueError on output it cannot read, such
+    as the "Binary file ... matches" line git prints without -I.
     """
-    # With -z the path and the line number each end at a NUL; the text ends at
-    # the newline, and only the text can hold neither.
+    # With -z the path and the line number each end at a NUL, and the text
+    # ends at the newline: a matched line cannot hold one.
     text = _text(output)
     matches = []
     position = 0
     while position < len(text):
         path_end = text.find("\0", position)
         number_end = text.find("\0", path_end + 1) if path_end != -1 else -1
-        record_end = text.find("\n", position)
-        if number_end == -1 or (record_end != -1 and record_end < number_end):
-            # git prints "Binary file <path> matches" with no NUL; callers pass -I.
+        if number_end == -1:
+            raise ValueError(f"git grep -z -n output ends without a path and line number: "
+                             f"{text[position:]!r}")
+        path, number = text[position:path_end], text[path_end + 1:number_end]
+        # "Binary file X matches" has no NUL, so it would be read as the
+        # start of the next match's path.
+        first_line = path.split("\n", 1)[0]
+        if not number.isdigit() or (
+                "\n" in path and first_line.startswith("Binary file ")
+                and first_line.endswith(" matches")):
             raise ValueError(f"git grep -z -n output has a line with no path and line "
-                             f"number: {text[position:record_end if record_end != -1 else None]!r}")
+                             f"number: {first_line!r}")
         line_end = text.find("\n", number_end + 1)
         if line_end == -1:
             line_end = len(text)
-        matches.append(GitGrepMatch(text[position:path_end],
-                                    int(text[path_end + 1:number_end]),
-                                    text[number_end + 1:line_end]))
+        matches.append(GitGrepMatch(path, int(number), text[number_end + 1:line_end]))
         position = line_end + 1
     return matches
 
@@ -257,12 +265,15 @@ def patch_header_path(text):
 
     A patch has no -z form. git writes a path holding a non-ASCII byte, a
     double quote, a backslash or a control character inside double quotes,
-    with C escapes, and ends an unquoted path holding a space with a tab.
+    with C escapes, and ends a path holding a space, quoted or not, with a tab.
     """
+    # Inside quotes a tab is written \t, so a raw tab at the end is always git's.
+    if text.endswith("\t"):
+        text = text[:-1]
     if len(text) >= 2 and text.startswith('"') and text.endswith('"'):
         raw, _ = codecs.escape_decode(text[1:-1].encode("utf-8", "surrogateescape"))
         return os.fsdecode(raw)
-    return text[:-1] if text.endswith("\t") else text
+    return text
 
 
 def run_git(directory, arguments, *, accepted_exit_codes=(0,),
