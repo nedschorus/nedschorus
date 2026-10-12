@@ -21,7 +21,7 @@ On 2026-10-03 the user set out the layers, in the MD-skills agent-seat's agent-s
 - **Part 2 of GHI 343**, the Stop hook that sets an unapproved change aside. Part 1 of GHI 343, the `wiki-write` skill, stays there. GHI 343's open question, whether the check replaces the PreToolUse guard, is answered: it adds to it.
 - **The third follow-up of the GHI-MD of GHI [Every refusal and warning a program hands an agent says why and what to do instead](https://github.com/nedschorus/nedschorus/issues/956)**: "a check that reports, and reverts, a guarded file changed without the user's approval by any means, a shell command included: approved writes record the file's hash and keep a copy, and a quotation of the user in a marker is checked against the transcript". That follow-up is the record of the user's 2026-10-03 design.
 
-The user approved merging them into this GHI on 2026-10-11, as item 2 of the approval-walk `codex-simplification-trawl-survivors-2026-10-10`, and decided the design questions below in that item's follow-up questions on 2026-10-11 and 2026-10-12. The walk-minutes are `docs/walk/codex-simplification-trawl-survivors-2026-10-10-minutes.md` in the cold-read-improvement agent-seat's checkout on ned-box, and are shipped to the log-store when the approval-walk closes.
+The user approved merging them into this GHI on 2026-10-11, as item 2 of the approval-walk `codex-simplification-trawl-survivors-2026-10-10`, and decided the design questions below in that item's follow-up questions on 2026-10-11 and 2026-10-12. The walk-minutes are at `nedlern@ned-box:/home/nedlern/agents/cold-read-improvement/docs/walk/codex-simplification-trawl-survivors-2026-10-10-minutes.md` until the approval-walk closes, and then in the log-store under `walk/`.
 
 ## The design
 
@@ -29,7 +29,7 @@ The user approved merging them into this GHI on 2026-10-11, as item 2 of the app
 
 It runs after every tool call, whatever the tool, and not at Stop. A command started in the background that writes after its tool call returns is caught at the next tool call.
 
-When nothing has changed, it takes under 100 ms on ned-box per tool call, and a test measures that. For each guarded file it compares the change time (ctime), the modification time, the size and the inode with a stored record, and hashes only a file whose record differs. The change time is compared because no program can set it back, as `touch -d` can set the modification time back. The list of guarded files is cached and recomputed only when the output of `git ls-files --cached --others --exclude-standard` changes. A prototype measured on 2026-10-11 took about 40 ms per run on ned-box, most of it Python's start-up and that one git call.
+When nothing has changed, it takes under 100 ms on ned-box per tool call, and a test measures that. For each guarded file it compares the change time (ctime), the modification time, the size and the inode with a stored record, and hashes only a file whose record differs. The change time is compared because no program can set it back, as `touch -d` can set the modification time back. The list of guarded files inside the checkout is cached, and recomputed only when the output of `git ls-files --cached --others --exclude-standard` changes: that one git call, about 6 ms, is cheaper than applying the guard's rules to every file, about 60 ms. The guarded files outside every checkout are a fixed list and need no git call. A prototype measured on 2026-10-11 took about 40 ms per run on ned-box, most of it Python's start-up and that one git call.
 
 ### Which files each agent-session checks
 
@@ -40,15 +40,15 @@ An agent-session checks the guarded files of its own checkout and the guarded fi
 A guarded file's content is approved when it equals one of these:
 
 1. **The version in the current commit (HEAD), unless a `git commit` in the same tool call put it there.** git's record of where HEAD has moved, the reflog, tells the two apart. A checkout, a reset, a merge, a pull, a rebase, a cherry-pick or a revert is git's own work; a `git commit`, including `--amend`, is the agent's. A shell command that edits `CLAUDE.md` and commits it in the same command is caught.
-2. **A version written by an Edit, Write or NotebookEdit call that spent an approval marker file.** The guard deletes the marker before the write, so the guard also leaves a short note naming the file, the agent-session and the time, and the hook approves the version that write produced.
+2. **A version written by an Edit, Write or NotebookEdit call that spent an approval marker file.** The guard deletes the marker before the write, so when it spends a marker it also writes a note, one small file per approved write, in a directory inside the worktree's git directory, naming the file, the agent-session and the time. After that tool call, the hook of that agent-session approves the version the write produced, records it, and deletes the note; a note left by an earlier tool call approves nothing.
 3. **For a guarded file git does not track** (`CLAUDE.local.md`, `~/.claude/CLAUDE.md`, `~/.claude/settings.json`, a memory file): the copy saved the first time the hook runs on that machine, or at the file's last approved write. Each machine keeps one copy per file path, shared by all its agent-sessions. After that first run, a new guarded file git does not track has no approved version.
 
 Also:
 
 - **A rename that leaves the content unchanged is approved:** a guarded file at a new path whose content equals the approved version of the file that left the old path. The old path is not restored. A file that must carry a set name, such as `SKILL.md`, is not renamed in practice, so no rule covers it.
-- **A deletion is approved when git's own work removed the file,** such as switching to a branch that does not have it. Any other deletion is restored like a change.
+- **A deletion is approved when git's own work removed the file:** the path is gone from HEAD, and the reflog shows that HEAD moved in this tool call by git's own work, such as switching to a branch that does not have the file. Any other deletion is restored like a change, a `git rm` followed by a `git commit` in the same call included.
 - **A version the hook has set aside is never approved later, by any rule.** Otherwise a later `git reset --hard` or `git stash` would bring the commit holding it back as git's own work. The hook's message tells the agent to amend that commit before pushing.
-- **While a rebase, merge or cherry-pick is in progress, the hook restores nothing and leaves its record as it is,** so that a conflict an agent is resolving is not wiped out. An operation is in progress when `rebase-merge`, `rebase-apply`, `MERGE_HEAD`, `CHERRY_PICK_HEAD` or `REVERT_HEAD` exists in the worktree's git directory, the test the user approved for GHI 956's location guard. The first check after the operation ends sees every file it changed, because their timestamps differ from the record.
+- **While a rebase, merge or cherry-pick is in progress, the hook restores nothing and leaves its record as it is,** so that a conflict an agent is resolving is not wiped out. An operation is in progress when `rebase-merge`, `rebase-apply`, `MERGE_HEAD`, `CHERRY_PICK_HEAD` or `REVERT_HEAD` exists in the worktree's git directory: the test `git_operation_in_progress` in `.claude/hooks/session-location-write-guard.py` already makes, which the user approved in the first approval-walk of GHI 956, item 6. The first check after the operation ends sees every file it changed, because their timestamps differ from the record.
 
 ### What it does with an unapproved change
 
@@ -57,7 +57,7 @@ Also:
 - **A new guarded file with no approved version,** such as a wiki page written by a shell command: it moves the file into the save directory, and nothing takes its place.
 - **The user's own edit, in an editor:** the hook cannot tell the user's editor from an agent's `sed`, so it handles the edit as any other. The agent shows the user the saved version; on his yes, the agent writes his words into the marker file and writes his version back with Edit.
 
-The message says what was changed and restored, and why; then, each on its own line with its condition, what the agent does next: show the user the saved version and ask; if he approves, write his words into the marker file and write the version back with Edit or Write; if the change is in a commit, amend the commit before pushing.
+The hook tells the agent through `additionalContext`, one message for all the files one tool call changed. The message says what was changed and restored, and why; then, each on its own line with its condition, what the agent does next: show the user the saved version and ask; if he approves, write his words into the marker file and write the version back with Edit or Write; if he does not, close the entry with the hook's own close command, which the message names; if the change is in a commit, amend the commit before pushing.
 
 ### The save directory
 
@@ -69,14 +69,14 @@ One directory per machine, `~/guarded-file-approved-versions-and-set-aside-chang
 Rules that keep agent-sessions from damaging each other's records:
 
 - The directory is only ever added to. Each copy is written whole to a temporary file and moved into place with `os.replace`, as `nc-systems/handoff/uncommitted-work-snapshots.py` does.
-- A set-aside entry is created with `O_EXCL`, so only the agent-session that creates it reports the change.
-- The record of timestamps is kept per worktree, in that worktree's git directory (`git rev-parse --git-dir`), so it goes when the worktree goes and no two agent-sessions write the same record.
-- A set-aside entry that nobody has answered is reported again by the next check in that checkout, so the change is not lost when the agent-session that found it ends.
+- A set-aside entry is named by the hash of the file's path and the hash of the changed version, and created with `O_EXCL`; when two agent-sessions find the same change, only the one that creates the entry reports it.
+- The record of timestamps for a checkout's files is kept in that worktree's git directory (`git rev-parse --git-dir`), so it goes when the worktree goes and no two agent-sessions write the same record. The record for the guarded files outside every checkout is kept once per machine, in the save directory, and replaced whole with `os.replace`.
+- An entry is answered when the user's version is written back, which the hook records, or when the agent closes it after the user declines. An entry nobody has answered is reported again once to each new agent-session in that checkout, at its first tool call, so the change is not lost when the agent-session that found it ends.
 - How long set-aside copies are kept is decided in the build.
 
 ### When something fails
 
-The hook never restores a file before its set-aside copy is written. If anything fails, it restores nothing, exits 0, and tells the agent through `additionalContext` what failed, as `scripts/uncommitted-work-snapshot-hook.py` does.
+The hook never restores a file before its set-aside copy is written. It restores a file by writing the approved version to a temporary file beside it and moving that into place with `os.replace`, so a failed restore leaves the changed version where it was. If anything fails, it restores nothing more, exits 0, and tells the agent through `additionalContext` what failed and which files are left changed, as `scripts/uncommitted-work-snapshot-hook.py` reports its failures.
 
 ### Checking a quotation of the user
 
