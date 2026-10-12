@@ -70,7 +70,11 @@ MAC_SURFACES = {
                         "scratch_trees": ["/tmp"]},
     "spellings": [["/private/tmp", "/tmp"]],
 }
-# Transcript names are session IDs; locating files within transcripts requires a content search.
+# Session transcripts, under projects/ and recovered/, are named by session ID: a name search cannot
+# find a file inside one, and the backup search the locator falls back on searches them.
+# The rest of the transcript mirror is searched, because its task lists, seat-briefs, CLAUDE.md
+# and handoffs outlive their originals. Keep the machine names aligned with
+# transcript-mirror-to-log-store.py's destinations.
 NED_BOX_SURFACES = {
     "machine": "ned-box",
     "surfaces": [
@@ -79,7 +83,9 @@ NED_BOX_SURFACES = {
                    "/tmp/claude-1000"],
          "git": True},
         {"name": "log-store", "roots": ["/home/nedlern/nedschorus-logs"],
-         "prune": ["/home/nedlern/nedschorus-logs/transcripts"]},
+         "prune": ["/home/nedlern/nedschorus-logs/transcripts/mac/projects",
+                   "/home/nedlern/nedschorus-logs/transcripts/ned-box/projects",
+                   "/home/nedlern/nedschorus-logs/transcripts/recovered"]},
         {"name": "handoffs", "roots": ["/home/nedlern/.claude/handoffs"]},
     ],
     "this_repository": {"clones": ["/home/nedlern/Projects/nedschorus"],
