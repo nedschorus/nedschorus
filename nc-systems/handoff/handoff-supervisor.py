@@ -148,6 +148,13 @@ _uncommitted_work_snapshots_spec = importlib.util.spec_from_file_location(
 uncommitted_work_snapshots = importlib.util.module_from_spec(_uncommitted_work_snapshots_spec)
 _uncommitted_work_snapshots_spec.loader.exec_module(uncommitted_work_snapshots)
 
+_git_machine_readable_output_spec = importlib.util.spec_from_file_location(
+    "git_machine_readable_output_runner_and_parser_common",
+    Path(__file__).resolve().parents[2] / "nc-systems" / "general-tools"
+    / "git-machine-readable-output-runner-and-parser-common.py")
+git_machine_readable_output = importlib.util.module_from_spec(_git_machine_readable_output_spec)
+_git_machine_readable_output_spec.loader.exec_module(git_machine_readable_output)
+
 # The opening is an EMPTY_SUCCESSOR_MARKERS entry used to recognize a workless resume.
 RESUME_PROMPT_WHEN_A_SESSION_ENDED_WITHOUT_A_HANDOFF = (
     "This session was resumed by crash recovery (nedschorus#120): the "
@@ -931,14 +938,14 @@ def overview_refresh_due_lines(working_directory: Path,
         main_commit = overview_check_git_output(
             ["rev-parse", "--short", main_commit_full], working_directory, timeout=timeout)
         listed = overview_check_git_output(
-            ["ls-tree", "-d", "--name-only", main_commit_full, "nc-systems/"],
+            ["ls-tree", "-z", "-d", "--name-only", main_commit_full, "nc-systems/"],
             working_directory, timeout=timeout)
     except Exception as error:
         print(f"handoff-supervisor: overview check stopped: "
               f"{type(error).__name__}: {error}")
         return ()
     due = []
-    for system_directory in listed.splitlines():
+    for system_directory in git_machine_readable_output.nul_separated_fields(listed):
         system = system_directory.rsplit("/", 1)[-1]
         try:
             overview_path = SYSTEM_OVERVIEW_PATH_TEMPLATE.format(system=system)

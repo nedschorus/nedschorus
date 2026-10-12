@@ -1183,7 +1183,7 @@ def run_overview_check_git_output_cases(workspace: Path):
         supervisor.run_git_here = real_run_git_here
     check("a failed ls-tree stops the check with a printed line naming it, and no line is due",
           due == () and "handoff-supervisor: overview check stopped: OverviewCheckGitFailure: "
-          "git ls-tree -d --name-only " in console.getvalue()
+          "git ls-tree -z -d --name-only " in console.getvalue()
           and "stub: ls-tree failed" in console.getvalue(),
           f"{due!r}\n{console.getvalue()}")
 
@@ -1417,6 +1417,38 @@ def run_overview_refresh_due_cases(workspace: Path):
     check("the system passed over is named on the console with the cause",
           "handoff-supervisor: overview check for aardvark passed over: TimeoutExpired"
           in console.getvalue(), console.getvalue())
+
+
+def run_overview_refresh_non_ascii_system_case(workspace: Path):
+    """A system directory whose name git would C-quote without -z is listed by
+    its real name, so its moved code still makes its overview due."""
+    repository = workspace / "overview-refresh-non-ascii-system"
+    repository.mkdir()
+    git_in(["init", "--quiet", "--initial-branch=main"], repository)
+    git_in(["config", "user.name", "fixture"], repository)
+    git_in(["config", "user.email", "fixture@nedschorus.invalid"], repository)
+
+    def commit(texts_by_path, message):
+        for relative, text in texts_by_path.items():
+            path = repository / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text, encoding="utf-8")
+        git_in(["add", "-A"], repository)
+        git_in(["commit", "--quiet", "-m", message], repository)
+        return git_in(["rev-parse", "HEAD"], repository).stdout.strip()
+
+    landed = commit({"nc-systems/café/café.py": "print('café')\n"}, "café lands")
+    commit({"docs/nedschorus-wiki/nedschorus-café-architecture-overview.md":
+            "# Café: an overview\n\n**Checked against:** commit "
+            f"[{landed}](https://github.com/nedschorus/nedschorus/commit/{landed})\n"},
+           "café's overview, checked")
+    commit({"nc-systems/café/café.py": "print('café, grown')\n"}, "café grows")
+    git_in(["update-ref", "refs/remotes/origin/main", "HEAD"], repository)
+    due = overview_refresh_due_or_missing(repository)
+    check("a system whose directory name is not ASCII is listed by its real name and made due",
+          isinstance(due, tuple) and len(due) == 1
+          and due[0].startswith("overview refresh due: café — 1 commit(s) under nc-systems/café/"),
+          repr(due))
 
 
 def run_overview_refresh_withheld_while_pull_request_open_cases(workspace: Path):
@@ -3017,6 +3049,7 @@ with fixture.handoff_supervisor_suite_workspace() as workspace:
             workspace / "gh-answering-no-open-pull-requests"):
         run_overview_check_git_output_cases(workspace)
         run_overview_refresh_due_cases(workspace)
+        run_overview_refresh_non_ascii_system_case(workspace)
     run_overview_refresh_withheld_while_pull_request_open_cases(workspace)
     run_overview_refresh_once_a_day_cases(workspace)
     run_overview_refresh_due_prompt_cases(workspace)
