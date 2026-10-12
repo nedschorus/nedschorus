@@ -53,6 +53,25 @@ recovery.agents_root_is_movable_on_this_machine = lambda: True
 recovery.durable_checkout = SCRIPT_PATH.resolve().parent.parent
 
 failures = []
+
+# What Claude Code 2.1.296 sets for an agent-session's commands, plus the tmux and supervisor
+# variables naming the calling agent-seat; every value is the caller's, never the launched seat's.
+CALLING_AGENT_SESSION_TEST_VARIABLES = {
+    "CLAUDECODE": "1",
+    "CLAUDE_PID": "4242",
+    "CLAUDE_CODE_SESSION_ID": "calling-session",
+    "CLAUDE_CODE_CHILD_SESSION": "1",
+    "CLAUDE_CODE_MESSAGING_SOCKET": "/run/user/1000/cc-socks/calling.sock",
+    "CLAUDE_CODE_MESSAGING_TOKEN": "calling-token",
+    "CLAUDE_CODE_BRIDGE_SESSION_ID": "session_calling",
+    "CLAUDE_CODE_SESSION_ATTENDED": "0",
+    "NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER": "calling-program",
+    "TMUX": "/tmp/tmux-1000/calling-seat,1,0",
+    "TMUX_PANE": "%0",
+    "NEDSCHORUS_HANDOFF_SUPERVISOR_AGENT_NAME": "calling-seat",
+    "NEDSCHORUS_HANDOFF_SUPERVISOR_WORKING_DIRECTORY": "/calling/seat/directory",
+    "NEDSCHORUS_HANDOFF_SUPERVISOR_SESSION_ID": "calling-supervisor-session",
+}
 skips = []
 passes = []
 verdict_reached = False
@@ -258,7 +277,7 @@ def tmux_server_answers(panes_by_socket, tmux_cannot_be_run=False,
         def __init__(self, returncode, stdout=""):
             self.returncode, self.stdout, self.stderr = returncode, stdout, ""
 
-    def fake_run_tmux(*arguments_after_tmux, socket_name=None):
+    def fake_run_tmux(*arguments_after_tmux, socket_name=None, environment=None):
         if tmux_cannot_be_run:
             return None
         if arguments_after_tmux[0] == "has-session":
@@ -983,6 +1002,37 @@ with tempfile.TemporaryDirectory() as temporary:
               launched)
     finally:
         supervisor_module.subprocess.Popen = real_popen
+
+    # A supervisor started by hand from another agent's shell must not hand that agent-session's
+    # variables to the claude it starts; the seat's own tmux variables stay.
+    started_environments = []
+    def environment_recording_popen(argv, cwd=None, env=None):
+        started_environments.append(env)
+        return FakeProcess()
+    saved_environment = {name: os.environ.get(name) for name in CALLING_AGENT_SESSION_TEST_VARIABLES}
+    os.environ.update(CALLING_AGENT_SESSION_TEST_VARIABLES)
+    try:
+        supervisor_module.subprocess.Popen = environment_recording_popen
+        supervisor_module.launch_agent_session("claude", "abc-123", Path("/tmp"), "the prompt")
+    finally:
+        supervisor_module.subprocess.Popen = real_popen
+        for name, value in saved_environment.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
+    started = started_environments[0] if started_environments else {}
+    seat_owned = ("TMUX", "TMUX_PANE", "NEDSCHORUS_HANDOFF_SUPERVISOR_AGENT_NAME",
+                  "NEDSCHORUS_HANDOFF_SUPERVISOR_WORKING_DIRECTORY",
+                  "NEDSCHORUS_HANDOFF_SUPERVISOR_SESSION_ID")
+    leaked = sorted(name for name in CALLING_AGENT_SESSION_TEST_VARIABLES
+                    if name not in seat_owned and name in started)
+    check("the supervisor starts claude without the calling agent-session's variables",
+          started_environments and not leaked, leaked)
+    check("the supervisor starts claude with its own seat's tmux variables and session id",
+          started.get("TMUX") == CALLING_AGENT_SESSION_TEST_VARIABLES["TMUX"]
+          and started.get("NEDSCHORUS_HANDOFF_SUPERVISOR_SESSION_ID") == "abc-123",
+          {name: started.get(name) for name in ("TMUX", "NEDSCHORUS_HANDOFF_SUPERVISOR_SESSION_ID")})
 
     # --- PR #131 review round: the fix-round regressions --------------------
 
@@ -1960,7 +2010,7 @@ with tempfile.TemporaryDirectory() as temporary:
     # supervisor command.
     workspace = Workspace(root / "r18")
     tmux_commands = []
-    def capture_tmux(*arguments_after_tmux, socket_name=None):
+    def capture_tmux(*arguments_after_tmux, socket_name=None, environment=None):
         tmux_commands.append((arguments_after_tmux, socket_name))
         class Done:
             returncode = 0
@@ -1998,6 +2048,63 @@ with tempfile.TemporaryDirectory() as temporary:
           and "abc-123" in box_tokens
           and "--handoff-dir" in box_tokens,
           box_command)
+
+    # A recovery run from another agent-session's shell must not hand that agent-session's
+    # Claude Code, tmux or supervisor variables to the seat it launches, on either branch.
+    saved_environment = {name: os.environ.get(name)
+                         for name in [*CALLING_AGENT_SESSION_TEST_VARIABLES,
+                                      "NEDSCHORUS_TEST_SEAT_KEEPS_THIS"]}
+    os.environ.update(CALLING_AGENT_SESSION_TEST_VARIABLES)
+    os.environ["NEDSCHORUS_TEST_SEAT_KEEPS_THIS"] = "kept"
+    environments_handed_on = {}
+    def capture_tmux_environment(*arguments_after_tmux, socket_name=None, environment=None):
+        # No environment means tmux inherits this process's own.
+        environments_handed_on["box"] = dict(os.environ) if environment is None else environment
+        class Done:
+            returncode = 0
+        return Done()
+    try:
+        recovery.subprocess.run = capture_subprocess_run
+        recovery.launcher_path = lambda: Path("/fake/launch-claude-mac")
+        real_launch_seat(workspace.name, workspace.seat_directory, workspace.handoffs, "")
+        environments_handed_on["mac"] = captured_run["env"]
+        recovery.launcher_path = lambda: None
+        recovery.run_tmux = capture_tmux_environment
+        real_launch_seat(workspace.name, workspace.seat_directory, workspace.handoffs, "")
+    finally:
+        recovery.subprocess.run = real_run
+        recovery.launcher_path = real_launcher_path
+        recovery.run_tmux = real_run_tmux
+        for name, value in saved_environment.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
+    for branch in ("mac", "box"):
+        handed_on = environments_handed_on.get(branch) or {}
+        leaked = sorted(set(CALLING_AGENT_SESSION_TEST_VARIABLES) & set(handed_on))
+        check(f"the {branch} launch branch hands the seat none of the calling "
+              "agent-session's variables",
+              branch in environments_handed_on and not leaked, leaked)
+        check(f"the {branch} launch branch keeps the rest of the caller's environment",
+              handed_on.get("NEDSCHORUS_TEST_SEAT_KEEPS_THIS") == "kept" and "PATH" in handed_on,
+              sorted(handed_on))
+
+    # run_tmux itself must pass the environment it is given to tmux, or the filtered environment
+    # never reaches the tmux server that copies it into the seat's windows.
+    tmux_run_keywords = []
+    def recording_subprocess_run(command, **keywords):
+        tmux_run_keywords.append(keywords)
+        return subprocess.CompletedProcess(command, 0, "", "")
+    handed_to_tmux = {"ONLY_FOR_THE_SEAT": "yes"}
+    recovery.subprocess.run = recording_subprocess_run
+    try:
+        real_run_tmux("new-session", "-d", socket_name="seat", environment=handed_to_tmux)
+    finally:
+        recovery.subprocess.run = real_run
+    check("run_tmux gives tmux the environment it was given",
+          bool(tmux_run_keywords) and tmux_run_keywords[0].get("env") == handed_to_tmux,
+          tmux_run_keywords)
     # nedschorus#141 review F2: this branch composes the supervisor command
     # itself instead of running the launcher, so it must carry the seat
     # environment the launcher would have set. Without it a recovered box
@@ -2360,7 +2467,7 @@ with tempfile.TemporaryDirectory() as temporary:
         all_dead()
         box_tmux_commands = []
 
-        def capture_box_tmux(*arguments_after_tmux, socket_name=None):
+        def capture_box_tmux(*arguments_after_tmux, socket_name=None, environment=None):
             box_tmux_commands.append(arguments_after_tmux)
             return subprocess.CompletedProcess(arguments_after_tmux, 0)
         patch("launcher_path", lambda: None)
@@ -4219,7 +4326,7 @@ with tempfile.TemporaryDirectory() as temporary:
             def __init__(self, returncode, stdout=""):
                 self.returncode, self.stdout, self.stderr = returncode, stdout, ""
 
-        def fake_run_tmux(*arguments_after_tmux, socket_name=None):
+        def fake_run_tmux(*arguments_after_tmux, socket_name=None, environment=None):
             asked = "question" in events
             if asked and after_the_question == "unanswerable":
                 return None

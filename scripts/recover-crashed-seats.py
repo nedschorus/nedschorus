@@ -236,7 +236,7 @@ def harness_project_directory(seat_directory: Path, projects_root: Path) -> Path
     return watcher.project_directory_for_seat(seat_directory, projects_root)
 
 
-def run_tmux(*arguments_after_tmux, socket_name=None):
+def run_tmux(*arguments_after_tmux, socket_name=None, environment=None):
     """Return the tmux result, or None when tmux cannot answer."""
     if shutil.which("tmux") is None:
         return None
@@ -244,7 +244,7 @@ def run_tmux(*arguments_after_tmux, socket_name=None):
     try:
         return subprocess.run(
             ["tmux", *socket_arguments, *arguments_after_tmux],
-            capture_output=True, text=True, timeout=30, check=False,
+            capture_output=True, text=True, timeout=30, check=False, env=environment,
         )
     except (OSError, subprocess.TimeoutExpired):
         return None
@@ -577,7 +577,8 @@ def launch_seat(name: str, seat_directory: Path, handoff_directory: Path,
     """Start the seat detached under its supervisor on its own tmux server."""
     # Pin the assessed agents root and handoff directory so launch defaults cannot select another seat.
     launcher = launcher_path()
-    environment = dict(os.environ)
+    # Recovery often runs from another agent-session's shell, whose variables must not reach the seat.
+    environment = supervisor.agent_seat_launch_environment_without_calling_agent_session_tmux_and_supervisor_variables(os.environ)
     # Each value passes through one shell; shlex.quote preserves apostrophes in paths.
     supervisor_arguments = compose_supervisor_arguments_for_seat_launch(
         handoff_directory, extra_supervisor_arguments)
@@ -611,7 +612,7 @@ def launch_seat(name: str, seat_directory: Path, handoff_directory: Path,
         supervisor_command += f" --first-prompt-file {shlex.quote(str(first_prompt_file))}"
     completed = run_tmux(
         "new-session", "-d", "-s", name, "-c", str(seat_directory),
-        supervisor_command, socket_name=name,
+        supervisor_command, socket_name=name, environment=environment,
     )
     return 1 if completed is None else completed.returncode
 

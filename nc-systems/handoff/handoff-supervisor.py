@@ -184,6 +184,46 @@ HANDOFF_SUPERVISOR_WORKING_DIRECTORY_ENVIRONMENT_VARIABLE = (
 )
 HANDOFF_SUPERVISOR_SESSION_ID_ENVIRONMENT_VARIABLE = "NEDSCHORUS_HANDOFF_SUPERVISOR_SESSION_ID"
 
+# Claude Code (2.1.296) sets these for every command an agent-session runs, and they name that
+# agent-session. An agent that launches or recovers another agent-seat from its own shell would
+# otherwise hand them on: the new agent-session's commits name the wrong session, its messaging
+# points at the caller's socket, and an unattended caller's flag silences the new one's hooks.
+CLAUDE_CODE_AGENT_SESSION_IDENTITY_ENVIRONMENT_VARIABLE_NAMES = frozenset({
+    "CLAUDECODE",
+    "CLAUDE_PID",
+    "CLAUDE_EFFORT",
+    "CLAUDE_REMOTE_CONTROL_SESSION_NAME_PREFIX",
+    "CLAUDE_CODE_SESSION_ID",
+    "CLAUDE_CODE_CHILD_SESSION",
+    "CLAUDE_CODE_MESSAGING_SOCKET",
+    "CLAUDE_CODE_MESSAGING_TOKEN",
+    "CLAUDE_CODE_BRIDGE_SESSION_ID",
+    "CLAUDE_CODE_ENTRYPOINT",
+    "CLAUDE_CODE_EXECPATH",
+    "CLAUDE_CODE_SESSION_ATTENDED",
+})
+
+
+def handoff_supervisor_environment_copy_without_calling_agent_session_variables(environment) -> dict:
+    # The reincarnation variable is this project's own, set for a claude a program starts.
+    calling_only = {*CLAUDE_CODE_AGENT_SESSION_IDENTITY_ENVIRONMENT_VARIABLE_NAMES,
+                    "NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER"}
+    return {name: value for name, value in environment.items() if name not in calling_only}
+
+
+def agent_seat_launch_environment_without_calling_agent_session_tmux_and_supervisor_variables(environment) -> dict:
+    """Return the environment to start an agent-seat's launcher or tmux server with."""
+    # A new tmux server copies its starter's environment into every window, the after-exit shell
+    # included, so the caller's tmux and supervisor variables are dropped here too.
+    caller_only = {"TMUX", "TMUX_PANE",
+                   HANDOFF_SUPERVISOR_AGENT_NAME_ENVIRONMENT_VARIABLE,
+                   HANDOFF_SUPERVISOR_WORKING_DIRECTORY_ENVIRONMENT_VARIABLE,
+                   HANDOFF_SUPERVISOR_SESSION_ID_ENVIRONMENT_VARIABLE}
+    return {name: value
+            for name, value in handoff_supervisor_environment_copy_without_calling_agent_session_variables(
+                environment).items()
+            if name not in caller_only}
+
 # Heartbeat age serves login recovery and diagnostics; live ownership requires a process check.
 HEARTBEAT_INTERVAL_SECONDS = 10.0
 
@@ -1255,7 +1295,8 @@ def launch_agent_session(agent_command: str, session_id: str, working_directory:
         command += ["--append-system-prompt-file", appended_system_prompt_file]
     # The test stub reads the final argument as the prompt, so no flag may follow it.
     command.append(prompt)
-    session_environment = dict(os.environ)
+    # A supervisor started by hand from another agent's shell inherits that agent-session's variables.
+    session_environment = handoff_supervisor_environment_copy_without_calling_agent_session_variables(os.environ)
     session_environment[HANDOFF_SUPERVISOR_AGENT_NAME_ENVIRONMENT_VARIABLE] = handoff_supervisor_agent_name
     session_environment[HANDOFF_SUPERVISOR_WORKING_DIRECTORY_ENVIRONMENT_VARIABLE] = str(working_directory)
     session_environment[HANDOFF_SUPERVISOR_SESSION_ID_ENVIRONMENT_VARIABLE] = session_id

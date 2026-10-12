@@ -400,7 +400,8 @@ def main(argv=None) -> int:
     sys.stdout.flush()
     sys.stderr.flush()
     # Forward the directories checked above so launch cannot switch seats; quote for the launcher's one shell parse.
-    environment = dict(os.environ)
+    # This often runs from another agent-session's shell, whose variables must not reach the seat.
+    environment = supervisor.agent_seat_launch_environment_without_calling_agent_session_tmux_and_supervisor_variables(os.environ)
     environment["NEDSCHORUS_AGENTS_ROOT"] = str(agents_root)
     environment["LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS"] = (
         f"--handoff-dir {shlex.quote(str(handoff_directory))}")
