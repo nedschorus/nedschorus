@@ -14,8 +14,7 @@ it do not hide it. A simple command that starts with echo or printf is data.
 tmux's options are read the way tmux's getopt reads them, grouped flags and
 redirections included, and every command of a tmux command sequence is
 checked. Commands run by ssh, bash -c, eval or a script file are outside this
-guard's scope. Message guide:
-docs/nedschorus-wiki/nedschorus-how-to-write-the-refusal-warning-or-reminder-a-program-hands-an-agent.md
+guard's scope.
 """
 
 import importlib.util
@@ -45,7 +44,7 @@ DATA_PRINTING_PROGRAMS = ("echo", "printf")
 SHELL_EXPANSION_PATTERN = re.compile(r"[$`*?\[]")
 REDIRECTION_WORD_PATTERN = re.compile(r"^[0-9]*(?:>>|>&|>|<<<|<>|<)")
 
-# tmux's getopt string is "2c:CDdf:lL:NqS:T:uUvV": these letters take a value.
+# tmux's getopt string is "2c:CDdf:hlL:NqS:T:uUvV": these letters take a value.
 TMUX_SERVER_NAMING_LETTERS = "LS"
 TMUX_OTHER_VALUE_LETTERS = "cfT"
 
@@ -59,7 +58,7 @@ REFUSAL_WITH_COMMAND_TEMPLATE = (
     "Killing it ends that agent-seat, its supervisor and every agent under "
     "it, you included. TMUX_TMPDIR does not change which server is meant "
     "while $TMUX is set.\n"
-    "To kill the private server whose socket lives under {tmpdir}, run:\n"
+    "To run it on the private server whose socket lives under {tmpdir}, run:\n"
     "{command}\n"
     "From now on, name the server in every tmux command you run, with "
     "-S <socket path> or -L <name> right after tmux, from the command that "
@@ -74,7 +73,8 @@ REFUSAL_WITHOUT_COMMAND_MESSAGE = (
     "its supervisor and every agent under it, you included.\n"
     "If you started a tmux server of your own, run the same command with "
     "-S <socket path> or -L <name> right after tmux, naming that server, as "
-    "in: tmux -L my-server kill-server\n"
+    "in: tmux -L my-server kill-server, or: tmux -L my-server kill-session "
+    "-t my-session\n"
     "If you started a session with a tmux command that named no server, that "
     "session is on your agent-seat's server: do not kill it with tmux. If "
     "the program you started in it must stop, stop that program with kill "

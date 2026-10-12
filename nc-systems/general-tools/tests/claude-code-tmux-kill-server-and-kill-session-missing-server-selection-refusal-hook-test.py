@@ -115,6 +115,10 @@ def refusal_cases():
         "after env -C and its value": "env -C /tmp tmux kill-server",
         "a full path to tmux": "/usr/bin/tmux kill-server",
         "a value flag skipped before the command": "tmux -f /dev/null kill-server",
+        "a value joined to -f": "tmux -f/tmp/x.conf kill-server",
+        "a value joined to -c": "tmux -c/bin/sh kill-server",
+        "a value joined to -T": "tmux -TRGB kill-server",
+        "-- before the command": "tmux -- kill-server",
         "a grouped flag whose last letter takes a value": "tmux -2f /dev/null kill-server",
         "a redirection before the command": "tmux 2>/dev/null kill-server",
         "a redirection written apart, before the command": "tmux 2> /dev/null kill-server",
@@ -140,6 +144,7 @@ def allow_cases():
         "a session whose name starts with kill": "tmux -L x new -d -s kill-session-demo",
         "kill-server as the value of -f": "tmux -f kill-server list-sessions",
         "another tmux command": "tmux list-sessions",
+        "tmux with flags and no command": "tmux -2u",
         "kill-pane is not a server or session kill": "tmux kill-pane -t x",
         "kill-server inside a heredoc body that ends at its own delimiter":
             "cat > probes.txt <<'EOF'\ntmux kill-server\nEOF\n",
@@ -211,6 +216,12 @@ def message_cases():
               bare is not None and line in bare, repr(bare))
     check("bare kill-server: its example command passes the guard",
           run_main("tmux -L my-server kill-server") is None)
+    check("the refusal gives a kill-session example too, and it passes the guard",
+          "tmux -L my-server kill-session -t my-session" in guard.REFUSAL_WITHOUT_COMMAND_MESSAGE
+          and run_main("tmux -L my-server kill-session -t my-session") is None,
+          repr(guard.REFUSAL_WITHOUT_COMMAND_MESSAGE))
+    check("with TMUX_TMPDIR, the line before a kill-session command does not call it a server kill",
+          kept_clear is not None and "To kill the private server" not in kept_clear, repr(kept_clear))
     chained = run_main("TMUX_TMPDIR=/tmp/a tmux new -d \\; kill-server")
     check("a chained kill gets no computed command", chained == guard.REFUSAL_WITHOUT_COMMAND_MESSAGE,
           repr(chained))
