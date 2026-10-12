@@ -864,6 +864,39 @@ with tempfile.TemporaryDirectory() as scratch:
           and confirmed[0].partition(":")[0] != announced[-1].partition(":")[0]
           if confirmed and announced else False, "\n".join(seen))
 
+# git worktree list without -z ends each attribute at a newline, so a newline
+# in a worktree path or a lock reason was read as the start of another line.
+with tempfile.TemporaryDirectory() as scratch:
+    scratch = Path(scratch)
+    checkout = scratch / "checkout"
+    checkout.mkdir()
+    git(checkout, "init", "-b", "main")
+    git(checkout, "config", "user.email", "test@test.invalid")
+    git(checkout, "config", "user.name", "clean-worktrees test")
+    (checkout / "README.md").write_text("# scratch\n", encoding="utf-8")
+    git(checkout, "add", "-A")
+    git(checkout, "commit", "-m", "seed")
+    git(checkout, "update-ref", "refs/remotes/origin/main", "HEAD")
+    git(checkout, "branch", "unattached-landed")
+    newline_path = scratch / "two\nlines-wt"
+    git(checkout, "worktree", "add", "-b", "newline-branch", str(newline_path), "HEAD")
+    git(checkout, "worktree", "lock", "--reason",
+        "held\nbranch refs/heads/unattached-landed", str(newline_path))
+    gone_path = scratch / "gone-wt"
+    git(checkout, "worktree", "add", "-b", "gone-branch", str(gone_path), "HEAD")
+    shutil.rmtree(gone_path)
+    module = load_clean_worktrees_module()
+    listed = module.list_worktrees(checkout, checkout)
+    check("a worktree path holding a newline is listed whole, with its branch",
+          (newline_path, "newline-branch") in listed, str(listed))
+    orphaned = module.branch_refs_with_no_worktree_fully_on_main(checkout)
+    check("a lock reason that reads like a branch line does not attach that branch",
+          "unattached-landed" in orphaned, str(orphaned))
+    dead = module.dead_worktree_registrations(checkout)
+    check("a prunable registration is reported with git's reason",
+          [path for path, reason in dead] == [str(gone_path)] and dead[0][1] != "no reason given",
+          str(dead))
+
 print()
 if failures:
     print(f"{len(failures)} case(s) failed: {', '.join(failures)}")
