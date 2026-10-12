@@ -74,12 +74,12 @@ MAC_DAILY_PLIST = {
     "StandardOutPath": "/Users/el/.claude/daily-full-test-run-of-main.log",
     "StandardErrorPath": "/Users/el/.claude/daily-full-test-run-of-main.log",
 }
-# The daily worktree cleanup, added to the table after the two jobs above; no
-# machine had it installed by hand.
 NED_BOX_SESSION_DIALOGS_LINE = (
     "*/10 * * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/scripts/"
     "log-store-session-dialogs-refresh.py --failures-only >> "
     "/home/nedlern/.claude/log-store-session-dialogs-refresh.log 2>&1")
+# The daily worktree cleanup, added to the table after the two jobs above; no
+# machine had it installed by hand.
 NED_BOX_CLEAN_LINE = (
     "30 6 * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/scripts/"
     "clean-worktrees.py --remove >> /home/nedlern/.claude/daily-clean-worktrees.log 2>&1")

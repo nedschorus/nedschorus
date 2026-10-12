@@ -12,12 +12,17 @@ tests never read or write the real log-store.
 import fcntl
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 SCRIPT_PATH = Path(__file__).with_name("log-store-session-dialogs-refresh.py")
+EXTRACTOR_PATH = Path(__file__).with_name("handoff-extract-conversation.py")
+# The transcripts' times are set after the extractor's, so a dialog's time is its transcript's.
+LATER_THAN_THE_EXTRACTOR = int(max(time.time(), EXTRACTOR_PATH.stat().st_mtime)) + 1000
 STORE_ROOT_VARIABLE = "LOG_STORE_SESSION_DIALOGS_REFRESH_LOG_STORE_ROOT_OVERRIDE"
 
 failures = []
@@ -31,9 +36,9 @@ def check(case_name, condition, detail=""):
         failures.append(case_name)
 
 
-def run(store_root, *arguments):
+def run(store_root, *arguments, script_path=SCRIPT_PATH):
     environment = dict(os.environ, **{STORE_ROOT_VARIABLE: str(store_root)})
-    return subprocess.run([sys.executable, str(SCRIPT_PATH), *arguments], capture_output=True,
+    return subprocess.run([sys.executable, str(script_path), *arguments], capture_output=True,
                           text=True, env=environment, check=False)
 
 
@@ -76,7 +81,7 @@ with tempfile.TemporaryDirectory() as workspace:
     write_transcript(store, "mac", "-Users-someone-project/s-mac/subagents", "agent-a0000000000000001",
                      conversation("subagent's own turn"))
     for path in (mac_transcript, box_transcript, empty_transcript):
-        os.utime(path, (1_700_000_000, 1_700_000_000))
+        os.utime(path, (LATER_THAN_THE_EXTRACTOR, LATER_THAN_THE_EXTRACTOR))
 
     first = run(store)
     mac_dialog = dialog_path(store, "mac", "-Users-someone-project", "s-mac")
@@ -108,7 +113,7 @@ with tempfile.TemporaryDirectory() as workspace:
 
     with mac_transcript.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps({"type": "user", "message": {"content": "a later question"}}) + "\n")
-    os.utime(mac_transcript, (1_700_000_600, 1_700_000_600))
+    os.utime(mac_transcript, (LATER_THAN_THE_EXTRACTOR + 600, LATER_THAN_THE_EXTRACTOR + 600))
     third = run(store, "--failures-only")
     check("a transcript that grew is written again, quietly under --failures-only",
           third.returncode == 0 and third.stdout == ""
@@ -150,6 +155,38 @@ with tempfile.TemporaryDirectory() as workspace:
           (held_quiet.returncode, held_quiet.stdout))
     check("without --failures-only the held lock is named",
           held_loud.returncode == 3 and "another run holds" in held_loud.stdout, held_loud.stdout)
+
+    # A project directory that cannot be listed is a failure, not a pass with nothing in it.
+    hidden_project = store / "transcripts" / "mac" / "projects" / "-Users-hidden-project"
+    write_transcript(store, "mac", "-Users-hidden-project", "s-hidden", conversation("hidden project"))
+    hidden_project.chmod(0)
+    try:
+        unlistable = run(store, "--failures-only")
+    finally:
+        hidden_project.chmod(0o755)
+    if os.geteuid() == 0:
+        print("SKIP  an unlistable directory: root lists every directory, so no failure can be caused")
+    else:
+        check("a directory of transcripts that cannot be listed prints a FAILED line naming it, "
+              "and the pass exits 1",
+              unlistable.returncode == 1 and f"FAILED: cannot list {hidden_project}" in unlistable.stdout,
+              (unlistable.returncode, unlistable.stdout, unlistable.stderr))
+
+    # A change to the extractor rewrites every dialog once, even of a transcript that never changes again.
+    programs = Path(workspace) / "programs"
+    programs.mkdir()
+    script_copy = programs / SCRIPT_PATH.name
+    shutil.copy2(SCRIPT_PATH, script_copy)
+    shutil.copy2(EXTRACTOR_PATH, programs / EXTRACTOR_PATH.name)
+    settled = run(store, "--failures-only", script_path=script_copy)
+    newer = LATER_THAN_THE_EXTRACTOR + 5000
+    os.utime(programs / EXTRACTOR_PATH.name, (newer, newer))
+    rewritten = run(store, script_path=script_copy)
+    check("after the extractor changes, a pass rewrites the dialogs of unchanged transcripts",
+          settled.returncode == 0 and rewritten.returncode == 0
+          and "wrote 0 session dialogs" not in rewritten.stdout
+          and box_dialog.stat().st_mtime_ns == newer * 1_000_000_000,
+          (settled.stdout, rewritten.stdout, box_dialog.stat().st_mtime_ns))
 
     no_transcripts = Path(workspace) / "empty-store"
     no_transcripts.mkdir()

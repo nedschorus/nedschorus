@@ -24,18 +24,20 @@ one pass behind its transcript, and an ended session's dialog is there whether
 or not a handoff wrote one. The subagents' own transcripts under
 `<session-id>/subagents/` are read only through the session's own records.
 
-WHEN A DIALOG IS WRITTEN. When there is none yet, or the transcript's
-modification time is later than the dialog's. Each dialog written is given its
-transcript's modification time as read before the transcript was read, so a
-transcript that grows while it is being read is written again on the next
-pass, and an unchanged one is never read twice. rsync -a keeps each
+WHEN A DIALOG IS WRITTEN. When there is none yet, or the later of the
+transcript's and the extractor's modification times is later than the
+dialog's. Each dialog written is given that later time as read before the
+transcript was read, so a transcript that grows while it is being read is
+written again on the next pass, an unchanged one is never read twice, and a
+change to the extractor rewrites every dialog once. rsync -a keeps each
 transcript's own time, which is what makes the comparison hold across the
 mirror. A transcript with no dialog in it still gets a dialog, one saying it
 holds no turns, so it is not read again until it changes.
 
-OUTPUT AND FAILURE. A transcript that cannot be read, or a dialog that cannot
-be written, prints a line opening FAILED naming the transcript and the error,
-and the pass goes on to the next; the exit is then 1. A store with no
+OUTPUT AND FAILURE. A transcript that cannot be read, a directory of
+transcripts that cannot be listed, or a dialog that cannot be written, prints
+a line opening FAILED naming the path and the error, and the pass goes on to
+the next; the exit is then 1. A store with no
 transcripts/ directory is FAILED too: on ned-box that means the store is not
 where this program looks. Without --failures-only a pass ends with one line
 counting the dialogs written, the ones already current, and the failures.
@@ -88,23 +90,46 @@ def store_root() -> pathlib.Path:
     return pathlib.Path(os.environ.get(STORE_ROOT_ENVIRONMENT_VARIABLE) or LOG_STORE_ROOT)
 
 
-def session_transcripts(transcripts_directory: pathlib.Path):
-    """Yield (machine, project key, transcript path) for every mirrored session transcript."""
-    for transcript in sorted(transcripts_directory.glob("*/projects/*/*.jsonl")):
-        project_directory = transcript.parent
-        yield project_directory.parent.parent.name, project_directory.name, transcript
+def sorted_entries(directory: pathlib.Path, unlisted: list):
+    """Return the directory's entries, sorted, or none, adding (directory, error) to unlisted when it cannot be listed."""
+    # Path.glob skips a directory it cannot list without saying so, which would leave its sessions undialogued unseen.
+    try:
+        return sorted(directory.iterdir())
+    except OSError as error:
+        unlisted.append((directory, error))
+        return []
+
+
+def session_transcripts(transcripts_directory: pathlib.Path, unlisted: list):
+    """Yield (machine, project key, transcript path) for every mirrored session transcript.
+
+    Each directory on the way that cannot be listed is added to unlisted as (directory, error).
+    """
+    for machine_directory in sorted_entries(transcripts_directory, unlisted):
+        projects_directory = machine_directory / "projects"
+        if not projects_directory.is_dir():
+            continue
+        for project_directory in sorted_entries(projects_directory, unlisted):
+            if not project_directory.is_dir():
+                continue
+            for transcript in sorted_entries(project_directory, unlisted):
+                if transcript.suffix == ".jsonl" and transcript.is_file():
+                    yield machine_directory.name, project_directory.name, transcript
 
 
 def refresh_one(extractor, transcript: pathlib.Path, dialog: pathlib.Path) -> bool:
-    """Write the transcript's dialog when it is missing or older; return whether it was written."""
-    transcript_modified = transcript.stat().st_mtime_ns
-    if dialog.exists() and dialog.stat().st_mtime_ns >= transcript_modified:
+    """Write the transcript's dialog when it is missing or older than the transcript or the extractor.
+
+    Return whether it was written.
+    """
+    source_modified = max(transcript.stat().st_mtime_ns, EXTRACTOR_PATH.stat().st_mtime_ns)
+    if dialog.exists() and dialog.stat().st_mtime_ns >= source_modified:
         return False
     text = extractor.render_complete_dialog_of_transcript_as_markdown(transcript)
     dialog.parent.mkdir(parents=True, exist_ok=True)
     partial = dialog.with_name(dialog.name + ".partial")
     partial.write_text(text, encoding="utf-8")
-    os.utime(partial, ns=(transcript_modified, transcript_modified))
+    os.utime(partial, ns=(source_modified, source_modified))
     os.replace(partial, dialog)
     return True
 
@@ -112,12 +137,14 @@ def refresh_one(extractor, transcript: pathlib.Path, dialog: pathlib.Path) -> bo
 def refresh_all(root: pathlib.Path, failures_only: bool) -> int:
     transcripts_directory = root / TRANSCRIPTS_DIRECTORY_NAME
     if not transcripts_directory.is_dir():
-        print(f"FAILED: no {transcripts_directory} directory to read transcripts from")
+        print(f"FAILED: no {transcripts_directory} directory to read transcripts from; "
+              "scripts/transcript-mirror-to-log-store.py creates it on its first pass")
         return EXIT_FAILED
     extractor = load_extractor()
     dialogs_directory = root / SESSION_DIALOGS_DIRECTORY_NAME
     written = current = failed = 0
-    for machine, project_key, transcript in session_transcripts(transcripts_directory):
+    unlisted = []
+    for machine, project_key, transcript in session_transcripts(transcripts_directory, unlisted):
         dialog = dialogs_directory / machine / project_key / f"{transcript.stem}{SESSION_DIALOG_SUFFIX}"
         try:
             if refresh_one(extractor, transcript, dialog):
@@ -128,6 +155,10 @@ def refresh_all(root: pathlib.Path, failures_only: bool) -> int:
             # One unreadable transcript must not keep every other session's dialog stale.
             failed += 1
             print(f"FAILED: {transcript} — {type(error).__name__}: {error}")
+    for directory, error in unlisted:
+        failed += 1
+        print(f"FAILED: cannot list {directory}, so its sessions get no dialog — "
+              f"{type(error).__name__}: {error}; make it readable by this user")
     if not failures_only:
         print(f"{PROGRAM}: wrote {written} session dialogs, {current} already current, "
               f"{failed} failed, under {dialogs_directory}")

@@ -887,6 +887,71 @@ with tempfile.TemporaryDirectory() as workspace:
     check("the complete dialog of a transcript with no dialog says it holds no turns",
           "All 0 dialog turns" in extractor.render_complete_dialog_of_transcript_as_markdown(path))
 
+# Fix-round cases: a repeated report after a SendMessage, the interim notice, and the tail's shared budget.
+with tempfile.TemporaryDirectory() as workspace:
+    # Two reviews by one agent, the second after a SendMessage, that both report the same words.
+    repeated = [
+        user_record("review it twice"),
+        agent_call("toolu_rv", "Review", "Review the change."),
+        launched("toolu_rv", "a1212121212121212"),
+        *every_copy_of(notification("a1212121212121212", "toolu_rv", "Review", "No findings.")),
+        tool_call("toolu_again", "SendMessage", {"to": "a1212121212121212", "message": "Review the fix."}),
+        *every_copy_of(notification("a1212121212121212", "toolu_again", "Review", "No findings.")),
+        assistant_record("Clean twice."),
+    ]
+    path = write_transcript(workspace, "sub-repeated.jsonl", repeated)
+    turns, _ = extractor.read_dialog_turns(path, include_subagent_tasks_and_reports=True)
+    check("an identical report after a SendMessage to the same agent is a new report, carried again, "
+          "while each report's four copies are carried once",
+          [kind for kind, *_ in subagent_turns_of(turns)] == ["task", "report", "follow-up", "report"],
+          subagent_turns_of(turns))
+
+    # A subagent waiting on its own background work: the interim notice is not its report.
+    interim = ("This agent has not reported yet: it is waiting on its own background work and will "
+               "deliver its report through SubagentHandback when that finishes.")
+    waiting = [
+        user_record("start the long job"),
+        agent_call("toolu_wait", "Long job", "Run it."),
+        launched("toolu_wait", "a1313131313131313"),
+        *every_copy_of(notification("a1313131313131313", "toolu_wait", "Long job", interim)),
+        assistant_record("Waiting."),
+        *handback_copies("a1313131313131313", "Done: all green."),
+    ]
+    path = write_transcript(workspace, "sub-interim.jsonl", waiting)
+    turns, skips = extractor.read_dialog_turns(path, include_subagent_tasks_and_reports=True)
+    check("the interim notice of a subagent still waiting is not carried as its report; the real report is",
+          [(kind, text) for kind, _, _, _, text in subagent_turns_of(turns)]
+          == [("task", "Run it."), ("report", "Done: all green.")],
+          subagent_turns_of(turns))
+    check("the agent's reply to an interim notice is kept, not dropped as an acknowledgement",
+          "Waiting." in [turn["text"] for turn in turns] and skips["acknowledgement"] == 0,
+          ([turn["text"] for turn in turns], skips))
+
+    # The tail's subagent texts share one budget, newest first; each keeps at least the minimum.
+    def words(label, count):
+        return " ".join([label] * count)
+    budget_session = [user_record("dispatch three"),
+                      agent_call("toolu_b1", "First", words("first", 900)),
+                      agent_call("toolu_b2", "Second", words("second", 900)),
+                      agent_call("toolu_b3", "Third", words("third", 300)),
+                      assistant_record(words("closing", 80))]
+    path = write_transcript(workspace, "sub-budget.jsonl", budget_session)
+    turns, skips = extractor.read_dialog_turns(path, include_subagent_tasks_and_reports=True)
+    tail_text = extractor.render_extraction(turns, extractor.ExtractionReport(
+        "s", path, "", 0, len(turns), skips))
+    check("the newest subagent text in the tail is whole, the next takes what the budget leaves, "
+          "and the oldest keeps the minimum, each cut one saying where the whole text is",
+          tail_text.count("third") == 300
+          and tail_text.count("second") == extractor.SUBAGENT_TAIL_WORDS_IN_ALL - 300
+          and tail_text.count("first") == extractor.MINIMUM_SUBAGENT_TAIL_WORDS
+          and tail_text.count("[Cut here: ") == 2,
+          (tail_text.count("third"), tail_text.count("second"), tail_text.count("first")))
+    complete_text = extractor.render_companion(turns, extractor.ExtractionReport(
+        "s", path, "", 0, len(turns), skips))
+    check("the complete dialog keeps every subagent text whole",
+          complete_text.count("first") == 900 and complete_text.count("second") == 900
+          and "[Cut here" not in complete_text)
+
 print()
 if failures:
     print(f"{len(failures)} case(s) failed: {', '.join(failures)}")

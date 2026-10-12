@@ -44,12 +44,15 @@ transcript, and each is carried once: a foreground agent's tool result; a
 <agent-message> hand-back (the SubagentHandback tool), whose report the
 harness frames and indents; and an <agent-message> a running subagent sent
 its session. A launch notice is dropped, and so is a notification whose
-result only says the report came as a hand-back. Because a report answers
+result only says the report came as a hand-back or will come later. The
+copies of one report are carried once; a report repeated after a SendMessage
+to the same subagent is a new report, carried again. Because a report answers
 the session, the agent's short reply to one is kept, not dropped as an
-acknowledgement. Subagent turns do not count toward the word floor, and in
-the tail a subagent text longer than MAXIMUM_SUBAGENT_TAIL_WORDS is cut there
-with a note saying where the whole text is; the complete dialog keeps every
-one whole. read_dialog_turns returns subagent turns only when asked, so its
+acknowledgement. Subagent turns do not count toward the word floor. In the
+tail, which the successor reads first, the subagent texts share
+SUBAGENT_TAIL_WORDS_IN_ALL, newest first, and each keeps at least
+MINIMUM_SUBAGENT_TAIL_WORDS; a text cut there carries a note saying where the
+whole text is. The complete dialog keeps every one whole. read_dialog_turns returns subagent turns only when asked, so its
 other callers keep the two voices they expect.
 
 Alongside the extraction, when it leaves turns behind, the complete filtered
@@ -101,9 +104,15 @@ SUBAGENT_NOTIFICATION_SUMMARY_PREFIXES = ('Agent "', 'Background agent "', 'Dyna
 HANDBACK_FRAME_OPENING = "[Subagent hand-back]"
 HANDBACK_FRAME_END = "The report follows:"
 REPORT_SENT_AS_HANDBACK_PREFIX = "This agent's report was delivered to you as a message"
+# A notification sent while a subagent waits on its own background work; its report comes later.
+REPORT_NOT_YET_SENT_PREFIX = "This agent has not reported yet"
+RESULTS_THAT_ARE_NOT_REPORTS = (REPORT_SENT_AS_HANDBACK_PREFIX, REPORT_NOT_YET_SENT_PREFIX)
 LAUNCH_NOTICE_PREFIXES = ("Async agent launched", "Workflow launched")
-# Measured on 1,526 reports in the Mac's transcripts: 98% are shorter; the longest ran to 15,088 words.
-MAXIMUM_SUBAGENT_TAIL_WORDS = 3000
+# Measured on the 379 transcripts with subagent turns in the log-store's mirror: with 3,000 words
+# for each text one tail reached 50,616 words; with these, the longest is 14,602 and the 90th
+# percentile 6,342, against 13,039 and 4,704 for the same tails without subagent turns.
+SUBAGENT_TAIL_WORDS_IN_ALL = 1000
+MINIMUM_SUBAGENT_TAIL_WORDS = 50
 
 
 class TranscriptProblem(Exception):
@@ -283,14 +292,9 @@ def handback_report_text(framed: str) -> str:
     _, found, after = framed.partition(HANDBACK_FRAME_END)
     if not found:
         return framed.strip()
-    report_lines = []
-    for line in after.lstrip("\n").split("\n"):
-        # The harness indents every report line by two spaces; its own text after the report is not indented.
-        if line.startswith("  ") or not line.strip():
-            report_lines.append(line[2:])
-        else:
-            break
-    return "\n".join(report_lines).strip()
+    # The harness indents every report line by two spaces.
+    return "\n".join(line[2:] if line.startswith("  ") else line
+                     for line in after.lstrip("\n").split("\n")).strip()
 
 
 def tool_result_text(block) -> str:
@@ -321,6 +325,7 @@ class SubagentTracker:
         self.subagent_by_agent_id = {}
         self.skill_by_tool_use_id = {}
         self.carried_report_keys = set()
+        self.follow_ups_sent_by_agent_id = {}
 
     def subagent_for_agent_id(self, agent_id: str) -> dict:
         subagent = self.subagent_by_agent_id.get(agent_id)
@@ -331,7 +336,7 @@ class SubagentTracker:
 
     def turns_from_record(self, record):
         """Return (new subagent turns, whether the record carried a subagent report at all)."""
-        if not isinstance(record, dict) or record.get("isSidechain"):
+        if not isinstance(record, dict):
             return [], False
         turns = []
         carried_report = False
@@ -384,6 +389,7 @@ class SubagentTracker:
             if not isinstance(message, str):
                 message = tool_input.get("content")
             if recipient in self.subagent_by_agent_id and isinstance(message, str):
+                self.follow_ups_sent_by_agent_id[recipient] = self.follow_ups_sent_by_agent_id.get(recipient, 0) + 1
                 return [self.turn(self.subagent_by_agent_id[recipient], "follow-up", message)]
         return []
 
@@ -426,8 +432,6 @@ class SubagentTracker:
             text = handback["text"]
         elif isinstance(result.get("content"), list):
             text = tool_result_text({"content": result["content"]})
-        if text.lstrip().startswith(REPORT_SENT_AS_HANDBACK_PREFIX):
-            return [], True
         return self.report_turns(subagent, text, status or "completed"), True
 
     def turns_from_harness_text(self, text: str, record):
@@ -451,7 +455,7 @@ class SubagentTracker:
                 subagent["description"] = quoted.group(1) if quoted else summary
             carried_report = True
             report = notification_tag(body, "result")
-            if report.startswith(REPORT_SENT_AS_HANDBACK_PREFIX):
+            if report.startswith(RESULTS_THAT_ARE_NOT_REPORTS):
                 continue
             status = notification_tag(body, "status") or "completed"
             report = report or summary
@@ -481,8 +485,11 @@ class SubagentTracker:
         return turns, carried_report
 
     def report_turns(self, subagent, text: str, status: str, kind="report"):
-        """Return the report as a turn, or no turn when an earlier copy was already carried."""
-        key = (subagent.get("agent_id") or id(subagent), kind, " ".join(text.split()), status)
+        """Return the report as a turn, or no turn when an earlier copy of the same delivery was carried."""
+        agent_id = subagent.get("agent_id")
+        # The harness copies one delivery up to four times; a SendMessage starts a new delivery.
+        key = (agent_id or id(subagent), self.follow_ups_sent_by_agent_id.get(agent_id, 0),
+               kind, " ".join(text.split()), status)
         if key in self.carried_report_keys:
             return []
         self.carried_report_keys.add(key)
@@ -674,16 +681,33 @@ SUBAGENT_HEADINGS = {
 
 
 def text_within_word_limit(text: str, maximum_words: int):
-    """Return (the whole lines of text that fit maximum_words, the number of words left out)."""
+    """Return (the whole lines of text that fit maximum_words, or the first line cut to it, and the number of words left out)."""
     kept_lines = []
     kept_words = 0
     for line in text.split("\n"):
         line_words = len(line.split())
         if kept_words + line_words > maximum_words:
+            if not kept_words:
+                # A first line longer than the limit is cut at the limit, so the text never shows empty.
+                kept_lines.append(" ".join(line.split()[:maximum_words]))
+                kept_words = maximum_words
             break
         kept_lines.append(line)
         kept_words += line_words
     return "\n".join(kept_lines).rstrip(), len(text.split()) - kept_words
+
+
+def subagent_tail_word_limits(turns) -> dict:
+    """Return each subagent turn's word limit in the tail, by index: newest first, from one shared budget."""
+    limits = {}
+    budget = SUBAGENT_TAIL_WORDS_IN_ALL
+    for index in range(len(turns) - 1, -1, -1):
+        if turns[index]["voice"] != SUBAGENT_VOICE:
+            continue
+        limit = max(MINIMUM_SUBAGENT_TAIL_WORDS, budget)
+        limits[index] = limit
+        budget = max(0, budget - min(limit, len(turns[index]["text"].split())))
+    return limits
 
 
 def render_turn(turn, report: ExtractionReport, maximum_subagent_words=None) -> list:
@@ -741,8 +765,9 @@ def render_extraction(turns, report: ExtractionReport) -> str:
 
     lines += ["", "---", ""]
 
-    for turn in turns:
-        lines += render_turn(turn, report, MAXIMUM_SUBAGENT_TAIL_WORDS)
+    limits = subagent_tail_word_limits(turns)
+    for index, turn in enumerate(turns):
+        lines += render_turn(turn, report, limits.get(index))
 
     lines += ["---", "", "Need more than this?"]
     lines += render_pointers(report)
