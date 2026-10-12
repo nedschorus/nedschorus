@@ -2097,11 +2097,16 @@ with tempfile.TemporaryDirectory() as temporary:
         tmux_run_keywords.append(keywords)
         return subprocess.CompletedProcess(command, 0, "", "")
     handed_to_tmux = {"ONLY_FOR_THE_SEAT": "yes"}
+    # run_tmux returns before subprocess.run when tmux is not on PATH; stubbing the lookup keeps
+    # this case meaningful on a host without tmux.
+    real_which = recovery.shutil.which
     recovery.subprocess.run = recording_subprocess_run
+    recovery.shutil.which = lambda program: f"/usr/bin/{program}"
     try:
         real_run_tmux("new-session", "-d", socket_name="seat", environment=handed_to_tmux)
     finally:
         recovery.subprocess.run = real_run
+        recovery.shutil.which = real_which
     check("run_tmux gives tmux the environment it was given",
           bool(tmux_run_keywords) and tmux_run_keywords[0].get("env") == handed_to_tmux,
           tmux_run_keywords)
