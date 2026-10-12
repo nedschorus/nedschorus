@@ -179,6 +179,16 @@ def commit_files(repository, files, message="Add the files"):
     git(repository, "commit", "-q", "-m", message)
 
 
+def box_log_store_prune(base):
+    """The production log-store surface's prune list, moved under
+    `base/box/logs`, so a case tests what production leaves out."""
+    production = next(surface for surface in program.NED_BOX_SURFACES["surfaces"]
+                      if surface["name"] == "log-store")
+    return [str(base / "box" / "logs"
+                / os.path.relpath(path, production["roots"][0]))
+            for path in production["prune"]]
+
+
 def make_plan(base, other="ssh", timeout_seconds=20, extra_mac_roots=()):
     """Both machines' plans under `base`, laid out as production lays them
     out: this repository's main clone is <machine>/Projects/nedschorus, seat
@@ -204,7 +214,7 @@ def make_plan(base, other="ssh", timeout_seconds=20, extra_mac_roots=()):
                    str(base / "box" / "tmp")],
          "git": True},
         {"name": "log-store", "roots": [str(base / "box" / "logs")],
-         "prune": [str(base / "box" / "logs" / "transcripts")]},
+         "prune": box_log_store_prune(base)},
         {"name": "handoffs", "roots": [str(base / "box" / "handoffs")]},
     ], "this_repository": {
         "clones": [str(base / "box" / "Projects" / "nedschorus")],
@@ -338,7 +348,8 @@ with scratch() as directory:
     write(base / "box/logs/seats/x/report-draft-from-origin-x.md", "gamma",
           NOW - 10)
     write(base / "box/handoffs/report-draft-handoff.md", "zeta", NOW - 20)
-    write(base / "box/logs/transcripts/report-draft.md", "delta")
+    write(base / "box/logs/transcripts/mac/projects/-Users-el-x/report-draft.md",
+          "delta")
     write(base / "mac/agents/seat-a/node_modules/pkg/report-draft.md", "eps")
     write(base / "mac/Projects/old/.git/report-draft-in-git-dir.md", "eta")
     write(base / "mac/Projects/a-report-draft-dir/notes.md", "theta")
@@ -372,7 +383,8 @@ with scratch() as directory:
           "/box/handoffs/report-draft-handoff.md" in other, other)
     check("each entry carries its size",
           "(5 bytes)" in stdout and "(4 bytes)" in stdout, stdout)
-    check("the log-store's transcripts directory is not searched",
+    check("the session transcripts in the log-store's transcript mirror are "
+          "not searched",
           "/box/logs/transcripts/" not in same + other, stdout)
     check("a node_modules tree is not searched",
           "node_modules" not in same + other, stdout)
@@ -388,7 +400,8 @@ with scratch() as directory:
           "log-store's exception",
           "mac checkouts:" in searched and "mac handoffs:" in searched
           and "ned-box log-store:" in searched
-          and f"except {base / 'box/logs/transcripts'}" in searched
+          and all(f"except {path}" in searched
+                  for path in box_log_store_prune(base))
           and "ned-box handoffs:" in searched and "mac git:" in searched,
           searched)
     check("a complete search prints no instruction to tell the user anything",
@@ -402,6 +415,36 @@ with scratch() as directory:
           and first[4] == FAKE_BOX
           and first[5].startswith("python3 - --this-machine-json "),
           argv_log)
+
+# --- The transcript mirror's copies in the log-store ----------------------------
+# transcript-mirror-to-log-store.py never deletes, so its copies of task lists,
+# seat-briefs, the global CLAUDE.md and handoffs can be the only ones left.
+with scratch() as directory:
+    base = pathlib.Path(directory)
+    make_stand_in_bin(base)
+    mirror = base / "box/logs/transcripts"
+    write(mirror / "mac/seat-briefs/some-seat/CLAUDE.local.md", "brief")
+    write(mirror / "ned-box/tasks/nedschorus-some-seat-tasks/41.json", "task")
+    write(mirror / "mac/CLAUDE.md", "global instructions")
+    write(mirror / "mac/handoffs/mirror-only-handoff.md", "handoff")
+    write(mirror / "mac/projects/-Users-el-x/mirror-session.jsonl", "mac")
+    write(mirror / "ned-box/projects/-home-nedlern-x/mirror-session.jsonl", "box")
+    write(mirror / "recovered/from-a-backup/-Users-el-x/mirror-session.jsonl",
+          "old")
+    for query, path in (
+            ("CLAUDE.local.md", "mac/seat-briefs/some-seat/CLAUDE.local.md"),
+            ("41.json", "ned-box/tasks/nedschorus-some-seat-tasks/41.json"),
+            ("CLAUDE.md", "mac/CLAUDE.md"),
+            ("mirror-only-handoff.md", "mac/handoffs/mirror-only-handoff.md")):
+        code, stdout, stderr = run(base, query)
+        same, _, _ = sections(stdout)
+        check(f"a copy only in the transcript mirror is found: {path}",
+              code == 0 and str(mirror / path) in same, stdout + stderr)
+    code, stdout, stderr = run(base, "mirror-session.jsonl")
+    same, other, _ = sections(stdout)
+    check("a session transcript in the transcript mirror, of either machine "
+          "or recovered, is not searched by name",
+          code != 0 and "mirror-session" not in same + other, stdout + stderr)
 
 # --- Ranking inside the same-name list ------------------------------------------
 with scratch() as directory:
@@ -769,9 +812,12 @@ check("the production plan searches ned-box's scratch worktrees, "
       len(box_checkouts) == 2
       and all("/tmp/claude-1000" in roots for roots in box_checkouts),
       box_checkouts)
-check("the production log-store surface leaves out transcripts/",
+check("the production log-store surface leaves out the session transcripts "
+      "of both machines and the recovered ones, and nothing else",
       log_store and log_store[0]["prune"]
-      == ["/home/nedlern/nedschorus-logs/transcripts"], log_store)
+      == ["/home/nedlern/nedschorus-logs/transcripts/mac/projects",
+          "/home/nedlern/nedschorus-logs/transcripts/ned-box/projects",
+          "/home/nedlern/nedschorus-logs/transcripts/recovered"], log_store)
 
 # --- The query reaches the other machine intact ---------------------------------
 with scratch() as directory:
