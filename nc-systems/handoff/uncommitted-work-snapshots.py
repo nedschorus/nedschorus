@@ -26,6 +26,7 @@ Usage:
 """
 
 import hashlib
+import importlib.util
 import json
 import os
 import shutil
@@ -62,6 +63,14 @@ MODULE_PATH = Path(__file__).resolve()
 
 class WorkSnapshotError(Exception):
     """A git command or a process lookup this module depends on failed."""
+
+
+_git_machine_readable_output_spec = importlib.util.spec_from_file_location(
+    "git_machine_readable_output_runner_and_parser_common",
+    Path(__file__).resolve().parents[2] / "nc-systems" / "general-tools"
+    / "git-machine-readable-output-runner-and-parser-common.py")
+git_machine_readable_output = importlib.util.module_from_spec(_git_machine_readable_output_spec)
+_git_machine_readable_output_spec.loader.exec_module(git_machine_readable_output)
 
 
 def run_git(directory, *arguments, environment=None, input_text=None):
@@ -214,14 +223,20 @@ def worktree_containing(path):
         if directory.parent == directory:
             return None
         directory = directory.parent
-    result = run_git(directory, "rev-parse", "--show-toplevel")
-    if result.returncode != 0 and "not a git repository" in result.stderr:
-        return None
-    if result.returncode != 0 or not result.stdout.strip():
+    try:
+        output = git_machine_readable_output.run_git_unless_outside_a_repository(
+            directory, ["rev-parse", "--show-toplevel"])
+    except git_machine_readable_output.GitCommandFailed as failure:
         raise WorkSnapshotError(
-            f"git rev-parse --show-toplevel in {directory} exited {result.returncode}: "
-            f"{result.stderr.strip() or 'no output'}")
-    return Path(result.stdout.strip()).resolve()
+            f"git rev-parse --show-toplevel in {directory} exited {failure.returncode}: "
+            f"{failure.stderr.strip() or 'no output'}") from None
+    if output is None:
+        return None
+    top = os.fsdecode(output).strip()
+    if not top:
+        raise WorkSnapshotError(
+            f"git rev-parse --show-toplevel in {directory} exited 0: no output")
+    return Path(top).resolve()
 
 
 def common_git_directory(directory):
@@ -496,9 +511,10 @@ def lost_work_snapshots(repo, agent_seat=None, is_alive=None, everything=None):
 
 def changed_files(repo, ref):
     """(status, path) pairs of the changes ref holds against its parent."""
-    output = git_output(repo, "diff-tree", "-r", "--root", "--no-renames",
+    output = git_output(repo, "diff-tree", "-z", "-r", "--root", "--no-renames",
                         "--no-commit-id", "--name-status", ref)
-    return [tuple(line.split("\t", 1)) for line in output.splitlines() if "\t" in line]
+    return [(entry.status, entry.path)
+            for entry in git_machine_readable_output.name_status_entries(output)]
 
 
 def changed_files_text(repo, ref):
@@ -577,8 +593,13 @@ def first_prompt_text(repo, agent_seat, handoff_directory, now=None, is_alive=No
     it cannot be mistaken for none.
     """
     is_alive = is_alive or owner_process_is_alive
-    probe = run_git(repo, "rev-parse", "--git-dir")
-    if probe.returncode != 0 and "not a git repository" in probe.stderr:
+    try:
+        outside_any_clone = git_machine_readable_output.run_git_unless_outside_a_repository(
+            repo, ["rev-parse", "--git-dir"]) is None
+    except git_machine_readable_output.GitCommandFailed:
+        # The listing below runs git again and states the failure.
+        outside_any_clone = False
+    if outside_any_clone:
         # Work-snapshots live in a clone; a working directory outside any has none.
         return ""
     try:
