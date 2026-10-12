@@ -79,6 +79,10 @@ MAC_DAILY_PLIST = {
 NED_BOX_CLEAN_LINE = (
     "30 6 * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/scripts/"
     "clean-worktrees.py --remove >> /home/nedlern/.claude/daily-clean-worktrees.log 2>&1")
+NED_BOX_CRASH_RESTART_WATCHER_LINE = (
+    "* * * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/nc-systems/handoff/"
+    "handoff-agent-seat-died-without-session-handoff-restart-watcher.py >> "
+    "/home/nedlern/.claude/handoff-agent-seat-died-without-session-handoff-restart-watcher.log 2>&1")
 MAC_CLEAN_PLIST = {
     "Label": "com.nedschorus.daily-clean-worktrees",
     "ProgramArguments": ["/opt/homebrew/bin/python3",
@@ -215,17 +219,23 @@ check("the Mac's daily worktree cleanup is a launchd job at 06:30, so a run miss
       clean["on"]["mac"]["scheduler"] == "launchd" and mac_clean_plist == MAC_CLEAN_PLIST
       and list(mac_clean_plist) == list(MAC_CLEAN_PLIST), mac_clean_plist)
 check("the table's jobs are the two typed by hand before this program, the daily worktree "
-      "cleanup and the weekly owner check of the work-snapshot hook, and no other",
+      "cleanup, ned-box's crash restart watcher and the weekly owner check of the work-snapshot "
+      "hook, and no other",
       sorted(real_jobs) == ["daily-clean-worktrees", "daily-full-test-run-of-main",
+                            "handoff-agent-seat-died-without-session-handoff-restart-watcher",
                             "transcript-mirror-to-log-store",
                             "weekly-uncommitted-work-snapshot-hook-real-claude-session-owner-check"],
       sorted(real_jobs))
+watcher = real_jobs["handoff-agent-seat-died-without-session-handoff-restart-watcher"]
+check("the crash restart watcher runs on ned-box only, every minute",
+      watcher["on"] == {"ned-box": {"scheduler": "cron", "schedule": "* * * * *"}}, watcher["on"])
 check("every job's program is a file of this repository",
       all((REPOSITORY_ROOT / job["program"]).is_file() for job in real_table["jobs"]),
       [job["program"] for job in real_table["jobs"]])
 mirror_documentation = (REPOSITORY_ROOT / mirror["program"]).read_text(encoding="utf-8")
 daily_documentation = (REPOSITORY_ROOT / daily["program"]).read_text(encoding="utf-8")
 clean_documentation = (REPOSITORY_ROOT / clean["program"]).read_text(encoding="utf-8")
+watcher_documentation = (REPOSITORY_ROOT / watcher["program"]).read_text(encoding="utf-8")
 weekly_live_check_documentation = (
     REPOSITORY_ROOT / real_jobs["weekly-uncommitted-work-snapshot-hook-real-claude-session-owner-check"]
     ["program"]).read_text(encoding="utf-8")
@@ -234,10 +244,11 @@ check("the lines each program documents are the table's lines, and each names th
       and f"  ned-box: {NED_BOX_MIRROR_LINE}\n" in mirror_documentation
       and f"    {NED_BOX_DAILY_LINE}\n" in daily_documentation
       and f"    {NED_BOX_CLEAN_LINE}\n" in clean_documentation
+      and f"    {NED_BOX_CRASH_RESTART_WATCHER_LINE}\n" in watcher_documentation
       and f"    {NED_BOX_WEEKLY_LIVE_CHECK_LINE}\n" in weekly_live_check_documentation
       and all("nc-systems/general-tools/install-scheduled-jobs-on-this-machine.py" in text
               for text in (mirror_documentation, daily_documentation, clean_documentation,
-                           weekly_live_check_documentation)))
+                           watcher_documentation, weekly_live_check_documentation)))
 
 printed, errors = io.StringIO(), io.StringIO()
 stub = MachineStub()
@@ -250,6 +261,8 @@ check("--print as ned-box prints ned-box's four cron lines from the real table a
           "transcript-mirror-to-log-store — cron line:", NED_BOX_MIRROR_LINE,
           "daily-full-test-run-of-main — cron line:", NED_BOX_DAILY_LINE,
           "daily-clean-worktrees — cron line:", NED_BOX_CLEAN_LINE,
+          "handoff-agent-seat-died-without-session-handoff-restart-watcher — cron line:",
+          NED_BOX_CRASH_RESTART_WATCHER_LINE,
           "weekly-uncommitted-work-snapshot-hook-real-claude-session-owner-check — cron line:",
           NED_BOX_WEEKLY_LIVE_CHECK_LINE],
       (exit_code, printed.getvalue(), errors.getvalue()))
