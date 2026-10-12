@@ -209,6 +209,9 @@ def run_decision_cases(root: Path):
           "merge-lane-2 is down" in text and "had restarted it at 2026-10-12 03:16 UTC" in text
           and "python3 scripts/recover-crashed-seats.py merge-lane-2" in text
           and f"  {watcher_module.MAC_LAUNCHER} merge-lane-2\n" in text, text)
+    check("the second-crash notice's restart command gives recovery a terminal with ssh -t",
+          "  ssh -t nedlern@ned-box 'cd ~/Projects/nedschorus && python3 "
+          "scripts/recover-crashed-seats.py merge-lane-2'\n" in text, text)
     check("the second-crash notice names the transcripts by their path on the Mac",
           "/Volumes/nedhome/.claude/projects/-merge-lane-2" in text, text)
     check("the second-crash window shows the notice and does not attach",
@@ -233,6 +236,9 @@ def run_decision_cases(root: Path):
           and "launch-claude-ubuntu merge-lane-2" in text, text)
     check("the failed-recovery notice gives the next step when recovery only says why it refused",
           "If it says only why recovery refused, ask an agent on ned-box" in text, text)
+    check("the failed-recovery notice's restart command gives recovery a terminal with ssh -t",
+          "  ssh -t nedlern@ned-box 'cd ~/Projects/nedschorus && python3 "
+          "scripts/recover-crashed-seats.py merge-lane-2'\n" in text, text)
 
     harness = Harness(root / "recovery-failed-last-line",
                       recovery_result=(1, "merge-lane-2: checking the seat\n"
@@ -459,11 +465,20 @@ def run_down_for_the_user_cases(root: Path):
     check("the recorded-exit notice gives the exit code, the time and the ssh -t command",
           "exit code 1" in text and "2026-10-12 03:04 UTC" in text
           and "ssh -t nedlern@ned-box" in text
-          and 'It asks "merge-lane-2 stopped with exit code 1. Restart it? y/n"; answer y, '
-              "and it resumes merge-lane-2's last conversation" in text, text)
+          and 'It asks "merge-lane-2 stopped with exit code 1. Restart it? y/n". Answer y, '
+              "and it resumes merge-lane-2's last conversation." in text, text)
+    check("the recorded-exit notice's restart command comes right after the line that "
+          "introduces it, not after the answer n",
+          "To restart it, run in a Terminal on your Mac:\n  ssh -t nedlern@ned-box "
+          "'cd ~/Projects/nedschorus && python3 scripts/recover-crashed-seats.py "
+          "merge-lane-2'\nIt asks" in text, text)
     check("the recorded-exit notice says what answering n does",
-          "answer n, and it starts nothing and prints the commands to bring merge-lane-2 "
-          "back by hand later" in text, text)
+          "Answer n, and it starts nothing and prints the commands to bring merge-lane-2 "
+          "back by hand later.\n" in text, text)
+    check("the recorded-exit notice opens the window only after answer y, since the "
+          "launcher starts a seat that is not running",
+          "If you answered y, open its window, also in a Terminal on your Mac, with:\n"
+          f"  {watcher_module.MAC_LAUNCHER} merge-lane-2\n" in text, text)
 
 
 def run_stopped_on_purpose_cases(root: Path):
