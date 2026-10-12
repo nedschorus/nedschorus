@@ -426,6 +426,52 @@ with tempfile.TemporaryDirectory() as temporary_directory:
           "already on GitHub under another branch name" in agent_text(result)
           and "never been pushed" not in agent_text(result), agent_text(result))
 
+    # BEHIND ITS REMOTE, DIVERGED FROM IT, AND ON MAIN: pushed or main, but a
+    # new commit on top is a push git rejects, so each gets its own first step.
+    edited_on_main = pushed_checkout / "scripts/recover-crashed-seats.py"
+    git(["checkout", "-q", "a-pushed-topic-branch"], pushed_checkout)
+    commit_file(pushed_checkout, "scripts/fix-from-elsewhere.py", "fix\n",
+                "a fix pushed from elsewhere")
+    git(["push", "-q", "origin", "a-pushed-topic-branch"], pushed_checkout)
+    git(["reset", "-q", "--hard", "HEAD~1"], pushed_checkout)
+    warning = agent_text(run_hook(hook_payload(pushed_checkout, edited_on_main)))
+    check("behind its remote: told to pull the remote's commits in with a rebase of only "
+          "its own new commit",
+          "origin/a-pushed-topic-branch has commits this checkout lacks" in warning
+          and "`git pull --rebase origin a-pushed-topic-branch`" in warning
+          and "This branch is pushed, so its review may be running" not in warning
+          and "\n" not in warning, warning)
+    commit_file(pushed_checkout, "scripts/local-work.py", "local\n", "new work made here")
+    warning = agent_text(run_hook(hook_payload(pushed_checkout, edited_on_main)))
+    check("diverged from its remote: told not to push, how to see both sides, and what "
+          "each case means",
+          warning.endswith(
+              "This branch has diverged from origin/a-pushed-topic-branch: each side has "
+              "commits the other lacks, so a push is rejected, and a force-push would "
+              "move a pushed head that may be under review. Do not push yet. Run `git log "
+              "--oneline --left-right origin/a-pushed-topic-branch...HEAD`: lines marked "
+              "< are only on origin/a-pushed-topic-branch, lines marked > only here. If "
+              "every > commit is new work made here since the last push, commit your "
+              "edit and run `git pull --rebase origin a-pushed-topic-branch`, which moves "
+              "only the > commits onto origin/a-pushed-topic-branch; then push once. If a "
+              "> commit is a rewritten copy of a < commit, as an amend or a rebase after "
+              "the push makes, do not push: tell the user that the pushed history was "
+              "rewritten in this checkout, list both sides' commits, and recommend "
+              "keeping origin/a-pushed-topic-branch and adding this checkout's changes "
+              "as a new commit on top of it."), warning)
+    git(["checkout", "-q", "main"], pushed_checkout)
+    git(["reset", "-q", "--hard", early_main_sha], pushed_checkout)
+    warning = agent_text(run_hook(hook_payload(pushed_checkout, edited_on_main)))
+    check("on main: told to move the edit to a topic branch and how to start the next one",
+          warning.endswith(
+              "This checkout is on main, and a change reaches main only through a pull "
+              "request from a topic branch. Run `git switch -c <a-branch-name>`, with a "
+              "name for your change, which keeps your edit; commit the edit there, then "
+              "run `git rebase origin/main`, which is allowed because the new branch has "
+              "never been pushed. From now on, start each topic with `git switch -c "
+              "<a-branch-name> origin/main` before its first edit."), warning)
+    git(["checkout", "-q", "a-fix-round-under-a-new-name"], pushed_checkout)
+
     # -----------------------------------------------------------------------
     # OUTSIDE THE CHECKOUT. Another worktree of the same repository, and a
     # scratch directory: in neither is a comparison against THIS checkout's
@@ -611,6 +657,7 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     (detached_origin / "lib" / "latin1.txt").write_bytes(b"".join(latin1_lines))
     git(["add", "lib/latin1.txt"], detached_origin)
     git(["commit", "-q", "-m", "a file that is not UTF-8"], detached_origin)
+    commit_file(detached_origin, "lib/moved.py", "".join(shared_lines), "a file main moves")
     detached = tmp / "detached-checkout"
     git(["clone", "-q", str(detached_origin), str(detached)], tmp)
     configure_identity(detached)
@@ -626,7 +673,11 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     git(["commit", "-q", "-m", "main rewrites line 2 of the file that is not UTF-8"], detached_origin)
     git(["rm", "-q", "lib/gone.py"], detached_origin)
     git(["commit", "-q", "-m", "main deletes gone.py"], detached_origin)
+    git(["mv", "lib/moved.py", "lib/renamed.py"], detached_origin)
+    git(["commit", "-q", "-m", "main moves moved.py"], detached_origin)
     git(["fetch", "-q", "origin"], detached)
+    deleting_commit = git(["log", "-1", "--format=%h (%s)", "origin/main", "--",
+                           "lib/gone.py"], detached).stdout.strip()
     shared_file = detached / "lib/shared.py"
 
     def detached_warning(edited):
@@ -680,10 +731,43 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     gone_file = detached / "lib/gone.py"
     gone_file.write_text("the agent edited this\n", encoding="utf-8")
     warning = detached_warning(gone_file)
-    check("detached: an edit of a file main deleted is told main no longer has it",
+    check("detached: an edit of a file main deleted is told which commit deleted it and "
+          "what to do",
           warning.split("\n")[-1] == (
-              "main no longer has a file at lib/gone.py: find out whether main moved or "
-              "deleted it (git log origin/main -- lib/gone.py) before you commit."), warning)
+              f"main deleted lib/gone.py in commit {deleting_commit}, so your edit has no "
+              "file to land in. Read why with `git log -1 --stat origin/main -- "
+              "lib/gone.py`. If your fix is still needed, drop this edit with `git "
+              "checkout -- lib/gone.py`, start a topic branch with `git switch -c "
+              "<a-branch-name> origin/main`, and make the same fix in the file that does "
+              "that job on main now. If no file on main does that job, drop the edit and "
+              "do not make the fix."), warning)
+
+    moved_file = detached / "lib/moved.py"
+    moved_file.write_text("".join(edited_far_away), encoding="utf-8")
+    warning = detached_warning(moved_file)
+    check("detached, unpushed: an edit of a file main moved is told the new path and to "
+          "rebase, which carries the edit there",
+          warning.split("\n")[-1] == (
+              "main moved lib/moved.py to lib/renamed.py. After you make the branch and "
+              "commit your edit at lib/moved.py, run `git rebase origin/main`: git follows "
+              "the move and applies your edit to lib/renamed.py. If the rebase stops on "
+              "lib/renamed.py, resolve the conflict there."), warning)
+
+    # git could list main's renames is the step that separates moved from
+    # deleted; when it fails, the line says so with git's text. The path set is
+    # cached by now, so only the rename listing reaches the failing diff.
+    result = run_hook(hook_payload(detached, moved_file),
+                      path_prefix=diff_failing_git_directory)
+    last_line = agent_text(result).split("\n")[-1]
+    check("detached: when git cannot list main's renames, the line says it could not "
+          "tell moved from deleted, with git's text, and claims neither",
+          last_line.startswith("main no longer has a file at lib/moved.py, and git could "
+                               "not tell whether main moved or deleted it (shimmed: this "
+                               "diff fails")
+          and "main deleted lib/moved.py" not in last_line
+          and "main moved lib/moved.py to" not in last_line,
+          agent_text(result))
+    git(["checkout", "-q", "--", "lib/moved.py"], detached)
 
     (detached_git_dir / "rebase-merge").mkdir()
     try:
@@ -745,6 +829,67 @@ with tempfile.TemporaryDirectory() as temporary_directory:
               "not as a deleted file",
               "git could not read lib/shared.py on origin/main (" in warning
               and "no longer has" not in warning, warning)
+
+    # A DETACHED HEAD AT A PULL REQUEST'S PUSHED HEAD: the worktree a fix-round
+    # agent works in. A rebase there rewrites commits under review with every
+    # hook allowing it, so no line may tell the agent to rebase.
+    git(["checkout", "-q", "-b", "a-pull-request-branch"], detached)
+    commit_file(detached, "lib/pull-request-work.py", "under review\n", "work under review")
+    git(["push", "-q", "origin", "a-pull-request-branch"], detached)
+    git(["checkout", "-q", "--detach"], detached)
+    shared_file.write_text("".join(edited_far_away), encoding="utf-8")
+    lines = detached_warning(shared_file).split("\n")
+    check("detached at a pushed head: the warning names the remote branch and forbids "
+          "the rebase",
+          len(lines) == 3 and lines[1] == (
+              "This checkout is on a detached HEAD whose commits are already on "
+              "origin/a-pull-request-branch, so they may be a pull request's head under "
+              "review: do not rebase or amend them. Make a branch (git switch -c "
+              "<a-branch-name>) before you commit, because a commit on a detached HEAD is "
+              "on no branch; your fix is a new commit on top."), "\n".join(lines))
+    check("detached at a pushed head: no overlap is told the merge carries it, not a rebase",
+          lines[-1] == (
+              "main's changes to lib/shared.py do not overlap this checkout's copy, so "
+              "they merge cleanly when the pull request merges: commit your edit on top, "
+              "and do not rebase to pick them up."), "\n".join(lines))
+    shared_file.write_text("".join(edited_same_line), encoding="utf-8")
+    warning = detached_warning(shared_file)
+    check("detached at a pushed head: an overlap is sent to the hand-merge, never a rebase",
+          warning.split("\n")[-1] == (
+              "main's changes to lib/shared.py overlap this checkout's copy, so the pull "
+              "request will conflict with main on this file. Commit your edit on top "
+              "first; then clear the conflict with the hand-merge that `python3 "
+              "scripts/branch-conflict-check.py` describes, never with a rebase.")
+          and "git rebase origin/main" not in warning, warning)
+    moved_file.write_text("".join(edited_far_away), encoding="utf-8")
+    warning = detached_warning(moved_file)
+    check("detached at a pushed head: a moved file is committed on top, not rebased",
+          warning.split("\n")[-1] == (
+              "main moved lib/moved.py to lib/renamed.py. Commit your edit on top at "
+              "lib/moved.py, and do not rebase: when the pull request merges, git follows "
+              "the move and carries your edit to lib/renamed.py. If `python3 "
+              "scripts/branch-conflict-check.py` reports a conflict, clear it with the "
+              "hand-merge it describes."), warning)
+    git(["checkout", "-q", "--", "lib/moved.py"], detached)
+
+    own_commits_failing_git_directory = tmp / "own-commits-failing-git"
+    own_commits_failing_git_directory.mkdir()
+    (own_commits_failing_git_directory / "git").write_text(
+        "#!/bin/sh\n"
+        'if [ "$1" = "rev-list" ] && [ "$2" = "origin/main..HEAD" ]; then\n'
+        '  printf "shimmed: no commit list\\n" >&2\n'
+        "  exit 128\n"
+        "fi\n"
+        f'exec "{real_git}" "$@"\n', encoding="utf-8")
+    (own_commits_failing_git_directory / "git").chmod(0o755)
+    warning = agent_text(run_hook(hook_payload(detached, shared_file),
+                                  path_prefix=own_commits_failing_git_directory))
+    lines = warning.split("\n")
+    check("detached, push state unknown: treated as pushed, with no rebase line",
+          len(lines) == 3 and lines[1].startswith(
+              "This checkout is on a detached HEAD, and git could not check whether its "
+              "commits are already on a remote branch, so treat them as pushed")
+          and "git rebase origin/main" not in warning, warning)
 
     branch_state_failing_git_directory = tmp / "branch-state-failing-git"
     branch_state_failing_git_directory.mkdir()
