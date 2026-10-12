@@ -26,6 +26,15 @@
       }
     },
     {
+      "name": "log-store-session-dialogs-refresh",
+      "program": "scripts/log-store-session-dialogs-refresh.py",
+      "arguments": ["--failures-only"],
+      "output": ".claude/log-store-session-dialogs-refresh.log",
+      "on": {
+        "ned-box": {"scheduler": "cron", "schedule": "*/10 * * * *"}
+      }
+    },
+    {
       "name": "daily-full-test-run-of-main",
       "program": "scripts/daily-full-test-run-of-main.py",
       "arguments": [],

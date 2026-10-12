@@ -76,6 +76,10 @@ MAC_DAILY_PLIST = {
 }
 # The daily worktree cleanup, added to the table after the two jobs above; no
 # machine had it installed by hand.
+NED_BOX_SESSION_DIALOGS_LINE = (
+    "*/10 * * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/scripts/"
+    "log-store-session-dialogs-refresh.py --failures-only >> "
+    "/home/nedlern/.claude/log-store-session-dialogs-refresh.log 2>&1")
 NED_BOX_CLEAN_LINE = (
     "30 6 * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/scripts/"
     "clean-worktrees.py --remove >> /home/nedlern/.claude/daily-clean-worktrees.log 2>&1")
@@ -194,11 +198,20 @@ check("the Mac's daily worktree cleanup is a launchd job at 06:30, so a run miss
       "sleeps starts at the next wake",
       clean["on"]["mac"]["scheduler"] == "launchd" and mac_clean_plist == MAC_CLEAN_PLIST
       and list(mac_clean_plist) == list(MAC_CLEAN_PLIST), mac_clean_plist)
-check("the table's jobs are the two typed by hand before this program and the daily worktree "
-      "cleanup, and no other",
+check("the table's jobs are the two typed by hand before this program, the daily worktree "
+      "cleanup and the session dialogs refresh, and no other",
       sorted(real_jobs) == ["daily-clean-worktrees", "daily-full-test-run-of-main",
-                            "transcript-mirror-to-log-store"],
+                            "log-store-session-dialogs-refresh", "transcript-mirror-to-log-store"],
       sorted(real_jobs))
+session_dialogs = real_jobs["log-store-session-dialogs-refresh"]
+check("the session dialogs refresh runs on ned-box alone, every 10 minutes, and its program "
+      "documents the table's line",
+      list(session_dialogs["on"]) == ["ned-box"]
+      and installer.cron_line(ned_box, session_dialogs, session_dialogs["on"]["ned-box"])
+      == NED_BOX_SESSION_DIALOGS_LINE
+      and f"  ned-box: {NED_BOX_SESSION_DIALOGS_LINE}\n"
+      in (REPOSITORY_ROOT / session_dialogs["program"]).read_text(encoding="utf-8"),
+      installer.cron_line(ned_box, session_dialogs, session_dialogs["on"]["ned-box"]))
 check("every job's program is a file of this repository",
       all((REPOSITORY_ROOT / job["program"]).is_file() for job in real_table["jobs"]),
       [job["program"] for job in real_table["jobs"]])
@@ -217,11 +230,12 @@ printed, errors = io.StringIO(), io.StringIO()
 stub = MachineStub()
 with redirect_stdout(printed), redirect_stderr(errors):
     exit_code = installer.main(["--print"], platform="linux", home=Path("/home/nedlern"), run=stub)
-check("--print as ned-box prints ned-box's three cron lines from the real table and runs nothing",
+check("--print as ned-box prints ned-box's four cron lines from the real table and runs nothing",
       exit_code == 0 and stub.commands == []
       and printed.getvalue().splitlines() == [
           "machine: ned-box (linux, /home/nedlern)",
           "transcript-mirror-to-log-store — cron line:", NED_BOX_MIRROR_LINE,
+          "log-store-session-dialogs-refresh — cron line:", NED_BOX_SESSION_DIALOGS_LINE,
           "daily-full-test-run-of-main — cron line:", NED_BOX_DAILY_LINE,
           "daily-clean-worktrees — cron line:", NED_BOX_CLEAN_LINE],
       (exit_code, printed.getvalue(), errors.getvalue()))

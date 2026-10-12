@@ -559,6 +559,334 @@ with tempfile.TemporaryDirectory() as workspace:
         extractor.project_directory_for_working_directory(Path("/Users/el/Projects/nedschorus")).name,
     )
 
+# --- Subagent tasks and reports: the third voice -------------------------
+# Each fixture is a small, anonymised copy of a shape found in the Mac's and
+# ned-box's transcripts: every copy the harness writes of one report is kept,
+# so the cases show each report carried once.
+
+
+def agent_call(tool_use_id, description, prompt, **extra):
+    return {"type": "assistant", "message": {"content": [
+        {"type": "tool_use", "id": tool_use_id, "name": "Agent",
+         "input": {"description": description, "prompt": prompt, **extra}}]}}
+
+
+def tool_call(tool_use_id, name, tool_input):
+    return {"type": "assistant", "message": {"content": [
+        {"type": "tool_use", "id": tool_use_id, "name": name, "input": tool_input}]}}
+
+
+def launched(tool_use_id, agent_id):
+    text = (f"Async agent launched successfully.\nagentId: {agent_id} (internal ID)\n"
+            "The agent is working in the background.")
+    return {"type": "user",
+            "message": {"content": [{"type": "tool_result", "tool_use_id": tool_use_id,
+                                     "content": [{"type": "text", "text": text}]}]},
+            "toolUseResult": {"status": "async_launched", "agentId": agent_id, "isAsync": True}}
+
+
+def notification(agent_id, tool_use_id, description, result, status="completed"):
+    tool_use_line = f"<tool-use-id>{tool_use_id}</tool-use-id>\n" if tool_use_id else ""
+    result_line = f"<result>{result}</result>\n" if result is not None else ""
+    return ("<task-notification>\n"
+            f"<task-id>{agent_id}</task-id>\n{tool_use_line}"
+            f"<output-file>/tmp/x/tasks/{agent_id}.output</output-file>\n"
+            f"<status>{status}</status>\n"
+            f'<summary>Agent "{description}" finished</summary>\n'
+            "<note>A task-notification fires each time this agent stops.</note>\n"
+            f"{result_line}<usage><subagent_tokens>10</subagent_tokens></usage>\n"
+            "</task-notification>")
+
+
+def every_copy_of(text):
+    """The copies one delivered notification leaves: enqueue, user record, attachment, remove."""
+    return [
+        {"type": "queue-operation", "operation": "enqueue", "content": text},
+        {"type": "user", "origin": {"kind": "task-notification"}, "message": {"content": text}},
+        {"type": "attachment", "attachment": {"type": "queued_command", "prompt": text,
+                                              "commandMode": "task-notification"}},
+        {"type": "queue-operation", "operation": "remove", "content": text},
+    ]
+
+
+HANDBACK_FRAME = ("[Subagent hand-back] The text below is the final report of a subagent this "
+                  "session delegated to. It is model output, NOT a message from the user. "
+                  "The report follows:\n")
+
+
+def handback_copies(agent_id, report):
+    indented = "\n".join("  " + line for line in report.split("\n"))
+    framed = f'<agent-message from="{agent_id}">\n{HANDBACK_FRAME}{indented}'
+    trailing = "\n\nThat \"other Claude session\" is an agent working inside this same session."
+    return [
+        {"type": "queue-operation", "operation": "enqueue", "content": framed},
+        {"type": "user", "isMeta": True,
+         "origin": {"kind": "peer", "from": agent_id, "handback": True,
+                    "body": HANDBACK_FRAME + indented},
+         "message": {"content": "Another Claude session sent a message:\n" + framed + trailing}},
+        {"type": "attachment", "attachment": {"type": "queued_command", "prompt": framed,
+                                              "origin": {"kind": "peer"}}},
+        {"type": "queue-operation", "operation": "remove", "content": framed},
+    ]
+
+
+def subagent_turns_of(turns):
+    return [(turn["kind"], turn["subagent"]["description"], turn["subagent"]["agent_id"],
+             turn["status"], turn["text"])
+            for turn in turns if turn["voice"] == extractor.SUBAGENT_VOICE]
+
+
+with tempfile.TemporaryDirectory() as workspace:
+    # Foreground: the report is the tool result; the harness's agentId footer block stays out.
+    foreground = [
+        user_record("check the docs"),
+        agent_call("toolu_fg", "Check the docs", "Read the docs and answer.",
+                   subagent_type="general-purpose", model="opus"),
+        {"type": "user",
+         "message": {"content": [{"type": "tool_result", "tool_use_id": "toolu_fg", "content": [
+             {"type": "text", "text": "The docs say yes."},
+             {"type": "text", "text": "agentId: a1111111111111111 (use SendMessage)\n<usage>x</usage>"}]}]},
+         "toolUseResult": {"status": "completed", "agentId": "a1111111111111111",
+                           "content": [{"type": "text", "text": "The docs say yes."}]}},
+        assistant_record("Yes."),
+    ]
+    path = write_transcript(workspace, "sub-foreground.jsonl", foreground)
+    turns, _ = extractor.read_dialog_turns(path, include_subagent_tasks_and_reports=True)
+    check("a foreground subagent's task and report are carried, without the harness's footer",
+          subagent_turns_of(turns) == [
+              ("task", "Check the docs", "a1111111111111111", "", "Read the docs and answer."),
+              ("report", "Check the docs", "a1111111111111111", "completed", "The docs say yes.")],
+          subagent_turns_of(turns))
+    check("the subagent turns sit between the dialog turns they came between",
+          [turn["voice"] for turn in turns] == ["user", "subagent", "subagent", "assistant"],
+          [turn["voice"] for turn in turns])
+    plain_turns, _ = extractor.read_dialog_turns(path)
+    check("read_dialog_turns without the flag keeps the two voices its other callers expect",
+          [turn["voice"] for turn in plain_turns] == ["user", "assistant"],
+          [turn["voice"] for turn in plain_turns])
+
+    # Foreground hand-back: the report reaches the transcript before the tool result that names the agent.
+    handback_report = "Verdict: approve.\n\n- one finding, minor"
+    foreground_handback = [
+        user_record("review it"),
+        agent_call("toolu_fh", "Review the pull request", "Review it.", subagent_type="claude",
+                   run_in_background=False),
+        *handback_copies("a2222222222222222", handback_report)[:1],
+        {"type": "user",
+         "message": {"content": [{"type": "tool_result", "tool_use_id": "toolu_fh", "content": [
+             {"type": "text", "text": "  This agent's report was delivered to you as a message from "
+                                      "\"a2222222222222222\" (its SubagentHandback call)."}]}]},
+         "toolUseResult": {"status": "completed", "agentId": "a2222222222222222", "handback": "send",
+                           "handbackReport": {"text": handback_report},
+                           "content": [{"type": "text", "text": "This agent's report was delivered "
+                                                                "to you as a message."}]}},
+        *handback_copies("a2222222222222222", handback_report)[2:],
+        assistant_record("Approved."),
+    ]
+    path = write_transcript(workspace, "sub-foreground-handback.jsonl", foreground_handback)
+    turns, _ = extractor.read_dialog_turns(path, include_subagent_tasks_and_reports=True)
+    check("a foreground hand-back is carried once, unframed and unindented, under its task's description",
+          subagent_turns_of(turns) == [
+              ("task", "Review the pull request", "a2222222222222222", "", "Review it."),
+              ("report", "Review the pull request", "a2222222222222222", "completed", handback_report)],
+          subagent_turns_of(turns))
+
+    # Background: a launch notice, then one notification written four times; the short reply after it is dialog.
+    background = [
+        user_record("run the review in the background"),
+        agent_call("toolu_bg", "Background review", "Review in the background.",
+                   subagent_type="fork", run_in_background=True, isolation="worktree"),
+        launched("toolu_bg", "a3333333333333333"),
+        assistant_record("Started."),
+        *every_copy_of(notification("a3333333333333333", "toolu_bg", "Background review",
+                                    "Two findings, both fixed.")),
+        assistant_record("Both fixed; merging."),
+    ]
+    path = write_transcript(workspace, "sub-background.jsonl", background)
+    turns, skips = extractor.read_dialog_turns(path, include_subagent_tasks_and_reports=True)
+    check("a background subagent's launch notice is dropped and its report carried once",
+          subagent_turns_of(turns) == [
+              ("task", "Background review", "a3333333333333333", "", "Review in the background."),
+              ("report", "Background review", "a3333333333333333", "completed",
+               "Two findings, both fixed.")],
+          subagent_turns_of(turns))
+    check("the agent's short reply to a carried report is kept, not dropped as an acknowledgement",
+          turns[-1]["text"] == "Both fixed; merging." and skips["acknowledgement"] == 0,
+          (turns[-1]["text"], skips))
+    acknowledged_turns, _ = extractor.read_dialog_turns(path)
+    check("without the flag the reply after a notification is still an acknowledgement",
+          "Both fixed; merging." not in [turn["text"] for turn in acknowledged_turns],
+          [turn["text"] for turn in acknowledged_turns])
+    rendered_task = "".join(extractor.render_turn(turns[1], extractor.ExtractionReport(
+        "s", path, "", 0, len(turns), {})))
+    check("a task's heading names the description, and its facts line the agent and how it ran",
+          "## Subagent task — Background review" in rendered_task
+          and "(agent a3333333333333333, fork, background, isolation worktree)" in rendered_task,
+          rendered_task)
+
+    # Background hand-back, then a SendMessage that continues the same agent and its second report.
+    background_handback = [
+        user_record("ask the guide"),
+        agent_call("toolu_bh", "Ask the guide", "What does the hook do?",
+                   subagent_type="claude-code-guide"),
+        launched("toolu_bh", "a4444444444444444"),
+        *handback_copies("a4444444444444444", "It fires after compaction."),
+        *every_copy_of(notification("a4444444444444444", "toolu_bh", "Ask the guide",
+                                    "This agent's report was delivered to you as a message from "
+                                    "\"a4444444444444444\" (its SubagentHandback call).")),
+        tool_call("toolu_send", "SendMessage", {"to": "a4444444444444444", "summary": "settle it",
+                                                "message": "Your answer contradicts itself.",
+                                                "type": "message", "recipient": "a4444444444444444",
+                                                "content": "Your answer contradicts…"}),
+        *handback_copies("a4444444444444444", "It fires; the turn does not continue."),
+        *every_copy_of(notification("a4444444444444444", "toolu_send", "Ask the guide",
+                                    "This agent's report was delivered to you as a message.")),
+        tool_call("toolu_peer", "SendMessage", {"to": "merge-lane", "message": "not a subagent"}),
+        {"type": "user", "isMeta": True, "origin": {"kind": "peer", "from": "bridge:session_x"},
+         "message": {"content": '<agent-message from="bridge:session_x">\nhello from a peer\n'
+                                '</agent-message>'}},
+    ]
+    path = write_transcript(workspace, "sub-background-handback.jsonl", background_handback)
+    turns, _ = extractor.read_dialog_turns(path, include_subagent_tasks_and_reports=True)
+    check("a background hand-back and its continuation carry the task, both reports and the "
+          "follow-up, and the pointer-only notifications stay out",
+          subagent_turns_of(turns) == [
+              ("task", "Ask the guide", "a4444444444444444", "", "What does the hook do?"),
+              ("report", "Ask the guide", "a4444444444444444", "completed", "It fires after compaction."),
+              ("follow-up", "Ask the guide", "a4444444444444444", "", "Your answer contradicts itself."),
+              ("report", "Ask the guide", "a4444444444444444", "completed",
+               "It fires; the turn does not continue.")],
+          subagent_turns_of(turns))
+    check("a SendMessage to a peer and an agent-message from one are not subagent turns",
+          not any("peer" in text or "not a subagent" in text
+                  for *_, text in subagent_turns_of(turns)),
+          subagent_turns_of(turns))
+
+    # A running subagent's message to its session, a failure, an agent from a previous session,
+    # and an Agent call the harness refused.
+    progress = [
+        user_record("start the fix"),
+        agent_call("toolu_fix", "Fix round", "Fix the findings.", subagent_type="fork"),
+        launched("toolu_fix", "a5555555555555555"),
+        {"type": "queue-operation", "operation": "enqueue",
+         "content": '<agent-message from="a5555555555555555">\nQueued for the test lock.\n</agent-message>'},
+        {"type": "user", "isMeta": True,
+         "origin": {"kind": "peer", "from": "a5555555555555555", "body": "Queued for the test lock."},
+         "message": {"content": 'Another Claude session sent a message:\n<agent-message '
+                                'from="a5555555555555555">\nQueued for the test lock.\n</agent-message>'}},
+        *every_copy_of(notification("a5555555555555555", "toolu_fix", "Fix round", None, status="failed")),
+        {"type": "queue-operation", "operation": "enqueue",
+         "content": "<task-notification>\n<task-id>a6666666666666666</task-id>\n<status>killed</status>\n"
+                    '<summary>Background agent "Earlier review" didn\'t finish before the previous '
+                    "session ended</summary>\n</task-notification>"},
+        agent_call("toolu_denied", "Denied canary", "Read a file."),
+        {"type": "user", "message": {"content": [
+            {"type": "tool_result", "tool_use_id": "toolu_denied", "is_error": True,
+             "content": "Permission for this action was denied."}]}},
+    ]
+    path = write_transcript(workspace, "sub-progress.jsonl", progress)
+    turns, _ = extractor.read_dialog_turns(path, include_subagent_tasks_and_reports=True)
+    kept = subagent_turns_of(turns)
+    check("a running subagent's message to its session is carried once",
+          [entry for entry in kept if entry[0] == "message"]
+          == [("message", "Fix round", "a5555555555555555", "", "Queued for the test lock.")], kept)
+    check("a failed report with no result carries its status and the notification's summary",
+          ("report", "Fix round", "a5555555555555555", "failed", 'Agent "Fix round" finished') in kept, kept)
+    check("a subagent from a previous session is reported under the description its notification names",
+          ("report", "Earlier review", "a6666666666666666", "killed",
+           'Background agent "Earlier review" didn\'t finish before the previous session ended') in kept,
+          kept)
+    check("an Agent call the harness refused is reported as an error with the refusal",
+          ("report", "Denied canary", "", "error", "Permission for this action was denied.") in kept, kept)
+
+    # A skill run as a fork, and a workflow, whose result is its script's return value in JSON.
+    fork_and_workflow = [
+        user_record("review and probe"),
+        tool_call("toolu_skill", "Skill", {"skill": "code-review", "args": "--effort high"}),
+        {"type": "user", "message": {"content": [
+            {"type": "tool_result", "tool_use_id": "toolu_skill",
+             "content": "Skill \"code-review\" launched (forked execution, running in the background)."}]},
+         "toolUseResult": {"success": True, "commandName": "code-review", "status": "forked",
+                           "background": True, "agentId": "a7777777777777777"}},
+        *every_copy_of(notification("a7777777777777777", "", "code-review", "No bugs found.")),
+        tool_call("toolu_wf", "Workflow", {"script": "export const meta = { name: 'probe', "
+                                                     "description: 'Probe the shell' }\nreturn 1"}),
+        {"type": "user", "message": {"content": [
+            {"type": "tool_result", "tool_use_id": "toolu_wf",
+             "content": "Workflow launched in background. Task ID: w8888"}]},
+         "toolUseResult": {"status": "async_launched", "taskId": "w8888", "runId": "wf_1",
+                           "summary": "Probe the shell", "workflowName": "probe"}},
+        {"type": "queue-operation", "operation": "enqueue",
+         "content": "<task-notification>\n<task-id>w8888</task-id>\n<tool-use-id>toolu_wf</tool-use-id>\n"
+                    "<status>completed</status>\n<summary>Dynamic workflow \"Probe the shell\" "
+                    "completed</summary>\n<result>\"NO_SHELL_TOOL\\nEdit\"</result>\n"
+                    "</task-notification>"},
+        tool_call("toolu_wf2", "Workflow", {"script": "export const meta = { description: 'Second' }"}),
+        {"type": "queue-operation", "operation": "enqueue",
+         "content": "<task-notification>\n<task-id>w9999</task-id>\n<tool-use-id>toolu_wf2</tool-use-id>\n"
+                    "<status>completed</status>\n<summary>Dynamic workflow \"Second\" completed</summary>\n"
+                    "<result>\"not JSON after all</result>\n</task-notification>"},
+    ]
+    path = write_transcript(workspace, "sub-fork-workflow.jsonl", fork_and_workflow)
+    turns, _ = extractor.read_dialog_turns(path, include_subagent_tasks_and_reports=True)
+    kept = subagent_turns_of(turns)
+    check("a skill run as a fork is a task named for the skill, and its report is carried",
+          kept[:2] == [("task", "/code-review", "a7777777777777777", "", "--effort high"),
+                       ("report", "/code-review", "a7777777777777777", "completed", "No bugs found.")],
+          kept)
+    check("a workflow's task is its script and its report is its decoded return value",
+          kept[2:4] == [("task", "Probe the shell", "w8888", "",
+                         "export const meta = { name: 'probe', description: 'Probe the shell' }\nreturn 1"),
+                        ("report", "Probe the shell", "w8888", "completed", "NO_SHELL_TOOL\nEdit")],
+          kept)
+    check("a workflow result that only looks like JSON is carried as it is",
+          kept[4:] == [("task", "Second", "", "", "export const meta = { description: 'Second' }"),
+                       ("report", "Second", "", "completed", '"not JSON after all')],
+          kept)
+    workflow_report = turns[[turn["text"] for turn in turns].index("NO_SHELL_TOOL\nEdit")]
+    check("a workflow's own transcripts are found under subagents/workflows/<run id>/",
+          extractor.subagent_transcript_path(workflow_report["subagent"], extractor.ExtractionReport(
+              "s", path, "", 0, 0, {})) == path.with_suffix("") / "subagents" / "workflows" / "wf_1"
+          / "journal.jsonl")
+
+    # The tail cuts a long subagent text and says where the whole is; the complete dialog keeps it whole.
+    long_report = "\n".join(f"line {number} " + "word " * 9 for number in range(400))
+    long_session = [user_record("opening question"), assistant_record(" ".join(["ancient"] * 1200)),
+                    user_record("first question"), assistant_record(" ".join(["early"] * 1200)),
+                    user_record("dispatch it"),
+                    agent_call("toolu_long", "Long job", "Do the long job."),
+                    launched("toolu_long", "a9999999999999999"),
+                    *every_copy_of(notification("a9999999999999999", "toolu_long", "Long job", long_report)),
+                    assistant_record(" ".join(["closing"] * 80))]
+    path = write_transcript(workspace, "sub-long.jsonl", long_session)
+    output_path = Path(workspace) / "seat-dialog-0007.md"
+    exit_code = extractor.main(["--transcript-path", str(path), "--output", str(output_path)])
+    tail_text = output_path.read_text(encoding="utf-8")
+    complete_text = output_path.with_name("seat-dialog-0007-complete.md").read_text(encoding="utf-8")
+    check("subagent words do not count toward the word floor, so the tail still reaches back "
+          "for the dialog it needs",
+          exit_code == 0 and "early early" in tail_text and "ancient" not in tail_text,
+          tail_text[:600])
+    check("the tail cuts a subagent text over the limit and names the session's and the "
+          "subagent's transcripts",
+          "line 399" not in tail_text and "[Cut here: " in tail_text and str(path) in tail_text
+          and str(path.with_suffix("") / "subagents" / "agent-a9999999999999999.jsonl") in tail_text,
+          tail_text[-900:])
+    check("the complete dialog keeps the long subagent text whole",
+          "line 399" in complete_text and "[Cut here" not in complete_text)
+    check("both files count the subagent turns apart from the words, and point at the "
+          "subagents' transcripts",
+          "2 subagent turns, not counted in the words" in tail_text
+          and "2 subagent turns, not counted in the words" in complete_text
+          and "/subagents/agent-<agent id>.jsonl" in tail_text
+          and "/subagents/agent-<agent id>.jsonl" in complete_text,
+          tail_text[:500])
+
+    # The rolling session dialog renders even a transcript with no dialog in it.
+    path = write_transcript(workspace, "no-dialog.jsonl", [{"type": "system", "content": "x"}])
+    check("the complete dialog of a transcript with no dialog says it holds no turns",
+          "All 0 dialog turns" in extractor.render_complete_dialog_of_transcript_as_markdown(path))
+
 print()
 if failures:
     print(f"{len(failures)} case(s) failed: {', '.join(failures)}")
