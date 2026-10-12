@@ -65,7 +65,10 @@ CREDENTIAL_DIRECTORIES in nc-systems/cold-read/cold-read-cell-common.py).
 `--sandbox workspace-write` lets a reviewer read anything, so the cell runs
 under a named permission profile instead: it extends Codex's `:workspace`
 profile, which writes where workspace-write did, and denies the credential
-directories and file names. Codex refuses the two together, so `--sandbox`
+directories and file names. Those writable roots are the checkout and the
+temporary directories, so the cell also adds the report's own directory with
+`--add-dir`: a report in another checkout, such as a walk draft's suggestions
+in a topic worktree, is otherwise refused with "Operation not permitted". Codex refuses the two together, so `--sandbox`
 is gone. Measured 2026-09-28 with canary files, on both machines: under
 workspace-write the reviewer read all three canaries; under the profile it
 read none, still read README.md, and wrote its report. Codex expands a deny
@@ -164,7 +167,7 @@ def credential_denying_permission_profile_arguments(platform: str = sys.platform
         CREDENTIAL_DENYING_PERMISSION_PROFILE, ":workspace", platform, network=True)
 
 
-def invocation_builder(effort: str):
+def invocation_builder(effort: str, report: pathlib.Path = None):
     """Return a callback producing (argv, stdin text) for each model and prompt."""
     # Codex takes a positional prompt; None tells the runner to close stdin explicitly.
     def build_invocation(model: str, prompt: str):
@@ -174,6 +177,10 @@ def invocation_builder(effort: str):
             "--disable", "memories",
             "-C", str(common.REPO_ROOT),
         ]
+        # The profile's writable roots are the checkout and the temporary
+        # directories; a report anywhere else needs its own directory added.
+        if report is not None:
+            command += ["--add-dir", str(report.parent)]
         if model:
             command += ["-m", model]
         command += ["-c", f"model_reasoning_effort={effort}"]

@@ -76,8 +76,10 @@ SETTINGS = json.dumps({"disableAllHooks": True,
                        "permissions": {"deny": CREDENTIAL_READ_DENY_RULES}})
 
 
-def invocation_builder(effort: str):
+def invocation_builder(effort: str, report: pathlib.Path = None):
     """Return a callback yielding model argv and prompt input for the shared runner."""
+    # Claude's Write tool already writes outside the checkout, so the report needs no grant.
+    del report
     # Pass the prompt on stdin: variadic --allowedTools can swallow a trailing positional argument.
     def build_invocation(model: str, prompt: str):
         command = [

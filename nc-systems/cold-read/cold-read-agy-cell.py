@@ -170,8 +170,10 @@ def credential_sandbox_prefix(platform: str = sys.platform) -> list:
     return prefix
 
 
-def invocation_builder(effort: str):
+def invocation_builder(effort: str, report: pathlib.Path = None):
     """Return a callback producing (agy argv, None) for the shared runner."""
+    # agy already writes outside the checkout, so the report needs no grant.
+    del report
     # agy takes the prompt through --print; None makes the runner close stdin.
     def build_invocation(model: str, prompt: str):
         command = [

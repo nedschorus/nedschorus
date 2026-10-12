@@ -330,7 +330,12 @@ def classify_failed_attempt(
     if start_error:
         return "agent-binary-missing", start_error
     if exit_code == 0:
-        return "no-report", "no report written"
+        # The reviewer's closing words usually say why it wrote nothing, such as a refused write.
+        closing = [line.strip() for line in stdout.splitlines() if line.strip()]
+        if not closing:
+            return "no-report", "no report written"
+        return ("no-report", "no report written; the reviewer's last line: "
+                + closing[-1][:CAUSE_DETAIL_MAX_CHARACTERS])
     last_lines = [line.strip() for line in (stderr if stderr.strip() else stdout).splitlines()
                   if line.strip()]
     detail = last_lines[-1][:CAUSE_DETAIL_MAX_CHARACTERS] if last_lines else "no output"
@@ -721,7 +726,7 @@ def run_cell(
 
     return run_model_chain(
         program=program, runtime=runtime, chain=chain, effort=effort,
-        build_invocation=invocation_builder(effort), prompt=prompt,
+        build_invocation=invocation_builder(effort, report), prompt=prompt,
         report=report, cell=args.cell, tier=args.tier,
         target_argument=args.target, baseline=baseline,
         cell_started_at=cell_started_at,

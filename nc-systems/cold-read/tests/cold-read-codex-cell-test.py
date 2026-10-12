@@ -334,6 +334,30 @@ with tempfile.TemporaryDirectory() as scratch:
                            and received_argv[index + 1].startswith("web_search=")]
     check("the cell asks codex for live web search",
           web_search_settings == ['web_search="live"'], repr(web_search_settings))
+    # The profile's writable roots are the checkout and the temporary
+    # directories; a report elsewhere is written only through --add-dir.
+    added_directories = [received_argv[index + 1]
+                         for index, argument in enumerate(received_argv[:-1])
+                         if argument == "--add-dir"]
+    check("the cell makes the report's own directory writable with --add-dir",
+          [Path(directory).resolve() for directory in added_directories]
+          == [report.parent.resolve()], repr(added_directories))
+
+    # --- A reviewer that exits 0 without a report says why ------------------
+    report.unlink(missing_ok=True)
+    refused_write_line = ("I could not write the report: PermissionError: "
+                          "[Errno 1] Operation not permitted")
+    stub_explains_no_report = (
+        "#!/usr/bin/env python3\n"
+        f"print({refused_write_line!r})\n"
+        "raise SystemExit(0)\n")
+    result = run_cell(stubs, stub_explains_no_report, report,
+                      "--cell", "restate", "--tier", "deep", "--target", str(target))
+    check("a codex that exits 0 without a report leaves the cell exiting 1",
+          result.returncode == 1, f"exit {result.returncode}; stderr={result.stderr!r}")
+    check("its cause line carries the reviewer's last line",
+          "cause: no-report — no report written; the reviewer's last line: "
+          + refused_write_line in result.stderr, repr(result.stderr[-600:]))
 
 print()
 if failures:
