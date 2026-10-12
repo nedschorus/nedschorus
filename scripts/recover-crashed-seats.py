@@ -1134,6 +1134,20 @@ def recover_seat(name: str, agents_root: Path, handoff_directory: Path,
             f"{reach_clause_for_a_running_seat(name)}")
 
 
+def list_agent_seat_names_with_agent_session_records(agents_root: Path, handoff_directory: Path,
+                             projects_root: Path) -> list:
+    """Return, sorted, the directories under agents_root that ever held a seat."""
+    # A never-run directory is not a crashed seat; explicit names may still recover one.
+    def ever_ran(name: str) -> bool:
+        return (supervisor.supervisor_state_path(handoff_directory, name).is_file()
+                or supervisor.handoff_file_path(handoff_directory, name).is_file()
+                or harness_project_directory(agents_root / name, projects_root).is_dir())
+    if not agents_root.is_dir():
+        return []
+    return sorted(entry.name for entry in agents_root.iterdir()
+                  if entry.is_dir() and ever_ran(entry.name))
+
+
 def append_to_recovery_log(handoff_directory: Path, report: str):
     # Recovery changes state, so the original verdict may not be reconstructible later.
     log_path = handoff_directory / "recover-crashed-seats-log.txt"
@@ -1210,16 +1224,7 @@ def main(argv=None) -> int:
                              f"an apostrophe into an iTerm window: {path}")
 
     if arguments.all:
-        # A never-run directory is not a crashed seat; explicit names may still recover one.
-        def ever_ran(name: str) -> bool:
-            return (supervisor.supervisor_state_path(handoff_directory, name).is_file()
-                    or supervisor.handoff_file_path(handoff_directory, name).is_file()
-                    or harness_project_directory(agents_root / name,
-                                                 projects_root).is_dir())
-        names = sorted(
-            entry.name for entry in agents_root.iterdir()
-            if entry.is_dir() and ever_ran(entry.name)
-        ) if agents_root.is_dir() else []
+        names = list_agent_seat_names_with_agent_session_records(agents_root, handoff_directory, projects_root)
         if not names:
             print(f"recover-crashed-seats: no seat directories under {agents_root}")
             return 1
