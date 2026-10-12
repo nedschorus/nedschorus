@@ -11,6 +11,13 @@ _tables_spec = importlib.util.spec_from_file_location(
 tables = importlib.util.module_from_spec(_tables_spec)
 _tables_spec.loader.exec_module(tables)
 
+_git_output_spec = importlib.util.spec_from_file_location(
+    "git_machine_readable_output_runner_and_parser_common",
+    pathlib.Path(__file__).resolve().parents[2] / "nc-systems" / "general-tools"
+    / "git-machine-readable-output-runner-and-parser-common.py")
+git_output = importlib.util.module_from_spec(_git_output_spec)
+_git_output_spec.loader.exec_module(git_output)
+
 
 def compose_state_exit_trailer(state, verdict, package_commit, counters, write_number=None):
     """Compose state-exit trailers, optionally including a counted or forced write."""
@@ -231,8 +238,10 @@ class TopicBranchGitRecord:
 
     def paths_changed_since(self, commit):
         """Return committed and uncommitted changes since commit, excluding the record directory."""
-        changed = set(self.git("diff", "--name-only", commit).stdout.split())
-        changed |= set(self.git("ls-files", "--others", "--exclude-standard").stdout.split())
+        changed = set(git_output.nul_separated_fields(
+            self.git("diff", "-z", "--name-only", commit).stdout))
+        changed |= set(git_output.nul_separated_fields(
+            self.git("ls-files", "-z", "--others", "--exclude-standard").stdout))
         record = str(self.record_directory)
         return sorted(p for p in changed if not p.startswith(record + "/"))
 
