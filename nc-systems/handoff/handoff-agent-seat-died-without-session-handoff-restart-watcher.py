@@ -37,9 +37,13 @@ seat running; after a failed attempt the poll is recorded again, so the
 attempt's own brief run is part of the death it was handling.
 
 The user hears from the watcher only when it cannot do its job of restarting:
-each case it does not or cannot restart, and each failure, becomes a notice
-shown in a window the program opens on his Mac with
-scripts/open-mac-window-from-ned-box.py. A restart it carries out shows no
+a crash it will not restart (a second crash inside RESTART_LIMIT_SECONDS), a
+seat down in a state only he should restart from (the two cases above), and
+each failure become a notice shown in a window the program opens on his Mac
+with scripts/open-mac-window-from-ned-box.py. The cases it leaves alone stay
+silent, logged only: a stop on purpose, a seat assessed refuse,
+ask-to-close-the-leftover-idle-shell or seat-asked-to-be-consulted, and a seat
+not seen running since the machine booted. A restart it carries out shows no
 notice: it opens a window on the Mac attached to the restarted seat's tmux
 session. A window the Mac cannot be reached for, a notice's or a restart's,
 stays pending and is tried again on every run. Every decision, each restart

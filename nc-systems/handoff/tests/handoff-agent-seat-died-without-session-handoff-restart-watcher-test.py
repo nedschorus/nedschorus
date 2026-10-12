@@ -541,6 +541,10 @@ def run_window_words_cases(root: Path):
                     "/home/nedlern/Projects/nedschorus/nc-systems/handoff/"
                     "handoff-agent-seat-died-without-session-handoff-restart-watcher.py",
                     "--show-notice", str(notice)]
+    built_words = watcher_module.show_notice_words_for_window(str(notice))
+    check("the notice window's words are the interpreter, this program, --show-notice and the notice",
+          built_words[2:] == notice_words[2:] and len(built_words) == len(notice_words),
+          repr(built_words))
     attach_words = [word.format(seat="merge-lane-2") for word in watcher_module.ATTACH_COMMAND]
     for name, words in (("a notice window", notice_words), ("a restarted seat's window", attach_words)):
         request = " ".join([forced_command.REQUEST_VERB, *words])
@@ -557,10 +561,12 @@ def run_command_line_cases(root: Path):
     notice = root / "notice.txt"
     notice.write_text("merge-lane-2 is down: the crash watcher could not restart it.\n",
                       encoding="utf-8")
+    # The words a notice window runs, built as the watcher builds them, so a flag the
+    # parser does not accept fails here rather than in a window on the Mac.
     completed = subprocess.run(
-        [sys.executable, str(SCRIPT_PATH), "--show-notice", str(notice)],
+        watcher_module.show_notice_words_for_window(str(notice)),
         stdin=subprocess.DEVNULL, capture_output=True, text=True, check=False)
-    check("--show-notice prints the notice and the close prompt, and exits 0",
+    check("a notice window's words print the notice and the close prompt, and exit 0",
           completed.returncode == 0 and "merge-lane-2 is down" in completed.stdout
           and watcher_module.SHOW_NOTICE_CLOSE_PROMPT in completed.stdout,
           f"{completed.returncode} {completed.stdout!r} {completed.stderr!r}")
