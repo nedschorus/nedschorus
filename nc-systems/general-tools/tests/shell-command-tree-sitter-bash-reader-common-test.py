@@ -125,6 +125,8 @@ for command, expected in [
     ("x | bash 0>f", [(["x"], []), (["bash"], [("0>", "f")])]),
     ("bash 10<f", [(["bash"], [("10<", "f")])]),
     ("bash 0 <f", [(["bash", "0"], [("<", "f")])]),
+    ("bash 0 <<<x", [(["bash", "0"], [("<<<", "x")])]),
+    ("xa 0<(xb)", [(["xb"], []), (["xa", "0", "<(xb)"], [])]),
     ("bash 2>f", [(["bash"], [("2>", "f")])]),
     ("bash 0<<E\ntmux kill-server\nE\nls", [(["bash"], [("<<", "tmux kill-server\n")]), (["ls"], [])]),
     ("bash 0<<-E\n\tb\n\tE\nls", [(["bash"], [("<<", "b\n")]), (["ls"], [])]),
@@ -179,6 +181,61 @@ for words, expected in [
 found = reader.simple_commands("a | b; c | d")
 check("each stage names the first stage of its own pipeline",
       [f.child_shell[-1].shell_pipeline_first_stage_byte_offset for f in found] == [0, 0, 7, 7], [f.child_shell for f in found])
+
+# --- $'...' decoded as bash decodes it, with bash itself as the oracle ---
+bash_version = subprocess.run(["bash", "-c", "echo ${BASH_VERSINFO[0]}.${BASH_VERSINFO[1]}"],
+                              capture_output=True, text=True).stdout.strip()
+ansi_c_words = [r"$'a\nb'", r"$'\t\x41\101\e\cA\c?'", r"$'it\'s \"x\" \?'", r"$'keep \q and \x and \u'",
+                r"$'nul\0after'", r"a$'\n'b", r"$'\c\\x'", r"$'\0101\x4142'", r"$'\a\b\f\r\v\E'"]
+# bash learned \u and \U in 4.2; the Mac's /bin/bash is 3.2.
+if tuple(int(part) for part in bash_version.split(".")) >= (4, 2):
+    ansi_c_words += [r"$'é\U0001F600☃x'"]
+else:
+    print(f"SKIP  $'\\u...' cases: bash {bash_version} predates \\u")
+for word in ansi_c_words:
+    expected = subprocess.run(["bash", "-c", f"printf %s {word}"], capture_output=True).stdout
+    found = reader.simple_commands(f"printf %s {word}")[0][2].encode("utf-8", "surrogateescape")
+    check(f"{word} is the word bash passes", found == expected, (found, expected))
+found = reader.simple_commands("ssh h $'true\\ntmux kill-server'")
+check("an ANSI-C quoted remote command keeps its newline, so the command after it is seen",
+      found[0][2] == "true\ntmux kill-server", list(found[0]))
+
+# --- a heredoc body walked as bash expands it ---
+for body, expected in [
+    # tree-sitter-bash splits a backticked command inside ${ }.
+    ("${v:-`echo $(printf x); tmux send-keys -t a b`}", [["printf", "x"], ["echo", "$(printf x)"],
+                                                       ["tmux", "send-keys", "-t", "a", "b"]]),
+    # tree-sitter-bash puts an escaped $( and the backticks after it outside the body's node.
+    ("\\$(echo `tmux send-keys -t a b`)\n$(printf x)", [["tmux", "send-keys", "-t", "a", "b"], ["printf", "x"]]),
+    # $(( whose inner ( closes before a ; is a substitution holding two subshells.
+    ("$((xa); (xb))", [["xa"], ["xb"]]),
+    ("$(( $(xc) + 1 ))", [["xc"]]),
+    # Order is by byte offset, after multi-byte text.
+    ("é" * 20 + " $(xa) `xb`", [["xa"], ["xb"]]),
+]:
+    found = [list(f) for f in reader.simple_commands(f"cat <<A\n{body}\nA")][:-1]
+    check(f"the body {body!r} runs the commands bash runs", found == expected, found)
+found = reader.simple_commands("cat <<A\n`cd /tmp; echo $(git push -f origin topic)`\nA")
+check("a substitution inside a backticked command runs in its child shell, after its cd",
+      [list(f) for f in found][:2] == [["cd", "/tmp"], ["git", "push", "-f", "origin", "topic"]]
+      and found[1].child_shell[:len(found[0].child_shell)] == found[0].child_shell,
+      [(list(f), f.child_shell) for f in found])
+found = reader.simple_commands("cat <<A\n$(tmux send-keys -t 'a;& esac' Enter) $(case x in x) :;& esac)\nA")
+check("a body's case repair leaves a quoted ;& esac inside a substitution as written",
+      list(found[0]) == ["tmux", "send-keys", "-t", "a;& esac", "Enter"], [list(f) for f in found])
+
+# --- ;& before a comment, and a repaired case inside a word ---
+check("a ;& followed by a comment and then esac is repaired, and the command after the case is read",
+      words_of("case x in x) :;& # note\nesac\ntmux kill-server")[-1] == ["tmux", "kill-server"],
+      words_of("case x in x) :;& # note\nesac\ntmux kill-server"))
+for command, word in [("echo $(case x in x) :;& esac)", "$(case x in x) :;& esac)"),
+                      ('echo "$(case x in x) :;;& esac)" y', "$(case x in x) :;;& esac)")]:
+    found = words_of(command)
+    check(f"a word holding a repaired case keeps its terminator as written: {command!r}",
+          found[-1][1] == word, found)
+found = words_of("echo $(case a in a) :;& esac) $(case a in a) :;; esac)")
+check("two words that differ only in their terminators each keep their own",
+      found[-1][1:] == ["$(case a in a) :;& esac)", "$(case a in a) :;; esac)"], found)
 
 # --- child shells: where a cd stays ---
 found = reader.simple_commands("(cd /tmp/other && make); git push --force-with-lease o b")
@@ -490,7 +547,7 @@ for command, expected in [
      [([":"], []), (["tmux", "kill-server"], []), (["cat"], ["$(case x in x) :;;& esac) $(tmux kill-server)\n"])]),
     # A backticked command that holds a substitution, an escaped backtick, and one never closed.
     ("cat <<A\n`xa $(xb) xc` \\`xd\\` `xe\nA",
-     [(["xa", "xc"], []), (["xb"], []), (["cat"], ["`xa $(xb) xc` \\`xd\\` `xe\n"])]),
+     [(["xb"], []), (["xa", "$(xb)", "xc"], []), (["cat"], ["`xa $(xb) xc` \\`xd\\` `xe\n"])]),
     # Substitutions run in the order written; $(( )) is arithmetic, $$( the process id.
     ("cat <<A\n$(xa) $(xb) `xc` $(xd)\nA",
      [(["xa"], []), (["xb"], []), (["xc"], []), (["xd"], []), (["cat"], ["$(xa) $(xb) `xc` $(xd)\n"])]),
