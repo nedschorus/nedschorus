@@ -93,6 +93,41 @@ REFUSED = {
     "codex exec whose help may be a second image": "codex exec -i shot.png help",
 }
 
+# Every member of the hook's option tables gets a case of its own, written out here rather than read
+# from the hook, so a member dropped from a table fails a case.
+CODEX_EXEC_VALUE_OPTIONS = (
+    "-c", "--config", "--enable", "--disable", "-i", "--image", "-m", "--model",
+    "--local-provider", "-p", "--profile", "-s", "--sandbox", "-C", "--cd", "--add-dir",
+    "--thread-source", "--output-schema", "--color", "-o", "--output-last-message")
+CODEX_EXEC_MANY_VALUE_OPTIONS = ("-i", "--image")
+COMMAND_RUNNING_PREFIX_VALUE_OPTIONS = {
+    "env": ("-u", "-C", "-S", "-P", "--unset", "--chdir", "--split-string"),
+    "command": (), "nohup": (), "time": (), "exec": ("-a",), "nice": ("-n",),
+    "timeout": ("-s", "-k", "--signal", "--kill-after"),
+    "caffeinate": ("-t", "-w"), "sandbox-exec": ("-f", "-p", "-D"), "setsid": (),
+}
+SHELL_STRING_RUNNERS = ("bash", "sh", "zsh")
+SHELL_VALUE_OPTIONS = ("-o", "+o", "-O", "+O")
+SSH_VALUE_LETTERS = "bceilmopBDEFIJLOPQRSwW"
+
+for option in CODEX_EXEC_VALUE_OPTIONS:
+    REFUSED[f"codex exec whose {option} takes the word help as its value"] = f"codex exec {option} help"
+for option in CODEX_EXEC_MANY_VALUE_OPTIONS:
+    REFUSED[f"codex exec whose help may be a second value of {option}"] = f"codex exec {option} a.png help"
+for prefix, options in COMMAND_RUNNING_PREFIX_VALUE_OPTIONS.items():
+    duration = " 600" if prefix == "timeout" else ""
+    REFUSED[f"codex exec behind {prefix}"] = f"{prefix}{duration} codex exec task"
+    for option in options:
+        REFUSED[f"codex exec behind {prefix} {option}, whose value is skipped"] = (
+            f"{prefix} {option} value{duration} codex exec task")
+for runner in SHELL_STRING_RUNNERS:
+    REFUSED[f"codex exec inside {runner} -c"] = f"{runner} -c 'codex exec task'"
+for option in SHELL_VALUE_OPTIONS:
+    REFUSED[f"codex exec inside bash {option} <value> -c"] = f"bash {option} pipefail -c 'codex exec task'"
+for letter in SSH_VALUE_LETTERS:
+    REFUSED[f"codex exec over ssh -{letter}, whose value is skipped"] = (
+        f"ssh -{letter} value ned-box 'codex exec task'")
+
 ALLOWED = {
     "the new program": "python3 scripts/run-codex-task-from-brief.py -C . --brief b.md -o r.md",
     "codex --version": "codex --version",
