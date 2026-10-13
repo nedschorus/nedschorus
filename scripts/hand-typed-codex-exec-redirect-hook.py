@@ -56,6 +56,8 @@ CODEX_EXEC_VALUE_OPTIONS = {
     "-c", "--config", "--enable", "--disable", "-i", "--image", "-m", "--model",
     "--local-provider", "-p", "--profile", "-s", "--sandbox", "-C", "--cd", "--add-dir",
     "--thread-source", "--output-schema", "--color", "-o", "--output-last-message"}
+# Of those, the ones Codex's own help shows as taking several values (`-i, --image <FILE>...`).
+CODEX_EXEC_MANY_VALUE_OPTIONS = {"-i", "--image"}
 
 USAGE_LINE = (
     f"python3 {RUNNER_PATH} -C <checkout> --brief <file> -o <report> "
@@ -178,6 +180,9 @@ def codex_exec_asks_for_help(arguments) -> bool:
         if word in ("-h", "--help"):
             return True
         if word in CODEX_EXEC_VALUE_OPTIONS:
+            if word in CODEX_EXEC_MANY_VALUE_OPTIONS:
+                # The option takes every following word as a value, so a later help may be one of them.
+                first_operand = False
             index += 2
             continue
         if not word.startswith("-"):

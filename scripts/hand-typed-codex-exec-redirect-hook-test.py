@@ -88,6 +88,9 @@ REFUSED = {
     "codex exec inside bash -c --": "bash -c -- 'codex exec task'",
     "codex exec in a heredoc that bash -s runs with arguments":
         "bash -s one two <<'EOF'\ncodex exec task\nEOF",
+    "codex exec resume whose later operand is help": "codex exec resume --last help",
+    "codex exec whose second operand is help": "codex exec task help",
+    "codex exec whose help may be a second image": "codex exec -i shot.png help",
 }
 
 ALLOWED = {

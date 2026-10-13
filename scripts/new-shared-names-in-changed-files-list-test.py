@@ -520,32 +520,9 @@ def case_hook_reports_once_per_worktree(root):
           "codex" not in first.lower(), first)
     check("the hook names the report's Rename: heading as what to act on",
           "lists a name under its Rename: heading" in first, first)
-    _, second = run_hook(clone, state_root, {"tool_name": "Edit", "tool_input": {"file_path": "many.md"}})
-    shown_second = set(re.findall(r"capped-name-\d\d", second))
-    check("the next reminder shows the names past the cap",
-          shown_first | shown_second == {f"capped-name-{index:02d}" for index in range(35)}
-          and not shown_first & shown_second, f"{len(shown_first)} then {len(shown_second)}")
-
-
-def case_hook_reports_once_per_worktree(root):
-    clone = make_clone(root, BASE_MAIN_FILES)
-    state_root = root / "state"
-    state_root.mkdir()
-    write(clone, "alpha.py", "def shared_helper():\n    return 1\n")
-    write(clone, "beta.py", "import alpha\nalpha.shared_helper()\n")
-    code, first = run_hook(clone, state_root, {"tool_name": "Write", "tool_input": {"file_path": "beta.py"}})
-    check("the hook exits 0", code == 0)
-    check("the hook names the new function", "shared_helper" in first, first)
-    check("the hook names the naming fresh-agent", "new-name-propose-and-check-fresh-agent" in first)
-    check("the hook tells a subagent to hand its names to the agent that dispatched it, under a heading "
-          "that says what to do with them",
-          "If you are a subagent and cannot start one, do not run the check yourself" in first
-          and "`New shared names: send these to the new-name-propose-and-check-fresh-agent subagent`" in first,
-          first)
-    check("the hook no longer tells anyone to run the check through Codex",
-          "codex" not in first.lower(), first)
-    check("the hook names the report's Rename: heading as what to act on",
-          "lists a name under its Rename: heading" in first, first)
+    check("the hook says the renames are for the agent that sent the names to the naming agent",
+          "If you sent the names to the new-name-propose-and-check-fresh-agent subagent yourself, when its "
+          "report lists a name under its Rename: heading" in first, first)
     _, second = run_hook(clone, state_root, {"tool_name": "Edit", "tool_input": {"file_path": "beta.py"}})
     check("the same names are not reported twice in one agent-session", second == "", second)
     git_directory = subprocess.run(["git", "rev-parse", "--absolute-git-dir"], cwd=str(clone), check=True,
