@@ -1142,8 +1142,24 @@ except r.ShellParserUnavailable as error:
     check("in an agent-session no user attends, the reader-failed message does not ask to tell the user",
           "do not tell the user" in unattended and "Tell the user" not in unattended
           and "If you are a subagent, tell the agent that dispatched you" in unattended, unattended)
-    check("the reader-failed message says where the quoted command goes",
-          "After those words, give the command as a quoted block of its own" in attended, attended)
+    check("the reader-failed message says where the command goes, and in what form",
+          "After those words, give the command as a fenced code block of its own, between two lines "
+          "of three backticks" in attended, attended)
+    for session, attended_wanted in [((None, None), True), (("1", None), True), (("0", None), False),
+                                     ((None, "1"), False)]:
+        with reader.agent_session_attendance_environment_variables_temporarily_set_for_test(*session):
+            from_session = context_of(reader.parser_unavailable_hook_output("The force-push guard", unreadable))
+        check(f"with the session variables {session}, the message reads the session from them",
+              ("Tell the user" in from_session) == attended_wanted
+              and ("do not tell the user" in from_session) != attended_wanted, from_session)
+    with reader.agent_session_attendance_environment_variables_temporarily_set_for_test("outer", None):
+        with reader.agent_session_attendance_environment_variables_temporarily_set_for_test(None, "1"):
+            inside = (os.environ.get("CLAUDE_CODE_SESSION_ATTENDED"),
+                      os.environ.get("NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER"))
+        after = (os.environ.get("CLAUDE_CODE_SESSION_ATTENDED"),
+                 os.environ.get("NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER"))
+    check("the session variables are set inside the block and put back as they were after it",
+          inside == (None, "1") and after == ("outer", None), (inside, after))
     missing_unattended = context_of(reader.parser_unavailable_hook_output(
         "The force-push guard", reader.ShellParserUnavailable("pip: no network"),
         {"CLAUDE_CODE_SESSION_ATTENDED": "0"}))

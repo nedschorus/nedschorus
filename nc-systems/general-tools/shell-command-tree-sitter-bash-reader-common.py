@@ -22,7 +22,8 @@ tree-sitter and tree-sitter-bash are compiled libraries, installed per user
 from compiled-python-libraries-pinned-requirements.txt beside this file. When
 they are missing, the first use installs them. ShellParserUnavailable means
 the install failed: the guard lets the command through and says so with
-parser_unavailable_hook_output, which asks for the user to be told.
+parser_unavailable_hook_output, which says whom to tell: the user, or, in an
+agent-session no user attends, only the agent that dispatched a subagent.
 ShellCommandUnreadable, a kind of it, means this module failed on the command;
 simple_commands raises no other error, and the guard lets the command through
 and says the reader failed on it. When the
@@ -42,6 +43,7 @@ from __future__ import annotations
 
 import codecs
 import collections
+import contextlib
 import importlib
 import json
 import os
@@ -450,6 +452,30 @@ def _session_unattended(environment):
                 or environment.get("CLAUDE_CODE_SESSION_ATTENDED") == "0")
 
 
+@contextlib.contextmanager
+def agent_session_attendance_environment_variables_temporarily_set_for_test(attended, reincarnation_owned_by_caller):
+    """Set the two variables _session_unattended reads, None for unset, and put both back after.
+
+    A test of a message that names whom to tell sets both, so it reads the same in any
+    agent-session it runs in.
+    """
+    values = {"CLAUDE_CODE_SESSION_ATTENDED": attended,
+              "NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER": reincarnation_owned_by_caller}
+    saved = {name: os.environ.get(name) for name in values}
+
+    def put(settings):
+        for name, value in settings.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
+    put(values)
+    try:
+        yield
+    finally:
+        put(saved)
+
+
 def parser_unavailable_hook_output(guard_name, error, environment=os.environ):
     """Return the PreToolUse JSON that lets the command through and says it was not checked."""
     host = socket.gethostname().split(".")[0]
@@ -458,12 +484,14 @@ def parser_unavailable_hook_output(guard_name, error, environment=os.environ):
             f"{guard_name} let this command through without checking it, and the command has "
             f"run: the shell command reader ({Path(__file__).name}) failed on it on {host} "
             f"({error.install_output}).\n"
-            f"Look at what the command did. If it did what {guard_name} exists to stop, undo "
-            f"that now where you can.\n"
+            f"Look at what the command did. If the command did what {guard_name} exists to "
+            f"stop, undo what the command did, now, where you can.\n"
             + report_to_user_or_dispatching_agent_instruction_build(
                 f"\"{guard_name} let a command through unchecked on {host}, because the shell "
                 f"command reader failed on it ({error.install_output}).\" After those words, "
-                f"give the command as a quoted block of its own, then say whether it did what "
+                f"give the command as a fenced code block of its own, between two lines of three "
+                f"backticks, or of more backticks than the longest run of backticks in the "
+                f"command, then say whether it did what "
                 f"{guard_name} exists to stop, what you undid, and what you could not undo.",
                 environment))
         return json.dumps({"hookSpecificOutput": {
@@ -477,8 +505,8 @@ def parser_unavailable_hook_output(guard_name, error, environment=os.environ):
     message = (
         f"{guard_name} let this command through without checking it, and the command has run: "
         f"the shell parser tree-sitter-bash is missing on {host}, and installing it failed.\n"
-        f"Look at what the command did. If it did what {guard_name} exists to stop, undo that "
-        f"now where you can.\n"
+        f"Look at what the command did. If the command did what {guard_name} exists to stop, "
+        f"undo what the command did, now, where you can.\n"
         + report_to_user_or_dispatching_agent_instruction_build(
             f"\"tree-sitter-bash is missing on {host} and could not be installed, so the "
             f"project's Bash guards are not checking commands there. To install it by hand, "

@@ -351,28 +351,40 @@ try:
 
     ticks = iter(range(0, 10_000, 100))
     LET_THROUGH_MESSAGES.clear()
+    with guard.shell_reader.agent_session_attendance_environment_variables_temporarily_set_for_test(None, None):
+        budget_refusal = run_main("grep -l needle */*.jsonl", scratch,
+                                  clock=lambda: float(next(ticks)))
     check("passes when the expansion budget is spent, and says the limit stopped the check",
-          run_main("grep -l needle */*.jsonl", scratch,
-                   clock=lambda: float(next(ticks))) is None
+          budget_refusal is None
           and len(LET_THROUGH_MESSAGES) == 1
           and "limit is deliberate; nothing failed" in LET_THROUGH_MESSAGES[0]
           and "Tell the user" not in LET_THROUGH_MESSAGES[0], LET_THROUGH_MESSAGES)
     real_analyze = guard.analyze_command_text
-    for failure in (OSError("disk unreadable"), ValueError("bad value"), re.error("bad pattern")):
+    for failure, session, attended in [
+            (OSError("disk unreadable"), (None, None), True),
+            (ValueError("bad value"), (None, None), True),
+            (re.error("bad pattern"), (None, None), True),
+            (OSError("disk unreadable"), ("0", None), False),
+            (OSError("disk unreadable"), (None, "1"), False)]:
         def failing(*arguments, failure=failure, **keywords):
             raise failure
         guard.analyze_command_text = failing
         LET_THROUGH_MESSAGES.clear()
         try:
-            refusal = run_main("grep -l needle */*.jsonl", scratch)
+            with guard.shell_reader.agent_session_attendance_environment_variables_temporarily_set_for_test(*session):
+                refusal = run_main("grep -l needle */*.jsonl", scratch)
         finally:
             guard.analyze_command_text = real_analyze
-        check(f"when the guard fails with {type(failure).__name__}, it lets the command through, "
-              f"says it was not checked, quotes the error and says whom to tell",
+        whom = ("Tell the user" in LET_THROUGH_MESSAGES[0] if attended
+                else "do not tell the user" in LET_THROUGH_MESSAGES[0]
+                and "If you are a subagent, tell the agent that dispatched you" in LET_THROUGH_MESSAGES[0]
+                and "Tell the user" not in LET_THROUGH_MESSAGES[0]) if LET_THROUGH_MESSAGES else False
+        check(f"when the guard fails with {type(failure).__name__}, with the session variables "
+              f"{session}, it lets the command through, says it was not checked, quotes the error "
+              f"and says whom to tell",
               refusal is None and len(LET_THROUGH_MESSAGES) == 1
               and f"{type(failure).__name__}: {failure}" in LET_THROUGH_MESSAGES[0]
-              and "without checking it" in LET_THROUGH_MESSAGES[0]
-              and "Tell the user" in LET_THROUGH_MESSAGES[0], LET_THROUGH_MESSAGES)
+              and "without checking it" in LET_THROUGH_MESSAGES[0] and whom, LET_THROUGH_MESSAGES)
 
     many = scratch / "many"
     many.mkdir()

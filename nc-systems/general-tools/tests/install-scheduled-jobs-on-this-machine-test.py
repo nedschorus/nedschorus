@@ -1347,8 +1347,9 @@ with tempfile.TemporaryDirectory() as temporary:
             shell_reader.load_parser = (lambda install=install: real_load_parser(
                 importer=missing_until_installed, installer=install))
             stub = MachineStub(crontab=(BOX_MIRROR + "\n" + runs_directly + "\n").encode())
-            exit_code, printed, errors = run_main(["--remove-not-in-table"], NED_BOX, stub) \
-                if wanted_exit == 2 else run_main(["--check"], NED_BOX, stub)
+            with shell_reader.agent_session_attendance_environment_variables_temporarily_set_for_test(None, None):
+                exit_code, printed, errors = run_main(["--remove-not-in-table"], NED_BOX, stub) \
+                    if wanted_exit == 2 else run_main(["--check"], NED_BOX, stub)
             if install is recording_install:
                 check("with tree-sitter-bash missing, the installer has the shell module install "
                       "it, then reads the crontab and reports the retired line",
@@ -1361,12 +1362,23 @@ with tempfile.TemporaryDirectory() as temporary:
                       install_calls == [True] and exit_code == 2 and stub.crontab_writes == []
                       and "pip exited 1: no network on this machine" in errors
                       and "Tell the user, or, if you are a subagent, the agent that dispatched "
-                      "you: tree-sitter-bash could not be installed on " in errors
+                      "you, in these words: \"tree-sitter-bash could not be installed on " in errors
                       and shell_reader.REQUIREMENTS_FILE.name in errors,
                       (install_calls, exit_code, printed, errors, stub.crontab_writes))
     finally:
         shell_reader.load_parser, shell_reader.STATE_DIRECTORY = real_load_parser, saved_state_directory
         shell_reader._parser = saved_parser
+
+    with shell_reader.agent_session_attendance_environment_variables_temporarily_set_for_test(None, "1"):
+        unattended_lines = installer.shell_parser_refusal(
+            shell_reader.ShellParserUnavailable("pip exited 1: no network"), runs_directly).lines
+    unattended_errors = "\n".join(unattended_lines)
+    check("in an agent-session no user attends, the install-failed refusal tells a subagent to "
+          "report, does not ask to tell the user, and still says how to install by hand",
+          "do not tell the user" in unattended_errors
+          and "If you are a subagent, tell the agent that dispatched you" in unattended_errors
+          and "Tell the user" not in unattended_errors and "pip install" in unattended_errors
+          and "pip exited 1: no network" in unattended_errors, unattended_errors)
 
     # A failure inside the shell reader stops this program the same way, naming the failure.
     real_collect = shell_reader._collect
@@ -1374,23 +1386,20 @@ with tempfile.TemporaryDirectory() as temporary:
     def failing_collect(*arguments, **keywords):
         raise ValueError("injected")
     shell_reader._collect = failing_collect
-    session_variables = ("CLAUDE_CODE_SESSION_ATTENDED", "NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER")
-    saved_session = {name: os.environ.pop(name, None) for name in session_variables}
+    backticked = runs_directly + " `date`"
     try:
-        # Attended: neither session variable is set.
         stub = MachineStub(crontab=(BOX_MIRROR + "\n" + runs_directly + "\n").encode())
-        exit_code, printed, errors = run_main(["--remove-not-in-table"], NED_BOX, stub)
-        os.environ["CLAUDE_CODE_SESSION_ATTENDED"] = "0"
-        unattended_exit, unattended_printed, unattended_errors = run_main(
-            ["--remove-not-in-table"], NED_BOX,
-            MachineStub(crontab=(BOX_MIRROR + "\n" + runs_directly + "\n").encode()))
+        with shell_reader.agent_session_attendance_environment_variables_temporarily_set_for_test(None, None):
+            exit_code, printed, errors = run_main(["--remove-not-in-table"], NED_BOX, stub)
+            _, _, backticked_errors = run_main(
+                ["--remove-not-in-table"], NED_BOX,
+                MachineStub(crontab=(BOX_MIRROR + "\n" + backticked + "\n").encode()))
+        with shell_reader.agent_session_attendance_environment_variables_temporarily_set_for_test("0", None):
+            unattended_exit, unattended_printed, unattended_errors = run_main(
+                ["--remove-not-in-table"], NED_BOX,
+                MachineStub(crontab=(BOX_MIRROR + "\n" + runs_directly + "\n").encode()))
     finally:
         shell_reader._collect = real_collect
-        for name, value in saved_session.items():
-            if value is None:
-                os.environ.pop(name, None)
-            else:
-                os.environ[name] = value
     check("when the shell reader fails on a crontab line, --remove-not-in-table writes no crontab, "
           "exits 2, and says what to tell the user, quoting the line and the failure",
           exit_code == 2 and stub.crontab_writes == [] and "ValueError: injected" in errors
@@ -1398,6 +1407,8 @@ with tempfile.TemporaryDirectory() as temporary:
           and f"failed on the crontab line `{runs_directly}` on " in errors.splitlines()[1]
           and "Tell the user" in errors and "in these words" in errors,
           (exit_code, printed, errors, stub.crontab_writes))
+    check("a crontab line holding a backtick is quoted with a longer run of backticks around it",
+          f"failed on the crontab line `` {backticked} `` on " in backticked_errors, backticked_errors)
     check("in an agent-session no user attends, that refusal tells a subagent to report, does not "
           "ask to tell the user, and gives a top-level agent its next step",
           unattended_exit == 2 and "do not tell the user" in unattended_errors
