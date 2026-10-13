@@ -42,17 +42,23 @@ a complete Markdown link, as the project's citation form for a task gives it
 around the reference, or a bracket that starts no link, names nothing.
 
 A LINK TITLE is checked for a Markdown link outside code whose target is
-https://github.com/nedschorus/nedschorus/pull/<n> or .../issues/<n> and whose
-text has at least TITLE_ATTEMPT_WORDS_AT_LEAST words and is not a URL; shorter
-text, such as "this PR" or "PR 1256", is no attempt at a title. The text and
+https://github.com/nedschorus/nedschorus/pull/<n> or .../issues/<n>, not a
+comment or a review in it, and whose text has at least
+TITLE_ATTEMPT_WORDS_AT_LEAST words; shorter text, such as "this PR" or
+"PR <number>", is no attempt at a title, and a URL is one word. The text and
 the title GitHub reports are compared after surrounding quotes and whitespace
 are stripped, runs of whitespace are made one space, Markdown backslash escapes
 are undone and case is ignored; text that matches only with backticks removed
-from both still matches. All titles come from one `gh api graphql` call per
+from both still matches. Link text may put an ID prefix before the title,
+such as `PR <n>, "<title>"`: PR, GHI or issue and a number, or `#` and a
+number, then a comma, colon, dash or space. The prefix is accepted only when
+its number is the URL's; when the number differs, the link is noted, and the
+note says the number is wrong. All titles come from one `gh api graphql` call per
 run, with a timeout of GH_TIMEOUT_SECONDS, because the hook runs on every
-prompt. When gh fails, times out or is not installed, titles are not checked
-and the note says so in one line; nothing else changes. A number GitHub has no
-item for is not reported.
+prompt. When gh fails, times out, is not installed, or reports any error other
+than an item that does not exist, titles are not checked and the note says so
+in one line; nothing else changes. A number GitHub has no item for is not
+reported.
 
 OUTPUT is a note, never a refusal and never a blocked prompt:
 hookSpecificOutput.additionalContext with the hook's event name, listing up to
@@ -119,8 +125,14 @@ LINK_TEXT_AND_TARGET_PATTERN = re.compile(
     r"\[(?P<text>(?:[^\[\]\n]|\[[^\[\]\n]*\])*)\]\((?P<target>(?:[^()\s]|\([^()\s]*\))*)")
 REPOSITORY_ITEM_URL_PATTERN = re.compile(
     r"^<?https://github\.com/" + GITHUB_REPOSITORY_OWNER + "/" + GITHUB_REPOSITORY_NAME
-    + r"/(?:pull|issues)/(?P<number>\d+)(?:[/?#]\S*)?>?$", re.IGNORECASE)
+    + r"/(?:pull|issues)/(?P<number>\d+)"
+    # A link to a comment or a review cites that comment, not the item's title.
+    + r"(?![^#]*#(?:issuecomment-|pullrequestreview-|discussion_r))(?:[/?#]\S*)?>?$",
+    re.IGNORECASE)
 MARKDOWN_BACKSLASH_ESCAPE_PATTERN = re.compile(r"\\([!-/:-@\[-`{-~])")
+ID_PREFIX_BEFORE_TITLE_PATTERN = re.compile(
+    r"^\s*(?:(?:PR|GHI|issue)\s+#?|#)(?P<number>\d+)\s*(?:[,:\u2013\u2014-]\s*|\s)(?P<title>.+)$",
+    re.IGNORECASE | re.DOTALL)
 SURROUNDING_QUOTE_PAIRS = (('"', '"'), ("'", "'"), ("\u201c", "\u201d"), ("\u2018", "\u2019"))
 # Not whitespace and not a word character, so no match can run across a skipped span.
 MASK_BARRIER_CHARACTER = "\x00"
@@ -155,7 +167,8 @@ PREVIOUS_REPLY_OPENING_LINES = (
 MARKDOWN_TITLE_OPENING_LINES = (
     "bare-number-citation-in-markdown-and-agent-reply-warning-hook: the text just written to {path} links {count} pull "
     "request(s) or GitHub issue(s) under link text that is not the title GitHub reports. A reader "
-    "takes link text to name what the link opens, so a wrong title points the reader at the wrong item.",
+    "takes link text written as a title to be the linked item's title, so a different title points "
+    "the reader at the wrong item.",
     "For each link listed below whose text was meant as the item's title, change the text to "
     "the title shown.",
     "For each link whose text describes the item in your own words instead, leave the text as written.",
@@ -163,16 +176,19 @@ MARKDOWN_TITLE_OPENING_LINES = (
 PREVIOUS_REPLY_TITLE_OPENING_LINES = (
     "bare-number-citation-in-markdown-and-agent-reply-warning-hook: your previous reply to the user linked {count} pull "
     "request(s) or GitHub issue(s) under link text that is not the title GitHub reports. A reader "
-    "takes link text to name what the link opens, so a wrong title points the reader at the wrong item.",
+    "takes link text written as a title to be the linked item's title, so a different title points "
+    "the reader at the wrong item.",
     "If your next reply mentions an item listed below whose link text was meant as its title, "
     "cite the item under the title shown.",
     "For a link whose text described the item in your own words instead, nothing needs doing.",
 )
 TITLES_NOT_CHECKED_LINE = (
-    "bare-number-citation-in-markdown-and-agent-reply-warning-hook: link titles were not checked, "
-    "because gh could not report them: {reason}. Nothing needs doing; the check runs again next time.")
-WRITE_TITLE_HIT_LINE = '{path}:{line}: "{text}" links {url}; its title is "{title}"'
-EXCERPT_TITLE_HIT_LINE = '"{text}" links {url}; its title is "{title}"'
+    "bare-number-citation-in-markdown-and-agent-reply-warning-hook: the text of {count} link(s) to pull "
+    "requests or GitHub issues was not checked against their titles on GitHub, because gh could not "
+    "report the titles: {reason}. Nothing needs doing; the check runs again next time.")
+WRITE_TITLE_HIT_LINE = '{path}:{line}: "{text}" links {url}; the title on GitHub is "{title}"{number_note}'
+EXCERPT_TITLE_HIT_LINE = '"{text}" links {url}; the title on GitHub is "{title}"{number_note}'
+WRONG_NUMBER_NOTE = "; the number {prefix_number} in the link text is not the link's number {number}"
 WRITE_HIT_LINE = '{path}:{line}: "{reference}" in "{excerpt}"'
 EXCERPT_HIT_LINE = '"{reference}" in "{excerpt}"'
 MORE_HITS_LINE = ("{count} more not listed: reread the rest of the same text for "
@@ -180,11 +196,14 @@ MORE_HITS_LINE = ("{count} more not listed: reread the rest of the same text for
 
 
 class LinkTitleMismatch:
-    def __init__(self, line_number, text, url, title):
+    def __init__(self, line_number, text, url, title, number, prefix_number=None):
         self.line_number = line_number
         self.text = text
         self.url = url
         self.title = title
+        self.number = number
+        # The number of an ID prefix in the text when it is not the URL's, else None.
+        self.prefix_number = prefix_number
 
 
 class GithubTitlesUnavailable(Exception):
@@ -294,10 +313,24 @@ def titles_match(link_text: str, title: str) -> bool:
     return link_text == title or link_text.replace("`", "") == title.replace("`", "")
 
 
+def link_title_mismatch(line_number, link_text, url, number, title):
+    """A LinkTitleMismatch, or None when the text is the title, with or
+    without an ID prefix carrying the URL's number."""
+    if titles_match(link_text, title):
+        return None
+    prefixed = ID_PREFIX_BEFORE_TITLE_PATTERN.match(link_text)
+    if prefixed is None:
+        return LinkTitleMismatch(line_number, link_text, url, title, number)
+    prefix_number = int(prefixed.group("number"))
+    if prefix_number == number and titles_match(prefixed.group("title"), title):
+        return None
+    return LinkTitleMismatch(line_number, link_text, url, title, number,
+                             prefix_number if prefix_number != number else None)
+
+
 def is_title_attempt(link_text: str) -> bool:
     words = link_text.split()
-    return (len(words) >= TITLE_ATTEMPT_WORDS_AT_LEAST
-            and not BARE_URL_PATTERN.fullmatch(link_text.strip()))
+    return len(words) >= TITLE_ATTEMPT_WORDS_AT_LEAST
 
 
 def repository_item_links_in(text: str, line_numbers_to_report=None):
@@ -311,15 +344,18 @@ def repository_item_links_in(text: str, line_numbers_to_report=None):
         if line_numbers_to_report is not None and line_number not in line_numbers_to_report:
             continue
         for match in MARKDOWN_LINK_PATTERN.finditer(line):
-            # An image's match starts at its "!", where this pattern does not match.
-            parts = LINK_TEXT_AND_TARGET_PATTERN.match(
-                original_lines[index], match.start())
+            # Matched in the masked line, so a bracket inside a code span in the
+            # text cannot stop the match; an image's match starts at its "!",
+            # where this pattern does not match.
+            parts = LINK_TEXT_AND_TARGET_PATTERN.match(line, match.start())
             if parts is None:
                 continue
-            url_match = REPOSITORY_ITEM_URL_PATTERN.match(parts.group("target"))
-            if url_match is None or not is_title_attempt(parts.group("text")):
+            link_text = original_lines[index][parts.start("text"):parts.end("text")]
+            target = original_lines[index][parts.start("target"):parts.end("target")]
+            url_match = REPOSITORY_ITEM_URL_PATTERN.match(target)
+            if url_match is None or not is_title_attempt(link_text):
                 continue
-            links.append((line_number, parts.group("text"), parts.group("target").strip("<>"),
+            links.append((line_number, link_text, target.strip("<>"),
                           int(url_match.group("number"))))
     return links
 
@@ -342,14 +378,20 @@ def github_titles(numbers, timeout_seconds=GH_TIMEOUT_SECONDS):
         raise GithubTitlesUnavailable(f"gh did not answer within {timeout_seconds} seconds")
     except OSError as error:
         raise GithubTitlesUnavailable(f"gh could not be run: {error}")
-    # A number with no item makes gh exit 1, but the other titles still arrive in data.
+    detail = (completed.stderr.strip() or completed.stdout.strip()
+              or f"exit {completed.returncode}").splitlines()[0]
     try:
-        repository = json.loads(completed.stdout)["data"]["repository"]
-    except (ValueError, KeyError, TypeError):
-        repository = None
-    if not isinstance(repository, dict):
-        detail = (completed.stderr.strip() or completed.stdout.strip()
-                  or f"exit {completed.returncode}").splitlines()[0]
+        answer = json.loads(completed.stdout)
+        repository = answer["data"]["repository"]
+        errors = answer.get("errors") or []
+    except (ValueError, KeyError, TypeError, AttributeError):
+        raise GithubTitlesUnavailable(f"gh api graphql failed: {detail}")
+    # A number with no item makes gh exit 1 with a NOT_FOUND error, while the
+    # other titles still arrive; any other error means a title may be missing.
+    if (not isinstance(repository, dict) or not isinstance(errors, list)
+            or any(not isinstance(error, dict) or error.get("type") != "NOT_FOUND"
+                   for error in errors)
+            or (completed.returncode != 0 and not errors)):
         raise GithubTitlesUnavailable(f"gh api graphql failed: {detail}")
     titles = {}
     for number in set(numbers):
@@ -359,31 +401,37 @@ def github_titles(numbers, timeout_seconds=GH_TIMEOUT_SECONDS):
 
 
 def link_title_mismatches_in(text: str, line_numbers_to_report=None):
-    """Return (mismatches, reason titles were not checked or None)."""
+    """Return (mismatches, reason titles were not checked or None, links found)."""
     links = repository_item_links_in(text, line_numbers_to_report)
     if not links:
-        return [], None
+        return [], None, 0
     try:
         titles = github_titles([number for _, _, _, number in links])
     except GithubTitlesUnavailable as error:
-        return [], str(error)
+        return [], str(error), len(links)
     mismatches = [
-        LinkTitleMismatch(line_number, link_text, url, titles[number])
-        for line_number, link_text, url, number in links
-        if titles.get(number) is not None and not titles_match(link_text, titles[number])]
-    return mismatches, None
+        mismatch for mismatch in (
+            link_title_mismatch(line_number, link_text, url, number, titles[number])
+            for line_number, link_text, url, number in links
+            if titles.get(number) is not None)
+        if mismatch is not None]
+    return mismatches, None, len(links)
 
 
-def title_note_lines(opening_lines, mismatches, reason, path=None, with_line_numbers=False):
+def title_note_lines(opening_lines, checked, path=None, with_line_numbers=False):
+    mismatches, reason, link_count = checked
     if reason is not None:
-        return [TITLES_NOT_CHECKED_LINE.format(reason=reason)]
+        return [TITLES_NOT_CHECKED_LINE.format(count=link_count, reason=reason)]
     if not mismatches:
         return []
     lines = [line.format(path=path, count=len(mismatches)) for line in opening_lines]
     for mismatch in mismatches[:HIT_LINES_LISTED_AT_MOST]:
         hit_line = WRITE_TITLE_HIT_LINE if with_line_numbers else EXCERPT_TITLE_HIT_LINE
+        number_note = "" if mismatch.prefix_number is None else WRONG_NUMBER_NOTE.format(
+            prefix_number=mismatch.prefix_number, number=mismatch.number)
         lines.append(hit_line.format(path=path, line=mismatch.line_number, text=mismatch.text,
-                                     url=mismatch.url, title=mismatch.title))
+                                     url=mismatch.url, title=mismatch.title,
+                                     number_note=number_note))
     if len(mismatches) > HIT_LINES_LISTED_AT_MOST:
         lines.append(MORE_HITS_LINE.format(count=len(mismatches) - HIT_LINES_LISTED_AT_MOST))
     return lines
@@ -469,7 +517,7 @@ def markdown_edit_note(payload: dict):
         if not git_would_track(root, relative_path):
             return None
         references = bare_references_in(new_string)
-        mismatches, reason = link_title_mismatches_in(new_string)
+        checked = link_title_mismatches_in(new_string)
         with_line_numbers = False
     else:
         content = tool_input.get("content")
@@ -486,9 +534,9 @@ def markdown_edit_note(payload: dict):
             index + 1 for index, line in enumerate(content.split("\n"))
             if line.rstrip() not in committed_lines)
         references = bare_references_in(content, new_line_numbers)
-        mismatches, reason = link_title_mismatches_in(content, new_line_numbers)
+        checked = link_title_mismatches_in(content, new_line_numbers)
         with_line_numbers = True
-    sections = title_note_lines(MARKDOWN_TITLE_OPENING_LINES, mismatches, reason,
+    sections = title_note_lines(MARKDOWN_TITLE_OPENING_LINES, checked,
                                 relative_path, with_line_numbers)
     if references:
         sections.insert(0, note_text(
@@ -555,8 +603,7 @@ def previous_reply_note(payload: dict, environment):
     if not reply.strip():
         return None
     references = bare_references_in(reply)
-    mismatches, reason = link_title_mismatches_in(reply)
-    sections = title_note_lines(PREVIOUS_REPLY_TITLE_OPENING_LINES, mismatches, reason)
+    sections = title_note_lines(PREVIOUS_REPLY_TITLE_OPENING_LINES, link_title_mismatches_in(reply))
     if references:
         sections.insert(0, note_text(PREVIOUS_REPLY_OPENING_LINES, references))
     if not sections:
