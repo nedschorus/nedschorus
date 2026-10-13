@@ -1258,7 +1258,8 @@ with tempfile.TemporaryDirectory() as temporary:
     # but is not it, and a function the line defines may never be called;
     # reading either as the line's program would keep a retired job or remove
     # a job that is not the project's. A pipeline's later stage only reads the
-    # job's output; a ( ) subshell's command is a job of the line.
+    # job's output, also when written alone in ( ) or { }; a ( ) subshell's command is a job
+    # of the line.
     substitution_cases = {
         f"0 5 * * * {box_clone}/scripts/a-retired-dated-log-job.py >> /tmp/x-$(date +\\%F).log 2>&1":
             [(f"{box_clone}/scripts/a-retired-dated-log-job.py", False)],
@@ -1278,6 +1279,15 @@ with tempfile.TemporaryDirectory() as temporary:
              ("/usr/bin/other-job", False)],
         f"0 5 * * * (/usr/bin/other-job); {box_clone}/scripts/a-retired-job.py":
             [("/usr/bin/other-job", False), (f"{box_clone}/scripts/a-retired-job.py", False)],
+        f"0 5 * * * {box_clone}/scripts/a-retired-job.py | (/usr/bin/logger -t x)":
+            [(f"{box_clone}/scripts/a-retired-job.py", False), ("/usr/bin/logger", True)],
+        f"0 5 * * * {box_clone}/scripts/a-retired-job.py | ( (/usr/bin/logger) )":
+            [(f"{box_clone}/scripts/a-retired-job.py", False), ("/usr/bin/logger", True)],
+        f"0 5 * * * {box_clone}/scripts/a-retired-job.py | {{ /usr/bin/logger; }}":
+            [(f"{box_clone}/scripts/a-retired-job.py", False), ("/usr/bin/logger", True)],
+        f"0 5 * * * {box_clone}/scripts/a-retired-job.py | (/usr/bin/logger) | /usr/bin/tee x":
+            [(f"{box_clone}/scripts/a-retired-job.py", False), ("/usr/bin/logger", True),
+             ("/usr/bin/tee", True)],
     }
     read_programs = {line: installer.programs_a_cron_line_runs(line) for line in substitution_cases}
     check("a crontab line runs each command outside a substitution, a later pipeline stage only "

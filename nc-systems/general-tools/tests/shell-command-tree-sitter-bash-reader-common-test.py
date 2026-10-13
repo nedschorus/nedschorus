@@ -132,6 +132,28 @@ for command, expected in [
     found = [(list(f), f.redirects) for f in reader.simple_commands(command)]
     check(f"the 0 before a redirect is its descriptor, not a word: {command!r}", found == expected, found)
 
+# --- the program a command runs, after wrappers ---
+for words, expected in [
+    (["A=1", "bash"], (1, True)),
+    (["timeout", "60", "bash"], (2, True)),
+    (["timeout", "-s", "KILL", "60", "bash"], (4, True)),
+    (["timeout", "--signal=KILL", "60", "bash"], (3, True)),
+    (["timeout", "--kill-after", "5", "60", "bash"], (4, True)),
+    (["sudo", "--user", "nedlern", "bash"], (3, True)),
+    (["/usr/bin/sudo", "-u", "nedlern", "env", "A=1", "nice", "-n", "5", "bash"], (8, True)),
+    (["env", "-i", "A=1", "grep"], (3, True)),
+    (["time", "-p", "grep"], (2, True)),
+    (["sudo", "--", "bash"], (2, True)),
+    (["flock", "-w", "5", "/tmp/l", "bash"], (4, True)),
+    (["caffeinate", "-t", "60", "bash"], (3, True)),
+    (["xargs", "-n", "1", "bash"], (3, False)),
+    (["tee", "/tmp/bash"], (0, True)),
+    (["sudo", "-u", "nedlern"], (None, True)),
+]:
+    check(f"the program of {' '.join(words)} is word {expected[0]}, "
+          f"{'receiving' if expected[1] else 'not receiving'} the standard input",
+          reader.simple_command_program_index_skipping_wrappers(words) == expected, reader.simple_command_program_index_skipping_wrappers(words))
+
 # --- child shells: where a cd stays ---
 found = reader.simple_commands("(cd /tmp/other && make); git push --force-with-lease o b")
 check("a cd inside ( ... ) runs in a child shell; the command after it does not",

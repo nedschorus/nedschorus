@@ -614,16 +614,24 @@ def programs_a_cron_line_runs(line: str) -> list:
     commands = [command for command in commands if not command.inside_substitution()]
     stage_sizes = {}
     for command in commands:
+        # A stage and the subshell that starts it share an offset, so the kind is part of the key.
         for shell in command.child_shell:
-            stage_sizes[shell] = stage_sizes.get(shell, 0) + 1
+            stage_sizes[shell, shell.kind] = stage_sizes.get((shell, shell.kind), 0) + 1
     # Only a later stage that is one command and nothing more reads the output; a stage such
     # as `(cat; /usr/bin/other-job)` runs other jobs of its own.
     return [(_program_of_a_cron_job(command),
-             bool(command.child_shell)
-             and command.child_shell[-1].kind == shell_reader.PIPELINE_STAGE
-             and not command.child_shell[-1].first_stage
-             and stage_sizes[command.child_shell[-1]] == 1)
+             _only_command_of_a_later_pipeline_stage(command, stage_sizes))
             for command in commands]
+
+
+def _only_command_of_a_later_pipeline_stage(command, stage_sizes):
+    # A stage written as (logger) runs logger in a subshell inside the stage.
+    shells = list(command.child_shell)
+    while shells and shells[-1].kind == shell_reader.SUBSHELL:
+        shells.pop()
+    return (bool(shells) and shells[-1].kind == shell_reader.PIPELINE_STAGE
+            and not shells[-1].first_stage
+            and stage_sizes[shells[-1], shells[-1].kind] == 1)
 
 
 def _program_of_a_cron_job(words):

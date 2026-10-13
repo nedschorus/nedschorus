@@ -28,10 +28,6 @@ SEARCH_PROGRAMS = ("grep", "egrep", "fgrep", "rg", "ugrep")
 # tree-sitter-bash keeps the time keyword as the first word of the command it times.
 LEADING_SHELL_KEYWORDS = {"time"}
 
-COMMAND_RUNNING_PREFIXES = ("env", "command", "nohup", "nice", "timeout")
-PREFIX_VALUE_OPTIONS = {"-u", "--unset", "-n", "-s", "--signal", "-k",
-                        "--kill-after"}
-
 ENVIRONMENT_ASSIGNMENT_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 
 UNRESOLVABLE_DIRECTORY_PATTERN = re.compile(r"[$`]")
@@ -127,36 +123,8 @@ def first_expansion_beginning_with_dash(word, directory, deadline, clock):
 
 def search_program_index(words):
     """Return the search-program index after shell keywords and wrappers, or None."""
-    index = 0
-    while index < len(words):
-        word = words[index]
-        if word in LEADING_SHELL_KEYWORDS:
-            index += 1
-            continue
-        if ENVIRONMENT_ASSIGNMENT_PATTERN.match(word):
-            index += 1
-            continue
-        if any(is_program(word, prefix) for prefix in COMMAND_RUNNING_PREFIXES):
-            running_timeout = is_program(word, "timeout")
-            index += 1
-            while index < len(words):
-                option = words[index]
-                if ENVIRONMENT_ASSIGNMENT_PATTERN.match(option):
-                    index += 1
-                    continue
-                if option in PREFIX_VALUE_OPTIONS:
-                    index += 2
-                    continue
-                if option.startswith("-"):
-                    index += 1
-                    continue
-                break
-            if running_timeout:
-                index += 1  # the timeout duration
-            continue
-        break
-    if index < len(words) and any(is_program(words[index], name)
-                                  for name in SEARCH_PROGRAMS):
+    index, _ = shell_reader.simple_command_program_index_skipping_wrappers(words)
+    if index is not None and any(is_program(words[index], name) for name in SEARCH_PROGRAMS):
         return index
     return None
 
