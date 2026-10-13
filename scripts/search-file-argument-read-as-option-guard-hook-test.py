@@ -404,6 +404,15 @@ try:
               and "without checking it" in LET_THROUGH_MESSAGES[0] and whom
               and guard.shell_reader.COMMAND_AS_FENCED_CODE_BLOCK_INSTRUCTION in LET_THROUGH_MESSAGES[0],
               LET_THROUGH_MESSAGES)
+        report = guard.shell_reader.report_to_user_or_dispatching_agent_instruction_build(
+            f"\"The search-file-argument guard failed on a command and let it through unchecked "
+            f"({type(failure).__name__}: {failure}).\" After those words, "
+            f"{guard.shell_reader.COMMAND_AS_FENCED_CODE_BLOCK_INSTRUCTION}.",
+            {"CLAUDE_CODE_SESSION_ATTENDED": "1" if attended else "0"})
+        check(f"when the guard fails with {type(failure).__name__}, with the session variables "
+              f"{session}, the message ends with the report, so skipping the rest skips only it",
+              bool(LET_THROUGH_MESSAGES) and LET_THROUGH_MESSAGES[0].endswith(report),
+              LET_THROUGH_MESSAGES)
 
     many = scratch / "many"
     many.mkdir()

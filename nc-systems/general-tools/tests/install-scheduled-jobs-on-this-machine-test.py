@@ -1377,7 +1377,7 @@ with tempfile.TemporaryDirectory() as temporary:
                       install_calls == [True] and exit_code == 2 and stub.crontab_writes == []
                       and "pip exited 1: no network on this machine" in errors
                       and "Tell the user, or, if you are a subagent, the agent that dispatched "
-                      "you, in these words: \"tree-sitter-bash could not be installed on " in errors
+                      "you, in these words: \"tree-sitter-bash is missing on " in errors
                       and shell_reader.REQUIREMENTS_FILE.name in errors,
                       (install_calls, exit_code, printed, errors, stub.crontab_writes))
     finally:
@@ -1399,10 +1399,38 @@ with tempfile.TemporaryDirectory() as temporary:
           unattended_errors)
     # The refusal names the machine it runs on, so the expected command is built for that machine.
     this_host = socket.gethostname().split(".")[0]
-    where, install = shell_reader.tree_sitter_bash_by_hand_install_instruction_for_user(this_host)
+    words = shell_reader.tree_sitter_bash_install_failure_report_words_build(
+        this_host, "pip exited 1: no network", "install-scheduled-jobs-on-this-machine did not run there")
+    install = words.splitlines()[1]
     check("the install command stands on a line of its own, with nothing after it to copy by mistake",
           install in unattended_lines and "python3 -m pip install" in install
           and install.rstrip("'").endswith("requirements.txt"), unattended_lines)
+    check("the install-failed refusal reports the words the Bash guards report, what the install "
+          "printed included",
+          unattended_errors.endswith(words), unattended_errors)
+
+    # "Skip the rest of this message" skips only the report, so each refusal must end with it.
+    real_build = shell_reader.report_to_user_or_dispatching_agent_instruction_build
+    built = []
+
+    def recording_build(words, environment=os.environ):
+        built.append(real_build(words, environment))
+        return built[-1]
+    shell_reader.report_to_user_or_dispatching_agent_instruction_build = recording_build
+    try:
+        for label, failure in (
+                ("the parser is missing", shell_reader.ShellParserUnavailable("pip exited 1")),
+                ("the reader failed", shell_reader.ShellCommandUnreadable("ValueError: injected"))):
+            for session in ((None, None), (None, "1")):
+                built.clear()
+                with shell_reader.agent_session_attendance_environment_variables_temporarily_set_for_test(
+                        *session):
+                    refusal_text = "\n".join(installer.shell_parser_refusal(failure, runs_directly).lines)
+                check(f"when {label}, with the session variables {session}, the refusal ends with "
+                      f"the report", len(built) == 1 and refusal_text.endswith(built[0]),
+                      (built, refusal_text))
+    finally:
+        shell_reader.report_to_user_or_dispatching_agent_instruction_build = real_build
 
     # A failure inside the shell reader stops this program the same way, naming the failure.
     real_collect = shell_reader._collect
@@ -1428,12 +1456,12 @@ with tempfile.TemporaryDirectory() as temporary:
           "exits 2, and says what to tell the user, quoting the line and the failure",
           exit_code == 2 and stub.crontab_writes == [] and "ValueError: injected" in errors
           and f"failed on the crontab line `{runs_directly}` on " in errors.splitlines()[0]
-          and f"failed on the crontab line `{runs_directly}` on " in errors.splitlines()[1]
+          and f"failed on the crontab line `{runs_directly}` on " in errors.splitlines()[-1]
           and "Tell the user" in errors and "in these words" in errors,
           (exit_code, printed, errors, stub.crontab_writes))
-    for index in (0, 1):
+    for index in (0, -1):
         check(f"a crontab line holding a backtick is quoted with a longer run of backticks around it, "
-              f"in line {index} of the refusal",
+              f"in {'the first' if index == 0 else 'the last'} line of the refusal",
               f"failed on the crontab line `` {backticked} `` on "
               in backticked_errors.splitlines()[index], backticked_errors)
     check("the refusal tells the agent to leave this run undone until the reader is fixed",

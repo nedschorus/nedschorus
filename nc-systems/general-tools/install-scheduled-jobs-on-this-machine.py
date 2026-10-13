@@ -577,24 +577,21 @@ def shell_parser_refusal(error, line) -> Refusal:
             f"({shell_reader.__file__.rsplit('/', 1)[-1]}) failed on the crontab line "
             f"{markdown_code_span(line)} "
             f"on {host} ({error.install_output}). Nothing on this machine changed.",
+            f"Leave this run of {PROGRAM} undone; run it again, with the same options, only "
+            f"after the shell command reader is fixed.",
             *shell_reader.report_to_user_or_dispatching_agent_instruction_build(
                 f"\"{PROGRAM} did not run, because the shell command reader failed on the "
                 f"crontab line {markdown_code_span(line)} on {host} "
-                f"({error.install_output}).\"").split("\n"),
-            f"Leave this run of {PROGRAM} undone; run it again, with the same options, only "
-            f"after the shell command reader is fixed.")
-    where, install = shell_reader.tree_sitter_bash_by_hand_install_instruction_for_user(host)
+                f"({error.install_output}).\"").split("\n"))
     return Refusal(
         f"{PROGRAM}: not run — the shell parser tree-sitter-bash, which this program uses to read "
         f"the crontab's commands, is missing on {host}, and installing it failed. Nothing on "
         f"this machine changed.",
-        *shell_reader.report_to_user_or_dispatching_agent_instruction_build(
-            f"\"tree-sitter-bash could not be installed on {host}. To install it by hand, run "
-            f"this command {where}:\" Then give the install command on a line of its own:\n"
-            f"{install}").split("\n"),
         f"Leave this run of {PROGRAM} undone; run it again, with the same options, only after "
         f"tree-sitter-bash is installed.",
-        f"What the install printed: {error.install_output}")
+        *shell_reader.report_to_user_or_dispatching_agent_instruction_build(
+            shell_reader.tree_sitter_bash_install_failure_report_words_build(
+                host, error.install_output, f"{PROGRAM} did not run there")).split("\n"))
 
 
 def _defines_a_function(command_text: str) -> bool:
