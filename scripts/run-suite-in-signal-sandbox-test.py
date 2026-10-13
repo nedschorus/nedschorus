@@ -135,6 +135,13 @@ def run_program(scratch, repository, *arguments, environment=None):
     return completed, (lines[-1] if lines else "")
 
 
+def worktrees(repository):
+    """Return the paths git lists as worktrees of repository."""
+    listed = subprocess.run(["git", "-C", str(repository), "worktree", "list", "--porcelain"],
+                            capture_output=True, text=True, check=True).stdout
+    return [line.split(" ", 1)[1] for line in listed.splitlines() if line.startswith("worktree ")]
+
+
 def unchanged(repository):
     return (repository / "doubling.py").read_bytes() == MODULE_SOURCE.encode() and \
         subprocess.run(["git", "-C", str(repository), "status", "--porcelain"],
@@ -676,6 +683,45 @@ else:
               and "FAIL: double(3)" in completed.stdout, (completed.returncode, completed.stdout))
         check("after a killed mutant, the mutated file is back byte for byte",
               unchanged(repository), (repository / "doubling.py").read_text())
+        copy_line = next((line for line in completed.stdout.splitlines()
+                          if "in the mutation-testing worktree " in line), "")
+        copy = copy_line.split("in the mutation-testing worktree ", 1)[-1].split(";", 1)[0]
+        check("the mutant is applied in a copy whose name ends in -mutation-testing-worktree, not in the "
+              "checkout, and the copy is removed after the run",
+              copy.endswith(program.MUTATION_TESTING_WORKTREE_LABEL) and str(repository) not in copy
+              and not pathlib.Path(copy).exists() and worktrees(repository) == [str(repository)],
+              (copy_line, worktrees(repository)))
+
+        # The copy holds the checkout's files as they are: an untracked suite is copied, and a
+        # tracked file deleted in the checkout is deleted in the copy.
+        (repository / "where-test.py").write_text(
+            "import os, sys\n"
+            "print('runs in:', os.getcwd())\n"
+            "print('deleted file present:', os.path.exists('fails-test.sh'))\n"
+            "sys.path.insert(0, '.')\n"
+            "import doubling\n"
+            "sys.exit(0 if doubling.double(2) == 4 else 1)\n")
+        (repository / "fails-test.sh").unlink()
+        status_before = subprocess.run(["git", "-C", str(repository), "status", "--porcelain"],
+                                       capture_output=True, text=True, check=True).stdout
+        completed, last = run_program(scratch, repository, "where-test.py",
+                                      "--mutant", str(killing))
+        status_after = subprocess.run(["git", "-C", str(repository), "status", "--porcelain"],
+                                      capture_output=True, text=True, check=True).stdout
+        ran_in = [line.split("runs in: ", 1)[1] for line in completed.stdout.splitlines()
+                  if line.startswith("runs in: ")]
+        check("the suite runs in the mutation-testing worktree, which holds an untracked suite and "
+              "lacks a tracked file deleted in the checkout",
+              completed.returncode == 0 and last.startswith("VERDICT: mutant killed")
+              and len(ran_in) == 2 and all(place.endswith(program.MUTATION_TESTING_WORKTREE_LABEL)
+                                           for place in ran_in)
+              and "deleted file present: False" in completed.stdout
+              and (repository / "doubling.py").read_bytes() == MODULE_SOURCE.encode()
+              and status_after == status_before,
+              (completed.returncode, completed.stdout, status_before, status_after))
+        subprocess.run(["git", "-C", str(repository), "checkout", "-q", "--", "fails-test.sh"],
+                       check=True)
+        (repository / "where-test.py").unlink()
 
         surviving = patch_file(scratch, repository, "survives.patch", "return 1", "return 2")
         completed, last = run_program(scratch, repository, "doubling-test.py",
@@ -792,8 +838,10 @@ else:
         stdout, stderr = process.communicate(timeout=120)
         stdout = "".join(seen) + stdout
         last = stdout.strip().splitlines()[-1] if stdout.strip() else ""
-        check("terminated with the mutant in, the program puts the file back and says not run",
-              process.returncode == 2 and "interrupted" in last and unchanged(repository),
+        check("terminated with the mutant in, the program removes its mutation-testing worktree, leaves "
+              "the checkout unchanged and says not run",
+              process.returncode == 2 and "interrupted" in last and unchanged(repository)
+              and worktrees(repository) == [str(repository)],
               (process.returncode, stdout, stderr, (repository / "doubling.py").read_text()))
 
         # --- An interrupted run leaves no process of the suite running ---------
@@ -838,101 +886,21 @@ else:
         (repository / "spawns-test.py").unlink()
         (repository / "heartbeat-child.py").unlink()
 
-        # --- Restore failure is reported, not hidden --------------------------
-        keep = scratch / "keep"
-        keep.mkdir()
-        (repository / "doubling.py").write_text("mutated\n")
-        original_write_back = program.write_back
-        program.write_back = lambda top, originals: ["doubling.py (read back differs)"]
+        # --- A copy that cannot be removed is reported, not hidden ------------
+        real_git = program.runner.git
+        program.runner.git = lambda top, *arguments: subprocess.CompletedProcess(
+            arguments, 128, "", "fatal: the copy is locked")
+        stderr = io.StringIO()
         try:
-            program.restore_originals(repository, {"doubling.py": kept(repository, MODULE_SOURCE.encode())}, keep)
-        except program.RestoreFailed as error:
-            check("a file that does not read back as its original is RestoreFailed naming "
-                  "the file and where its original is kept",
-                  "doubling.py" in str(error) and str(keep) in str(error), str(error))
-        else:
-            check("a file that does not read back as its original is RestoreFailed naming "
-                  "the file and where its original is kept", False, "no exception")
+            with contextlib.redirect_stderr(stderr):
+                program.mutation_testing_worktree_remove(repository, scratch / "repo-mutation-testing-worktree")
         finally:
-            program.write_back = original_write_back
-        failed = program.write_back(repository,
-                                    {"doubling.py": kept(repository, MODULE_SOURCE.encode())})
-        check("write_back puts the bytes back and reports nothing when they read back",
-              failed == [] and unchanged(repository), failed)
-        failed = program.write_back(repository, {"no-dir/x.py": program.KeptOriginal(
-            b"x", 0o644, (0, 0))})
-        check("write_back reports a file it cannot write", failed and "no-dir/x.py" in failed[0],
-              failed)
-        original_read_bytes = pathlib.Path.read_bytes
-        doubling_kept = kept(repository, MODULE_SOURCE.encode())
-        pathlib.Path.read_bytes = lambda self: b"something else"
-        try:
-            failed = program.write_back(repository, {"doubling.py": doubling_kept})
-        finally:
-            pathlib.Path.read_bytes = original_read_bytes
-        check("write_back reports a file that does not read back as written",
-              failed == ["doubling.py (read back differs)"], failed)
-
-        original_chmod = program.os.chmod
-        program.os.chmod = lambda *arguments, **options: None
-        try:
-            failed = program.write_back(repository, {"doubling.py": program.KeptOriginal(
-                MODULE_SOURCE.encode(), 0o600, (0, 0))})
-        finally:
-            program.os.chmod = original_chmod
-        check("write_back reports a file whose mode does not read back as the original's",
-              len(failed) == 1 and "doubling.py (mode" in failed[0], failed)
-
-        # SIGTERM during the restore waits until every file is written.
-        written = []
-
-        def write_back_terminated_half_way(top, originals):
-            os.kill(os.getpid(), signal.SIGTERM)
-            written.append("all files")
-            return []
-
-        original_write_back = program.write_back
-        program.write_back = write_back_terminated_half_way
-        signal.signal(signal.SIGTERM, program.raise_terminated)
-        try:
-            program.restore_originals(repository,
-                                      {"doubling.py": kept(repository, MODULE_SOURCE.encode())},
-                                      keep)
-            terminated = False
-        except program.Terminated:
-            terminated = True
-        finally:
-            program.write_back = original_write_back
-            for restored in program.INTERRUPTING_SIGNALS:
-                signal.signal(restored, signal.SIG_DFL)
-            signal.signal(signal.SIGINT, signal.default_int_handler)
-        check("a SIGTERM that arrives during the restore takes effect only after every file "
-              "is written", terminated and written == ["all files"], (terminated, written))
-
-        # A restore that fails while a SIGTERM is pending is reported as a failed restore.
-        def write_back_fails_and_terminated(top, originals):
-            os.kill(os.getpid(), signal.SIGTERM)
-            return ["doubling.py (read back differs)"]
-
-        program.write_back = write_back_fails_and_terminated
-        signal.signal(signal.SIGTERM, program.raise_terminated)
-        try:
-            program.restore_originals(repository,
-                                      {"doubling.py": kept(repository, MODULE_SOURCE.encode())},
-                                      keep)
-            outcome = "no exception"
-        except program.RestoreFailed as error:
-            outcome = f"RestoreFailed: {error}"
-        except program.Terminated as error:
-            outcome = f"Terminated: {error}"
-        finally:
-            program.write_back = original_write_back
-            for restored in program.INTERRUPTING_SIGNALS:
-                signal.signal(restored, signal.SIG_DFL)
-            signal.signal(signal.SIGINT, signal.default_int_handler)
-        check("a restore that fails while a SIGTERM is pending is RestoreFailed, not an "
-              "interruption", outcome.startswith("RestoreFailed") and "doubling.py" in outcome
-              and "SIGTERM" in outcome, outcome)
+            program.runner.git = real_git
+        check("a mutation-testing worktree that cannot be removed is reported with the command that "
+              "removes it",
+              "could not be removed (fatal: the copy is locked)" in stderr.getvalue()
+              and f"git -C {repository} worktree remove --force {scratch / 'repo-mutation-testing-worktree'}"
+              in stderr.getvalue(), stderr.getvalue())
 
         # --- The lock ---------------------------------------------------------
         lock_path = scratch / "run.lock"

@@ -27,6 +27,7 @@ Every push runs under an outer timeout in its own process group, so a hook
 that hangs fails its case instead of wedging the suite.
 """
 
+import importlib.util
 import os
 import shutil
 import signal
@@ -42,6 +43,8 @@ HOOK_DIRECTORY_NAME = "git-client-side-hooks"
 PRE_PUSH_HOOK = SCRIPTS_DIRECTORY / HOOK_DIRECTORY_NAME / "pre-push"
 PREPARE_COMMIT_MSG_HOOK = SCRIPTS_DIRECTORY / HOOK_DIRECTORY_NAME / "prepare-commit-msg"
 CONFLICT_CHECK_RUNNER = SCRIPTS_DIRECTORY / "git-client-side-hooks-pre-push-conflict-check.py"
+LOST_CASE_AND_COPY_CHECK = (SCRIPTS_DIRECTORY / "git-client-side-hooks-pre-push-refusal-of-lost-"
+                            "test-cases-and-of-pushes-from-mutation-testing-worktrees.py")
 REAL_CONFLICT_CHECK = SCRIPTS_DIRECTORY / "branch-conflict-check.py"
 GIT_OUTPUT_MODULE_RELATIVE_PATH = Path(
     "nc-systems/general-tools/git-machine-readable-output-runner-and-parser-common.py")
@@ -177,7 +180,8 @@ time.sleep(FAKE_HANG_SECONDS)
 # --- Layouts and repositories ---------------------------------------------
 
 def make_layout(parent, name, conflict_check=REAL_CONFLICT_CHECK,
-                runner_text=None, include_runner=True):
+                runner_text=None, include_runner=True, lost_case_and_copy_check_text=None,
+                include_lost_case_and_copy_check=True):
     """A copy of this checkout's hooks, laid out as the hook expects.
 
     conflict_check is a Path to copy, a string of fake check source, or None
@@ -194,6 +198,11 @@ def make_layout(parent, name, conflict_check=REAL_CONFLICT_CHECK,
         runner.write_text(runner_text)
     elif include_runner:
         shutil.copy2(CONFLICT_CHECK_RUNNER, runner)
+    lost_case_and_copy_check = scripts / LOST_CASE_AND_COPY_CHECK.name
+    if lost_case_and_copy_check_text is not None:
+        lost_case_and_copy_check.write_text(lost_case_and_copy_check_text)
+    elif include_lost_case_and_copy_check:
+        shutil.copy2(LOST_CASE_AND_COPY_CHECK, lost_case_and_copy_check)
     if isinstance(conflict_check, Path):
         shutil.copy2(conflict_check, scripts / REAL_CONFLICT_CHECK.name)
         module = parent / name / GIT_OUTPUT_MODULE_RELATIVE_PATH
@@ -467,7 +476,8 @@ def run_unit_cases():
     layout_parent = Path(tempfile.mkdtemp(prefix="pre-push-shell-filter-"))
     try:
         hooks = make_layout(layout_parent, "filter", conflict_check=None,
-                            include_runner=False)
+                            include_runner=False,
+                            lost_case_and_copy_check_text="import sys\nsys.exit(0)\n")
         expected_first_line_end = NO_BRANCH_CHECKED % ", ".join(
             [branch_entry("topic", sha), branch_entry("renamed-on-push", other)])
         for shell in SHELLS_FOR_THE_HOOK:
@@ -851,11 +861,144 @@ def run_push_cases(scratch):
           os.access(PRE_PUSH_HOOK, os.X_OK), str(PRE_PUSH_HOOK))
 
 
+# --- Lost test cases and mutation-testing worktrees ------------------------------
+
+DEMO_TEST_ON_MAIN = (
+    "def check(name, condition):\n    pass\n\n\n"
+    "def case(name, condition):\n    pass\n\n\n"
+    "for word in ['a', 'b']:\n"
+    "    check(f'the word {word} is read', True)\n"
+    "check('alpha holds', True)\n"
+    "check(\n    'beta holds '\n    'across two lines', True)\n"
+    "case('gamma holds', True)\n\n\n"
+    "def test_delta():\n    pass\n")
+
+
+def lost_case_scenario(scratch, name, hooks):
+    """A Scenario whose main holds demo-test.py, and a branch `cases` cut from that main."""
+    scenario = Scenario(scratch, name, hooks)
+    scenario.git(scenario.clone, "switch", "--quiet", "main")
+    scenario.commit("demo-test.py", DEMO_TEST_ON_MAIN, "Main gains demo-test.py")
+    scenario.git(scenario.clone, "push", "--quiet", "--no-verify", "origin", "main")
+    scenario.git(scenario.clone, "fetch", "--quiet", "origin")
+    scenario.git(scenario.clone, "switch", "--quiet", "-c", "cases")
+    return scenario
+
+
+def run_lost_case_and_copy_cases(scratch):
+    real = make_layout(scratch, "layout-lost-cases")
+
+    scenario = lost_case_scenario(scratch, "lost-silently", real)
+    scenario.commit("demo-test.py", DEMO_TEST_ON_MAIN.replace("check('alpha holds', True)\n", ""),
+                    "Tidy the demo test")
+    result = scenario.push("origin", "cases")
+    check("a branch that loses a check() case with no commit message naming it is refused, "
+          "naming the file and the case",
+          was_refused(result) and "  demo-test.py: alpha holds" in result.stderr
+          and "no commit message on the branch names them" in result.stderr
+          and scenario.origin_ref("cases") is None, result.describe())
+    check("the refusal says how to put the case back or account for it",
+          "If a case went by mistake, put it back, commit, and push again." in result.stderr
+          and "git commit --allow-empty" in result.stderr, result.describe())
+
+    scenario.git(scenario.clone, "commit", "--quiet", "--allow-empty", "-m",
+                 "Drop the case alpha holds: the demo no longer needs it")
+    result = scenario.push("origin", "cases")
+    check("once a commit message names the lost case, the push goes through",
+          went_through(result) and scenario.origin_ref("cases") == scenario.head("cases"),
+          result.describe())
+
+    for label, edited, message, refused in [
+            ("a case() case", DEMO_TEST_ON_MAIN.replace("case('gamma holds', True)\n", ""),
+             "Tidy", True),
+            ("a def test_ function",
+             DEMO_TEST_ON_MAIN.replace("def test_delta():\n    pass\n", ""), "Tidy", True),
+            ("a case whose wording spans two string pieces",
+             DEMO_TEST_ON_MAIN.replace("check(\n    'beta holds '\n    'across two lines', True)\n",
+                                       ""),
+             "Drop the case beta holds\nacross two lines: no longer needed", False),
+            ("an f-string case, named in the message with its placeholder filled",
+             DEMO_TEST_ON_MAIN.replace("    check(f'the word {word} is read', True)\n",
+                                       "    pass\n"),
+             "Drop the case the word a is read and its sibling: no longer needed", False),
+            ("an f-string case, named in the message with a line break inside its placeholder",
+             DEMO_TEST_ON_MAIN.replace("    check(f'the word {word} is read', True)\n",
+                                       "    pass\n"),
+             "Drop the case the word\na is read and its sibling: no longer needed", False)]:
+        scenario = lost_case_scenario(scratch, "lost-" + str(abs(hash(label))), real)
+        scenario.commit("demo-test.py", edited, message)
+        result = scenario.push("origin", "cases")
+        check(f"losing {label} is {'refused' if refused else 'let through'} "
+              f"{'when no message names it' if refused else 'when a message names it'}",
+              was_refused(result) if refused else went_through(result), result.describe())
+
+    scenario = lost_case_scenario(scratch, "moved", real)
+    scenario.commit("demo-test.py", DEMO_TEST_ON_MAIN.replace("check('alpha holds', True)\n", ""),
+                    "Move alpha")
+    scenario.commit("other-test.py", "def check(name, condition):\n    pass\n\n\n"
+                    "check('alpha holds', True)\n", "Move alpha, second half")
+    result = scenario.push("origin", "cases")
+    check("a case moved to another test file is not lost, and the push goes through",
+          went_through(result) and "pre-push:" not in result.stderr, result.describe())
+
+    scenario = lost_case_scenario(scratch, "unreadable", real)
+    scenario.commit("demo-test.py", "this is not python (\n", "Break the demo test")
+    result = scenario.push("origin", "cases")
+    check("a test file that is not Python at the pushed commit lets the push through and says "
+          "its cases were not compared",
+          went_through(result) and "demo-test.py could not be read" in result.stderr
+          and "could not be read as Python" in result.stderr
+          and "this push is refused" not in result.stderr, result.describe())
+
+    for label, text, expected in [
+            ("crashes", "raise RuntimeError('broken')\n",
+             "-worktrees.py, exited with status 1, so this push was not checked for either."),
+            ("is missing", None, "the check for lost test cases and mutation-testing worktrees did not "
+             "run, because ")]:
+        hooks = make_layout(scratch, "layout-lost-check-" + label.replace(" ", "-"),
+                            lost_case_and_copy_check_text=text,
+                            include_lost_case_and_copy_check=text is not None)
+        scenario = lost_case_scenario(scratch, "lost-check-" + label.replace(" ", "-"), hooks)
+        scenario.commit("demo-test.py",
+                        DEMO_TEST_ON_MAIN.replace("check('alpha holds', True)\n", ""), "Tidy")
+        result = scenario.push("origin", "cases")
+        check(f"when the lost-test-case check {label}, the push goes through and the hook says "
+              f"what was not checked and to tell the user",
+              went_through(result) and expected in result.stderr
+              and TELL_USER_LINE in result.stderr, result.describe())
+
+    # A push from a copy whose directory name ends in -mutation-testing-worktree is refused, whatever it pushes.
+    scenario = Scenario(scratch, "copy", real)
+    copy = scratch / "copy-checkout-mutation-testing-worktree"
+    scenario.git(scenario.clone, "worktree", "add", "--quiet", "--detach", str(copy), "clean")
+    result = scenario.push("origin", "HEAD:refs/heads/from-a-copy", cwd=copy)
+    check("a push from a checkout whose directory name ends in -mutation-testing-worktree is refused, "
+          "naming the copy and how to remove it",
+          was_refused(result) and str(copy) in result.stderr
+          and "Push from the checkout you work in, not from this copy." in result.stderr
+          and f"git worktree remove --force {copy}" in result.stderr
+          and scenario.origin_ref("from-a-copy") is None, result.describe())
+    result = scenario.push("origin", "clean:refs/heads/clean-mutation-testing-worktree")
+    check("a push of a branch whose name ends in -mutation-testing-worktree is refused",
+          was_refused(result) and "pushes clean-mutation-testing-worktree, whose name ends in -mutation-testing-worktree"
+          in result.stderr and scenario.origin_ref("clean-mutation-testing-worktree") is None,
+          result.describe())
+    specification = importlib.util.spec_from_file_location("lost_case_and_copy_check",
+                                                           LOST_CASE_AND_COPY_CHECK)
+    loaded = importlib.util.module_from_spec(specification)
+    specification.loader.exec_module(loaded)
+    helper_source = (SCRIPTS_DIRECTORY / "run-suite-in-signal-sandbox.py").read_text()
+    check("the pre-push check and the mutation helper use the same label",
+          f'MUTATION_TESTING_WORKTREE_LABEL = "{loaded.MUTATION_TESTING_WORKTREE_LABEL}"' in helper_source,
+          loaded.MUTATION_TESTING_WORKTREE_LABEL)
+
+
 def main():
     run_unit_cases()
     scratch = Path(tempfile.mkdtemp(prefix="pre-push-test-"))
     try:
         run_push_cases(scratch)
+        run_lost_case_and_copy_cases(scratch)
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
     if failures:
