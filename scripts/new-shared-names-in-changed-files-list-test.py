@@ -521,16 +521,15 @@ def case_codex_command_keeps_paths_with_spaces_whole(root):
             del os.environ["HOME"]
         else:
             os.environ["HOME"] = environment_home
-    command_match = re.search(r"`(codex exec [^`]*)`", context)
-    check("the reminder carries a codex command", command_match is not None, context)
+    command_match = re.search(r"`(python3 [^`]*run-codex-task-from-brief\.py[^`]*)`", context)
+    check("the reminder carries a run-codex-task-from-brief command", command_match is not None, context)
     if command_match is None:
         return
-    arguments = shlex.split(command_match.group(1).removesuffix(" < /dev/null"))
+    arguments = shlex.split(command_match.group(1))
     check("the -C argument is the real checkout path, kept whole",
           arguments[arguments.index("-C") + 1] == str(clone), str(arguments))
-    roots = [argument for argument in arguments if argument.startswith("sandbox_workspace_write.writable_roots=")]
-    check("the writable_roots argument names the real ~/.gemini path, kept whole",
-          roots == ["sandbox_workspace_write.writable_roots=" + json.dumps([str(home / ".gemini")])], str(roots))
+    check("the --writable-root argument names the real ~/.gemini path, kept whole",
+          arguments[arguments.index("--writable-root") + 1] == str(home / ".gemini"), str(arguments))
 
 
 def case_hook_reports_once_per_worktree(root):
@@ -543,15 +542,22 @@ def case_hook_reports_once_per_worktree(root):
     check("the hook exits 0", code == 0)
     check("the hook names the new function", "shared_helper" in first, first)
     check("the hook names the naming fresh-agent", "new-name-propose-and-check-fresh-agent" in first)
-    gemini_roots = shlex.quote("sandbox_workspace_write.writable_roots=" + json.dumps([str(Path.home() / ".gemini")]))
-    codex_command = ("`codex exec -m gpt-6.1-sol -c model_reasoning_effort=medium --disable memories "
-                     "--sandbox workspace-write -c sandbox_workspace_write.network_access=true "
-                     f"-c {gemini_roots} -C {shlex.quote(str(clone))} \"git fetch has already been run; skip that "
-                     "step and use origin/main as it is. Read .claude/agents/new-name-propose-and-check-fresh-agent.md "
-                     "and do exactly what it says, for these entries, one per line: "
-                     "<name>: <one sentence saying what it names>\" < /dev/null`")
-    check("the hook tells a subagent to run the check through Codex, in the real checkout, with stdin closed",
-          "If you are a subagent and cannot start one" in first and codex_command in first, first)
+    runner = Path(__file__).resolve().with_name("run-codex-task-from-brief.py")
+    codex_command = (f"`python3 {shlex.quote(str(runner))} -C {shlex.quote(str(clone))} "
+                     "--brief <brief file> -o <report file> -m gpt-6.1-sol --effort medium "
+                     "--sandbox workspace-write --network "
+                     f"--writable-root {shlex.quote(str(Path.home() / '.gemini'))}`")
+    brief_line = ("\"git fetch has already been run; skip that step and use origin/main as it is. "
+                  "Read .claude/agents/new-name-propose-and-check-fresh-agent.md and do exactly what "
+                  "it says, for these entries, one per line:\"")
+    check("the hook tells a subagent to run the check through the Codex task program, in the real checkout",
+          "If you are a subagent and cannot start one" in first and codex_command in first
+          and brief_line in first, first)
+    check("the hook names a runner that exists and accepts every option it gives",
+          runner.is_file() and all(option in subprocess.run(
+              [sys.executable, str(runner), "--help"], capture_output=True, text=True).stdout
+              for option in ("--brief", "--effort", "--sandbox", "--network", "--writable-root")))
+    check("the hook no longer tells anyone to hand-type codex exec", "codex exec" not in first, first)
     check("the hook tells a subagent to run git fetch itself before Codex",
           "First run `git fetch` yourself" in first, first)
     _, second = run_hook(clone, state_root, {"tool_name": "Edit", "tool_input": {"file_path": "beta.py"}})

@@ -4,7 +4,8 @@
 Usage:
   scripts/run-codex-task-from-brief.py -C <checkout> --brief <file> -o <report>
       [--sandbox read-only|workspace-write] [-m <model>] [--effort <effort>]
-      [--deadline-minutes <minutes>] [--run-log <file>]
+      [--network] [--writable-root <folder>]... [--outside-git-checkout]
+      [--web-search] [--deadline-minutes <minutes>] [--run-log <file>]
 
 The program an agent uses to hand Codex a task. It always:
   - reads the prompt from the brief file, never from the command line;
@@ -16,6 +17,13 @@ The program an agent uses to hand Codex a task. It always:
   - runs Codex under a permission profile that denies credential files,
     extending `:read-only`, or `:workspace` with `--sandbox workspace-write`,
     and with Codex's memory store off.
+
+Options that widen what Codex may do, each off by default:
+  --network               let Codex's commands reach the network;
+  --writable-root <folder>  let Codex write in this folder as well as the
+                          checkout, with --sandbox workspace-write; repeatable;
+  --outside-git-checkout  let -C name a folder that is not a git checkout;
+  --web-search            give Codex its live web search tool.
 
 On success it prints `report: <path>` and exits 0. It exits 1, saying what
 failed, when Codex cannot be started, exits nonzero, writes no report, or
@@ -60,6 +68,14 @@ def build_argument_parser() -> argparse.ArgumentParser:
                         default="read-only")
     parser.add_argument("-m", dest="model", help="Codex model id")
     parser.add_argument("--effort", help="reasoning effort, such as medium or xhigh")
+    parser.add_argument("--network", action="store_true",
+                        help="let Codex's commands reach the network")
+    parser.add_argument("--writable-root", action="append", default=[], metavar="FOLDER",
+                        help="a folder Codex may write in besides the checkout; repeatable")
+    parser.add_argument("--outside-git-checkout", action="store_true",
+                        help="let -C name a folder that is not a git checkout")
+    parser.add_argument("--web-search", action="store_true",
+                        help="give Codex its live web search tool")
     parser.add_argument("--deadline-minutes", type=float,
                         default=DEFAULT_DEADLINE_MINUTES,
                         help=f"stop Codex after this long (default {DEFAULT_DEADLINE_MINUTES})")
@@ -68,15 +84,24 @@ def build_argument_parser() -> argparse.ArgumentParser:
 
 
 def codex_command(checkout: pathlib.Path, report: pathlib.Path, sandbox: str,
-                  model, effort, prompt: str) -> list:
+                  model, effort, prompt: str, network: bool = False,
+                  writable_roots=(), outside_git_checkout: bool = False,
+                  web_search: bool = False) -> list:
     command = [
         "codex", "exec",
         *common.codex_credential_denying_permission_profile_arguments(
-            PERMISSION_PROFILE_NAME, SANDBOX_TO_PROFILE_BASE[sandbox]),
+            PERMISSION_PROFILE_NAME, SANDBOX_TO_PROFILE_BASE[sandbox], network=network),
         "--disable", "memories",
         "-C", str(checkout),
         "-o", str(report),
     ]
+    for root in writable_roots:
+        command += ["--add-dir", str(root)]
+    if outside_git_checkout:
+        command.append("--skip-git-repo-check")
+    if web_search:
+        # `codex exec` does not accept --search; this config key is what that flag sets.
+        command += ["-c", 'web_search="live"']
     if model:
         command += ["-m", model]
     if effort:
@@ -120,8 +145,11 @@ def main(argv=None) -> int:
         return fail(f"the brief {brief} is empty.")
     # A report left by an earlier run must not pass for this run's.
     report.unlink(missing_ok=True)
-    command = codex_command(checkout, report, args.sandbox, args.model,
-                            args.effort, prompt)
+    command = codex_command(
+        checkout, report, args.sandbox, args.model, args.effort, prompt,
+        network=args.network,
+        writable_roots=[pathlib.Path(root).resolve() for root in args.writable_root],
+        outside_git_checkout=args.outside_git_checkout, web_search=args.web_search)
     deadline_seconds = args.deadline_minutes * 60
     print(f"{PROGRAM}: running Codex in {checkout}; log {run_log}", file=sys.stderr)
     try:

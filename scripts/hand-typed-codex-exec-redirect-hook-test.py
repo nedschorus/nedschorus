@@ -43,7 +43,7 @@ def refusal(command, tool_name="Bash"):
     if not text:
         return None
     output = json.loads(text)["hookSpecificOutput"]
-    return output["permissionDecisionReason"] if output["permissionDecision"] == "deny" else None
+    return output.get("permissionDecisionReason") if output.get("permissionDecision") == "deny" else None
 
 
 REFUSED = {
@@ -62,6 +62,27 @@ REFUSED = {
     "codex exec inside bash -c": "bash -c 'codex exec -C x \"task\"'",
     "codex exec inside an ssh command": "ssh nedlern@ned-box 'cd ~/x && codex exec \"task\"'",
     "codex exec reading a heredoc": 'codex exec - <<EOF\ndo the task\nEOF',
+    "codex exec after a global --search": 'timeout 1500 codex --search exec --skip-git-repo-check "task"',
+    "codex exec inside bash -lc": "bash -lc 'cd x; codex exec \"task\"'",
+    "codex exec inside bash -o pipefail -c": "bash -o pipefail -c 'codex exec \"task\" | tee log'",
+    "codex exec inside nohup bash -c": "nohup bash -c 'codex exec \"task\" > log 2>&1' &",
+    "codex exec inside ssh with options that take values":
+        "ssh -o ConnectTimeout=10 -p 22 nedlern@ned-box 'codex exec \"task\" < /dev/null'",
+    "codex exec in ssh's remote command given as several words": "ssh ned-box cd x '&&' codex exec task",
+    "codex exec inside bash -c inside ssh":
+        "ssh ned-box \"bash -c 'codex exec task'\"",
+    "codex exec inside a substitution inside double quotes": 'echo "$(codex exec task)"',
+    "codex review behind exec": 'codex exec review --uncommitted',
+    "codex exec behind env -u, whose option takes a value":
+        'env -u GIT_DIR -u GIT_WORK_TREE timeout 400 codex exec "task"',
+    "codex exec behind sandbox-exec -f": "sandbox-exec -f p.sb codex exec --sandbox danger-full-access task",
+    "codex exec in a heredoc that ssh runs": "ssh -o BatchMode=yes ned-box <<'EOF'\ncd x\ncodex exec task\nEOF",
+    "codex exec in a heredoc that a remote bash -s runs":
+        "ssh ned-box bash -s <<'EOF'\ncodex exec task < /dev/null\nEOF",
+    "codex exec behind setsid nohup over ssh":
+        "ssh -o ConnectTimeout=8 ned-box 'cd x && setsid nohup codex exec task > log 2>&1 &'",
+    "codex exec run by eval": "eval codex exec $ARGS -C . 'task'",
+    "codex exec in a heredoc that a local bash runs": "bash <<'EOF'\ncodex exec task\nEOF",
 }
 
 ALLOWED = {
@@ -74,6 +95,19 @@ ALLOWED = {
     "a heredoc body that mentions codex exec": "cat > notes.md <<'EOF'\ncodex exec \"x\"\nEOF",
     "a commit message that mentions codex exec": 'git commit -m "Refuse a hand-typed codex exec"',
     "ps listing codex processes": "ps -axo pid,command | grep codex",
+    "pgrep for codex exec": "pgrep -fl 'git push|codex exec'",
+    "an ssh command that runs no codex": "ssh -o BatchMode=yes ned-box 'ls ~/codex-exec-notes'",
+    "an ssh session with no remote command": "ssh -p 22 ned-box",
+    "bash running a script file": "bash scripts/run.sh codex exec",
+    "a bash -c that mentions codex exec in quoted text": "bash -c 'echo \"codex exec\"'",
+    "a heredoc of notes appended over ssh": "ssh ned-box 'cat >> notes.md' <<'EOF'\nNever type `codex exec` by hand.\nEOF",
+    "an eval that runs no codex": "eval \"$(ssh-agent -s)\"",
+    "a heredoc fed to a bash script file": "bash run.sh <<'EOF'\ncodex exec task\nEOF",
+    "a python heredoc that mentions codex exec": "python3 - <<'EOF'\nprint('codex exec')\nEOF",
+    "a cold-read cell, which runs Codex itself":
+        "python3 nc-systems/cold-read/cold-read-codex-cell.py --prompt-file p.md -o r.md",
+    "a cold-read cell run over ssh":
+        "ssh nedlern@ned-box 'cd ~/x && python3 nc-systems/cold-read/cold-read-codex-cell.py --prompt-file p.md'",
 }
 
 for name, command in REFUSED.items():
@@ -91,13 +125,45 @@ check("the refusal gives the program's usage line",
       hook.USAGE_LINE in hook.REFUSAL
       and "scripts/run-codex-task-from-brief.py" in hook.USAGE_LINE)
 
+check("the refusal maps Codex's own widening options to the program's",
+      all(option in hook.REFUSAL for option in ("--network", "--writable-root",
+                                                "--outside-git-checkout", "--web-search")))
+
+saved_simple_commands = hook.shell_reader.simple_commands
+
+
+def parser_missing(_command):
+    raise hook.shell_reader.ShellParserUnavailable("pip: no network")
+
+
+hook.shell_reader.simple_commands = parser_missing
+try:
+    stdout = io.StringIO()
+    with contextlib.redirect_stdout(stdout):
+        code = hook.main(stdin=io.StringIO(json.dumps(
+            {"tool_name": "Bash", "tool_input": {"command": 'codex exec "task"'}})))
+finally:
+    hook.shell_reader.simple_commands = saved_simple_commands
+output = json.loads(stdout.getvalue() or "{}").get("hookSpecificOutput", {})
+check("without the shell parser the hook exits 0, lets the command through and says so",
+      code == 0 and "permissionDecision" not in output
+      and "hand-typed codex exec guard" in output.get("additionalContext", "")
+      and "pip: no network" in output.get("additionalContext", ""), repr(output))
+
 program_help = subprocess.run(
     [sys.executable, str(HOOK_SCRIPT.with_name("run-codex-task-from-brief.py")), "--help"],
     capture_output=True, text=True, check=False)
-for flag in ("-C", "--brief", "-o", "--sandbox", "-m", "--effort", "--deadline-minutes"):
+for flag in ("-C", "--brief", "-o", "--sandbox", "-m", "--effort", "--network",
+             "--writable-root", "--outside-git-checkout", "--web-search",
+             "--deadline-minutes", "--run-log"):
     check(f"the usage line's flag {flag} is one the program accepts",
           flag in hook.USAGE_LINE and flag in program_help.stdout,
           program_help.stdout[:200])
+
+usage_in_program_docstring = " ".join(
+    program_help.stdout.split("Usage:\n", 1)[-1].split("\n\n", 1)[0].split())
+check("the hook's usage line is the program's own usage line, word for word",
+      usage_in_program_docstring == hook.USAGE_LINE, usage_in_program_docstring)
 
 process = subprocess.run(
     [sys.executable, str(HOOK_SCRIPT)],

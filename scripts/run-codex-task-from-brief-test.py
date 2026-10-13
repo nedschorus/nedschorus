@@ -113,6 +113,44 @@ try:
           and ["-m", "model-x"] == arguments[arguments.index("-m"):arguments.index("-m") + 2]
           and "model_reasoning_effort=high" in arguments, repr(arguments))
 
+    completed, report, _ = run("report")
+    arguments = json.loads(arguments_file.read_text())
+    check("without the widening options Codex gets no network, extra folder, git skip or web search",
+          not any("network" in argument or "web_search" in argument for argument in arguments)
+          and "--add-dir" not in arguments and "--skip-git-repo-check" not in arguments,
+          repr(arguments))
+
+    extra_root_one = scratch / "extra one"
+    extra_root_two = scratch / "extra-two"
+    completed, report, _ = run("report", "--sandbox", "workspace-write", "--network",
+                               "--writable-root", str(extra_root_one),
+                               "--writable-root", str(extra_root_two),
+                               "--outside-git-checkout", "--web-search")
+    arguments = json.loads(arguments_file.read_text())
+    added_folders = [arguments[index + 1] for index, argument in enumerate(arguments)
+                     if argument == "--add-dir"]
+    check("--network turns on the permission profile's network",
+          completed.returncode == 0
+          and "permissions.codex-task-no-credentials.network.enabled=true" in arguments,
+          f"exit {completed.returncode}, {arguments!r}, stderr {completed.stderr!r}")
+    check("each --writable-root reaches Codex as its own --add-dir, path whole",
+          added_folders == [str(extra_root_one), str(extra_root_two)], repr(added_folders))
+    check("--outside-git-checkout passes --skip-git-repo-check",
+          "--skip-git-repo-check" in arguments, repr(arguments))
+    check("--web-search sets web_search to live, after exec",
+          ["-c", 'web_search="live"'] == arguments[arguments.index('web_search="live"') - 1:
+                                                     arguments.index('web_search="live"') + 1]
+          if 'web_search="live"' in arguments else False, repr(arguments))
+    check("the brief is still the last argument with every option on",
+          arguments[-1] == brief.read_text(), repr(arguments[-1]))
+
+    help_text = subprocess.run([sys.executable, str(PROGRAM), "--help"], capture_output=True,
+                               text=True, check=False).stdout
+    check("the usage line names every option",
+          all(option in help_text for option in ("--network", "--writable-root <folder>",
+                                                 "--outside-git-checkout", "--web-search")),
+          help_text)
+
     completed, report, _ = run("fail")
     check("a Codex failure exits 1 and names the exit code and the log",
           completed.returncode == 1 and "Codex exited 3" in completed.stderr

@@ -30,6 +30,7 @@ SHELL_TOOL_NAME = "Bash"
 STATE_DIRECTORY = Path(tempfile.gettempdir()) / "new-shared-names-reminder-hook-state"
 SESSION_ID_SAFE_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
 LISTER_PATH = Path(__file__).resolve().parent / "new-shared-names-in-changed-files-list.py"
+CODEX_TASK_RUNNER_PATH = Path(__file__).resolve().parent / "run-codex-task-from-brief.py"
 
 _git_machine_readable_output_spec = importlib.util.spec_from_file_location(
     "git_machine_readable_output_runner_and_parser_common",
@@ -49,12 +50,15 @@ REMINDER_TEMPLATE = (
     "If you are a subagent and cannot start one, run the same check through Codex instead, in "
     "the background, and act on its report the same way.\n"
     "First run `git fetch` yourself; Codex's sandbox cannot write the git directory.\n"
-    "Then run: `codex exec -m gpt-6.1-sol -c model_reasoning_effort=medium --disable memories "
-    "--sandbox workspace-write -c sandbox_workspace_write.network_access=true -c {writable_roots} "
-    "-C {checkout} \"git fetch has already been run; skip that step and use origin/main as it is. "
-    "Read .claude/agents/{agent}.md and do exactly what it says, for these entries, one per line: "
-    "<name>: <one sentence saying what it names>\" < /dev/null`\n"
-    "Keep the `< /dev/null`: Codex hangs when stdin is left open.\n"
+    "Then write a brief file holding this line: \"git fetch has already been run; skip that "
+    "step and use origin/main as it is. Read .claude/agents/{agent}.md and do exactly what it "
+    "says, for these entries, one per line:\" and below it one line per name, "
+    "<name>: <one sentence saying what it names>.\n"
+    "Then run: `python3 {runner} -C {checkout} --brief <brief file> -o <report file> "
+    "-m gpt-6.1-sol --effort medium --sandbox workspace-write --network "
+    "--writable-root {gemini_directory}`\n"
+    "It prints `report: <report file>` once Codex has written its report; otherwise it "
+    "exits 1 and says why.\n"
     "When it flags a name, rename it everywhere your branch uses it, in one commit.\n"
     "If it flags a new project-term or system-term, put the new term to the user before you "
     "use it.\n"
@@ -333,10 +337,9 @@ def failure_report_once(state: dict, error: str):
     return FAILURE_TEMPLATE.format(error=error, page=NAMING_PAGE_PATH)
 
 
-def codex_writable_roots_argument() -> str:
+def codex_writable_gemini_directory() -> str:
     # The fresh-agent's blind guess runs agy, which must write under ~/.gemini inside Codex's sandbox.
-    gemini_directory = str(Path.home() / ".gemini")
-    return shlex.quote("sandbox_workspace_write.writable_roots=" + json.dumps([gemini_directory]))
+    return shlex.quote(str(Path.home() / ".gemini"))
 
 
 def reminder_text(new_names, checkout: Path) -> str:
@@ -347,7 +350,8 @@ def reminder_text(new_names, checkout: Path) -> str:
                                             command=LISTER_COMMAND))
     return REMINDER_TEMPLATE.format(names="\n".join(lines), agent=NAMING_FRESH_AGENT_NAME,
                                     page=NAMING_PAGE_PATH, checkout=shlex.quote(str(checkout)),
-                                    writable_roots=codex_writable_roots_argument())
+                                    runner=shlex.quote(str(CODEX_TASK_RUNNER_PATH)),
+                                    gemini_directory=codex_writable_gemini_directory())
 
 
 def emit(text: str) -> None:
