@@ -260,7 +260,10 @@ def test_an_interrupted_check_kills_claude_and_removes_its_scratch_clone():
         [sys.executable, str(CHECK), "--claude-program", str(FAKE_CLAUDE),
          "--record-directory", str(SCRATCH / "records-interrupted"), "--timeout-seconds", "60"],
         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-        env=dict(os.environ, FAKE_CLAUDE_MODE="hang", TMPDIR=str(temporary)))
+        env=dict(os.environ, FAKE_CLAUDE_MODE="hang", TMPDIR=str(temporary)),
+        # A Python started with SIGINT ignored keeps ignoring it, and this suite may be started
+        # that way, as by a shell's background job.
+        preexec_fn=lambda: signal.signal(signal.SIGINT, signal.SIG_DFL))
     deadline = time.monotonic() + 30
     while not (FAKE_CLAUDE_PROCESS_ID_FILE.exists() and FAKE_CLAUDE_CHILD_PROCESS_ID_FILE.exists()):
         if time.monotonic() > deadline or check_process.poll() is not None:
@@ -285,6 +288,36 @@ def test_an_interrupted_check_kills_claude_and_removes_its_scratch_clone():
           f"still running: {still_running}; exit {check_process.returncode}: {stderr}")
     check(list(temporary.iterdir()) == [],
           "an interrupted check removes its scratch clone", list(temporary.iterdir()))
+
+
+def test_an_interruption_after_claude_was_reaped_still_propagates():
+    # Popen.communicate() catches KeyboardInterrupt, reaps a child that exits within 0.25 s,
+    # and re-raises; by then claude's process group can be empty.
+    class ReapedThenInterrupted(subprocess.Popen):
+        def communicate(self, input=None, timeout=None):
+            self.wait()
+            raise KeyboardInterrupt
+
+    def start_a_claude_that_exits_at_once(program, clone, settings):
+        return ReapedThenInterrupted([sys.executable, "-c", "pass"], start_new_session=True)
+
+    real = weekly_owner_check.start_claude
+    records = SCRATCH / "records-interrupted-after-reaping"
+    propagated = False
+    try:
+        weekly_owner_check.start_claude = start_a_claude_that_exits_at_once
+        with contextlib.redirect_stdout(io.StringIO()):
+            weekly_owner_check.main(
+                ["--claude-program", "claude", "--record-directory", str(records)])
+    except KeyboardInterrupt:
+        propagated = True
+    finally:
+        weekly_owner_check.start_claude = real
+    written = list(records.glob("*.txt")) if records.is_dir() else []
+    check(propagated and not written,
+          "an interruption that arrives after claude and its group are gone still ends the "
+          "check with the interruption, and writes no record",
+          f"propagated: {propagated}; records: {[path.read_text() for path in written]}")
 
 
 def test_the_record_goes_to_the_log_store_by_default():
@@ -380,6 +413,7 @@ def main():
         for case in (test_a_session_that_finds_itself_passes, test_failures_are_recorded,
                      test_claude_that_cannot_start_or_finish_fails,
                      test_an_interrupted_check_kills_claude_and_removes_its_scratch_clone,
+                     test_an_interruption_after_claude_was_reaped_still_propagates,
                      test_the_record_goes_to_the_log_store_by_default,
                      test_a_scratch_clone_that_cannot_be_made_fails,
                      test_a_check_that_cannot_run_fails,

@@ -57,6 +57,7 @@ A record that could not be written leaves the run's lines in that log file.
 """
 
 import argparse
+import contextlib
 import importlib.util
 import json
 import os
@@ -158,10 +159,11 @@ def wait_for_claude(process, timeout_seconds):
 
     A timeout, or an interruption such as Ctrl-C, kills claude's whole process group, so
     no hook or Bash command claude started outlives the check. claude runs in a session of
-    its own, so a Ctrl-C at the terminal reaches only the check, which re-raises it after
-    the kill. Killing the group also closes any copy of claude's output pipes a child holds,
-    so the read after the kill does not wait for that child; the test's fake claude has such
-    a child, and whether a real claude's children hold claude's pipes has not been checked.
+    its own, so a Ctrl-C at the terminal reaches only the check, which kills whatever is left
+    of claude's group and re-raises the interruption. Killing the group also closes any copy
+    of claude's output pipes a child holds, so the read after the kill does not wait for that
+    child; the test's fake claude has such a child, and whether a real claude's children hold
+    claude's pipes has not been checked.
     """
     try:
         stdout, stderr = process.communicate(timeout=timeout_seconds)
@@ -170,7 +172,10 @@ def wait_for_claude(process, timeout_seconds):
         stdout, stderr = process.communicate()
         return process.pid, None, stdout, stderr
     except BaseException:
-        os.killpg(process.pid, signal.SIGKILL)
+        # communicate() may already have reaped claude when the interruption arrives, and
+        # claude's group may then be empty.
+        with contextlib.suppress(ProcessLookupError):
+            os.killpg(process.pid, signal.SIGKILL)
         process.wait()
         raise
     return process.pid, process.returncode, stdout, stderr
