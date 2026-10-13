@@ -77,7 +77,7 @@ MAC_DAILY_PLIST = {
 }
 NED_BOX_SESSION_DIALOGS_LINE = (
     "*/10 * * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/scripts/"
-    "log-store-session-dialogs-refresh.py --failures-only >> "
+    "log-store-session-dialogs-refresh-nbd.py --failures-only >> "
     "/home/nedlern/.claude/log-store-session-dialogs-refresh.log 2>&1")
 # The daily worktree cleanup, added to the table after the two jobs above; no
 # machine had it installed by hand.

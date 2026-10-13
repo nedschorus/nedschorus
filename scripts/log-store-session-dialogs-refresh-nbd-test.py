@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Tests for log-store-session-dialogs-refresh.py.
+"""Tests for log-store-session-dialogs-refresh-nbd.py.
 
-Run: python3 scripts/log-store-session-dialogs-refresh-test.py
+Run: python3 scripts/log-store-session-dialogs-refresh-nbd-test.py
 Prints one line per case and exits non-zero if any case fails.
 
 Every case builds a scratch log-store in a temporary directory and points the
@@ -19,8 +19,9 @@ import tempfile
 import time
 from pathlib import Path
 
-SCRIPT_PATH = Path(__file__).with_name("log-store-session-dialogs-refresh.py")
+SCRIPT_PATH = Path(__file__).with_name("log-store-session-dialogs-refresh-nbd.py")
 EXTRACTOR_PATH = Path(__file__).with_name("handoff-extract-conversation.py")
+SUBAGENT_TRACKER_PATH = Path(__file__).with_name("handoff-extract-conversation-subagent-tracker-nbd.py")
 # The transcripts' times are set after the extractor's, so a dialog's time is its transcript's.
 LATER_THAN_THE_EXTRACTOR = int(max(time.time(), EXTRACTOR_PATH.stat().st_mtime)) + 1000
 STORE_ROOT_VARIABLE = "LOG_STORE_SESSION_DIALOGS_REFRESH_LOG_STORE_ROOT_OVERRIDE"
@@ -102,9 +103,9 @@ with tempfile.TemporaryDirectory() as workspace:
           sorted(str(p) for p in (store / "session-dialogs").rglob("*")))
     check("a transcript with no dialog still gets a dialog that says it has no turns",
           empty_dialog.is_file() and "All 0 dialog turns" in empty_dialog.read_text(encoding="utf-8"))
-    check("a dialog carries its transcript's modification time",
-          mac_dialog.stat().st_mtime_ns == mac_transcript.stat().st_mtime_ns,
-          (mac_dialog.stat().st_mtime_ns, mac_transcript.stat().st_mtime_ns))
+    check("a dialog carries its transcript's change time",
+          mac_dialog.stat().st_mtime_ns == mac_transcript.stat().st_ctime_ns,
+          (mac_dialog.stat().st_mtime_ns, mac_transcript.stat().st_ctime_ns))
 
     second = run(store)
     check("a second pass over unchanged transcripts writes nothing",
@@ -132,6 +133,16 @@ with tempfile.TemporaryDirectory() as workspace:
           late.returncode == 0 and "mirrored late" in dialog_path(
               store, "mac", "-Users-someone-project", "s-old-times").read_text(encoding="utf-8"),
           (late.returncode, late.stdout))
+
+    # The mirror keeps a Mac transcript's time to the whole second, so growth within that second keeps the time.
+    with old_times.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps({"type": "user", "message": {"content": "same second"}}) + "\n")
+    os.utime(old_times, (1_000_001_000, 1_000_001_000))
+    same_second = run(store, "--failures-only")
+    check("a transcript that grew without its modification time changing is written again",
+          same_second.returncode == 0 and "same second" in dialog_path(
+              store, "mac", "-Users-someone-project", "s-old-times").read_text(encoding="utf-8"),
+          (same_second.returncode, same_second.stdout))
 
     # A mirrored transcript replaced by an older-dated copy has a time that goes backwards.
     with old_times.open("a", encoding="utf-8") as handle:
@@ -167,6 +178,56 @@ with tempfile.TemporaryDirectory() as workspace:
     check("the pass goes on past an unreadable transcript",
           dialog_path(store, "ned-box", "-home-someone-project", "s-later").is_file())
 
+    # The stale-dialog warning: the cron log is read by no one, so the reader of the dialog is told.
+    warning_opening = "This dialog could not be refreshed since "
+    unreadable_dialog = dialog_path(store, "mac", "-Users-someone-project", "s-unreadable")
+    unreadable_text = unreadable_dialog.read_text(encoding="utf-8") if unreadable_dialog.is_file() else ""
+    check("a transcript with no dialog yet that cannot be read gets a dialog holding only the stale-dialog warning",
+          unreadable_text.startswith(warning_opening) and unreadable_text.count("\n") == 1
+          and unreadable_text.rstrip().endswith("; what follows may be out of date.")
+          and "PermissionError" in unreadable_text, unreadable_text)
+    check("a dialog given the stale-dialog warning carries time 0, which no transcript's change time can equal",
+          unreadable_dialog.is_file() and unreadable_dialog.stat().st_mtime_ns == 0
+          and mac_dialog.stat().st_mtime_ns != 0,
+          unreadable_dialog.stat().st_mtime_ns if unreadable_dialog.is_file() else "no dialog")
+    unreadable_dialog.write_text(warning_opening + "2020-01-01 00:00 UTC: PermissionError: earlier; "
+                                 "what follows may be out of date.\n", encoding="utf-8")
+    # As the program leaves a warned dialog, so the next pass reads the transcript whatever tick the chmod lands in.
+    os.utime(unreadable_dialog, ns=(0, 0))
+    mac_transcript.chmod(0)
+    unreadable.chmod(0)
+    try:
+        still_failing = run(store, "--failures-only")
+    finally:
+        mac_transcript.chmod(0o644)
+        unreadable.chmod(0o644)
+    still_text = unreadable_dialog.read_text(encoding="utf-8")
+    check("a failure that lasts keeps the time it began in the stale-dialog warning, and still prints FAILED",
+          still_text.startswith(warning_opening + "2020-01-01 00:00 UTC: PermissionError")
+          and still_text.count(warning_opening) == 1 and f"FAILED: {unreadable}" in still_failing.stdout
+          and still_failing.returncode == 1, (still_text, still_failing.stdout))
+    stale_mac_text = mac_dialog.read_text(encoding="utf-8")
+    check("a dialog that could not be rewritten keeps its last text under the stale-dialog warning",
+          stale_mac_text.startswith(warning_opening) and "mac question" in stale_mac_text
+          and "a later question" in stale_mac_text, stale_mac_text[:400])
+    mac_transcript.chmod(0)
+    try:
+        run(store, "--failures-only")
+    finally:
+        mac_transcript.chmod(0o644)
+    twice_stale_mac_text = mac_dialog.read_text(encoding="utf-8")
+    check("a second failed pass keeps one stale-dialog warning over the same last text",
+          twice_stale_mac_text.count(warning_opening) == 1 and "mac question" in twice_stale_mac_text,
+          twice_stale_mac_text[:400])
+    recovered_pass = run(store, "--failures-only")
+    check("the pass after the transcripts can be read again rewrites both dialogs without the warning",
+          recovered_pass.returncode == 0
+          and not mac_dialog.read_text(encoding="utf-8").startswith(warning_opening)
+          and "mac question" in mac_dialog.read_text(encoding="utf-8")
+          and not unreadable_dialog.read_text(encoding="utf-8").startswith(warning_opening)
+          and "hidden" in unreadable_dialog.read_text(encoding="utf-8"),
+          (recovered_pass.returncode, recovered_pass.stdout))
+
     # A dialog that cannot be written is a failure too.
     blocked = write_transcript(store, "mac", "-Users-blocked-project", "s-blocked", conversation("blocked"))
     blocked_directory = store / "session-dialogs" / "mac" / "-Users-blocked-project"
@@ -176,6 +237,8 @@ with tempfile.TemporaryDirectory() as workspace:
     check("a dialog that cannot be written prints a FAILED line, and the pass exits 1",
           fifth.returncode == 1 and f"FAILED: {blocked}" in fifth.stdout,
           (fifth.returncode, fifth.stdout, fifth.stderr))
+    check("a dialog whose stale-dialog warning cannot be written either prints that FAILED line too",
+          "FAILED: could not warn in " in fifth.stdout, fifth.stdout)
     blocked_directory.unlink()
 
     lock_path = store / "session-dialogs" / ".log-store-session-dialogs-refresh.lock"
@@ -245,6 +308,7 @@ with tempfile.TemporaryDirectory() as workspace:
     script_copy = programs / SCRIPT_PATH.name
     shutil.copy2(SCRIPT_PATH, script_copy)
     shutil.copy2(EXTRACTOR_PATH, programs / EXTRACTOR_PATH.name)
+    shutil.copy2(SUBAGENT_TRACKER_PATH, programs / SUBAGENT_TRACKER_PATH.name)
     settled = run(store, "--failures-only", script_path=script_copy)
     touched = run(store, script_path=script_copy)
     with (programs / EXTRACTOR_PATH.name).open("a", encoding="utf-8") as handle:
@@ -256,7 +320,7 @@ with tempfile.TemporaryDirectory() as workspace:
           settled.returncode == 0 and "wrote 0 session dialogs" in touched.stdout
           and rewritten.returncode == 0 and "wrote 0 session dialogs" not in rewritten.stdout
           and "wrote 0 session dialogs" in after.stdout
-          and box_dialog.stat().st_mtime_ns == box_transcript.stat().st_mtime_ns,
+          and box_dialog.stat().st_mtime_ns == box_transcript.stat().st_ctime_ns,
           (settled.stdout, touched.stdout, rewritten.stdout, after.stdout))
 
     # A dialog the changed extractor could not rewrite is rewritten by a later pass.
@@ -275,6 +339,50 @@ with tempfile.TemporaryDirectory() as workspace:
         check("a dialog the changed extractor could not rewrite is rewritten by the next pass",
               stuck.returncode == 1 and "wrote 0 session dialogs" not in retried.stdout,
               (stuck.stdout, retried.stdout))
+
+    # A change to the subagent tracker alone also rewrites every dialog once.
+    with (programs / SUBAGENT_TRACKER_PATH.name).open("a", encoding="utf-8") as handle:
+        handle.write("# changed\n")
+    tracker_rewritten = run(store, script_path=script_copy)
+    tracker_after = run(store, script_path=script_copy)
+    check("after the subagent tracker's bytes change, one pass rewrites the dialogs, and the next writes none",
+          tracker_rewritten.returncode == 0 and "wrote 0 session dialogs" not in tracker_rewritten.stdout
+          and "wrote 0 session dialogs" in tracker_after.stdout,
+          (tracker_rewritten.stdout, tracker_after.stdout))
+
+    # A tracker that cannot be read still lets every dialog be written, without subagent turns and saying so.
+    tracker_copy = programs / SUBAGENT_TRACKER_PATH.name
+    tracker_aside = programs / "tracker-set-aside.py"
+    tracker_copy.rename(tracker_aside)
+    try:
+        without_tracker = run(store, "--failures-only", script_path=script_copy)
+        box_without_tracker = box_dialog.read_text(encoding="utf-8")
+    finally:
+        tracker_aside.rename(tracker_copy)
+    check("a subagent tracker that cannot be read prints a FAILED line naming it, and the pass exits 1",
+          without_tracker.returncode == 1 and f"FAILED: cannot read {tracker_copy.resolve()}" in without_tracker.stdout,
+          (without_tracker.returncode, without_tracker.stdout, without_tracker.stderr))
+    check("a subagent tracker that cannot be read leaves each dialog written, with the note that subagent turns "
+          "are left out and no subagent turn",
+          "## Subagent tasks and reports left out" in box_without_tracker
+          and "## Subagent task " not in box_without_tracker and "box question" in box_without_tracker,
+          box_without_tracker[:600])
+    undeletable_store = Path(workspace) / "undeletable-digest-store"
+    write_transcript(undeletable_store, "mac", "-Users-someone-project", "s-undeletable", conversation("undeletable"))
+    (undeletable_store / "session-dialogs" / ".dialogs-written-by-extractor-sha256" / "inside").mkdir(parents=True)
+    tracker_copy.rename(tracker_aside)
+    try:
+        undeletable = run(undeletable_store, "--failures-only", script_path=script_copy)
+    finally:
+        tracker_aside.rename(tracker_copy)
+    check("a digest that cannot be removed while the tracker cannot be read prints a FAILED line, and the pass exits 1",
+          undeletable.returncode == 1 and "FAILED: could not remove " in undeletable.stdout,
+          (undeletable.returncode, undeletable.stdout, undeletable.stderr))
+    tracker_back = run(store, script_path=script_copy)
+    check("the pass after the tracker is back writes every dialog again, with its subagent turns",
+          tracker_back.returncode == 0 and "wrote 0 session dialogs" not in tracker_back.stdout
+          and "## Subagent task " in box_dialog.read_text(encoding="utf-8"),
+          (tracker_back.stdout, box_dialog.read_text(encoding="utf-8")[:400]))
 
     # A digest that cannot be read or kept is a failure: otherwise every pass would rewrite every dialog unseen.
     digest_store = Path(workspace) / "digest-store"

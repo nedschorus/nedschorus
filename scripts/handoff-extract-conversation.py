@@ -35,18 +35,12 @@ needs and all of which are large.
 Kept as a third voice, Subagent: for each subagent the session dispatched,
 what it was asked and what it reported, never its own records. These subagent
 turns have the voice "subagent" even when the session's agent wrote them, as
-it wrote each task. The asks are the
-Agent (formerly Task) tool's prompt, a Workflow tool's script, a skill the
-Skill tool ran as a fork, and a SendMessage to a subagent already dispatched.
-The reports arrive in four shapes, each copied up to four times into the
-transcript, and each is carried once: a foreground agent's tool result; a
-<task-notification> naming an agent or a workflow, with its <result>; an
-<agent-message> hand-back (the SubagentHandback tool), whose report the
-harness frames and indents; and an <agent-message> a running subagent sent
-its session. A launch notice is dropped, and so is a notification whose
-result only says the report came as a hand-back or will come later. The
-copies of one report are carried once; a report repeated after a SendMessage
-to the same subagent is a new report, carried again. Because a report answers
+it wrote each task. The subagent tracker,
+scripts/handoff-extract-conversation-subagent-tracker-nbd.py, finds them and
+says which records it reads. The tracker is nice-but-dirty: when it cannot be
+loaded or raises, the subagent turns are left out, and one note in the
+complete dialog says so and why, so the handoff still writes its dialog and
+exits 0. Because a report answers
 the session, the agent's short reply to one is kept, not dropped as an
 acknowledgement. Subagent turns go in the complete dialog only, every one
 whole: the tail, which the successor reads first, carries the user's and the
@@ -64,6 +58,7 @@ found, 4 transcript unusable (empty, unparseable, or boundary not found).
 """
 
 import argparse
+import importlib.util
 import json
 import re
 import sys
@@ -97,16 +92,9 @@ INJECTED_TEXT_PREFIXES = (
 MAXIMUM_ACKNOWLEDGEMENT_WORDS = 60
 
 SUBAGENT_VOICE = "subagent"
-SUBAGENT_DISPATCH_TOOL_NAMES = ("Agent", "Task")
-# Notifications for subagents dispatched by a previous session match no dispatch in this transcript.
-SUBAGENT_NOTIFICATION_SUMMARY_PREFIXES = ('Agent "', 'Background agent "', 'Dynamic workflow "')
-HANDBACK_FRAME_OPENING = "[Subagent hand-back]"
-HANDBACK_FRAME_END = "The report follows:"
-REPORT_SENT_AS_HANDBACK_PREFIX = "This agent's report was delivered to you as a message"
-# A notification sent while a subagent waits on its own background work; its report comes later.
-REPORT_NOT_YET_SENT_PREFIX = "This agent has not reported yet"
-RESULTS_THAT_ARE_NOT_REPORTS = (REPORT_SENT_AS_HANDBACK_PREFIX, REPORT_NOT_YET_SENT_PREFIX)
-LAUNCH_NOTICE_PREFIXES = ("Async agent launched", "Workflow launched")
+SUBAGENT_TRACKER_MODULE_FILE_NAME = "handoff-extract-conversation-subagent-tracker-nbd.py"
+# The kind of the one turn that says the subagent turns were left out; it is not a subagent turn.
+SUBAGENT_TURNS_LEFT_OUT_KIND = "left-out"
 
 
 class TranscriptProblem(Exception):
@@ -153,7 +141,13 @@ def read_dialog_turns(transcript_path: Path, drop_acknowledgements=True,
     in voice SUBAGENT_VOICE, with the keys SubagentTracker documents. A task is the session's agent's
     words but has that voice too, so a caller collecting the "assistant" voice will not see it.
     """
-    tracker = SubagentTracker() if include_subagent_tasks_and_reports else None
+    tracker = None
+    tracker_failure = None
+    if include_subagent_tasks_and_reports:
+        try:
+            tracker = new_subagent_tracker()
+        except Exception as error:
+            tracker_failure = subagent_turns_left_out_turn(error)
     # The writer may still be exiting, leaving a partial final record.
     turns = []
     skip_counts = {
@@ -188,6 +182,9 @@ def read_dialog_turns(transcript_path: Path, drop_acknowledgements=True,
             else:
                 skip_counts["malformed"] += 1
             continue
+        # A subagent's own records belong to its transcript, not to this session's dialog or its subagent turns.
+        if isinstance(record, dict) and record.get("isSidechain"):
+            continue
 
         turn = dialog_turn_from_record(record)
         if turn is None:
@@ -213,7 +210,8 @@ def read_dialog_turns(transcript_path: Path, drop_acknowledgements=True,
                 interrupted_since_queued = False
         else:
             turn["timestamp"] = record.get("timestamp") or ""
-            if (drop_acknowledgements and following_injected_record
+            # Once the tracker fails, no record can show it carried a report, so a short reply may answer one: keep it.
+            if (drop_acknowledgements and following_injected_record and tracker_failure is None
                     and len(turn["text"].split()) <= MAXIMUM_ACKNOWLEDGEMENT_WORDS):
                 skip_counts["acknowledgement"] += 1
             else:
@@ -222,7 +220,13 @@ def read_dialog_turns(transcript_path: Path, drop_acknowledgements=True,
             following_injected_record = False
 
         if tracker is not None:
-            subagent_turns, carried_subagent_report = tracker.turns_from_record(record)
+            try:
+                subagent_turns, carried_subagent_report = tracker.turns_from_record(record)
+            except Exception as error:
+                tracker = None
+                tracker_failure = subagent_turns_left_out_turn(error)
+                turns = [turn for turn in turns if turn["voice"] != SUBAGENT_VOICE]
+                continue
             for subagent_turn in subagent_turns:
                 subagent_turn["timestamp"] = record.get("timestamp") or ""
             turns.extend(subagent_turns)
@@ -230,7 +234,39 @@ def read_dialog_turns(transcript_path: Path, drop_acknowledgements=True,
             if carried_subagent_report:
                 following_injected_record = False
 
+    if tracker_failure is not None:
+        turns.append(tracker_failure)
     return turns, skip_counts
+
+
+_subagent_tracker_module = None
+
+
+def new_subagent_tracker():
+    """Return a new SubagentTracker, loading the tracker's file on first use; any failure raises."""
+    global _subagent_tracker_module
+    if _subagent_tracker_module is None:
+        specification = importlib.util.spec_from_file_location(
+            "handoff_extract_conversation_subagent_tracker_nbd", subagent_tracker_module_path())
+        module = importlib.util.module_from_spec(specification)
+        specification.loader.exec_module(module)
+        if module.SUBAGENT_VOICE != SUBAGENT_VOICE:
+            raise ValueError(f"the tracker's voice is {module.SUBAGENT_VOICE!r}, "
+                             f"the extractor's {SUBAGENT_VOICE!r}")
+        _subagent_tracker_module = module
+    return _subagent_tracker_module.SubagentTracker()
+
+
+def subagent_tracker_module_path() -> Path:
+    # Asked for only when subagent turns are, because a caller may run this file's source with no __file__.
+    return Path(__file__).resolve().with_name(SUBAGENT_TRACKER_MODULE_FILE_NAME)
+
+
+def subagent_turns_left_out_turn(error):
+    text = (f"The subagent tracker, {SUBAGENT_TRACKER_MODULE_FILE_NAME}, failed, so this dialog leaves out every "
+            f"subagent task and report: {type(error).__name__}: {error}")
+    return {"voice": SUBAGENT_VOICE, "kind": SUBAGENT_TURNS_LEFT_OUT_KIND, "text": text,
+            "subagent": {"agent_id": "", "description": "", "details": []}, "status": "", "timestamp": ""}
 
 
 def record_shows_tool_activity(record) -> bool:
@@ -253,273 +289,6 @@ def joined_text_blocks(content) -> str:
         for block in content
         if isinstance(block, dict) and block.get("type") == "text"
     )
-
-
-def notification_tag(body: str, tag: str) -> str:
-    match = re.search(rf"<{tag}>(.*?)</{tag}>", body, re.S)
-    return match.group(1).strip() if match else ""
-
-
-def texts_a_report_can_arrive_in(record):
-    """Yield every harness text in the record that can carry a notification or an agent-message."""
-    record_type = record.get("type")
-    if record_type == "queue-operation":
-        if isinstance(record.get("content"), str):
-            yield record["content"]
-    elif record_type == "attachment":
-        attachment = record.get("attachment")
-        if (isinstance(attachment, dict) and attachment.get("type") == "queued_command"
-                and isinstance(attachment.get("prompt"), str)):
-            yield attachment["prompt"]
-    elif record_type == "user":
-        content = (record.get("message") or {}).get("content")
-        if isinstance(content, str):
-            yield content
-        elif isinstance(content, list):
-            for block in content:
-                if isinstance(block, dict) and block.get("type") == "text":
-                    yield block.get("text", "")
-
-
-def handback_report_text(framed: str) -> str:
-    """Return the report inside a hand-back frame: the indented lines after the frame, unindented."""
-    _, found, after = framed.partition(HANDBACK_FRAME_END)
-    if not found:
-        return framed.strip()
-    # The harness indents every report line by two spaces.
-    return "\n".join(line[2:] if line.startswith("  ") else line
-                     for line in after.lstrip("\n").split("\n")).strip()
-
-
-def tool_result_text(block) -> str:
-    content = block.get("content")
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        return "\n".join(
-            part.get("text", "") for part in content
-            if isinstance(part, dict) and part.get("type") == "text"
-            # The harness appends the agent id and token usage as a block of its own.
-            and not part.get("text", "").lstrip().startswith("agentId:"))
-    return ""
-
-
-class SubagentTracker:
-    """Turn a session's records into the subagent turns its dialog carries.
-
-    Each turn returned has voice SUBAGENT_VOICE, text, kind ("task", "follow-up",
-    "report" or "message"), and "subagent": a dict shared by every turn of one
-    subagent, which later records fill in, holding "description", "agent_id",
-    "details" (type, model, background, isolation). A report turn also holds "status".
-    """
-
-    def __init__(self):
-        self.subagent_by_tool_use_id = {}
-        self.subagent_by_agent_id = {}
-        self.skill_by_tool_use_id = {}
-        self.carried_report_keys = set()
-        self.follow_ups_sent_by_agent_id = {}
-        self.deliveries_by_block = {}
-
-    def subagent_for_agent_id(self, agent_id: str) -> dict:
-        subagent = self.subagent_by_agent_id.get(agent_id)
-        if subagent is None:
-            subagent = {"agent_id": agent_id, "description": "", "details": []}
-            self.subagent_by_agent_id[agent_id] = subagent
-        return subagent
-
-    def turns_from_record(self, record):
-        """Return (new subagent turns, whether the record carried a subagent report at all)."""
-        if not isinstance(record, dict):
-            return [], False
-        turns = []
-        carried_report = False
-        content = (record.get("message") or {}).get("content")
-        if record.get("type") == "assistant" and isinstance(content, list):
-            for block in content:
-                if isinstance(block, dict) and block.get("type") == "tool_use":
-                    turns += self.turns_from_tool_use(block)
-        if record.get("type") == "user" and isinstance(content, list):
-            for block in content:
-                if isinstance(block, dict) and block.get("type") == "tool_result":
-                    block_turns, block_carried = self.turns_from_tool_result(block, record)
-                    turns += block_turns
-                    carried_report = carried_report or block_carried
-        for text in texts_a_report_can_arrive_in(record):
-            text_turns, text_carried = self.turns_from_harness_text(text, record)
-            turns += text_turns
-            carried_report = carried_report or text_carried
-        return turns, carried_report
-
-    def turns_from_tool_use(self, block):
-        name = block.get("name")
-        tool_input = block.get("input") if isinstance(block.get("input"), dict) else {}
-        tool_use_id = block.get("id") or ""
-        if name in SUBAGENT_DISPATCH_TOOL_NAMES:
-            details = [str(tool_input[key]) for key in ("subagent_type", "model") if tool_input.get(key)]
-            if tool_input.get("run_in_background") in (True, "true"):
-                details.append("background")
-            if tool_input.get("isolation"):
-                details.append(f"isolation {tool_input['isolation']}")
-            subagent = {"agent_id": "", "description": str(tool_input.get("description") or ""),
-                        "details": details}
-            self.subagent_by_tool_use_id[tool_use_id] = subagent
-            prompt = tool_input.get("prompt")
-            return [self.turn(subagent, "task", prompt if isinstance(prompt, str) else "")]
-        if name == "Workflow":
-            script = tool_input.get("script") or tool_input.get("scriptPath") or ""
-            # The launch result names the workflow; a launch that was refused leaves only the script's meta.
-            described = re.search(r"""description:\s*(['"])(.*?)\1""", script) if isinstance(script, str) else None
-            subagent = {"agent_id": "", "description": described.group(2) if described else "",
-                        "details": ["workflow"]}
-            self.subagent_by_tool_use_id[tool_use_id] = subagent
-            return [self.turn(subagent, "task", script if isinstance(script, str) else "")]
-        if name == "Skill":
-            self.skill_by_tool_use_id[tool_use_id] = tool_input
-            return []
-        if name == "SendMessage":
-            recipient = tool_input.get("to") or tool_input.get("recipient")
-            message = tool_input.get("message")
-            if not isinstance(message, str):
-                message = tool_input.get("content")
-            if recipient in self.subagent_by_agent_id and isinstance(message, str):
-                self.follow_ups_sent_by_agent_id[recipient] = self.follow_ups_sent_by_agent_id.get(recipient, 0) + 1
-                return [self.turn(self.subagent_by_agent_id[recipient], "follow-up", message)]
-        return []
-
-    def turns_from_tool_result(self, block, record):
-        tool_use_id = block.get("tool_use_id") or ""
-        result = record.get("toolUseResult") if isinstance(record.get("toolUseResult"), dict) else {}
-        if tool_use_id in self.skill_by_tool_use_id and result.get("status") == "forked":
-            skill_input = self.skill_by_tool_use_id.pop(tool_use_id)
-            subagent = self.subagent_for_agent_id(str(result.get("agentId") or ""))
-            subagent["description"] = f"/{result.get('commandName') or skill_input.get('skill', '')}"
-            subagent["details"] = ["forked skill"]
-            arguments = skill_input.get("args")
-            return [self.turn(subagent, "task", arguments if isinstance(arguments, str) else "")], False
-        subagent = self.subagent_by_tool_use_id.get(tool_use_id)
-        if subagent is None:
-            return [], False
-        text = tool_result_text(block)
-        agent_id = result.get("agentId") or result.get("taskId")
-        if not agent_id:
-            found = re.search(r"agentId: (\w+)", json.dumps(block.get("content")))
-            agent_id = found.group(1) if found else ""
-        if agent_id:
-            agent_id = str(agent_id)
-            subagent["agent_id"] = agent_id
-            # A foreground hand-back reaches the transcript before the tool result that names its agent.
-            earlier = self.subagent_by_agent_id.setdefault(agent_id, subagent)
-            if earlier is not subagent:
-                earlier["description"] = earlier["description"] or subagent["description"]
-                earlier["details"] = earlier["details"] or subagent["details"]
-        if result.get("workflowName") or result.get("runId"):
-            subagent["description"] = str(result.get("summary") or result.get("workflowName") or "")
-        if block.get("is_error"):
-            return [self.turn(subagent, "report", text, status="error")], True
-        status = result.get("status") or ""
-        if status == "async_launched" or text.lstrip().startswith(LAUNCH_NOTICE_PREFIXES):
-            return [], False
-        handback = result.get("handbackReport")
-        if isinstance(handback, dict) and isinstance(handback.get("text"), str):
-            text = handback["text"]
-        elif isinstance(result.get("content"), list):
-            text = tool_result_text({"content": result["content"]})
-        return self.report_turns(subagent, text, status or "completed"), True
-
-    def follow_ups_when_enqueued(self, block: str, record) -> dict:
-        """Return the follow-up counts as they stood when the delivery this copy of block belongs to was enqueued.
-
-        The harness writes one delivery as an enqueue, then as a remove, a queued_command attachment or a
-        user record, and those later copies can land after a SendMessage to the same agent. The queue drains
-        in order and writes each kind of copy once per enqueue, so each later copy is matched to the oldest
-        enqueue of the same block that has no copy of its kind yet. A copy with no enqueue left to match
-        counts as a delivery of its own.
-        """
-        deliveries = self.deliveries_by_block.setdefault(block, [])
-        record_type = record.get("type")
-        if record_type == "queue-operation" and record.get("operation") == "enqueue":
-            deliveries.append({"copies": set(), "follow_ups": dict(self.follow_ups_sent_by_agent_id)})
-            return deliveries[-1]["follow_ups"]
-        copy_kind = record.get("operation") if record_type == "queue-operation" else record_type
-        unmatched = [delivery for delivery in deliveries if copy_kind not in delivery["copies"]]
-        if not unmatched:
-            return self.follow_ups_sent_by_agent_id
-        unmatched[0]["copies"].add(copy_kind)
-        return unmatched[0]["follow_ups"]
-
-    def turns_from_harness_text(self, text: str, record):
-        turns = []
-        carried_report = False
-        for match in re.finditer(r"<task-notification>(.*?)</task-notification>", text, re.S):
-            body = match.group(1)
-            follow_ups = self.follow_ups_when_enqueued(match.group(0), record)
-            summary = notification_tag(body, "summary")
-            task_ids = re.findall(r"<task-id>(.*?)</task-id>", body, re.S)
-            tool_use_id = notification_tag(body, "tool-use-id")
-            subagent = self.subagent_by_tool_use_id.get(tool_use_id)
-            if subagent is None:
-                subagent = next((self.subagent_by_agent_id[task_id.strip()] for task_id in task_ids
-                                 if task_id.strip() in self.subagent_by_agent_id), None)
-            if subagent is None and summary.startswith(SUBAGENT_NOTIFICATION_SUMMARY_PREFIXES):
-                subagent = self.subagent_for_agent_id(task_ids[0].strip() if task_ids else "")
-            if subagent is None:
-                continue
-            if not subagent["description"]:
-                quoted = re.search(r'"(.*)"', summary)
-                subagent["description"] = quoted.group(1) if quoted else summary
-            carried_report = True
-            report = notification_tag(body, "result")
-            if report.startswith(RESULTS_THAT_ARE_NOT_REPORTS):
-                continue
-            status = notification_tag(body, "status") or "completed"
-            report = report or summary
-            if "workflow" in subagent["details"] and report.startswith('"'):
-                # A workflow's result is its script's return value, written as JSON.
-                try:
-                    decoded = json.loads(report)
-                except json.JSONDecodeError:
-                    decoded = None
-                if isinstance(decoded, str):
-                    report = decoded
-            turns += self.report_turns(subagent, report, status, follow_ups)
-        if "<agent-message" in text:
-            origin = record.get("origin") if isinstance(record.get("origin"), dict) else {}
-            for match in re.finditer(r'<agent-message from="([^"]*)">\n?(.*?)(?:</agent-message>|\Z)', text, re.S):
-                sender, body = match.group(1), match.group(2)
-                if origin.get("from") == sender and isinstance(origin.get("body"), str):
-                    body = origin["body"]
-                # A user record's copy runs on past the message, so the block is the sender and body alone.
-                follow_ups = self.follow_ups_when_enqueued(f"{sender}\n{body.strip()}", record)
-                if body.lstrip().startswith(HANDBACK_FRAME_OPENING):
-                    carried_report = True
-                    turns += self.report_turns(self.subagent_for_agent_id(sender),
-                                               handback_report_text(body), "completed", follow_ups)
-                elif sender in self.subagent_by_agent_id:
-                    carried_report = True
-                    turns += self.report_turns(self.subagent_by_agent_id[sender], body.strip(),
-                                               "", follow_ups, kind="message")
-        return turns, carried_report
-
-    def report_turns(self, subagent, text: str, status: str, follow_ups=None, kind="report"):
-        """Return the report as a turn, or no turn when an earlier copy of the same delivery was carried.
-
-        follow_ups is the follow-up counts as they stood when the delivery was enqueued; by default, now.
-        """
-        agent_id = subagent.get("agent_id")
-        # The harness copies one delivery up to four times; a SendMessage starts a new delivery.
-        follow_ups = self.follow_ups_sent_by_agent_id if follow_ups is None else follow_ups
-        key = (agent_id or id(subagent), follow_ups.get(agent_id, 0),
-               kind, " ".join(text.split()), status)
-        if key in self.carried_report_keys:
-            return []
-        self.carried_report_keys.add(key)
-        return [self.turn(subagent, kind, text, status=status)]
-
-    @staticmethod
-    def turn(subagent, kind, text, status=""):
-        return {"voice": SUBAGENT_VOICE, "kind": kind, "text": text.strip(),
-                "subagent": subagent, "status": status}
 
 
 def dialog_turn_from_record(record):
@@ -591,8 +360,12 @@ def word_count(turns) -> int:
     return sum(len(turn["text"].split()) for turn in turns if turn["voice"] != SUBAGENT_VOICE)
 
 
+def turns_left_out_notes(turns) -> list:
+    return [turn for turn in turns if turn["voice"] == SUBAGENT_VOICE and turn["kind"] == SUBAGENT_TURNS_LEFT_OUT_KIND]
+
+
 def subagent_turn_count(turns) -> int:
-    return sum(1 for turn in turns if turn["voice"] == SUBAGENT_VOICE)
+    return sum(1 for turn in turns if turn["voice"] == SUBAGENT_VOICE) - len(turns_left_out_notes(turns))
 
 
 def select_tail_clearing_floor(turns, minimum_words: int = MINIMUM_DIALOG_WORDS):
@@ -693,6 +466,7 @@ SUBAGENT_HEADINGS = {
     "follow-up": "Subagent task, continued",
     "report": "Subagent report",
     "message": "Subagent message",
+    SUBAGENT_TURNS_LEFT_OUT_KIND: "Subagent tasks and reports left out",
 }
 
 
@@ -759,7 +533,7 @@ def render_companion(turns, report: ExtractionReport) -> str:
     lines = [
         f"# Complete session dialog — {report.session_id}",
         "",
-        f"All {len(turns)} dialog turns ({word_count(turns)} words{subagent_turns_note(turns)}), "
+        f"All {len(turns) - len(turns_left_out_notes(turns))} dialog turns ({word_count(turns)} words{subagent_turns_note(turns)}), "
         f"harness-injected records and their acknowledgements filtered out.",
         f"Tool calls, results, and the agent's thinking are only in the full "
         f"transcript: {report.transcript_path}",
@@ -871,6 +645,10 @@ def main(argv=None) -> int:
         print(f"handoff-extract-conversation: {problem}", file=sys.stderr)
         return 4
 
+    # The tail and stdout leave out subagent turns, the note among them, so its failure is told here too.
+    for note in turns_left_out_notes(turns):
+        print(f"handoff-extract-conversation: {note['text']}", file=sys.stderr)
+
     report = ExtractionReport(
         session_id=session_id,
         transcript_path=transcript_path,
@@ -883,7 +661,7 @@ def main(argv=None) -> int:
     if arguments.output:
         output_path = Path(arguments.output).expanduser()
         # The tail leaves out every subagent turn, so a session with one also gets its complete dialog.
-        if len(selected) < len(turns):
+        if len(selected) < len(dialog) or subagent_turn_count(turns):
             report.companion_path = output_path.with_name(
                 f"{output_path.stem}-complete{output_path.suffix}"
             )
@@ -893,7 +671,8 @@ def main(argv=None) -> int:
         if report.companion_path:
             report.companion_path.write_text(
                 render_companion(turns, report), encoding="utf-8")
-            print(f"wrote all {len(turns)} turns to {report.companion_path}", file=sys.stderr)
+            print(f"wrote all {len(turns) - len(turns_left_out_notes(turns))} turns to {report.companion_path}",
+                  file=sys.stderr)
     else:
         sys.stdout.write(render_extraction(selected, report))
 
