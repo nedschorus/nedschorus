@@ -18,6 +18,7 @@ import importlib.util
 import json
 import os
 import signal
+import shlex
 import shutil
 import subprocess
 import sys
@@ -159,9 +160,12 @@ def test_a_session_that_finds_itself_passes():
           and "--no-session-persistence" in arguments,
           "claude runs print mode on Haiku with Bash allowed and no saved session", arguments)
     entries = seen["settings"]["hooks"]["PostToolUse"]
-    hook_relative = str(weekly_owner_check.HOOK_RELATIVE)
+    # The fake claude's cwd is resolved; on macOS the check's temporary path is not (/var is a
+    # symlink to /private/var), so compare both resolved.
+    hook_path = Path(shlex.split(entries[0]["hooks"][0]["command"])[-1])
     check(len(entries) == 1 and entries[0]["matcher"] == "Bash"
-          and entries[0]["hooks"][0]["command"].endswith(f"{seen['clone']}/{hook_relative}"),
+          and hook_path.resolve()
+          == Path(seen["clone"]).resolve() / weekly_owner_check.HOOK_RELATIVE,
           "the settings register the scratch clone's hook after each Bash call", entries)
 
 
