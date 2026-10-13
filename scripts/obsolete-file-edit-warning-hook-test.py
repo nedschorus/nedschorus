@@ -276,22 +276,28 @@ with tempfile.TemporaryDirectory() as temporary_directory:
 
     # -----------------------------------------------------------------------
     # THE CACHE. Same origin/main tip, same HEAD: the answer cannot have
-    # changed, and the diff is not run again.
+    # changed, and the diff is not run again. The warning already given is not
+    # given again word for word.
     # -----------------------------------------------------------------------
     call_log.unlink()
     first = run_hook(hook_payload(checkout, edited_file), path_prefix=recording_git_directory)
     diffs_after_first = recorded_calls("diff")
     second = run_hook(hook_payload(checkout, edited_file), path_prefix=recording_git_directory)
-    check("the cached path set still warns on a second edit of the same file",
-          "scripts/recover-crashed-seats.py" in agent_text(second), second.stdout)
+    check("a second edit of the same file, whose warning would be the same text, is silent",
+          silent(second) and second.stderr == "", second.stdout + second.stderr)
     check("and the second call runs no further diff — the set was cached",
           recorded_calls("diff") == diffs_after_first,
           f"{diffs_after_first} then {recorded_calls('diff')}: "
           + call_log.read_text(encoding="utf-8"))
-    check("the cache is keyed on both origin/main's tip and this checkout's HEAD",
+    check("the cache is keyed on both origin/main's tip and this checkout's HEAD, "
+          "and holds the warnings given",
           sorted(json.loads(cache_path.read_text(encoding="utf-8")).keys())
-          == ["head", "main_tip", "paths"],
+          == ["head", "main_tip", "paths", "warned"],
           cache_path.read_text(encoding="utf-8") if cache_path.exists() else "no cache written")
+    check("the record holds the text of the warning given about the file",
+          json.loads(cache_path.read_text(encoding="utf-8")).get("warned", {}).get(
+              "scripts/recover-crashed-seats.py") == warning,
+          cache_path.read_text(encoding="utf-8"))
     check("the cache sits in the checkout's own git directory, beside the freshness stamp",
           cache_path.parent == checkout_git_dir, str(cache_path))
 
@@ -308,6 +314,9 @@ with tempfile.TemporaryDirectory() as temporary_directory:
           recorded_calls("diff") == 1, call_log.read_text(encoding="utf-8"))
     check("and a file that has only just gone obsolete now warns",
           "scripts/untouched-by-main.py" in agent_text(result), result.stdout)
+    result = run_hook(hook_payload(checkout, edited_file), path_prefix=recording_git_directory)
+    check("when main moves, a file already warned about is warned about again",
+          "scripts/recover-crashed-seats.py" in agent_text(result), result.stdout)
 
     # -----------------------------------------------------------------------
     # HEAD MOVES: so does the merge base, so the answer can change.
@@ -320,6 +329,32 @@ with tempfile.TemporaryDirectory() as temporary_directory:
           recorded_calls("diff") == 1, call_log.read_text(encoding="utf-8"))
     check("and the warning is still made from the fresh set",
           "scripts/recover-crashed-seats.py" in agent_text(result), result.stdout)
+
+    # -----------------------------------------------------------------------
+    # A RECORD THAT CANNOT BE WRITTEN. A directory where the cache file should
+    # be: the warning is still given, says the record was not written, and so
+    # is given again at the next edit.
+    # -----------------------------------------------------------------------
+    cache_path.unlink()
+    cache_path.mkdir()
+    try:
+        unrecorded_first = run_hook(hook_payload(checkout, edited_file),
+                                    path_prefix=recording_git_directory)
+        unrecorded_second = run_hook(hook_payload(checkout, edited_file),
+                                     path_prefix=recording_git_directory)
+    finally:
+        cache_path.rmdir()
+    for label, result in (("first", unrecorded_first), ("second", unrecorded_second)):
+        text = agent_text(result)
+        check(f"a record that cannot be written: the {label} edit is still warned, exit 0",
+              result.returncode == 0 and "scripts/recover-crashed-seats.py" in text
+              and "so your edit is built on an old copy of the file." in text,
+              result.stdout + result.stderr)
+        check(f"a record that cannot be written: the {label} warning says so and why",
+              text.split("\n")[-1].startswith(
+                  "obsolete-file-edit-warning could not record that it gave this warning, so it "
+                  "will give it again at your next edit of this file (")
+              and "IsADirectoryError" in text, text)
 
     # -----------------------------------------------------------------------
     # A PUSHED head gets the other advice: the frozen-head rule, not a rebase.
@@ -628,11 +663,15 @@ with tempfile.TemporaryDirectory() as temporary_directory:
               "main's changes to lib/latin1.txt do not overlap this checkout's copy; a "
               "rebase merges them cleanly."), result.stdout + result.stderr)
 
+    check("detached: the same edit again, whose warning would be the same text, is silent",
+          detached_warning(shared_file) == "", "")
+
     edited_same_line = list(shared_lines)
     edited_same_line[1] = "line 2, as the agent edited it\n"
     shared_file.write_text("".join(edited_same_line), encoding="utf-8")
     warning = detached_warning(shared_file)
-    check("detached: an edit of the lines main changed is told they overlap",
+    check("detached: an edit of the lines main changed is told they overlap, "
+          "though the file was warned about before",
           warning.split("\n")[-1] == (
               "main's changes to lib/shared.py overlap this checkout's copy: after you "
               "make the branch and commit your edit, run git rebase origin/main, which "
@@ -720,6 +759,11 @@ with tempfile.TemporaryDirectory() as temporary_directory:
           len(lines) == 2 and lines[1] == (
               "git could not report this checkout's branch state (shimmed: no branch "
               "state): stop and tell the user before you commit."), agent_text(result))
+    result = run_hook(hook_payload(detached, shared_file),
+                      path_prefix=branch_state_failing_git_directory)
+    check("unknown branch state: the same failure at the next edit is reported again, "
+          "never held back as a repeat",
+          agent_text(result) == "\n".join(lines), agent_text(result))
 
     # -----------------------------------------------------------------------
     # NEVER FETCHES. The Stop hook fetches on its own throttle; a PostToolUse
