@@ -424,6 +424,15 @@ def run_with_stdout_on_terminal(command, working_directory, environment,
     stderr_descriptor = process.stderr.fileno()
     written = {controller: bytearray(), stderr_descriptor: bytearray()}
     deadline = time.monotonic() + timeout_seconds
+
+    def stop_command_and_raise_timeout():
+        os.killpg(process.pid, signal.SIGKILL)
+        process.wait()
+        raise subprocess.TimeoutExpired(
+            command, timeout_seconds,
+            output=bytes(written[controller]),
+            stderr=bytes(written[stderr_descriptor]))
+
     try:
         with selectors.DefaultSelector() as selector:
             selector.register(controller, selectors.EVENT_READ)
@@ -431,12 +440,7 @@ def run_with_stdout_on_terminal(command, working_directory, environment,
             while selector.get_map():
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
-                    os.killpg(process.pid, signal.SIGKILL)
-                    process.wait()
-                    raise subprocess.TimeoutExpired(
-                        command, timeout_seconds,
-                        output=bytes(written[controller]),
-                        stderr=bytes(written[stderr_descriptor]))
+                    stop_command_and_raise_timeout()
                 for key, _ in selector.select(remaining):
                     try:
                         chunk = os.read(key.fd, 65536)
@@ -450,8 +454,13 @@ def run_with_stdout_on_terminal(command, working_directory, environment,
                         written[key.fd].extend(chunk)
                     else:
                         selector.unregister(key.fd)
-        returncode = process.wait(
-            timeout=max(deadline - time.monotonic(), 0.1))
+        # A command can close both streams and keep running, so the wait
+        # is bounded by the same deadline and stopped the same way.
+        try:
+            returncode = process.wait(
+                timeout=max(deadline - time.monotonic(), 0.1))
+        except subprocess.TimeoutExpired:
+            stop_command_and_raise_timeout()
     finally:
         os.close(controller)
         process.stderr.close()
@@ -1025,6 +1034,39 @@ def main() -> int:
               and elapsed < 15,
               (result["replay"].returncode, f"{elapsed:.1f}s",
                result["replay"].stderr[:300]))
+
+        # --- the pseudo-terminal helper: a command that closes its terminal
+        # and its stderr and then keeps running is stopped at the timeout
+        # too, and does not outlive the helper.
+        pid_file = root / "helper-closed-streams-command.pid"
+        started = time.monotonic()
+        try:
+            run_with_stdout_on_terminal(
+                [sys.executable, "-c",
+                 "import os, sys, time; "
+                 f"open({str(pid_file)!r}, 'w').write(str(os.getpid())); "
+                 "os.close(1); os.close(2); time.sleep(600)"],
+                str(root), dict(os.environ), timeout_seconds=2)
+            closed_streams_timed_out = False
+        except subprocess.TimeoutExpired:
+            closed_streams_timed_out = True
+        elapsed = time.monotonic() - started
+        closed_streams_command_survived = False
+        if pid_file.is_file():
+            closed_streams_pid = int(pid_file.read_text(encoding="utf-8"))
+            try:
+                os.kill(closed_streams_pid, 0)
+                closed_streams_command_survived = True
+                os.kill(closed_streams_pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        check("pseudo-terminal helper: a command that closes both streams "
+              "and keeps running is stopped at the timeout and does not "
+              "survive",
+              closed_streams_timed_out and elapsed < 15
+              and pid_file.is_file() and not closed_streams_command_survived,
+              (closed_streams_timed_out, f"{elapsed:.1f}s",
+               pid_file.is_file(), closed_streams_command_survived))
 
         # --- the iTerm2 profile: an attached launch from an iTerm2 terminal
         # switches the tab back to the user's own profile before ssh
