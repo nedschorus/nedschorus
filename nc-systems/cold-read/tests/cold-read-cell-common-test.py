@@ -628,9 +628,15 @@ with tempfile.TemporaryDirectory() as scratch:
     check("an agent-binary that could not be started is agent-binary-missing with the error",
           classify(exit_code=None, start_error="[Errno 2] No such file or directory: 'claude'")
           == ("agent-binary-missing", "[Errno 2] No such file or directory: 'claude'"))
-    check("exit 0 with no report is no-report",
-          classify(stdout="I read it and wrote nothing.\n", exit_code=0)
-          == ("no-report", "no report written"))
+    check("exit 0 with no report is no-report, with the reviewer's last line as the reason",
+          classify(stdout="I read it.\n\nI wrote nothing.\n\n", exit_code=0)
+          == ("no-report", "no report written; the reviewer's last line: I wrote nothing."),
+          repr(classify(stdout="I read it.\n\nI wrote nothing.\n\n", exit_code=0)))
+    check("exit 0 with no report and no output says only no report written",
+          classify(stdout=" \n", exit_code=0) == ("no-report", "no report written"))
+    check("the reviewer's last line is cut to 120 characters",
+          classify(stdout="y" * 200 + "\n", exit_code=0)
+          == ("no-report", "no report written; the reviewer's last line: " + "y" * 120))
     check("anything else is exit-N with the last non-empty stderr line, cut to 120",
           classify(stdout="chat\n", stderr="first\n\n" + "x" * 200 + "\n\n", exit_code=2)
           == ("exit-2", "x" * 120))
@@ -1277,6 +1283,10 @@ with tempfile.TemporaryDirectory() as scratch:
           result.returncode == 0, f"exit {result.returncode}; stderr={result.stderr!r}")
     check("the Codex cell runs under no --sandbox, which Codex will not combine with a profile",
           "--sandbox" not in codex_argv, repr(codex_argv))
+    # Only a report outside the checkout is staged in a temporary directory;
+    # this one lies inside it, where the profile already lets codex write.
+    check("a Codex report inside the checkout is written in place, with no --add-dir",
+          "--add-dir" not in codex_argv and report.is_file(), repr(codex_argv))
     check("the Codex cell selects the credential-denying profile, extending :workspace",
           'default_permissions="cold-read-no-credentials"' in codex_overrides
           and 'permissions.cold-read-no-credentials.extends=":workspace"' in codex_overrides,
