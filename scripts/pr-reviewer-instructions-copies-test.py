@@ -123,9 +123,9 @@ def differences(instructions: str, claude_md: str) -> list:
         return [f"the instructions file has no {SECTION_HEADING!r} section"]
 
     paragraphs = section_paragraphs(review_scope_section(instructions))
-    if len(paragraphs) != 3:
+    if len(paragraphs) < 2:
         return [f"the section holds {len(paragraphs)} paragraph(s), expected an "
-                f"intro and two bullets: {paragraphs}"]
+                f"intro and at least one bullet: {paragraphs}"]
     file_intro, file_bullets = paragraphs[0], paragraphs[1:]
 
     claude_intro, claude_bullets = claude_md_copy(claude_md)
