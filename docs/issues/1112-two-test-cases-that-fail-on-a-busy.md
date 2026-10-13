@@ -1,27 +1,16 @@
 ---
-issue: "[Three test cases that fail on a busy machine and pass on rerun: the several-target watcher exiting when its output closes, a stop while the last cell saves its report, and a stop while a relaunch is prepared](https://github.com/nedschorus/nedschorus/issues/1112)"
+issue: "[Two test cases that fail on a busy machine and pass on rerun: a stop while the last cell saves its report, and a stop while a relaunch is prepared](https://github.com/nedschorus/nedschorus/issues/1112)"
 ---
 
-# Three test cases that fail on a busy machine and pass on rerun: the several-target watcher exiting when its output closes, a stop while the last cell saves its report, and a stop while a relaunch is prepared
+# Two test cases that fail on a busy machine and pass on rerun: a stop while the last cell saves its report, and a stop while a relaunch is prepared
 
-Three test cases have each failed in the test run of a pull request's head commit on ned-box and then passed when run again with no code change. A test run of a head commit that fails for no reason in the code holds up the merge of an unrelated pull request until someone reruns it. Fix each case so that it either gets a deadline that holds on a busy machine or waits for the event it is checking instead of a timer.
+Two test cases have each failed in the test run of a pull request's head commit on ned-box and then passed when run again with no code change. A test run of a head commit that fails for no reason in the code holds up the merge of an unrelated pull request until someone reruns it. Fix each case so that it either gets a deadline that holds on a busy machine or waits for the event it is checking instead of a timer.
 
 The user approved filing this GHI on 2026-10-09 (about 05:09Z, "both y") as item 4 of merge-lane-2's open-items approval-walk; the minutes are at `nedlern@ned-box:/home/nedlern/agents/merge-lane-2/docs/walk/merge-lane-2-open-items-walk-2026-10-05-minutes.md`.
 
-## Case 1: the several-target watcher exits when its output closes
+A third case, in `scripts/watch-agent-dialog-alerts-test.py`, the several-target watcher exiting when its output closes, was this GHI's case 1 until PR [Delete the retired alert watcher and the dialog watcher; keep project_directory_for_seat in its own module](https://github.com/nedschorus/nedschorus/pull/1262) deleted it together with the watcher, merged as `a2c99fc7` on 2026-10-13.
 
-`scripts/watch-agent-dialog-alerts-test.py`, the check that opens "when its output closes, the several-target watcher exits and takes both child watchers with it" (line 1273 on main when this was written).
-
-Failures: in the test run of the head commit of PR [instruction-file-guard: each refusal says to create .walk-approved with the Write tool](https://github.com/nedschorus/nedschorus/pull/1032) on 2026-10-04, and of PR [A reminder to run the locator replaces CLAUDE.md's locate-first line](https://github.com/nedschorus/nedschorus/pull/1071) at about 2026-10-05 06:45Z. Each passed on rerun.
-
-The timers, in the order the case runs:
-- It waits up to 20 s (`deadline = time.monotonic() + 20.0`) for both child watchers to print their `: started` lines.
-- It closes the watcher's output, then waits up to 15 s (`process.wait(timeout=15)`) for the watcher to exit. On timeout it records "still running 15 s after its output closed".
-- The exit itself depends on a child watcher writing a line after the output closed: the fake Mac stream ends after 1.5 s (`hold_seconds: 1.5`), so its child writes once more and finds the pipe closed. On a busy machine, the child's write, the watcher's notice of the broken pipe, and the teardown of both children all queue behind other work.
-
-What it could wait on instead: the event the case checks is that the watcher exits and both child watchers are gone. The case could wait for the two `: started` lines and for the watcher process's exit with no fixed short limit, keeping only a long ceiling, such as 120 s, to stop a hung test: neither the 20 s nor the 15 s figure asserts anything about the code.
-
-## Case 2: a stop that lands while the last cell saves its report
+## Case 1: a stop that lands while the last cell saves its report
 
 `scripts/sanity-check-attacks-test.py`, case 55, the check that opens "a stop that lands while the last cell saves its report ends the run with its STOPPED line, and the report is kept" (line 3017 on main when this was written).
 
@@ -30,11 +19,11 @@ Failure: in the first test run of the head commit of PR [GHI-MD edit for issue 9
 The timers:
 - `wait_until(...)` (line 2368) polls every 0.05 s for up to 30 s, first for the `report-check-hold.held` marker, which says the driver is holding the last cell before its report check, and then, after the test sends SIGTERM, for the `stop-walk-done` marker.
 - `process.communicate(timeout=30)` then waits up to 30 s for the run to end.
-Both waits already wait for events, so a 30 s limit running out is less likely than in case 1. Which part of the check failed is not known: the failure's detail line (held, walked, record, stdout, stderr) is not in merge-lane-2's report of the failure, which is where this GHI's account of it comes from.
+Both waits already wait for events, so a 30 s limit running out is less likely than with a fixed timer. Which part of the check failed is not known: the failure's detail line (held, walked, record, stdout, stderr) is not in merge-lane-2's report of the failure, which is where this GHI's account of it comes from.
 
-Next action for case 2: find the detail line of the failing run, in the log of the test run of that pull request's head commit, which merge-lane-2 writes under its scratchpad in `/tmp/claude-1000/-home-nedlern-agents-merge-lane-2/` and which may since have been cleaned, or reproduce by running the suite many times under load through `python3 scripts/run-suite-in-signal-sandbox.py scripts/sanity-check-attacks-test.py`. Then fix the condition that failed: a limit that is too short, an event the case does not actually wait for, or another of the check's conditions, such as the STOPPED line or the shipped record.
+Next action for case 1: find the detail line of the failing run, in the log of the test run of that pull request's head commit, which merge-lane-2 writes under its scratchpad in `/tmp/claude-1000/-home-nedlern-agents-merge-lane-2/` and which may since have been cleaned, or reproduce by running the suite many times under load through `python3 scripts/run-suite-in-signal-sandbox.py scripts/sanity-check-attacks-test.py`. Then fix the condition that failed: a limit that is too short, an event the case does not actually wait for, or another of the check's conditions, such as the STOPPED line or the shipped record.
 
-## Case 3: a stop that lands while a relaunch is prepared
+## Case 2: a stop that lands while a relaunch is prepared
 
 `scripts/sanity-check-attacks-test.py`, case 49, the two checks that open "a stop that lands while a relaunch is prepared: the first launch had failed and the relaunch was under way when the signal came" and "and no agent-binary starts after the signal, and the run ends by it with its copy removed" (the case starts at line 2659 on main when this was written).
 
@@ -53,7 +42,7 @@ The timers, in the order the case runs:
 
 The 10 s wait for the stop handler is the shortest limit and the first to fail; the later failures follow from the test letting the hold go after it. Whether the handler was only slow, or was stuck until the hold was let go, is not known from the log.
 
-Next action for case 3: reproduce by running the suite many times under load through `python3 scripts/run-suite-in-signal-sandbox.py scripts/sanity-check-attacks-test.py`, and record when the driver writes `stop-walk-done` relative to the SIGTERM and to the end of the hold. If the file comes late but before the hold ends, the 10 s limit is too short for a busy machine, and the fix is the one this GHI asks for; if the file comes only after the hold ends, or never, the stop handler waits on the relaunch, and that defect in `scripts/sanity-check-attacks.py` is fixed instead.
+Next action for case 2: reproduce by running the suite many times under load through `python3 scripts/run-suite-in-signal-sandbox.py scripts/sanity-check-attacks-test.py`, and record when the driver writes `stop-walk-done` relative to the SIGTERM and to the end of the hold. If the file comes late but before the hold ends, the 10 s limit is too short for a busy machine, and the fix is the one this GHI asks for; if the file comes only after the hold ends, or never, the stop handler waits on the relaunch, and that defect in `scripts/sanity-check-attacks.py` is fixed instead.
 
 ## Done when
 
