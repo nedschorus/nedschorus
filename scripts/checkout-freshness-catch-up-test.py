@@ -55,14 +55,40 @@ def git(arguments, cwd: Path):
                           capture_output=True, text=True, check=False)
 
 
-def run_catch_up(extra_arguments, path_prefix=None):
+def run_catch_up_once(extra_arguments, path_prefix=None, stdin_text=None):
     environment = dict(os.environ)
     if path_prefix is not None:
         environment["PATH"] = f"{path_prefix}{os.pathsep}{environment['PATH']}"
     return subprocess.run(
         [sys.executable, str(SCRIPT_PATH), "--interval-seconds", "0", *extra_arguments],
         capture_output=True, text=True, check=False, env=environment,
+        input=stdin_text,
     )
+
+
+def run_catch_up(extra_arguments, path_prefix=None):
+    """One Stop-hook run, then the next prompt's delivery, as the agent meets
+    them: the user's lines from the Stop run and the agent's notes from the
+    delivery, in one result. The operator-facing modes run once, as before."""
+    stop = run_catch_up_once(extra_arguments, path_prefix)
+    if "--cwd" not in extra_arguments or any(
+            flag in extra_arguments for flag in ("--report", "--reference-pull",
+                                                 "--deliver-pending-agent-notes")):
+        return stop
+    cwd = extra_arguments[extra_arguments.index("--cwd") + 1]
+    delivery = run_catch_up_once(["--deliver-pending-agent-notes", "--cwd", cwd], path_prefix)
+    combined = dict(emitted_object(stop) or {})
+    delivered = (emitted_object(delivery) or {}).get("hookSpecificOutput", {}).get(
+        "additionalContext", "")
+    stop_context = combined.pop("hookSpecificOutput", {}).get("additionalContext", "")
+    agent = "\n".join(text for text in (stop_context, delivered) if text)
+    if agent:
+        combined["hookSpecificOutput"] = {"hookEventName": "UserPromptSubmit",
+                                          "additionalContext": agent}
+    return subprocess.CompletedProcess(
+        stop.args, stop.returncode,
+        json.dumps(combined, ensure_ascii=False) if combined else "",
+        stop.stderr + delivery.stderr)
 
 
 def emitted_object(result):
@@ -160,15 +186,9 @@ with tempfile.TemporaryDirectory() as temporary_directory:
           result.stdout + result.stderr)
     check("the rebase leaves no merge commit",
           git(["rev-list", "--merges", "--count", "origin/main..HEAD"], seat).stdout.strip() == "0")
-    check("the agent is told it was rebased, and which files moved under it",
-          "was rebased onto origin/main" in agent_text(result)
-          and "scripts your tests run against (1): scripts/advance-one.py" in agent_text(result),
-          agent_text(result))
-    check("and told to rerun the suites for what it touched",
-          "--only-suites-whose-recorded-inputs-changed-since origin/main`: your work now "
-          "sits on newer code." in agent_text(result), agent_text(result))
-    check("the rebased note ends by saying it is not for the user, byte for byte",
-          agent_text(result).endswith("\n" + NOT_FOR_THE_USER_LINE), agent_text(result))
+    check("a seat with no commits of its own, moved where main changed no standing "
+          "instruction, is told nothing",
+          agent_text(result) == "", agent_text(result))
     check("the USER hears nothing about routine drift",
           display_text(result) == "", display_text(result))
     check("never a block", never_blocks(result), result.stdout)
@@ -226,8 +246,9 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     git(["checkout", "--", "shared.txt"], seat)
     cleaned = run_catch_up(["--cwd", str(seat)])
     check("the moment the tree is clean, the rebase goes (attempted every turn end)",
-          (seat / "advance-two.txt").exists() and "was rebased" in agent_text(cleaned),
-          agent_text(cleaned))
+          (seat / "advance-two.txt").exists(), cleaned.stdout)
+    check("and, with no commits of its own and no standing instruction changed, "
+          "nothing is told", agent_text(cleaned) == "", agent_text(cleaned))
 
     # A CONFLICT is attempted, aborted cleanly, and named.
     commit_file(seat, "shared.txt", "seat version\n", "seat edits shared")
@@ -503,14 +524,6 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     # Detached HEAD: an agent-seat's own checkout, moved forward when it holds
     # nothing of its own, and otherwise told why not and what to do. The texts
     # are spelled out here, not imported, so a typo in the script fails a case.
-    detached_moved_text = (
-        "This checkout's detached HEAD was moved forward to origin/main: it held no commits "
-        "of its own and no uncommitted tracked changes, so nothing was lost.\n"
-        "CLAUDE.md and the skills load from this checkout, so what you read from them earlier "
-        "in this session may be out of date; the hooks already run from the new files.\n"
-        "If CLAUDE.md is listed above, read it again before your next action.\n"
-        "If a skill you are following is listed above, read that skill's SKILL.md under "
-        ".claude/skills/ again before its next step.")
     detached_not_moved_second_line = (
         "CLAUDE.md, the skills and the hooks load from this checkout, so until it moves, the "
         "files listed above stay older here than on main.")
@@ -547,10 +560,8 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     check("a detached HEAD with nothing of its own and an untracked file is moved forward",
           head_of(detached) == main_tip() and (detached / "seat-scratch-note.md").exists()
           and (detached / "scripts/detached-advance.py").exists(), agent_text(result))
-    check("and the agent is told message A, after the files that moved",
-          f"{detached_moved_text}\n{NOT_FOR_THE_USER_LINE}" in agent_text(result)
-          and agent_text(result).index("scripts/detached-advance.py")
-          < agent_text(result).index("was moved forward"), agent_text(result))
+    check("and, main having changed no standing instruction, the agent is told nothing",
+          agent_text(result) == "", agent_text(result))
     check("and the user is told nothing", display_text(result) == "", display_text(result))
     result = run_catch_up(["--cwd", str(detached)])
     check("a detached HEAD already at origin/main prints nothing",
@@ -571,9 +582,10 @@ with tempfile.TemporaryDirectory() as temporary_directory:
           agent_text(result) == "", agent_text(result))
     git(["checkout", "--", "shared.txt"], tracked)
     result = run_catch_up(["--cwd", str(tracked)])
-    check("once the change is gone, the next turn's end moves it forward and says so",
-          head_of(tracked) == main_tip() and detached_moved_text in agent_text(result),
-          agent_text(result))
+    check("once the change is gone, the next turn's end moves it forward",
+          head_of(tracked) == main_tip(), agent_text(result))
+    check("and the move drops the queued not-moved note instead of repeating it",
+          "was not moved forward" not in agent_text(result), agent_text(result))
 
     own = detached_worktree_behind_main("detached-own-commit-worktree")
     commit_file(own, "own-work.txt", "own\n", "a commit on a detached HEAD")
@@ -661,7 +673,7 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     (locked_git_dir / "index.lock").unlink()
     result = run_catch_up(["--cwd", str(locked)])
     check("once the lock is gone, the next turn's end moves it forward",
-          head_of(locked) == main_tip() and detached_moved_text in agent_text(result),
+          head_of(locked) == main_tip() and "Git refused" not in agent_text(result),
           agent_text(result))
     commit_file(origin, "scripts/detached-relock-advance.py", "advance\n",
                 "advance after a detached checkout was moved")
@@ -723,7 +735,7 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     result = run_catch_up(["--cwd", str(ghi)])
     check("a never-pushed branch with no own commits, far behind, is brought level",
           never_blocks(result) and (ghi / "scripts/advance-four.py").exists()
-          and "was rebased" in agent_text(result), result.stdout)
+          and agent_text(result) == "", result.stdout)
 
     # A foreign merge in progress blocks the rebase and survives untouched.
     foreign_git_dir = Path(git(["rev-parse", "--absolute-git-dir"], ghi).stdout.strip())
@@ -1798,6 +1810,197 @@ with tempfile.TemporaryDirectory() as z_scratch:
           catch_up_module.uncommitted_tracked_change_count(z_seat) == 1,
           str(catch_up_module.uncommitted_tracked_change_count(z_seat)))
     git(["reset", "-q", "--hard"], z_seat)
+
+# ---------------------------------------------------------------------------
+# Notes reach the agent with its next prompt, not at Stop; a checkout with no
+# commits of its own hears only of standing instructions main changed
+# ---------------------------------------------------------------------------
+with tempfile.TemporaryDirectory() as notes_scratch:
+    tmp = Path(notes_scratch).resolve()
+    real_git = shutil.which("git")
+    fixture_count = [0]
+
+    def notes_fixture(first_files=None):
+        """(origin, seat): a remote holding first_files, and a never-pushed
+        seat branch level with it, with no commits of its own."""
+        fixture_count[0] += 1
+        root = tmp / f"fixture-{fixture_count[0]}"
+        origin_repo = root / "origin"
+        origin_repo.mkdir(parents=True)
+        git(["init", "-q", "-b", "main"], origin_repo)
+        configure_identity(origin_repo)
+        for name, content in (first_files or {"shared.txt": "first\n"}).items():
+            commit_file(origin_repo, name, content, f"add {name}")
+        clone = root / "clone"
+        git(["clone", "-q", str(origin_repo), str(clone)], root)
+        configure_identity(clone)
+        seat_path = root / "seat"
+        git(["worktree", "add", "-q", "-b", "seat", str(seat_path), "main"], clone)
+        configure_identity(seat_path)
+        return origin_repo, seat_path
+
+    def stop_only(checkout, path_prefix=None):
+        return run_catch_up_once(["--cwd", str(checkout)], path_prefix)
+
+    def deliver(checkout):
+        return run_catch_up_once(["--deliver-pending-agent-notes", "--cwd", str(checkout)])
+
+    def delivered_text(result):
+        return ((emitted_object(result) or {}).get("hookSpecificOutput", {})
+                .get("additionalContext", ""))
+
+    def stamp_path_of(checkout):
+        return Path(git(["rev-parse", "--absolute-git-dir"], checkout).stdout.strip()) \
+            / "checkout-freshness-stamp.json"
+
+    claude_md_lines = "".join(f"- rule {number}\n" for number in range(1, 6))
+    origin_repo, notes_seat = notes_fixture({"CLAUDE.md": claude_md_lines})
+    commit_file(origin_repo, "CLAUDE.md", claude_md_lines.replace("- rule 3\n", "- rule three\n"),
+                "main changes a rule")
+    stop = stop_only(notes_seat)
+    check("a Stop run gives the agent no context, so it costs no turn",
+          "hookSpecificOutput" not in (emitted_object(stop) or {}), stop.stdout)
+    check("and queues the note in the stamp",
+          len(stamp_of(notes_seat).get("pending_agent_notes", [])) == 1, str(stamp_of(notes_seat)))
+    first = deliver(notes_seat)
+    check("the next prompt's delivery is a UserPromptSubmit context",
+          (emitted_object(first) or {}).get("hookSpecificOutput", {}).get("hookEventName")
+          == "UserPromptSubmit", first.stdout)
+    check("a changed CLAUDE.md is told with its changed lines, old and new",
+          "checkout-freshness: main changed CLAUDE.md, which this agent-session read at its start."
+          in delivered_text(first)
+          and "\n-- rule 3\n" in delivered_text(first) and "\n+- rule three" in delivered_text(first)
+          and "rule 4" not in delivered_text(first), delivered_text(first))
+    check("the CLAUDE.md note ends by saying it is not for the user, byte for byte",
+          delivered_text(first).endswith("\n" + NOT_FOR_THE_USER_LINE), delivered_text(first))
+    check("a delivery clears the queue, so the next prompt hears nothing",
+          deliver(notes_seat).stdout.strip() == "" and "pending_agent_notes" not in stamp_of(notes_seat),
+          str(stamp_of(notes_seat)))
+
+    origin_repo, notes_seat = notes_fixture()
+    commit_file(origin_repo, ".claude/skills/walk-me-through/SKILL.md", "steps\n", "a skill changes")
+    commit_file(origin_repo, "docs/agents/pr-reviewer-instructions.md", "rules\n", "instructions change")
+    commit_file(origin_repo, "nc-systems/cold-read/cold-read-fast-clarify-prompt.md", "p\n", "a prompt")
+    commit_file(origin_repo, ".claude/skills/walk-me-through/reference.md", "r\n", "not a SKILL.md")
+    commit_file(origin_repo, "scripts/tool.py", "t\n", "a script")
+    stop_only(notes_seat)
+    told = delivered_text(deliver(notes_seat))
+    check("a changed SKILL.md tells the agent to invoke the skill again",
+          "checkout-freshness: main changed .claude/skills/walk-me-through/SKILL.md. If you are "
+          "following the walk-me-through skill, invoke it again before its next step, so that "
+          "its new text loads." in told, told)
+    check("a changed -instructions.md and -prompt.md are told as standing instructions",
+          "main changed docs/agents/pr-reviewer-instructions.md, a file of standing instructions."
+          in told and "main changed nc-systems/cold-read/cold-read-fast-clarify-prompt.md, a file"
+          in told, told)
+    check("a skill's other files and scripts are not told",
+          "reference.md" not in told and "scripts/tool.py" not in told, told)
+
+    origin_repo, notes_seat = notes_fixture({"CLAUDE.md": "- one rule\n"})
+    commit_file(origin_repo, "CLAUDE.md", "".join(f"- new rule {n:04d} {'x' * 60}\n"
+                                                  for n in range(120)), "a long rewrite")
+    stop_only(notes_seat)
+    told = delivered_text(deliver(notes_seat))
+    check("a CLAUDE.md change too long to show is named by its changed lines",
+          "checkout-freshness: main changed CLAUDE.md, which this agent-session read at its start, "
+          "at lines 1-120. Read CLAUDE.md again before your next action." in told
+          and "new rule 0050" not in told, told[:400])
+
+    origin_repo, notes_seat = notes_fixture({"CLAUDE.md": "- a\n"})
+    commit_file(origin_repo, "CLAUDE.md", "- b\n", "first change")
+    stop_only(notes_seat)
+    commit_file(origin_repo, "CLAUDE.md", "- c\n", "second change")
+    stop_only(notes_seat)
+    told = delivered_text(deliver(notes_seat))
+    check("two moves before one prompt are both told",
+          "+- b" in told and "+- c" in told and told.count("main changed CLAUDE.md") == 2, told)
+
+    origin_repo, notes_seat = notes_fixture()
+    commit_file(origin_repo, "CLAUDE.md", "- rule\n", "main adds CLAUDE.md")
+    diff_fails = tmp / "diff-fails-shim"
+    diff_fails.mkdir()
+    (diff_fails / "git").write_text(
+        "#!/bin/sh\n"
+        'for argument in "$@"; do\n'
+        '  if [ "$argument" = "--name-only" ]; then\n'
+        '    echo "fatal: shimmed diff failure" >&2; exit 128\n'
+        "  fi\n"
+        "done\n"
+        f'exec "{real_git}" "$@"\n', encoding="utf-8")
+    (diff_fails / "git").chmod(0o755)
+    stop_only(notes_seat, path_prefix=str(diff_fails))
+    told = delivered_text(deliver(notes_seat))
+    check("a diff git cannot make is told as such, never read as nothing changed",
+          (notes_seat / "CLAUDE.md").exists()
+          and "checkout-freshness: this checkout was moved forward to origin/main, but git could "
+          "not list what main changed (fatal: shimmed diff failure)." in told
+          and "Read CLAUDE.md again before your next action." in told, told)
+
+    origin_repo, notes_seat = notes_fixture()
+    (notes_seat / "shared.txt").write_text("dirty\n", encoding="utf-8")
+    commit_file(origin_repo, "a.txt", "a\n", "advance a")
+    stop_only(notes_seat)
+    commit_file(origin_repo, "b.txt", "b\n", "advance b")
+    stop_only(notes_seat)
+    told = delivered_text(deliver(notes_seat))
+    check("a newer not-updated note replaces the older one",
+          told.count("Not updated: 1 uncommitted tracked change(s)") == 1 and "b.txt" in told, told)
+    stop_only(notes_seat)
+    commit_file(origin_repo, "c.txt", "c\n", "advance c")
+    stop_only(notes_seat)
+    git(["checkout", "--", "shared.txt"], notes_seat)
+    stop_only(notes_seat)
+    told = delivered_text(deliver(notes_seat))
+    check("a note that a move was blocked is dropped once the move is made",
+          "Not updated" not in told and (notes_seat / "c.txt").exists(), told)
+
+    origin_repo, notes_seat = notes_fixture()
+    stop_only(notes_seat)
+    stamp_file = stamp_path_of(notes_seat)
+    commit_file(origin_repo, "CLAUDE.md", "- rule\n", "main adds CLAUDE.md")
+    stamp_file.chmod(0o444)
+    stamp_file.parent.chmod(0o555)
+    try:
+        stop = stop_only(notes_seat)
+    finally:
+        stamp_file.parent.chmod(0o755)
+        stamp_file.chmod(0o644)
+    stop_context = ((emitted_object(stop) or {}).get("hookSpecificOutput", {})
+                    .get("additionalContext", ""))
+    check("notes that cannot be queued go out at Stop instead, saying why",
+          "main changed CLAUDE.md" in stop_context
+          and "checkout-freshness: these notes come now, not with your next prompt, because they "
+          "could not be saved to" in stop_context, stop.stdout)
+
+    origin_repo, notes_seat = notes_fixture()
+    commit_file(origin_repo, "CLAUDE.md", "- rule\n", "main adds CLAUDE.md")
+    stop_only(notes_seat)
+    stamp_file = stamp_path_of(notes_seat)
+    stamp_file.chmod(0o444)
+    try:
+        delivered = delivered_text(deliver(notes_seat))
+    finally:
+        stamp_file.chmod(0o644)
+    check("a delivery that cannot clear the queue says the notes may come again",
+          "main changed CLAUDE.md" in delivered
+          and "checkout-freshness: these notes could not be cleared from" in delivered, delivered)
+
+    stamp_file.write_text("{not json", encoding="utf-8")
+    delivered = delivered_text(deliver(notes_seat))
+    check("a queue that cannot be read is told, not taken for an empty one",
+          "checkout-freshness: notes queued for you could not be read from" in delivered, delivered)
+
+    long_notes = [{"kind": "moved", "text": "long " + "y" * 4000, "short": "short one"},
+                  {"kind": "moved", "text": "long " + "z" * 6000, "short": "short two"}]
+    check("a delivery too long for one context is cut to the notes' short forms",
+          catch_up_module.delivery_text(long_notes) == "short one\n\nshort two",
+          catch_up_module.delivery_text(long_notes)[:200])
+    many = [{"kind": "moved", "text": "n" * 3000} for _ in range(5)]
+    cut = catch_up_module.delivery_text(many)
+    check("and when even those are too long, the newest that fit are kept, the rest counted",
+          len(cut) <= catch_up_module.DELIVERY_CHARACTER_LIMIT
+          and cut.startswith("checkout-freshness: 3 older note(s) did not fit"), cut[:120])
+
 
 print()
 if failures:
