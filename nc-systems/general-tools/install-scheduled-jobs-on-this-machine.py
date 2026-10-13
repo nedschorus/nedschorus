@@ -138,8 +138,8 @@ only in its output file.
 Exit codes: 0 done, or for --check every job matches; 1 a step failed after
 this program began changing the machine, or for --check a job differs or is
 not in the table; 2 not run — a bad invocation, a table this program cannot
-use, a machine the table does not name, a job's program missing, or a crontab
-that could not be read.
+use, a machine the table does not name, a job's program missing, a crontab
+that could not be read, or a shell parser that could not be installed.
 
 Every option of main() beyond argv is a seam for
 tests/install-scheduled-jobs-on-this-machine-test.py, which installs nothing
@@ -149,15 +149,23 @@ are temporary.
 """
 
 import argparse
+import importlib.util
 import json
 import os
 import plistlib
 import re
 import shlex
+import socket
 import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+
+_shell_reader_spec = importlib.util.spec_from_file_location(
+    "shell_command_tree_sitter_bash_reader_common",
+    Path(__file__).resolve().with_name("shell-command-tree-sitter-bash-reader-common.py"))
+shell_reader = importlib.util.module_from_spec(_shell_reader_spec)
+_shell_reader_spec.loader.exec_module(shell_reader)
 
 PROGRAM = "install-scheduled-jobs-on-this-machine"
 TABLE_FILE_NAME = "scheduled-jobs-on-each-machine.json"
@@ -549,6 +557,23 @@ CRON_ENVIRONMENT_ASSIGNMENT = re.compile(r"\s*[A-Za-z_][A-Za-z0-9_]*\s*=")
 INTERPRETER_PROGRAM_NAME = re.compile(r"python[0-9.]*|bash|sh|dash|zsh|perl|ruby|node|env")
 
 
+def shell_parser_refusal(error) -> Refusal:
+    host = socket.gethostname().split(".")[0]
+    install = (f"python3 -m pip install --user --break-system-packages "
+               f"-r {shell_reader.REQUIREMENTS_FILE}")
+    # The user sits at the Mac, and reaches ned-box over ssh.
+    by_hand = (f"from your Mac, run: ssh nedlern@ned-box '{install}'" if host == "ned-box"
+               else f"run on {host}: {install}")
+    return Refusal(
+        f"{PROGRAM}: not run — the shell parser tree-sitter-bash, which this program uses to read "
+        f"the crontab's commands, is missing on {host}, and installing it failed. Nothing on "
+        f"this machine changed.",
+        f"Tell the user, or, if you are a subagent, the agent that dispatched you: "
+        f"tree-sitter-bash could not be installed on {host}; to install it by hand, {by_hand}.",
+        "Once tree-sitter-bash is installed, run the same command again, with the same options.",
+        f"What the install printed: {error.install_output}")
+
+
 def program_a_cron_line_runs(line: str):
     """Return the program path as spelled in a cron line, or None when unresolved."""
     # Interpreter and env options may consume arguments; guessing could remove an unrelated job.
@@ -559,9 +584,12 @@ def program_a_cron_line_runs(line: str):
     if len(fields) < (2 if special_schedule else 6):
         return None
     try:
-        words = shlex.split(fields[-1])
-    except ValueError:
-        words = fields[-1].split()
+        commands = shell_reader.simple_commands(fields[-1])
+    except shell_reader.ShellParserUnavailable as error:
+        raise shell_parser_refusal(error)
+    if not commands:
+        return None
+    words = commands[0]
     after_interpreter = False
     for word in words:
         if CRON_ENVIRONMENT_ASSIGNMENT.match(word):

@@ -308,7 +308,8 @@ check("--help ends with the docstring's exit-codes paragraph and prints nothing 
           "program began changing the machine, or for --check a job differs or is not in the "
           "table; 2 not run — a bad "
           "invocation, a table this program cannot use, a machine the table does not name, a "
-          "job's program missing, or a crontab that could not be read.")
+          "job's program missing, a crontab that could not be read, or a shell parser that "
+          "could not be installed.")
       and "WHY THIS EXISTS" not in help_text and "THE TABLE is " not in help_text
       and "user-ruled" not in help_text, help_text)
 check("--check's help names both reasons for exit 1",
@@ -1240,6 +1241,69 @@ with tempfile.TemporaryDirectory() as temporary:
           and plistlib.loads(plist_path.read_bytes()) == expected_plist, (exit_code, printed))
     check("--print shows the plist with this program's line",
           installer.PLIST_WRITTEN_BY_THIS_PROGRAM.decode() in mac_printed, mac_printed)
+
+    # The cron command is read by the shell module, as bash reads it: a
+    # redirection written before the program does not hide the program.
+    redirect_first = (f"0 5 * * * >> /tmp/retired.log 2>&1 "
+                      f"{box_clone}/scripts/a-retired-redirect-first-job.py")
+    check("a crontab line whose redirection comes before its program runs that program, and "
+          "one whose command is only a comment runs nothing",
+          [installer.program_a_cron_line_runs(line)
+           for line in (redirect_first, "0 5 * * * # paused")]
+          == [f"{box_clone}/scripts/a-retired-redirect-first-job.py", None],
+          [installer.program_a_cron_line_runs(line)
+           for line in (redirect_first, "0 5 * * * # paused")])
+
+    # tree-sitter-bash missing: the module installs it, as on a Mac whose
+    # Python has not run a guard yet; a failed install stops this program,
+    # which changes nothing and says to tell the user.
+    shell_reader = installer.shell_reader
+    real_load_parser, real_importer = shell_reader.load_parser, shell_reader.import_tree_sitter_bash
+    saved_state_directory, saved_parser = shell_reader.STATE_DIRECTORY, shell_reader._parser
+    shell_reader.STATE_DIRECTORY = root / "shell-reader-state"
+    install_calls = []
+
+    def missing_until_installed():
+        if not install_calls:
+            raise ImportError("No module named 'tree_sitter_bash'")
+        return real_importer()
+
+    def recording_install():
+        install_calls.append(True)
+        return ""
+
+    def failing_install():
+        install_calls.append(True)
+        raise shell_reader.ShellParserUnavailable("pip exited 1: no network on this machine")
+
+    try:
+        for install, wanted_exit in ((recording_install, 1), (failing_install, 2)):
+            install_calls.clear()
+            shell_reader._parser = None
+            shutil.rmtree(shell_reader.STATE_DIRECTORY, ignore_errors=True)
+            shell_reader.load_parser = (lambda install=install: real_load_parser(
+                importer=missing_until_installed, installer=install))
+            stub = MachineStub(crontab=(BOX_MIRROR + "\n" + runs_directly + "\n").encode())
+            exit_code, printed, errors = run_main(["--remove-not-in-table"], NED_BOX, stub) \
+                if wanted_exit == 2 else run_main(["--check"], NED_BOX, stub)
+            if install is recording_install:
+                check("with tree-sitter-bash missing, the installer has the shell module install "
+                      "it, then reads the crontab and reports the retired line",
+                      install_calls == [True] and exit_code == 1
+                      and f"NOT IN THE TABLE: the crontab line {runs_directly} — " in printed,
+                      (install_calls, exit_code, printed, errors))
+            else:
+                check("when that install fails, --remove-not-in-table writes no crontab, exits 2 "
+                      "and says what the install printed and to tell the user",
+                      install_calls == [True] and exit_code == 2 and stub.crontab_writes == []
+                      and "pip exited 1: no network on this machine" in errors
+                      and "Tell the user, or, if you are a subagent, the agent that dispatched "
+                      "you: tree-sitter-bash could not be installed on " in errors
+                      and shell_reader.REQUIREMENTS_FILE.name in errors,
+                      (install_calls, exit_code, printed, errors, stub.crontab_writes))
+    finally:
+        shell_reader.load_parser, shell_reader.STATE_DIRECTORY = real_load_parser, saved_state_directory
+        shell_reader._parser = saved_parser
 
 print()
 if failures:
