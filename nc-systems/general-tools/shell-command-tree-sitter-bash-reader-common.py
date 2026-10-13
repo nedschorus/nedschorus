@@ -92,8 +92,9 @@ def _shell_text_errors(error):
                     else character.encode("utf-8", "surrogatepass"))
         return bytes(out), error.end
     surrogate = error.object[error.start:error.start + 3]
+    # U+DC80 to U+DCFF stand for single bytes, so their own three bytes stay three bytes.
     if len(surrogate) == 3 and surrogate[0] == 0xED and 0xA0 <= surrogate[1] <= 0xBF \
-            and 0x80 <= surrogate[2] <= 0xBF:
+            and 0x80 <= surrogate[2] <= 0xBF and not 0xB2 <= surrogate[1] <= 0xB3:
         return surrogate.decode("utf-8", "surrogatepass"), error.start + 3
     return chr(0xDC00 + error.object[error.start]), error.start + 1
 
@@ -430,15 +431,28 @@ def parser_unavailable_hook_output(guard_name, error, environment=os.environ):
     """Return the PreToolUse JSON that lets the command through and says it was not checked."""
     host = socket.gethostname().split(".")[0]
     if isinstance(error, ShellCommandUnreadable):
+        report = (
+            f"in these words: \"{guard_name} let a command through unchecked on {host}, because "
+            f"the shell command reader failed on it ({error.install_output}).\" Quote the "
+            f"command after those words, then say whether it did what {guard_name} exists to "
+            f"stop, what you undid, and what you could not undo.")
+        if _session_unattended(environment):
+            tell = (f"If you are a subagent, tell the agent that dispatched you, {report}\n"
+                    f"No user attends this agent-session, so do not tell the user; if you are "
+                    f"not a subagent, go on with your task.")
+        else:
+            tell = (f"Tell the user, or, if you are a subagent, the agent that dispatched you, "
+                    f"{report}")
+        message = (
+            f"{guard_name} let this command through without checking it, and the command has "
+            f"run: the shell command reader ({Path(__file__).name}) failed on it on {host} "
+            f"({error.install_output}).\n"
+            f"Look at what the command did. If it did what {guard_name} exists to stop, undo "
+            f"that now where you can.\n"
+            f"{tell}")
         return json.dumps({"hookSpecificOutput": {
             "hookEventName": "PreToolUse",
-            "additionalContext": (
-                f"{guard_name} let this command through without checking it: the shell command "
-                f"reader failed on it on {host} ({error.install_output}).\n"
-                f"If the command could do what {guard_name} guards against, check it by hand "
-                f"before relying on it.\n"
-                f"Tell the user, or, if you are a subagent, the agent that dispatched you, that "
-                f"the reader failed, with the command and the failure quoted as they are."),
+            "additionalContext": message,
         }})
     not_checked = (f"{guard_name} let this command through without checking it: the shell parser "
                    f"tree-sitter-bash is missing on {host}, and installing it failed.")

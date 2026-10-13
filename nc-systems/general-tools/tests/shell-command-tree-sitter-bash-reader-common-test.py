@@ -192,7 +192,7 @@ ansi_c_words = [r"$'a\nb'", r"$'\t\x41\101\e\cA\c?'", r"$'it\'s \"x\" \?'", r"$'
 bash_writes_unicode_escapes = subprocess.run(
     ["bash", "-c", "printf %s $'\\u00e9'"], capture_output=True).stdout == "é".encode()
 if bash_writes_unicode_escapes:
-    ansi_c_words += [r"$'\u00e9\U0001F600\u2603x'", r"$'\U110000 \U7FFFFFFF a\UFFFFFFFFb \uD800\uDFFF'"]
+    ansi_c_words += [r"$'\u00e9\U0001F600\u2603x'", r"$'\U110000 \U7FFFFFFF a\UFFFFFFFFb \uD800\uDFFF'", r"$'\uDC80\uDCFF a\uDCA0'"]
 else:
     print(f"SKIP  $'\\u...' cases: bash {bash_version} here does not write \\u as UTF-8 "
           f"(bash before 4.2, or a locale that is not UTF-8)")
@@ -215,10 +215,19 @@ found = reader.simple_commands("echo \ud800x \udcff; tmux kill-server")
 check("a lone surrogate from a JSON payload, and a byte that is not UTF-8, keep their words",
       [list(f) for f in found] == [["echo", "\ud800x", "\udcff"], ["tmux", "kill-server"]],
       [list(f) for f in found])
-started = time.monotonic()
-reader.simple_commands("case x in x) :;& " + "#" * 60 + " y\nesac; case z in z) :;& " + "#" * 60)
+# Run in its own process under a deadline: a pattern that backtracks would hang this test.
+timing_code = ("import importlib.util, sys; s = importlib.util.spec_from_file_location('r', sys.argv[1]); "
+               "r = importlib.util.module_from_spec(s); s.loader.exec_module(r); "
+               "r.simple_commands('case x in x) :;& ' + '#' * 60 + ' y\\nesac; case z in z) :;& ' + '#' * 60)")
+try:
+    started = time.monotonic()
+    subprocess.run([sys.executable, "-c", timing_code, str(MODULE_PATH)], timeout=20, check=True,
+                   capture_output=True)
+    timing = time.monotonic() - started
+except (subprocess.TimeoutExpired, subprocess.CalledProcessError) as problem:
+    timing = repr(problem)
 check("a run of # after a terminator is matched in linear time",
-      time.monotonic() - started < 2, time.monotonic() - started)
+      isinstance(timing, float) and timing < 10, timing)
 found = reader.simple_commands("ssh h $'true\\ntmux kill-server'")
 check("an ANSI-C quoted remote command keeps its newline, so the command after it is seen",
       found[0][2] == "true\ntmux kill-server", list(found[0]))
@@ -1108,6 +1117,17 @@ except r.ShellParserUnavailable as error:
         check(f"with no parser, {relative} lets the command through and says it was not checked",
               code == 0 and context.startswith(guard_name + " let this command through"),
               (code, context))
+
+    unreadable = reader.ShellCommandUnreadable("ValueError: injected")
+    attended = context_of(reader.parser_unavailable_hook_output("The force-push guard", unreadable, {}))
+    unattended = context_of(reader.parser_unavailable_hook_output(
+        "The force-push guard", unreadable, {"CLAUDE_CODE_SESSION_ATTENDED": "0"}))
+    check("when the reader fails, the guard's message says the command ran and what to check and undo",
+          "the command has run" in attended and "Look at what the command did" in attended
+          and "undo" in attended and "Tell the user" in attended and "ValueError: injected" in attended,
+          attended)
+    check("in an agent-session no user attends, the reader-failed message does not ask to tell the user",
+          "do not tell the user" in unattended and "Tell the user" not in unattended, unattended)
 
     # A failure inside the reader reaches each guard as ShellCommandUnreadable, never as another
     # error that would stop the guard.
