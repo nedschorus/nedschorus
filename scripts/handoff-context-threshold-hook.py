@@ -5,12 +5,21 @@ Stop-hook payloads lack context usage; headless sessions lack a status line.
 The transcript supplies usage for both interactive and headless sessions."""
 
 import argparse
+import importlib.util
 import json
 import os
 import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+
+# Every Stop hook obeys this rule first: see the module's docstring.
+_answer_loop_guard_specification = importlib.util.spec_from_file_location(
+    "claude_code_stop_hook_silent_while_agent_answers_a_stop_hook_common",
+    Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+    / "claude-code-stop-hook-silent-while-agent-answers-a-stop-hook-common.py")
+answer_loop_guard = importlib.util.module_from_spec(_answer_loop_guard_specification)
+_answer_loop_guard_specification.loader.exec_module(answer_loop_guard)
 
 HANDOFF_DIRECTORY = Path.home() / ".claude" / "handoffs"
 
@@ -282,6 +291,8 @@ def main(argv=None) -> int:
         return 0
 
     payload = hook_payload_from_stdin()
+    if answer_loop_guard.stop_hook_stays_silent_while_agent_answers_a_stop_hook(payload):
+        return 0
     session_id = payload.get("session_id", "")
     if not session_id:
         return 0

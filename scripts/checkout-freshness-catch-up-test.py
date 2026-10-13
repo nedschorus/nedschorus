@@ -807,6 +807,20 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     check("--cwd never waits on stdin (a terminal would hang)", not hung,
           "the run was still waiting after 30s")
 
+    # While the agent answers a Stop hook, the hook does nothing at all: with a
+    # zero interval it would otherwise fetch and rewrite the stamp.
+    stamp_path = Path(git(["rev-parse", "--absolute-git-dir"], seat).stdout.strip()) / "checkout-freshness-stamp.json"
+    stamp_before = stamp_path.read_bytes() if stamp_path.exists() else None
+    answering = subprocess.run(
+        [sys.executable, str(SCRIPT_PATH), "--interval-seconds", "0"],
+        input=json.dumps({"cwd": str(seat), "stop_hook_active": True}),
+        capture_output=True, text=True, check=False)
+    stamp_after = stamp_path.read_bytes() if stamp_path.exists() else None
+    check("stop_hook_active: silent, and no fetch or stamp write while the agent answers a Stop hook",
+          answering.returncode == 0 and answering.stdout == "" and answering.stderr == ""
+          and stamp_after == stamp_before,
+          f"rc={answering.returncode} {answering.stdout} {answering.stderr} stamp changed: {stamp_after != stamp_before}")
+
     # The real wiring reads cwd from the stdin payload.
     payload = json.dumps({"cwd": str(seat)})
     from_stdin = subprocess.run(

@@ -15,8 +15,8 @@ replies, about four fires in five were correct. Matches inside code, quoted
 text and block quotes do not count.
 
 THE HOOK STAYS SILENT when any of these holds:
-  - stop_hook_active is set: the agent is already continuing because of a
-    Stop hook, and blocking again could loop;
+  - this Stop ends the agent's answer to a Stop hook's output (the shared
+    rule of nc-systems/general-tools/claude-code-stop-hook-silent-while-agent-answers-a-stop-hook-common.py);
   - the agent ran the locator this turn (a Bash command naming
     locate-file-copies-across-machines.py) or invoked the skill
     locate-before-saying-a-file-is-missing;
@@ -60,6 +60,7 @@ UNCLEAR) and prints the fire counts by label and the precision.
 """
 import argparse
 import csv
+import importlib.util
 import json
 import os
 import re
@@ -67,6 +68,14 @@ import socket
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+
+# Every Stop hook obeys this rule first: see the module's docstring.
+_answer_loop_guard_specification = importlib.util.spec_from_file_location(
+    "claude_code_stop_hook_silent_while_agent_answers_a_stop_hook_common",
+    Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+    / "claude-code-stop-hook-silent-while-agent-answers-a-stop-hook-common.py")
+answer_loop_guard = importlib.util.module_from_spec(_answer_loop_guard_specification)
+_answer_loop_guard_specification.loader.exec_module(answer_loop_guard)
 
 SKILL_NAME = "locate-before-saying-a-file-is-missing"
 LOCATOR_PROGRAM_NAME = "locate-file-copies-across-machines.py"
@@ -312,7 +321,7 @@ def run(stdin_text, environment, home, now):
     if not isinstance(payload, dict):
         raise ValueError(f"the input on the hook's stdin is a JSON {type(payload).__name__}, not an object")
     event = payload.get("hook_event_name") or "Stop"
-    if payload.get("stop_hook_active"):
+    if answer_loop_guard.stop_hook_stays_silent_while_agent_answers_a_stop_hook(payload):
         return None
     if event == "SubagentStop":
         transcript_path = payload.get("agent_transcript_path")
