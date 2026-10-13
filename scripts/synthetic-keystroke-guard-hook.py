@@ -40,6 +40,8 @@ MAX_ANALYSIS_DEPTH = 4
 KEYSTROKE_VERBS = {"send-keys", "send", "paste-buffer", "pasteb"}
 SHELL_CONSUMER_PROGRAMS = {"sh", "bash", "zsh", "dash", "ksh"}
 SHELL_OPTIONS_WITH_A_VALUE = {"--rcfile", "--init-file"}
+# A redirection of standard input, with its descriptor 0 written or left out.
+STANDARD_INPUT_REDIRECT_PATTERN = re.compile(r"0?<")
 
 TMUX_GLOBAL_VALUE_FLAGS = {"-S", "-L", "-f", "-c", "-T"}
 
@@ -491,7 +493,7 @@ def analyze_heredoc(words, body, ssh_context, verified, guard):
         # in a substitution there inherits that standard input too.
         remote = shell_reader.simple_commands(" ".join(remote_words))
         if host is not None and (not remote or any(
-                shell_reads_the_heredoc(command) for command in remote)):
+                shell_reads_the_heredoc(command, remote) for command in remote)):
             remote_context = ((NESTED_SSH_HOST, ()) if ssh_context is not None
                               else (host, tuple(carried)))
             return analyze_command_text(body, remote_context, verified, guard)
@@ -501,20 +503,33 @@ def analyze_heredoc(words, body, ssh_context, verified, guard):
     return None
 
 
-def shell_reads_the_heredoc(command):
+def shell_reads_the_heredoc(command, remote):
     """Return whether a command of ssh's remote line is a shell that reads the heredoc.
 
-    The heredoc is ssh's standard input. A later stage of a pipeline reads the stage
-    before it instead, and a command with an input redirection reads what that names.
+    The heredoc is ssh's standard input. A command that replaces its standard input,
+    as with < file, reads that instead. A later stage of a pipeline reads what the
+    pipeline's first stage passes on, so it receives the heredoc unless every command
+    of that first stage replaces its standard input.
     """
-    if any(shell.kind == shell_reader.PIPELINE_STAGE and not shell.first_stage
-           for shell in command.child_shell):
+    if replaces_standard_input(command):
         return False
-    if any(operator.startswith("<") for operator, _ in command.redirects):
-        return False
+    for shell in command.child_shell:
+        if shell.kind == shell_reader.PIPELINE_STAGE:
+            first = shell.shell_pipeline_first_stage_byte_offset
+            if all(replaces_standard_input(other) for other in remote if any(
+                    stage.kind == shell_reader.PIPELINE_STAGE and stage == first
+                    for stage in other.child_shell)):
+                return False
     index, kind, receives_standard_input = ssh_or_shell_program(command)
     return (kind == "shell" and receives_standard_input
             and shell_reads_standard_input(command[index + 1:]))
+
+
+def replaces_standard_input(command):
+    """Return whether a command reads its standard input from a redirection of its own."""
+    return any(STANDARD_INPUT_REDIRECT_PATTERN.match(operator)
+               and (operator.lstrip("0"), target) not in (("<&", "0"), ("<", "/dev/stdin"))
+               for operator, target in command.redirects)
 
 
 def ssh_or_shell_program(words):

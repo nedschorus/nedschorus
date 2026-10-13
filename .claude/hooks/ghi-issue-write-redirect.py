@@ -95,9 +95,10 @@ WHAT IT CANNOT SEE, so nobody mistakes a choice for an oversight:
 - ghi-info's headless sessions run with `--setting-sources user`
   (`scripts/ghi-info-ask.py`), so this project's hooks do not load there, and
   its link-repair edits are untouched.
-- A `gh` behind `ssh`, `sh -c`, `eval`, `timeout`, `command`, or in a heredoc
-  body is not recognised; `env` in front is. The same limits as the
-  force-push guard, whose reading this shares.
+- A `gh` behind `ssh`, `sh -c`, `eval`, or in a heredoc body is not
+  recognised; one behind a wrapper the shared shell module knows, such as
+  `env`, `timeout` or `command`, is. The same limits as the force-push
+  guard, whose reading this shares.
 - A gh alias the user defined is not expanded.
 
 Commands are read with nc-systems/general-tools/shell-command-tree-sitter-bash-reader-common.py,
@@ -123,7 +124,6 @@ is_program = shell_reader.is_program
 PROJECT_REPOSITORY = "nedschorus/nedschorus"
 
 ENVIRONMENT_ASSIGNMENT_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
-ENV_COMMAND_VALUE_OPTIONS = {"-u", "--unset"}
 ISSUE_URL_PATTERN = re.compile(
     r"^(?:https?://)?(?:www\.)?github\.com/([^/]+/[^/#?]+)/issues/", re.IGNORECASE)
 
@@ -296,32 +296,15 @@ def find_gh_issue_invocation(words):
     """Given one simple command's words, return (subcommand, arguments,
     repository_from_environment) for an invoked `gh issue <subcommand>`, or
     None. Quoted prose naming it arrives as one data word and never matches.
-    Leading assignments and an `env` in front are read through, and a
+    Leading assignments and wrappers in front are read through, and a
     repository flag before the subcommand is carried into the arguments."""
-    index = 0
-    repository_from_environment = None
-    while index < len(words) and ENVIRONMENT_ASSIGNMENT_PATTERN.match(words[index]):
-        if words[index].startswith("GH_REPO="):
-            repository_from_environment = words[index][len("GH_REPO="):]
-        index += 1
-    if index < len(words) and is_program(words[index], "env"):
-        index += 1
-        while index < len(words):
-            word = words[index]
-            if ENVIRONMENT_ASSIGNMENT_PATTERN.match(word):
-                if word.startswith("GH_REPO="):
-                    repository_from_environment = word[len("GH_REPO="):]
-                index += 1
-                continue
-            if word in ENV_COMMAND_VALUE_OPTIONS:
-                index += 2
-                continue
-            if word.startswith("-"):
-                index += 1
-                continue
-            break
-    if index >= len(words) or not is_program(words[index], "gh"):
+    index, _ = shell_reader.simple_command_program_index_skipping_wrappers(words)
+    if index is None or not is_program(words[index], "gh"):
         return None
+    repository_from_environment = None
+    for word in words[:index]:
+        if word.startswith("GH_REPO="):
+            repository_from_environment = word[len("GH_REPO="):]
     repository_flag_values = []
     index = skip_repository_flags(words, index + 1, repository_flag_values)
     if index >= len(words) or words[index] != "issue":

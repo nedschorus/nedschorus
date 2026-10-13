@@ -576,9 +576,21 @@ check("env in front of another git command is not a push",
 
 runner = ProbeRunner(open_pull_requests={"the-pr-branch": FAST_READ_PULL_REQUEST})
 decision, reason = decide("timeout 60 git push --force origin the-pr-branch", runner)
-check("the stated limit: a push behind timeout is not recognised",
-      decision is None and not runner.calls,
-      f"{decision}: {reason} {runner.calls}")
+check("a push behind timeout is read through the shared wrapper table",
+      decision == "deny", f"{decision}: {reason} {runner.calls}")
+for command in ["env -C /elsewhere/wt-fast-read git push --force origin",
+                "env --chdir=/elsewhere/wt-fast-read git push --force origin",
+                "sudo -D /elsewhere git -C wt-fast-read push --force origin"]:
+    runner = ProbeRunner(branch="the-pr-branch",
+                         open_pull_requests={"the-pr-branch": FAST_READ_PULL_REQUEST})
+    decision, _ = decide(command, runner)
+    check(f"a wrapper's directory option moves the checkout the branch is resolved from: {command}",
+          decision == "deny"
+          and ["git", "-C", "/elsewhere/wt-fast-read", "rev-parse", "--abbrev-ref", "HEAD"]
+          in runner.calls, (decision, runner.calls))
+runner = ProbeRunner(branch="the-pr-branch", open_pull_requests={"the-pr-branch": FAST_READ_PULL_REQUEST})
+decision, _ = decide(f"env {guard.ESCAPE_HATCH_ASSIGNMENT} git push --force origin", runner)
+check("the escape hatch after env still sanctions the push", decision is None, decision)
 
 # ---------------------------------------------------------------------------
 # Prose is data. The guard's own commit message and pull request body say
