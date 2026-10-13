@@ -50,7 +50,7 @@ def main(arguments):
     window_sender = load_window_sender_module()
     forced_command = window_sender.load_forced_command_module()
     ned_box_home = os.environ.get("NEDSCHORUS_NED_BOX_HOME") or forced_command.NED_BOX_HOME
-    pages_directory = f"{ned_box_home.rstrip('/')}/{forced_command.BROWSER_PAGES_DIRECTORY_NAME}"
+    pages_directory = f"{ned_box_home.rstrip('/')}/{forced_command.LOG_STORE_DIRECTORY_NAME}"
     if len(arguments) != 1:
         print(f"usage: {PROGRAM} <path>", file=sys.stderr)
         print(f"Opens one .html file under {pages_directory}/ in the browser on the user's Mac.", file=sys.stderr)
@@ -65,9 +65,9 @@ def main(arguments):
         print(f"{PROGRAM}: no request was sent, because {resolved} holds a character outside letters, digits and _ . / : = @ % + , -, such as a space.", file=sys.stderr)
         print(f"Write the page under {pages_directory}/ with a name made only of those characters.", file=sys.stderr)
         return window_sender.EXIT_USAGE_OR_REFUSED
-    request = f"{forced_command.BROWSER_VERB} {resolved}"
+    request = f"{forced_command.OPEN_IN_MAC_BROWSER_REQUEST_VERB} {resolved}"
     try:
-        forced_command.browser_page_path_on_ned_box(request, ned_box_home)
+        forced_command.open_in_browser_request_html_page_path_check(request, ned_box_home)
     except forced_command.RequestRefused as refusal:
         print(f"{PROGRAM}: no request was sent, because {refusal}.", file=sys.stderr)
         print(f"The Mac opens only .html files under {pages_directory}/: write the page there.", file=sys.stderr)

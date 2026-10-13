@@ -453,7 +453,7 @@ else:
 
 def browser_refusal_of(request, ned_box_home="/home/nedlern"):
     try:
-        forced_command.browser_page_path_on_ned_box(request, ned_box_home)
+        forced_command.open_in_browser_request_html_page_path_check(request, ned_box_home)
     except forced_command.RequestRefused as refusal:
         return str(refusal)
     return None
