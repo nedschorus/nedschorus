@@ -139,6 +139,39 @@ found = reader.simple_commands("cd /tmp | cat; grep -l needle *")
 check("a cd that is a pipeline stage runs in a child shell, so the command after it is in the start directory",
       found[0].child_shell != () and found[-1].child_shell == (),
       [(list(f), f.child_shell) for f in found])
+# tree-sitter-bash nests the misparse one level deeper when two stages have a redirection.
+found = reader.simple_commands("git push origin w$i > $X/push$i.log 2>&1")
+check("a redirection target that tree-sitter-bash splits after its last $ stays one target",
+      [list(f) for f in found] == [["git", "push", "origin", "w$i"]]
+      and found[0].redirects == [(">", "$X/push$i.log"), ("2>&", "1")],
+      [(list(f), f.redirects) for f in found])
+found = reader.simple_commands("cd /o && git log 2>/dev/null | head 2>/dev/null | cat; git push")
+check("a cd before && counts after a pipeline in which two stages have a redirection",
+      [list(f) for f in found] == [["cd", "/o"], ["git", "log"], ["head"], ["cat"], ["git", "push"]]
+      and [f.child_shell == () for f in found] == [True, False, False, False, True]
+      and found[1].redirects == [("2>", "/dev/null")] and found[2].redirects == [("2>", "/dev/null")],
+      [(list(f), f.child_shell, f.redirects) for f in found])
+# tree-sitter-bash joins a redirected command on the next line onto a long pipeline's last stage.
+found = reader.simple_commands("make 2>&1 | tail -1 | sed s/a/b/\ncd /other >/dev/null\ngit push")
+check("a redirected cd on the line after a pipeline of three stages runs in the parent shell",
+      [list(f) for f in found] == [["make"], ["tail", "-1"], ["sed", "s/a/b/"], ["cd", "/other"],
+                                    ["git", "push"]]
+      and [f.child_shell == () for f in found] == [False, False, False, True, True]
+      and found[3].redirects == [(">", "/dev/null")] and found[2].redirects == [],
+      [(list(f), f.child_shell, f.redirects) for f in found])
+found = reader.simple_commands("cat <<EOF | bash && ls\nx\nEOF")
+check("a pipeline after a heredoc's delimiter ends at &&, and the heredoc reaches its later stage",
+      [list(f) for f in found] == [["cat"], ["bash"], ["ls"]]
+      and found[1].heredocs and found[1].heredocs[0].body == "x\n" and found[2].child_shell == ()
+      and not found[2].heredocs, [(list(f), f.child_shell, f.heredocs) for f in found])
+found = reader.simple_commands("(cd /a); f $(g) | h")
+check("each child shell says its kind: a subshell, a substitution, or a pipeline stage that "
+      "knows whether it is its pipeline's first",
+      [[(shell.kind, shell.first_stage) for shell in f.child_shell] for f in found]
+      == [[("subshell", False)], [("pipeline stage", True), ("substitution", False)],
+          [("pipeline stage", True)], [("pipeline stage", False)]]
+      and [f.inside_substitution() for f in found] == [False, True, False, False],
+      [(list(f), f.child_shell) for f in found])
 found = reader.simple_commands("x | cd /a && ls >o | head")
 check("each stage of both pipelines in `x | cd /a && ls >o | head` runs in a child shell",
       all(f.child_shell != () for f in found) and found[2].redirects == [(">", "o")],
@@ -252,6 +285,23 @@ found = reader.simple_commands("git push <<EOF --force origin the-pr-branch >/de
 check("a redirection after the words that follow a heredoc delimiter stays a redirection",
       [list(f) for f in found] == [["git", "push", "--force", "origin", "the-pr-branch"]]
       and (">", "/dev/null") in found[0].redirects, [(list(f), f.redirects) for f in found])
+found = reader.simple_commands("git push <<EOF --force origin b | cat\nx\nEOF")
+check("words after a heredoc delimiter followed by a pipe stay the command's words",
+      [list(f) for f in found] == [["git", "push", "--force", "origin", "b"], ["cat"]],
+      [(list(f), f.redirects) for f in found])
+found = reader.simple_commands("f $(cat <<EOF -n) y\nx\nEOF\n")
+check("a heredoc in a substitution that closes on its line is not moved out of it to the outer command",
+      found and not any(f[:1] == ["f"] and f.heredocs for f in found),
+      [(list(f), f.heredocs) for f in found])
+found = reader.simple_commands("cat <<A <<B\na\nA\nb\nB")
+check("of two heredocs on one line, the first keeps its own body",
+      found and found[0].heredocs and found[0].heredocs[0].body == "a\n",
+      [(list(f), f.heredocs) for f in found])
+found = reader.simple_commands("cat <<'EOF' 2>/dev/null | bash\nx\nEOF")
+check("a heredoc whose command has a redirection after the delimiter reaches the piped bash",
+      [list(f) for f in found] == [["cat"], ["bash"]] and found[1].heredocs
+      and found[1].heredocs[0].body == "x\n" and ("2>", "/dev/null") in found[0].redirects,
+      [(list(f), f.redirects, f.heredocs) for f in found])
 found = reader.simple_commands("cat <<EOF $(tmux send-keys -t a x) 2>&1 >out\nx\nEOF")
 check("a substitution among the words after a heredoc delimiter still runs, with the line read again",
       ["tmux", "send-keys", "-t", "a", "x"] in [list(f) for f in found]
@@ -493,9 +543,34 @@ with tempfile.TemporaryDirectory() as scratch:
     finally:
         if sys.modules.get("tree_sitter") is CachedUnusableTreeSitter and saved_module is not None:
             sys.modules["tree_sitter"] = saved_module
-    check("after an install, a cached copy that could not be used is dropped and the installed one loads",
+    check("before importing inside the lock, a cached copy that could not be used is dropped, "
+          "so the installed one loads with no install",
           raised is None and parser is not None and parser.parse(b"ls").root_node.type == "program"
           and installs == [], (raised, installs))
+
+    # The copy on disk is unusable until the install replaces it; the import inside the lock
+    # caches it again, so it must be dropped once more after the install.
+    MARKER = "tree_sitter.unusable_copy_marker"
+    disk = {"usable": False}
+
+    def importer_of_the_disk_copy():
+        if MARKER in sys.modules:
+            raise ImportError("the cached copy cannot be used")
+        if not disk["usable"]:
+            sys.modules[MARKER] = object()
+            raise ImportError("the copy on disk cannot be used")
+        return reader.import_tree_sitter_bash()
+    try:
+        parser = reader.load_parser(importer_of_the_disk_copy,
+                                    lambda: disk.update(usable=True) or "installed",
+                                    Clock(5300.0), lambda: False)
+        raised = None
+    except reader.ShellParserUnavailable as error:
+        parser, raised = None, error
+    finally:
+        sys.modules.pop(MARKER, None)
+    check("after an install, the unusable copy cached inside the lock is dropped and the "
+          "installed one loads", raised is None and parser is not None, raised)
 
     # The real importer, in a process whose user site did not exist when it started.
     import tree_sitter as installed_tree_sitter

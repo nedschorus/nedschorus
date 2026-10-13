@@ -485,9 +485,8 @@ def analyze_heredoc(words, body, ssh_context, verified, guard):
     index, kind = first_ssh_or_shell(words)
     if kind == "ssh":
         host, carried, remote_words = parse_ssh_invocation(words[index + 1:])
-        # ssh joins its remote words, and the remote shell splits them again.
-        remote = " ".join(remote_words).split()
-        remote_index, remote_kind = first_ssh_or_shell(remote)
+        # ssh joins its remote words, and the remote shell reads them again as a command line.
+        remote, remote_index, remote_kind = remote_ssh_or_shell(" ".join(remote_words))
         # The remote shell runs the heredoc when ssh has no remote command, or when the remote
         # command is a shell reading its standard input, such as bash -s.
         if host is not None and (not remote or (
@@ -499,6 +498,20 @@ def analyze_heredoc(words, body, ssh_context, verified, guard):
     if kind == "shell" and shell_reads_standard_input(words[index + 1:]):
         return analyze_command_text(body, ssh_context, verified, guard)
     return None
+
+
+def remote_ssh_or_shell(remote_line):
+    """Return (words, index, kind) for the first command of a remote line that runs ssh or a shell.
+
+    words is [] when ssh has no remote command; kind is None when no command runs either.
+    """
+    commands = [command for command in shell_reader.simple_commands(remote_line)
+                if not command.inside_substitution()]
+    for command in commands:
+        index, kind = first_ssh_or_shell(command)
+        if kind is not None:
+            return list(command), index, kind
+    return ([] if not commands else list(commands[0])), None, None
 
 
 def first_ssh_or_shell(words):
@@ -522,7 +535,8 @@ def shell_reads_standard_input(arguments):
     index = 0
     while index < len(arguments):
         word = arguments[index]
-        if word == "--":
+        # A lone - ends a shell's options as -- does.
+        if word in ("--", "-"):
             return reads_standard_input or index + 1 >= len(arguments)
         if word in SHELL_OPTIONS_WITH_A_VALUE:
             index += 2

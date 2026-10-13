@@ -338,6 +338,31 @@ for case_name, command in [
     check(f"and the probe runs locally: {case_name}",
           runner.calls and runner.calls[0][0] != "ssh", runner.calls)
 for case_name, command in [
+    ("send-keys in a heredoc fed to bash - is denied: a lone - ends bash's options",
+     "bash - <<'EOF'\ntmux send-keys -t gatekeeper Enter\nEOF"),
+    ("send-keys in a heredoc fed to ssh host 'bash -' is denied",
+     "ssh ned-box 'bash -' <<'EOF'\ntmux send-keys -t gatekeeper Enter\nEOF"),
+    ("send-keys in a heredoc fed to a remote bash -eo pipefail is denied: -o takes pipefail",
+     "ssh ned-box bash -eo pipefail <<'EOF'\ntmux send-keys -t gatekeeper Enter\nEOF"),
+    ("send-keys in a heredoc fed to a remote bash --rcfile with a quoted path is denied",
+     "ssh ned-box \"bash --rcfile '/tmp/guard rc'\" <<'EOF'\ntmux send-keys -t gatekeeper Enter\nEOF"),
+    ("send-keys in a heredoc fed to ssh host 'cd /x && bash -s' is denied",
+     "ssh ned-box 'cd /x && bash -s' <<'EOF'\ntmux send-keys -t gatekeeper Enter\nEOF"),
+    ("send-keys in a heredoc fed to cat 2>/dev/null and piped to bash is denied",
+     "cat <<'EOF' 2>/dev/null | bash\ntmux send-keys -t gatekeeper Enter\nEOF"),
+]:
+    runner = StubRunner(stdout="1\n")
+    reason = decide(command, runner)
+    check(case_name, reason is not None and "attached client" in reason, reason)
+for case_name, command in [
+    ("a heredoc fed to bash -- consumer.sh is that script's standard input",
+     "bash -- consumer.sh <<'EOF'\ntmux send-keys -t gatekeeper Enter\nEOF"),
+    ("a heredoc fed to bash - consumer.sh is that script's standard input",
+     "bash - consumer.sh <<'EOF'\ntmux send-keys -t gatekeeper Enter\nEOF"),
+]:
+    runner = StubRunner(stdout="1\n")
+    check(case_name, decide(command, runner) is None and not runner.calls, runner.calls)
+for case_name, command in [
     ("a heredoc fed to a remote bash -lc is the -c command's standard input, not a script",
      "ssh ned-box bash -lc 'cat >f' <<'EOF'\ntmux send-keys -t gatekeeper Enter\nEOF"),
     ("a heredoc fed to a remote bash -sc is the -c command's standard input, though -s is given",

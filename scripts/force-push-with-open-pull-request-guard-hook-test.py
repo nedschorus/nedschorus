@@ -286,6 +286,28 @@ check("D2 gh ran in the cd'd directory, so it infers the right repository",
       "/elsewhere/wt-fast-read" in runner.probe_directories(),
       str(runner.probe_directories()))
 
+# tree-sitter-bash folds a command bash runs in the parent shell into a pipeline stage
+# in two shapes; the cd before or on the line after the pipeline still moves the probe.
+for case_name, command in [
+    ("a cd before a pipeline in which two stages have a redirection",
+     "cd /elsewhere/wt-fast-read && git log 2>/dev/null | head 2>/dev/null | cat; "
+     "git push -f origin the-pr-branch"),
+    ("a redirected cd on the line after a pipeline of three stages",
+     "make 2>&1 | tail -1 | sed s/a/b/\ncd /elsewhere/wt-fast-read >/dev/null\n"
+     "git push -f origin the-pr-branch"),
+]:
+    runner = ProbeRunner(branch="the-pr-branch",
+                         open_pull_requests={"the-pr-branch": FAST_READ_PULL_REQUEST})
+    decision, _ = decide(command, runner)
+    check(f"D2 {case_name} moves the probe", decision == "deny"
+          and "/elsewhere/wt-fast-read" in runner.probe_directories(),
+          (decision, runner.probe_directories()))
+runner = ProbeRunner(branch="the-pr-branch",
+                     open_pull_requests={"the-pr-branch": FAST_READ_PULL_REQUEST})
+decide("cd /elsewhere/wt-fast-read | cat; git push -f origin the-pr-branch", runner)
+check("D2 a cd that is itself a pipeline stage does not move the probe",
+      "/elsewhere/wt-fast-read" not in runner.probe_directories(), runner.probe_directories())
+
 runner = ProbeRunner()
 decision, reason = decide("cd $WORKTREE && git push --force", runner)
 check("D2 an unexpanded directory is refused as unresolvable",
