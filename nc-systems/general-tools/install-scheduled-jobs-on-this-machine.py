@@ -561,24 +561,28 @@ CRON_ENVIRONMENT_ASSIGNMENT = re.compile(r"\s*[A-Za-z_][A-Za-z0-9_]*\s*=")
 INTERPRETER_PROGRAM_NAME = re.compile(r"python[0-9.]*|bash|sh|dash|zsh|perl|ruby|node|env")
 
 
+def markdown_code_span(text):
+    """Return text as a Markdown code span that no run of backticks inside it closes."""
+    longest = max((len(run) for run in re.findall("`+", text)), default=0)
+    fence = "`" * (longest + 1)
+    padding = " " if text.startswith("`") or text.endswith("`") else ""
+    return f"{fence}{padding}{text}{padding}{fence}"
+
+
 def shell_parser_refusal(error, line) -> Refusal:
     host = socket.gethostname().split(".")[0]
     if isinstance(error, shell_reader.ShellCommandUnreadable):
-        stopped = (f"{PROGRAM}: not run — the shell command reader "
-                   f"({shell_reader.__file__.rsplit('/', 1)[-1]}) failed on the crontab line "
-                   f"{line} on {host} ({error.install_output}). Nothing on this machine changed.")
-        report = (f"in these words: \"{PROGRAM} did not run, because the shell command reader "
-                  f"failed on the crontab line {line} on {host} ({error.install_output}).\"")
-        again = (f"Run {PROGRAM} again, with the same options, only after the shell command reader "
-                 f"is fixed.")
-        if shell_reader._session_unattended(os.environ):
-            return Refusal(stopped,
-                           f"If you are a subagent, tell the agent that dispatched you, {report}",
-                           "No user attends this agent-session, so do not tell the user.", again)
-        return Refusal(stopped,
-                       f"Tell the user, or, if you are a subagent, the agent that dispatched you, "
-                       f"{report}",
-                       again)
+        return Refusal(
+            f"{PROGRAM}: not run — the shell command reader "
+            f"({shell_reader.__file__.rsplit('/', 1)[-1]}) failed on the crontab line "
+            f"{markdown_code_span(line)} "
+            f"on {host} ({error.install_output}). Nothing on this machine changed.",
+            *shell_reader.report_to_user_or_dispatching_agent_instruction_build(
+                f"\"{PROGRAM} did not run, because the shell command reader failed on the "
+                f"crontab line {markdown_code_span(line)} on {host} "
+                f"({error.install_output}).\"").split("\n"),
+            f"Run {PROGRAM} again, with the same options, only after the shell command reader "
+            f"is fixed.")
     install = (f"python3 -m pip install --user --break-system-packages "
                f"-r {shell_reader.REQUIREMENTS_FILE}")
     # The user sits at the Mac, and reaches ned-box over ssh.
@@ -588,9 +592,10 @@ def shell_parser_refusal(error, line) -> Refusal:
         f"{PROGRAM}: not run — the shell parser tree-sitter-bash, which this program uses to read "
         f"the crontab's commands, is missing on {host}, and installing it failed. Nothing on "
         f"this machine changed.",
-        f"Tell the user, or, if you are a subagent, the agent that dispatched you: "
-        f"tree-sitter-bash could not be installed on {host}; to install it by hand, {by_hand}.",
-        "Once tree-sitter-bash is installed, run the same command again, with the same options.",
+        *shell_reader.report_to_user_or_dispatching_agent_instruction_build(
+            f"\"tree-sitter-bash could not be installed on {host}; to install it by hand, "
+            f"{by_hand}.\"").split("\n"),
+        f"Run {PROGRAM} again, with the same options, only after tree-sitter-bash is installed.",
         f"What the install printed: {error.install_output}")
 
 

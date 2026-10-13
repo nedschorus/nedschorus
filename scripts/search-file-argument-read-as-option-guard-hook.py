@@ -267,6 +267,25 @@ def analyze_command_text(command, payload_cwd, clock=time.monotonic):
         accepted_command=whole_command, **details)
 
 
+def unchecked_hook_output(why, report=None):
+    """Return the PreToolUse JSON that lets a command through and says why it was not checked.
+
+    report, when given, is the words to tell the user or the dispatching agent.
+    """
+    message = (
+        f"The search-file-argument guard let this command through without checking it, and "
+        f"the command has run: {why}\n"
+        f"Look at the files the command's file patterns match. If one of them names a file "
+        f"whose name starts with -, the search read that name as an option, so run the search "
+        f"again with -- before the file names; if none does, the search ran as written.")
+    if report is not None:
+        message += "\n" + shell_reader.report_to_user_or_dispatching_agent_instruction_build(report)
+    return json.dumps({"hookSpecificOutput": {
+        "hookEventName": "PreToolUse",
+        "additionalContext": message,
+    }})
+
+
 def deny(reason):
     print(json.dumps({"hookSpecificOutput": {
         "hookEventName": "PreToolUse",
@@ -292,7 +311,18 @@ def main(stdin=sys.stdin, clock=time.monotonic):
         print(shell_reader.parser_unavailable_hook_output(
             "The search-file-argument guard", error))
         return 0
-    except (ExpansionBudgetSpent, OSError, ValueError, re.error):
+    except ExpansionBudgetSpent:
+        print(unchecked_hook_output(
+            f"expanding its file patterns took longer than the guard's "
+            f"{EXPANSION_BUDGET_SECONDS:.0f}-second limit, which keeps the guard inside its hook "
+            f"timeout. The limit is deliberate; nothing failed."))
+        return 0
+    except (OSError, ValueError, re.error) as error:
+        print(unchecked_hook_output(
+            f"the guard failed on it ({type(error).__name__}: {error}).",
+            f"\"The search-file-argument guard failed on a command and let it through unchecked "
+            f"({type(error).__name__}: {error}).\" After those words, give the command as a "
+            f"quoted block of its own."))
         return 0
     if refusal:
         deny(refusal)
