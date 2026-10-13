@@ -1497,6 +1497,19 @@ check("a new process that fails outside the reader reaches the guard as its exce
       raised is not None and raised.install_output
       == "reading the command in a new process failed: RuntimeError: the request could not be read",
       raised and raised.install_output)
+# A new process killed by a signal prints nothing; its exit status is then the agent's only clue.
+killed_child = "import os, signal; os.kill(os.getpid(), signal.SIGKILL)"
+try:
+    reader._simple_commands_in_a_new_process(
+        "ls", None, runner=lambda arguments, **options: subprocess.run(
+            [sys.executable, "-c", killed_child], **options))
+    raised = None
+except reader.ShellParserUnavailable as error:
+    raised = error
+check("a new process killed by a signal, which prints nothing, reaches the guard as its exit status",
+      raised is not None
+      and raised.install_output == "reading the command in a new process failed: exit -9",
+      raised and raised.install_output)
 command = reader.simple_commands("cat <<E >~/x\nb\nE")[0]
 command.added_attribute = (reader.ShellWordWithUnexpandedTildePrefixBashWouldExpand("~/y"), [1, None])
 command.heredocs[0].added_attribute = True
