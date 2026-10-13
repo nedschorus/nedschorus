@@ -1140,7 +1140,18 @@ except r.ShellParserUnavailable as error:
           and "undo" in attended and "Tell the user" in attended and "ValueError: injected" in attended,
           attended)
     check("in an agent-session no user attends, the reader-failed message does not ask to tell the user",
-          "do not tell the user" in unattended and "Tell the user" not in unattended, unattended)
+          "do not tell the user" in unattended and "Tell the user" not in unattended
+          and "If you are a subagent, tell the agent that dispatched you" in unattended, unattended)
+    check("the reader-failed message says where the quoted command goes",
+          "After those words, give the command as a quoted block of its own" in attended, attended)
+    missing_unattended = context_of(reader.parser_unavailable_hook_output(
+        "The force-push guard", reader.ShellParserUnavailable("pip: no network"),
+        {"CLAUDE_CODE_SESSION_ATTENDED": "0"}))
+    check("in an agent-session no user attends, the parser-missing message still has a subagent "
+          "report to the agent that dispatched it",
+          "If you are a subagent, tell the agent that dispatched you, in these words" in missing_unattended
+          and "pip: no network" in missing_unattended and "Tell the user" not in missing_unattended,
+          missing_unattended)
 
     # A failure inside the reader reaches each guard as ShellCommandUnreadable, never as another
     # error that would stop the guard.

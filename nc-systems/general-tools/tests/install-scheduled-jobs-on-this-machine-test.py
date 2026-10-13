@@ -1374,31 +1374,35 @@ with tempfile.TemporaryDirectory() as temporary:
     def failing_collect(*arguments, **keywords):
         raise ValueError("injected")
     shell_reader._collect = failing_collect
+    session_variables = ("CLAUDE_CODE_SESSION_ATTENDED", "NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER")
+    saved_session = {name: os.environ.pop(name, None) for name in session_variables}
     try:
+        # Attended: neither session variable is set.
         stub = MachineStub(crontab=(BOX_MIRROR + "\n" + runs_directly + "\n").encode())
         exit_code, printed, errors = run_main(["--remove-not-in-table"], NED_BOX, stub)
-        saved_attended = os.environ.get("CLAUDE_CODE_SESSION_ATTENDED")
         os.environ["CLAUDE_CODE_SESSION_ATTENDED"] = "0"
-        try:
-            unattended_exit, unattended_printed, unattended_errors = run_main(
-                ["--remove-not-in-table"], NED_BOX,
-                MachineStub(crontab=(BOX_MIRROR + "\n" + runs_directly + "\n").encode()))
-        finally:
-            if saved_attended is None:
-                os.environ.pop("CLAUDE_CODE_SESSION_ATTENDED", None)
-            else:
-                os.environ["CLAUDE_CODE_SESSION_ATTENDED"] = saved_attended
+        unattended_exit, unattended_printed, unattended_errors = run_main(
+            ["--remove-not-in-table"], NED_BOX,
+            MachineStub(crontab=(BOX_MIRROR + "\n" + runs_directly + "\n").encode()))
     finally:
         shell_reader._collect = real_collect
+        for name, value in saved_session.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
     check("when the shell reader fails on a crontab line, --remove-not-in-table writes no crontab, "
-          "exits 2, and says what to tell the user, naming the line and the failure",
+          "exits 2, and says what to tell the user, quoting the line and the failure",
           exit_code == 2 and stub.crontab_writes == [] and "ValueError: injected" in errors
-          and f"failed on the crontab line {runs_directly} on " in errors.splitlines()[0]
-          and f"failed on the crontab line {runs_directly} on " in errors.splitlines()[1]
-          and "in these words" in errors,
+          and f"failed on the crontab line `{runs_directly}` on " in errors.splitlines()[0]
+          and f"failed on the crontab line `{runs_directly}` on " in errors.splitlines()[1]
+          and "Tell the user" in errors and "in these words" in errors,
           (exit_code, printed, errors, stub.crontab_writes))
-    check("in an agent-session no user attends, that refusal does not ask to tell the user",
+    check("in an agent-session no user attends, that refusal tells a subagent to report, does not "
+          "ask to tell the user, and gives a top-level agent its next step",
           unattended_exit == 2 and "do not tell the user" in unattended_errors
+          and "If you are a subagent, tell the agent that dispatched you" in unattended_errors
+          and "go on with your task" in unattended_errors
           and "Tell the user" not in unattended_errors, unattended_errors)
 
 print()

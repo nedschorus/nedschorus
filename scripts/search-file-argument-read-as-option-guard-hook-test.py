@@ -20,6 +20,7 @@ import contextlib
 import importlib.util
 import io
 import json
+import re
 import os
 import shutil
 import subprocess
@@ -57,8 +58,14 @@ def make_scratch_projects_folder():
     return scratch
 
 
+LET_THROUGH_MESSAGES = []
+
+
 def run_main(command, cwd, clock=None):
-    """Drive main() as the harness does; return the refusal text or None."""
+    """Drive main() as the harness does; return the refusal text or None.
+
+    A message that lets the command through is kept in LET_THROUGH_MESSAGES.
+    """
     payload = {"tool_name": "Bash", "cwd": str(cwd),
                "tool_input": {"command": command}}
     stdout = io.StringIO()
@@ -73,6 +80,9 @@ def run_main(command, cwd, clock=None):
     if not text:
         return None
     output = json.loads(text)["hookSpecificOutput"]
+    if "permissionDecision" not in output:
+        LET_THROUGH_MESSAGES.append(output["additionalContext"])
+        return None
     assert output["permissionDecision"] == "deny", output
     return output["permissionDecisionReason"]
 
@@ -332,7 +342,7 @@ try:
         check(f"passes: {command!r}", run_main(command, scratch) is None)
 
     # -----------------------------------------------------------------------
-    # Fails open, silently.
+    # Lets the command through, and says why it was not checked.
     # -----------------------------------------------------------------------
     check("passes when a cd target cannot be resolved",
           run_main('cd "$SOMEWHERE" && grep -l needle */*.jsonl', scratch) is None)
@@ -340,9 +350,29 @@ try:
           run_main("grep -l needle */*.jsonl", scratch / "no-such-folder") is None)
 
     ticks = iter(range(0, 10_000, 100))
-    check("passes when the expansion budget is spent",
+    LET_THROUGH_MESSAGES.clear()
+    check("passes when the expansion budget is spent, and says the limit stopped the check",
           run_main("grep -l needle */*.jsonl", scratch,
-                   clock=lambda: float(next(ticks))) is None)
+                   clock=lambda: float(next(ticks))) is None
+          and len(LET_THROUGH_MESSAGES) == 1
+          and "limit is deliberate; nothing failed" in LET_THROUGH_MESSAGES[0]
+          and "Tell the user" not in LET_THROUGH_MESSAGES[0], LET_THROUGH_MESSAGES)
+    real_analyze = guard.analyze_command_text
+    for failure in (OSError("disk unreadable"), ValueError("bad value"), re.error("bad pattern")):
+        def failing(*arguments, failure=failure, **keywords):
+            raise failure
+        guard.analyze_command_text = failing
+        LET_THROUGH_MESSAGES.clear()
+        try:
+            refusal = run_main("grep -l needle */*.jsonl", scratch)
+        finally:
+            guard.analyze_command_text = real_analyze
+        check(f"when the guard fails with {type(failure).__name__}, it lets the command through, "
+              f"says it was not checked, quotes the error and says whom to tell",
+              refusal is None and len(LET_THROUGH_MESSAGES) == 1
+              and f"{type(failure).__name__}: {failure}" in LET_THROUGH_MESSAGES[0]
+              and "without checking it" in LET_THROUGH_MESSAGES[0]
+              and "Tell the user" in LET_THROUGH_MESSAGES[0], LET_THROUGH_MESSAGES)
 
     many = scratch / "many"
     many.mkdir()
@@ -354,6 +384,7 @@ try:
         readings_taken.append(None)
         return 0.0 if len(readings_taken) < 3 else 1000.0
 
+    LET_THROUGH_MESSAGES.clear()
     check("passes when the budget is spent during a walk over 300 names",
           run_main("grep -l needle *", many,
                    clock=clock_past_the_budget_on_its_third_reading) is None)
