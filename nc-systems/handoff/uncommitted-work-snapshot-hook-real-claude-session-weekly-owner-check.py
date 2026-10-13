@@ -156,9 +156,12 @@ def start_claude(claude_program, clone, settings_path):
 def wait_for_claude(process, timeout_seconds):
     """Return (claude's process id, exit code, stdout, stderr); the exit code is None on timeout.
 
-    A timeout kills claude's whole process group: a child left alive, such as a
-    hook or a Bash command, would keep claude's output pipes open and the read
-    after the kill would wait for that child.
+    A timeout, or an interruption such as Ctrl-C, kills claude's whole process group, so
+    no hook or Bash command claude started outlives the check. claude runs in a session of
+    its own, so a Ctrl-C at the terminal reaches only the check, which re-raises it after
+    the kill. Killing the group also closes any copy of claude's output pipes a child holds,
+    so the read after the kill does not wait for that child; the test's fake claude has such
+    a child, and whether a real claude's children hold claude's pipes has not been checked.
     """
     try:
         stdout, stderr = process.communicate(timeout=timeout_seconds)
@@ -166,6 +169,10 @@ def wait_for_claude(process, timeout_seconds):
         os.killpg(process.pid, signal.SIGKILL)
         stdout, stderr = process.communicate()
         return process.pid, None, stdout, stderr
+    except BaseException:
+        os.killpg(process.pid, signal.SIGKILL)
+        process.wait()
+        raise
     return process.pid, process.returncode, stdout, stderr
 
 

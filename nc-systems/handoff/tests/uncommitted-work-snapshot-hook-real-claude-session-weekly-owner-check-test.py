@@ -249,6 +249,44 @@ def test_claude_that_cannot_start_or_finish_fails():
           f"still running: {still_running}; {record or (completed and completed.stderr)}")
 
 
+def test_an_interrupted_check_kills_claude_and_removes_its_scratch_clone():
+    # Ctrl-C at a terminal sends SIGINT to the foreground process group, which holds the check
+    # but not claude, because claude runs in a session of its own.
+    for stale in (FAKE_CLAUDE_PROCESS_ID_FILE, FAKE_CLAUDE_CHILD_PROCESS_ID_FILE):
+        stale.unlink(missing_ok=True)
+    temporary = SCRATCH / "temporary-directory-of-the-interrupted-check"
+    temporary.mkdir()
+    check_process = subprocess.Popen(
+        [sys.executable, str(CHECK), "--claude-program", str(FAKE_CLAUDE),
+         "--record-directory", str(SCRATCH / "records-interrupted"), "--timeout-seconds", "60"],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        env=dict(os.environ, FAKE_CLAUDE_MODE="hang", TMPDIR=str(temporary)))
+    deadline = time.monotonic() + 30
+    while not (FAKE_CLAUDE_PROCESS_ID_FILE.exists() and FAKE_CLAUDE_CHILD_PROCESS_ID_FILE.exists()):
+        if time.monotonic() > deadline or check_process.poll() is not None:
+            check_process.kill()
+            check(False, "an interrupted check kills claude and its child process",
+                  "the fake claude never started its child: " + check_process.communicate()[1])
+            return
+        time.sleep(0.1)
+    os.kill(check_process.pid, signal.SIGINT)
+    try:
+        _, stderr = check_process.communicate(timeout=30)
+    except subprocess.TimeoutExpired:
+        check_process.kill()
+        _, stderr = check_process.communicate()
+    still_running = [process_id for process_id in (
+        int(FAKE_CLAUDE_PROCESS_ID_FILE.read_text()),
+        int(FAKE_CLAUDE_CHILD_PROCESS_ID_FILE.read_text())) if process_is_running(process_id)]
+    for process_id in still_running:
+        os.kill(process_id, signal.SIGKILL)
+    check(not still_running and "KeyboardInterrupt" in stderr,
+          "an interrupted check kills claude and its child process",
+          f"still running: {still_running}; exit {check_process.returncode}: {stderr}")
+    check(list(temporary.iterdir()) == [],
+          "an interrupted check removes its scratch clone", list(temporary.iterdir()))
+
+
 def test_the_record_goes_to_the_log_store_by_default():
     mark = weekly_owner_check.mark
     real = mark.this_machine_is_ned_box, mark.run_on_ned_box_or_here
@@ -341,6 +379,7 @@ def main():
     try:
         for case in (test_a_session_that_finds_itself_passes, test_failures_are_recorded,
                      test_claude_that_cannot_start_or_finish_fails,
+                     test_an_interrupted_check_kills_claude_and_removes_its_scratch_clone,
                      test_the_record_goes_to_the_log_store_by_default,
                      test_a_scratch_clone_that_cannot_be_made_fails,
                      test_a_check_that_cannot_run_fails,
