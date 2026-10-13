@@ -149,10 +149,36 @@ for words, expected in [
     (["xargs", "-n", "1", "bash"], (3, False)),
     (["tee", "/tmp/bash"], (0, True)),
     (["sudo", "-u", "nedlern"], (None, True)),
+    (["env", "-u", "HOME", "bash"], (3, True)),
+    (["env", "--unset", "HOME", "bash"], (3, True)),
+    (["timeout", "-k", "5", "60", "bash"], (4, True)),
+    (["timeout", "--signal", "KILL", "60", "bash"], (4, True)),
+    (["timeout", "60", "--signal=KILL", "bash"], (3, True)),
+    (["timeout", "60", "-s", "KILL", "bash"], (4, True)),
+    (["flock", "/tmp/l", "-c", "bash"], (None, True)),
+    (["env", "-a", "name", "bash"], (3, True)),
+    (["env", "--argv0", "name", "bash"], (3, True)),
+    (["env", "-f", "x.env", "bash"], (3, True)),
+    (["env", "--file", "x.env", "bash"], (3, True)),
+    (["env", "-P", "/bin", "bash"], (3, True)),
+    (["sudo", "-R", "/root", "bash"], (3, True)),
+    (["sudo", "-T", "60", "bash"], (3, True)),
+    (["sudo", "-c", "staff", "bash"], (3, True)),
+    (["sudo", "-a", "pam", "bash"], (3, True)),
+    (["sudo", "--chroot", "/root", "bash"], (3, True)),
+    (["sudo", "--command-timeout", "60", "bash"], (3, True)),
+    (["sudo", "-hhost", "bash"], (2, True)),
+    (["xargs", "-J", "%", "bash"], (3, False)),
+    (["xargs", "-R", "2", "bash"], (3, False)),
+    (["xargs", "-S", "255", "bash"], (3, False)),
 ]:
     check(f"the program of {' '.join(words)} is word {expected[0]}, "
           f"{'receiving' if expected[1] else 'not receiving'} the standard input",
           reader.simple_command_program_index_skipping_wrappers(words) == expected, reader.simple_command_program_index_skipping_wrappers(words))
+
+found = reader.simple_commands("a | b; c | d")
+check("each stage names the first stage of its own pipeline",
+      [f.child_shell[-1].shell_pipeline_first_stage_byte_offset for f in found] == [0, 0, 7, 7], [f.child_shell for f in found])
 
 # --- child shells: where a cd stays ---
 found = reader.simple_commands("(cd /tmp/other && make); git push --force-with-lease o b")

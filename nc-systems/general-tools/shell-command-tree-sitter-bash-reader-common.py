@@ -114,13 +114,17 @@ class ChildShell(int):
     kind is SUBSTITUTION for a command or process substitution, whose output
     becomes words of another command, PIPELINE_STAGE for a stage of a pipeline
     of two or more, and SUBSHELL for ( ... ). first_stage says whether a
-    pipeline stage is its pipeline's first.
+    pipeline stage is its pipeline's first, and
+    shell_pipeline_first_stage_byte_offset is where that first stage starts, the
+    same for every stage of one pipeline.
     """
 
-    def __new__(cls, offset, kind, first_stage=False):
+    def __new__(cls, offset, kind, first_stage=False,
+                shell_pipeline_first_stage_byte_offset=None):
         shell = super().__new__(cls, offset)
         shell.kind = kind
         shell.first_stage = first_stage
+        shell.shell_pipeline_first_stage_byte_offset = shell_pipeline_first_stage_byte_offset
         return shell
 
     def __repr__(self):
@@ -176,10 +180,12 @@ class Wrapper:
 # flock's -c and env's -S take a command line as their value; the command they run is not
 # found, and the words after the value are taken as the program.
 WRAPPERS = {
-    "sudo": Wrapper({"-u", "-g", "-C", "-U", "-D", "-h", "-p", "-r", "-t", "--user",
-                     "--group", "--close-from", "--other-user", "--chdir", "--host",
-                     "--prompt", "--role", "--type"}),
-    "env": Wrapper({"-u", "-C", "-S", "--unset", "--chdir", "--split-string"}),
+    # sudo's -h takes a host only when attached, as in -hhost; alone it asks for help.
+    "sudo": Wrapper({"-u", "-g", "-C", "-U", "-D", "-p", "-r", "-t", "-R", "-T", "-c", "-a",
+                     "--user", "--group", "--close-from", "--other-user", "--chdir", "--host",
+                     "--prompt", "--role", "--type", "--chroot", "--command-timeout"}),
+    "env": Wrapper({"-u", "-C", "-S", "-a", "-f", "-P", "--unset", "--chdir", "--split-string",
+                    "--argv0", "--file"}),
     "timeout": Wrapper({"-s", "-k", "--signal", "--kill-after"}, operands=1),
     "nice": Wrapper({"-n", "--adjustment"}),
     "stdbuf": Wrapper({"-i", "-o", "-e", "--input", "--output", "--error"}),
@@ -191,7 +197,7 @@ WRAPPERS = {
     "flock": Wrapper({"-w", "-E", "-c", "--timeout", "--wait", "--conflict-exit-code",
                       "--command"}, operands=1),
     "caffeinate": Wrapper({"-t", "-w"}),
-    "xargs": Wrapper({"-a", "-d", "-E", "-I", "-L", "-n", "-P", "-s", "--arg-file",
+    "xargs": Wrapper({"-a", "-d", "-E", "-I", "-J", "-L", "-n", "-P", "-R", "-s", "-S", "--arg-file",
                       "--delimiter", "--max-lines", "--max-args", "--max-procs",
                       "--max-chars", "--process-slot-var"}, passes_standard_input=False),
 }
@@ -219,10 +225,17 @@ def simple_command_program_index_skipping_wrappers(words):
             return index, receives_standard_input
         receives_standard_input = receives_standard_input and wrapper.passes_standard_input
         index += 1
-        while index < len(words) and words[index].startswith("-"):
-            index += 2 if words[index] in wrapper.options_with_a_value else 1
-        index += wrapper.operands
+        index = _index_after_options(words, index, wrapper)
+        if wrapper.operands:
+            # Options may follow the operand too, as in timeout 60 --signal=KILL.
+            index = _index_after_options(words, index + wrapper.operands, wrapper)
     return None, receives_standard_input
+
+
+def _index_after_options(words, index, wrapper):
+    while index < len(words) and words[index].startswith("-"):
+        index += 2 if words[index] in wrapper.options_with_a_value else 1
+    return index
 
 
 def install_compiled_libraries(runner=subprocess.run):
@@ -621,10 +634,12 @@ class _Collector:
                 current[-1]["redirects"].append(item[1:])
         for pipeline in pipelines:
             shared_heredocs = list(heredocs)
+            pipeline_start = (pipeline[0]["children"][0] if pipeline[0]["children"]
+                              else pipeline[0]["node"]).start_byte
             for position, unit in enumerate(pipeline):
                 first = unit["children"][0] if unit["children"] else unit["node"]
                 unit_shell = (child_shell + (ChildShell(first.start_byte, PIPELINE_STAGE,
-                                                        position == 0),)
+                                                        position == 0, pipeline_start),)
                               if len(pipeline) > 1 else child_shell)
                 redirects, trailing_words = [], []
                 for redirect, limit in unit["redirects"]:

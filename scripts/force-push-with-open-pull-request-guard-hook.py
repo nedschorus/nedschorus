@@ -2,8 +2,9 @@
 """Deny force pushes that would replace a pull request head under review.
 
 Reviewers work against the pushed head; rewriting it invalidates their work.
-Detection is literal: shell wrappers other than env, ssh commands, heredoc
-bodies, and pushes of multiple branches are outside this guard's scope.
+Detection is literal: a push behind the wrappers the shared shell module
+knows, such as env, sudo and timeout, is read; ssh commands, heredoc bodies,
+and pushes of multiple branches are outside this guard's scope.
 The checkout determines the GitHub repository, regardless of the named remote;
 a push with no refspec is assumed to use push.default=simple.
 
@@ -53,8 +54,8 @@ SHORT_VALUE_LETTERS = "o"
 
 ENVIRONMENT_ASSIGNMENT_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 
-# An env option's value must not be mistaken for the program name.
-ENV_COMMAND_VALUE_OPTIONS = {"-u", "--unset"}
+# A wrapper option that runs the program in another directory.
+WRAPPER_DIRECTORY_OPTIONS = {("env", "-C"), ("env", "--chdir"), ("sudo", "-D"), ("sudo", "--chdir")}
 
 UNEXPANDED_PATTERN = re.compile(r"[$`*?]|\{\}")
 
@@ -144,30 +145,11 @@ BUDGET_SPENT_DETAIL = (
 
 def find_git_push_invocation(words):
     """Return sanctioned status, push words and directory override, or None for a non-push."""
-    index = 0
-    sanctioned = False
-    while index < len(words) and ENVIRONMENT_ASSIGNMENT_PATTERN.match(words[index]):
-        if words[index] == ESCAPE_HATCH_ASSIGNMENT:
-            sanctioned = True
-        index += 1
-    if index < len(words) and is_program(words[index], "env"):
-        index += 1
-        while index < len(words):
-            word = words[index]
-            if ENVIRONMENT_ASSIGNMENT_PATTERN.match(word):
-                if word == ESCAPE_HATCH_ASSIGNMENT:
-                    sanctioned = True
-                index += 1
-                continue
-            if word in ENV_COMMAND_VALUE_OPTIONS:
-                index += 2
-                continue
-            if word.startswith("-"):
-                index += 1
-                continue
-            break
-    if index >= len(words) or not is_program(words[index], "git"):
+    index, _ = shell_reader.simple_command_program_index_skipping_wrappers(words)
+    if index is None or not is_program(words[index], "git"):
         return None
+    sanctioned = ESCAPE_HATCH_ASSIGNMENT in words[:index]
+    wrapper_directory = directory_a_wrapper_sets(words[:index])
     index += 1
     directory_override = None
     while index < len(words):
@@ -189,9 +171,28 @@ def find_git_push_invocation(words):
         break
     if index >= len(words) or words[index] != "push":
         return None
+    if wrapper_directory is not None:
+        directory_override = (wrapper_directory if directory_override is None
+                              else os.path.join(wrapper_directory, directory_override))
     return {"sanctioned": sanctioned,
             "push_words": words[index + 1:],
             "directory_override": directory_override}
+
+
+def directory_a_wrapper_sets(wrapper_words):
+    """Return the directory env -C or sudo -D in front of the program changes to, or None."""
+    directory, wrapper, index = None, None, 0
+    while index < len(wrapper_words):
+        word = wrapper_words[index]
+        if not word.startswith("-"):
+            wrapper = word.rsplit("/", 1)[-1]
+        elif (wrapper, word) in WRAPPER_DIRECTORY_OPTIONS and index + 1 < len(wrapper_words):
+            directory = wrapper_words[index + 1]
+            index += 1
+        elif word.startswith("--chdir=") and wrapper in ("env", "sudo"):
+            directory = word[len("--chdir="):]
+        index += 1
+    return directory
 
 
 def parse_push_arguments(push_words):
