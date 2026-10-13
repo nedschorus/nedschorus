@@ -392,6 +392,44 @@ check("a word holding a heredoc is given back as written, body included",
       [list(f) for f in found] == [["cat"], ["git", "commit", "-m", "$(cat <<'EOF'\nmessage\nEOF\n)"]],
       [list(f) for f in found])
 
+# --- a heredoc body starts at the next line, and its substitutions run in order ---
+for command, expected in [
+    # A group that opens on the heredoc's line and closes later: the body still starts next line.
+    ("cat <<EOF && (xa\nbody\nEOF\n)\nxc d", [(["cat"], ["body\n"]), (["xa"], []), (["xc", "d"], [])]),
+    ("cat <<EOF && { xa\nbody\nEOF\n}\nxc d", [(["cat"], ["body\n"]), (["xa"], []), (["xc", "d"], [])]),
+    # A heredoc after a case ended by ;;& is taken out too, once the case is read.
+    ("case x in x) :;;& esac; bash <<'EOF'\nEOF2\ntmux send-keys -t a b\nEOF",
+     [([":"], []), (["bash"], ["EOF2\ntmux send-keys -t a b\n"])]),
+    # Inside double quotes a backslash keeps " literal in a delimiter.
+    ('cat <<"E\\"F"\nbody\nE"F\nls', [(["cat"], ["body\n"]), (["ls"], [])]),
+    # A heredoc inside a body's substitution is taken out before the substitution is read.
+    ("cat <<A\n$(cat <<B; xz\nb\nB\n)\nA",
+     [(["cat"], ["b\n"]), (["xz"], []), (["cat"], ["$(cat <<B; xz\nb\nB\n)\n"])]),
+    # A substitution that never closes takes the rest of the body: bash runs none of it.
+    ("cat <<A\n$(echo $(tmux send-keys -t a b)\nA", [(["cat"], ["$(echo $(tmux send-keys -t a b)\n"])]),
+    # Substitutions run in the order written; $(( )) is arithmetic, $$( the process id.
+    ("cat <<A\n$(xa) $(xb) `xc` $(xd)\nA",
+     [(["xa"], []), (["xb"], []), (["xc"], []), (["xd"], []), (["cat"], ["$(xa) $(xb) `xc` $(xd)\n"])]),
+    ("cat <<A\n$((1+2)) $$(xe) \\$(xf) $(xg)\nA",
+     [(["xg"], []), (["cat"], ["$((1+2)) $$(xe) \\$(xf) $(xg)\n"])]),
+]:
+    found = [(list(f), [h.body for h in f.heredocs]) for f in reader.simple_commands(command)]
+    check(f"heredoc read as bash reads it: {command!r}", found == expected, found)
+found = reader.simple_commands("cat <<A\n$(cd /x)\nA\ncat <<B\n$(git push -f o t)\nB")
+check("substitutions in two different bodies are different child shells, so a cd in one stays there",
+      found[0].child_shell != found[2].child_shell
+      and found[0].child_shell[0] < 0 and found[2].child_shell[0] < 0,
+      [(list(f), f.child_shell) for f in found])
+many = "".join(f"cat <<E{n}\nx\nE{n}\n" for n in range(reader.MAX_HEREDOCS_TAKEN_OUT + 2))
+found = reader.simple_commands(many + "bash <<Z\ntmux send-keys -t a b\nZ")
+check("a heredoc past the most that are taken out is still read as data fed to its command",
+      list(found[-1]) == ["bash"] and [h.body for h in found[-1].heredocs] == ["tmux send-keys -t a b\n"],
+      (list(found[-1]), found[-1].heredocs))
+found = reader.simple_commands("echo hi | w | od -c | head -2\ncat > f <x\ncat > g <y\n"
+                               "cd $(tmux send-keys -t a b) && for t in a b; do e; done; cat o")
+check("a substitution on a line folded into a redirection is read once",
+      [list(f) for f in found].count(["tmux", "send-keys", "-t", "a", "b"]) == 1, [list(f) for f in found])
+
 # --- a pipeline stage that is only a redirection, and lines folded into a redirection ---
 found = reader.simple_commands("a | >f && cd /x")
 check("a stage that is only a redirection ends its pipeline, so the command after && is not a stage",

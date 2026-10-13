@@ -483,41 +483,46 @@ class _Collector:
         for child in node.children:
             self.visit(child, child_shell, heredocs)
 
-    def expanded_heredoc_body(self, body, child_shell):
+    def expanded_heredoc_body(self, taken, child_shell):
         """Collect the commands an unquoted heredoc body runs as the shell expands it.
 
-        Only its substitutions run, and only those that close. Each one's text is read
-        as a command line of its own, so a heredoc inside it is taken out as any other.
+        Only its $( ) and backticked substitutions run, in the order written. Each
+        $( ) is found by parsing the body's text from there as a command line, with its
+        own heredocs taken out, and its text is read as a command line of its own. A
+        substitution that never closes takes the rest of the body with it, and bash
+        runs none of it.
         """
-        wrapper = b"NEDSCHORUS_BODY_END"
-        while wrapper in body:
-            wrapper += b"_"
-        prefix = b"cat <<" + wrapper + b"\n"
-        source = prefix + body + (b"" if body.endswith(b"\n") or not body else b"\n") \
-            + wrapper + b"\n"
-        text = bytearray(body)
-        stack = [parser().parse(source).root_node]
-        found = []
-        while stack:
-            node = stack.pop()
-            if node.type == "command_substitution":
-                found.append(node)
-                continue
-            stack.extend(node.children)
-        for node in found:
-            # tree-sitter-bash gives a substitution that never closes, and a backticked one in
-            # a body, no node of this type.
-            start, end = node.start_byte - len(prefix), node.end_byte - len(prefix)
-            text[start:end] = b" " * (end - start)
-            if _follows_process_id(source, node.start_byte):
-                continue
-            inner = source[node.start_byte + 2:node.end_byte - 1].decode("utf-8", "surrogatepass")
-            self.adopt(simple_commands(inner, self.glob_markers),
-                       child_shell + (ChildShell(-1 - start, SUBSTITUTION),))
-        # tree-sitter-bash reads $( ) in a body but leaves backticks as text.
-        for start, inner in backticked_commands(bytes(text).decode("utf-8", "surrogatepass")):
-            self.adopt(simple_commands(inner, self.glob_markers),
-                       child_shell + (ChildShell(-1 - start, SUBSTITUTION),))
+        body = taken.body
+        index = 0
+        while index < len(body):
+            character = body[index:index + 1]
+            if character == b"\\":
+                index += 2
+            elif character == b"`":
+                found = backticked_commands(body[index:].decode("utf-8", "surrogatepass"))
+                if not found or found[0][0] != 0:
+                    break
+                self.adopt(simple_commands(found[0][1], self.glob_markers),
+                           child_shell + (self.body_child_shell(taken, index),))
+                index = _backtick_end(body, index)
+            elif body[index:index + 2] == b"$(" and not _follows_process_id(body, index):
+                substitution = _substitution_at_start(body[index:])
+                if substitution is None:
+                    break
+                if substitution.startswith(b"$(("):
+                    index += len(substitution)
+                    continue
+                inner = substitution[2:-1].decode("utf-8", "surrogatepass")
+                self.adopt(simple_commands(inner, self.glob_markers),
+                           child_shell + (self.body_child_shell(taken, index),))
+                index += len(substitution)
+            else:
+                index += 1
+
+    @staticmethod
+    def body_child_shell(taken, offset):
+        # Negative, so it is no offset of the command line; apart for each body.
+        return ChildShell(-1 - offset - taken.number * BODY_IDENTITY_STRIDE, SUBSTITUTION)
 
     def adopt(self, commands, child_shell):
         """Add commands read from a second parse, inside the child shell they run in."""
@@ -653,7 +658,7 @@ class _Collector:
         body = taken.body.decode("utf-8", "surrogatepass")
         redirects.append(("<<", body))
         if taken.expanded:
-            self.expanded_heredoc_body(taken.body, child_shell)
+            self.expanded_heredoc_body(taken, child_shell)
         return [Heredoc(body, taken.expanded, taken.delimiter_as_written)]
 
     def simple_command(self, node, children, child_shell, heredocs, redirects, trailing_words):
@@ -738,10 +743,16 @@ def simple_commands(command_text, glob_markers=None):
     except ShellParserInstalledForANewProcess:
         _use_a_new_process()
         return _simple_commands_in_a_new_process(command_text, glob_markers)
-    source, tree, taken_out = _source_with_heredoc_bodies_taken_out(
-        command_text.encode("utf-8", "surrogatepass"))
+    original = command_text.encode("utf-8", "surrogatepass")
+    source, tree, taken_out = _source_with_heredoc_bodies_taken_out(original)
     if tree.root_node.has_error:
-        source, tree = _source_with_last_case_terminators_plain(source, tree)
+        # The case is repaired in the text as written, so that a heredoc after it, which
+        # the case's error hid, is in the parse and taken out with the others.
+        plain = _source_with_last_case_terminators_plain(original, parser().parse(original))
+        if plain != original:
+            repaired = _source_with_heredoc_bodies_taken_out(plain)
+            if not repaired[1].root_node.has_error:
+                source, tree, taken_out = repaired
     commands = _collect(tree.root_node, glob_markers, source, taken_out)
     if taken_out:
         for command in commands:
@@ -822,12 +833,13 @@ def _heredoc_starts(node):
 class _HeredocTakenOut:
     """A heredoc taken out of a command line: what was written, and its body."""
 
-    def __init__(self, written, delimiter_as_written, body, expanded, ending):
+    def __init__(self, written, delimiter_as_written, body, expanded, ending, number):
         self.written = written
         self.delimiter_as_written = delimiter_as_written
         self.body = body
         self.expanded = expanded
         self.ending = ending
+        self.number = number
 
 
 HEREDOC_PLACEHOLDER_PREFIX = "NEDSCHORUS_HEREDOC_"
@@ -875,7 +887,7 @@ def _source_with_heredoc_bodies_taken_out(source):
             written.decode("utf-8", "surrogatepass"),
             delimiter_as_written.decode("utf-8", "surrogatepass"), body,
             not any(mark in delimiter_as_written for mark in (b"'", b'"', b"\\")),
-            source[body_end:resume].decode("utf-8", "surrogatepass"))
+            source[body_end:resume].decode("utf-8", "surrogatepass"), index)
         source = (source[:operator.start_byte] + b"<" + placeholder.encode()
                   + source[delimiter_end:body_start] + source[resume:])
         tree = parser().parse(source)
@@ -894,11 +906,20 @@ def _delimiter_word(source, position):
         if character == b"\\":
             word += source[index + 1:index + 2]
             index += 2
-        elif character in (b"'", b'"'):
+        elif character == b"'":
             closing = source.find(character, index + 1)
             closing = len(source) if closing == -1 else closing
             word += source[index + 1:closing]
             index = closing + 1
+        elif character == b'"':
+            # Inside double quotes a backslash keeps ", \\, $ and ` literal.
+            index += 1
+            while index < len(source) and source[index:index + 1] != b'"':
+                if source[index:index + 1] == b"\\" and source[index + 1:index + 2] in b'"\\$`':
+                    index += 1
+                word += source[index:index + 1]
+                index += 1
+            index += 1
         elif character in b" \t\n;&|()<>":
             break
         else:
@@ -953,8 +974,8 @@ def _heredoc_body_start(source, delimiter_end):
             comments.append((node.start_byte, node.end_byte))
             continue
         if node.type in ("string", "raw_string", "ansi_c_string", "translated_string",
-                         "command_substitution", "process_substitution", "subshell",
-                         "compound_statement", "expansion", "arithmetic_expansion"):
+                         "command_substitution", "process_substitution", "expansion",
+                         "arithmetic_expansion"):
             inside.append((node.start_byte, node.end_byte))
             continue
         stack.extend(node.children)
@@ -987,6 +1008,32 @@ def _with_heredocs_put_back(text, taken_out):
     return text
 
 
+BODY_IDENTITY_STRIDE = 1 << 32
+
+
+def _substitution_at_start(text):
+    """Return the text of the $( ) or $(( )) that text starts with, as written, or None if it never closes."""
+    probe = b": " + text
+    source, tree, taken = _source_with_heredoc_bodies_taken_out(probe)
+    node = tree.root_node.descendant_for_byte_range(2, 3)
+    while node is not None and node.start_byte == 2 and node.type not in (
+            "command_substitution", "arithmetic_expansion"):
+        node = node.parent
+    if node is None or node.start_byte != 2 or not node.children \
+            or node.children[-1].type not in (")", "))") or node.children[-1].is_missing:
+        return None
+    written = source[2:node.end_byte].decode("utf-8", "surrogatepass")
+    return _with_heredocs_put_back(written, taken).encode("utf-8", "surrogatepass")
+
+
+def _backtick_end(text, index):
+    """Return the offset just after the backtick that closes the one at index."""
+    closing = index + 1
+    while closing < len(text) and text[closing:closing + 1] != b"`":
+        closing += 2 if text[closing:closing + 1] == b"\\" else 1
+    return closing + 1
+
+
 def _follows_process_id(source, offset):
     """Return whether bash reads the $( at offset as $$, the process id, followed by a parenthesis."""
     # tree-sitter-bash reads $$(x) as $ and $(x); bash pairs the dollars from the left.
@@ -1002,7 +1049,7 @@ LAST_CASE_TERMINATOR_PATTERN = re.compile(rb";;?&(\s*esac\b)")
 
 
 def _source_with_last_case_terminators_plain(source, tree):
-    """Return (source, tree) with ;;& or ;& before esac read as ;;, when that clears the error.
+    """Return source with ;;& or ;& before esac written as ;;.
 
     tree-sitter-bash rejects a last case branch ended by ;;& or ;&, and loses
     every command after the case; before esac they act as ;; does.
@@ -1012,11 +1059,7 @@ def _source_with_last_case_terminators_plain(source, tree):
             return match.group(0)
         return (b";;" + b" " * (len(match.group(0)) - len(match.group(1)) - 2)
                 + match.group(1))
-    plain = LAST_CASE_TERMINATOR_PATTERN.sub(plain_terminator, source)
-    if plain == source:
-        return source, tree
-    plain_tree = parser().parse(plain)
-    return (plain, plain_tree) if not plain_tree.root_node.has_error else (source, tree)
+    return LAST_CASE_TERMINATOR_PATTERN.sub(plain_terminator, source)
 
 
 TEXT_NODE_TYPES = {"raw_string", "string", "ansi_c_string", "heredoc_body", "comment"}
