@@ -4,12 +4,15 @@
 Run: python3 scripts/claude-code-session-transcript-project-directory-for-agent-seat-common-test.py
 Prints one line per case and exits non-zero if any case fails.
 
-The expected folder names are hard-coded literals, not derived from the
-function under test, so a mangling bug cannot be mirrored into the
-expectation. Each mangle case's seat path is rooted at a directory that
-exists on no machine, so resolve() passes it through unchanged; the symlink
-case builds a real link, because Claude Code names the folder after the
-resolved path the session runs in.
+The three mangle cases expect hard-coded literal folder names, not ones
+derived from the function under test, so a mangling bug cannot be mirrored
+into the expectation; their seat paths are rooted at a directory that
+exists on no machine, so resolve() passes them through unchanged. The
+symlink case builds a real link in a temporary directory, because Claude
+Code names the folder after the resolved path the session runs in. That
+directory's path is known only at run time, so the case computes its
+expected name with its own character test, independent of the function
+under test.
 """
 
 import importlib.util
