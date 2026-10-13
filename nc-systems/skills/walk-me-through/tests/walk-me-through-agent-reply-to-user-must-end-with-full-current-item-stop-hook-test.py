@@ -39,9 +39,11 @@ This approval-walk settles two questions about the poem page. It has 9 items.
 
 ## Item 2 of 9: where the poem page lives
 
-The poem page goes in the wiki, next to the glossary and the style guide, so that agents find it where they already look for project terms. Its name is checked against the naming page before the file is created.
+The poem page goes in the wiki, next to the glossary and the style guide, so that agents find it where they already look for project terms. Its name is checked against the [naming page](file:///x/naming.md) before the file is created.
 
 The strongest case for N: a page in the wiki is one more document agents must be told to read. Recommendation: Y.
+
+---
 
 ## Item 4.1 of 9: how a poem row reads
 
@@ -49,7 +51,12 @@ One row per job an agent is about to do, written "to do X, use Y", with one exam
 
 ## Item 5 of 9: the hook
 
-A hook checks each written file for narrow patterns and names the row to use when one matches. Recommendation: Y.
+A hook checks each written file for narrow patterns and names the row to use when one matches. The first patterns:
+
+- a Markdown fence literal;
+- `ps` called to find a process.
+
+Recommendation: Y.
 
 ## Item 6 of 9: the reviewer
 
@@ -63,7 +70,8 @@ Item 8 of 9 drops a repeated sentence from the page's last row. Recommendation: 
 
 ## Item 9 of 9: the page's opening section
 
-The opening section is rewritten. The original section:
+The opening section is rewritten.
+Item 1 of 9 put the page in the wiki, so the opening says so. The original section:
 
 ### What the page is
 
@@ -84,13 +92,15 @@ ITEM_2_REPLY = """Recorded your answer to item 1.
 
 **Item 2 of 9: where the poem page lives**
 
-The poem page goes in the wiki, next to the glossary and the style guide, so that agents find it where they already look for project terms. Its name is checked against the [naming page](file:///x/naming.md) before the file is created.
+The poem page goes in the wiki, next to the glossary and the style guide, so that agents find it where they already look for project terms. Its name is checked against the naming page before the file is created.
 
-**The strongest case for N:** a page in the wiki is one more document agents must be told to read.
+**The strongest case for N:** a page in the wiki is one more document agents must be told to read. **Recommendation: Y.**"""
 
-**Recommendation: Y.** Item 7 covers how agents are told about the page.
 
-Y, N or D?"""
+def section(start, end=None):
+    """The walk-document's text from one running-count heading to another."""
+    return WALK_DOCUMENT[WALK_DOCUMENT.index(start):
+                         WALK_DOCUMENT.index(end) if end else len(WALK_DOCUMENT)]
 
 
 def check(case_name, condition, detail=""):
@@ -172,131 +182,129 @@ def test_passes_when_reply_ends_with_item_in_full():
     case = Case()
     case.walk_files(minutes="Next to present: item 2 of 9.")
     case.reply(ITEM_2_REPLY)
-    check_silent("reply ending with the current item in full passes", case.run())
+    check_silent("a reply ending with the item, restated with bold, passes", case.run())
+    case.reply("Recorded.\n\n" + section("## Item 2 of 9", "## Item 4.1 of 9"))
+    check_silent("a reply ending with the item's walk-document text passes", case.run())
+    case = Case()
+    case.walk_files(minutes="Next to present: item 5 of 9.")
+    case.reply(section("## Item 5 of 9", "## Item 6 of 9")
+               .replace("- a Markdown", "1. a Markdown").replace("- `ps`", "2. `ps`"))
+    check_silent("an item whose list is restated as a numbered list passes", case.run())
 
 
-def test_blocks_short_summary():
+def test_blocks_reply_not_ending_with_item():
     case = Case()
     case.walk_files(minutes="Next to present: item 2 of 9.")
-    case.reply("The background job finished. Waiting on item 2 of 9; Recommendation: Y.")
-    check_blocked("a one-line summary of the item is sent back", case.run(),
-                  "summary, not the item", "Item 2 of 9", "poem-page-2026-10-12.md")
-
-
-def test_blocks_reply_without_item():
-    case = Case()
-    case.walk_files(minutes="Next to present: item 2 of 9.")
-    case.reply("The background job finished and its report is in the log-store.")
-    check_blocked("a reply without the item is sent back", case.run(),
-                  "does not contain `Item 2 of 9`")
-
-
-def test_blocks_text_after_item():
-    case = Case()
-    case.walk_files(minutes="Next to present: item 2 of 9.")
-    case.reply(ITEM_2_REPLY + "\n\n" + " ".join(["more"] * 100))
-    check_blocked("a reply with the item followed by 100 words is sent back", case.run(),
-                  "words follow the item, so the message does not end with it")
-
-
-def test_blocks_wrong_recommendation():
-    case = Case()
-    case.walk_files(minutes="Next to present: item 2 of 9.")
-    case.reply(ITEM_2_REPLY.replace("Recommendation: Y.", "Recommendation: N."))
-    check_blocked("a reply whose recommendation letter differs from the item's is sent back",
-                  case.run(), "does not carry `Recommendation: Y`")
+    for case_name, reply in (
+            ("a one-line summary of the item is sent back",
+             "The background job finished. Waiting on item 2 of 9; Recommendation: Y."),
+            ("a reply without the item is sent back",
+             "The background job finished and its report is in the log-store."),
+            ("a reply with a question after the item is sent back",
+             ITEM_2_REPLY + "\n\nY, N or D?"),
+            ("a reply closing with a line naming the item again is sent back",
+             ITEM_2_REPLY + "\n\nItem 2 of 9: Y, N or D?"),
+            ("a reply whose recommendation letter differs from the item's is sent back",
+             ITEM_2_REPLY.replace("Recommendation: Y.", "Recommendation: N.")),
+            ("a reply with a later item after the current one is sent back",
+             ITEM_2_REPLY + "\n\n" + section("## Item 5 of 9", "## Item 6 of 9"))):
+        case.reply(reply)
+        check_blocked(case_name, case.run(),
+                      "does not end with the walk-document's text of Item 2 of 9, word for word")
 
 
 def test_items_shown_together():
     case = Case()
     case.walk_files(minutes="Next to present: items 5 and 6 of 9.")
-    both = ("Item 5 of 9: the hook. A hook checks each written file for narrow patterns "
-            "and names the row to use when one matches. Recommendation: Y.\n\n"
-            "Item 6 of 9: the reviewer. A cheap reviewer checks each code pull request "
-            "against the page. Recommendation: N.")
-    case.reply(both)
-    check_silent("items shown together pass when both are repeated", case.run())
-    case.reply(both.split("\n\n")[1])
+    five = section("## Item 5 of 9", "## Item 6 of 9")
+    six = section("## Item 6 of 9", "## Items 7 and 8 of 9")
+    case.reply(five + six)
+    check_silent("items shown together pass when both are repeated in order", case.run())
+    case.reply(six)
     check_blocked("items shown together are sent back when one is left out", case.run(),
-                  "`Item 5 of 9`")
-
-
-def test_part_without_recommendation():
-    case = Case()
-    case.walk_files(minutes="Next to present: item 4.1 of 9.")
-    part = ("**Item 4.1 of 9: how a poem row reads**\n\nOne row per job an agent is about "
-            "to do, written \"to do X, use Y\", with one example call and the mistake it "
-            "prevents, so an agent reading the row can act on it without opening anything "
-            "else. " + SUB_STEP_EXTRA)
-    case.reply(part + "\n\nAny questions before part 4.2?")
-    check_silent("a part with no recommendation, longer than 80 words, passes word for word",
-                 case.run())
-    case.reply(part + "\n\n" + " ".join(["more"] * 300))
-    check_blocked("a part with no recommendation followed by 300 words is sent back", case.run(),
-                  "words follow the item")
+                  "Item 5 of 9 and Item 6 of 9")
+    case.reply(six + five)
+    check_blocked("items shown together are sent back when out of order", case.run(),
+                  "Item 5 of 9 and Item 6 of 9")
 
 
 def test_items_under_one_heading():
     case = Case()
     case.walk_files(minutes="Next to present: items 7 and 8 of 9.")
-    section = WALK_DOCUMENT[WALK_DOCUMENT.index("## Items 7 and 8 of 9"):
-                            WALK_DOCUMENT.index("## Item 9 of 9")]
-    case.reply(section + "\n\n7 and 8: Y, N or D?")
+    grouped = section("## Items 7 and 8 of 9", "## Item 9 of 9")
+    case.reply(grouped)
     check_silent("items shown together under one heading pass word for word", case.run())
-    case.reply(section.replace("Recommendation: Y.", "Recommendation: N.", 1))
-    check_blocked("items under one heading are sent back when one letter is wrong", case.run(),
-                  "does not carry `Recommendation: Y`, `Recommendation: Y`")
+    case.reply(grouped[:grouped.index("Item 8 of 9 drops")])
+    check_blocked("items under one heading are sent back when the second is left out",
+                  case.run(), "Items 7 and 8 of 9")
 
 
-def test_items_shown_together_are_checked_one_by_one():
+def test_part_without_recommendation():
     case = Case()
-    case.walk_files(minutes="Next to present: items 5 and 6 of 9.")
-    case.reply("Item 5 of 9: the hook. A hook checks each written file for narrow patterns "
-               "and names the row to use when one matches. Recommendation: N.\n\n"
-               "Item 6 of 9: the reviewer. A cheap reviewer checks each code pull request "
-               "against the page. Recommendation: Y. Recommendation: N.")
-    check_blocked("the first item's wrong letter does not pass on the second item's letter",
-                  case.run(), "`Item 5 of 9` does not carry `Recommendation: Y`")
-    case.reply("Item 5 of 9. Recommendation: Y.\n\n"
-               "Item 6 of 9: the reviewer. A cheap reviewer checks each code pull request "
-               "against the page, and here are more words to fill the count. Recommendation: N.")
-    check_blocked("a summarized first item does not pass on the second item's words",
-                  case.run(), "`Item 5 of 9` runs")
+    case.walk_files(minutes="Next to present: item 4.1 of 9.")
+    part = section("## Item 4.1 of 9", "## Item 5 of 9")
+    case.reply("- " + part.replace("## ", "**", 1).replace(":", ":**", 1))
+    check_silent("a part with no recommendation passes, restated as a list item in bold",
+                 case.run())
+    case.reply(part + "\n\nAny questions before part 4.2?")
+    check_blocked("a part followed by a question is sent back", case.run(), "Item 4.1 of 9")
 
 
 def test_item_holding_original_and_proposed_sections():
     case = Case()
     case.walk_files(minutes="Next to present: item 9 of 9.")
-    section = WALK_DOCUMENT[WALK_DOCUMENT.index("## Item 9 of 9"):]
-    case.reply(section)
+    item = section("## Item 9 of 9")
+    case.reply(item)
     check_silent("an item holding its own headings passes word for word", case.run())
-    case.reply(section[:section.index("The proposed section:")] + "Recommendation: Y.")
+    case.reply(item[:item.index("The proposed section:")])
     check_blocked("an item cut short at its first inner heading is sent back", case.run(),
-                  "summary, not the item")
+                  "Item 9 of 9")
 
 
-def test_silent_turn_after_a_notice_is_not_checked():
+def turn_records(*middle):
+    """A turn opened by the user, whose first reply lacks the item, then the given records."""
+    return ([{"type": "user", "message": {"role": "user", "content": "what is PR 1188?"}},
+             {"type": "assistant", "message": {"id": "m1", "content": [
+                 {"type": "text", "text": "PR 1188 changes the hook."}]}}]
+            + list(middle))
+
+
+TOOL_CALL = {"type": "assistant", "message": {"id": "m2", "content": [
+    {"type": "tool_use", "name": "Bash", "input": {"command": "ls"}}]}}
+TOOL_RESULT = {"type": "user", "message": {"role": "user", "content": [
+    {"type": "tool_result", "tool_use_id": "t", "content": "ok"}]}}
+NOTICE = {"type": "user", "origin": {"kind": "task-notification"},
+          "message": {"role": "user", "content": [
+              {"type": "text", "text": "<task-notification>done</task-notification>"}]}}
+PEER_MESSAGE = {"type": "user", "isMeta": True, "origin": {"kind": "peer"},
+                "message": {"role": "user", "content": [
+                    {"type": "text", "text": "Another Claude session sent a message: hello"}]}}
+# A loaded skill's text, as scripts/absence-claim-locator-reminder-hook-test.py records it.
+SKILL_LOADED = {"type": "user", "isMeta": True, "message": {"role": "user", "content": [
+    {"type": "text", "text": "Base directory for this skill: /x\n\n# walk-me-through"}]}}
+LATER_TEXT = {"type": "assistant", "message": {"id": "m3", "content": [
+    {"type": "text", "text": "The background job finished."}]}}
+
+
+def test_where_the_turn_starts():
     case = Case()
     case.walk_files(minutes="Next to present: item 2 of 9.")
-    notice = {"type": "user", "origin": {"kind": "task-notification"}, "isMeta": True,
-              "message": {"role": "user", "content": [
-                  {"type": "text", "text": "<task-notification>done</task-notification>"}]}}
-    records = [{"type": "user", "message": {"role": "user", "content": "what is PR 1188?"}},
-               {"type": "assistant", "message": {"id": "m1", "content": [
-                   {"type": "text", "text": "PR 1188 changes the hook."}]}},
-               notice,
-               {"type": "assistant", "message": {"id": "m2", "content": [
-                   {"type": "tool_use", "name": "Bash", "input": {"command": "ls"}}]}},
-               {"type": "user", "message": {"role": "user", "content": [
-                   {"type": "tool_result", "tool_use_id": "t", "content": "ok"}]}}]
-    case.transcript.write_text("".join(json.dumps(record) + "\n" for record in records))
-    check_silent("a turn after a background-task notice that wrote nothing is not checked",
-                 case.run())
-    records.append({"type": "assistant", "message": {"id": "m3", "content": [
-        {"type": "text", "text": "The background job finished."}]}})
-    case.transcript.write_text("".join(json.dumps(record) + "\n" for record in records))
-    check_blocked("a turn after a notice that wrote to the user is checked", case.run(),
-                  "does not contain `Item 2 of 9`")
+    for case_name, records, blocked in (
+            ("a reply lacking the item, then tool calls, is checked",
+             turn_records(TOOL_CALL, TOOL_RESULT), True),
+            ("a skill loaded inside the turn does not start a new turn",
+             turn_records(TOOL_CALL, TOOL_RESULT, SKILL_LOADED, TOOL_CALL, TOOL_RESULT), True),
+            ("a silent turn after a background-task notice is not checked",
+             turn_records(NOTICE, TOOL_CALL, TOOL_RESULT), False),
+            ("a silent turn after another agent-seat's message is not checked",
+             turn_records(PEER_MESSAGE, TOOL_CALL), False),
+            ("a turn after a notice that wrote to the user is checked",
+             turn_records(NOTICE, TOOL_CALL, TOOL_RESULT, LATER_TEXT), True)):
+        case.transcript.write_text("".join(json.dumps(record) + "\n" for record in records))
+        if blocked:
+            check_blocked(case_name, case.run(), "Item 2 of 9")
+        else:
+            check_silent(case_name, case.run())
 
 
 def test_unparseable_line():

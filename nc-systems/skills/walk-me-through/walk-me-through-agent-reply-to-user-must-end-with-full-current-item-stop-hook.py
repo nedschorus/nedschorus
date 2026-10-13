@@ -8,10 +8,14 @@ current item in full; this hook is the check on that rule. The skill's other
 half, writing nothing when an automated event gives the user nothing new,
 cannot be checked here: a turn that wrote nothing has nothing to check.
 
-THE TURN starts at the last user-type record in the transcript that is not
-only tool results: the user's message, another agent-seat's message, a
-background-task notice, or a local command. The reply checked is the text of
-the last assistant message after it; a turn whose assistant messages hold no
+THE TURN starts at the last user-type record in the transcript that is
+neither only tool results nor an injection inside the turn: the user's
+message, another agent-seat's message, a parent's message to its subagent,
+a background-task notice, or a local command. An injection is a record
+marked isMeta with no such origin, such as a loaded skill's text or a system
+reminder. Claude Code marks another agent-seat's message isMeta too, so the
+origin decides first. The reply checked is the text of the last assistant
+message after the turn's start; a turn whose assistant messages hold no
 text, such as a silent turn after a background-task notice, is not checked.
 
 THE OPEN APPROVAL-WALK. The walk-me-through skill keeps one line in each
@@ -23,31 +27,20 @@ approval-walk is the most recently modified one whose line names items.
 Minutes with no such line, as every walk before the line existed, are not
 open walks.
 
-ITEMS IN THE WALK-DOCUMENT. The hook reads only what the skill fixes: each
-item starts with its running count, `Item N of M` or, for items shown
-together, `Items 5 and 6 of M`, on a heading line (one starting `#` or `**`),
-and an item's recommendation is the letter after `Recommendation:`. An item
-runs from its running-count line to the next running-count line, so headings
+ITEMS IN THE WALK-DOCUMENT. An item starts at its running count, `Item N of
+M` or, for items shown together, `Items 5 and 6 of M`, on a heading line
+(one starting `#` or `**`), and runs to the next running count, so headings
 inside an item, such as an original and a proposed section, stay in it. A
-heading that names several items is one unit, shown together.
+heading that names several items is one unit.
 
-THE CHECK, after Markdown emphasis, code marks, link targets and heading
-marks are removed and case and whitespace are folded. Each unit the minutes
-name owns the stretch of the reply from the last mention of its first item's
-running count to the next unit's, or to the end of the reply for the last
-unit:
-  - every unit's running count appears in the reply, in the walk-document's
-    order;
-  - each stretch carries the unit's recommendation letters in the
-    walk-document's order, so one item's letter does not pass for another's;
-  - each stretch is at least MINIMUM_SHARE_OF_ITEM_WORDS of the unit's words
-    in the walk-document, so a one-line summary does not pass;
-  - the reply ends with the last unit: after its last recommendation, no more
-    than the words the walk-document has there plus WORDS_ALLOWED_AFTER_ITEM
-    follow (a question such as "Y, N or D?" or the case for the
-    recommendation); a unit with no recommendation, such as a first
-    sub-step, may run to (1 + MINIMUM_SHARE_OF_ITEM_WORDS) times its words
-    plus WORDS_ALLOWED_AFTER_ITEM.
+THE CHECK matches the rule exactly: the reply must end with the text of the
+units the minutes name, taken from the walk-document, in the walk-document's
+order. Both texts are compared after link targets, heading marks, list
+markers, thematic breaks, emphasis and code marks are removed and whitespace
+is folded, so an item restated with bold and bullets still matches. So the
+item an agent presents in chat is the walk-document's text, word for word;
+an agent that rewords an item edits the walk-document first. Nothing may
+follow the item, not even a question such as "Y, N or D?".
 
 SILENT when stop_hook_active is set (the agent is already continuing because
 of a Stop hook), when the agent-session is a headless `claude -p` child (its
@@ -81,9 +74,8 @@ ITEMS_VALUE = re.compile(r"^items?\s+(.+?)\s+of\s+(\d+)\.?$", re.I)
 ITEM_NUMBER = re.compile(r"\d+(?:\.\d+)*")
 # A running count: `item 2 of 9`, `item 4.1 of 9`, `items 5 and 6 of 9`, `items 5, 6 and 7 of 9`.
 RUNNING_COUNT = r"items?\s+(\d+(?:\.\d+)*(?:\s*(?:,|and|&)\s*\d+(?:\.\d+)*)*)\s+of\s+{total}\b"
-RECOMMENDATION = re.compile(r"recommendation:\s*\**\s*([A-Za-z])\b", re.I)
-MINIMUM_SHARE_OF_ITEM_WORDS = 0.5
-WORDS_ALLOWED_AFTER_ITEM = 80
+# A record from one of these starts a turn even when Claude Code marks it isMeta.
+TURN_STARTING_ORIGIN_KINDS = ("human", "peer", "coordinator", "task-notification")
 
 BLOCK_OPENING_TEMPLATE = (
     "approval-walk current-item check: your message to the user does not end "
@@ -144,6 +136,9 @@ def last_reply_text(transcript_path):
                 and all(isinstance(block, dict) and block.get("type") == "tool_result"
                         for block in content)):
             continue
+        origin_kind = (record.get("origin") or {}).get("kind")
+        if record.get("isMeta") and origin_kind not in TURN_STARTING_ORIGIN_KINDS:
+            continue
         start = index + 1
         break
     texts_by_message = {}
@@ -177,14 +172,17 @@ def checkout_top(directory):
 
 
 def normalized(text):
+    """Return text without the Markdown that a restatement in chat may change."""
     text = re.sub(r"\[([^\]\n]*)\]\([^)\n]*\)", r"\1", text)
-    text = re.sub(r"^\s{0,3}#{1,6}\s*", "", text, flags=re.M)
-    text = re.sub(r"[*_`]", "", text)
-    return re.sub(r"\s+", " ", text).strip().lower()
-
-
-def word_count(text):
-    return len(text.split())
+    lines = []
+    for line in text.splitlines():
+        if re.fullmatch(r"\s*(?:[-*_]\s*){3,}", line):
+            continue
+        line = re.sub(r"^\s{0,3}#{1,6}\s+", "", line)
+        line = re.sub(r"^\s*(?:[-*+]|\d+[.)])\s+", "", line)
+        lines.append(line)
+    text = re.sub(r"[*_`]", "", "\n".join(lines))
+    return re.sub(r"\s+", " ", text).strip()
 
 
 def next_to_present(minutes_text):
@@ -236,56 +234,10 @@ def running_count_label(numbers, total):
     return f"Items {', '.join(numbers[:-1])} and {numbers[-1]} of {total}"
 
 
-def is_in_order_within(wanted, found):
-    remaining = iter(found)
-    return all(any(letter == candidate for candidate in remaining) for letter in wanted)
-
-
-def shortfall(reply, units, total):
-    """Return why the reply does not end with the named units, or None when it does."""
-    text = normalized(reply)
-    mentions = [(match.start(), set(ITEM_NUMBER.findall(match[1])))
-                for match in re.finditer(RUNNING_COUNT.format(total=re.escape(total)), text)]
-    starts = []
-    limit = len(text) + 1
-    for numbers, _ in reversed(units):
-        # From the unit's first item, so a later item's line inside the unit
-        # does not cut the earlier items out of its stretch.
-        earlier = [position for position, named in mentions
-                   if position < limit and numbers[0] in named]
-        if not earlier:
-            return f"the message does not contain `{running_count_label(numbers, total)}`"
-        limit = earlier[-1]
-        starts.append(limit)
-    starts.reverse()
-    for index, (numbers, unit_text) in enumerate(units):
-        end = starts[index + 1] if index + 1 < len(units) else len(text)
-        stretch = text[starts[index]:end]
-        unit = normalized(unit_text)
-        label = running_count_label(numbers, total)
-        wanted = [letter.lower() for letter in RECOMMENDATION.findall(unit)]
-        found = [letter.lower() for letter in RECOMMENDATION.findall(stretch)]
-        if not is_in_order_within(wanted, found):
-            letters = ", ".join(f"`Recommendation: {letter.upper()}`" for letter in wanted)
-            return f"the message's `{label}` does not carry {letters} as the walk-document has it"
-        if word_count(stretch) < MINIMUM_SHARE_OF_ITEM_WORDS * word_count(unit):
-            return (f"`{label}` runs {word_count(stretch)} words in the message and "
-                    f"{word_count(unit)} in the walk-document, so the message gives a "
-                    f"summary, not the item")
-    last_unit = normalized(units[-1][1])
-    last_stretch = text[starts[-1]:]
-    unit_recommendations = list(RECOMMENDATION.finditer(last_unit))
-    if unit_recommendations:
-        allowed = (word_count(last_unit[unit_recommendations[-1].end():])
-                   + WORDS_ALLOWED_AFTER_ITEM)
-        following = word_count(last_stretch[list(RECOMMENDATION.finditer(last_stretch))[-1].end():])
-    else:
-        allowed = ((1 + MINIMUM_SHARE_OF_ITEM_WORDS) * word_count(last_unit)
-                   + WORDS_ALLOWED_AFTER_ITEM)
-        following = word_count(last_stretch)
-    if following > allowed:
-        return f"{following} words follow the item, so the message does not end with it"
-    return None
+def ends_with_units(reply, units):
+    """True when the reply ends with the units' walk-document text, in order."""
+    wanted = normalized("\n".join(unit_text for _, unit_text in units))
+    return normalized(reply).endswith(wanted)
 
 
 def block(opening, instructions, **values):
@@ -335,10 +287,10 @@ def run(stdin_text, environment):
         named = ", ".join(f"`Item {number} of {total}`" for number in missing)
         return block(UNUSABLE_OPENING_TEMPLATE, UNUSABLE_INSTRUCTIONS, problem=(
             f"its walk-document has no heading {named}, which the minutes name."), **values)
-    reason = shortfall(reply, units, total)
-    if reason is None:
+    if ends_with_units(reply, units):
         return None
     items = " and ".join(running_count_label(unit[0], total) for unit in units)
+    reason = f"the message does not end with the walk-document's text of {items}, word for word"
     return block(BLOCK_OPENING_TEMPLATE, BLOCK_INSTRUCTIONS, reason=reason, items=items, **values)
 
 
