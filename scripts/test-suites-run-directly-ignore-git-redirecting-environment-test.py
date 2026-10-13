@@ -131,6 +131,7 @@ FILES_THE_SUITE_RUN_WITH_EVERY_VARIABLE_READS = (
     "scripts/code-review-codex-cell.py",
     "nc-systems/cold-read/cold-read-cell-common.py",
     "nc-systems/cold-read/cold-read-record-names.py",
+    "nc-systems/general-tools/git-machine-readable-output-runner-and-parser-common.py",
 )
 
 # Where each variable points, relative to the named repository's top

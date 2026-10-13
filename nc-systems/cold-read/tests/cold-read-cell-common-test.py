@@ -203,7 +203,7 @@ CONCURRENT_RUN_REVIEW_TEXT = (
 # The report path arrives by environment rather than by parsing the prompt,
 # so a change to the prompt templates cannot silently unhook the stub.
 STUB_MODEL_RUNTIME = """#!/usr/bin/env python3
-import json, os, pathlib, sys
+import json, os, pathlib, subprocess, sys
 
 received_prompt = ""
 try:
@@ -259,6 +259,11 @@ if "edit" in step:
     edited_path, added_text = step["edit"]
     with open(edited_path, "a", encoding="utf-8") as handle:
         handle.write(added_text)
+if "git_mv" in step:
+    # A staged rename, the one change git status reports under two names.
+    old_path, new_path = step["git_mv"]
+    subprocess.run(["git", "mv", old_path, new_path], cwd=pathlib.Path(old_path).parent,
+                   check=True, capture_output=True)
 if "break_git" in step:
     git_directory = pathlib.Path(step["break_git"])
     git_directory.rename(git_directory.with_name(".git-renamed-by-the-stub"))
@@ -532,6 +537,37 @@ with tempfile.TemporaryDirectory() as scratch:
           visible_report_relative_path not in stray_write_warning(result.stderr),
           repr(result.stderr))
 
+    # A report path with a space: plain `git status --porcelain` quotes such a
+    # path, and the quoted name never matched the report's own name.
+    shutil.rmtree(repository)
+    repository = build_scratch_repository(scratch)
+    spaced_report_relative_path = "docs/drafts/cold read cell common test report.md"
+    report = repository / spaced_report_relative_path
+    result = run_claude_cell(
+        repository, stubs, {"*": {"report": "STUB REVIEW: one restatement\n"}}, report,
+    )
+    check("a visible --report whose path has a space is not reported as a stray write",
+          stray_write_warning(result.stderr) == "", repr(result.stderr))
+
+    # A renamed tracked file is named under both its old and its new name.
+    shutil.rmtree(repository)
+    repository = build_scratch_repository(scratch)
+    renamed_relative_path = "docs/drafts/cold-read-cell-common-test-renamed.md"
+    report = repository / "cold-read-records" / "run-rename" / "claude-restate-second.md"
+    result = run_claude_cell(
+        repository, stubs,
+        {"*": {"report": "STUB REVIEW: one restatement\n",
+               "git_mv": [str(repository / TARGET_RELATIVE_PATH),
+                          str(repository / renamed_relative_path)]}},
+        report,
+    )
+    warning = stray_write_warning(result.stderr)
+    named = (warning.split(" — ", 1)[1].split(". This cell", 1)[0].split(", ")
+             if " — " in warning else [])
+    check("a rename is reported as two stray writes, the old name and the new",
+          sorted(named) == sorted([TARGET_RELATIVE_PATH, renamed_relative_path]),
+          repr(result.stderr))
+
     # --- The `deep` tier has one model and its failure is the cell's --------
     # User-ruled 2026-09-04: "opus falling back to fable is not valid. If opus
     # fails we stop working and wait for it to come back." Until then the
@@ -582,6 +618,26 @@ with tempfile.TemporaryDirectory() as scratch:
         "cold_read_cell_common_under_test", SYSTEM_DIRECTORY / "cold-read-cell-common.py")
     common_module = importlib.util.module_from_spec(common_spec)
     common_spec.loader.exec_module(common_module)
+
+    # git that does not start, or does not finish, is a failure to look too.
+    git_output_module = common_module.git_machine_readable_output
+    real_run_git = git_output_module.run_git
+
+    def git_that_does_not_start(directory, arguments, **_options):
+        raise git_output_module.GitCommandFailed(
+            arguments, directory, None, "could not start git: no such file")
+
+    git_output_module.run_git = git_that_does_not_start
+    try:
+        common_module.working_tree_state()
+        unavailable_detail = None
+    except common_module.WriteDetectorUnavailable as error:
+        unavailable_detail = str(error)
+    finally:
+        git_output_module.run_git = real_run_git
+    check("git that does not start makes the write detector unavailable, saying why",
+          unavailable_detail is not None and "could not start git" in unavailable_detail,
+          repr(unavailable_detail))
     claude_spec = importlib.util.spec_from_file_location(
         "cold_read_claude_cell_under_test", SYSTEM_DIRECTORY / "cold-read-claude-cell.py")
     claude_module = importlib.util.module_from_spec(claude_spec)

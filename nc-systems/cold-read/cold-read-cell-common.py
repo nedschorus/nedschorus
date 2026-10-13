@@ -24,6 +24,13 @@ _record_names_spec = importlib.util.spec_from_file_location(
 record_names = importlib.util.module_from_spec(_record_names_spec)
 _record_names_spec.loader.exec_module(record_names)
 
+_git_machine_readable_output_spec = importlib.util.spec_from_file_location(
+    "git_machine_readable_output_runner_and_parser_common",
+    pathlib.Path(__file__).resolve().parents[1] / "general-tools"
+    / "git-machine-readable-output-runner-and-parser-common.py")
+git_machine_readable_output = importlib.util.module_from_spec(_git_machine_readable_output_spec)
+_git_machine_readable_output_spec.loader.exec_module(git_machine_readable_output)
+
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent.parent
 PROMPTS_DIR = REPO_ROOT / ".claude" / "skills" / "cold-read" / "prompts"
 
@@ -374,17 +381,18 @@ def working_tree_state() -> set:
     """Return changed paths and content fingerprints, including untracked files."""
     # Fingerprints detect edits to already-dirty files; --untracked-files=all exposes files
     # inside already-untracked directories.
-    completed = subprocess.run(
-        ["git", "status", "--porcelain", "--untracked-files=all"],
-        cwd=REPO_ROOT, capture_output=True, text=True, check=False,
-    )
-    if completed.returncode != 0:
-        raise WriteDetectorUnavailable(completed.stderr.strip() or "no detail")
-    return {
-        (name, path_content_fingerprint(REPO_ROOT / name))
-        for name in (line[3:] for line in completed.stdout.splitlines())
-        if name
-    }
+    # A rename contributes both names, so a renamed tracked file is caught under either.
+    try:
+        output = git_machine_readable_output.run_git(
+            REPO_ROOT, ["status", "--porcelain", "-z", "--untracked-files=all"])
+    except git_machine_readable_output.GitCommandFailed as failure:
+        raise WriteDetectorUnavailable(failure.stderr.strip() or "no detail") from None
+    names = set()
+    for entry in git_machine_readable_output.status_entries(output):
+        names.add(entry.path)
+        if entry.origin_path:
+            names.add(entry.origin_path)
+    return {(name, path_content_fingerprint(REPO_ROOT / name)) for name in names}
 
 
 def repo_relative_name(path) -> str:
