@@ -262,11 +262,13 @@ def simple_command_program_index_skipping_wrappers(words):
 
 
 def simple_command_wrapper_options_and_values_parsed_from_words(words):
-    """Return (wrapper, option, value) for each option given to the wrappers before the program.
+    """Return (wrapper, [(option, value), ...]) for each wrapper before the program, in order.
 
-    wrapper is the wrapper's name without its directory, as in ("env", "-C",
-    "/w") for `env -u X -C /w git push`. value is None for an option that takes
-    none, and an option written --name=value is split at the =.
+    wrapper is the wrapper's name without its directory, as in ("env", [("-u",
+    "X"), ("-C", "/w")]) for `env -u X -C /w git push`; a wrapper written twice
+    gives two entries. value is None for an option that takes none, and for one
+    that takes a value but is the last word; an option written --name=value is
+    split at the =.
     """
     return _wrappers_read(words)[2]
 
@@ -283,24 +285,26 @@ def _wrappers_read(words):
         if wrapper is None:
             return index, receives_standard_input, options
         receives_standard_input = receives_standard_input and wrapper.passes_standard_input
-        index = _index_after_options(words, index + 1, name, wrapper, options)
+        own = []
+        options.append((name, own))
+        index = _index_after_options(words, index + 1, wrapper, own)
         if wrapper.operands:
             # Options may follow the operand too, as in timeout 60 --signal=KILL.
-            index = _index_after_options(words, index + wrapper.operands, name, wrapper, options)
+            index = _index_after_options(words, index + wrapper.operands, wrapper, own)
     return None, receives_standard_input, options
 
 
-def _index_after_options(words, index, name, wrapper, options):
+def _index_after_options(words, index, wrapper, options):
     while index < len(words) and words[index].startswith("-"):
         option = words[index]
         if option in wrapper.options_with_a_value:
-            options.append((name, option, words[index + 1] if index + 1 < len(words) else None))
+            options.append((option, words[index + 1] if index + 1 < len(words) else None))
             index += 2
             continue
         if option.startswith("--") and "=" in option:
-            options.append((name, *option.split("=", 1)))
+            options.append(tuple(option.split("=", 1)))
         else:
-            options.append((name, option, None))
+            options.append((option, None))
         index += 1
     return index
 

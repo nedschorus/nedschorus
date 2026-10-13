@@ -180,11 +180,13 @@ for words, expected in [
           reader.simple_command_program_index_skipping_wrappers(words) == expected, reader.simple_command_program_index_skipping_wrappers(words))
 
 for words, expected in [
-    (["env", "-u", "X", "-C", "/w", "git"], [("env", "-u", "X"), ("env", "-C", "/w")]),
+    (["env", "-u", "X", "-C", "/w", "git"], [("env", [("-u", "X"), ("-C", "/w")])]),
     (["/usr/bin/sudo", "-n", "--chdir=/w", "env", "-i", "git"],
-     [("sudo", "-n", None), ("sudo", "--chdir", "/w"), ("env", "-i", None)]),
-    (["timeout", "60", "-s", "KILL", "git"], [("timeout", "-s", "KILL")]),
-    (["env", "-C"], [("env", "-C", None)]),
+     [("sudo", [("-n", None), ("--chdir", "/w")]), ("env", [("-i", None)])]),
+    (["timeout", "60", "-s", "KILL", "git"], [("timeout", [("-s", "KILL")])]),
+    (["env", "-C", "/a", "env", "-C", "b", "git"], [("env", [("-C", "/a")]), ("env", [("-C", "b")])]),
+    (["nohup", "git"], [("nohup", [])]),
+    (["env", "-C"], [("env", [("-C", None)])]),
     (["git", "-C", "/w"], []),
 ]:
     check(f"the options the wrappers of {' '.join(words)} are given",

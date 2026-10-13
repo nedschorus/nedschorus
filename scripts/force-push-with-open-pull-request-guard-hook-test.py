@@ -26,6 +26,8 @@ import contextlib
 import importlib.util
 import io
 import json
+import tempfile
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -584,7 +586,9 @@ for command in ["env -C /elsewhere/wt-fast-read git push --force origin",
                 "env -u X -C /elsewhere/wt-fast-read git push --force origin",
                 "sudo -u r -D /elsewhere/wt-fast-read git push --force origin",
                 "env -C /elsewhere env -C wt-fast-read git push --force origin",
-                "env -C /nowhere env -C /elsewhere/wt-fast-read git push --force origin"]:
+                "env -C /nowhere env -C /elsewhere/wt-fast-read git push --force origin",
+                "env -C /nowhere -C /elsewhere/wt-fast-read git push --force origin",
+                "sudo -D /nowhere -D /elsewhere/wt-fast-read git push --force origin"]:
     runner = ProbeRunner(branch="the-pr-branch",
                          open_pull_requests={"the-pr-branch": FAST_READ_PULL_REQUEST})
     decision, _ = decide(command, runner)
@@ -592,6 +596,56 @@ for command in ["env -C /elsewhere/wt-fast-read git push --force origin",
           decision == "deny"
           and ["git", "-C", "/elsewhere/wt-fast-read", "rev-parse", "--abbrev-ref", "HEAD"]
           in runner.calls, (decision, runner.calls))
+# Within one env, only the last -C counts: env -C /a -C b runs in b, from where it started.
+runner = ProbeRunner(branch="the-pr-branch", open_pull_requests={"the-pr-branch": FAST_READ_PULL_REQUEST})
+decision, _ = decide("env -C /nowhere -C wt-fast-read git push --force origin", runner)
+check("within one env the last -C counts, taken from the directory the command started in",
+      decision == "deny"
+      and ["git", "-C", os.path.join(SESSION_WORKTREE, "wt-fast-read"), "rev-parse", "--abbrev-ref", "HEAD"]
+      in runner.calls, (decision, runner.calls))
+# ~ is expanded before a directory is joined to the one before it.
+saved_home = os.environ.get("HOME")
+os.environ["HOME"] = "/elsewhere"
+try:
+    for command in ["env -C /nowhere env -C ~/wt-fast-read git push --force origin",
+                    "env -C /nowhere git -C ~/wt-fast-read push --force origin"]:
+        runner = ProbeRunner(branch="the-pr-branch",
+                             open_pull_requests={"the-pr-branch": FAST_READ_PULL_REQUEST})
+        decision, _ = decide(command, runner)
+        check(f"a ~ directory is expanded before it is joined: {command}",
+              decision == "deny"
+              and ["git", "-C", "/elsewhere/wt-fast-read", "rev-parse", "--abbrev-ref", "HEAD"]
+              in runner.calls, (decision, runner.calls))
+finally:
+    if saved_home is None:
+        os.environ.pop("HOME", None)
+    else:
+        os.environ["HOME"] = saved_home
+
+# bash and the real env are the oracle for where nested wrappers run a command.
+with tempfile.TemporaryDirectory() as place:
+    place = os.path.realpath(place)
+    for relative in ("a/b", "c", "home/x"):
+        os.makedirs(os.path.join(place, relative))
+    for wrappers in [["env", "-C", f"{place}/a", "env", "-C", "b"],
+                     ["env", "-C", f"{place}/a", "env", "-C", f"{place}/c"],
+                     ["env", "-C", f"{place}/a", "env", "-C", "~/x"],
+                     ["env", "-C", f"{place}/c", "-C", f"{place}/a/b"]]:
+        # bash expands the ~ before env sees it, as it would for the agent's command.
+        real = subprocess.run(["bash", "-c", " ".join(wrappers + ["pwd"])], capture_output=True,
+                              text=True, env={**os.environ, "HOME": f"{place}/home"}, cwd=place)
+        if real.returncode != 0:
+            print(f"SKIP  {' '.join(wrappers)}: this env refuses it ({real.stderr.strip()[:80]})")
+            continue
+        saved_home = os.environ.get("HOME")
+        os.environ["HOME"] = f"{place}/home"
+        try:
+            found = guard.directory_a_wrapper_sets(wrappers + ["git", "push"])
+        finally:
+            os.environ["HOME"] = saved_home
+        check(f"the guard finds the directory the real env runs in: {' '.join(wrappers)}",
+              os.path.normpath(os.path.join(place, found)) == real.stdout.strip(),
+              (found, real.stdout.strip()))
 runner = ProbeRunner(branch="the-pr-branch", open_pull_requests={"the-pr-branch": FAST_READ_PULL_REQUEST})
 decision, _ = decide(f"env {guard.ESCAPE_HATCH_ASSIGNMENT} git push --force origin", runner)
 check("the escape hatch after env still sanctions the push", decision is None, decision)
