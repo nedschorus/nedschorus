@@ -181,7 +181,7 @@ check("D5 'stop rather than reverse' is the refusal's SECOND line",
       len(lines) > 1
       and lines[1].startswith(
           "If you are force-pushing to restore what an earlier force push replaced")
-      and "stop" in lines[1] and "message merge-lane" in lines[1]
+      and "stop" in lines[1] and "message merge-lane-2" in lines[1]
       and "ListAgents" in lines[1],
       lines[1] if len(lines) > 1 else reason)
 check("the refusal teaches the remedy: a new commit on top, pushed without --force",
@@ -332,7 +332,7 @@ decision, reason = decide("git push --force origin the-pr-branch", runner)
 check("D3 the unchecked note tells the agent how to confirm by hand",
       reason and "gh pr list --state open --head the-pr-branch" in reason, reason)
 check("D3 the note's fallback works when gh itself cannot run",
-      reason and "or fails, message merge-lane" in reason
+      reason and "or fails, message merge-lane-2" in reason
       and "ListAgents" in reason, reason)
 # Asking gh again helps after a timeout or an unreadable answer, and fails
 # the same way after gh could not run or failed outright — so only the first
