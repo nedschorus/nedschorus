@@ -9,6 +9,15 @@ the hook as Claude Code does, as a subprocess reading a payload on stdin: the
 PostToolUse cases against a throwaway repository under a temporary directory,
 the UserPromptSubmit cases against transcripts written there.
 
+The link-title cases put a stand-in gh first on PATH, for the hook's
+subprocesses and for this process alike. GH_STAND_IN_MODE_VARIABLE picks what
+it does: answer with the titles in GH_STAND_IN_TITLES_VARIABLE, as real gh
+does, with a NOT_FOUND error and exit 1 for a number it has no title for;
+answer the same way but with a FORBIDDEN error added ("forbidden"); answer
+with the titles but exit 1 with no error ("titles-exit-1"); fail; or sleep
+past the hook's timeout. With no mode set it fails, so a case that does
+not expect a gh call shows the call as a "not checked" line.
+
 Every git call, the hook's included, runs with the variables that redirect
 git (GIT_DIR and its kin) removed, so a GIT_DIR inherited from the caller
 cannot point these writes at another repository.
@@ -34,9 +43,45 @@ _git_environment_fixture.remove_git_redirecting_environment_variables_from_this_
 
 HOOK_PATH = Path(__file__).resolve().with_name("bare-number-citation-in-markdown-and-agent-reply-warning-hook.py")
 
+GH_STAND_IN_MODE_VARIABLE = "BARE_NUMBER_CITATION_TEST_GH_MODE"
+GH_STAND_IN_TITLES_VARIABLE = "BARE_NUMBER_CITATION_TEST_GH_TITLES"
+GH_STAND_IN_DIRECTORY = Path(tempfile.mkdtemp(prefix="bare-number-citation-test-gh-"))
+atexit.register(shutil.rmtree, str(GH_STAND_IN_DIRECTORY), True)
+(GH_STAND_IN_DIRECTORY / "gh").write_text(f"""#!{sys.executable}
+import json, os, re, sys, time
+mode = os.environ.get("{GH_STAND_IN_MODE_VARIABLE}", "")
+if mode == "sleep":
+    time.sleep(30)
+if mode not in ("titles", "forbidden", "titles-exit-1"):
+    print("stand-in gh: no network", file=sys.stderr)
+    sys.exit(1)
+titles = json.loads(os.environ["{GH_STAND_IN_TITLES_VARIABLE}"])
+query = sys.argv[-1]
+repository = {{}}
+errors = []
+for number in re.findall(r"n(\\d+): issueOrPullRequest", query):
+    if number in titles:
+        repository["n" + number] = {{"title": titles[number]}}
+    else:
+        repository["n" + number] = None
+        errors.append({{"type": "NOT_FOUND", "path": ["repository", "n" + number]}})
+if mode == "forbidden":
+    errors.append({{"type": "FORBIDDEN", "message": "stand-in gh: resource not accessible"}})
+answer = {{"data": {{"repository": repository}}}}
+if errors:
+    answer["errors"] = errors
+print(json.dumps(answer))
+if errors:
+    print("gh: " + (errors[-1].get("message") or "Could not resolve"), file=sys.stderr)
+sys.exit(1 if errors or mode == "titles-exit-1" else 0)
+""", encoding="utf-8")
+(GH_STAND_IN_DIRECTORY / "gh").chmod(0o755)
+os.environ["PATH"] = str(GH_STAND_IN_DIRECTORY) + os.pathsep + os.environ.get("PATH", "")
+
 # An attended session, as an agent-seat's own is; the headless cases override it.
 HOOK_ENVIRONMENT = {name: value for name, value in os.environ.items()
-                    if name != "NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER"}
+                    if name not in ("NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER",
+                                    GH_STAND_IN_MODE_VARIABLE, GH_STAND_IN_TITLES_VARIABLE)}
 HOOK_ENVIRONMENT["CLAUDE_CODE_SESSION_ATTENDED"] = "1"
 
 failures = []
@@ -218,6 +263,114 @@ check("the Markdown note also says where a task's subject is",
 
 
 # ---------------------------------------------------------------------------
+# Link titles, called directly.
+# ---------------------------------------------------------------------------
+
+PULL_URL = "https://github.com/nedschorus/nedschorus/pull/1256"
+ISSUE_URL = "https://github.com/nedschorus/nedschorus/issues/1196"
+TITLES = {"1256": "Shell reader: \\u and `~` expanded where bash expands it",
+          "1196": "Replace the hand-written parsers with real parsers"}
+
+
+def linked_numbers(text):
+    return [number for _, _, _, number in hook.repository_item_links_in(text)]
+
+
+check("a link to a pull request whose text has three or more words is checked",
+      linked_numbers(f"PR [Some three words]({PULL_URL})") == [1256],
+      linked_numbers(f"PR [Some three words]({PULL_URL})"))
+check("a link to an issue, with the issue's own fragment, is checked",
+      linked_numbers(f"GHI [Some three words]({ISSUE_URL}#issue-12)") == [1196],
+      linked_numbers(f"GHI [Some three words]({ISSUE_URL}#issue-12)"))
+for name, text in (
+        ("text of two words", f"[this PR]({PULL_URL})"),
+        ("text that is the URL", f"[{PULL_URL}]({PULL_URL})"),
+        ("a link inside a code span", f"`[Some three words]({PULL_URL})`"),
+        ("a link inside a fenced block", f"```\n[Some three words]({PULL_URL})\n```"),
+        ("an image", f"![Some three words]({PULL_URL})"),
+        ("another repository", "[Some three words](https://github.com/other/repo/pull/1256)"),
+        ("a bare URL", f"see {PULL_URL} now")):
+    check(f"no title is checked for {name}", linked_numbers(text) == [], linked_numbers(text))
+for fragment in ("#issuecomment-12", "#pullrequestreview-34", "#discussion_r56", "/files#r78"):
+    text = f"[Some three words]({PULL_URL}{fragment})"
+    check(f"no title is checked for a link to a comment or a review: {fragment}",
+          linked_numbers(text) == [], linked_numbers(text))
+check("no title is checked for text in escaped brackets, which is no link",
+      linked_numbers(f"\\[Some three words\\]({PULL_URL})") == [],
+      linked_numbers(f"\\[Some three words\\]({PULL_URL})"))
+angle = hook.repository_item_links_in(f"[Some three words](<{PULL_URL}>)")
+check("a link whose target is in angle brackets is checked, and its URL is given without them",
+      [(url, number) for _, _, url, number in angle] == [(PULL_URL, 1256)], angle)
+bracket = hook.repository_item_links_in(f"[Fix `foo[` in parser]({PULL_URL})")
+check("link text holding a bracket inside a code span is checked, with its text as written",
+      [text for _, text, _, _ in bracket] == ["Fix `foo[` in parser"], bracket)
+
+for name, link_text, title in (
+        ("the same text", "Fix the parser", "Fix the parser"),
+        ("surrounding quotes and whitespace", ' "Fix  the parser" ', "Fix the parser"),
+        ("curly quotes", "\u201cFix the parser\u201d", "Fix the parser"),
+        ("a different case", "fix the Parser", "Fix the parser"),
+        ("a Markdown escape", "Fix \\[the\\] parser", "Fix [the] parser"),
+        ("backticks in the title only", "Fix the ~ parser", "Fix the `~` parser")):
+    check(f"link text matches its title: {name}", hook.titles_match(link_text, title),
+          (link_text, title))
+def prefixed_note(link_text, number=1256, title="Fix the parser"):
+    mismatch = hook.link_title_mismatch(1, link_text, PULL_URL, number, title)
+    return None if mismatch is None else (mismatch.prefix_number,)
+
+
+for link_text in ('PR 1256, "Fix the parser"', "PR #1256: Fix the parser", "GHI 1256 - Fix the parser",
+                  "issue 1256 \u201cFix the parser\u201d", "#1256 Fix the parser", "pr 1256, fix the parser",
+                  "PR \\#1256: Fix the parser", '"PR 1256: Fix the parser"'):
+    check(f"a correct title behind an ID prefix with the link's number matches: {link_text}",
+          prefixed_note(link_text) is None, prefixed_note(link_text))
+check("a correct title behind an ID prefix with another number is noted, with the wrong number",
+      prefixed_note('PR 1253, "Fix the parser"') == (1253,), prefixed_note('PR 1253, "Fix the parser"'))
+check("a wrong title behind an ID prefix with the link's number is noted, with no number note",
+      prefixed_note('PR 1256, "Fix the reader"') == (None,), prefixed_note('PR 1256, "Fix the reader"'))
+check("a wrong title behind an ID prefix with another number is noted, with the wrong number",
+      prefixed_note('PR 1253, "Fix the reader"') == (1253,), prefixed_note('PR 1253, "Fix the reader"'))
+
+check("link text that is another item's title does not match",
+      not hook.titles_match("Bash guards: messages say why", "Shell reader: ~ marks"))
+
+os.environ[GH_STAND_IN_MODE_VARIABLE] = "titles"
+os.environ[GH_STAND_IN_TITLES_VARIABLE] = json.dumps({"1256": "A real title here"})
+mismatches, reason, _ = hook.link_title_mismatches_in(
+    f"[A wrong title here]({PULL_URL}) and [Some three words]"
+    "(https://github.com/nedschorus/nedschorus/pull/999999)")
+check("a mismatch is found by one gh call, and a number with no item is not reported",
+      reason is None and [(m.text, m.title) for m in mismatches]
+      == [("A wrong title here", "A real title here")],
+      (reason, [(m.text, m.title) for m in mismatches]))
+
+for mode, expected in (("forbidden", "gh api graphql failed: gh: stand-in gh: resource not accessible"),
+                       ("titles-exit-1", "gh api graphql failed: {")):
+    os.environ[GH_STAND_IN_MODE_VARIABLE] = mode
+    try:
+        hook.github_titles([1256])
+        error_reason = None
+    except hook.GithubTitlesUnavailable as error:
+        error_reason = str(error)
+    check(f"gh's answer with titles but a failure other than an absent item is a gh failure: {mode}",
+          error_reason is not None and error_reason.startswith(expected), error_reason)
+
+os.environ[GH_STAND_IN_MODE_VARIABLE] = "sleep"
+try:
+    hook.github_titles([1256], timeout_seconds=1)
+    timeout_reason = None
+except hook.GithubTitlesUnavailable as error:
+    timeout_reason = str(error)
+check("a gh that does not answer in time is a gh failure",
+      timeout_reason == "gh did not answer within 1 seconds", timeout_reason)
+mismatches, reason, _ = hook.link_title_mismatches_in(f"[A wrong title here]({PULL_URL})")
+check("the hook's own gh call has a timeout, and a timeout skips the check",
+      mismatches == [] and reason is not None and "did not answer within" in reason, reason)
+os.environ.pop(GH_STAND_IN_MODE_VARIABLE)
+os.environ.pop(GH_STAND_IN_TITLES_VARIABLE)
+
+
+# ---------------------------------------------------------------------------
 # The hook, run as a subprocess.
 # ---------------------------------------------------------------------------
 
@@ -296,6 +449,56 @@ result = run_hook(tool_payload("Edit", REPOSITORY / "docs" / "old.md", old_strin
                                new_string="See [issue 46](https://x.y/issues/46)."))
 check("Edit with no bare reference is silent",
       result.returncode == 0 and result.stdout == "", result.stdout)
+
+titles_environment = dict(HOOK_ENVIRONMENT, **{
+    GH_STAND_IN_MODE_VARIABLE: "titles", GH_STAND_IN_TITLES_VARIABLE: json.dumps(TITLES)})
+result = run_hook(tool_payload("Write", REPOSITORY / "docs" / "links.md",
+                               content=f"Title\n\nSee GHI [Some other item title]({ISSUE_URL}).\n"),
+                  titles_environment)
+context = context_of(result)
+check("Write with a link under the wrong title gets a note giving the right title",
+      context is not None
+      and f'docs/links.md:3: "Some other item title" links {ISSUE_URL}; the title on GitHub is '
+          f'"{TITLES["1196"]}"' in context["additionalContext"], result.stdout)
+
+result = run_hook(tool_payload("Edit", REPOSITORY / "docs" / "old.md", old_string="Old",
+                               new_string=f"See GHI [Some other item title]({ISSUE_URL})."),
+                  titles_environment)
+context = context_of(result)
+check("Edit with a link under the wrong title gets a note giving the right title",
+      context is not None
+      and f'"Some other item title" links {ISSUE_URL}; the title on GitHub is "{TITLES["1196"]}"'
+          in context["additionalContext"], result.stdout)
+
+committed_link_line = f"Old link: GHI [Some other item title]({ISSUE_URL}).\n"
+(REPOSITORY / "docs" / "linked.md").write_text(committed_link_line, encoding="utf-8")
+git("add", "-A")
+git("commit", "-q", "-m", "a committed link under a stale title")
+result = run_hook(tool_payload("Write", REPOSITORY / "docs" / "linked.md",
+                               content=committed_link_line + "A new plain line.\n"),
+                  titles_environment)
+check("Write does not check the title of a link on a line HEAD already holds",
+      result.returncode == 0 and result.stdout == "", result.stdout)
+
+result = run_hook(tool_payload("Write", REPOSITORY / "docs" / "wrong-number.md",
+                               content=f"See [GHI 1253, \"{TITLES['1196']}\"]({ISSUE_URL}).\n"),
+                  titles_environment)
+context = context_of(result)
+check("Write with a wrong number gets the Markdown note's own wrong-number instruction",
+      context is not None and hook.MARKDOWN_WRONG_NUMBER_LINE in context["additionalContext"]
+      and "the number 1253 in the link text is not the link's number 1196" in context["additionalContext"],
+      result.stdout)
+
+many_links = "".join(f"[Wrong title number {index}]({PULL_URL}).\n" for index in range(12))
+result = run_hook(tool_payload("Write", REPOSITORY / "docs" / "many.md", content=many_links),
+                  titles_environment)
+context = context_of(result)
+listed = [line for line in (context or {}).get("additionalContext", "").split("\n")
+          if "; the title on GitHub is" in line]
+check("Write lists at most 10 title mismatches and counts the rest",
+      len(listed) == 10 and hook.MORE_TITLE_HITS_LINE.format(count=2)
+      in (context or {}).get("additionalContext", ""),
+      result.stdout)
 
 result = run_hook(tool_payload("Write", REPOSITORY / "notes.txt", content="PR 931\n"))
 check("a file that is not Markdown is not scanned", result.stdout == "", result.stdout)
@@ -401,6 +604,74 @@ check("UserPromptSubmit: silent in a headless claude -p child", result.stdout ==
 owned = dict(HOOK_ENVIRONMENT, NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER="1")
 result = run_hook(prompt_payload(path), owned)
 check("UserPromptSubmit: silent when a caller owns the session", result.stdout == "", result.stdout)
+
+path = transcript(user("go"), assistant("m1", text_block(
+    f"Merged PR [Bash guards: messages say why]({PULL_URL}) and GHI [{TITLES['1196']}]({ISSUE_URL}).")))
+result = run_hook(prompt_payload(path), titles_environment)
+context = context_of(result)
+check("UserPromptSubmit: a link under another item's title gets a note giving the right title",
+      result.returncode == 0 and context is not None
+      and "linked 1 pull request(s) or GitHub issue(s) under link text that is not the title"
+          in context["additionalContext"]
+      and f'"Bash guards: messages say why" links {PULL_URL}; the title on GitHub is "{TITLES["1256"]}"'
+          in context["additionalContext"],
+      result.stdout)
+check("UserPromptSubmit: a link under its own title is not listed",
+      context is not None and ISSUE_URL not in context["additionalContext"], result.stdout)
+
+path = transcript(user("go"), assistant("m1", text_block(
+    f"Merged [PR 1253, \"{TITLES['1256']}\"]({PULL_URL}).")))
+result = run_hook(prompt_payload(path), titles_environment)
+context = context_of(result)
+check("UserPromptSubmit: a correct title behind another number's prefix is noted, saying the number is wrong",
+      context is not None
+      and f"""the title on GitHub is "{TITLES['1256']}"; the number 1253 in the link text is not the link's number 1256"""
+          in context["additionalContext"], result.stdout)
+check("UserPromptSubmit: a wrong number gets its own instruction, to make the text and the URL agree",
+      context is not None and hook.PREVIOUS_REPLY_WRONG_NUMBER_LINE in context["additionalContext"],
+      result.stdout)
+
+path = transcript(user("go"), assistant("m1", text_block(
+    f"Merged [PR 1256, \"Some wrong title\"]({PULL_URL}).")))
+result = run_hook(prompt_payload(path), titles_environment)
+context = context_of(result)
+check("UserPromptSubmit: a note with no wrong number has no wrong-number instruction",
+      context is not None and "the title on GitHub is" in context["additionalContext"]
+      and hook.PREVIOUS_REPLY_WRONG_NUMBER_LINE not in context["additionalContext"], result.stdout)
+
+path = transcript(user("go"), assistant("m1", text_block(
+    f"GHI [{TITLES['1196']}]({ISSUE_URL}) and PR [\"{TITLES['1256']}\"]({PULL_URL}).")))
+result = run_hook(prompt_payload(path), titles_environment)
+check("UserPromptSubmit: links under their own titles are silent",
+      result.returncode == 0 and result.stdout == "", result.stdout)
+
+failing_environment = dict(HOOK_ENVIRONMENT, **{GH_STAND_IN_MODE_VARIABLE: "fail"})
+path = transcript(user("go"), assistant("m1", text_block(
+    f"Merged PR [Bash guards: messages say why]({PULL_URL}) and PR 931.")))
+result = run_hook(prompt_payload(path), failing_environment)
+context = context_of(result)
+check("UserPromptSubmit: when gh fails, titles are skipped, the note says so, and bare numbers are still noted",
+      result.returncode == 0 and context is not None
+      and "the text of 1 link(s) to pull requests or GitHub issues was not checked against their "
+          "titles on GitHub, because gh could not report the titles: "
+          "gh api graphql failed: stand-in gh: no network" in context["additionalContext"]
+      and '"PR 931"' in context["additionalContext"], result.stdout)
+
+no_gh_environment = dict(HOOK_ENVIRONMENT, PATH=str(SCRATCH / "no-programs-here"))
+result = run_hook(prompt_payload(path), no_gh_environment)
+context = context_of(result)
+check("UserPromptSubmit: when gh is not installed, titles are skipped and the note says so",
+      result.returncode == 0 and context is not None
+      and "because gh could not report the titles: gh could not be run:"
+          in context["additionalContext"], result.stdout)
+
+forbidden_environment = dict(titles_environment, **{GH_STAND_IN_MODE_VARIABLE: "forbidden"})
+result = run_hook(prompt_payload(path), forbidden_environment)
+context = context_of(result)
+check("UserPromptSubmit: when gh reports an error other than an absent item, titles are skipped and the note says so",
+      result.returncode == 0 and context is not None
+      and "because gh could not report the titles: gh api graphql failed: gh: stand-in gh: "
+          "resource not accessible" in context["additionalContext"], result.stdout)
 
 result = run_hook({"hook_event_name": "Stop", "transcript_path": str(path)})
 check("Stop is no longer handled", result.returncode == 0 and result.stdout == "", result.stdout)
