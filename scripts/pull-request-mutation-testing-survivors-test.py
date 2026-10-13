@@ -63,7 +63,8 @@ if (control / "machine.lock").exists():
 with (control / "calls.log").open("a") as log:
     log.write(json.dumps({{"tool": tool, "arguments": arguments,
                           "cwd": os.getcwd(), "head": head,
-                          "lock_free": lock_free}}) + "\\n")
+                          "lock_free": lock_free,
+                          "session_attended": os.environ.get("CLAUDE_CODE_SESSION_ATTENDED")}}) + "\\n")
 if tool == "cr-filter-git":
     sys.exit(plan.get("filter_exit", 0))
 command = arguments[0]
@@ -283,9 +284,14 @@ def run_cases():
         venv, control = fake_venv(scratch_name, {"dump": [
             [work_item("scripts/thing.py", 2, "core/NumberReplacer", "a"), result("killed")]]})
         completed = run_script(repository, control, "--head", head, "--base", base,
-                               "--cosmic-ray-venv", str(venv))
+                               "--cosmic-ray-venv", str(venv),
+                               extra_environment={"CLAUDE_CODE_SESSION_ATTENDED": "0"})
         check("every mutant killed: exit 0", completed.returncode == 0,
               f"rc={completed.returncode} out={completed.stdout} err={completed.stderr}")
+        recorded = calls(control)
+        check("cosmic-ray, which launches the suites, runs without the variable that says whether "
+              "a user attends the agent-session",
+              recorded and all(call["session_attended"] is None for call in recorded), recorded)
 
     with tempfile.TemporaryDirectory() as scratch_name:
         repository, base, head = scratch_repository(scratch_name, HEAD_FILES)

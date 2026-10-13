@@ -407,7 +407,7 @@ def run_suite_confined(top, suite, interpreter, sandbox_prefix, proof_file, byte
     command = [*sandbox_prefix, sys.executable, str(Path(__file__).resolve()),
                INSIDE_CHECK_OPTION, str(proof_file), "--",
                *suite_command(top, suite, interpreter)]
-    environment = runner.environment_without_git_redirecting_variables()
+    environment = runner.test_suite_launch_environment_without_git_redirecting_and_agent_session_attendance_variables()
     if bytecode_dir is not None:
         environment["PYTHONPYCACHEPREFIX"] = str(bytecode_dir)
     # A proof left by an earlier run must not vouch for this one.

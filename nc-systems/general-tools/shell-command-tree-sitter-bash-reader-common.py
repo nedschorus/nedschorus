@@ -483,8 +483,8 @@ def agent_session_attendance_environment_variables_temporarily_set_for_test(atte
 
 
 COMMAND_AS_FENCED_CODE_BLOCK_INSTRUCTION = (
-    "give the command as a fenced code block of its own, between two lines of three backticks, "
-    "or of more backticks than the longest run of backticks in the command")
+    "give the command that ran as a fenced code block of its own, between two lines of three "
+    "backticks, or of more backticks than the longest run of backticks in that command")
 
 
 def tree_sitter_bash_by_hand_install_instruction_for_user(host):
@@ -547,10 +547,10 @@ def report_to_user_or_dispatching_agent_instruction_build(words, environment=os.
     attends the agent-session.
     """
     if _session_unattended(environment):
-        return (f"If you are a subagent, tell the agent that dispatched you, in these words: "
-                f"{words}\n"
-                f"No user attends this agent-session, so do not tell the user; if you are not "
-                f"a subagent, go on with your task.")
+        return (f"No user attends this agent-session, so do not tell the user. If you are not "
+                f"a subagent, skip the report below and go on with your task.\n"
+                f"If you are a subagent, tell the agent that dispatched you, in these words: "
+                f"{words}")
     return (f"Tell the user, or, if you are a subagent, the agent that dispatched you, in these "
             f"words: {words}")
 

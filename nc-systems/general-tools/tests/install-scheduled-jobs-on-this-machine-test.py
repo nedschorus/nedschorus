@@ -20,6 +20,7 @@ import json
 import os
 import plistlib
 import shutil
+import socket
 import subprocess
 import sys
 import tempfile
@@ -1382,10 +1383,12 @@ with tempfile.TemporaryDirectory() as temporary:
           and "Leave this run of install-scheduled-jobs-on-this-machine undone; run it again, with "
           "the same options, only after tree-sitter-bash is installed." in unattended_lines,
           unattended_errors)
-    where, install = shell_reader.tree_sitter_bash_by_hand_install_instruction_for_user("ned-box")
+    # The refusal names the machine it runs on, so the expected command is built for that machine.
+    this_host = socket.gethostname().split(".")[0]
+    where, install = shell_reader.tree_sitter_bash_by_hand_install_instruction_for_user(this_host)
     check("the install command stands on a line of its own, with nothing after it to copy by mistake",
-          install in unattended_lines and install.startswith("ssh nedlern@ned-box 'python3 -m pip ")
-          and install.endswith("requirements.txt'"), unattended_lines)
+          install in unattended_lines and "python3 -m pip install" in install
+          and install.rstrip("'").endswith("requirements.txt"), unattended_lines)
 
     # A failure inside the shell reader stops this program the same way, naming the failure.
     real_collect = shell_reader._collect
