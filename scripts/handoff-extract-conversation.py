@@ -39,8 +39,10 @@ it wrote each task. The subagent tracker,
 scripts/handoff-extract-conversation-subagent-tracker-nbd.py, finds them and
 says which records it reads. The tracker is nice-but-dirty: when it cannot be
 loaded or raises, the subagent turns are left out, and one note says so and
-why, in the header of the conversation-tail, of stdout and of the complete
-dialog, and on stderr, so the handoff still writes its dialog and exits 0. Because a report answers
+why: as a line in the header of the conversation-tail, which is also what
+stdout gets; as a section of its own, "Subagent tasks and reports left out",
+in the body of the complete dialog, when one is written; and on stderr. The
+handoff still writes its dialog and exits 0. Because a report answers
 the session, the agent's short reply to one is kept, not dropped as an
 acknowledgement. Subagent turns go in the complete dialog only, every one
 whole: the tail, which the successor reads first, carries the user's and the
