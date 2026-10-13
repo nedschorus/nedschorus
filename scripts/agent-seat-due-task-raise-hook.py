@@ -72,7 +72,10 @@ is for the agent. The text is one instruction per due task, then the
 instruction for a task that cannot be acted on yet. Nothing to raise:
 nothing printed, exit 0. A fault, such as a payload that is not a JSON
 object, a state file that cannot be written or any exception: one line on
-stderr naming the hook and the fault, nothing on stdout, exit 1. Claude Code
+stderr naming the hook and the fault, nothing on stdout, exit 1. The line for
+a failed state write says how many due tasks went unraised, or that none was
+due, and that the first stop after the state file can be written raises them;
+the line for any other fault says no task was checked. Claude Code
 records a Stop hook's exit 1 as a non-blocking error and still ends the turn.
 Exit 2 and additionalContext would both continue the conversation, and a
 fault that recurs at every stop would then never let the agent stop.
@@ -427,7 +430,8 @@ def run(stdin_text: str, environment, home: Path, now: datetime) -> "str | None"
     """The JSON to print, or None for silence; raises on a fault."""
     payload = json.loads(stdin_text)
     if not isinstance(payload, dict):
-        raise HookFault(f"the hook payload is a JSON {type(payload).__name__}, not an object")
+        raise HookFault(f"the payload Claude Code sent on stdin is a JSON "
+                        f"{type(payload).__name__}, not an object, so no task was checked")
     if environment.get(REINCARNATION_OWNED_BY_CALLER_VARIABLE):
         return None  # a caller's headless child: the raise would replace its answer
     if environment.get(SESSION_ATTENDED_VARIABLE) == SESSION_UNATTENDED_VALUE:
@@ -443,8 +447,14 @@ def run(stdin_text: str, environment, home: Path, now: datetime) -> "str | None"
         try:
             write_state_atomically(state_path, state)
         except OSError as error:
-            raise HookFault(f"the state file {state_path} could not be written, so "
-                            f"{len(lines)} due task(s) were not raised: {error}") from error
+            if lines:
+                outcome = (f"so {len(lines)} due task(s) were not raised at this stop; the "
+                           f"first stop after the state file can be written raises them")
+            else:
+                outcome = "no task was due at this stop, so none went unraised"
+            raise HookFault(f"the state file {state_path} could not be written, and {outcome}. "
+                            f"Make {state_path.parent} a directory this user can write to: "
+                            f"{error}") from error
     if not lines:
         return None
     return json.dumps({
@@ -461,10 +471,13 @@ def main() -> int:
                      datetime.now(timezone.utc))
         if output is not None:
             print(output)
+    except HookFault as error:
+        print(f"agent-seat-due-task-raise-hook: {error}", file=sys.stderr)
+        return 1
     except Exception as error:
-        print(f"agent-seat-due-task-raise-hook: no due task was raised, because the "
-              f"hook failed; the turn ends as usual: {type(error).__name__}: {error}",
-              file=sys.stderr)
+        print(f"agent-seat-due-task-raise-hook: the hook failed, so no task was checked at "
+              f"this stop; the first stop without this fault raises any task that is due: "
+              f"{type(error).__name__}: {error}", file=sys.stderr)
         return 1
     return 0
 

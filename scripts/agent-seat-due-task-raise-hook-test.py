@@ -430,8 +430,8 @@ check("malformed task files beside a due task: the due task still raised",
 seat = Seat()
 seat.task("65", metadata={"due_utc": PAST_DUE})
 for name, stdin_text, fault_words in (
-        ("not JSON", "not json at all", "JSONDecodeError"),
-        ("a JSON list", "[1, 2]", "a JSON list, not an object"),
+        ("not JSON", "not json at all", "no task was checked at this stop"),
+        ("a JSON list", "[1, 2]", "a JSON list, not an object, so no task was checked"),
         ("empty", "", "JSONDecodeError")):
     result = seat.run(stdin_text=stdin_text)
     check(f"malformed payload ({name}): reported on stderr, exit 1, no raise",
@@ -475,7 +475,25 @@ seat.state_path.parent.parent.mkdir(parents=True)
 seat.state_path.parent.write_text("a file where the state directory should be")
 result = seat.run()
 check("state cannot be written: reported on stderr, exit 1, and no raise goes unrecorded",
-      reported(result, "could not be written, so 1 due task(s) were not raised"), result)
+      reported(result, "could not be written, and so 1 due task(s) were not raised at this "
+                       "stop; the first stop after the state file can be written raises them")
+      and "no task was checked" not in result.stderr, result)
+seat.state_path.parent.unlink()
+text = context_of(seat.run()) or ""
+check("state writable again: the task the failed write left unraised is raised",
+      text.startswith("Act on task 70 "), text)
+
+seat = Seat()
+seat.task("71", metadata={"waits_on": [{"pr_merged": 140}]})
+seat.respond({"pr:140": "fail"})
+seat.state_path.parent.parent.mkdir(parents=True)
+seat.state_path.parent.write_text("a file where the state directory should be")
+result = seat.run()
+check("state cannot be written with nothing due: reported, saying no task went unraised",
+      reported(result, "could not be written, and no task was due at this stop, so none "
+                       "went unraised")
+      and "were not raised" not in result.stderr
+      and "no task was checked" not in result.stderr, result)
 
 # --- task files are never written ------------------------------------------------
 seat = Seat()
