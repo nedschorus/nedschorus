@@ -574,6 +574,16 @@ def shell_parser_refusal(error) -> Refusal:
         f"What the install printed: {error.install_output}")
 
 
+def _defines_a_function(command_text: str) -> bool:
+    pending = [shell_reader.parser().parse(command_text.encode("utf-8", "surrogatepass")).root_node]
+    while pending:
+        node = pending.pop()
+        if node.type == "function_definition":
+            return True
+        pending.extend(node.children)
+    return False
+
+
 def program_a_cron_line_runs(line: str):
     """Return the program path as spelled in a cron line, or None when unresolved."""
     # Interpreter and env options may consume arguments; guessing could remove an unrelated job.
@@ -585,11 +595,14 @@ def program_a_cron_line_runs(line: str):
         return None
     try:
         commands = shell_reader.simple_commands(fields[-1])
+        defines_a_function = _defines_a_function(fields[-1])
     except shell_reader.ShellParserUnavailable as error:
         raise shell_parser_refusal(error)
-    if not commands:
+    # A substitution's command runs first but is not the line's; a function's body may never run.
+    top_level = [command for command in commands if not command.child_shell]
+    if defines_a_function or not top_level:
         return None
-    words = commands[0]
+    words = top_level[0]
     after_interpreter = False
     for word in words:
         if CRON_ENVIRONMENT_ASSIGNMENT.match(word):

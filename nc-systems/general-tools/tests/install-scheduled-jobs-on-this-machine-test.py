@@ -1254,6 +1254,25 @@ with tempfile.TemporaryDirectory() as temporary:
           [installer.program_a_cron_line_runs(line)
            for line in (redirect_first, "0 5 * * * # paused")])
 
+    # A command substitution's command runs before the line's own command
+    # but is not it, and a function the line defines may never be called;
+    # reading either as the line's program would keep a retired job or remove
+    # a job that is not the project's.
+    substitution_cases = {
+        f"0 5 * * * {box_clone}/scripts/a-retired-dated-log-job.py >> /tmp/x-$(date +\\%F).log 2>&1":
+            f"{box_clone}/scripts/a-retired-dated-log-job.py",
+        f"0 5 * * * /usr/bin/foo $({box_clone}/scripts/a-helper.py)": "/usr/bin/foo",
+        f"0 5 * * * /usr/bin/foo `{box_clone}/scripts/a-helper.py`": "/usr/bin/foo",
+        f"0 5 * * * /usr/bin/foo <({box_clone}/scripts/a-helper.py)": "/usr/bin/foo",
+        f"0 5 * * * {box_clone}/scripts/a-retired-job.py; /usr/bin/logger done":
+            f"{box_clone}/scripts/a-retired-job.py",
+        f"0 5 * * * f() {{ {box_clone}/scripts/a-helper.py; }}; /usr/bin/other": None,
+    }
+    read_programs = {line: installer.program_a_cron_line_runs(line) for line in substitution_cases}
+    check("a crontab line's program is its first command outside any substitution, and a line "
+          "that defines a function is not read",
+          read_programs == substitution_cases, read_programs)
+
     # tree-sitter-bash missing: the module installs it, as on a Mac whose
     # Python has not run a guard yet; a failed install stops this program,
     # which changes nothing and says to tell the user.
