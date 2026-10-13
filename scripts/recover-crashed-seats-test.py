@@ -1619,7 +1619,7 @@ with tempfile.TemporaryDirectory() as temporary:
 
     # Round 3 P1: an underscore-named seat's transcripts are FOUND — the
     # mangling is the harness's (every non-alphanumeric becomes a dash),
-    # delegated to watch-agent-dialogs' probe-verified rule.
+    # delegated to the shared project-directory module's probe-verified rule.
     workspace = Workspace(root / "r10", name="under_score_seat")
     all_dead()
     mangled = recovery.harness_project_directory(workspace.seat_directory,

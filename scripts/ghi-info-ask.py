@@ -145,10 +145,11 @@ _mirror_spec = importlib.util.spec_from_file_location(
 mirror_refresh = importlib.util.module_from_spec(_mirror_spec)
 _mirror_spec.loader.exec_module(mirror_refresh)
 
-_watcher_spec = importlib.util.spec_from_file_location(
-    "watch_agent_dialogs", SCRIPT_DIRECTORY / "watch-agent-dialogs.py")
-watcher = importlib.util.module_from_spec(_watcher_spec)
-_watcher_spec.loader.exec_module(watcher)
+_project_directory_spec = importlib.util.spec_from_file_location(
+    "claude_code_session_transcript_project_directory_for_seat_common",
+    SCRIPT_DIRECTORY / "claude-code-session-transcript-project-directory-for-seat-common.py")
+project_directory_module = importlib.util.module_from_spec(_project_directory_spec)
+_project_directory_spec.loader.exec_module(project_directory_module)
 
 _threshold_hook_spec = importlib.util.spec_from_file_location(
     "handoff_context_threshold_hook", SCRIPT_DIRECTORY / "handoff-context-threshold-hook.py")
@@ -474,7 +475,7 @@ def state_lock(lock_path: Path):
 def transcript_path_for(seat_dir: Path, session_id: str, projects_root: Path):
     if not session_id:
         return None
-    project_directory = watcher.project_directory_for_seat(seat_dir, projects_root)
+    project_directory = project_directory_module.project_directory_for_seat(seat_dir, projects_root)
     return project_directory / f"{session_id}.jsonl"
 
 
