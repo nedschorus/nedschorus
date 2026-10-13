@@ -47,24 +47,29 @@ import collections
 import contextlib
 import functools
 import importlib
+import importlib.util
 import json
 import os
 import re
-import site
 import socket
 import subprocess
 import sys
 import time
 from pathlib import Path
 
-REQUIREMENTS_FILE = Path(__file__).resolve().with_name(
-    "compiled-python-libraries-pinned-requirements.txt")
+_pinned_libraries_install_spec = importlib.util.spec_from_file_location(
+    "compiled_python_libraries_pinned_requirements_install_common",
+    Path(__file__).resolve().with_name("compiled-python-libraries-pinned-requirements-install-common.py"))
+pinned_libraries_install = importlib.util.module_from_spec(_pinned_libraries_install_spec)
+_pinned_libraries_install_spec.loader.exec_module(pinned_libraries_install)
+
+REQUIREMENTS_FILE = pinned_libraries_install.PINNED_REQUIREMENTS_FILE
 # The Bash guards run in parallel with a 30-second hook timeout; a cached wheel installs in about a second.
 INSTALL_TIMEOUT_SECONDS = 8
-INSTALL_RETRY_SECONDS = 600
+INSTALL_RETRY_SECONDS = pinned_libraries_install.INSTALL_RETRY_SECONDS
 STATE_DIRECTORY = Path.home() / ".cache" / "nedschorus-shell-command-reader"
-INSTALL_LOCK_FILE_NAME = "install.lock"
-INSTALL_FAILURE_FILE_NAME = "last-install-failure.txt"
+INSTALL_LOCK_FILE_NAME = pinned_libraries_install.INSTALL_LOCK_FILE_NAME
+INSTALL_FAILURE_FILE_NAME = pinned_libraries_install.INSTALL_FAILURE_FILE_NAME
 
 RECURSION_LIMIT_FOR_DEEP_NESTING = 100_000
 
@@ -106,15 +111,11 @@ def _shell_text_errors(error):
 codecs.register_error(SHELL_TEXT_ERRORS, _shell_text_errors)
 
 
-class ShellParserUnavailable(Exception):
+class ShellParserUnavailable(pinned_libraries_install.CompiledPythonLibrariesUnavailable):
     """tree-sitter-bash could not be imported, and installing it failed.
 
     install_output holds what the install printed, or why it did not run.
     """
-
-    def __init__(self, install_output):
-        super().__init__(install_output)
-        self.install_output = install_output
 
 
 class ShellCommandUnreadable(ShellParserUnavailable):
@@ -315,18 +316,8 @@ def _index_after_options(words, index, wrapper, options):
 
 def install_compiled_libraries(runner=subprocess.run):
     """Install the pinned requirements per user; return what pip printed, or raise ShellParserUnavailable."""
-    command = [sys.executable, "-m", "pip", "install", "--user", "--break-system-packages",
-               "--disable-pip-version-check", "--quiet", "-r", str(REQUIREMENTS_FILE)]
-    try:
-        completed = runner(command, capture_output=True, text=True, timeout=INSTALL_TIMEOUT_SECONDS,
-                           stdin=subprocess.DEVNULL)
-    except (OSError, subprocess.SubprocessError) as error:
-        raise ShellParserUnavailable(f"`{' '.join(command)}` did not finish: {error}") from error
-    printed = (completed.stdout + completed.stderr).strip()
-    if completed.returncode != 0:
-        raise ShellParserUnavailable(
-            f"`{' '.join(command)}` exited {completed.returncode}: {printed or '(no output)'}")
-    return printed
+    return pinned_libraries_install.pinned_requirements_pip_install(
+        INSTALL_TIMEOUT_SECONDS, runner, REQUIREMENTS_FILE, ShellParserUnavailable)
 
 
 def import_tree_sitter_bash():
@@ -378,69 +369,9 @@ def _forget_loaded_copies():
 
 def _install_then_import(importer, installer, clock, fresh_process_check):
     # The guards run in parallel on each command, so they take turns, and only the first installs.
-    try:
-        STATE_DIRECTORY.mkdir(parents=True, exist_ok=True)
-        lock = open(STATE_DIRECTORY / INSTALL_LOCK_FILE_NAME, "w")
-    except OSError as error:
-        raise ShellParserUnavailable(f"could not open the install lock in {STATE_DIRECTORY}: {error}") \
-            from error
-    with lock:
-        try:
-            import fcntl
-            fcntl.flock(lock, fcntl.LOCK_EX)
-        except (ImportError, OSError):
-            pass  # Without the lock, two installs may run; each installs the same pinned files.
-        # Another guard may have installed into a user site this process did not have at start-up.
-        _refresh_import_paths()
-        _forget_loaded_copies()
-        try:
-            return importer()
-        except ImportError:
-            pass
-        failure_record = STATE_DIRECTORY / INSTALL_FAILURE_FILE_NAME
-        try:
-            if clock() - failure_record.stat().st_mtime < INSTALL_RETRY_SECONDS:
-                # Each guard on each command would otherwise wait for its own failing install.
-                raise ShellParserUnavailable(failure_record.read_text(encoding="utf-8"))
-        except OSError:
-            pass
-        try:
-            installer()
-            _refresh_import_paths()
-            _forget_loaded_copies()
-            try:
-                modules = importer()
-            except ImportError as error:
-                if fresh_process_check():
-                    raise ShellParserInstalledForANewProcess(
-                        f"the install finished; this process still holds the copy it could not "
-                        f"use: {error}") from error
-                raise ShellParserUnavailable(
-                    f"the install finished but importing still fails: {error}") from error
-        except ShellParserInstalledForANewProcess:
-            _forget_failure(failure_record)
-            raise
-        except ShellParserUnavailable as error:
-            try:
-                failure_record.write_text(error.install_output, encoding="utf-8")
-            except OSError:
-                pass
-            raise
-        _forget_failure(failure_record)
-        return modules
-
-
-def _forget_failure(failure_record):
-    try:
-        failure_record.unlink()
-    except OSError:
-        pass
-
-
-def _refresh_import_paths():
-    # A user site that did not exist at start-up is not on sys.path yet.
-    site.addsitedir(site.getusersitepackages())
-    importlib.invalidate_caches()
+    return pinned_libraries_install.compiled_python_libraries_install_then_import(
+        importer, installer, clock, fresh_process_check, STATE_DIRECTORY, _forget_loaded_copies,
+        ShellParserUnavailable, ShellParserInstalledForANewProcess)
 
 
 _parser = None
