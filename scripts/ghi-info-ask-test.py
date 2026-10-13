@@ -319,7 +319,7 @@ with tempfile.TemporaryDirectory() as temporary:
     ghi_ask.save_state(seat10 / ghi_ask.STATE_FILE_NAME,
                        {"session_id": "sess-BIG", "closes_since_birth": 0, "recent_matches": []})
     projects_root = root / "projects"
-    project_directory = ghi_ask.watcher.project_directory_for_seat(seat10, projects_root)
+    project_directory = ghi_ask.project_directory_module.project_directory_for_seat(seat10, projects_root)
     project_directory.mkdir(parents=True)
     (project_directory / "sess-BIG.jsonl").write_bytes(
         b"x" * (ghi_ask.TRANSCRIPT_SIZE_THRESHOLD_BYTES + 1))
@@ -338,7 +338,7 @@ with tempfile.TemporaryDirectory() as temporary:
     # hook's notice came back in place of the answer. That hook is silent in
     # these sessions now, so this trigger is what bounds them.
     def transcript_at_context_tokens(seat, session_id, tokens):
-        project_directory = ghi_ask.watcher.project_directory_for_seat(seat, projects_root)
+        project_directory = ghi_ask.project_directory_module.project_directory_for_seat(seat, projects_root)
         project_directory.mkdir(parents=True, exist_ok=True)
         record = {"type": "assistant", "message": {
             "model": "claude-sonnet-5",

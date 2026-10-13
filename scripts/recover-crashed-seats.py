@@ -187,11 +187,12 @@ _records_reader_spec = importlib.util.spec_from_file_location(
 records_reader = importlib.util.module_from_spec(_records_reader_spec)
 _records_reader_spec.loader.exec_module(records_reader)
 
-_watcher_spec = importlib.util.spec_from_file_location(
-    "watch_agent_dialogs", Path(__file__).with_name("watch-agent-dialogs.py")
+_project_directory_spec = importlib.util.spec_from_file_location(
+    "claude_code_session_transcript_project_directory_for_seat_common",
+    Path(__file__).with_name("claude-code-session-transcript-project-directory-for-seat-common.py")
 )
-watcher = importlib.util.module_from_spec(_watcher_spec)
-_watcher_spec.loader.exec_module(watcher)
+project_directory_module = importlib.util.module_from_spec(_project_directory_spec)
+_project_directory_spec.loader.exec_module(project_directory_module)
 
 # Reuse retirement rules so every socket holding the seat’s name is cleared consistently.
 _resupervise_spec = importlib.util.spec_from_file_location(
@@ -247,7 +248,7 @@ def default_handoff_directory() -> Path:
 
 def harness_project_directory(seat_directory: Path, projects_root: Path) -> Path:
     # The harness replaces every non-ASCII-alphanumeric character, including underscores.
-    return watcher.project_directory_for_seat(seat_directory, projects_root)
+    return project_directory_module.project_directory_for_seat(seat_directory, projects_root)
 
 
 def run_tmux(*arguments_after_tmux, socket_name=None, environment=None):

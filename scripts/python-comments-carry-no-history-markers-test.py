@@ -159,8 +159,6 @@ FILES_AWAITING_THE_COMMENT_TRIM = {
     "scripts/walk-file-endings-match-the-skill-test.py": 3,
     "scripts/walk-files-ship-test.py": 12,
     "scripts/walk-files-ship.py": 12,
-    "scripts/watch-agent-dialog-alerts-test.py": 7,
-    "scripts/watch-agent-dialogs-test.py": 2,
 }
 
 # Lines whose marker is data the code needs, not history: "path:line": reason.
