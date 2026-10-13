@@ -24,8 +24,8 @@ after origin/main last took a change to the document, prints
 "cold-read-full-run N of 3", and refuses a fourth. A flag saying the user
 decided to run again or to change the design makes the run number 1, and the
 marker file it leaves in its record starts the count again for later runs. A log-store or git history that cannot be read does not stop the read, as
-with shipping: the run goes ahead and says COUNT NOT CHECKED instead of a
-count.
+with shipping: the run goes ahead and says EARLIER COLD-READ-FULL-RUNS NOT COUNTED
+instead of a count.
 
 THE FROZEN COPY IS WHAT THE COLD-READ-CELLS READ, and it is read-only
 (user-ruled 2026-08-28). Every cell used to open the live document, so an edit
@@ -221,8 +221,8 @@ record_directory_name_for_target = record_names.record_directory_name_for_target
 
 
 FULL_RUN_LIMIT = 3
-USER_RULED_ANOTHER_RUN_FLAG = "--user-ruled-another-cold-read-full-run"
-USER_RULED_ANOTHER_RUN_MARKER_NAME = "user-ruled-another-cold-read-full-run.txt"
+USER_RULED_COUNT_RESTART_FLAG = "--user-ruled-cold-read-full-run-count-restart"
+USER_RULED_COUNT_RESTART_MARKER_NAME = "user-ruled-cold-read-full-run-count-restart-marker.txt"
 # A grid report's name; a fast read's record holds only fast-read.md. Older
 # records prefix each report with "<record name>--".
 FULL_RUN_REPORT_NAME_PATTERN = re.compile(r"^(?:.*--)?(?:claude|codex)-.*\.md$")
@@ -290,7 +290,7 @@ def earlier_full_runs_since_count_start(frozen_paths: set, landed_at, listing: l
             record["frozen"] = True
         elif FULL_RUN_REPORT_NAME_PATTERN.match(inside):
             record["reported"] = max(record["reported"] or 0.0, float(mtime))
-        elif inside == USER_RULED_ANOTHER_RUN_MARKER_NAME:
+        elif inside == USER_RULED_COUNT_RESTART_MARKER_NAME:
             record["marked"] = True
     runs = sorted((record["reported"], directory, record["marked"])
                   for directory, record in records.items()
@@ -716,7 +716,7 @@ def main() -> int:
         "--target", required=True, help="document path, relative to the repo root or absolute"
     )
     parser.add_argument(
-        USER_RULED_ANOTHER_RUN_FLAG, action="store_true",
+        USER_RULED_COUNT_RESTART_FLAG, action="store_true",
         help=f"the user ruled, after this document's cold-read-full-run {FULL_RUN_LIMIT} "
              f"of {FULL_RUN_LIMIT}, to run again or to change the design; this run "
              f"starts the count again at 1")
@@ -747,7 +747,7 @@ def main() -> int:
             print(f"cold-read-grid: {runtime} cell launcher missing: {launcher}", file=sys.stderr)
             return 2
 
-    user_ruled_another_run = args.user_ruled_another_cold_read_full_run
+    user_ruled_count_restart = args.user_ruled_cold_read_full_run_count_restart
     # Like shipping, counting needs ned-box, and a review must not wait on ned-box.
     count_unavailable = None
     earlier_runs = []
@@ -755,7 +755,7 @@ def main() -> int:
         earlier_runs = earlier_full_runs_of(target)
     except FullRunCountUnavailable as error:
         count_unavailable = str(error)
-    run_number = 1 if user_ruled_another_run else len(earlier_runs) + 1
+    run_number = 1 if user_ruled_count_restart else len(earlier_runs) + 1
     if run_number > FULL_RUN_LIMIT and count_unavailable is None:
         print(f"cold-read-grid: refusing cold-read-full-run {run_number} of "
               f"{target.name}: a change to a document gets at most {FULL_RUN_LIMIT} "
@@ -767,17 +767,17 @@ def main() -> int:
               f"in the log-store lists, and ask whether to stop, run again, or change "
               f"the document's design.\n"
               f"If the user rules to run again, run again with "
-              f"{USER_RULED_ANOTHER_RUN_FLAG}.\n"
+              f"{USER_RULED_COUNT_RESTART_FLAG}.\n"
               f"If the user rules to change the design, make the change first, then "
-              f"run again with {USER_RULED_ANOTHER_RUN_FLAG}.\n"
+              f"run again with {USER_RULED_COUNT_RESTART_FLAG}.\n"
               f"If the user rules to stop, give the user the document to read as it "
               f"stands.", file=sys.stderr)
         return 2
 
     record_dir = make_record_dir(target, record_clock_reading())
-    if user_ruled_another_run:
+    if user_ruled_count_restart:
         # The marker restarts the count for every later run of this document.
-        (record_dir / USER_RULED_ANOTHER_RUN_MARKER_NAME).write_text(
+        (record_dir / USER_RULED_COUNT_RESTART_MARKER_NAME).write_text(
             "The user ruled to run this document's cold-read-full-runs again.\n",
             encoding="utf-8")
     reference_integrity_pre_pass(target, record_dir)
@@ -797,10 +797,10 @@ def main() -> int:
     if count_unavailable is None:
         print(f"cold-read-full-run {run_number} of {FULL_RUN_LIMIT} for {target.name}.")
     else:
-        print(f"COUNT NOT CHECKED: this run went ahead without counting the earlier "
-              f"cold-read-full-runs of {target.name}: {count_unavailable}\n"
-              f"Tell the user what this line says, and count the runs in the "
-              f"log-store yourself before the next one.")
+        print(f"EARLIER COLD-READ-FULL-RUNS NOT COUNTED: this run went ahead without "
+              f"counting the earlier cold-read-full-runs of {target.name}: "
+              f"{count_unavailable}\n"
+              f"Tell the user what this line says.")
     print(f"Launched six reviewers against {target}. Reports appear in "
           f"{record_dir} as each completes — read each as it arrives.")
 

@@ -1645,7 +1645,7 @@ with tempfile.TemporaryDirectory() as scratch:
           and "2026-09-04" not in result.stderr and "2026-09-05" not in result.stderr,
           f"exit {result.returncode}; stderr={result.stderr!r}")
     check("the refusal tells the agent what to do on each of the user's answers",
-          "--user-ruled-another-cold-read-full-run" in result.stderr
+          "--user-ruled-cold-read-full-run-count-restart" in result.stderr
           and "If the user rules to stop" in result.stderr, result.stderr)
     check("a refused run creates no record and launches no reviewer",
           sorted(p.name for p in (repository / "cold-read-records").iterdir())
@@ -1653,13 +1653,13 @@ with tempfile.TemporaryDirectory() as scratch:
           f"records {sorted((repository / 'cold-read-records').iterdir())}; stdout={result.stdout!r}")
 
     flagged = run_grid(repository, stubs / "full-run-count-refused",
-                       extra_arguments=["--user-ruled-another-cold-read-full-run"])
+                       extra_arguments=["--user-ruled-cold-read-full-run-count-restart"])
     marked_record = record_directory_of(repository)
     check("the user's ruling runs a fourth as 1 of 3 and marks its record",
           flagged.returncode == 0
           and "cold-read-full-run 1 of 3 for" in flagged.stdout
           and marked_record is not None
-          and (marked_record / "user-ruled-another-cold-read-full-run.txt").is_file(),
+          and (marked_record / "user-ruled-cold-read-full-run-count-restart-marker.txt").is_file(),
           f"exit {flagged.returncode}; stdout={flagged.stdout!r}; stderr={flagged.stderr!r}")
     result = run_grid(repository, stubs / "full-run-count-refused",
                       {RECORD_CLOCK_OVERRIDE_VARIABLE: "2026-09-17T10:42"})
@@ -1709,8 +1709,8 @@ with tempfile.TemporaryDirectory() as scratch:
     repository = build_scratch_repository(scratch, "full-run-count-store-unreadable")
     result = run_grid(repository, stubs / "full-run-count-store-unreadable",
                       {RECORD_SHIP_DESTINATION_VARIABLE: str(scratch / "no-such-log-store")})
-    check("an unlistable log-store is reported as COUNT NOT CHECKED and the read goes ahead",
-          result.returncode == 0 and "COUNT NOT CHECKED:" in result.stdout
+    check("an unlistable log-store is reported as EARLIER COLD-READ-FULL-RUNS NOT COUNTED and the read goes ahead",
+          result.returncode == 0 and "EARLIER COLD-READ-FULL-RUNS NOT COUNTED:" in result.stdout
           and "no-such-log-store" in result.stdout and " of 3 for " not in result.stdout
           and len([line for line in result.stdout.splitlines() if line.startswith("saved:")]) == 6,
           f"exit {result.returncode}; stdout={result.stdout!r}")
@@ -1724,8 +1724,8 @@ with tempfile.TemporaryDirectory() as scratch:
     uncommitted_target.write_text("# Target\n", encoding="utf-8")
     result = run_grid(repository, stubs / "full-run-count-history-unreadable",
                       target_relative_path=str(uncommitted_target))
-    check("an unreadable git history is reported as COUNT NOT CHECKED",
-          "COUNT NOT CHECKED:" in result.stdout and "git log --follow" in result.stdout,
+    check("an unreadable git history is reported as EARLIER COLD-READ-FULL-RUNS NOT COUNTED",
+          "EARLIER COLD-READ-FULL-RUNS NOT COUNTED:" in result.stdout and "git log --follow" in result.stdout,
           f"exit {result.returncode}; stdout={result.stdout!r}; stderr={result.stderr!r}")
 
 print()
