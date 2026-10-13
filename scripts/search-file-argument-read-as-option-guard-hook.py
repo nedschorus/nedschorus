@@ -321,8 +321,8 @@ def main(stdin=sys.stdin, clock=time.monotonic):
         print(unchecked_hook_output(
             f"the guard failed on it ({type(error).__name__}: {error}).",
             f"\"The search-file-argument guard failed on a command and let it through unchecked "
-            f"({type(error).__name__}: {error}).\" After those words, give the command as a "
-            f"quoted block of its own."))
+            f"({type(error).__name__}: {error}).\" After those words, "
+            f"{shell_reader.COMMAND_AS_FENCED_CODE_BLOCK_INSTRUCTION}."))
         return 0
     if refusal:
         deny(refusal)

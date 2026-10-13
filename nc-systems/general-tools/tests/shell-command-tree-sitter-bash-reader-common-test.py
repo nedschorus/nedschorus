@@ -1265,6 +1265,13 @@ except r.ShellParserUnavailable as error:
           and str(reader.REQUIREMENTS_FILE) in first and "subagent" in first, first)
     check("every report has the user told again; nothing is counted",
           "Tell the user" in again and again.replace("tmux kill", "force-push") == first, again)
+    this_host = __import__("socket").gethostname().split(".")[0]
+    install = reader.tree_sitter_bash_by_hand_install_instruction_for_user(this_host)[1]
+    check("the install command stands on a line of its own in the message",
+          install in first.splitlines(), first)
+    check("the words to report include the command, as a fenced code block, and what was undone",
+          reader.COMMAND_AS_FENCED_CODE_BLOCK_INSTRUCTION in first and "what you undid" in first
+          and "what you could not undo" in first, first)
     on_ned_box = __import__("socket").gethostname().split(".")[0] == "ned-box"
     check("the install command for ned-box is given in the ssh form the user runs from the Mac",
           on_ned_box == ("ssh nedlern@ned-box 'python3 -m pip install" in first), first)

@@ -1378,7 +1378,14 @@ with tempfile.TemporaryDirectory() as temporary:
           "do not tell the user" in unattended_errors
           and "If you are a subagent, tell the agent that dispatched you" in unattended_errors
           and "Tell the user" not in unattended_errors and "pip install" in unattended_errors
-          and "pip exited 1: no network" in unattended_errors, unattended_errors)
+          and "pip exited 1: no network" in unattended_errors
+          and "Leave this run of install-scheduled-jobs-on-this-machine undone; run it again, with "
+          "the same options, only after tree-sitter-bash is installed." in unattended_lines,
+          unattended_errors)
+    where, install = shell_reader.tree_sitter_bash_by_hand_install_instruction_for_user("ned-box")
+    check("the install command stands on a line of its own, with nothing after it to copy by mistake",
+          install in unattended_lines and install.startswith("ssh nedlern@ned-box 'python3 -m pip ")
+          and install.endswith("requirements.txt'"), unattended_lines)
 
     # A failure inside the shell reader stops this program the same way, naming the failure.
     real_collect = shell_reader._collect
@@ -1407,13 +1414,20 @@ with tempfile.TemporaryDirectory() as temporary:
           and f"failed on the crontab line `{runs_directly}` on " in errors.splitlines()[1]
           and "Tell the user" in errors and "in these words" in errors,
           (exit_code, printed, errors, stub.crontab_writes))
-    check("a crontab line holding a backtick is quoted with a longer run of backticks around it",
-          f"failed on the crontab line `` {backticked} `` on " in backticked_errors, backticked_errors)
+    for index in (0, 1):
+        check(f"a crontab line holding a backtick is quoted with a longer run of backticks around it, "
+              f"in line {index} of the refusal",
+              f"failed on the crontab line `` {backticked} `` on "
+              in backticked_errors.splitlines()[index], backticked_errors)
+    check("the refusal tells the agent to leave this run undone until the reader is fixed",
+          "Leave this run of install-scheduled-jobs-on-this-machine undone; run it again, with the "
+          "same options, only after the shell command reader is fixed." in errors.splitlines(), errors)
     check("in an agent-session no user attends, that refusal tells a subagent to report, does not "
           "ask to tell the user, and gives a top-level agent its next step",
           unattended_exit == 2 and "do not tell the user" in unattended_errors
           and "If you are a subagent, tell the agent that dispatched you" in unattended_errors
           and "go on with your task" in unattended_errors
+          and "Leave this run of install-scheduled-jobs-on-this-machine undone" in unattended_errors
           and "Tell the user" not in unattended_errors, unattended_errors)
 
 print()

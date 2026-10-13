@@ -401,7 +401,9 @@ try:
               f"and says whom to tell",
               refusal is None and len(LET_THROUGH_MESSAGES) == 1
               and f"{type(failure).__name__}: {failure}" in LET_THROUGH_MESSAGES[0]
-              and "without checking it" in LET_THROUGH_MESSAGES[0] and whom, LET_THROUGH_MESSAGES)
+              and "without checking it" in LET_THROUGH_MESSAGES[0] and whom
+              and guard.shell_reader.COMMAND_AS_FENCED_CODE_BLOCK_INSTRUCTION in LET_THROUGH_MESSAGES[0],
+              LET_THROUGH_MESSAGES)
 
     many = scratch / "many"
     many.mkdir()

@@ -502,6 +502,27 @@ with tempfile.TemporaryDirectory() as scratch:
     check("the suite still exits 0, so none of the above is read off a failure",
           result.returncode == 0, (result.returncode, result.stdout, result.stderr))
 
+# --- The environment each suite is launched with: no agent-session attendance --
+# Whether a user attends the agent-session changes what some messages under test say, so a suite
+# must not inherit it from the agent-session that runs it.
+SUITE_THAT_REPORTS_SESSION_VARIABLES = "reports-session-variables-test.py"
+with tempfile.TemporaryDirectory() as scratch:
+    root = pathlib.Path(scratch)
+    make_repo(root, {SUITE_THAT_REPORTS_SESSION_VARIABLES: (
+        "import json\n"
+        f"here = pathlib.Path(os.environ['{RAN_FILE_VARIABLE}']).parent\n"
+        "(here / 'session-variables-the-suite-saw.json').write_text(json.dumps("
+        "{name: os.environ.get(name) for name in "
+        "['CLAUDE_CODE_SESSION_ATTENDED', 'NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER']}))\n")})
+    result = run(root, environment_extra={"CLAUDE_CODE_SESSION_ATTENDED": "0",
+                                         "NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER": "1"})
+    saw_file = root / "session-variables-the-suite-saw.json"
+    saw = json.loads(saw_file.read_text()) if saw_file.exists() else None
+    check("a suite launched by the program sees neither variable that says whether a user attends",
+          saw == {"CLAUDE_CODE_SESSION_ATTENDED": None,
+                  "NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER": None},
+          (saw, result.returncode, result.stdout[-300:], result.stderr[-300:]))
+
 # --- The program's own git calls: no git redirection either ------------------
 # nedschorus#639, the program's half. The program's OWN process is given an
 # ambient GIT_DIR naming a victim repository that tracks a suite the checkout
