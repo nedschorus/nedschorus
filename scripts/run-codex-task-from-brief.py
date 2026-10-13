@@ -106,21 +106,25 @@ def codex_command(checkout: pathlib.Path, report: pathlib.Path, sandbox: str,
         command += ["-m", model]
     if effort:
         command += ["-c", f"model_reasoning_effort={effort}"]
-    return command + [prompt]
+    # `--` keeps a brief that begins with "-", such as front matter, from being read as an option.
+    return command + ["--", prompt]
 
 
 def stop_process_group(process: subprocess.Popen) -> None:
-    for stop_signal, wait_seconds in ((signal.SIGTERM, STOP_GRACE_SECONDS),
-                                      (signal.SIGKILL, None)):
-        try:
-            os.killpg(process.pid, stop_signal)
-        except ProcessLookupError:
-            return
-        try:
-            process.wait(timeout=wait_seconds)
-            return
-        except subprocess.TimeoutExpired:
-            continue
+    try:
+        os.killpg(process.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        return
+    try:
+        process.wait(timeout=STOP_GRACE_SECONDS)
+    except subprocess.TimeoutExpired:
+        pass
+    # Codex exiting is not enough: a process it started may outlive SIGTERM in the same group.
+    try:
+        os.killpg(process.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    process.wait()
 
 
 def fail(message: str) -> int:

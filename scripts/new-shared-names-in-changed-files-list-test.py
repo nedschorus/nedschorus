@@ -15,7 +15,6 @@ import io
 import json
 import os
 import re
-import shlex
 import subprocess
 import sys
 import tempfile
@@ -450,15 +449,15 @@ def case_branch_check_failure_on_a_quiet_shell_call_is_told(root):
 def case_reminder_is_capped():
     hook = load_module("hook_for_cap_case", HOOK_PATH)
     many = [("a.md", "markdown-backquoted-name", f"listed-name-{index:02d}") for index in range(35)]
-    text = hook.reminder_text(many, Path("/checkout"))
+    text = hook.reminder_text(many)
     check("the reminder lists the first 30 names", "listed-name-29" in text and "listed-name-30" not in text, text)
     check("the reminder says how many more and how to see them",
           "and 5 more" in text and "new-shared-names-in-changed-files-list.py" in text, text)
     check("the more-names line gives a command that runs the lister with python3",
           "python3 scripts/new-shared-names-in-changed-files-list.py" in text, text)
-    few = hook.reminder_text(many[:3], Path("/checkout"))
+    few = hook.reminder_text(many[:3])
     check("a short reminder has no more-names line", " more," not in few, few)
-    exactly_at_cap = hook.reminder_text(many[:30], Path("/checkout"))
+    exactly_at_cap = hook.reminder_text(many[:30])
     check("a reminder of exactly 30 names has no more-names line", " more," not in exactly_at_cap, exactly_at_cap)
 
 
@@ -502,34 +501,30 @@ def case_hook_shows_names_past_the_cap_later(root):
           and not shown_first & shown_second, f"{len(shown_first)} then {len(shown_second)}")
 
 
-def case_codex_command_keeps_paths_with_spaces_whole(root):
-    spaced_root = root / "parent with space"
-    spaced_root.mkdir()
-    clone = make_clone(spaced_root, BASE_MAIN_FILES)
+def case_hook_reports_once_per_worktree(root):
+    clone = make_clone(root, BASE_MAIN_FILES)
     state_root = root / "state"
     state_root.mkdir()
-    home = root / "home with space"
-    home.mkdir()
     write(clone, "alpha.py", "def shared_helper():\n    return 1\n")
     write(clone, "beta.py", "import alpha\nalpha.shared_helper()\n")
-    environment_home = os.environ.get("HOME")
-    os.environ["HOME"] = str(home)
-    try:
-        _, context = run_hook(clone, state_root, {"tool_name": "Write", "tool_input": {"file_path": "beta.py"}})
-    finally:
-        if environment_home is None:
-            del os.environ["HOME"]
-        else:
-            os.environ["HOME"] = environment_home
-    command_match = re.search(r"`(python3 [^`]*run-codex-task-from-brief\.py[^`]*)`", context)
-    check("the reminder carries a run-codex-task-from-brief command", command_match is not None, context)
-    if command_match is None:
-        return
-    arguments = shlex.split(command_match.group(1))
-    check("the -C argument is the real checkout path, kept whole",
-          arguments[arguments.index("-C") + 1] == str(clone), str(arguments))
-    check("the --writable-root argument names the real ~/.gemini path, kept whole",
-          arguments[arguments.index("--writable-root") + 1] == str(home / ".gemini"), str(arguments))
+    code, first = run_hook(clone, state_root, {"tool_name": "Write", "tool_input": {"file_path": "beta.py"}})
+    check("the hook exits 0", code == 0)
+    check("the hook names the new function", "shared_helper" in first, first)
+    check("the hook names the naming fresh-agent", "new-name-propose-and-check-fresh-agent" in first)
+    check("the hook tells a subagent to hand its names to the agent that dispatched it, under a heading "
+          "that says what to do with them",
+          "If you are a subagent and cannot start one, do not run the check yourself" in first
+          and "`New shared names: send these to the new-name-propose-and-check-fresh-agent subagent`" in first,
+          first)
+    check("the hook no longer tells anyone to run the check through Codex",
+          "codex" not in first.lower(), first)
+    check("the hook names the report's Rename: heading as what to act on",
+          "lists a name under its Rename: heading" in first, first)
+    _, second = run_hook(clone, state_root, {"tool_name": "Edit", "tool_input": {"file_path": "many.md"}})
+    shown_second = set(re.findall(r"capped-name-\d\d", second))
+    check("the next reminder shows the names past the cap",
+          shown_first | shown_second == {f"capped-name-{index:02d}" for index in range(35)}
+          and not shown_first & shown_second, f"{len(shown_first)} then {len(shown_second)}")
 
 
 def case_hook_reports_once_per_worktree(root):
@@ -542,24 +537,15 @@ def case_hook_reports_once_per_worktree(root):
     check("the hook exits 0", code == 0)
     check("the hook names the new function", "shared_helper" in first, first)
     check("the hook names the naming fresh-agent", "new-name-propose-and-check-fresh-agent" in first)
-    runner = Path(__file__).resolve().with_name("run-codex-task-from-brief.py")
-    codex_command = (f"`python3 {shlex.quote(str(runner))} -C {shlex.quote(str(clone))} "
-                     "--brief <brief file> -o <report file> -m gpt-6.1-sol --effort medium "
-                     "--sandbox workspace-write --network "
-                     f"--writable-root {shlex.quote(str(Path.home() / '.gemini'))}`")
-    brief_line = ("\"git fetch has already been run; skip that step and use origin/main as it is. "
-                  "Read .claude/agents/new-name-propose-and-check-fresh-agent.md and do exactly what "
-                  "it says, for these entries, one per line:\"")
-    check("the hook tells a subagent to run the check through the Codex task program, in the real checkout",
-          "If you are a subagent and cannot start one" in first and codex_command in first
-          and brief_line in first, first)
-    check("the hook names a runner that exists and accepts every option it gives",
-          runner.is_file() and all(option in subprocess.run(
-              [sys.executable, str(runner), "--help"], capture_output=True, text=True).stdout
-              for option in ("--brief", "--effort", "--sandbox", "--network", "--writable-root")))
-    check("the hook no longer tells anyone to hand-type codex exec", "codex exec" not in first, first)
-    check("the hook tells a subagent to run git fetch itself before Codex",
-          "First run `git fetch` yourself" in first, first)
+    check("the hook tells a subagent to hand its names to the agent that dispatched it, under a heading "
+          "that says what to do with them",
+          "If you are a subagent and cannot start one, do not run the check yourself" in first
+          and "`New shared names: send these to the new-name-propose-and-check-fresh-agent subagent`" in first,
+          first)
+    check("the hook no longer tells anyone to run the check through Codex",
+          "codex" not in first.lower(), first)
+    check("the hook names the report's Rename: heading as what to act on",
+          "lists a name under its Rename: heading" in first, first)
     _, second = run_hook(clone, state_root, {"tool_name": "Edit", "tool_input": {"file_path": "beta.py"}})
     check("the same names are not reported twice in one agent-session", second == "", second)
     git_directory = subprocess.run(["git", "rev-parse", "--absolute-git-dir"], cwd=str(clone), check=True,
@@ -1070,7 +1056,7 @@ def main() -> int:
              case_branch_check_failure_is_told_and_the_file_check_still_runs,
              case_remote_branch_lookup_failure_is_told_and_no_branch_reported,
              case_branch_check_failure_on_a_quiet_shell_call_is_told,
-             case_hook_reports_once_per_worktree, case_codex_command_keeps_paths_with_spaces_whole,
+             case_hook_reports_once_per_worktree,
              case_two_worktrees_keep_separate_records,
              case_new_branch_is_told_a_name_again_and_gone_branches_are_dropped,
              case_unreadable_record_is_told_and_names_are_told_again,

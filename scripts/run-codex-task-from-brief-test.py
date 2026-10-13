@@ -2,8 +2,9 @@
 """Tests for scripts/run-codex-task-from-brief.py, with a fake `codex` on PATH.
 
 The fake records its arguments and, by the FAKE_CODEX_MODE environment
-variable, writes a report, fails, writes nothing, sleeps past the deadline,
-or blocks reading stdin. Each case runs the real program as a process.
+variable, writes a report, fails with or without a report, writes nothing,
+sleeps past the deadline with a child that may ignore SIGTERM, or blocks
+reading stdin. Each case runs the real program as a process.
 
 Run: python3 scripts/run-codex-task-from-brief-test.py
 Prints one line per case and exits non-zero if any case fails.
@@ -21,7 +22,7 @@ from pathlib import Path
 PROGRAM = Path(__file__).with_name("run-codex-task-from-brief.py")
 
 FAKE_CODEX = r'''#!/usr/bin/env python3
-import json, os, sys, time
+import json, os, signal, sys, time
 arguments = sys.argv[1:]
 with open(os.environ["FAKE_CODEX_ARGUMENTS_FILE"], "w") as record:
     json.dump(arguments, record)
@@ -34,11 +35,16 @@ if mode == "report":
 elif mode == "fail":
     print("fake codex: model refused", file=sys.stderr)
     sys.exit(3)
+elif mode == "report-then-fail":
+    open(report, "w").write("a partial report\n")
+    sys.exit(3)
 elif mode == "no-report":
     pass
-elif mode == "sleep":
+elif mode in ("sleep", "sleep-child-ignores-sigterm"):
     child = os.fork()
     if child == 0:
+        if mode == "sleep-child-ignores-sigterm":
+            signal.signal(signal.SIGTERM, signal.SIG_IGN)
         open(os.environ["FAKE_CODEX_CHILD_PID_FILE"], "w").write(str(os.getpid()))
         time.sleep(600)
         os._exit(0)
@@ -92,8 +98,8 @@ try:
     check("success exits 0 and prints the report path",
           completed.returncode == 0 and completed.stdout.strip() == f"report: {report}",
           f"exit {completed.returncode}, stdout {completed.stdout!r}, stderr {completed.stderr!r}")
-    check("the brief's whole text is the prompt", arguments[-1] == brief.read_text(),
-          repr(arguments[-1]))
+    check("the brief's whole text is the prompt, after --",
+          arguments[-1] == brief.read_text() and arguments[-2] == "--", repr(arguments[-2:]))
     check("Codex runs in the checkout with its memory store off",
           arguments[:1] == ["exec"] and ["-C", str(checkout)] == arguments[
               arguments.index("-C"):arguments.index("-C") + 2]
@@ -157,6 +163,25 @@ try:
           and ".run.log" in completed.stderr and not report.exists(),
           f"exit {completed.returncode}, stderr {completed.stderr!r}")
 
+    completed, report, _ = run("report-then-fail")
+    check("Codex exiting nonzero after writing a report still exits 1 and prints no report line",
+          completed.returncode == 1 and "Codex exited 3" in completed.stderr
+          and "report:" not in completed.stdout,
+          f"exit {completed.returncode}, stdout {completed.stdout!r}, stderr {completed.stderr!r}")
+
+    dash_brief = scratch / "dash-brief.md"
+    dash_brief.write_text("---\ntitle: front matter\n---\nDo the task.\n")
+    environment = dict(os.environ, PATH=f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
+                       FAKE_CODEX_MODE="report", FAKE_CODEX_ARGUMENTS_FILE=str(arguments_file))
+    completed = subprocess.run(
+        [sys.executable, str(PROGRAM), "-C", str(checkout), "--brief", str(dash_brief),
+         "-o", str(scratch / "dash-report.md")], env=environment, capture_output=True,
+        text=True, check=False)
+    arguments = json.loads(arguments_file.read_text())
+    check("a brief that begins with - reaches Codex after --, so it is not read as an option",
+          completed.returncode == 0 and arguments[-2:] == ["--", dash_brief.read_text()],
+          f"exit {completed.returncode}, {arguments[-2:]!r}")
+
     stale = scratch / "report-no-report.md"
     stale.write_text("left by an earlier run\n")
     completed, report, _ = run("no-report")
@@ -181,6 +206,23 @@ try:
           f"exit {completed.returncode}, {elapsed:.1f}s, stderr {completed.stderr!r}")
     check("the deadline also stops the processes Codex started",
           child_pid is not None and not child_alive, f"child {child_pid} alive={child_alive}")
+
+    child_pid_file.unlink(missing_ok=True)
+    completed, report, elapsed = run("sleep-child-ignores-sigterm", "--deadline-minutes", "0.05")
+    child_pid = int(child_pid_file.read_text()) if child_pid_file.exists() else None
+    time.sleep(0.5)
+    child_alive = False
+    if child_pid:
+        try:
+            os.kill(child_pid, 0)
+            child_alive = True
+        except ProcessLookupError:
+            pass
+        if child_alive:
+            os.kill(child_pid, 9)
+    check("the deadline also kills a process Codex started that ignores SIGTERM",
+          completed.returncode == 1 and child_pid is not None and not child_alive,
+          f"exit {completed.returncode}, child {child_pid} alive={child_alive}, {elapsed:.1f}s")
 
     # The caller's own stdin is an open pipe that never closes; the fake must still see EOF.
     holder = subprocess.Popen(["sleep", "60"], stdout=subprocess.PIPE)

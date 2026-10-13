@@ -33,7 +33,6 @@ _shell_reader_spec.loader.exec_module(shell_reader)
 is_program = shell_reader.is_program
 
 CODEX_EXEC_SUBCOMMANDS = ("exec", "e")
-HELP_WORDS = {"-h", "--help", "help"}
 # Programs that run the command after them, each with its options that take a value.
 COMMAND_RUNNING_PREFIX_VALUE_OPTIONS = {
     "env": {"-u", "-C", "-S", "-P", "--unset", "--chdir", "--split-string"},
@@ -51,8 +50,15 @@ SHELL_VALUE_OPTIONS = {"-o", "+o", "-O", "+O"}
 SSH_VALUE_LETTERS = "bceilmopBDEFIJLOPQRSwW"
 ENVIRONMENT_ASSIGNMENT_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 
+RUNNER_PATH = Path(__file__).resolve().parent / "run-codex-task-from-brief.py"
+# Codex exec's options that take the next word as their value.
+CODEX_EXEC_VALUE_OPTIONS = {
+    "-c", "--config", "--enable", "--disable", "-i", "--image", "-m", "--model",
+    "--local-provider", "-p", "--profile", "-s", "--sandbox", "-C", "--cd", "--add-dir",
+    "--thread-source", "--output-schema", "--color", "-o", "--output-last-message"}
+
 USAGE_LINE = (
-    "scripts/run-codex-task-from-brief.py -C <checkout> --brief <file> -o <report> "
+    f"python3 {RUNNER_PATH} -C <checkout> --brief <file> -o <report> "
     "[--sandbox read-only|workspace-write] [-m <model>] [--effort <effort>] "
     "[--network] [--writable-root <folder>]... [--outside-git-checkout] "
     "[--web-search] [--deadline-minutes <minutes>] [--run-log <file>]")
@@ -63,11 +69,12 @@ REFUSAL = (
     "nothing to stop it.\n"
     "Write the prompt to a file and run the task with:\n"
     f"  {USAGE_LINE}\n"
-    "In place of Codex's own options: --sandbox or -s becomes --sandbox; "
-    "network access becomes --network; --add-dir or writable_roots becomes "
-    "--writable-root, once per folder; --skip-git-repo-check becomes "
-    "--outside-git-checkout; --search or web_search becomes --web-search; "
-    "-c model_reasoning_effort becomes --effort.\n"
+    "In place of Codex's own options: -s or --sandbox becomes --sandbox; "
+    "-c sandbox_workspace_write.network_access=true becomes --network; "
+    "--add-dir <folder> or -c sandbox_workspace_write.writable_roots=[...] becomes "
+    "--writable-root <folder>, once per folder; --skip-git-repo-check becomes "
+    "--outside-git-checkout; --search or -c web_search=... becomes --web-search; "
+    "-c model_reasoning_effort=<effort> becomes --effort <effort>; -m stays -m.\n"
     "That program closes stdin, logs Codex's output, stops Codex at the "
     "deadline, and says what failed when Codex writes no report."
 )
@@ -100,7 +107,10 @@ def shell_command_string(arguments):
     index = 0
     while index < len(arguments):
         word = arguments[index]
-        if word == "--" or not word.startswith(("-", "+")):
+        if word == "--":
+            # `bash -c -- <string>`: the string follows the end of the options.
+            return arguments[index + 1] if reads_string and index + 1 < len(arguments) else None
+        if not word.startswith(("-", "+")):
             return word if reads_string else None
         if word in SHELL_VALUE_OPTIONS:
             index += 1  # the value is the next word
@@ -112,15 +122,19 @@ def shell_command_string(arguments):
 
 def shell_reads_commands_from_stdin(arguments) -> bool:
     """Return whether bash, sh or zsh with these arguments runs the commands on its stdin."""
+    # With -s the words after the options are positional parameters, and stdin is still run.
+    reads_stdin_explicitly = False
     index = 0
     while index < len(arguments):
         word = arguments[index]
         if word == "--" or not word.startswith(("-", "+")):
-            return False  # a script file, or with -c a command string
+            return reads_stdin_explicitly  # otherwise a script file
         if word in SHELL_VALUE_OPTIONS:
             index += 1
         elif not word.startswith("--") and "c" in word[1:]:
             return False
+        elif not word.startswith("--") and "s" in word[1:]:
+            reads_stdin_explicitly = True
         index += 1
     return True
 
@@ -153,6 +167,27 @@ def is_shell_reading_stdin(words) -> bool:
             and shell_reads_commands_from_stdin(words[index + 1:]))
 
 
+def codex_exec_asks_for_help(arguments) -> bool:
+    """Return whether the words after `codex exec` ask for help rather than run a task."""
+    index = 0
+    first_operand = True
+    while index < len(arguments):
+        word = arguments[index]
+        if word == "--":
+            return False  # what follows is the prompt
+        if word in ("-h", "--help"):
+            return True
+        if word in CODEX_EXEC_VALUE_OPTIONS:
+            index += 2
+            continue
+        if not word.startswith("-"):
+            if first_operand and word == "help":
+                return True
+            first_operand = False
+        index += 1
+    return False
+
+
 def runs_codex_exec(words, heredocs=()) -> bool:
     """Return whether one simple command, with the heredocs fed to it, runs codex exec."""
     index = program_index_after_prefixes(words)
@@ -161,8 +196,8 @@ def runs_codex_exec(words, heredocs=()) -> bool:
     program, arguments = words[index], words[index + 1:]
     if is_program(program, "codex"):
         # Codex's global options take values, so any exec word counts rather than the first operand.
-        return (any(word in CODEX_EXEC_SUBCOMMANDS for word in arguments)
-                and not HELP_WORDS & set(arguments))
+        exec_indexes = [i for i, word in enumerate(arguments) if word in CODEX_EXEC_SUBCOMMANDS]
+        return bool(exec_indexes) and not codex_exec_asks_for_help(arguments[exec_indexes[0] + 1:])
     if any(is_program(program, runner) for runner in SHELL_STRING_RUNNERS):
         inner = shell_command_string(arguments)
         stdin_is_commands = shell_reads_commands_from_stdin(arguments)

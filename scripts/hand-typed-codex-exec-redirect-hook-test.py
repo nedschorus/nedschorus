@@ -83,12 +83,19 @@ REFUSED = {
         "ssh -o ConnectTimeout=8 ned-box 'cd x && setsid nohup codex exec task > log 2>&1 &'",
     "codex exec run by eval": "eval codex exec $ARGS -C . 'task'",
     "codex exec in a heredoc that a local bash runs": "bash <<'EOF'\ncodex exec task\nEOF",
+    "codex exec writing its report to a file named help": "codex exec -o help 'task' &",
+    "codex exec whose prompt, after --, is --help": "codex exec -- '--help'",
+    "codex exec inside bash -c --": "bash -c -- 'codex exec task'",
+    "codex exec in a heredoc that bash -s runs with arguments":
+        "bash -s one two <<'EOF'\ncodex exec task\nEOF",
 }
 
 ALLOWED = {
     "the new program": "python3 scripts/run-codex-task-from-brief.py -C . --brief b.md -o r.md",
     "codex --version": "codex --version",
     "codex exec --help": "codex exec --help",
+    "codex exec -h after its options": "codex exec -C x -h",
+    "codex exec help": "codex exec help",
     "codex login status": "codex login status",
     "a grep for the words codex exec": 'grep -rn "codex exec" docs/',
     "an echo that mentions codex exec": "echo 'never type codex exec by hand'",
@@ -122,8 +129,16 @@ check("a tool other than Bash is ignored",
       refusal('codex exec "task"', tool_name="Read") is None)
 
 check("the refusal gives the program's usage line",
-      hook.USAGE_LINE in hook.REFUSAL
-      and "scripts/run-codex-task-from-brief.py" in hook.USAGE_LINE)
+      hook.USAGE_LINE in hook.REFUSAL)
+
+check("the refusal names the program by an absolute path that exists, so it runs from any folder",
+      hook.RUNNER_PATH.is_absolute() and hook.RUNNER_PATH.is_file()
+      and f"python3 {hook.RUNNER_PATH} " in hook.USAGE_LINE, hook.USAGE_LINE)
+
+check("the refusal writes Codex's configuration keys with their -c",
+      all(f"-c {key}" in hook.REFUSAL for key in (
+          "sandbox_workspace_write.network_access", "sandbox_workspace_write.writable_roots",
+          "web_search", "model_reasoning_effort")), hook.REFUSAL)
 
 check("the refusal maps Codex's own widening options to the program's",
       all(option in hook.REFUSAL for option in ("--network", "--writable-root",
@@ -162,8 +177,10 @@ for flag in ("-C", "--brief", "-o", "--sandbox", "-m", "--effort", "--network",
 
 usage_in_program_docstring = " ".join(
     program_help.stdout.split("Usage:\n", 1)[-1].split("\n\n", 1)[0].split())
-check("the hook's usage line is the program's own usage line, word for word",
-      usage_in_program_docstring == hook.USAGE_LINE, usage_in_program_docstring)
+hook_usage_options = hook.USAGE_LINE.split(f"python3 {hook.RUNNER_PATH} ", 1)[-1]
+program_usage_options = usage_in_program_docstring.split("scripts/run-codex-task-from-brief.py ", 1)[-1]
+check("the hook's usage line carries the program's own usage line, word for word",
+      hook_usage_options == program_usage_options, f"{hook_usage_options!r} vs {program_usage_options!r}")
 
 process = subprocess.run(
     [sys.executable, str(HOOK_SCRIPT)],
