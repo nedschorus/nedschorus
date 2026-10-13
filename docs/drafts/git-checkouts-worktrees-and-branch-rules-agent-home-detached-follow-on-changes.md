@@ -39,7 +39,7 @@ Swept from origin/main at e2cf5ea2 on 2026-10-09 by an Explore subagent, at the 
 - `docs/nedschorus-wiki/nedschorus-agent-seat-model.md:18, 32, 38, 67, 69-71`
 - `docs/nedschorus-wiki/nedschorus-fleet-machine-paths-and-checkouts.md:23, 24, 33, 49, 77`
 - `docs/nedschorus-wiki/nedschorus-fleet-git-worktree-working-model.md:64, 205-213, 350-351, 551`
-- `docs/nedschorus-wiki/nedschorus-handoff-system-overview.md:53`: "often sits on a detached HEAD" becomes always.
+- `docs/nedschorus-wiki/nedschorus-handoff-architecture-overview.md:27`: the launcher "creates a Mac agent-seat's agent-home and seat-branch"; it creates the agent-home only, detached at main.
 - `docs/founding/choirmaster-founding-handoff.md:7`: historical; update or mark superseded.
 
 ## GHI-MDs
