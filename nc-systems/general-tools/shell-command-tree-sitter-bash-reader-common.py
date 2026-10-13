@@ -8,6 +8,11 @@ does it run, with which words? A hand-written reader gets ordinary bash wrong
 tree-sitter-bash is the parser Claude Code and the Codex CLI use; this module
 walks its tree and hands each simple command back as its words.
 
+Heredoc bodies are taken out of the command line before it is parsed, by
+bash's own rules, and each `<<DELIMITER` stands in the parse as a plain input
+redirection; everything else is read from tree-sitter-bash's nodes, which
+handle the few groupings the grammar gets wrong.
+
 simple_commands collects what it can, from an incomplete or invalid command
 too, so a guard can refuse what it finds. Nothing it returns proves a command
 safe: words keep expansions such as `$HOME` as written, and a command built at
@@ -62,10 +67,6 @@ REDIRECT_NODE_TYPES = {"file_redirect", "heredoc_redirect", "herestring_redirect
 # Nodes that only group commands; tree-sitter-bash's grouping of these is not trusted.
 SEQUENCE_NODE_TYPES = {"pipeline", "list", "redirected_statement", "negated_command"}
 PIPE_OPERATORS = {"|", "|&"}
-LIST_OPERATORS = {"&&", "||", ";", "&"}
-# What redirect() reads inside a heredoc_redirect; every other node there is commands.
-HEREDOC_PARTS_READ_BY_REDIRECT = REDIRECT_NODE_TYPES | {
-    "heredoc_start", "heredoc_body", "heredoc_end", "file_descriptor", "ERROR", "comment"}
 # Characters a backslash keeps literal inside double quotes; before any other, the backslash stays.
 DOUBLE_QUOTE_ESCAPABLE = set('"\\$`')
 
@@ -417,12 +418,19 @@ def _heredoc_of(node):
     return Heredoc(body_text, not any(mark in delimiter for mark in "'\"\\"), delimiter)
 
 
-def _redirect_parts(node, glob_markers):
-    """Return ((operator, target), words after the target) for one file redirect."""
+def _redirect_destinations(node):
+    return node.children_by_field_name("destination") or [
+        child for child in node.named_children if child.type != "file_descriptor"][:1]
+
+
+def _redirect_parts(node, glob_markers, limit=None):
+    """Return ((operator, target), words after the target) for one file redirect.
+
+    limit, when given, is how many of its destination nodes belong to it.
+    """
     operator = "".join(_text(child) for child in node.children
                        if child.type in ("file_descriptor",) or not child.is_named)
-    destinations = node.children_by_field_name("destination") or [
-        child for child in node.named_children if child.type != "file_descriptor"][:1]
+    destinations = _redirect_destinations(node)[:limit]
     # tree-sitter-bash reads the words after a redirect's target as more targets; bash
     # passes them to the command as arguments. It also splits a target such as
     # `$X/push$i.log` after its last `$`; a part that touches the one before it is the same word.
@@ -438,22 +446,15 @@ def _redirect_parts(node, glob_markers):
 
 
 class _Collector:
-    def __init__(self, glob_markers, source, skip_errors=False):
+    def __init__(self, glob_markers, source, heredocs_taken_out):
         self.glob_markers = glob_markers
         self.source = source
-        self.skip_errors = skip_errors
+        self.heredocs_taken_out = heredocs_taken_out
         self.commands = []
 
     def visit(self, node, child_shell, heredocs=()):
         kind = node.type
         if kind == "comment":
-            return
-        if kind == "ERROR" and self.skip_errors:
-            # Inside a body bash expands, only a substitution that closed runs.
-            for child in node.children:
-                if child.type in CHILD_SHELL_NODE_TYPES and child.children \
-                        and child.children[-1].type in (")", "`"):
-                    self.visit(child, child_shell)
             return
         if kind == "command_substitution" and self.follows_process_id(node):
             return
@@ -483,18 +484,40 @@ class _Collector:
             self.visit(child, child_shell, heredocs)
 
     def expanded_heredoc_body(self, body, child_shell):
-        """Collect the commands an unquoted heredoc body runs as the shell expands it."""
-        text = bytearray(body.text)
-        for child in body.named_children:
-            if child.type != "heredoc_content":
-                self.visit(child, child_shell)
-                # What tree-sitter-bash read is not scanned again for backticks.
-                start, end = child.start_byte - body.start_byte, child.end_byte - body.start_byte
-                text[start:end] = b" " * (end - start)
+        """Collect the commands an unquoted heredoc body runs as the shell expands it.
+
+        Only its substitutions run, and only those that close. Each one's text is read
+        as a command line of its own, so a heredoc inside it is taken out as any other.
+        """
+        wrapper = b"NEDSCHORUS_BODY_END"
+        while wrapper in body:
+            wrapper += b"_"
+        prefix = b"cat <<" + wrapper + b"\n"
+        source = prefix + body + (b"" if body.endswith(b"\n") or not body else b"\n") \
+            + wrapper + b"\n"
+        text = bytearray(body)
+        stack = [parser().parse(source).root_node]
+        found = []
+        while stack:
+            node = stack.pop()
+            if node.type == "command_substitution":
+                found.append(node)
+                continue
+            stack.extend(node.children)
+        for node in found:
+            # tree-sitter-bash gives a substitution that never closes, and a backticked one in
+            # a body, no node of this type.
+            start, end = node.start_byte - len(prefix), node.end_byte - len(prefix)
+            text[start:end] = b" " * (end - start)
+            if _follows_process_id(source, node.start_byte):
+                continue
+            inner = source[node.start_byte + 2:node.end_byte - 1].decode("utf-8", "surrogatepass")
+            self.adopt(simple_commands(inner, self.glob_markers),
+                       child_shell + (ChildShell(-1 - start, SUBSTITUTION),))
         # tree-sitter-bash reads $( ) in a body but leaves backticks as text.
         for start, inner in backticked_commands(bytes(text).decode("utf-8", "surrogatepass")):
             self.adopt(simple_commands(inner, self.glob_markers),
-                       child_shell + (ChildShell(body.start_byte + start, SUBSTITUTION),))
+                       child_shell + (ChildShell(-1 - start, SUBSTITUTION),))
 
     def adopt(self, commands, child_shell):
         """Add commands read from a second parse, inside the child shell they run in."""
@@ -503,14 +526,7 @@ class _Collector:
                                                command.redirects, command.heredocs))
 
     def follows_process_id(self, node):
-        """Return whether bash reads this $( as $$, the process id, followed by a parenthesis."""
-        # tree-sitter-bash reads $$(x) as $ and $(x); bash pairs the dollars from the left.
-        dollars = 0
-        index = node.start_byte - 1
-        while index >= 0 and self.source[index:index + 1] == b"$":
-            dollars += 1
-            index -= 1
-        return self.source[node.start_byte:node.start_byte + 2] == b"$(" and dollars % 2 == 1
+        return _follows_process_id(self.source, node.start_byte)
 
     def visit_inside(self, node, child_shell):
         """Visit the commands inside one word or redirect of a command."""
@@ -540,12 +556,9 @@ class _Collector:
                 joined = False
             elif item[0] == "pipe":
                 joined = True
-            elif current:
-                # A redirection belongs to the command written just before it.
-                current[-1]["redirects"].append(item[1])
             else:
-                # A statement that is only a redirection still runs its target's substitutions.
-                self.visit(item[1], child_shell)
+                # A redirection belongs to the command written just before it.
+                current[-1]["redirects"].append(item[1:])
         for pipeline in pipelines:
             shared_heredocs = list(heredocs)
             for position, unit in enumerate(pipeline):
@@ -554,10 +567,10 @@ class _Collector:
                                                         position == 0),)
                               if len(pipeline) > 1 else child_shell)
                 redirects, trailing_words = [], []
-                for redirect in unit["redirects"]:
+                for redirect, limit in unit["redirects"]:
                     shared_heredocs.extend(
-                        self.redirect(redirect, unit_shell, redirects, trailing_words))
-                if unit["node"].type in SIMPLE_COMMAND_NODE_TYPES:
+                        self.redirect(redirect, unit_shell, redirects, trailing_words, limit))
+                if unit["children"] is not None:
                     self.simple_command(unit["node"], unit["children"], unit_shell,
                                         list(shared_heredocs), redirects, trailing_words)
                 else:
@@ -566,14 +579,16 @@ class _Collector:
     def _flatten(self, node, items):
         """Append node's commands, operators and redirections to items, in the order written."""
         kind = node.type
+        if kind == "redirected_statement" and node.child_by_field_name("body") is None:
+            # A statement that is only a redirection is a command with no words: it ends a
+            # pipeline as any command does, and its target's substitutions run.
+            items.append(("unit", node, []))
         if kind in SEQUENCE_NODE_TYPES:
             for child in node.children:
                 if child.type == "comment":
                     continue
                 if child.type in REDIRECT_NODE_TYPES:
-                    items.append(("redirect", child))
-                    if child.type == "heredoc_redirect":
-                        self._flatten_heredoc_line(child, items)
+                    self._flatten_redirect(child, items)
                 elif child.is_named:
                     self._flatten(child, items)
                 elif child.type in PIPE_OPERATORS:
@@ -594,70 +609,69 @@ class _Collector:
             return
         items.append(("unit", node, None))
 
-    def _flatten_heredoc_line(self, heredoc_redirect, items):
-        """Append what tree-sitter-bash puts after a heredoc's delimiter, other than the heredoc's own parts.
+    def _flatten_redirect(self, node, items):
+        """Append a redirection, and the commands tree-sitter-bash folded into it from later lines.
 
-        tree-sitter-bash puts the rest of the heredoc's line, such as `| bash` or
-        `|| { … }`, inside the heredoc_redirect. Every node there is read as
-        commands, except the parts redirect() reads as the heredoc's.
+        tree-sitter-bash reads the words on the lines after a long pipeline's
+        redirection as more of its targets, as in `a | b | head` followed by
+        `cat > f` and `cd /x`; bash runs each line as a command.
         """
-        arguments = heredoc_redirect.children_by_field_name("argument")
-        for inner in heredoc_redirect.children:
-            if inner.type in PIPE_OPERATORS:
-                items.append(("pipe",))
-            elif inner.is_named and inner not in arguments \
-                    and inner.type not in HEREDOC_PARTS_READ_BY_REDIRECT:
-                self._flatten(inner, items)
+        destinations = _redirect_destinations(node) if node.type == "file_redirect" else []
+        groups, previous_end = [[]], None
+        for destination in destinations:
+            if previous_end is not None and _separates_commands(
+                    self.source[previous_end:destination.start_byte]):
+                groups.append([])
+            groups[-1].append(destination)
+            previous_end = destination.end_byte
+        items.append(("redirect", node, len(groups[0]) if len(groups) > 1 else None))
+        for group in groups[1:]:
+            items.append(("unit", node, group))
 
-    def redirect(self, node, child_shell, redirects, trailing_words):
+    def redirect(self, node, child_shell, redirects, trailing_words, limit=None):
         """Add one redirection to a command's redirects; return the heredocs it feeds."""
-        self.visit_inside_redirect(node, child_shell)
-        if node.type != "heredoc_redirect":
-            pair, extra = _redirect_parts(node, self.glob_markers)
-            redirects.append(pair)
-            trailing_words.extend(extra)
-            return []
-        heredoc = _heredoc_of(node)
-        redirects.append(("<<", heredoc.body))
-        arguments = node.children_by_field_name("argument")
-        for inner in node.children:
-            if inner.type == "heredoc_body":
-                if heredoc.expanded:
-                    self.expanded_heredoc_body(inner, child_shell)
-            elif inner.type in REDIRECT_NODE_TYPES:
-                self.visit_inside(inner, child_shell)
-                pair, extra = _redirect_parts(inner, self.glob_markers)
-                redirects.append(pair)
-                trailing_words.extend(extra)
-            elif inner in arguments:
-                # A word after the delimiter on the heredoc's line is the command's word.
-                self.visit_inside(inner, child_shell)
-                trailing_words.append(word_value(inner, self.glob_markers))
-            elif inner.type == "ERROR":
-                self.visit_inside(inner, child_shell)
-        return [heredoc]
-
-    def visit_inside_redirect(self, node, child_shell):
-        """Visit the substitutions in a file redirection's target."""
-        if node.type != "heredoc_redirect":
+        if limit is None:
             self.visit_inside(node, child_shell)
+        else:
+            for destination in _redirect_destinations(node)[:limit]:
+                self.visit_inside(destination, child_shell)
+        if node.type == "heredoc_redirect":
+            # Only a heredoc that could not be taken out is left in the tree; it is data.
+            heredoc = _heredoc_of(node)
+            redirects.append(("<<", heredoc.body))
+            return [heredoc]
+        pair, extra = _redirect_parts(node, self.glob_markers, limit)
+        trailing_words.extend(extra)
+        return self.heredoc_or_redirect(pair, child_shell, redirects)
+
+    def heredoc_or_redirect(self, pair, child_shell, redirects):
+        """Add pair to redirects, as the heredoc it stands for when its target is one taken out."""
+        taken = self.heredocs_taken_out.get(pair[1])
+        if taken is None:
+            redirects.append(pair)
+            return []
+        body = taken.body.decode("utf-8", "surrogatepass")
+        redirects.append(("<<", body))
+        if taken.expanded:
+            self.expanded_heredoc_body(taken.body, child_shell)
+        return [Heredoc(body, taken.expanded, taken.delimiter_as_written)]
 
     def simple_command(self, node, children, child_shell, heredocs, redirects, trailing_words):
-        words, own_redirects = [], []
+        words, own_redirects, own_heredocs = [], [], []
         for child in children:
-            self._read_command_part(child, child_shell, words, own_redirects)
+            self._read_command_part(child, child_shell, words, own_redirects, own_heredocs)
         words.extend(trailing_words)
         if words:
             self.commands.append(SimpleCommand(words, child_shell, own_redirects + list(redirects),
-                                               list(heredocs)))
+                                               own_heredocs + list(heredocs)))
 
-    def _read_command_part(self, child, child_shell, words, redirects):
-        """Add one child node of a command to its words or its redirections."""
+    def _read_command_part(self, child, child_shell, words, redirects, heredocs):
+        """Add one child node of a command to its words, its redirections or its heredocs."""
         # Substitutions anywhere in the command run before it.
         self.visit_inside(child, child_shell)
         if child.type in REDIRECT_NODE_TYPES:
             pair, extra = _redirect_parts(child, self.glob_markers)
-            redirects.append(pair)
+            heredocs.extend(self.heredoc_or_redirect(pair, child_shell, redirects))
             words.extend(extra)
         elif child.type == "variable_assignment":
             name = next((part for part in child.children if part.type == "variable_name"), None)
@@ -724,23 +738,16 @@ def simple_commands(command_text, glob_markers=None):
     except ShellParserInstalledForANewProcess:
         _use_a_new_process()
         return _simple_commands_in_a_new_process(command_text, glob_markers)
-    source = _source_with_heredoc_delimiters_ended(command_text.encode("utf-8", "surrogatepass"))
-    rewritten = _source_with_unique_heredoc_delimiters(source)
-    restore = []
-    if rewritten is None:
-        tree = parser().parse(source)
-    else:
-        source, restore, tree = rewritten
-    source, tree = _source_with_heredoc_operators_after_their_words(source, tree)
-    commands = None
+    source, tree, taken_out = _source_with_heredoc_bodies_taken_out(
+        command_text.encode("utf-8", "surrogatepass"))
     if tree.root_node.has_error:
         source, tree = _source_with_last_case_terminators_plain(source, tree)
-    if tree.root_node.has_error:
-        commands = _reread_with_heredoc_bodies_apart(source, tree, glob_markers)
-    if commands is None:
-        commands = _collect(tree.root_node, glob_markers, source)
-    for command in commands:
-        _restore_delimiters(command, restore)
+    commands = _collect(tree.root_node, glob_markers, source, taken_out)
+    if taken_out:
+        for command in commands:
+            command[:] = [_with_heredocs_put_back(word, taken_out) for word in command]
+            command.redirects = [(operator, _with_heredocs_put_back(target, taken_out))
+                                 for operator, target in command.redirects]
     return commands
 
 
@@ -790,22 +797,8 @@ def _read_command_on_standard_input():
         for command in found], ensure_ascii=False).encode("utf-8", "surrogatepass"))
 
 
-def _restore_delimiters(command, restore):
-    """Put the command's own heredoc delimiters back into its words and heredocs."""
-    def restored(text):
-        for unique, original in restore:
-            text = text.replace(unique, original)
-        return text
-    if restore:
-        command[:] = [restored(word) for word in command]
-        command.redirects = [(operator, restored(target)) for operator, target in command.redirects]
-        for heredoc in command.heredocs:
-            heredoc.delimiter = restored(heredoc.delimiter)
-            heredoc.body = restored(heredoc.body)
-
-
-def _collect(root, glob_markers, source, skip_errors=False):
-    collector = _Collector(glob_markers, source, skip_errors)
+def _collect(root, glob_markers, source, heredocs_taken_out):
+    collector = _Collector(glob_markers, source, heredocs_taken_out)
     # The walk recurses once per nesting level; a deeply nested command must not crash a guard.
     limit = sys.getrecursionlimit()
     sys.setrecursionlimit(max(limit, RECURSION_LIMIT_FOR_DEEP_NESTING))
@@ -826,289 +819,183 @@ def _heredoc_starts(node):
     return sorted(found, key=lambda start: start.start_byte)
 
 
-def _inside_heredoc_body(node):
-    """Return whether tree-sitter-bash itself placed node inside a heredoc body.
+class _HeredocTakenOut:
+    """A heredoc taken out of a command line: what was written, and its body."""
 
-    Such a heredoc start is inside a substitution in a body bash expands, so
-    bash reads it as a heredoc of its own.
+    def __init__(self, written, delimiter_as_written, body, expanded, ending):
+        self.written = written
+        self.delimiter_as_written = delimiter_as_written
+        self.body = body
+        self.expanded = expanded
+        self.ending = ending
+
+
+HEREDOC_PLACEHOLDER_PREFIX = "NEDSCHORUS_HEREDOC_"
+# Each heredoc taken out costs a parse; real commands hold far fewer.
+MAX_HEREDOCS_TAKEN_OUT = 256
+
+
+def _source_with_heredoc_bodies_taken_out(source):
+    """Return (source, tree, {placeholder: _HeredocTakenOut}) with every heredoc's body taken out.
+
+    bash reads a heredoc's body in its lexer, line by line, after the line
+    that opens it, and ends it at a line that is exactly its delimiter.
+    tree-sitter-bash ends a body at a line that only starts with the
+    delimiter, misreads what follows the delimiter on its line, and puts the
+    commands after the body inside the heredoc. Once a body is misplaced,
+    every node after it is wrong, so no reading of the tree can repair it.
+    So the bodies are taken out first, as bash's lexer takes them: the
+    earliest heredoc operator in the parse is placed right, since nothing
+    before it is a heredoc; its delimiter word and body are found by bash's
+    rules; `<<DELIMITER` becomes `<PLACEHOLDER`, a plain redirection
+    tree-sitter-bash reads correctly, and the body lines are removed; then
+    the next one, until none is left.
     """
+    taken = {}
+    original = source
+    tree = parser().parse(source)
+    for index in range(MAX_HEREDOCS_TAKEN_OUT):
+        start = next(iter(_heredoc_starts(tree.root_node)), None)
+        operator = start.prev_sibling if start is not None else None
+        if operator is None or operator.type not in ("<<", "<<-"):
+            break
+        delimiter_end, delimiter = _delimiter_word(source, start.start_byte)
+        body_start = _heredoc_body_start(source, delimiter_end)
+        body_end, resume = _heredoc_body_end(source, body_start, delimiter, operator.type == "<<-",
+                                             _inside_substitution(start))
+        body = source[body_start:body_end]
+        if operator.type == "<<-":
+            body = b"\n".join(line.lstrip(b"\t") for line in body.split(b"\n"))
+        placeholder = f"{HEREDOC_PLACEHOLDER_PREFIX}{index}"
+        while placeholder.encode() in original:
+            placeholder += "_"
+        written = source[operator.start_byte:delimiter_end]
+        delimiter_as_written = source[start.start_byte:delimiter_end]
+        taken[placeholder] = _HeredocTakenOut(
+            written.decode("utf-8", "surrogatepass"),
+            delimiter_as_written.decode("utf-8", "surrogatepass"), body,
+            not any(mark in delimiter_as_written for mark in (b"'", b'"', b"\\")),
+            source[body_end:resume].decode("utf-8", "surrogatepass"))
+        source = (source[:operator.start_byte] + b"<" + placeholder.encode()
+                  + source[delimiter_end:body_start] + source[resume:])
+        tree = parser().parse(source)
+    return source, tree, taken
+
+
+def _delimiter_word(source, position):
+    """Return (end, delimiter) for the heredoc delimiter word at position, by bash's rules.
+
+    The word ends at an unquoted blank or operator character; the delimiter is
+    the word with its quotes and backslashes removed.
+    """
+    word, index = bytearray(), position
+    while index < len(source):
+        character = source[index:index + 1]
+        if character == b"\\":
+            word += source[index + 1:index + 2]
+            index += 2
+        elif character in (b"'", b'"'):
+            closing = source.find(character, index + 1)
+            closing = len(source) if closing == -1 else closing
+            word += source[index + 1:closing]
+            index = closing + 1
+        elif character in b" \t\n;&|()<>":
+            break
+        else:
+            word += character
+            index += 1
+    return index, bytes(word)
+
+
+def _inside_substitution(node):
     parent = node.parent
     while parent is not None:
-        if parent.type == "heredoc_body":
+        if parent.type in ("command_substitution", "process_substitution"):
             return True
         parent = parent.parent
     return False
 
 
-UNIQUE_DELIMITER_PREFIX = b"NEDSCHORUS_HEREDOC_END_"
-# Each pass corrects the heredocs the previous parse misplaced; real commands nest far less.
-MAX_HEREDOC_RENAMING_PASSES = 8
+def _heredoc_body_end(source, position, delimiter, dashed, inside_substitution):
+    """Return (body end, where the command line resumes) for a body starting at position.
 
-
-def _source_with_heredoc_delimiters_ended(source):
-    """Return source with a space after each heredoc delimiter that an operator follows directly.
-
-    bash ends a delimiter word at ;, &, |, (, ), < or >, as in `cat <<EOF; ls`;
-    tree-sitter-bash takes everything up to a space as the delimiter.
+    The body ends at a line that is exactly its delimiter, after leading tabs
+    for <<-; inside a substitution, bash also ends it at the delimiter
+    followed by the substitution's ). A body that never ends runs to the end.
     """
-    tree = parser().parse(source)
-    ends = []
-    for start in _heredoc_starts(tree.root_node):
-        text, index, quote = start.text, 0, None
-        while index < len(text):
-            character = text[index:index + 1]
-            if quote:
-                quote = None if character == quote else quote
-            elif character == b"\\":
-                index += 1
-            elif character in (b"'", b'"'):
-                quote = character
-            elif character in b";&|()<>":
-                ends.append(start.start_byte + index)
-                break
-            index += 1
-    if not ends:
-        return source
-    spaced = bytearray(source)
-    for end in reversed(ends):
-        spaced[end:end] = b" "
-    return bytes(spaced)
-
-
-def _heredoc_delimiter(start):
-    """Return the word that ends a heredoc's body: the delimiter with bash's quote removal."""
-    text, word, index = start.text, bytearray(), 0
-    while index < len(text):
-        character = text[index:index + 1]
-        if character == b"\\":
-            word += text[index + 1:index + 2]
-            index += 2
-        elif character == b"'":
-            closing = text.find(b"'", index + 1)
-            closing = len(text) if closing == -1 else closing
-            word += text[index + 1:closing]
-            index = closing + 1
-        elif character == b'"':
-            index += 1
-            while index < len(text) and text[index:index + 1] != b'"':
-                if text[index:index + 1] == b"\\" and text[index + 1:index + 2] in b'"\\$`':
-                    index += 1
-                word += text[index:index + 1]
-                index += 1
-            index += 1
-        else:
-            word += character
-            index += 1
-    return bytes(word)
-
-
-def _source_with_unique_heredoc_delimiters(source):
-    """Return (source with unique heredoc delimiters, [(unique, original)], tree), or None.
-
-    bash ends a heredoc only at a line that is exactly its delimiter;
-    tree-sitter-bash ends it at any line that starts with the delimiter, such
-    as EOF2 inside a body ended by EOF, and reads the rest of the body as
-    commands. Renaming each delimiter, and the line that ends its body, to a
-    word found nowhere in the command leaves bash's reading unchanged and
-    lets tree-sitter-bash find the same end. A heredoc start that a misread
-    parse found inside another heredoc's body is part of that body, so it is
-    left alone; each pass reparses, until no start is left to rename.
-    """
-    original = source
-    replacements_made = []  # (unique word, delimiter as written, delimiter after quote removal)
-    tree = parser().parse(source)
-    for _pass in range(MAX_HEREDOC_RENAMING_PASSES):
-        replacements = []  # (start, end, new bytes, original bytes)
-        bodies = []  # (first byte, byte after the end line) of each body placed in this pass
-        body_resumes = 0
-        for start in _heredoc_starts(tree.root_node):
-            nested = any(first <= start.start_byte < after for first, after in bodies)
-            if nested and not _inside_heredoc_body(start):
-                continue
-            delimiter = _heredoc_delimiter(start)
-            if not delimiter:
-                continue
-            dashed = source[:start.start_byte].rstrip(b" \t").endswith(b"<<-")
-            line_end = _logical_line_end(source, start.end_byte)
-            if line_end == -1:
-                break
-            renamed = delimiter.startswith(UNIQUE_DELIMITER_PREFIX)
-            if renamed:
-                unique = delimiter
-            else:
-                unique = UNIQUE_DELIMITER_PREFIX + b"%d" % len(replacements_made)
-                while unique in original or unique in source:
-                    unique += b"_"
-                quoted = start.text != delimiter
-                replacements.append((start.start_byte, start.end_byte,
-                                     b"'" + unique + b"'" if quoted else unique, start.text))
-                replacements_made.append((unique, start.text, delimiter))
-            # A heredoc in a substitution inside another's body starts on its own next line;
-            # heredocs that share a command line take their bodies one after another.
-            body_first = position = line_end + 1 if nested else max(line_end + 1, body_resumes)
-            while position < len(source):
-                line_end = source.find(b"\n", position)
-                if line_end == -1:
-                    line_end = len(source)
-                line = source[position:line_end]
-                compared = line.lstrip(b"\t") if dashed else line
-                # Inside $( ... ), bash also ends the body at the delimiter followed by ).
-                if compared == delimiter or compared.startswith(delimiter + b")"):
-                    begin = position + len(line) - len(compared)
-                    if not renamed:
-                        replacements.append((begin, begin + len(delimiter), unique, delimiter))
-                    body_resumes = (line_end + 1 if compared == delimiter
-                                    else begin + len(delimiter))
-                    break
-                position = line_end + 1
-            else:
-                body_resumes = len(source)
-            bodies.append((body_first, body_resumes))
-        if not replacements:
-            break
-        rewritten = bytearray(source)
-        for begin, end, new, _old in sorted(replacements, reverse=True):
-            rewritten[begin:end] = new
-        source = bytes(rewritten)
-        tree = parser().parse(source)
-    if not replacements_made:
-        return None
-    restore = []
-    for unique, start_text, delimiter in replacements_made:
-        quoted = start_text != delimiter
-        if quoted:
-            restore.append(("'" + unique.decode() + "'", start_text.decode("utf-8", "surrogatepass")))
-        restore.append((unique.decode(), delimiter.decode("utf-8", "surrogatepass")))
-    # Quoted forms first, so a bare unique word inside one is not restored on its own.
-    restore.sort(key=lambda pair: -len(pair[0]))
-    return source, restore, tree
-
-
-def _source_with_heredoc_operators_after_their_words(source, tree):
-    """Return (source, tree) with each heredoc's line rewritten so tree-sitter-bash reads it as bash does.
-
-    tree-sitter-bash misreads what follows a heredoc's delimiter on its line.
-    bash reads `git push <<EOF --force origin b | cat` as
-    `git push --force origin b <<EOF | cat`, since a redirection may stand
-    anywhere among a command's words, so the words and redirections after the
-    delimiter are moved in front of the `<<DELIMITER`, up to what ends the
-    command. tree-sitter-bash also misreads a `;` or `&` on a heredoc's line,
-    so the commands after the first one are moved to the line after the
-    heredoc's body, where bash runs them in the same order.
-    """
-    moved = bytearray(source)
-    changed = False
-    for start in reversed(_heredoc_starts(tree.root_node)):
-        operator = start.prev_sibling
-        line_end = _logical_line_end(source, start.end_byte)
-        if operator is None or operator.type not in ("<<", "<<-") or line_end == -1 \
-                or _inside_heredoc_body(start):
-            continue
-        # A file descriptor written before << goes with it, as in `3<<EOF`.
-        opening = start.parent.start_byte if start.parent.type == "heredoc_redirect" \
-            else operator.start_byte
-        rest = source[start.end_byte:line_end]
-        end, ended_by = _command_end(rest)
-        stretch, after = rest[:end], rest[end:].lstrip(b" \t")
-        # A heredoc in a substitution that closes on its own line stays inside the substitution.
-        if ended_by == ")":
-            continue
-        # Two heredocs on one line take their bodies in order, so neither is moved.
-        if b"<<" in stretch or (not stretch.strip() and after == rest.lstrip(b" \t")):
-            continue
-        words = stretch.strip() + b" " if stretch.strip() else b""
-        moved[opening:line_end] = (b" " + words + source[opening:start.end_byte] + b" " + after)
-        changed = True
-    if changed:
-        source = bytes(moved)
-        tree = parser().parse(source)
-    return _source_with_commands_after_heredoc_lines_moved_below_their_bodies(source, tree)
-
-
-def _source_with_commands_after_heredoc_lines_moved_below_their_bodies(source, tree):
-    for start in reversed(_heredoc_starts(tree.root_node)):
-        line_end = _logical_line_end(source, start.end_byte)
-        if line_end == -1 or _inside_heredoc_body(start):
-            continue
-        rest = source[start.end_byte:line_end]
-        separator = _first_list_separator(rest)
-        if separator is None or b"<<" in rest:
-            continue
-        later = rest[separator + 1:].strip()
-        body_end = _heredoc_body_end(source, line_end + 1, _heredoc_delimiter(start),
-                                     source[:start.start_byte].rstrip(b" \t").endswith(b"<<-"))
-        if not later or body_end is None:
-            continue
-        source = (source[:start.end_byte] + rest[:separator] + source[line_end:body_end]
-                  + later + b"\n" + source[body_end:])
-        tree = parser().parse(source)
-    return source, tree
-
-
-def _first_list_separator(text):
-    """Return the offset of the first ; or & that ends a command in text, outside any nesting, or None."""
-    probe = b": " + text
-    found = []
-    stack = [parser().parse(probe).root_node]
-    while stack:
-        node = stack.pop()
-        if node.type in CHILD_SHELL_NODE_TYPES or node.type in TEXT_NODE_TYPES \
-                or node.type in ("expansion", "simple_expansion", "compound_statement",
-                                 "if_statement", "while_statement", "for_statement",
-                                 "case_statement", "c_style_for_statement"):
-            continue
-        if not node.is_named and node.type in (";", "&"):
-            found.append(node.start_byte - 2)
-        stack.extend(node.children)
-    return min(found, default=None)
-
-
-def _heredoc_body_end(source, position, delimiter, dashed):
-    """Return the offset just after the line that ends a heredoc body starting at position, or None."""
     while position < len(source):
         line_end = source.find(b"\n", position)
         line_end = len(source) if line_end == -1 else line_end
         line = source[position:line_end]
-        if (line.lstrip(b"\t") if dashed else line) == delimiter:
-            return min(line_end + 1, len(source))
+        compared = line.lstrip(b"\t") if dashed else line
+        if compared == delimiter:
+            return position, min(line_end + 1, len(source))
+        if inside_substitution and compared.startswith(delimiter + b")"):
+            return position, position + len(line) - len(compared) + len(delimiter)
         position = line_end + 1
-    return None
+    return len(source), len(source)
 
 
-def _logical_line_end(source, position):
-    """Return the offset of the line end at or after position that a backslash does not continue, or -1."""
-    while True:
-        line_end = source.find(b"\n", position)
-        if line_end == -1:
-            return -1
-        backslashes = len(source[:line_end]) - len(source[:line_end].rstrip(b"\\"))
-        if backslashes % 2 == 0:
-            return line_end
-        position = line_end + 1
+def _heredoc_body_start(source, delimiter_end):
+    """Return where a heredoc's body starts: after the line that opens it.
 
-
-def _command_end(text):
-    """Return (offset, ended_by) for where the first command in text ends.
-
-    ended_by is the operator, ), or "#" for a comment, that ends it, or None at the end of text.
+    That line ends at the first line end outside quotes, substitutions and
+    backslash continuations, as in `cat <<EOF && git commit -m "two` with the
+    message's second line next. The rest of the command line is parsed on its
+    own to find it; what follows that line end does not change how the text
+    before it is read.
     """
-    probe = b": " + text
-    ends = []
-    stack = [parser().parse(probe).root_node]
+    probe = b": " + source[delimiter_end:]
+    stack, inside, comments = [parser().parse(probe).root_node], [], []
     while stack:
         node = stack.pop()
         if node.type == "comment":
-            ends.append((node.start_byte, "#"))
+            comments.append((node.start_byte, node.end_byte))
             continue
-        if node.type in CHILD_SHELL_NODE_TYPES or node.type in TEXT_NODE_TYPES \
-                or node.type in ("expansion", "simple_expansion"):
+        if node.type in ("string", "raw_string", "ansi_c_string", "translated_string",
+                         "command_substitution", "process_substitution", "subshell",
+                         "compound_statement", "expansion", "arithmetic_expansion"):
+            inside.append((node.start_byte, node.end_byte))
             continue
-        if not node.is_named and (node.type in PIPE_OPERATORS or node.type in LIST_OPERATORS
-                                  or node.type == ")"):
-            ends.append((node.start_byte, node.type))
         stack.extend(node.children)
-    end, ended_by = min(ends, default=(len(probe), None))
-    return max(0, end - 2), ended_by
+    position = 2
+    while True:
+        line_end = probe.find(b"\n", position)
+        if line_end == -1:
+            return len(source)
+        # A backslash continues a line, except at the end of a comment.
+        continued = (len(probe[:line_end]) - len(probe[:line_end].rstrip(b"\\"))) % 2 == 1 \
+            and not any(begin <= line_end - 1 < end for begin, end in comments)
+        if not any(begin < line_end < end for begin, end in inside) and not continued:
+            return delimiter_end + line_end - 2 + 1
+        position = line_end + 1
+
+
+def _with_heredocs_put_back(text, taken_out):
+    """Return text with each heredoc taken out of it put back as written, body included."""
+    for placeholder in reversed(list(taken_out)):
+        taken = taken_out[placeholder]
+        mark = "<" + placeholder
+        index = text.find(mark)
+        while index != -1:
+            text = text[:index] + taken.written + text[index + len(mark):]
+            line_end = text.find("\n", index + len(taken.written))
+            if line_end != -1:
+                text = (text[:line_end + 1] + taken.body.decode("utf-8", "surrogatepass")
+                        + taken.ending + text[line_end + 1:])
+            index = text.find(mark, index + len(taken.written))
+    return text
+
+
+def _follows_process_id(source, offset):
+    """Return whether bash reads the $( at offset as $$, the process id, followed by a parenthesis."""
+    # tree-sitter-bash reads $$(x) as $ and $(x); bash pairs the dollars from the left.
+    dollars = 0
+    index = offset - 1
+    while index >= 0 and source[index:index + 1] == b"$":
+        dollars += 1
+        index -= 1
+    return source[offset:offset + 2] == b"$(" and dollars % 2 == 1
 
 
 LAST_CASE_TERMINATOR_PATTERN = re.compile(rb";;?&(\s*esac\b)")
@@ -1143,46 +1030,6 @@ def _inside_text(root, byte):
             return True
         node = node.parent
     return False
-
-
-def _reread_with_heredoc_bodies_apart(source, tree, glob_markers):
-    """Return the commands of a command line whose unquoted heredoc bodies broke the parse, or None.
-
-    tree-sitter-bash parses an unquoted heredoc body as text with substitutions,
-    and a lone quote there, which bash only reports when it expands the body,
-    can turn every command after the heredoc into an error. Quoting each such
-    delimiter keeps the bodies apart from the commands; each body is then read
-    on its own, so its error stays inside it.
-    """
-    starts = [start for start in _heredoc_starts(tree.root_node)
-              if not any(mark in _text(start) for mark in "'\"\\")]
-    if not starts:
-        return None
-    quoted = bytearray(source)
-    for start in reversed(starts):
-        quoted[start.start_byte:start.end_byte] = b"'" + start.text + b"'"
-    commands = _collect(parser().parse(bytes(quoted)).root_node, glob_markers, bytes(quoted))
-    quoted_here = {"'" + _text(start) + "'" for start in starts}
-    bodies = []
-    for command in commands:
-        for heredoc in command.heredocs:
-            if heredoc.delimiter in quoted_here:
-                heredoc.expanded = True
-                if heredoc.body not in bodies:
-                    bodies.append(heredoc.body)
-    for body in bodies:
-        # A substitution bash cannot close runs nothing, so what the body's errors hold is left out.
-        wrapper = "NEDSCHORUS_BODY_END"
-        while wrapper in body:
-            wrapper += "_"
-        body_source = (f"cat <<{wrapper}\n" + body + f"{wrapper}\n").encode("utf-8", "surrogatepass")
-        inside = _collect(parser().parse(body_source).root_node, glob_markers, body_source,
-                          skip_errors=True)
-        # Only the substitutions in an unquoted body run.
-        commands[:0] = [SimpleCommand(list(found), (ChildShell(-1, SUBSTITUTION),) + found.child_shell,
-                                      found.redirects, found.heredocs)
-                        for found in inside if found[:1] != ["cat"] or found.inside_substitution()]
-    return commands
 
 
 if __name__ == "__main__" and sys.argv[1:] == [NEW_PROCESS_READ_FLAG]:
