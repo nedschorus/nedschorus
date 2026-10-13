@@ -45,14 +45,12 @@ A reincarnation kills the session, and the session's in-process subagents die wi
 
 ## The handoff file format
 
-**Status: the block form below is QUEUED, not built** (R20 in
-`nedschorus-fleet-git-worktree-working-model.md`; the document's `status: built`
-frontmatter covers the rest of the system, not this). Today the writer
-collapses every whitespace run in the next step to a single space, and the
-supervisor parses one `key: value` line at a time with no block parser — so a
-multi-line next step reaches the successor as a dense chain. This section
-specifies what both ends will do, because a reader-only change cannot restore
-line breaks a writer has already destroyed.
+**Status: the block form below is built.** The writer,
+`nc-systems/handoff/handoff-write-and-check-supervisor.py`, appends the
+`next-step-verbatim` block, and the supervisor,
+`nc-systems/handoff/handoff-supervisor.py`, reads it, so a multi-line next
+step reaches the successor with its line breaks. This section specifies what
+both ends do.
 
 The handoff file is a short list of `key: value` lines, written whole — the
 writer renders it to a `.partial` file and renames, so no reader ever sees it
