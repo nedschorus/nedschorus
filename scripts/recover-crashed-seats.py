@@ -259,9 +259,11 @@ def run_tmux(*arguments_after_tmux, socket_name=None, environment=None):
 
 # What tmux prints when the session, or the server holding it, does not exist. Any other
 # failure, such as a client and server of different tmux versions, is no answer.
+# What tmux 3.6 prints for an absent session: another session holds the server, the server
+# holds none ("no current target"), the socket refuses ("no server running"), or no socket.
 TMUX_SAYS_NO_SUCH_SESSION_OR_SERVER = re.compile(
-    r"can't find session|no server running"
-    r"|error connecting to .*\((?:No such file or directory|Connection refused)\)")
+    r"can't find session|no current target|no server running"
+    r"|error connecting to .*\(No such file or directory\)")
 
 
 def tmux_has_session(name: str, socket_name: str):
@@ -280,13 +282,16 @@ def tmux_has_session(name: str, socket_name: str):
 
 def tmux_session_alive_anywhere(name: str):
     """Return (alive, detail), with alive None when tmux cannot answer."""
+    errors = []
     for socket_name in dict.fromkeys((name, "default")):
         held, detail = tmux_has_session(name, socket_name)
-        if held is None:
-            return None, (f"{detail}, so seat liveness cannot be "
-                          "checked — refusing rather than guessing")
         if held:
             return True, f"tmux session '{name}' is alive on socket '{socket_name}'"
+        if held is None:
+            errors.append(detail)
+    if errors:
+        return None, (f"{'; '.join(dict.fromkeys(errors))}, so seat liveness cannot be "
+                      "checked — refusing rather than guessing")
     return False, ""
 
 
