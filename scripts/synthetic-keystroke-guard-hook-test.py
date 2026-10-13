@@ -272,6 +272,66 @@ reason = decide("ssh ned 'tmux send-keys -t gatekeeper Enter'", StubRunner(stdou
 check("ssh-wrapped injection to an attached box session is denied",
       reason is not None and "attached client" in reason, reason)
 
+# ssh with no remote command runs its standard input in the remote shell: the
+# ordinary form from the Mac feeds the box a heredoc.
+runner = StubRunner(stdout="1\n")
+reason = decide("ssh ned-box <<'EOF'\ntmux send-keys -t gatekeeper Enter\nEOF", runner)
+check("send-keys in a heredoc fed to ssh with no remote command is denied",
+      reason is not None and "attached client" in reason, reason)
+check("the heredoc's probe runs over ssh to that host",
+      runner.calls and runner.calls[0][0] == "ssh" and "ned-box" in runner.calls[0],
+      runner.calls)
+runner = StubRunner(stdout="1\n")
+check("a heredoc fed to ssh that has a remote command of its own is that command's data",
+      decide("ssh ned-box 'cat > notes.md' <<'EOF'\ntmux send-keys -t gatekeeper Enter\nEOF",
+             runner) is None and not runner.calls, runner.calls)
+
+# A remote shell reading its standard input, as `bash -s` does, runs the heredoc
+# too. The command below is a real Mac agent's (cold-read-research, 2026-09), whose
+# body has lines that only start with its delimiter, with a send-keys line added.
+REAL_MAC_SSH_BASH_S = (
+    "ssh -o BatchMode=yes nedlern@ned-box 'bash -s' <<'EOF'\n"
+    "S=$(mktemp -d /tmp/cold-read-heredoc-probe-XXXXXX); echo \"S=$S\"\n"
+    "for shell in bash sh; do\n"
+    "  small=$($shell -c 'cat <<EOF\nSMALL_OK\nEOF' 2>&1)\n"
+    "  big=$($shell -c \"cat <<'EOF' | wc -c\n$(head -c 100000 /dev/zero | tr '\\0' 'x')\nEOF\" 2>&1)\n"
+    "  echo \"$shell outside any sandbox: small=[$small] big=[$big]\"\n"
+    "done\n"
+    "cd /; rm -rf $S\n"
+    "tmux send-keys -t gatekeeper Enter\n"
+    "EOF")
+for case_name, command in [
+    ("send-keys in a real Mac ssh 'bash -s' heredoc with nested heredocs is denied",
+     REAL_MAC_SSH_BASH_S),
+    ("send-keys in a heredoc fed to ssh host bash is denied",
+     "ssh ned-box bash <<'EOF'\ntmux send-keys -t gatekeeper Enter\nEOF"),
+]:
+    runner = StubRunner(stdout="1\n")
+    reason = decide(command, runner)
+    check(case_name, reason is not None and "attached client" in reason, reason)
+    check(f"and the probe runs over ssh: {case_name}",
+          runner.calls and runner.calls[0][0] == "ssh" and "ned-box" in " ".join(runner.calls[0]),
+          runner.calls)
+nested_heredocs_fed_to_bash = ("bash <<'EOF'\ncat <<'EOF2' >a\nx\nEOF2\ncat <<'EOF3' >b\ny\nEOF3\n"
+                               "tmux send-keys -t gatekeeper Enter\nEOF")
+reason = decide(nested_heredocs_fed_to_bash, StubRunner(stdout="1\n"))
+check("send-keys after two heredocs in a body with a line starting with its delimiter is denied",
+      reason is not None and "attached client" in reason, reason)
+
+# tmux runs each command after a \; word as a command of its own.
+for case_name, command in [
+    ("send-keys after a tmux \\; separator is denied",
+     "tmux select-window -t gatekeeper \\; send-keys -t gatekeeper Enter"),
+    ("send-keys after a separator ending the previous command's last word is denied",
+     "tmux select-window -t gatekeeper\\; send-keys -t gatekeeper Enter"),
+]:
+    reason = decide(command, StubRunner(stdout="1\n"))
+    check(case_name, reason is not None and "attached client" in reason, reason)
+runner = StubRunner(stdout="1\n")
+check("a tmux command sequence with no keystroke verb is allowed without a probe",
+      decide("tmux select-window -t gatekeeper \\; list-panes", runner) is None
+      and not runner.calls, runner.calls)
+
 check("a target tmux does not know is allowed (keystrokes land nowhere)",
       decide("tmux send-keys -t no-such-seat Enter",
              StubRunner(stderr="can't find pane: no-such-seat", returncode=1)) is None)
@@ -629,24 +689,6 @@ reason = decide('echo "$(tmux send-keys -t seat-a x', runner)
 check("an unterminated \"$( is read as commands to the end of the text",
       reason is not None and "attached client" in reason, reason)
 
-words = guard.tokenize_simple_commands('echo "at $(date +%H) today" done')
-check("the substitution's commands come first and the word keeps its text unexpanded",
-      words == [["date", "+%H"], ["echo", "at $(date +%H) today", "done"]], words)
-
-words = guard.tokenize_simple_commands('cd "$(dirname "$(git rev-parse --git-dir)")" && ls')
-check("a substitution nested in another, both double-quoted, is read innermost first",
-      words == [["git", "rev-parse", "--git-dir"],
-                ["dirname", "$(git rev-parse --git-dir)"],
-                ["cd", '$(dirname "$(git rev-parse --git-dir)")'], ["ls"]], words)
-
-words = guard.tokenize_simple_commands(
-    'echo "$(printf \')\'; printf "%s)" x; (cd /tmp; ls); tmux send-keys -t seat-a x) end"')
-check("a ) in quotes or closing a subshell does not close the substitution",
-      words[:5] == [["printf", ")"], ["printf", "%s)", "x"], ["cd", "/tmp"], ["ls"],
-                    ["tmux", "send-keys", "-t", "seat-a", "x"]]
-      and len(words) == 6 and words[5][0] == "echo" and words[5][1].endswith(" end"),
-      words)
-
 # Controls: forms the fix must leave as they were.
 runner = StubRunner(stdout="1\n")
 check("an escaped \\$( in double quotes is not a substitution (stays data, no probes)",
@@ -664,12 +706,6 @@ reason = decide('echo "$((1<<20))"\ntmux send-keys -t seat-a x', runner)
 check("double-quoted arithmetic 1<<20 opens no heredoc; the next line is still guarded",
       reason is not None and "attached client" in reason, reason)
 
-shell_view, heredocs = guard.split_out_heredocs(commit_message_quoting_a_backticked_command)
-check("the heredoc inside the double-quoted substitution is split out, body and all",
-      shell_view == "git commit -m \"$(cat <<'EOF'\n)\""
-      and [body.splitlines()[0] for _line, body in heredocs] == ["Document the rule"],
-      (shell_view, heredocs))
-
 # --- a quoted substitution must never hide a command the shell runs ---
 # In each command below the shell runs the tmux command. The reader that read
 # a double-quoted string as one word listed that command, by reading on past
@@ -683,23 +719,15 @@ for case_name, command in [
      "NOTE=\"$(a $'it\\'s')\"; tmux send-keys -t seat-a x"),
     ("a heredoc in quoted arithmetic with a lone ' in its body: the command after it is read",
      "N=\"$(( $(cat <<'EOF'\nit's 1\nEOF\n) + 1 ))\"; tmux send-keys -t seat-a x"),
-    # The shell rejects this one. It stands for every reading of a
-    # substitution that loses its place and never finds the closing ).
-    ("a substitution the reader cannot close: the command after the string is still read",
-     'echo "$(a \'unclosed)"; tmux send-keys -t seat-a x'),
 ]:
     reason = decide(command, StubRunner(stdout="1\n"))
     check(case_name, reason is not None and "attached client" in reason, reason)
 
-words = guard.tokenize_simple_commands('echo "$(a ${x%(*}; b ${y:-$(c)})" && d')
-check("inside ${...} a parenthesis is a word character, and a $( there is still read",
-      words == [["a", "${x%(*}"], ["b", "${y:-$"], ["c"], ["}"],
-                ["echo", "$(a ${x%(*}; b ${y:-$(c)})"], ["d"]], words)
-
-words = guard.tokenize_simple_commands("a $'it\\'s' b; echo $'x'; c 'it\\'s'")
-check("$'...' ends at its first unescaped quote, and a plain '...' at its first quote",
-      words[0] == ["a", "$it\\'s", "b"] and words[1] == ["echo", "$x"]
-      and words[2][0] == "c", words)
+# bash rejects a line whose quote never closes and runs none of it, the tmux command included.
+runner = StubRunner(stdout="1\n")
+check("a line bash rejects for an unclosed quote runs nothing and is not refused",
+      decide('echo "$(a \'unclosed)"; tmux send-keys -t seat-a x', runner) is None
+      and not runner.calls, runner.calls)
 
 # The bare form, $( ... ) outside quotes, read the $'...' string the same
 # wrong way before this change, so the command after it passed there too.
@@ -734,33 +762,6 @@ check("escaped \\` and \\$( in an unquoted-delimiter heredoc stay data (no probe
       decide("cat > notes.md <<EOF\nnever \\`tmux send-keys -t seat-a x\\` "
              "or \\$(tmux send-keys -t seat-b y) here\nEOF", runner) is None
       and not runner.calls, runner.calls)
-
-shell_view, heredocs = guard.split_out_heredocs(
-    "cat <<EOF\nnever `tmux send-keys -t seat-a x` or $(date +%H) here\nEOF\nls")
-mark = guard.EXPANDED_BODY_COMMANDS_MARK
-check("an unquoted-delimiter heredoc leaves its substitutions in the shell view, marked, at its <<",
-      shell_view == (f"cat {mark}{'tmux send-keys -t seat-a x'.encode().hex()}{mark}"
-                     f"{mark}{'date +%H'.encode().hex()}{mark}<<EOF\nls")
-      and heredocs == [("cat <<EOF",
-                        "never `tmux send-keys -t seat-a x` or $(date +%H) here")],
-      (shell_view, heredocs))
-# A guard that scans the shell view's text itself, as the leading-dash guard
-# marks unquoted glob characters, must not see a body's quotes or globs: a
-# lone ' there would hide every glob after the heredoc.
-shell_view_with_quotes, _heredocs = guard.split_out_heredocs(
-    "cat <<EOF\nuse the `don't \"*\" #` form\nEOF\ngrep phrase *.txt")
-check("a marked command list holds no quote, glob character or # in the shell view",
-      shell_view_with_quotes.endswith("<<EOF\ngrep phrase *.txt")
-      and not any(c in shell_view_with_quotes[:-len("<<EOF\ngrep phrase *.txt")]
-                  for c in "'\"`*#"),
-      shell_view_with_quotes)
-words = guard.tokenize_simple_commands(shell_view)
-check("each marked command list is read as a substitution, ahead of the heredoc's command",
-      words == [["tmux", "send-keys", "-t", "seat-a", "x"], ["date", "+%H"],
-                ["cat", "<<EOF"], ["ls"]]
-      and [type(w).__name__ for w in words] == ["SubstitutionCommand", "SubstitutionCommand",
-                                                 "list", "list"],
-      words)
 
 # The heredoc scan keeps its place past the same two forms: a heredoc opened
 # on the line after either is still split out, and its body is data.
@@ -938,13 +939,6 @@ for case_name, command in [
 ]:
     runner = StubRunner(stdout="1\n")
     check(case_name, decide(command, runner) is None and not runner.calls, runner.calls)
-
-words = guard.tokenize_simple_commands('X="$(case $v in (a|b) c;; *) d;;& e) f;& esac)" && g')
-check("inside a quoted substitution a case's patterns and branches are read as commands",
-      words[:-2] == [["case", "$v", "in"], ["a"], ["b"], ["c"], ["*"], ["d"], ["e"],
-                     ["f"], ["esac"]]
-      and words[-2][0].startswith("X=$(case") and words[-1] == ["g"], words)
-
 
 # --- the ssh invocation parser ---
 

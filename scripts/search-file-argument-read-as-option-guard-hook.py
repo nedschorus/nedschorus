@@ -15,28 +15,24 @@ import sys
 import time
 from pathlib import Path
 
-_keystroke_guard_path = Path(__file__).with_name("synthetic-keystroke-guard-hook.py")
-_keystroke_guard_spec = importlib.util.spec_from_file_location(
-    "synthetic_keystroke_guard_hook", _keystroke_guard_path)
-keystroke_guard = importlib.util.module_from_spec(_keystroke_guard_spec)
-_keystroke_guard_spec.loader.exec_module(keystroke_guard)
-
-split_out_heredocs = keystroke_guard.split_out_heredocs
-tokenize_simple_commands = keystroke_guard.tokenize_simple_commands
-is_program = keystroke_guard.is_program
+_shell_reader_spec = importlib.util.spec_from_file_location(
+    "shell_command_tree_sitter_bash_reader_common",
+    Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+    / "shell-command-tree-sitter-bash-reader-common.py")
+shell_reader = importlib.util.module_from_spec(_shell_reader_spec)
+_shell_reader_spec.loader.exec_module(shell_reader)
+is_program = shell_reader.is_program
 
 SEARCH_PROGRAMS = ("grep", "egrep", "fgrep", "rg", "ugrep")
 
-LEADING_SHELL_KEYWORDS = {"do", "then", "else", "elif", "if", "while", "until",
-                          "{", "!", "time"}
+# tree-sitter-bash keeps the time keyword as the first word of the command it times.
+LEADING_SHELL_KEYWORDS = {"time"}
 
 COMMAND_RUNNING_PREFIXES = ("env", "command", "nohup", "nice", "timeout")
 PREFIX_VALUE_OPTIONS = {"-u", "--unset", "-n", "-s", "--signal", "-k",
                         "--kill-after"}
 
 ENVIRONMENT_ASSIGNMENT_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
-
-REDIRECTION_WORD_PATTERN = re.compile(r"^[0-9]*(?:>>|>|<<<|<>|<)")
 
 UNRESOLVABLE_DIRECTORY_PATTERN = re.compile(r"[$`]")
 
@@ -167,8 +163,7 @@ def search_program_index(words):
 
 def read_simple_commands(command):
     """Return simple commands with heredoc data removed and unquoted glob characters marked."""
-    shell_view, _heredoc_bodies = split_out_heredocs(command)
-    return tokenize_simple_commands(shell_view, glob_markers=GLOB_CHARACTER_MARKERS)
+    return shell_reader.simple_commands(command, glob_markers=GLOB_CHARACTER_MARKERS)
 
 
 def command_with_double_dash_before_word(command, commands, command_index,
@@ -202,11 +197,6 @@ def refused_search(command, commands, command_index, program_index,
         word = arguments[index]
         if word == "--":
             return None
-        redirection = REDIRECTION_WORD_PATTERN.match(word)
-        if redirection:
-            target_is_next_word = redirection.end() == len(word)
-            index += 2 if target_is_next_word else 1
-            continue
         if not word_holds_unquoted_glob(word):
             index += 1
             continue
@@ -217,7 +207,6 @@ def refused_search(command, commands, command_index, program_index,
         later_words = arguments[index + 1:]
         option_follows = any(
             plain_word(later).startswith("-") and later != "-"
-            and not REDIRECTION_WORD_PATTERN.match(later)
             for later in later_words)
         details = {"glob_word": plain_word(word), "name": name, "program": program}
         if option_follows:
@@ -232,9 +221,9 @@ def refused_search(command, commands, command_index, program_index,
         respelled = (words[first_word:program_index + 1] + arguments[:index]
                      + ["--"] + arguments[index:])
         respelled_search = " ".join(
-            item if REDIRECTION_WORD_PATTERN.match(item) or item == "--"
-            else shell_spelling_of_word(item)
-            for item in respelled)
+            [item if item == "--" else shell_spelling_of_word(item) for item in respelled]
+            + [operator + shell_spelling_of_word(target)
+               for operator, target in words.redirects if operator != "<<"])
         return details, whole_command, respelled_search
     return None
 
@@ -249,9 +238,9 @@ def resolve_directory(base, target):
 def first_refused_search(command, payload_cwd, deadline, clock):
     """Return the first refused search while tracking literal cd commands."""
     commands = read_simple_commands(command)
-    directories = {(): payload_cwd}  # Substitution-local cd must not change the parent directory.
+    directories = {(): payload_cwd}  # A child shell's cd must not change the parent directory.
     for command_index, words in enumerate(commands):
-        substitution = getattr(words, "substitution", ())
+        substitution = words.child_shell
         enclosing = substitution
         while enclosing not in directories:
             enclosing = enclosing[:-1]
@@ -331,6 +320,10 @@ def main(stdin=sys.stdin, clock=time.monotonic):
     payload_cwd = payload.get("cwd") or os.getcwd()
     try:
         refusal = analyze_command_text(command, payload_cwd, clock)
+    except shell_reader.ShellParserUnavailable as error:
+        print(shell_reader.parser_unavailable_hook_output(
+            "The search-file-argument guard", error))
+        return 0
     except (ExpansionBudgetSpent, OSError, ValueError, re.error):
         return 0
     if refusal:

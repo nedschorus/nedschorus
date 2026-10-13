@@ -28,7 +28,6 @@ import tempfile
 from pathlib import Path
 
 HOOK_SCRIPT = Path(__file__).with_name("search-file-argument-read-as-option-guard-hook.py")
-KEYSTROKE_GUARD_SCRIPT = Path(__file__).with_name("synthetic-keystroke-guard-hook.py")
 
 _spec = importlib.util.spec_from_file_location("search_guard", HOOK_SCRIPT)
 guard = importlib.util.module_from_spec(_spec)
@@ -87,19 +86,11 @@ def run_in_shell(command, cwd):
 scratch = make_scratch_projects_folder()
 try:
     # -----------------------------------------------------------------------
-    # The shared shell reader is really imported, not copied.
+    # The shared shell module is really imported, not copied.
     # -----------------------------------------------------------------------
-    _keystroke_spec = importlib.util.spec_from_file_location(
-        "keystroke_guard_for_test", KEYSTROKE_GUARD_SCRIPT)
-    keystroke_guard = importlib.util.module_from_spec(_keystroke_spec)
-    _keystroke_spec.loader.exec_module(keystroke_guard)
-    check("the guard uses the keystroke guard's tokenizer and heredoc split",
-          guard.tokenize_simple_commands.__code__.co_code
-          == keystroke_guard.tokenize_simple_commands.__code__.co_code
-          and guard.split_out_heredocs.__code__.co_code
-          == keystroke_guard.split_out_heredocs.__code__.co_code
-          and guard.tokenize_simple_commands.__module__
-          == "synthetic_keystroke_guard_hook")
+    check("the guard reads commands with the shared shell module",
+          guard.shell_reader.__name__ == "shell_command_tree_sitter_bash_reader_common"
+          and guard.read_simple_commands("grep x *")[0][:2] == ["grep", "x"])
 
     # -----------------------------------------------------------------------
     # The misreading, on the real programs, before the guard is tested.
@@ -152,6 +143,7 @@ try:
         "egrep -l needle */*.jsonl",
         "/usr/bin/grep -l needle */*.jsonl",
         "timeout 10 grep -l needle */*.jsonl",
+        "time grep -l needle */*.jsonl",
         "env LC_ALL=C grep -l needle */*.jsonl",
         "LC_ALL=C grep -l needle */*.jsonl",
         "echo $(grep -l needle */*.jsonl)",
@@ -164,6 +156,17 @@ try:
         f"grep -l needle {DASH_FOLDER}/*.jsonl",
     ]:
         check(f"refused: {command}", run_main(command, scratch) is not None)
+
+    # When the -- cannot be put into the whole command, the suggestion is the search alone,
+    # with its redirections, so that running it does what the agent meant.
+    real_whole_command = guard.command_with_double_dash_before_word
+    guard.command_with_double_dash_before_word = lambda *arguments: None
+    try:
+        refusal = run_main("grep -l needle */*.jsonl 2>/dev/null", scratch)
+    finally:
+        guard.command_with_double_dash_before_word = real_whole_command
+    check("the search-alone suggestion keeps the search's redirections",
+          (refusal or "").endswith("run: grep -l needle -- */*.jsonl 2>/dev/null"), refusal)
 
     elsewhere = scratch / "plain"
     check("refused after a literal cd into the folder from elsewhere",

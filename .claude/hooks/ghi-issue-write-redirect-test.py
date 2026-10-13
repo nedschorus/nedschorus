@@ -79,6 +79,8 @@ EDIT_TITLE_FALLBACK = guard.edit_title_refusal(None)
 
 # Each refused form, and the refusal it must get.
 REFUSED = [
+    ("comment whose body is the word --help", "gh issue comment 46 --body --help",
+     COMMENT_FALLBACK),
     ("comment with --body", 'gh issue comment 46 --body "done"',
      COMMENT_FALLBACK),
     ("comment with -b", "gh issue comment 46 -b done", COMMENT_FALLBACK),
@@ -201,6 +203,18 @@ HEREDOC_MESSAGE_QUOTING_A_COMMENT = (
 
 # Each form that must pass untouched.
 ALLOWED = [
+    # The required case: the ned-box command of 2026-09-29T16:24:28Z, verbatim, which pipes
+    # JSON holding `gh issue comment` to a program. gh is not the command being run.
+    ("JSON naming gh issue comment, piped to a program (ned-box, 2026-09-29T16:24:28Z)",
+     "S=/tmp/claude-1000/-home-nedlern-agents-merge-lane-2/13c82a05-f77c-409c-970d-19633827d2f6/"
+     "scratchpad/pr771r2-mac-claude; cd $S/wt/head && grep -n -A12 '^VALUE_FLAGS' "
+     ".claude/hooks/ghi-issue-write-redirect.py | head -20; printf '%s' "
+     "'{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"gh issue comment 46 --edit-last "
+     "--edit-last=true\"}}' | python3 $S/cmp/main/.claude/hooks/ghi-issue-write-redirect.py "
+     ">/dev/null 2>$S/err2.txt; echo \"main exit $? $(tail -1 $S/err2.txt)\"; gh issue comment "
+     "--help 2>/dev/null | grep -i 'edit-last' | head -2"),
+    ("comment's help", "gh issue comment --help"),
+    ("edit's short help", "gh issue edit -h"),
     ("view", "gh issue view 46"),
     ("list", "gh issue list --state open --limit 200"),
     ("status", "gh issue status"),
@@ -327,9 +341,9 @@ check("an unreadable payload exits 0 and says nothing",
 
 # The shared shell reader is imported, not copied: a change there reaches
 # this guard, and a broken import fails here instead of failing open at runtime.
-check("the tokenizer is the keystroke guard's",
-      guard.tokenize_simple_commands.__module__ == "synthetic_keystroke_guard_hook",
-      guard.tokenize_simple_commands.__module__)
+check("the reader is the shared shell module",
+      guard.shell_reader.__name__ == "shell_command_tree_sitter_bash_reader_common",
+      guard.shell_reader.__name__)
 
 # End to end, as the harness runs it.
 for command, should_refuse in (("gh issue comment 46 -b x", True),
