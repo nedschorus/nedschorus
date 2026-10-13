@@ -81,6 +81,8 @@ class Harness:
         # A launch that does not come up polls before it dies: its heartbeat moves.
         self.died_at_after_recovery = None
         self.on_purpose = False
+        # recovery's assessment as though a leftover shell were closed; None: not wired.
+        self.assess_as_though_leftover_shell_closed = None
 
     def assess(self, seat):
         if seat in self.assessment_errors:
@@ -116,7 +118,8 @@ class Harness:
             recorded_exit_question=recovery_module.restart_question_for_a_seat_with_a_recorded_exit,
             open_seat_window=self.open_seat_window,
             seat_session_alive=(self.seat_session_check or
-                                (lambda seat: (self.seat_session_alive, "tmux's answer"))))
+                                (lambda seat: (self.seat_session_alive, "tmux's answer"))),
+            assess_as_though_leftover_shell_closed=self.assess_as_though_leftover_shell_closed)
         watcher.run(list(seats))
 
     def decisions(self):
@@ -179,8 +182,7 @@ def run_decision_cases(root: Path):
     check("a seat seen running again between two crashed sightings starts its confirmation over",
           harness.recoveries == [], repr(harness.recoveries))
 
-    for verdict in ("seat-asked-to-be-consulted", "offer-after-recorded-exit", "refuse",
-                    "ask-to-close-the-leftover-idle-shell"):
+    for verdict in ("seat-asked-to-be-consulted", "offer-after-recorded-exit"):
         harness = Harness(root / f"left-alone-{verdict}")
         harness.on_purpose = True
         harness.verdicts["merge-lane-2"] = ("seat-already-running", "")
@@ -587,6 +589,125 @@ def run_down_for_the_user_cases(root: Path):
           f"  {watcher_module.MAC_LAUNCHER} merge-lane-2\n" in text, text)
 
 
+LEFTOVER_SHELL_DETAIL = ("a tmux session named merge-lane-2 is alive, but no live supervisor",
+                         [4242], "one pane, a shell with nothing in the foreground")
+
+
+def refused_after_running(harness, verdict, detail, minutes=(5, 6, 7, 8)):
+    harness.verdicts["merge-lane-2"] = ("seat-already-running", "")
+    harness.run(SEEN_RUNNING)
+    harness.verdicts["merge-lane-2"] = (verdict, detail)
+    for minute in minutes:
+        harness.run(SEEN_RUNNING + timedelta(minutes=minute))
+
+
+def run_refused_cases(root: Path):
+    harness = Harness(root / "recovery-refuses")
+    refusal = ("the supervisor lock at /x names a live process, but ps could not confirm it "
+               "is a supervisor of this seat")
+    refused_after_running(harness, "refuse", refusal)
+    notices = [path for path in harness.notices() if "recovery-refuses" in path.name]
+    text = notices[0].read_text(encoding="utf-8") if notices else ""
+    check("a seat recovery refuses, seen running this boot, is not restarted, and the user is "
+          "told once", harness.recoveries == [] and len(harness.notices()) == 1
+          and len(notices) == 1, repr(harness.notices()))
+    check("the recovery-refuses notice quotes the refusal and gives the restart and window "
+          "commands, run on the Mac",
+          "merge-lane-2 is down or cannot be shown to be running" in text
+          and f"  {refusal}\n" in text
+          and "  ssh -t nedlern@ned-box 'cd ~/Projects/nedschorus && python3 "
+              "scripts/recover-crashed-seats.py merge-lane-2'\n" in text
+          and f"  {watcher_module.MAC_LAUNCHER} merge-lane-2\n" in text, text)
+
+    harness = Harness(root / "leftover-shell")
+    refused_after_running(harness, "ask-to-close-the-leftover-idle-shell", LEFTOVER_SHELL_DETAIL)
+    notices = [path for path in harness.notices() if "leftover-shell" in path.name]
+    text = notices[0].read_text(encoding="utf-8") if notices else ""
+    check("a seat whose tmux session is a leftover shell, seen running this boot, is not "
+          "restarted, and the user is told once",
+          harness.recoveries == [] and len(harness.notices()) == 1 and len(notices) == 1,
+          repr(harness.notices()))
+    check("the leftover-shell notice says the watcher cannot close the shell, and gives the "
+          "command that asks, what y and n do, and the window command",
+          "only the shell its launch left open" in text
+          and "  ssh -t nedlern@ned-box 'cd ~/Projects/nedschorus && python3 "
+              "scripts/recover-crashed-seats.py merge-lane-2'\n" in text
+          and "Answer y, and it closes the shell and restarts merge-lane-2. Answer n, and it "
+              "leaves merge-lane-2 down.\n" in text
+          and f"  {watcher_module.MAC_LAUNCHER} merge-lane-2\n" in text, text)
+
+    for predicted_verdict, predicted_detail, on_purpose, what in (
+            ("seat-asked-to-be-consulted", (7, "the user asked to be consulted"), False,
+             "a dont-restart handoff waiting"),
+            ("offer-after-recorded-exit", (0, "2026-10-12T03:05:00+00:00", "s"), True,
+             "a recorded stop on purpose")):
+        harness = Harness(root / f"leftover-shell-over-{predicted_verdict}")
+        harness.on_purpose = on_purpose
+        asked = []
+
+        def assess_as_though_leftover_shell_closed(seat, pane_process_ids,
+                                                   answer=(predicted_verdict, predicted_detail)):
+            asked.append((seat, pane_process_ids))
+            return answer
+        harness.assess_as_though_leftover_shell_closed = assess_as_though_leftover_shell_closed
+        refused_after_running(harness, "ask-to-close-the-leftover-idle-shell",
+                              LEFTOVER_SHELL_DETAIL)
+        check(f"a leftover shell over {what} stays silent, judged with the shell's own pane "
+              "process ids", harness.notices() == [] and harness.recoveries == []
+              and asked and asked[0] == ("merge-lane-2", [4242]),
+              repr((harness.notices(), asked)))
+
+    harness = Harness(root / "leftover-shell-over-a-crash")
+    harness.assess_as_though_leftover_shell_closed = (
+        lambda seat, pane_process_ids: ("resume", ("session-id", "found")))
+    refused_after_running(harness, "ask-to-close-the-leftover-idle-shell", LEFTOVER_SHELL_DETAIL)
+    check("a leftover shell over a crash is reported, not restarted",
+          harness.recoveries == []
+          and [path.name for path in harness.notices() if "leftover-shell" in path.name],
+          repr(harness.notices()))
+
+    harness = Harness(root / "leftover-shell-prediction-fails")
+
+    def prediction_fails(seat, pane_process_ids):
+        raise OSError("the handoff directory cannot be read")
+    harness.assess_as_though_leftover_shell_closed = prediction_fails
+    refused_after_running(harness, "ask-to-close-the-leftover-idle-shell", LEFTOVER_SHELL_DETAIL)
+    logged = [entry for entry in harness.decisions()
+              if entry["decision"].startswith("could not assess as though")]
+    check("when the assessment as though the shell were closed fails, the leftover shell is "
+          "reported, and the failure logged",
+          len([path for path in harness.notices() if "leftover-shell" in path.name]) == 1
+          and logged and "the handoff directory cannot be read" in logged[0]["error"],
+          repr((harness.notices(), harness.decisions())))
+
+    # A refusal whose supervisor still polls: every poll would make a new death.
+    harness = Harness(root / "refusal-repeats")
+    harness.verdicts["merge-lane-2"] = ("seat-already-running", "")
+    harness.run(SEEN_RUNNING)
+    harness.verdicts["merge-lane-2"] = ("refuse", "a supervisor may be watching this seat")
+    for minute in range(5, 40):
+        harness.died_at = SEEN_RUNNING + timedelta(minutes=minute, seconds=-10)
+        harness.run(SEEN_RUNNING + timedelta(minutes=minute))
+    first_episode = list(harness.notices())
+    check("a refusal that lasts, its supervisor still polling, is told once, not every few "
+          "minutes", len(first_episode) == 1, repr(first_episode))
+    harness.verdicts["merge-lane-2"] = ("seat-already-running", "")
+    harness.run(SEEN_RUNNING + timedelta(minutes=41))
+    harness.verdicts["merge-lane-2"] = ("refuse", "a supervisor may be watching this seat")
+    harness.died_at = SEEN_RUNNING + timedelta(minutes=41)
+    for minute in (45, 46, 47):
+        harness.run(SEEN_RUNNING + timedelta(minutes=minute))
+    check("a refusal after the seat is seen running again is told again",
+          len(harness.notices()) == 2, repr(harness.notices()))
+
+    harness = Harness(root / "refused-not-seen-since-boot")
+    harness.verdicts["merge-lane-2"] = ("refuse", "detail")
+    for minute in (5, 6, 7):
+        harness.run(BOOT + timedelta(minutes=minute))
+    check("a refused seat not seen running since the machine booted stays silent",
+          harness.notices() == [], repr(harness.notices()))
+
+
 def run_stopped_on_purpose_cases(root: Path):
     """The real predicate watch() builds, on fixture handoff and supervisor files."""
     agents_root = root / "purpose-agents"
@@ -860,6 +981,10 @@ def run_watch_wiring_cases(root: Path):
         def list_agent_seat_names_with_agent_session_records(*arguments):
             return []
 
+        @staticmethod
+        def predicted_assessment_once_the_leftover_idle_shell_is_closed(*arguments):
+            return ("predicted", arguments)
+
     class FakeLoginRestart:
         recovery = FakeRecovery
         supervisor = object()
@@ -894,6 +1019,14 @@ def run_watch_wiring_cases(root: Path):
           len(built) == 1
           and built[0].get("seat_session_alive") is FakeRecovery.tmux_session_alive_anywhere,
           repr(built))
+    predict = built[0].get("assess_as_though_leftover_shell_closed") if len(built) == 1 else None
+    predicted = predict("seat-a", [4242]) if predict else None
+    check("watch() passes the Watcher recovery's assessment as though the leftover shell were "
+          "closed, with the agents root, handoff directory and pane process ids",
+          predicted is not None and predicted[0] == "predicted"
+          and predicted[1][0] == "seat-a" and predicted[1][1] == root / "agents"
+          and predicted[1][2] == root / "handoffs" and predicted[1][4] == [4242],
+          repr(predicted))
 
 
 with tempfile.TemporaryDirectory() as temporary_directory:
@@ -902,6 +1035,7 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     run_handled_crash_cases(Path(temporary_directory))
     run_handled_death_key_cases(Path(temporary_directory))
     run_down_for_the_user_cases(Path(temporary_directory))
+    run_refused_cases(Path(temporary_directory))
     run_stopped_on_purpose_cases(Path(temporary_directory))
     run_path_on_the_mac_cases()
     run_environment_cases()

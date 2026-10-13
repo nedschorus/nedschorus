@@ -19,9 +19,16 @@ scripts/recover-crashed-seats.py makes (assess_seat), and:
   that is now down in a state only he should restart from: a handoff waiting
   that no supervisor acted on, or an exit its supervisor recorded without
   resuming, other than a stop on purpose;
-- leaves every other agent-seat alone: a stop on purpose (a clean exit, or an
-  exit its supervisor recorded as a stop at a dont-restart handoff), a refusal,
-  and an agent-seat not seen running since the machine booted, which the login
+- tells the user, without restarting it, about an agent-seat it saw running
+  that recover-crashed-seats.py now refuses (verdict refuse), or whose tmux
+  session is now only the shell its launch left open (verdict
+  ask-to-close-the-leftover-idle-shell), which recovery closes only on an
+  operator's yes at a terminal; a leftover shell over a stop on purpose stays
+  silent, judged by assessing the seat as though the shell were closed;
+- leaves every other agent-seat alone: a stop on purpose (a clean exit, an
+  exit its supervisor recorded as a stop at a dont-restart handoff, or a
+  dont-restart handoff waiting, verdict seat-asked-to-be-consulted), and an
+  agent-seat not seen running since the machine booted, which the login
   restart or the user brings back;
 - tries to restart an agent-seat at most once in RESTART_LIMIT_SECONDS, a
   failed attempt included; a second crash inside that time leaves it down and
@@ -38,12 +45,13 @@ attempt's own brief run is part of the death it was handling.
 
 The user hears from the watcher only when it cannot do its job of restarting:
 a crash it will not restart (a second crash inside RESTART_LIMIT_SECONDS), a
-seat down in a state only he should restart from (the two cases above), and
-each failure become a notice shown in a window the program opens on his Mac
-with scripts/open-mac-window-from-ned-box.py. The cases it leaves alone stay
-silent, logged only: a stop on purpose, a seat assessed refuse,
-ask-to-close-the-leftover-idle-shell or seat-asked-to-be-consulted, and a seat
-not seen running since the machine booted. A restart it carries out shows no
+seat down in a state only he should restart from (the two cases above), a seat
+recovery refuses or a leftover shell holds (the case after those), and each
+failure become a notice shown in a window the program opens on his Mac with
+scripts/open-mac-window-from-ned-box.py. A refused seat gets one notice until
+it is seen running again, however long the refusal lasts. The cases it leaves
+alone stay silent, logged only: a stop on purpose, and a seat not seen running
+since the machine booted. A restart it carries out shows no
 notice: recover-crashed-seats.py opens a window on the Mac attached to the
 restarted seat's tmux session. A window the Mac cannot be reached for, a
 notice's or a restarted seat's, stays pending and is tried again on every run. Every decision, each restart
@@ -92,6 +100,9 @@ CRASHED_VERDICTS = ("resume", "ignite")
 RUNNING_VERDICT = "seat-already-running"
 WAITING_HANDOFF_VERDICT = "defer-to-boot-ignition"
 RECORDED_EXIT_VERDICT = "offer-after-recorded-exit"
+REFUSED_VERDICT = "refuse"
+LEFTOVER_SHELL_VERDICT = "ask-to-close-the-leftover-idle-shell"
+DONT_RESTART_HANDOFF_VERDICT = "seat-asked-to-be-consulted"
 # Two sightings a minute apart keep a run from acting on a seat that a launch,
 # resupervise-seat.py or the login restart is bringing up at that moment.
 CRASH_CONFIRMATION_SECONDS = 50
@@ -182,6 +193,37 @@ RECORDED_EXIT_NOTICE_TEMPLATE = (
     "Record: {record}\n"
 )
 
+LEFTOVER_SHELL_NOTICE_TEMPLATE = (
+    "{seat} is down, and the crash watcher cannot restart it. Its supervisor stopped at "
+    "about {died_at}, and {seat}'s tmux session on ned-box is now only the shell its "
+    "launch left open. Recovery closes that shell only when someone at a terminal says "
+    "yes, so the watcher, which runs unattended, leaves {seat} down.\n"
+    "To close the shell and restart {seat}, run in a Terminal on your Mac:\n"
+    "  ssh -t nedlern@ned-box 'cd ~/Projects/nedschorus && python3 scripts/recover-crashed-seats.py {seat}'\n"
+    "It asks whether to restart {seat}. Answer y, and it closes the shell and restarts "
+    "{seat}. Answer n, and it leaves {seat} down.\n"
+    "If you answered y, open its window, also in a Terminal on your Mac, with:\n"
+    "  {mac_launcher} {seat}\n"
+    "The watcher tells you again only after {seat} has run again.\n"
+    "Record: {record}\n"
+)
+
+RECOVERY_REFUSES_NOTICE_TEMPLATE = (
+    "{seat} is down or cannot be shown to be running, and the crash watcher cannot "
+    "restart it: scripts/recover-crashed-seats.py refuses it, saying:\n"
+    "  {refusal}\n"
+    "The watcher saw {seat} running earlier; its supervisor last checked in at about "
+    "{died_at}.\n"
+    "If that line says what to do, do it first. Otherwise ask an agent on ned-box to find "
+    "out why recovery refuses {seat} and fix it, giving it this notice.\n"
+    "Then restart {seat} by running in a Terminal on your Mac:\n"
+    "  ssh -t nedlern@ned-box 'cd ~/Projects/nedschorus && python3 scripts/recover-crashed-seats.py {seat}'\n"
+    "and open its window, also in a Terminal on your Mac, with:\n"
+    "  {mac_launcher} {seat}\n"
+    "The watcher tells you again only after {seat} has run again.\n"
+    "Record: {record}\n"
+)
+
 SHOW_NOTICE_CLOSE_PROMPT = "Press Enter to close this window."
 
 
@@ -244,7 +286,7 @@ class Watcher:
     def __init__(self, *, state, now, boot_at, log_directory, assess, died_at_about,
                  transcripts_directory, recover, open_window, show_notice_words,
                  stopped_on_purpose=None, recorded_exit_question=None, open_seat_window=None,
-                 seat_session_alive=None):
+                 seat_session_alive=None, assess_as_though_leftover_shell_closed=None):
         self.state = state
         self.stopped_on_purpose = stopped_on_purpose or (lambda seat, detail: False)
         self.recorded_exit_question = recorded_exit_question or (
@@ -264,6 +306,11 @@ class Watcher:
         # recover-crashed-seats.py's tmux_session_alive_anywhere, which returns (alive, detail),
         # alive None when tmux cannot answer.
         self.seat_session_alive = seat_session_alive
+        # recover-crashed-seats.py's predicted_assessment_once_the_leftover_idle_shell_is_closed,
+        # bound to the agents root: (seat, pane process ids) -> (verdict, detail). It tells a
+        # leftover shell over a stop on purpose from one over a crash. None counts every
+        # leftover shell as a crash's.
+        self.assess_as_though_leftover_shell_closed = assess_as_though_leftover_shell_closed
 
     @property
     def decisions_path(self) -> Path:
@@ -367,14 +414,35 @@ class Watcher:
                           error=error_text)
 
     def down_kind(self, seat, verdict, detail):
-        """Return "crash" to restart, "for-the-user" to report, or None to leave alone."""
+        """Return "crash" to restart, "for-the-user" or "refused" to report, or None to leave alone."""
         if verdict in CRASHED_VERDICTS:
             return "crash"
         if verdict == WAITING_HANDOFF_VERDICT:
             return "for-the-user"
         if verdict == RECORDED_EXIT_VERDICT and not self.stopped_on_purpose(seat, detail):
             return "for-the-user"
+        if verdict == REFUSED_VERDICT:
+            return "refused"
+        if (verdict == LEFTOVER_SHELL_VERDICT
+                and not self.leftover_shell_over_a_stop_on_purpose(seat, detail)):
+            return "refused"
         return None
+
+    def leftover_shell_over_a_stop_on_purpose(self, seat, detail) -> bool:
+        """An attached launch leaves its shell open after every stop, a stop on purpose too."""
+        if self.assess_as_though_leftover_shell_closed is None:
+            return False
+        _, pane_process_ids, _ = detail
+        try:
+            verdict, predicted = self.assess_as_though_leftover_shell_closed(
+                seat, pane_process_ids)
+        except Exception as error:  # noqa: BLE001 - unsure of a stop on purpose, tell the user
+            self.log(seat, "could not assess as though its leftover shell were closed; "
+                     "counted as not a stop on purpose", error=f"{type(error).__name__}: {error}")
+            return False
+        if verdict == DONT_RESTART_HANDOFF_VERDICT:
+            return True
+        return verdict == RECORDED_EXIT_VERDICT and self.stopped_on_purpose(seat, predicted)
 
     def mark_seen_running(self, record, moment):
         record["last_seen_running_at"] = timestamp(moment)
@@ -422,8 +490,13 @@ class Watcher:
         if verdict == RUNNING_VERDICT:
             self.mark_seen_running(record, self.now)
             record.pop("left_alone_verdict", None)
+            record.pop("refusal_noticed", None)
             return
         kind = self.down_kind(seat, verdict, detail)
+        # A refusal can last while its supervisor still polls, which makes each poll a new
+        # death below; one notice per refusal until the seat is seen running again.
+        if kind == "refused" and record.get("refusal_noticed"):
+            return
         if kind is None:
             record.pop("first_seen_crashed_at", None)
             if record.get("left_alone_verdict") != verdict:
@@ -452,6 +525,10 @@ class Watcher:
         died_at = self.died_at_about(seat) or last_seen_running
         if kind == "for-the-user":
             self.report_down_for_the_user(seat, verdict, detail, died_at)
+            return
+        if kind == "refused":
+            record["refusal_noticed"] = verdict
+            self.report_refused(seat, verdict, detail, died_at)
             return
         recent = self.recent_recovery_attempts(record)
         if recent:
@@ -501,6 +578,19 @@ class Watcher:
                           died_at=clock_text(died_at), exit_code=exit_code,
                           recovery_last_line=(output_lines[-1].strip() if output_lines
                                               else "(it printed nothing)"))
+
+    def report_refused(self, seat, verdict, detail, died_at):
+        if verdict == LEFTOVER_SHELL_VERDICT:
+            self.log(seat, "not restarted: its tmux session is a leftover shell, which recovery "
+                     "closes only on an operator's yes; user told",
+                     died_at_about=timestamp(died_at), detail=str(detail))
+            self.write_notice(seat, "leftover-shell", LEFTOVER_SHELL_NOTICE_TEMPLATE,
+                              died_at=clock_text(died_at))
+            return
+        self.log(seat, "not restarted: recovery refuses it; user told",
+                 died_at_about=timestamp(died_at), detail=str(detail))
+        self.write_notice(seat, "recovery-refuses", RECOVERY_REFUSES_NOTICE_TEMPLATE,
+                          died_at=clock_text(died_at), refusal=str(detail))
 
     def report_down_for_the_user(self, seat, verdict, detail, died_at):
         if verdict == WAITING_HANDOFF_VERDICT:
@@ -652,6 +742,10 @@ def watch(environment, state_directory: Path, log_directory: Path) -> int:
     def recover(seat):
         return recover_seat_in_clean_environment(seat, environment)
 
+    def assess_as_though_leftover_shell_closed(seat, pane_process_ids):
+        return recovery.predicted_assessment_once_the_leftover_idle_shell_is_closed(
+            seat, agents_root, handoff_directory, projects_root, pane_process_ids)
+
     watcher = Watcher(
         state=state, now=datetime.now(timezone.utc), boot_at=login_restart.machine_boot_time(),
         log_directory=log_directory, assess=assess, died_at_about=died_at_about,
@@ -660,7 +754,8 @@ def watch(environment, state_directory: Path, log_directory: Path) -> int:
         stopped_on_purpose=stopped_on_purpose_predicate(supervisor, handoff_directory),
         recorded_exit_question=recovery.restart_question_for_a_seat_with_a_recorded_exit,
         open_seat_window=recovery.agent_seat_mac_window_open_unless_tmux_client_already_attached,
-        seat_session_alive=recovery.tmux_session_alive_anywhere)
+        seat_session_alive=recovery.tmux_session_alive_anywhere,
+        assess_as_though_leftover_shell_closed=assess_as_though_leftover_shell_closed)
     try:
         watcher.run(recovery.list_agent_seat_names_with_agent_session_records(
             agents_root, handoff_directory, projects_root))
