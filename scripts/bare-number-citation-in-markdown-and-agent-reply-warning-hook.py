@@ -186,21 +186,21 @@ PREVIOUS_REPLY_TITLE_OPENING_LINES = (
 )
 MARKDOWN_WRONG_NUMBER_LINE = (
     "For each link listed below whose line ends by saying the number in the link text is not the "
-    "link's number, the instruction to use the title shown does not apply, because the URL may be "
-    "the part that is wrong. Decide from the text around the link which item was meant, and point "
-    "the link's URL at that item. Then, if the link text was meant as a title, write the link text "
-    "as that item's ID prefix and its title on GitHub, which gh issue view <that item's number> "
-    "--json title --jq .title prints; if the link text was your own words, keep the words and make "
-    "any number in them that item's number.")
+    "link's number, the URL may be the part that is wrong, so do not change the link text to fit "
+    "the URL. Decide from the text around the link which item was meant, and point the link's URL "
+    "at that item. Then, if the link text was meant as a title, write the link text as that item's "
+    "ID prefix and title, such as PR <number>, \"<title>\"; gh issue view <that item's number> "
+    "--json title --jq .title prints the title, for a pull request too. If the link text was your "
+    "own words, keep the words and make any number in them that item's number.")
 PREVIOUS_REPLY_WRONG_NUMBER_LINE = (
     "For each link listed below whose line ends by saying the number in the link text is not the "
-    "link's number, the instruction to use the title shown does not apply, because the URL may be "
-    "the part that is wrong. This note asks for no correction now. If a later reply of yours cites "
-    "the item again, first decide from your earlier reply which item was meant, and point the "
-    "link's URL at that item. Then, if the link text was meant as a title, write the link text as "
-    "that item's ID prefix and its title on GitHub, which gh issue view <that item's number> "
-    "--json title --jq .title prints; if the link text was your own words, keep the words and make "
-    "any number in them that item's number.")
+    "link's number, the URL may be the part that is wrong, so do not change the link text to fit "
+    "the URL. This note asks for no correction now. If a later reply of yours cites the item "
+    "again, first decide from your earlier reply which item was meant, and point the link's URL "
+    "at that item. Then, if the link text was meant as a title, write the link text as that item's "
+    "ID prefix and title, such as PR <number>, \"<title>\"; gh issue view <that item's number> "
+    "--json title --jq .title prints the title, for a pull request too. If the link text was your "
+    "own words, keep the words and make any number in them that item's number.")
 TITLES_NOT_CHECKED_LINE = (
     "bare-number-citation-in-markdown-and-agent-reply-warning-hook: the text of {count} link(s) to pull "
     "requests or GitHub issues was not checked against their titles on GitHub, because gh could not "
@@ -455,9 +455,9 @@ def title_note_lines(opening_lines, wrong_number_line, checked, path=None,
         return []
     listed = mismatches[:HIT_LINES_LISTED_AT_MOST]
     # opening_lines[0] says what was found; the rest instruct about titles, and
-    # are left out when every listed link has a wrong number, whose own line
-    # replaces them.
-    if all(mismatch.prefix_number is not None for mismatch in listed):
+    # are left out when every link, listed or not, has a wrong number, whose own
+    # line replaces them.
+    if all(mismatch.prefix_number is not None for mismatch in mismatches):
         opening_lines = opening_lines[:1]
     lines = [line.format(path=path, count=len(mismatches)) for line in opening_lines]
     if any(mismatch.prefix_number is not None for mismatch in listed):

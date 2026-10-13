@@ -510,6 +510,17 @@ check("Write: a wrong-number link listed 11th or later, so not shown, adds no wr
       context is not None and hook.MORE_TITLE_HITS_LINE.format(count=1) in context["additionalContext"]
       and hook.MARKDOWN_WRONG_NUMBER_LINE not in context["additionalContext"], result.stdout)
 
+unlisted_wrong_title = "".join(
+    f"[PR 1253, \"{TITLES['1256']}\" number {index}]({PULL_URL}).\n" for index in range(10)) + (
+    f"[Wrong title number 10]({PULL_URL}).\n")
+result = run_hook(tool_payload("Write", REPOSITORY / "docs" / "unlisted-title.md", content=unlisted_wrong_title),
+                  titles_environment)
+context = context_of(result)
+check("Write: ten wrong numbers listed and a wrong title unlisted keeps the title instructions",
+      context is not None and hook.MARKDOWN_TITLE_OPENING_LINES[1] in context["additionalContext"]
+      and hook.MARKDOWN_WRONG_NUMBER_LINE in context["additionalContext"]
+      and hook.MORE_TITLE_HITS_LINE.format(count=1) in context["additionalContext"], result.stdout)
+
 result = run_hook(tool_payload("Write", REPOSITORY / "notes.txt", content="PR 931\n"))
 check("a file that is not Markdown is not scanned", result.stdout == "", result.stdout)
 
