@@ -531,7 +531,7 @@ Follow-ups the second approval-walk accepted, each its own change after this pul
 
 - a close command in `scripts/ghi-issue-write.py` that opens the outcome edit's pull request and, run again after that pull request merges, finishes the rerun and closes the issue; the issue guard then points a hand-typed `gh issue close` at it, and messages 1 and 2 shrink to one line;
 - the issue guard refuses a command that only quotes the words `gh issue comment` inside data; the fix belongs to the cold-read-research seat's planned replacement of the Bash guards' hand-written shell parser, which carries that command as a required test case;
-- a check that reports, and reverts, a guarded file changed without the user's approval by any means, a shell command included: approved writes record the file's hash and keep a copy, and a quotation of the user in a marker is checked against the transcript;
+- a check that catches a guarded file changed without the user's approval by any means, a shell command included: carried by GHI [Catch a guarded file changed without the user's approval, ask him, and keep every version](https://github.com/nedschorus/nedschorus/issues/1268), which asks the user instead of reverting;
 - the handoff-supervisor's report that it could not read the reminder marks reaches the next agent-seat's handoff prompt (open question 5).
 
 ## Questions the approval-walks settled
