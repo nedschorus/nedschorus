@@ -184,23 +184,30 @@ PREVIOUS_REPLY_TITLE_OPENING_LINES = (
     "prefix such as PR <number>.",
     "For a link whose text described the item in your own words instead, nothing needs doing.",
 )
+WRONG_NUMBER_LINE_OPENING = (
+    "For each link listed below whose line ends by saying the number in the link text is not the "
+    "link's number, ")
+# Present only when the title lines are, so the two never contradict.
+WRONG_NUMBER_TITLE_LINES_OVERRIDE = "the two instruction lines above do not apply to it: "
+# Present only when the title lines, which already say it, are left out.
+NO_CORRECTION_NOW_SENTENCE = "This note asks for no correction now. "
 MARKDOWN_WRONG_NUMBER_LINE = (
-    "For each link listed below whose line ends by saying the number in the link text is not the "
-    "link's number, the URL may be the part that is wrong, so do not change the link text to fit "
-    "the URL. Decide from the text around the link which item was meant, and point the link's URL "
-    "at that item. Then, if the link text was meant as a title, write the link text as that item's "
-    "ID prefix and title, such as PR <number>, \"<title>\"; gh issue view <that item's number> "
-    "--json title --jq .title prints the title, for a pull request too. If the link text was your "
-    "own words, keep the words and make any number in them that item's number.")
+    WRONG_NUMBER_LINE_OPENING + "{override}the URL may be the part that is wrong, so do not change "
+    "the link text to fit the URL. Decide from the text around the link which item was meant, and "
+    "point the link's URL at that item. Then, if the link text was meant as a title, write the link "
+    "text as that item's ID prefix and title, such as PR <number>, \"<title>\"; gh issue view "
+    "<that item's number> --json title --jq .title prints the title, for a pull request too. If "
+    "the link text was your own words, keep the words, and make any number in them that item's "
+    "number; words with no number stay as written.")
 PREVIOUS_REPLY_WRONG_NUMBER_LINE = (
-    "For each link listed below whose line ends by saying the number in the link text is not the "
-    "link's number, the URL may be the part that is wrong, so do not change the link text to fit "
-    "the URL. This note asks for no correction now. If a later reply of yours cites the item "
-    "again, first decide from your earlier reply which item was meant, and point the link's URL "
-    "at that item. Then, if the link text was meant as a title, write the link text as that item's "
-    "ID prefix and title, such as PR <number>, \"<title>\"; gh issue view <that item's number> "
-    "--json title --jq .title prints the title, for a pull request too. If the link text was your "
-    "own words, keep the words and make any number in them that item's number.")
+    "{no_correction}" + WRONG_NUMBER_LINE_OPENING + "{override}the URL may be the part that is "
+    "wrong, so do not change the link text to fit the URL. If a later reply of yours cites the "
+    "item again, first decide from your earlier reply which item was meant, and point the link's "
+    "URL at that item. Then, if the link text was meant as a title, write the link text as that "
+    "item's ID prefix and title, such as PR <number>, \"<title>\"; gh issue view <that item's "
+    "number> --json title --jq .title prints the title, for a pull request too. If the link text "
+    "was your own words, keep the words, and make any number in them that item's number; words "
+    "with no number stay as written.")
 TITLES_NOT_CHECKED_LINE = (
     "bare-number-citation-in-markdown-and-agent-reply-warning-hook: the text of {count} link(s) to pull "
     "requests or GitHub issues was not checked against their titles on GitHub, because gh could not "
@@ -446,6 +453,12 @@ def link_title_mismatches_in(text: str, line_numbers_to_report=None):
     return mismatches, None, len(links)
 
 
+def wrong_number_line_text(template, title_lines_shown):
+    return template.format(
+        override=WRONG_NUMBER_TITLE_LINES_OVERRIDE if title_lines_shown else "",
+        no_correction="" if title_lines_shown else NO_CORRECTION_NOW_SENTENCE)
+
+
 def title_note_lines(opening_lines, wrong_number_line, checked, path=None,
                      with_line_numbers=False):
     mismatches, reason, link_count = checked
@@ -457,11 +470,12 @@ def title_note_lines(opening_lines, wrong_number_line, checked, path=None,
     # opening_lines[0] says what was found; the rest instruct about titles, and
     # are left out when every link, listed or not, has a wrong number, whose own
     # line replaces them.
-    if all(mismatch.prefix_number is not None for mismatch in mismatches):
+    title_lines_shown = not all(mismatch.prefix_number is not None for mismatch in mismatches)
+    if not title_lines_shown:
         opening_lines = opening_lines[:1]
     lines = [line.format(path=path, count=len(mismatches)) for line in opening_lines]
     if any(mismatch.prefix_number is not None for mismatch in listed):
-        lines.append(wrong_number_line)
+        lines.append(wrong_number_line_text(wrong_number_line, title_lines_shown))
     for mismatch in listed:
         hit_line = WRITE_TITLE_HIT_LINE if with_line_numbers else EXCERPT_TITLE_HIT_LINE
         number_note = "" if mismatch.prefix_number is None else WRONG_NUMBER_NOTE.format(
