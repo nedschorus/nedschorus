@@ -359,7 +359,7 @@ for event in ("reply", "write"):
             note = "\n".join(lines)
             name = f"{event}, {kind}, {'more than ten' if more_than_listed else 'ten or fewer'}"
             title_lines_expected = kind != "numbers"
-            wrong_number_lines = [line for line in lines if hook.WRONG_NUMBER_LINE_OPENING in line]
+            wrong_number_lines = [line for line in lines if hook.WRONG_NUMBER_LINE_OPENING_INSTRUCTION in line]
             no_correction_count = note.count("This note asks for no correction now.")
             check(f"title note combination: {name}: the summary line comes first",
                   lines[0].startswith("bare-number-citation-in-markdown-and-agent-reply-warning-hook: "), lines[0])
@@ -368,13 +368,12 @@ for event in ("reply", "write"):
             check(f"title note combination: {name}: one wrong-number line when a listed link has a wrong number",
                   len(wrong_number_lines) == (0 if kind == "titles" else 1), note)
             check(f"title note combination: {name}: the wrong-number line overrides the title lines exactly when they are shown",
-                  all((hook.WRONG_NUMBER_TITLE_LINES_OVERRIDE in line) == title_lines_expected
+                  all((hook.WRONG_NUMBER_TITLE_LINES_OVERRIDE_INSTRUCTION in line) == title_lines_expected
                       for line in wrong_number_lines), note)
             if event == "reply":
                 check(f"title note combination: {name}: the reply note says once, before its instructions, that it asks for no correction now",
                       no_correction_count == 1
-                      and note.index("This note asks for no correction now.")
-                      < min(note.index(marker) for marker in ("If a later reply",) if marker in note),
+                      and -1 < note.find("This note asks for no correction now.") < note.find("If a later reply"),
                       note)
             else:
                 check(f"title note combination: {name}: the Write note does not say it asks for no correction",
@@ -560,7 +559,7 @@ result = run_hook(tool_payload("Write", REPOSITORY / "docs" / "eleventh.md", con
 context = context_of(result)
 check("Write: a wrong-number link listed 11th or later, so not shown, adds no wrong-number instruction",
       context is not None and hook.MORE_TITLE_HITS_LINE.format(count=1) in context["additionalContext"]
-      and hook.WRONG_NUMBER_LINE_OPENING not in context["additionalContext"], result.stdout)
+      and hook.WRONG_NUMBER_LINE_OPENING_INSTRUCTION not in context["additionalContext"], result.stdout)
 
 unlisted_wrong_title = "".join(
     f"[PR 1253, \"{TITLES['1256']}\" number {index}]({PULL_URL}).\n" for index in range(10)) + (
@@ -728,7 +727,7 @@ result = run_hook(prompt_payload(path), titles_environment)
 context = context_of(result)
 check("UserPromptSubmit: a note with no wrong number has no wrong-number instruction",
       context is not None and "the title on GitHub is" in context["additionalContext"]
-      and hook.WRONG_NUMBER_LINE_OPENING not in context["additionalContext"], result.stdout)
+      and hook.WRONG_NUMBER_LINE_OPENING_INSTRUCTION not in context["additionalContext"], result.stdout)
 
 path = transcript(user("go"), assistant("m1", text_block(
     f"GHI [{TITLES['1196']}]({ISSUE_URL}) and PR [\"{TITLES['1256']}\"]({PULL_URL}).")))
