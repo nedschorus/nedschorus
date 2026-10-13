@@ -521,8 +521,15 @@ def case_hook_reports_once_per_worktree(root):
     check("the hook names the report's Rename: heading as what to act on",
           "lists a name under its Rename: heading" in first, first)
     check("the hook says the renames are for the agent that sent the names to the naming agent",
-          "If you sent the names to the new-name-propose-and-check-fresh-agent subagent yourself, when its "
-          "report lists a name under its Rename: heading" in first, first)
+          "If you sent the names to the new-name-propose-and-check-fresh-agent subagent yourself:\n"
+          "- When its report lists a name under its Rename: heading" in first, first)
+    check("the hook says a subagent's line carries the name's file and leaves out the parentheses",
+          "<one sentence saying what it names and which file it is in>" in first
+          and "leaving out the parentheses that follow each name above" in first, first)
+    check("the hook says to rename a name the by-hand check finds breaking the naming page",
+          "and rename any name that breaks the page" in first, first)
+    check("the hook says renames from the report and from the by-hand check go in one commit",
+          "Make every rename, from its report and from your own check, in one single commit" in first, first)
     _, second = run_hook(clone, state_root, {"tool_name": "Edit", "tool_input": {"file_path": "beta.py"}})
     check("the same names are not reported twice in one agent-session", second == "", second)
     git_directory = subprocess.run(["git", "rev-parse", "--absolute-git-dir"], cwd=str(clone), check=True,
