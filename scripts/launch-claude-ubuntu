@@ -139,7 +139,7 @@ while [ $# -gt 0 ]; do
     esac
 done
 case "$AGENT_NAME" in
-    (*[!a-zA-Z0-9_-]*|"") echo "launch-claude-ubuntu: agent names are letters, digits, - and _" >&2; exit 2 ;;
+    (*[!abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-]*|"") echo "launch-claude-ubuntu: agent names are letters, digits, - and _" >&2; exit 2 ;;
 esac
 
 # Which GitHub account a box seat acts as — the twin of the same block in
@@ -161,7 +161,7 @@ esac
 # blocked, never a third state (user-ruled 2026-08-22).
 SEAT_GITHUB_ACCOUNT="${NEDSCHORUS_SEAT_GITHUB_ACCOUNT:-ubuntu-claude}"
 case "$SEAT_GITHUB_ACCOUNT" in
-    (*[!a-zA-Z0-9_-]*|"") echo "launch-claude-ubuntu: NEDSCHORUS_SEAT_GITHUB_ACCOUNT is a GitHub account name — letters, digits, - and _" >&2; exit 2 ;;
+    (*[!abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-]*|"") echo "launch-claude-ubuntu: NEDSCHORUS_SEAT_GITHUB_ACCOUNT is a GitHub account name — letters, digits, - and _" >&2; exit 2 ;;
 esac
 SEAT_GITHUB_TOKEN_FILE_UNDER_HOME=".config/nedschorus/$SEAT_GITHUB_ACCOUNT.token"
 

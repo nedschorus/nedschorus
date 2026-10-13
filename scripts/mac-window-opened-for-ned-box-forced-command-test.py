@@ -211,12 +211,13 @@ for request in ["open-agent-seat-window", "open-agent-seat-window a b", "open-ag
           and "open-mac-window-from-ned-box.py --agent-seat <seat>, naming one agent-seat" in result.stderr
           and "Send a request of the form" not in result.stderr,
           (result.returncode, opened, result.stderr))
-def launcher_accepts_seat_name(name):
+def launcher_accepts_seat_name(name, bash_options=(), locale_environment=None, bash="bash"):
     """Run the real launch-claude-ubuntu up to its seat-name check, and no further."""
     # An invalid account name makes the launcher stop at the check right after the seat-name
     # check, before it reaches ssh, so a name it accepts launches nothing.
-    environment = dict(os.environ, NEDSCHORUS_SEAT_GITHUB_ACCOUNT="not a valid account!")
-    result = subprocess.run(["bash", str(PROGRAM_PATH.with_name("launch-claude-ubuntu")), name],
+    environment = dict(os.environ, NEDSCHORUS_SEAT_GITHUB_ACCOUNT="not a valid account!",
+                       **(locale_environment or {}))
+    result = subprocess.run([bash, *bash_options, str(PROGRAM_PATH.with_name("launch-claude-ubuntu")), name],
                             capture_output=True, text=True, env=environment, timeout=30)
     if "NEDSCHORUS_SEAT_GITHUB_ACCOUNT" in result.stderr:
         return True
@@ -229,6 +230,70 @@ for name in ["merge-lane-2", "reboot_test", "_x", "9", "a.b", ".hidden", "-v", "
     check(f"the forced command accepts the seat name {name!r} exactly when launch-claude-ubuntu does",
           bool(forced_command.AGENT_SEAT_NAME_PATTERN.fullmatch(name)) == launcher_accepts_seat_name(name),
           name)
+
+
+def mac_bash_range_rules(bash="bash"):
+    """Return (bash options, locale environment) that make bash match ranges as the Mac's bash 3.2 does, or a skip reason."""
+    # The Mac's /bin/bash 3.2 has no globasciiranges, so a bracket range such as a-z follows the
+    # UTF-8 locale's collation there and can match é; bash 5 with globasciiranges off does the same.
+    # Setting the option is the probe: `shopt globasciiranges` exits 1 both when the option is off
+    # and when this bash has no such option.
+    locales = subprocess.run(["locale", "-a"], capture_output=True, text=True).stdout.split()
+    utf8_locale = next((name for name in locales if name.lower() in ("en_us.utf8", "en_us.utf-8")), None)
+    if utf8_locale is None:
+        return "no en_US UTF-8 locale is installed"
+    probe = subprocess.run([bash, "+O", "globasciiranges", "-c", ":"], capture_output=True, text=True)
+    options = ("+O", "globasciiranges") if probe.returncode == 0 and not probe.stderr else ()
+    return options, {"LC_ALL": utf8_locale}
+
+
+def check_seat_names_under_mac_range_rules(bash="bash", label=""):
+    rules = mac_bash_range_rules(bash)
+    if isinstance(rules, str):
+        print(f"SKIP  seat names under the Mac's bash range rules{label}: {rules}")
+        return
+    options, locale_environment = rules
+    for name in ["merge-lane-2", "a.b", "é", "ß", "Ä"]:
+        check(f"launch-claude-ubuntu accepts {name!r} exactly as the forced command does, under a UTF-8 "
+              f"locale with bracket ranges following its collation, as on the Mac's bash 3.2{label}",
+              bool(forced_command.AGENT_SEAT_NAME_PATTERN.fullmatch(name)) == launcher_accepts_seat_name(
+                  name, options, locale_environment, bash),
+              name)
+
+
+check_seat_names_under_mac_range_rules()
+
+# A bash with no globasciiranges option, as the Mac's 3.2 is: a wrapper refuses the option the way
+# bash 3.2 does, so the probe must fall back to plain bash rather than end the test file.
+with tempfile.TemporaryDirectory() as no_option_directory:
+    no_option_bash = Path(no_option_directory) / "bash"
+    no_option_bash.write_text(
+        "#!/bin/sh\n"
+        "for argument in \"$@\"; do\n"
+        "  if [ \"$argument\" = globasciiranges ]; then\n"
+        "    echo \"bash: globasciiranges: invalid shell option name\" >&2; exit 2\n"
+        "  fi\n"
+        "done\n"
+        f"exec {shutil.which('bash')} -c 'shopt -u globasciiranges; . \"$0\"' \"$@\"\n")
+    no_option_bash.chmod(0o755)
+    check("the range-rules probe drops globasciiranges for a bash that has no such option",
+          not isinstance(mac_bash_range_rules(str(no_option_bash)), str)
+          and mac_bash_range_rules(str(no_option_bash))[0] == (), mac_bash_range_rules(str(no_option_bash)))
+    check_seat_names_under_mac_range_rules(str(no_option_bash), " (a bash with no globasciiranges)")
+
+
+# launch-claude-mac keeps a twin of launch-claude-ubuntu's name checks; it cannot run past them
+# on this machine, so its patterns are compared with the tested launcher's, character for character.
+def launcher_name_check_patterns(launcher_name):
+    text = PROGRAM_PATH.with_name(launcher_name).read_text(encoding="utf-8")
+    return [line.split(")", 1)[0].strip() + ")" for line in text.splitlines()
+            if line.strip().startswith("(*[!") and line.strip().endswith(";;")]
+
+
+check("launch-claude-mac's seat-name and account-name patterns are launch-claude-ubuntu's",
+      launcher_name_check_patterns("launch-claude-mac") == launcher_name_check_patterns("launch-claude-ubuntu")
+      and len(launcher_name_check_patterns("launch-claude-ubuntu")) == 2,
+      (launcher_name_check_patterns("launch-claude-mac"), launcher_name_check_patterns("launch-claude-ubuntu")))
 check("a refused window request names the --agent-seat form too",
       "open-mac-window-from-ned-box.py --agent-seat <seat>" in run_program("open-windowx tmux")[0].stderr)
 
