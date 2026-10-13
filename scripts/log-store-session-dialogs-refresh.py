@@ -226,11 +226,15 @@ def main(argv=None) -> int:
     with lock:
         try:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except OSError:
+        except BlockingIOError:
             if not failures_only:
                 print(f"{PROGRAM}: another run holds {dialogs_directory / LOCK_FILE_NAME}; "
                       "leaving it to finish")
             return EXIT_LOCKED
+        except OSError as error:
+            print(f"FAILED: could not lock {dialogs_directory / LOCK_FILE_NAME}, so no dialog was refreshed — "
+                  f"{type(error).__name__}: {error}")
+            return EXIT_FAILED
         return refresh_all(root, failures_only)
 
 

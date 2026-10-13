@@ -189,6 +189,20 @@ with tempfile.TemporaryDirectory() as workspace:
     check("without --failures-only the held lock is named",
           held_loud.returncode == 3 and "another run holds" in held_loud.stdout, held_loud.stdout)
 
+    # A lock that fails for any reason but another run holding it is a failure, not an overlap to leave alone.
+    lock_failing_script = Path(workspace) / "refresh-with-a-failing-lock.py"
+    lock_failing_script.write_text(
+        "import errno, fcntl, runpy, sys\n"
+        "def failing_flock(*arguments):\n"
+        "    raise OSError(errno.ENOLCK, 'No locks available')\n"
+        "fcntl.flock = failing_flock\n"
+        f"sys.argv[0] = {str(SCRIPT_PATH)!r}\n"
+        f"runpy.run_path({str(SCRIPT_PATH)!r}, run_name='__main__')\n", encoding="utf-8")
+    lock_failed = run(store, "--failures-only", script_path=lock_failing_script)
+    check("a lock that fails other than by being held prints a FAILED line, and the pass exits 1",
+          lock_failed.returncode == 1 and "FAILED: could not lock" in lock_failed.stdout,
+          (lock_failed.returncode, lock_failed.stdout, lock_failed.stderr))
+
     # A project directory that cannot be listed is a failure, not a pass with nothing in it.
     hidden_project = store / "transcripts" / "mac" / "projects" / "-Users-hidden-project"
     write_transcript(store, "mac", "-Users-hidden-project", "s-hidden", conversation("hidden project"))
