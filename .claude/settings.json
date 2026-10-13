@@ -102,6 +102,11 @@
             "type": "command",
             "command": "python3 \"$CLAUDE_PROJECT_DIR\"/nc-systems/general-tools/claude-code-tmux-kill-server-and-kill-session-missing-server-selection-refusal-hook.py",
             "timeout": 30
+          },
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/scripts/hand-typed-codex-exec-redirect-hook.py",
+            "timeout": 30
           }
         ]
       },
