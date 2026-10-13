@@ -1337,12 +1337,16 @@ def _simple_commands_in_a_new_process(command_text, glob_markers, runner=subproc
         raise ShellParserUnavailable(f"reading the command in a new process failed: {error}") \
             from error
     if completed.returncode != 0:
+        # The agent is told to quote this, so it gets the exception's own line, not the traceback.
+        error_lines = completed.stderr.decode("utf-8", "replace").strip().splitlines()
         raise ShellParserUnavailable(
             "reading the command in a new process failed: "
-            + (completed.stderr.decode("utf-8", "replace").strip() or f"exit {completed.returncode}"))
+            + (error_lines[-1] if error_lines else f"exit {completed.returncode}"))
     read = json.loads(completed.stdout.decode("utf-8", SHELL_TEXT_ERRORS))
     if "unreadable" in read:
         raise ShellCommandUnreadable(read["unreadable"])
+    if "parser_unavailable" in read:
+        raise ShellParserUnavailable(read["parser_unavailable"])
     return _reader_output_from_json(read["commands"])
 
 
@@ -1356,9 +1360,10 @@ def _read_command_on_standard_input():
     except ShellCommandUnreadable as error:
         sys.stdout.buffer.write(json.dumps({"unreadable": error.install_output}).encode())
         return
-    except ShellParserUnavailable:
+    except ShellParserUnavailable as error:
         # A parser this process cannot load reaches the guard as a missing parser, with its install advice.
-        raise
+        sys.stdout.buffer.write(json.dumps({"parser_unavailable": error.install_output}).encode())
+        return
     except Exception as error:
         # Any other failure, such as one sending what was read, is the reader failing on the command.
         sys.stdout.buffer.write(json.dumps({"unreadable": f"{type(error).__name__}: {error}"}).encode())
