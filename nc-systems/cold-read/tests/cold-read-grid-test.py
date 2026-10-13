@@ -369,7 +369,7 @@ def write_target(repository, relative_path):
 
 
 def run_grid(repository, stub_directory, environment_overrides=None,
-             target_relative_path=TARGET_RELATIVE_PATH):
+             target_relative_path=TARGET_RELATIVE_PATH, extra_arguments=()):
     stub_directory.mkdir(parents=True, exist_ok=True)
     for runtime_name in ("claude", "codex"):
         stub = stub_directory / runtime_name
@@ -383,6 +383,8 @@ def run_grid(repository, stub_directory, environment_overrides=None,
     environment["HOME"] = str(scratch_home)
     environment["PATH"] = f"{stub_directory}{os.pathsep}{environment.get('PATH', '')}"
     environment[RECORD_SHIP_DESTINATION_VARIABLE] = str(repository / SCRATCH_LOG_STORE_RELATIVE)
+    # The grid lists the store to count earlier runs, and a store it cannot list stops it.
+    (repository / SCRATCH_LOG_STORE_RELATIVE).mkdir(parents=True, exist_ok=True)
     environment[RECORD_CLOCK_OVERRIDE_VARIABLE] = FIXED_RECORD_CLOCK_FOR_TESTS
     environment[CELL_POLL_INTERVAL_OVERRIDE_VARIABLE] = CELL_POLL_INTERVAL_FOR_TESTS_SECONDS
     environment["COLD_READ_GRID_TEST_STUB_ATTEMPT_COUNTER_DIRECTORY"] = str(
@@ -390,9 +392,17 @@ def run_grid(repository, stub_directory, environment_overrides=None,
     environment.update(environment_overrides or {})
     return subprocess.run(
         [sys.executable, str(repository / "nc-systems" / "cold-read" / "cold-read-grid.py"),
-         "--target", target_relative_path],
+         "--target", target_relative_path, *extra_arguments],
         capture_output=True, text=True, check=False, env=environment,
     )
+
+
+def seed_log_store_record(repository, directory_name, file_names):
+    """A record in the scratch log-store, as an earlier run would have left it."""
+    directory = repository / SCRATCH_LOG_STORE_RELATIVE / directory_name
+    directory.mkdir(parents=True)
+    for file_name in file_names:
+        (directory / file_name).write_text("earlier run\n", encoding="utf-8")
 
 
 def record_directory_of(repository):
@@ -1589,6 +1599,93 @@ with tempfile.TemporaryDirectory() as scratch:
           "`local.md`" not in reference_check
           and "UNRESOLVED" not in reference_check, reference_check)
 
+
+    # --- At most three cold-read-full-runs of a document ---------------------
+    # A design had six full runs, each drawing about as many findings as the
+    # last; the user ruled that a document gets three, then he decides.
+    repository = build_scratch_repository(scratch, "full-run-count-first")
+    result = run_grid(repository, stubs / "full-run-count-first")
+    check("a document's first full run is announced as 1 of 3",
+          "cold-read-full-run 1 of 3 for cold-read-grid-test-target.md." in result.stdout
+          and result.returncode == 0, f"exit {result.returncode}; stdout={result.stdout!r}")
+
+    repository = build_scratch_repository(scratch, "full-run-count-refused")
+    for day in ("2026-09-01", "2026-09-02", "2026-09-03"):
+        seed_log_store_record(repository, f"cold-read-grid-test-target-{day}",
+                              ["claude-hunt-deep.md", "reference-check.md"])
+    # A fast read of the same document and a full run of another one do not count.
+    seed_log_store_record(repository, "cold-read-grid-test-target-2026-09-04", ["fast-read.md"])
+    seed_log_store_record(repository, "other-document-2026-09-04", ["claude-hunt-deep.md"])
+    result = run_grid(repository, stubs / "full-run-count-refused")
+    check("a fourth full run is refused with exit 2 and the three earlier records named",
+          result.returncode == 2 and "refusing cold-read-full-run 4" in result.stderr
+          and "cold-read-grid-test-target-2026-09-03" in result.stderr
+          and "2026-09-04" not in result.stderr,
+          f"exit {result.returncode}; stderr={result.stderr!r}")
+    check("the refusal tells the agent what to do on each of the user's answers",
+          "--user-ruled-another-cold-read-full-run" in result.stderr
+          and "If the user rules to stop" in result.stderr, result.stderr)
+    check("a refused run creates no record and launches no reviewer",
+          record_directory_of(repository) is None and "saved:" not in result.stdout,
+          f"record {record_directory_of(repository)}; stdout={result.stdout!r}")
+
+    flagged = run_grid(repository, stubs / "full-run-count-refused",
+                       extra_arguments=["--user-ruled-another-cold-read-full-run"])
+    marked_record = record_directory_of(repository)
+    check("the user's ruling runs a fourth as 1 of 3 and marks its record",
+          flagged.returncode == 0
+          and "cold-read-full-run 1 of 3 for" in flagged.stdout
+          and marked_record is not None
+          and (marked_record / "user-ruled-another-cold-read-full-run.txt").is_file(),
+          f"exit {flagged.returncode}; stdout={flagged.stdout!r}; stderr={flagged.stderr!r}")
+    result = run_grid(repository, stubs / "full-run-count-refused",
+                      {RECORD_CLOCK_OVERRIDE_VARIABLE: "2026-09-17T10:42"})
+    check("the marked record starts the count again: the next run is 2 of 3",
+          result.returncode == 0 and "cold-read-full-run 2 of 3 for" in result.stdout,
+          f"exit {result.returncode}; stdout={result.stdout!r}; stderr={result.stderr!r}")
+
+    # A renamed document keeps the runs it had under its earlier file name.
+    repository = build_scratch_repository(scratch, "full-run-count-renamed")
+    earlier_relative = "docs/drafts/earlier-name-of-the-target.md"
+    subprocess.run(["git", "-C", str(repository), "mv", TARGET_RELATIVE_PATH, earlier_relative],
+                   check=True, capture_output=True)
+    subprocess.run(["git", "-C", str(repository), "commit", "-q", "-m", "rename to the earlier name"],
+                   check=True, capture_output=True)
+    subprocess.run(["git", "-C", str(repository), "mv", earlier_relative, TARGET_RELATIVE_PATH],
+                   check=True, capture_output=True)
+    subprocess.run(["git", "-C", str(repository), "commit", "-q", "-m", "rename back"],
+                   check=True, capture_output=True)
+    for day in ("2026-09-01", "2026-09-02", "2026-09-03"):
+        seed_log_store_record(repository, f"earlier-name-of-the-target-{day}",
+                              ["codex-hunt-deep.md"])
+    result = run_grid(repository, stubs / "full-run-count-renamed")
+    check("runs under a document's earlier file name count toward its three",
+          result.returncode == 2 and "earlier-name-of-the-target-2026-09-03" in result.stderr,
+          f"exit {result.returncode}; stderr={result.stderr!r}")
+
+    # A log-store that cannot be listed does not stop the read, as with
+    # shipping, and the run says it went uncounted rather than counting zero.
+    repository = build_scratch_repository(scratch, "full-run-count-store-unreadable")
+    result = run_grid(repository, stubs / "full-run-count-store-unreadable",
+                      {RECORD_SHIP_DESTINATION_VARIABLE: str(scratch / "no-such-log-store")})
+    check("an unlistable log-store is reported as COUNT NOT CHECKED and the read goes ahead",
+          result.returncode == 0 and "COUNT NOT CHECKED:" in result.stdout
+          and "no-such-log-store" in result.stdout and " of 3 for " not in result.stdout
+          and len([line for line in result.stdout.splitlines() if line.startswith("saved:")]) == 6,
+          f"exit {result.returncode}; stdout={result.stdout!r}")
+
+    # A git history that cannot be read is reported the same way: a
+    # repository with no commit has a top level but no log.
+    repository = build_scratch_repository(scratch, "full-run-count-history-unreadable")
+    empty_repository = scratch / "repository-without-commits"
+    subprocess.run(["git", "init", "-q", str(empty_repository)], check=True)
+    uncommitted_target = empty_repository / "uncommitted-target.md"
+    uncommitted_target.write_text("# Target\n", encoding="utf-8")
+    result = run_grid(repository, stubs / "full-run-count-history-unreadable",
+                      target_relative_path=str(uncommitted_target))
+    check("an unreadable git history is reported as COUNT NOT CHECKED",
+          "COUNT NOT CHECKED:" in result.stdout and "git log --follow" in result.stdout,
+          f"exit {result.returncode}; stdout={result.stdout!r}; stderr={result.stderr!r}")
 
 print()
 if failures:

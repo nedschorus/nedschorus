@@ -16,6 +16,17 @@ The cold-read-record holds one report per cold-read-cell, the reference-check
 file, and under target/ the exact bytes reviewed at the cold-read-target's own
 repository path (frozen at launch, the same read that fingerprints it).
 
+AT MOST THREE COLD-READ-FULL-RUNS OF A DOCUMENT, THEN THE USER DECIDES. Before
+it creates anything, the grid lists the log-store's cold-read-records, counts
+those of this document that hold a grid report, under its present file name
+and every earlier one `git log --follow` shows, prints
+"cold-read-full-run N of 3", and refuses a fourth. --user-ruled-another-cold-read-full-run
+says the user ruled to run again or to change the design: the run is number 1,
+and the marker file it leaves in its record starts the count again for later
+runs. A log-store or git history that cannot be read does not stop the read, as
+with shipping: the run goes ahead and says COUNT NOT CHECKED instead of a
+count.
+
 THE FROZEN COPY IS WHAT THE COLD-READ-CELLS READ, and it is read-only
 (user-ruled 2026-08-28). Every cell used to open the live document, so an edit
 part-way through a run left some reports describing the old text and some the
@@ -98,6 +109,7 @@ import importlib.util
 import os
 import pathlib
 import re
+import shlex
 import signal
 import subprocess
 import sys
@@ -116,6 +128,10 @@ CELL_LAUNCHERS = {
     "codex": pathlib.Path(__file__).with_name("cold-read-codex-cell.py"),
 }
 RECORD_SHIPPER = pathlib.Path(__file__).with_name("cold-read-record-ship.py")
+_record_shipper_spec = importlib.util.spec_from_file_location(
+    "cold_read_record_ship", RECORD_SHIPPER)
+record_shipper = importlib.util.module_from_spec(_record_shipper_spec)
+_record_shipper_spec.loader.exec_module(record_shipper)
 # Import shared status phrases so launcher output and grid parsing cannot drift.
 _common_spec = importlib.util.spec_from_file_location(
     "cold_read_cell_common", pathlib.Path(__file__).with_name("cold-read-cell-common.py")
@@ -202,6 +218,78 @@ def record_clock_reading() -> datetime.datetime:
 
 record_name_for_target = record_names.record_name_for_target
 record_directory_name_for_target = record_names.record_directory_name_for_target
+
+
+FULL_RUN_LIMIT = 3
+USER_RULED_ANOTHER_RUN_FLAG = "--user-ruled-another-cold-read-full-run"
+USER_RULED_ANOTHER_RUN_MARKER_NAME = "user-ruled-another-cold-read-full-run.txt"
+# A grid report's name; a fast read's record holds only fast-read.md. Older
+# records prefix each report with "<record name>--".
+FULL_RUN_REPORT_NAME_PATTERN = re.compile(r"^(?:.*--)?(?:claude|codex)-.*\.md$")
+
+
+class FullRunCountUnavailable(Exception):
+    """The log-store or the document's git history could not be read."""
+
+
+def record_names_of_target_and_earlier_names(target: pathlib.Path) -> set:
+    """The record names of target's present file name and of every name git
+    shows it had before, so a renamed document keeps its count."""
+    names = {record_name_for_target(target)}
+    inside = subprocess.run(
+        ["git", "-C", str(target.parent), "rev-parse", "--show-toplevel"],
+        capture_output=True, text=True, check=False)
+    if inside.returncode != 0:
+        return names  # A document outside any git repository has no earlier names.
+    history = subprocess.run(
+        ["git", "-C", str(target.parent), "log", "--follow", "--name-only",
+         "--format=", "--", target.name],
+        capture_output=True, text=True, check=False)
+    if history.returncode != 0:
+        raise FullRunCountUnavailable(
+            f"git log --follow on {target} exited {history.returncode}: "
+            f"{history.stderr.strip()}")
+    names.update(record_name_for_target(pathlib.Path(line))
+                 for line in history.stdout.splitlines() if line.strip())
+    return names
+
+
+def log_store_record_file_listing() -> list:
+    """Every '<record directory>/<file>' in the log-store's cold-read-records."""
+    host, store = record_shipper.destination_for_this_machine()
+    command = ["find", str(store), "-mindepth", "2", "-maxdepth", "2",
+               "-type", "f", "-printf", "%P\n"]
+    if host:
+        command = record_shipper.SSH_COMMAND + [host, shlex.join(command)]
+    listing = subprocess.run(command, capture_output=True, text=True, check=False)
+    if listing.returncode != 0:
+        where = f"{host}:{store}" if host else str(store)
+        raise FullRunCountUnavailable(
+            f"listing {where} exited {listing.returncode}: {listing.stderr.strip()}")
+    return listing.stdout.splitlines()
+
+
+def earlier_full_runs_since_count_start(record_names_of_target: set, listing: list) -> list:
+    """The record directories of this document's cold-read-full-runs, oldest
+    first, from the last one started on the user's ruling onward."""
+    patterns = [re.compile(
+        rf"^(?:{re.escape(name)}-(?P<new_date>{record_names.RECORD_DATE_PATTERN})"
+        rf"|(?P<old_date>{record_names.RECORD_DATE_PATTERN})-{re.escape(name)})"
+        rf"(?:-(?P<suffix>\d+))?$") for name in record_names_of_target]
+    files_by_directory = {}
+    for line in listing:
+        directory, _, file_name = line.partition("/")
+        files_by_directory.setdefault(directory, set()).add(file_name)
+    runs = []
+    for directory, file_names in files_by_directory.items():
+        match = next(filter(None, (p.match(directory) for p in patterns)), None)
+        if match and any(FULL_RUN_REPORT_NAME_PATTERN.match(f) for f in file_names):
+            day = match.group("new_date") or match.group("old_date")
+            runs.append((day, int(match.group("suffix") or 1), directory,
+                         USER_RULED_ANOTHER_RUN_MARKER_NAME in file_names))
+    runs.sort()
+    restarts = [index for index, run in enumerate(runs) if run[3]]
+    return [run[2] for run in runs[restarts[-1] if restarts else 0:]]
 
 
 def make_record_dir(target: pathlib.Path, now: datetime.datetime) -> pathlib.Path:
@@ -609,6 +697,11 @@ def main() -> int:
     parser.add_argument(
         "--target", required=True, help="document path, relative to the repo root or absolute"
     )
+    parser.add_argument(
+        USER_RULED_ANOTHER_RUN_FLAG, action="store_true",
+        help=f"the user ruled, after this document's cold-read-full-run {FULL_RUN_LIMIT} "
+             f"of {FULL_RUN_LIMIT}, to run again or to change the design; this run "
+             f"starts the count again at 1")
     args = parser.parse_args()
 
     target = pathlib.Path(args.target)
@@ -636,7 +729,36 @@ def main() -> int:
             print(f"cold-read-grid: {runtime} cell launcher missing: {launcher}", file=sys.stderr)
             return 2
 
+    user_ruled_another_run = args.user_ruled_another_cold_read_full_run
+    # Like shipping, counting needs ned-box, and a review must not wait on ned-box.
+    count_unavailable = None
+    earlier_runs = []
+    try:
+        earlier_runs = earlier_full_runs_since_count_start(
+            record_names_of_target_and_earlier_names(target), log_store_record_file_listing())
+    except FullRunCountUnavailable as error:
+        count_unavailable = str(error)
+    run_number = 1 if user_ruled_another_run else len(earlier_runs) + 1
+    if run_number > FULL_RUN_LIMIT and count_unavailable is None:
+        print(f"cold-read-grid: refusing cold-read-full-run {run_number} of "
+              f"{target.name}: a document gets at most {FULL_RUN_LIMIT} before the "
+              f"user decides whether it gets more, and the log-store holds "
+              f"{len(earlier_runs)}: {', '.join(earlier_runs)}. No reviewer was "
+              f"launched and no record directory was created.\n"
+              f"Bring the user the number of findings each of those runs' triage.md "
+              f"recorded, and ask whether to stop, run again, or change the design.\n"
+              f"If the user rules to run again or to change the design, run again "
+              f"with {USER_RULED_ANOTHER_RUN_FLAG}.\n"
+              f"If the user rules to stop, give the user the document to read as it "
+              f"stands.", file=sys.stderr)
+        return 2
+
     record_dir = make_record_dir(target, record_clock_reading())
+    if user_ruled_another_run:
+        # The marker restarts the count for every later run of this document.
+        (record_dir / USER_RULED_ANOTHER_RUN_MARKER_NAME).write_text(
+            "The user ruled to run this document's cold-read-full-runs again.\n",
+            encoding="utf-8")
     reference_integrity_pre_pass(target, record_dir)
 
     # All reviewers read the frozen bytes so live edits cannot split the review across versions.
@@ -651,6 +773,13 @@ def main() -> int:
               file=sys.stderr)
         return 2
     # Freezing can fail, so announce launch only after the copy succeeds.
+    if count_unavailable is None:
+        print(f"cold-read-full-run {run_number} of {FULL_RUN_LIMIT} for {target.name}.")
+    else:
+        print(f"COUNT NOT CHECKED: this run went ahead without counting the earlier "
+              f"cold-read-full-runs of {target.name}: {count_unavailable}\n"
+              f"Tell the user what this line says, and count the runs in the "
+              f"log-store yourself before the next one.")
     print(f"Launched six reviewers against {target}. Reports appear in "
           f"{record_dir} as each completes — read each as it arrives.")
 
