@@ -1081,7 +1081,7 @@ def _source_with_case_terminators_repaired(text, text_node_types, keep_first=Fal
         matches = [found for found in LAST_CASE_TERMINATOR_PATTERN.finditer(source)
                    if not _inside_text(tree.root_node, found.start(), text_node_types)]
         starts = [(_offset_before_edits(found.start(), edits), found.start(1) - found.start())
-                  for found in matches[:1]]
+                  for found in (matches if all_at_once else matches[:1])]
         starts = [(start, length) for start, length in starts if start is not None]
         if not starts:
             break
