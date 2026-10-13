@@ -149,7 +149,7 @@ def find_git_push_invocation(words):
     if index is None or not is_program(words[index], "git"):
         return None
     sanctioned = ESCAPE_HATCH_ASSIGNMENT in words[:index]
-    wrapper_directory = directory_a_wrapper_sets(words[:index])
+    wrapper_directory = directory_a_wrapper_sets(words)
     index += 1
     directory_override = None
     while index < len(words):
@@ -179,19 +179,16 @@ def find_git_push_invocation(words):
             "directory_override": directory_override}
 
 
-def directory_a_wrapper_sets(wrapper_words):
-    """Return the directory env -C or sudo -D in front of the program changes to, or None."""
-    directory, wrapper, index = None, None, 0
-    while index < len(wrapper_words):
-        word = wrapper_words[index]
-        if not word.startswith("-"):
-            wrapper = word.rsplit("/", 1)[-1]
-        elif (wrapper, word) in WRAPPER_DIRECTORY_OPTIONS and index + 1 < len(wrapper_words):
-            directory = wrapper_words[index + 1]
-            index += 1
-        elif word.startswith("--chdir=") and wrapper in ("env", "sudo"):
-            directory = word[len("--chdir="):]
-        index += 1
+def directory_a_wrapper_sets(words):
+    """Return the directory env -C or sudo -D in front of the program changes to, or None.
+
+    Each directory option is taken relative to the one before it, as the wrappers run in turn.
+    """
+    directory = None
+    options = shell_reader.simple_command_wrapper_options_and_values_parsed_from_words(words)
+    for wrapper, option, value in options:
+        if (wrapper, option) in WRAPPER_DIRECTORY_OPTIONS and value is not None:
+            directory = value if directory is None else os.path.join(directory, value)
     return directory
 
 

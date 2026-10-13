@@ -580,7 +580,11 @@ check("a push behind timeout is read through the shared wrapper table",
       decision == "deny", f"{decision}: {reason} {runner.calls}")
 for command in ["env -C /elsewhere/wt-fast-read git push --force origin",
                 "env --chdir=/elsewhere/wt-fast-read git push --force origin",
-                "sudo -D /elsewhere git -C wt-fast-read push --force origin"]:
+                "sudo -D /elsewhere git -C wt-fast-read push --force origin",
+                "env -u X -C /elsewhere/wt-fast-read git push --force origin",
+                "sudo -u r -D /elsewhere/wt-fast-read git push --force origin",
+                "env -C /elsewhere env -C wt-fast-read git push --force origin",
+                "env -C /nowhere env -C /elsewhere/wt-fast-read git push --force origin"]:
     runner = ProbeRunner(branch="the-pr-branch",
                          open_pull_requests={"the-pr-branch": FAST_READ_PULL_REQUEST})
     decision, _ = decide(command, runner)

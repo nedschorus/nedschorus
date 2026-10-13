@@ -171,10 +171,23 @@ for words, expected in [
     (["xargs", "-J", "%", "bash"], (3, False)),
     (["xargs", "-R", "2", "bash"], (3, False)),
     (["xargs", "-S", "255", "bash"], (3, False)),
+    (["sudo", "-h", "bash"], (2, True)),
 ]:
     check(f"the program of {' '.join(words)} is word {expected[0]}, "
           f"{'receiving' if expected[1] else 'not receiving'} the standard input",
           reader.simple_command_program_index_skipping_wrappers(words) == expected, reader.simple_command_program_index_skipping_wrappers(words))
+
+for words, expected in [
+    (["env", "-u", "X", "-C", "/w", "git"], [("env", "-u", "X"), ("env", "-C", "/w")]),
+    (["/usr/bin/sudo", "-n", "--chdir=/w", "env", "-i", "git"],
+     [("sudo", "-n", None), ("sudo", "--chdir", "/w"), ("env", "-i", None)]),
+    (["timeout", "60", "-s", "KILL", "git"], [("timeout", "-s", "KILL")]),
+    (["env", "-C"], [("env", "-C", None)]),
+    (["git", "-C", "/w"], []),
+]:
+    check(f"the options the wrappers of {' '.join(words)} are given",
+          reader.simple_command_wrapper_options_and_values_parsed_from_words(words) == expected,
+          reader.simple_command_wrapper_options_and_values_parsed_from_words(words))
 
 found = reader.simple_commands("a | b; c | d")
 check("each stage names the first stage of its own pipeline",

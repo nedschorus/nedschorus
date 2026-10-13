@@ -219,28 +219,51 @@ def simple_command_program_index_skipping_wrappers(words):
     is false when a wrapper, such as xargs, keeps its standard input from the
     program.
     """
-    index = 0
-    receives_standard_input = True
+    index, receives_standard_input, _ = _wrappers_read(words)
+    return index, receives_standard_input
+
+
+def simple_command_wrapper_options_and_values_parsed_from_words(words):
+    """Return (wrapper, option, value) for each option given to the wrappers before the program.
+
+    wrapper is the wrapper's name without its directory, as in ("env", "-C",
+    "/w") for `env -u X -C /w git push`. value is None for an option that takes
+    none, and an option written --name=value is split at the =.
+    """
+    return _wrappers_read(words)[2]
+
+
+def _wrappers_read(words):
+    index, receives_standard_input, options = 0, True, []
     while index < len(words):
         word = words[index]
         if ENVIRONMENT_ASSIGNMENT_PATTERN.match(word):
             index += 1
             continue
-        wrapper = WRAPPERS.get(word.rsplit("/", 1)[-1])
+        name = word.rsplit("/", 1)[-1]
+        wrapper = WRAPPERS.get(name)
         if wrapper is None:
-            return index, receives_standard_input
+            return index, receives_standard_input, options
         receives_standard_input = receives_standard_input and wrapper.passes_standard_input
-        index += 1
-        index = _index_after_options(words, index, wrapper)
+        index = _index_after_options(words, index + 1, name, wrapper, options)
         if wrapper.operands:
             # Options may follow the operand too, as in timeout 60 --signal=KILL.
-            index = _index_after_options(words, index + wrapper.operands, wrapper)
-    return None, receives_standard_input
+            index = _index_after_options(words, index + wrapper.operands, name, wrapper, options)
+    return None, receives_standard_input, options
 
 
-def _index_after_options(words, index, wrapper):
+def _index_after_options(words, index, name, wrapper, options):
     while index < len(words) and words[index].startswith("-"):
-        index += 2 if words[index] in wrapper.options_with_a_value else 1
+        option = words[index]
+        if option in wrapper.options_with_a_value:
+            options.append((name, option, words[index + 1] if index + 1 < len(words) else None))
+            index += 2
+            continue
+        if option.startswith("--") and "=" in option:
+            options.append((name, *option.split("=", 1)))
+        else:
+            options.append((name, option, None))
+        index += 1
     return index
 
 
