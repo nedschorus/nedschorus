@@ -67,7 +67,7 @@ REQUIREMENTS_FILE = pinned_libraries_install.PINNED_REQUIREMENTS_FILE
 # The Bash guards run in parallel with a 30-second hook timeout; a cached wheel installs in about a second.
 INSTALL_TIMEOUT_SECONDS = 8
 INSTALL_RETRY_SECONDS = pinned_libraries_install.INSTALL_RETRY_SECONDS
-STATE_DIRECTORY = Path.home() / ".cache" / "nedschorus-shell-command-reader"
+STATE_DIRECTORY = pinned_libraries_install.PINNED_REQUIREMENTS_INSTALL_STATE_DIRECTORY
 INSTALL_LOCK_FILE_NAME = pinned_libraries_install.INSTALL_LOCK_FILE_NAME
 INSTALL_FAILURE_FILE_NAME = pinned_libraries_install.INSTALL_FAILURE_FILE_NAME
 
@@ -423,10 +423,8 @@ def tree_sitter_bash_install_failure_report_words_build(host, install_output, co
 
     consequence says what goes undone because of it; the words end with what the install printed.
     """
-    install = f"python3 -m pip install --user --break-system-packages -r {REQUIREMENTS_FILE}"
-    # The user sits at the Mac, and reaches ned-box over ssh.
-    where, install = (("in a Terminal on your Mac", f"ssh nedlern@ned-box '{install}'")
-                      if host == "ned-box" else (f"on {host}", install))
+    where, install = pinned_libraries_install.pinned_requirements_by_hand_install_command(
+        host, REQUIREMENTS_FILE)
     return (f"\"tree-sitter-bash is missing on {host} and could not be installed, so "
             f"{consequence}. To install it by hand, run this command {where}:\" Then give the "
             f"install command on a line of its own:\n"

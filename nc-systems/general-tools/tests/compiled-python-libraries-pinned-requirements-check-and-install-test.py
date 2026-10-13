@@ -8,6 +8,7 @@ Run: python3 nc-systems/general-tools/tests/compiled-python-libraries-pinned-req
 Prints one line per case and exits non-zero if any case fails.
 """
 
+import fcntl
 import importlib.util
 import json
 import subprocess
@@ -37,6 +38,15 @@ def check(name, condition, detail=None):
         print(f"FAIL  {name}: {detail!r}")
 
 
+LOCK_DIRECTORY = Path(tempfile.mkdtemp()) / "install-state"
+real_check_and_install_before_lock = checker.check_and_install
+
+
+def check_and_install_in_scratch(host, runner, installer):
+    return real_check_and_install_before_lock(host, runner, installer, LOCK_DIRECTORY)
+
+
+checker.check_and_install = check_and_install_in_scratch
 PINS = checker.pinned_versions()
 check("the pinned file's lines are read as name and version, and its comments skipped",
       PINS == {"tree-sitter": "0.25.2", "tree-sitter-bash": "0.25.1"}, PINS)
@@ -72,13 +82,20 @@ ONE_MISSING = {"tree-sitter": "0.25.2", "tree-sitter-bash": None}
 
 
 def installer_that(outcome):
-    state = {"installs": 0}
+    state = {"installs": 0, "lock_held": None}
 
     def installer():
         state["installs"] += 1
+        # The lock is held when another opener cannot take it without waiting.
+        with open(LOCK_DIRECTORY / install.INSTALL_LOCK_FILE_NAME, "w") as other:
+            try:
+                fcntl.flock(other, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                state["lock_held"] = False
+            except BlockingIOError:
+                state["lock_held"] = True
         if outcome is not None:
             raise install.CompiledPythonLibrariesUnavailable(outcome)
-        return "installed"
+        return "Successfully installed tree-sitter-bash-0.25.1"
     installer.state = state
     return installer
 
@@ -94,6 +111,8 @@ status, lines = checker.check_and_install("ned-box", version_reader(ONE_MISSING,
 check("a missing library is installed, and the one line names what was installed",
       status == 0 and installer.state["installs"] == 1 and len(lines) == 1
       and "tree-sitter-bash: wanted 0.25.1, found none" in lines[0], (status, lines))
+check("the install runs holding the install lock the Bash guards take",
+      installer.state["lock_held"] is True, installer.state)
 
 installer = installer_that(None)
 status, lines = checker.check_and_install(
@@ -108,19 +127,21 @@ text = "\n".join(lines)
 check("a failed install exits 1, naming the machine, what is missing and what the install printed",
       status == 1 and "ned-box:" in lines[0] and "tree-sitter-bash: wanted 0.25.1, found none" in text
       and "no network" in text, lines)
-check("on ned-box the by-hand command is the ssh form the user runs from the Mac",
-      lines[-1] == f"To install them by hand: ssh nedlern@ned-box 'python3 -m pip install --user "
-                   f"--break-system-packages --disable-pip-version-check --quiet -r "
-                   f"{install.PINNED_REQUIREMENTS_FILE}'", lines[-1])
+check("on ned-box the by-hand command is the ssh form the user runs from the Mac, naming this interpreter",
+      lines[-1] == f"To install them by hand, run this command in a Terminal on your Mac: "
+                   f"ssh nedlern@ned-box '{sys.executable} -m pip install --user "
+                   f"--break-system-packages -r {install.PINNED_REQUIREMENTS_FILE}'", lines[-1])
 status, lines = checker.check_and_install("Neds-MacBook-Pro", version_reader(ONE_MISSING),
                                           installer_that("no network"))
 check("on another machine the by-hand command is run there as it is",
-      lines[-1].startswith("To install them by hand: python3 -m pip install --user"), lines[-1])
+      lines[-1].startswith(f"To install them by hand, run this command on Neds-MacBook-Pro: "
+                           f"{sys.executable} -m pip install --user"), lines[-1])
 
 status, lines = checker.check_and_install("ned-box", version_reader(ONE_MISSING),
                                           installer_that(None))
-check("an install that succeeds but leaves a library missing exits 1, saying the install printed nothing",
-      status == 1 and "(nothing)" in "\n".join(lines), lines)
+check("an install that succeeds but leaves a library missing exits 1, quoting what the install printed",
+      status == 1 and "What the install printed: Successfully installed tree-sitter-bash-0.25.1"
+      in lines, lines)
 
 try:
     checker.check_and_install("ned-box", version_reader(1), installer_that(None))

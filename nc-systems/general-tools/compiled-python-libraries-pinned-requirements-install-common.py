@@ -28,7 +28,9 @@ Load it by path, under the snake_case form of its file name:
 # Deferred annotations let the module load on the Mac's system Python 3.9.
 from __future__ import annotations
 
+import contextlib
 import importlib
+import shlex
 import site
 import subprocess
 import sys
@@ -37,6 +39,9 @@ from pathlib import Path
 PINNED_REQUIREMENTS_FILE = Path(__file__).resolve().with_name(
     "compiled-python-libraries-pinned-requirements.txt")
 INSTALL_RETRY_SECONDS = 600
+# Every caller that installs the pinned file takes its turn on the lock here. The directory keeps
+# the name the shell reader, its first caller, gave it.
+PINNED_REQUIREMENTS_INSTALL_STATE_DIRECTORY = Path.home() / ".cache" / "nedschorus-shell-command-reader"
 INSTALL_LOCK_FILE_NAME = "install.lock"
 INSTALL_FAILURE_FILE_NAME = "last-install-failure.txt"
 
@@ -59,6 +64,38 @@ class CompiledPythonLibrariesInstalledForANewProcess(CompiledPythonLibrariesUnav
 def pinned_requirements_pip_install_command(requirements_file=PINNED_REQUIREMENTS_FILE):
     return [sys.executable, "-m", "pip", "install", "--user", "--break-system-packages",
             "--disable-pip-version-check", "--quiet", "-r", str(requirements_file)]
+
+
+def pinned_requirements_by_hand_install_command(host, requirements_file=PINNED_REQUIREMENTS_FILE):
+    """Return (where, command): where the user runs the pinned file's install by hand, and the command.
+
+    The command names this process's own interpreter, which is the one the libraries must be
+    installed for; a bare `python3` on the user's PATH may be another one.
+    """
+    install = shlex.join([sys.executable, "-m", "pip", "install", "--user", "--break-system-packages",
+                          "-r", str(requirements_file)])
+    # The user sits at the Mac, and reaches ned-box over ssh.
+    if host == "ned-box":
+        return "in a Terminal on your Mac", f"ssh nedlern@ned-box {shlex.quote(install)}"
+    return f"on {host}", install
+
+
+@contextlib.contextmanager
+def pinned_requirements_install_lock(state_directory, unavailable_error=CompiledPythonLibrariesUnavailable):
+    """Hold the install lock in state_directory, so parallel callers install one at a time."""
+    try:
+        state_directory.mkdir(parents=True, exist_ok=True)
+        lock = open(state_directory / INSTALL_LOCK_FILE_NAME, "w")
+    except OSError as error:
+        raise unavailable_error(f"could not open the install lock in {state_directory}: {error}") \
+            from error
+    with lock:
+        try:
+            import fcntl
+            fcntl.flock(lock, fcntl.LOCK_EX)
+        except (ImportError, OSError):
+            pass  # Without the lock, two installs may run; each installs the same pinned files.
+        yield
 
 
 def pinned_requirements_pip_install(timeout_seconds, runner=subprocess.run,
@@ -92,18 +129,7 @@ def compiled_python_libraries_install_then_import(
     forget_loaded_copies drops this process's cached copies, so the next import loads the disk copy.
     The lock and the failure record live in state_directory.
     """
-    try:
-        state_directory.mkdir(parents=True, exist_ok=True)
-        lock = open(state_directory / INSTALL_LOCK_FILE_NAME, "w")
-    except OSError as error:
-        raise unavailable_error(f"could not open the install lock in {state_directory}: {error}") \
-            from error
-    with lock:
-        try:
-            import fcntl
-            fcntl.flock(lock, fcntl.LOCK_EX)
-        except (ImportError, OSError):
-            pass  # Without the lock, two installs may run; each installs the same pinned files.
+    with pinned_requirements_install_lock(state_directory, unavailable_error):
         # Another caller may have installed into a user site this process did not have at start-up.
         _refresh_import_paths()
         forget_loaded_copies()

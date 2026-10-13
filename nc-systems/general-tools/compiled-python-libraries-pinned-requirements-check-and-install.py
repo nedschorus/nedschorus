@@ -75,16 +75,12 @@ def missing_libraries(pins, versions):
             for name in sorted(pins) if versions.get(name) != pins[name]]
 
 
-def by_hand_install_command(host):
-    install = " ".join(["python3", *pinned_libraries_install.pinned_requirements_pip_install_command()[1:]])
-    # The user sits at the Mac, and reaches ned-box over ssh.
-    if host == "ned-box":
-        return f"ssh nedlern@ned-box '{install}'"
-    return install
+def check_and_install(host, runner=subprocess.run, installer=None,
+                      state_directory=pinned_libraries_install.PINNED_REQUIREMENTS_INSTALL_STATE_DIRECTORY):
+    """Return (exit status, report lines).
 
-
-def check_and_install(host, runner=subprocess.run, installer=None):
-    """Return (exit status, report lines)."""
+    The install takes the same lock as the Bash guards' install, so the two never run pip at once.
+    """
     if installer is None:
         def installer():
             return pinned_libraries_install.pinned_requirements_pip_install(INSTALL_TIMEOUT_SECONDS, runner)
@@ -93,19 +89,20 @@ def check_and_install(host, runner=subprocess.run, installer=None):
     if not missing:
         return 0, [f"{host}: all {len(pins)} pinned compiled Python libraries are installed "
                    f"at their pinned versions."]
-    install_output = ""
-    try:
-        installer()
-    except pinned_libraries_install.CompiledPythonLibrariesUnavailable as error:
-        install_output = error.install_output
-    still_missing = missing_libraries(pins, installed_versions(pins, runner))
+    with pinned_libraries_install.pinned_requirements_install_lock(state_directory):
+        try:
+            install_output = installer()
+        except pinned_libraries_install.CompiledPythonLibrariesUnavailable as error:
+            install_output = error.install_output
+        still_missing = missing_libraries(pins, installed_versions(pins, runner))
     if not still_missing:
         return 0, [f"{host}: installed {'; '.join(missing)}; all {len(pins)} pinned compiled "
                    f"Python libraries are now at their pinned versions."]
     return 1, [f"{host}: these pinned compiled Python libraries are still missing after an install:",
                *(f"  {line}" for line in still_missing),
                f"What the install printed: {install_output or '(nothing)'}",
-               f"To install them by hand: {by_hand_install_command(host)}"]
+               "To install them by hand, run this command {}: {}".format(
+                   *pinned_libraries_install.pinned_requirements_by_hand_install_command(host))]
 
 
 def main(arguments=None):
