@@ -500,6 +500,16 @@ check("Write lists at most 10 title mismatches and counts the rest",
       in (context or {}).get("additionalContext", ""),
       result.stdout)
 
+eleventh_wrong_number = "".join(
+    f"[Wrong title number {index}]({PULL_URL}).\n" for index in range(10)) + (
+    f"[PR 1253, \"{TITLES['1256']}\"]({PULL_URL}).\n")
+result = run_hook(tool_payload("Write", REPOSITORY / "docs" / "eleventh.md", content=eleventh_wrong_number),
+                  titles_environment)
+context = context_of(result)
+check("Write: a wrong-number link listed 11th or later, so not shown, adds no wrong-number instruction",
+      context is not None and hook.MORE_TITLE_HITS_LINE.format(count=1) in context["additionalContext"]
+      and hook.MARKDOWN_WRONG_NUMBER_LINE not in context["additionalContext"], result.stdout)
+
 result = run_hook(tool_payload("Write", REPOSITORY / "notes.txt", content="PR 931\n"))
 check("a file that is not Markdown is not scanned", result.stdout == "", result.stdout)
 
@@ -630,6 +640,22 @@ check("UserPromptSubmit: a correct title behind another number's prefix is noted
 check("UserPromptSubmit: a wrong number gets its own instruction, to make the text and the URL agree",
       context is not None and hook.PREVIOUS_REPLY_WRONG_NUMBER_LINE in context["additionalContext"],
       result.stdout)
+
+check("UserPromptSubmit: when every listed link has a wrong number, the title instructions are left out",
+      context is not None
+      and hook.PREVIOUS_REPLY_TITLE_OPENING_LINES[1] not in context["additionalContext"]
+      and hook.PREVIOUS_REPLY_TITLE_OPENING_LINES[2] not in context["additionalContext"]
+      and "under link text that is not the title GitHub reports" in context["additionalContext"],
+      result.stdout)
+
+path = transcript(user("go"), assistant("m1", text_block(
+    f"Merged [PR 1253, \"{TITLES['1256']}\"]({PULL_URL}) and [PR 1256, \"Some wrong title\"]({PULL_URL}).")))
+result = run_hook(prompt_payload(path), titles_environment)
+context = context_of(result)
+check("UserPromptSubmit: a note with both kinds of link keeps the title instructions and adds the wrong-number one",
+      context is not None
+      and hook.PREVIOUS_REPLY_TITLE_OPENING_LINES[1] in context["additionalContext"]
+      and hook.PREVIOUS_REPLY_WRONG_NUMBER_LINE in context["additionalContext"], result.stdout)
 
 path = transcript(user("go"), assistant("m1", text_block(
     f"Merged [PR 1256, \"Some wrong title\"]({PULL_URL}).")))

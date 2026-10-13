@@ -179,24 +179,28 @@ PREVIOUS_REPLY_TITLE_OPENING_LINES = (
     "request(s) or GitHub issue(s) under link text that is not the title GitHub reports. A reader "
     "takes link text written as a title to be the linked item's title, so a different title points "
     "the reader at the wrong item.",
-    "This asks for no correction now. If a later reply of yours mentions an item listed below "
+    "This note asks for no correction now. If a later reply of yours mentions an item listed below "
     "whose link text was meant as its title, cite the item under the title shown, keeping any ID "
     "prefix such as PR <number>.",
     "For a link whose text described the item in your own words instead, nothing needs doing.",
 )
 MARKDOWN_WRONG_NUMBER_LINE = (
     "For each link listed below whose line ends by saying the number in the link text is not the "
-    "link's number, the two lines above about changing or keeping the text do not apply, because "
-    "the URL may be the part that is wrong. Decide from the text around the link which item was "
-    "meant; then point the link's URL at that item, and write the link text as that item's ID "
-    "prefix and its title on GitHub, which gh issue view <number> --json title prints.")
+    "link's number, the instruction to use the title shown does not apply, because the URL may be "
+    "the part that is wrong. Decide from the text around the link which item was meant, and point "
+    "the link's URL at that item. Then, if the link text was meant as a title, write the link text "
+    "as that item's ID prefix and its title on GitHub, which gh issue view <that item's number> "
+    "--json title --jq .title prints; if the link text was your own words, keep the words and make "
+    "any number in them that item's number.")
 PREVIOUS_REPLY_WRONG_NUMBER_LINE = (
     "For each link listed below whose line ends by saying the number in the link text is not the "
-    "link's number, the two lines above about the title do not apply, because the URL may be the "
-    "part that is wrong. If a later reply of yours mentions that item, first decide from your "
-    "reply which item was meant; then point the link's URL at that item, and write the link text "
-    "as that item's ID prefix and its title on GitHub, which gh issue view <number> --json title "
-    "prints.")
+    "link's number, the instruction to use the title shown does not apply, because the URL may be "
+    "the part that is wrong. This note asks for no correction now. If a later reply of yours cites "
+    "the item again, first decide from your earlier reply which item was meant, and point the "
+    "link's URL at that item. Then, if the link text was meant as a title, write the link text as "
+    "that item's ID prefix and its title on GitHub, which gh issue view <that item's number> "
+    "--json title --jq .title prints; if the link text was your own words, keep the words and make "
+    "any number in them that item's number.")
 TITLES_NOT_CHECKED_LINE = (
     "bare-number-citation-in-markdown-and-agent-reply-warning-hook: the text of {count} link(s) to pull "
     "requests or GitHub issues was not checked against their titles on GitHub, because gh could not "
@@ -449,11 +453,16 @@ def title_note_lines(opening_lines, wrong_number_line, checked, path=None,
         return [TITLES_NOT_CHECKED_LINE.format(count=link_count, reason=reason)]
     if not mismatches:
         return []
+    listed = mismatches[:HIT_LINES_LISTED_AT_MOST]
+    # opening_lines[0] says what was found; the rest instruct about titles, and
+    # are left out when every listed link has a wrong number, whose own line
+    # replaces them.
+    if all(mismatch.prefix_number is not None for mismatch in listed):
+        opening_lines = opening_lines[:1]
     lines = [line.format(path=path, count=len(mismatches)) for line in opening_lines]
-    if any(mismatch.prefix_number is not None
-           for mismatch in mismatches[:HIT_LINES_LISTED_AT_MOST]):
+    if any(mismatch.prefix_number is not None for mismatch in listed):
         lines.append(wrong_number_line)
-    for mismatch in mismatches[:HIT_LINES_LISTED_AT_MOST]:
+    for mismatch in listed:
         hit_line = WRITE_TITLE_HIT_LINE if with_line_numbers else EXCERPT_TITLE_HIT_LINE
         number_note = "" if mismatch.prefix_number is None else WRONG_NUMBER_NOTE.format(
             prefix_number=mismatch.prefix_number, number=mismatch.number)
