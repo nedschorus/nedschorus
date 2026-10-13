@@ -331,6 +331,57 @@ check("a wrong title behind an ID prefix with the link's number is noted, with n
 check("a wrong title behind an ID prefix with another number is noted, with the wrong number",
       prefixed_note('PR 1253, "Fix the reader"') == (1253,), prefixed_note('PR 1253, "Fix the reader"'))
 
+# Every combination of the title note: reply and Write; title mismatches only,
+# wrong numbers only, and both; ten or fewer, and more than ten.
+
+
+def rendered_title_note(event, kind, more_than_listed):
+    count = 12 if more_than_listed else 2
+    wrong_numbers = {"titles": 0, "numbers": count, "both": count // 2}[kind]
+    mismatches = [hook.LinkTitleMismatch(index + 1, f"Link text {index}", PULL_URL, "A real title", 1256,
+                                         1253 if index < wrong_numbers else None)
+                  for index in range(count)]
+    if event == "reply":
+        lines = hook.title_note_lines(hook.PREVIOUS_REPLY_TITLE_OPENING_LINES,
+                                      hook.PREVIOUS_REPLY_WRONG_NUMBER_LINE, (mismatches, None, count))
+        opening = hook.PREVIOUS_REPLY_TITLE_OPENING_LINES
+    else:
+        lines = hook.title_note_lines(hook.MARKDOWN_TITLE_OPENING_LINES, hook.MARKDOWN_WRONG_NUMBER_LINE,
+                                      (mismatches, None, count), "docs/a.md", True)
+        opening = hook.MARKDOWN_TITLE_OPENING_LINES
+    return lines, opening
+
+
+for event in ("reply", "write"):
+    for kind in ("titles", "numbers", "both"):
+        for more_than_listed in (False, True):
+            lines, opening = rendered_title_note(event, kind, more_than_listed)
+            note = "\n".join(lines)
+            name = f"{event}, {kind}, {'more than ten' if more_than_listed else 'ten or fewer'}"
+            title_lines_expected = kind != "numbers"
+            wrong_number_lines = [line for line in lines if hook.WRONG_NUMBER_LINE_OPENING in line]
+            no_correction_count = note.count("This note asks for no correction now.")
+            check(f"title note combination: {name}: the summary line comes first",
+                  lines[0].startswith("bare-number-citation-in-markdown-and-agent-reply-warning-hook: "), lines[0])
+            check(f"title note combination: {name}: title lines shown only when a link has a plain wrong title",
+                  all((line in lines) == title_lines_expected for line in opening[1:]), note)
+            check(f"title note combination: {name}: one wrong-number line when a listed link has a wrong number",
+                  len(wrong_number_lines) == (0 if kind == "titles" else 1), note)
+            check(f"title note combination: {name}: the wrong-number line overrides the title lines exactly when they are shown",
+                  all((hook.WRONG_NUMBER_TITLE_LINES_OVERRIDE in line) == title_lines_expected
+                      for line in wrong_number_lines), note)
+            if event == "reply":
+                check(f"title note combination: {name}: the reply note says once, before its instructions, that it asks for no correction now",
+                      no_correction_count == 1
+                      and note.index("This note asks for no correction now.")
+                      < min(note.index(marker) for marker in ("If a later reply",) if marker in note),
+                      note)
+            else:
+                check(f"title note combination: {name}: the Write note does not say it asks for no correction",
+                      no_correction_count == 0, note)
+            check(f"title note combination: {name}: the count of links not listed appears exactly when there are more than ten",
+                  (hook.MORE_TITLE_HITS_LINE.format(count=2) in lines) == more_than_listed, note)
+
 check("link text that is another item's title does not match",
       not hook.titles_match("Bash guards: messages say why", "Shell reader: ~ marks"))
 
@@ -485,7 +536,8 @@ result = run_hook(tool_payload("Write", REPOSITORY / "docs" / "wrong-number.md",
                   titles_environment)
 context = context_of(result)
 check("Write with a wrong number gets the Markdown note's own wrong-number instruction",
-      context is not None and hook.MARKDOWN_WRONG_NUMBER_LINE in context["additionalContext"]
+      context is not None
+      and hook.wrong_number_line_text(hook.MARKDOWN_WRONG_NUMBER_LINE, False) in context["additionalContext"]
       and "the number 1253 in the link text is not the link's number 1196" in context["additionalContext"],
       result.stdout)
 
@@ -499,6 +551,27 @@ check("Write lists at most 10 title mismatches and counts the rest",
       len(listed) == 10 and hook.MORE_TITLE_HITS_LINE.format(count=2)
       in (context or {}).get("additionalContext", ""),
       result.stdout)
+
+eleventh_wrong_number = "".join(
+    f"[Wrong title number {index}]({PULL_URL}).\n" for index in range(10)) + (
+    f"[PR 1253, \"{TITLES['1256']}\"]({PULL_URL}).\n")
+result = run_hook(tool_payload("Write", REPOSITORY / "docs" / "eleventh.md", content=eleventh_wrong_number),
+                  titles_environment)
+context = context_of(result)
+check("Write: a wrong-number link listed 11th or later, so not shown, adds no wrong-number instruction",
+      context is not None and hook.MORE_TITLE_HITS_LINE.format(count=1) in context["additionalContext"]
+      and hook.WRONG_NUMBER_LINE_OPENING not in context["additionalContext"], result.stdout)
+
+unlisted_wrong_title = "".join(
+    f"[PR 1253, \"{TITLES['1256']}\" number {index}]({PULL_URL}).\n" for index in range(10)) + (
+    f"[Wrong title number 10]({PULL_URL}).\n")
+result = run_hook(tool_payload("Write", REPOSITORY / "docs" / "unlisted-title.md", content=unlisted_wrong_title),
+                  titles_environment)
+context = context_of(result)
+check("Write: ten wrong numbers listed and a wrong title unlisted keeps the title instructions",
+      context is not None and hook.MARKDOWN_TITLE_OPENING_LINES[1] in context["additionalContext"]
+      and hook.wrong_number_line_text(hook.MARKDOWN_WRONG_NUMBER_LINE, True) in context["additionalContext"]
+      and hook.MORE_TITLE_HITS_LINE.format(count=1) in context["additionalContext"], result.stdout)
 
 result = run_hook(tool_payload("Write", REPOSITORY / "notes.txt", content="PR 931\n"))
 check("a file that is not Markdown is not scanned", result.stdout == "", result.stdout)
@@ -628,7 +701,25 @@ check("UserPromptSubmit: a correct title behind another number's prefix is noted
       and f"""the title on GitHub is "{TITLES['1256']}"; the number 1253 in the link text is not the link's number 1256"""
           in context["additionalContext"], result.stdout)
 check("UserPromptSubmit: a wrong number gets its own instruction, to make the text and the URL agree",
-      context is not None and hook.PREVIOUS_REPLY_WRONG_NUMBER_LINE in context["additionalContext"],
+      context is not None
+      and hook.wrong_number_line_text(hook.PREVIOUS_REPLY_WRONG_NUMBER_LINE, False) in context["additionalContext"],
+      result.stdout)
+
+check("UserPromptSubmit: when every listed link has a wrong number, the title instructions are left out",
+      context is not None
+      and hook.PREVIOUS_REPLY_TITLE_OPENING_LINES[1] not in context["additionalContext"]
+      and hook.PREVIOUS_REPLY_TITLE_OPENING_LINES[2] not in context["additionalContext"]
+      and "under link text that is not the title GitHub reports" in context["additionalContext"],
+      result.stdout)
+
+path = transcript(user("go"), assistant("m1", text_block(
+    f"Merged [PR 1253, \"{TITLES['1256']}\"]({PULL_URL}) and [PR 1256, \"Some wrong title\"]({PULL_URL}).")))
+result = run_hook(prompt_payload(path), titles_environment)
+context = context_of(result)
+check("UserPromptSubmit: a note with both kinds of link keeps the title instructions and adds the wrong-number one",
+      context is not None
+      and hook.PREVIOUS_REPLY_TITLE_OPENING_LINES[1] in context["additionalContext"]
+      and hook.wrong_number_line_text(hook.PREVIOUS_REPLY_WRONG_NUMBER_LINE, True) in context["additionalContext"],
       result.stdout)
 
 path = transcript(user("go"), assistant("m1", text_block(
@@ -637,7 +728,7 @@ result = run_hook(prompt_payload(path), titles_environment)
 context = context_of(result)
 check("UserPromptSubmit: a note with no wrong number has no wrong-number instruction",
       context is not None and "the title on GitHub is" in context["additionalContext"]
-      and hook.PREVIOUS_REPLY_WRONG_NUMBER_LINE not in context["additionalContext"], result.stdout)
+      and hook.WRONG_NUMBER_LINE_OPENING not in context["additionalContext"], result.stdout)
 
 path = transcript(user("go"), assistant("m1", text_block(
     f"GHI [{TITLES['1196']}]({ISSUE_URL}) and PR [\"{TITLES['1256']}\"]({PULL_URL}).")))
