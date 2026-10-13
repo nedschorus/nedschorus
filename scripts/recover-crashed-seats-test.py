@@ -642,9 +642,11 @@ def run_tmux_has_session_answer_cases(root: Path):
 
     patch("tmux_session_alive_anywhere", real_tmux_session_alive_anywhere)
     patch("tmux_session_is_a_leftover_idle_shell", real_tmux_session_is_a_leftover_idle_shell)
-    for absent in ("can't find session: seat-a", "no server running on /tmp/tmux-1000/seat-a",
-                   "error connecting to /tmp/tmux-1000/seat-a (No such file or directory)",
-                   "error connecting to /tmp/tmux-1000/seat-a (Connection refused)"):
+    # Each is what tmux 3.6 prints: another session only, a server with no sessions,
+    # a socket nobody listens on, and no socket file.
+    for absent in ("can't find session: seat-a", "no current target",
+                   "no server running on /tmp/tmux-1000/seat-a",
+                   "error connecting to /tmp/tmux-1000/seat-a (No such file or directory)"):
         tmux_prints(1, absent)
         alive, detail = recovery.tmux_session_alive_anywhere("seat-a")
         check(f"tmux's {absent!r} answers that the session does not exist",
@@ -655,6 +657,23 @@ def run_tmux_has_session_answer_cases(root: Path):
           alive is None and "exited 1: protocol version mismatch (client 9, server 8)" in detail
           and detail.endswith("so seat liveness cannot be checked — refusing rather than guessing"),
           repr((alive, detail)))
+    def named_socket_errs_and_default_socket_answers(default_answer):
+        def answer(*arguments, socket_name=None, environment=None):
+            if socket_name == "seat-a":
+                return Answer(1, "protocol version mismatch (client 9, server 8)")
+            return default_answer
+        patch("run_tmux", answer)
+
+    named_socket_errs_and_default_socket_answers(Answer(0))
+    alive, detail = recovery.tmux_session_alive_anywhere("seat-a")
+    check("a session on the legacy default socket is found when the seat's own socket errs",
+          alive is True and "socket 'default'" in detail, repr((alive, detail)))
+    named_socket_errs_and_default_socket_answers(Answer(1, "can't find session: seat-a"))
+    alive, detail = recovery.tmux_session_alive_anywhere("seat-a")
+    check("an error on the seat's own socket is still no answer when the default socket "
+          "has no such session",
+          alive is None and "protocol version mismatch" in detail, repr((alive, detail)))
+    tmux_prints(1, "protocol version mismatch (client 9, server 8)")
     proven, panes, detail = recovery.tmux_session_is_a_leftover_idle_shell(
         "seat-a", root / "has-session-error-seat")
     check("the leftover-shell proof fails, with tmux's reason, when has-session fails with an "

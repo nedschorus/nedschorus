@@ -375,8 +375,9 @@ def run_decision_cases(root: Path):
                if "protocol version mismatch" in entry["decision"]]
           == ["pending window kept, retried each run: recovery's tmux check could not say "
               "whether the session exists, and said: tmux has-session on socket 'merge-lane-2' exited 1: protocol version mismatch "
-              "(client 9, server 8), so seat liveness cannot be checked — refusing rather "
-              "than guessing"]
+              "(client 9, server 8); tmux has-session on socket 'default' exited 1: protocol "
+              "version mismatch (client 9, server 8), so seat liveness cannot be checked — "
+              "refusing rather than guessing"]
           and not any(entry["decision"].startswith("pending window dropped")
                       for entry in harness.decisions()),
           repr((harness.state["pending_notices"], harness.decisions())))
