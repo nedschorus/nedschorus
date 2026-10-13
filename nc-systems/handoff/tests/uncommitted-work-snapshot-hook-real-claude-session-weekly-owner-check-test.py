@@ -14,7 +14,9 @@ copy of the module, with whatever owner, file or transcript the case needs.
 Run: python3 nc-systems/handoff/tests/uncommitted-work-snapshot-hook-real-claude-session-weekly-owner-check-test.py
 """
 
+import contextlib
 import importlib.util
+import io
 import json
 import os
 import signal
@@ -49,8 +51,9 @@ import importlib.util, json, os, subprocess, sys, time
 from pathlib import Path
 mode = os.environ["FAKE_CLAUDE_MODE"]
 session = "11111111-2222-3333-4444-555555555555"
-named_claude = os.environ["FAKE_CLAUDE_PYTHON_NAMED_CLAUDE"]
-if mode == "hook" and sys.executable != named_claude:
+if mode == "hook" and "FAKE_CLAUDE_RUNNING_AS_CLAUDE" not in os.environ:
+    os.environ["FAKE_CLAUDE_RUNNING_AS_CLAUDE"] = "1"
+    named_claude = os.environ["FAKE_CLAUDE_PYTHON_NAMED_CLAUDE"]
     os.execv(named_claude, [named_claude, __file__, *sys.argv[1:]])
 if mode == "login-lapsed":
     print("Invalid API key · Please run /login", file=sys.stderr)
@@ -103,10 +106,27 @@ FAKE_CLAUDE.chmod(0o755)
 FAKE_CLAUDE_PROCESS_ID_FILE = SCRATCH / "fake-claude-process-id"
 FAKE_CLAUDE_CHILD_PROCESS_ID_FILE = SCRATCH / "fake-claude-child-process-id"
 FAKE_CLAUDE_ARGUMENTS_FILE = SCRATCH / "fake-claude-arguments.json"
-# A copy, not a symbolic link: the process name the hook reads is the name of the file executed.
+
+
+def interpreter_image_of_this_process():
+    """The executable file this process runs, which is not always sys.executable: on macOS a
+    framework Python's bin/python3.x is a launcher that re-executes Python.app's Python, so a
+    copy of the launcher would run under the name Python, not claude."""
+    if sys.platform.startswith("linux"):
+        return Path(os.readlink("/proc/self/exe"))
+    ps = subprocess.run(["ps", "-o", "comm=", "-p", str(os.getpid())],
+                        capture_output=True, text=True, check=True)
+    image = Path(ps.stdout.strip())
+    if not image.is_absolute():
+        raise RuntimeError(f"ps reported {image!r} as this process's executable, not a full path")
+    return image
+
+
+# A copy, not a symbolic link: the process name the hook reads is the name of the executable
+# file the process runs.
 PYTHON_NAMED_CLAUDE = SCRATCH / "python-named-claude" / "claude"
 PYTHON_NAMED_CLAUDE.parent.mkdir()
-shutil.copy2(Path(sys.executable).resolve(), PYTHON_NAMED_CLAUDE)
+shutil.copy2(interpreter_image_of_this_process(), PYTHON_NAMED_CLAUDE)
 os.environ.update(FAKE_CLAUDE_PROCESS_ID_FILE=str(FAKE_CLAUDE_PROCESS_ID_FILE),
                   FAKE_CLAUDE_CHILD_PROCESS_ID_FILE=str(FAKE_CLAUDE_CHILD_PROCESS_ID_FILE),
                   FAKE_CLAUDE_ARGUMENTS_FILE=str(FAKE_CLAUDE_ARGUMENTS_FILE),
@@ -133,6 +153,10 @@ run_count = [0]
 def run_check(mode, *extra, claude_program=None, timeout=120, environment=None):
     run_count[0] += 1
     records = SCRATCH / f"records-{run_count[0]}"
+    if "--timeout-seconds" not in extra:
+        # Under the check's own 300 s default, a fake claude that hangs would meet this
+        # function's timeout first and show as a bare TimeoutExpired, not the check's report.
+        extra = (*extra, "--timeout-seconds", str(timeout / 2))
     completed = subprocess.run(
         [sys.executable, str(CHECK), "--claude-program", str(claude_program or FAKE_CLAUDE),
          "--record-directory", str(records), *extra],
@@ -277,6 +301,28 @@ def test_a_check_that_cannot_run_fails():
           record or completed.stderr)
 
 
+def test_an_error_after_claude_started_is_not_reported_as_a_failed_start():
+    def raise_process_lookup_error(process, timeout_seconds):
+        raise ProcessLookupError("no such process group")
+    real = weekly_owner_check.start_claude, weekly_owner_check.wait_for_claude
+    records = SCRATCH / "records-error-after-start"
+    try:
+        weekly_owner_check.start_claude = lambda program, clone, settings: object()
+        weekly_owner_check.wait_for_claude = raise_process_lookup_error
+        with contextlib.redirect_stdout(io.StringIO()):
+            exit_code = weekly_owner_check.main(
+                ["--claude-program", "claude", "--record-directory", str(records)])
+    finally:
+        weekly_owner_check.start_claude, weekly_owner_check.wait_for_claude = real
+    written = list(records.glob("*.txt"))
+    record = written[0].read_text() if written else ""
+    check(exit_code == 1
+          and "FAIL the check could not run: ProcessLookupError" in record
+          and "could not be started" not in record,
+          "an error while waiting for a started claude fails the check as "
+          "\"could not run\", not as claude failing to start", record)
+
+
 def test_a_record_that_cannot_be_written_is_reported():
     blocker = SCRATCH / "a-file-not-a-directory"
     blocker.write_text("")
@@ -298,6 +344,7 @@ def main():
                      test_the_record_goes_to_the_log_store_by_default,
                      test_a_scratch_clone_that_cannot_be_made_fails,
                      test_a_check_that_cannot_run_fails,
+                     test_an_error_after_claude_started_is_not_reported_as_a_failed_start,
                      test_a_record_that_cannot_be_written_is_reported):
             try:
                 case()
