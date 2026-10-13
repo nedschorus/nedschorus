@@ -210,7 +210,8 @@ def read_dialog_turns(transcript_path: Path, drop_acknowledgements=True,
                 interrupted_since_queued = False
         else:
             turn["timestamp"] = record.get("timestamp") or ""
-            if (drop_acknowledgements and following_injected_record
+            # Once the tracker fails, no record can show it carried a report, so a short reply may answer one: keep it.
+            if (drop_acknowledgements and following_injected_record and tracker_failure is None
                     and len(turn["text"].split()) <= MAXIMUM_ACKNOWLEDGEMENT_WORDS):
                 skip_counts["acknowledgement"] += 1
             else:
@@ -359,9 +360,12 @@ def word_count(turns) -> int:
     return sum(len(turn["text"].split()) for turn in turns if turn["voice"] != SUBAGENT_VOICE)
 
 
+def turns_left_out_notes(turns) -> list:
+    return [turn for turn in turns if turn["voice"] == SUBAGENT_VOICE and turn["kind"] == SUBAGENT_TURNS_LEFT_OUT_KIND]
+
+
 def subagent_turn_count(turns) -> int:
-    return sum(1 for turn in turns
-               if turn["voice"] == SUBAGENT_VOICE and turn["kind"] != SUBAGENT_TURNS_LEFT_OUT_KIND)
+    return sum(1 for turn in turns if turn["voice"] == SUBAGENT_VOICE) - len(turns_left_out_notes(turns))
 
 
 def select_tail_clearing_floor(turns, minimum_words: int = MINIMUM_DIALOG_WORDS):
@@ -529,7 +533,7 @@ def render_companion(turns, report: ExtractionReport) -> str:
     lines = [
         f"# Complete session dialog — {report.session_id}",
         "",
-        f"All {len(turns)} dialog turns ({word_count(turns)} words{subagent_turns_note(turns)}), "
+        f"All {len(turns) - len(turns_left_out_notes(turns))} dialog turns ({word_count(turns)} words{subagent_turns_note(turns)}), "
         f"harness-injected records and their acknowledgements filtered out.",
         f"Tool calls, results, and the agent's thinking are only in the full "
         f"transcript: {report.transcript_path}",
@@ -641,6 +645,10 @@ def main(argv=None) -> int:
         print(f"handoff-extract-conversation: {problem}", file=sys.stderr)
         return 4
 
+    # The tail and stdout leave out subagent turns, the note among them, so its failure is told here too.
+    for note in turns_left_out_notes(turns):
+        print(f"handoff-extract-conversation: {note['text']}", file=sys.stderr)
+
     report = ExtractionReport(
         session_id=session_id,
         transcript_path=transcript_path,
@@ -653,7 +661,7 @@ def main(argv=None) -> int:
     if arguments.output:
         output_path = Path(arguments.output).expanduser()
         # The tail leaves out every subagent turn, so a session with one also gets its complete dialog.
-        if len(selected) < len(turns):
+        if len(selected) < len(dialog) or subagent_turn_count(turns):
             report.companion_path = output_path.with_name(
                 f"{output_path.stem}-complete{output_path.suffix}"
             )
@@ -663,7 +671,8 @@ def main(argv=None) -> int:
         if report.companion_path:
             report.companion_path.write_text(
                 render_companion(turns, report), encoding="utf-8")
-            print(f"wrote all {len(turns)} turns to {report.companion_path}", file=sys.stderr)
+            print(f"wrote all {len(turns) - len(turns_left_out_notes(turns))} turns to {report.companion_path}",
+                  file=sys.stderr)
     else:
         sys.stdout.write(render_extraction(selected, report))
 

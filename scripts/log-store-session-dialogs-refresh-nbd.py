@@ -107,14 +107,22 @@ EXIT_LOCKED = 3
 
 
 def load_extractor():
-    """Return (the extractor module, the sha256 of its bytes and its subagent tracker's)."""
+    """Return (the extractor module, the sha256 of its bytes and its subagent tracker's, the error reading the tracker or None).
+
+    A tracker that cannot be read counts as empty in the digest: the extractor then writes each dialog without
+    subagent turns and says so in it, which beats leaving every dialog stale.
+    """
     # One read for both, so a change to the file during a pass cannot pair old code with the new digest.
     source = EXTRACTOR_PATH.read_bytes()
     module = types.ModuleType("handoff_extract_conversation")
     module.__file__ = str(EXTRACTOR_PATH)
     sys.modules[module.__name__] = module
     exec(compile(source, str(EXTRACTOR_PATH), "exec"), module.__dict__)
-    return module, hashlib.sha256(source + SUBAGENT_TRACKER_PATH.read_bytes()).hexdigest()
+    try:
+        tracker_source, tracker_error = SUBAGENT_TRACKER_PATH.read_bytes(), None
+    except OSError as error:
+        tracker_source, tracker_error = b"", error
+    return module, hashlib.sha256(source + tracker_source).hexdigest(), tracker_error
 
 
 def store_root() -> pathlib.Path:
@@ -193,6 +201,8 @@ def mark_dialog_stale(dialog: pathlib.Path, error: BaseException) -> None:
     dialog.parent.mkdir(parents=True, exist_ok=True)
     partial = dialog.with_name(dialog.name + ".partial")
     partial.write_text(warning + ("\n" + text if text else ""), encoding="utf-8")
+    # No change time is 0, so the next pass never takes a stale dialog for current, even within one timestamp tick.
+    os.utime(partial, ns=(0, 0))
     os.replace(partial, dialog)
 
 
@@ -202,10 +212,21 @@ def refresh_all(root: pathlib.Path, failures_only: bool) -> int:
         print(f"FAILED: no {transcripts_directory} directory to read transcripts from; "
               "scripts/transcript-mirror-to-log-store.py creates it on its first pass")
         return EXIT_FAILED
-    extractor, extractor_sha256 = load_extractor()
+    extractor, extractor_sha256, tracker_error = load_extractor()
     dialogs_directory = root / SESSION_DIALOGS_DIRECTORY_NAME
     extractor_sha256_file = dialogs_directory / EXTRACTOR_SHA256_FILE_NAME
     written = current = failed = 0
+    if tracker_error is not None:
+        # Counted as a failure, so the digest is not kept and every dialog is written again once the tracker is back.
+        failed += 1
+        print(f"FAILED: cannot read {SUBAGENT_TRACKER_PATH}, so every dialog this pass writes leaves out its "
+              f"subagent tasks and reports and says so — {type(tracker_error).__name__}: {tracker_error}")
+        # The kept digest names the working tracker; without it the dialogs written now would pass for current later.
+        try:
+            extractor_sha256_file.unlink(missing_ok=True)
+        except OSError as error:
+            print(f"FAILED: could not remove {extractor_sha256_file}, so the dialogs this pass writes without "
+                  f"subagent turns may not be written again when the tracker is back — {type(error).__name__}: {error}")
     try:
         extractor_unchanged = extractor_sha256_file.read_text(encoding="utf-8").strip() == extractor_sha256
     except FileNotFoundError:

@@ -8,7 +8,9 @@ Every case builds its own transcript in a temporary directory, so the tests
 never read a real session and never touch ~/.claude.
 """
 
+import contextlib
 import importlib.util
+import io
 import json
 import sys
 import tempfile
@@ -556,22 +558,81 @@ with tempfile.TemporaryDirectory() as workspace:
     path = write_transcript(workspace, "tracker-fails.jsonl", foreground)
     output_path = Path(workspace) / "seat-dialog-0001.md"
     original_tracker_path = extractor.subagent_tracker_module_path
+    file_stderr, stdout_stderr, stdout_text = io.StringIO(), io.StringIO(), io.StringIO()
     try:
         extractor._subagent_tracker_module = None
         extractor.subagent_tracker_module_path = lambda: Path(workspace) / "no-such-tracker-nbd.py"
-        exit_code = extractor.main(["--transcript-path", str(path), "--output", str(output_path)])
+        with contextlib.redirect_stderr(file_stderr):
+            exit_code = extractor.main(["--transcript-path", str(path), "--output", str(output_path)])
+        with contextlib.redirect_stderr(stdout_stderr), contextlib.redirect_stdout(stdout_text):
+            stdout_exit_code = extractor.main(["--transcript-path", str(path)])
+        complete = extractor.render_complete_dialog_of_transcript_as_markdown(path)
     finally:
         extractor.subagent_tracker_module_path = original_tracker_path
         extractor._subagent_tracker_module = None
-    complete_path = output_path.with_name("seat-dialog-0001-complete.md")
-    complete = complete_path.read_text(encoding="utf-8") if complete_path.is_file() else ""
     check("a tracker that cannot be loaded leaves the handoff's exit 0 and its tail written",
           exit_code == 0 and output_path.is_file(), exit_code)
+    check("a tracker that cannot be loaded is told on stderr, writing to a file or to stdout",
+          "subagent tracker" in file_stderr.getvalue() and "FileNotFoundError" in file_stderr.getvalue()
+          and stdout_exit_code == 0 and "FileNotFoundError" in stdout_stderr.getvalue()
+          and "check the docs" in stdout_text.getvalue(),
+          (file_stderr.getvalue(), stdout_stderr.getvalue()))
     check("a tracker that cannot be loaded leaves a note naming the failure in the complete dialog, "
           "and no subagent turn",
           "## Subagent tasks and reports left out" in complete and "FileNotFoundError" in complete
           and "## Subagent task " not in complete and "check the docs" in complete,
           complete)
+    whole_path = write_transcript(workspace, "tracker-fails-whole.jsonl",
+                                  ordinary_records()[:-1] + [assistant_record(" ".join(["closing"] * 80))])
+    whole_output = Path(workspace) / "whole-out.md"
+    try:
+        extractor._subagent_tracker_module = None
+        extractor.subagent_tracker_module_path = lambda: Path(workspace) / "no-such-tracker-nbd.py"
+        with contextlib.redirect_stderr(io.StringIO()):
+            extractor.main(["--transcript-path", str(whole_path), "--output", str(whole_output)])
+    finally:
+        extractor.subagent_tracker_module_path = original_tracker_path
+        extractor._subagent_tracker_module = None
+    check("a tracker that cannot be loaded adds no complete dialog to a handoff whose tail carries every turn",
+          whole_output.is_file() and not (Path(workspace) / "whole-out-complete.md").exists())
+    complete_header = complete.split("\n---\n", 1)[0]
+    check("the note is counted neither as a dialog turn nor as a subagent turn, and brings no subagent "
+          "transcript pointer",
+          "All 2 dialog turns" in complete_header and "subagent turns" not in complete_header
+          and "agent-<agent id>.jsonl" not in complete_header,
+          complete_header)
+
+    # The reply to a notification is kept once the tracker fails: no record can then show it carried a report.
+    notified = [
+        user_record("run the long job"),
+        user_record("<task-notification><task-id>b1</task-id><status>completed</status>"
+                    "<result>All green.</result></task-notification>"),
+        assistant_record("Both fixed; merging."),
+    ]
+    notified_path = write_transcript(workspace, "tracker-fails-on-notification.jsonl", notified)
+
+    class TrackerThatRaisesOnNotification:
+        def turns_from_record(self, record):
+            if "<task-notification>" in json.dumps(record):
+                raise KeyError("a notification shape the tracker does not know")
+            return [], False
+
+    original_new_tracker = extractor.new_subagent_tracker
+    try:
+        extractor.new_subagent_tracker = TrackerThatRaisesOnNotification
+        notified_turns, notified_skips = extractor.read_dialog_turns(
+            notified_path, include_subagent_tasks_and_reports=True)
+    finally:
+        extractor.new_subagent_tracker = original_new_tracker
+    check("a tracker that raises on a notification leaves the agent's short reply to it in the dialog",
+          "Both fixed; merging." in [turn["text"] for turn in notified_turns]
+          and notified_skips["acknowledgement"] == 0,
+          ([turn["text"] for turn in notified_turns], notified_skips))
+    plain_turns, plain_skips = extractor.read_dialog_turns(notified_path)
+    check("without subagent turns asked for, a short reply to a notification is still an acknowledgement",
+          "Both fixed; merging." not in [turn["text"] for turn in plain_turns]
+          and plain_skips["acknowledgement"] == 1,
+          ([turn["text"] for turn in plain_turns], plain_skips))
 
     class TrackerThatRaises:
         def __init__(self):

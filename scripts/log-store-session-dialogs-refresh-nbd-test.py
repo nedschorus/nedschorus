@@ -186,8 +186,14 @@ with tempfile.TemporaryDirectory() as workspace:
           unreadable_text.startswith(warning_opening) and unreadable_text.count("\n") == 1
           and unreadable_text.rstrip().endswith("; what follows may be out of date.")
           and "PermissionError" in unreadable_text, unreadable_text)
+    check("a dialog given the stale-dialog warning carries time 0, which no transcript's change time can equal",
+          unreadable_dialog.is_file() and unreadable_dialog.stat().st_mtime_ns == 0
+          and mac_dialog.stat().st_mtime_ns != 0,
+          unreadable_dialog.stat().st_mtime_ns if unreadable_dialog.is_file() else "no dialog")
     unreadable_dialog.write_text(warning_opening + "2020-01-01 00:00 UTC: PermissionError: earlier; "
                                  "what follows may be out of date.\n", encoding="utf-8")
+    # As the program leaves a warned dialog, so the next pass reads the transcript whatever tick the chmod lands in.
+    os.utime(unreadable_dialog, ns=(0, 0))
     mac_transcript.chmod(0)
     unreadable.chmod(0)
     try:
@@ -343,6 +349,40 @@ with tempfile.TemporaryDirectory() as workspace:
           tracker_rewritten.returncode == 0 and "wrote 0 session dialogs" not in tracker_rewritten.stdout
           and "wrote 0 session dialogs" in tracker_after.stdout,
           (tracker_rewritten.stdout, tracker_after.stdout))
+
+    # A tracker that cannot be read still lets every dialog be written, without subagent turns and saying so.
+    tracker_copy = programs / SUBAGENT_TRACKER_PATH.name
+    tracker_aside = programs / "tracker-set-aside.py"
+    tracker_copy.rename(tracker_aside)
+    try:
+        without_tracker = run(store, "--failures-only", script_path=script_copy)
+        box_without_tracker = box_dialog.read_text(encoding="utf-8")
+    finally:
+        tracker_aside.rename(tracker_copy)
+    check("a subagent tracker that cannot be read prints a FAILED line naming it, and the pass exits 1",
+          without_tracker.returncode == 1 and f"FAILED: cannot read {tracker_copy.resolve()}" in without_tracker.stdout,
+          (without_tracker.returncode, without_tracker.stdout, without_tracker.stderr))
+    check("a subagent tracker that cannot be read leaves each dialog written, with the note that subagent turns "
+          "are left out and no subagent turn",
+          "## Subagent tasks and reports left out" in box_without_tracker
+          and "## Subagent task " not in box_without_tracker and "box question" in box_without_tracker,
+          box_without_tracker[:600])
+    undeletable_store = Path(workspace) / "undeletable-digest-store"
+    write_transcript(undeletable_store, "mac", "-Users-someone-project", "s-undeletable", conversation("undeletable"))
+    (undeletable_store / "session-dialogs" / ".dialogs-written-by-extractor-sha256" / "inside").mkdir(parents=True)
+    tracker_copy.rename(tracker_aside)
+    try:
+        undeletable = run(undeletable_store, "--failures-only", script_path=script_copy)
+    finally:
+        tracker_aside.rename(tracker_copy)
+    check("a digest that cannot be removed while the tracker cannot be read prints a FAILED line, and the pass exits 1",
+          undeletable.returncode == 1 and "FAILED: could not remove " in undeletable.stdout,
+          (undeletable.returncode, undeletable.stdout, undeletable.stderr))
+    tracker_back = run(store, script_path=script_copy)
+    check("the pass after the tracker is back writes every dialog again, with its subagent turns",
+          tracker_back.returncode == 0 and "wrote 0 session dialogs" not in tracker_back.stdout
+          and "## Subagent task " in box_dialog.read_text(encoding="utf-8"),
+          (tracker_back.stdout, box_dialog.read_text(encoding="utf-8")[:400]))
 
     # A digest that cannot be read or kept is a failure: otherwise every pass would rewrite every dialog unseen.
     digest_store = Path(workspace) / "digest-store"
