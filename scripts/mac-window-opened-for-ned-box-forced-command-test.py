@@ -211,12 +211,13 @@ for request in ["open-agent-seat-window", "open-agent-seat-window a b", "open-ag
           and "open-mac-window-from-ned-box.py --agent-seat <seat>, naming one agent-seat" in result.stderr
           and "Send a request of the form" not in result.stderr,
           (result.returncode, opened, result.stderr))
-def launcher_accepts_seat_name(name):
+def launcher_accepts_seat_name(name, bash_options=(), locale_environment=None):
     """Run the real launch-claude-ubuntu up to its seat-name check, and no further."""
     # An invalid account name makes the launcher stop at the check right after the seat-name
     # check, before it reaches ssh, so a name it accepts launches nothing.
-    environment = dict(os.environ, NEDSCHORUS_SEAT_GITHUB_ACCOUNT="not a valid account!")
-    result = subprocess.run(["bash", str(PROGRAM_PATH.with_name("launch-claude-ubuntu")), name],
+    environment = dict(os.environ, NEDSCHORUS_SEAT_GITHUB_ACCOUNT="not a valid account!",
+                       **(locale_environment or {}))
+    result = subprocess.run(["bash", *bash_options, str(PROGRAM_PATH.with_name("launch-claude-ubuntu")), name],
                             capture_output=True, text=True, env=environment, timeout=30)
     if "NEDSCHORUS_SEAT_GITHUB_ACCOUNT" in result.stderr:
         return True
@@ -229,6 +230,43 @@ for name in ["merge-lane-2", "reboot_test", "_x", "9", "a.b", ".hidden", "-v", "
     check(f"the forced command accepts the seat name {name!r} exactly when launch-claude-ubuntu does",
           bool(forced_command.AGENT_SEAT_NAME_PATTERN.fullmatch(name)) == launcher_accepts_seat_name(name),
           name)
+
+
+def mac_bash_emulation_unavailable_reason():
+    """Return why this machine cannot run bash as the Mac's bash 3.2 does, or None when it can."""
+    # The Mac's /bin/bash 3.2 has no globasciiranges, so a bracket range such as a-z follows the
+    # UTF-8 locale's collation there and can match é; bash 5 with globasciiranges off does the same.
+    if subprocess.run(["bash", "-c", "shopt globasciiranges"], capture_output=True).returncode not in (0, 1):
+        return "this bash has no globasciiranges option, so it cannot be switched off"
+    locales = subprocess.run(["locale", "-a"], capture_output=True, text=True).stdout.split()
+    utf8_locale = next((name for name in locales if name.lower() in ("en_us.utf8", "en_us.utf-8")), None)
+    if utf8_locale is None:
+        return "no en_US UTF-8 locale is installed"
+    return None
+
+
+mac_emulation_reason = mac_bash_emulation_unavailable_reason()
+if mac_emulation_reason:
+    print(f"SKIP  seat names under the Mac's bash range rules: {mac_emulation_reason}")
+else:
+    for name in ["merge-lane-2", "a.b", "é", "ß", "Ä"]:
+        check(f"launch-claude-ubuntu accepts {name!r} exactly as the forced command does, under a UTF-8 "
+              "locale with globasciiranges off, as on the Mac's bash 3.2",
+              bool(forced_command.AGENT_SEAT_NAME_PATTERN.fullmatch(name)) == launcher_accepts_seat_name(
+                  name, ("+O", "globasciiranges"), {"LC_ALL": "en_US.UTF-8"}),
+              name)
+# launch-claude-mac keeps a twin of launch-claude-ubuntu's name checks; it cannot run past them
+# on this machine, so its patterns are compared with the tested launcher's, character for character.
+def launcher_name_check_patterns(launcher_name):
+    text = PROGRAM_PATH.with_name(launcher_name).read_text(encoding="utf-8")
+    return [line.split(")", 1)[0].strip() + ")" for line in text.splitlines()
+            if line.strip().startswith("(*[!") and line.strip().endswith(";;")]
+
+
+check("launch-claude-mac's seat-name and account-name patterns are launch-claude-ubuntu's",
+      launcher_name_check_patterns("launch-claude-mac") == launcher_name_check_patterns("launch-claude-ubuntu")
+      and len(launcher_name_check_patterns("launch-claude-ubuntu")) == 2,
+      (launcher_name_check_patterns("launch-claude-mac"), launcher_name_check_patterns("launch-claude-ubuntu")))
 check("a refused window request names the --agent-seat form too",
       "open-mac-window-from-ned-box.py --agent-seat <seat>" in run_program("open-windowx tmux")[0].stderr)
 

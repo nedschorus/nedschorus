@@ -140,7 +140,7 @@ while [ $# -gt 0 ]; do
     esac
 done
 case "$AGENT_NAME" in
-    (*[!a-zA-Z0-9_-]*|"") echo "launch-claude-mac: agent names are letters, digits, - and _" >&2; exit 2 ;;
+    (*[!abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-]*|"") echo "launch-claude-mac: agent names are letters, digits, - and _" >&2; exit 2 ;;
 esac
 
 # Which GitHub account this seat acts as. The default is the HOST's account,
@@ -173,7 +173,7 @@ esac
 # exported-but-empty override is the default rather than a refusal.
 SEAT_GITHUB_ACCOUNT="${NEDSCHORUS_SEAT_GITHUB_ACCOUNT:-mac-claude}"
 case "$SEAT_GITHUB_ACCOUNT" in
-    (*[!a-zA-Z0-9_-]*|"") echo "launch-claude-mac: NEDSCHORUS_SEAT_GITHUB_ACCOUNT is a GitHub account name — letters, digits, - and _" >&2; exit 2 ;;
+    (*[!abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-]*|"") echo "launch-claude-mac: NEDSCHORUS_SEAT_GITHUB_ACCOUNT is a GitHub account name — letters, digits, - and _" >&2; exit 2 ;;
 esac
 
 # The override is CONSUMED here and unset before the tmux server starts, so
