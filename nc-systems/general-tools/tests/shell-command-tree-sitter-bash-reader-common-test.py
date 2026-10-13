@@ -510,7 +510,7 @@ check("a body of 3,500 substitutions is read in one parse, well inside a guard's
 found = reader.simple_commands("cat <<A\n$(cd /x)\nA\ncat <<B\n$(git push -f o t)\nB")
 check("substitutions in two different bodies are different child shells, so a cd in one stays there",
       found[0].child_shell != found[2].child_shell
-      and found[0].child_shell[0] < 0 and found[2].child_shell[0] < 0,
+      and found[0].child_shell[0].offset < 0 and found[2].child_shell[0].offset < 0,
       [(list(f), f.child_shell) for f in found])
 many = "".join(f"cat <<E{n}\nx\nE{n}\n" for n in range(reader.MAX_HEREDOCS_TAKEN_OUT + 2))
 found = reader.simple_commands(many + "bash <<Z\ntmux send-keys -t a b\nZ")
@@ -539,6 +539,11 @@ check("the lines tree-sitter-bash folds into a long pipeline's redirections are 
 found = words_of("cat <<'EOF'\nEOF2\ncat <<D\nEOF\ncase x in x) :;& esac\ntmux kill-server")
 check("a case after a body tree-sitter-bash misplaces is repaired, and the command after it is read",
       found == [["cat"], [":"], ["tmux", "kill-server"]], found)
+for command in ["case y in y) xa <<E ;&\n$(tmux send-keys -t a b)\nE\nesac\ncase x in x) :;& esac\nxc",
+                "case x in x) cat <<E ;&\n$(tmux send-keys -t a b)\n;& esac\nE\nesac\nls"]:
+    found = words_of(command)
+    check(f"a ;& on a heredoc's line, with esac after the body, is repaired without touching the body: {command!r}",
+          ["tmux", "send-keys", "-t", "a", "b"] in found and found[-1] in (["xc"], ["ls"]), found)
 found = reader.simple_commands("case x in x) :;& esac; cat <<'D'\n:;& esac\nD\nls")
 check("a ;& in a body that the case's error hid is left as written",
       [list(f) for f in found] == [[":"], ["cat"], ["ls"]] and found[1].heredocs[0].body == ":;& esac\n",
@@ -729,8 +734,6 @@ with tempfile.TemporaryDirectory() as scratch:
     expected = [(list(f), f.child_shell, f.redirects, [(h.body, h.expanded, h.delimiter)
                                                       for h in f.heredocs])
                 for f in reader.simple_commands(command, {"*": "<glob>"})]
-    expected_kinds = [[(int(s), s.kind, s.first_stage) for s in f.child_shell]
-                      for f in reader.simple_commands(command, {"*": "<glob>"})]
     real_parser = reader.parser
 
     loads = []
@@ -743,17 +746,12 @@ with tempfile.TemporaryDirectory() as scratch:
         found = [(list(f), f.child_shell, f.redirects, [(h.body, h.expanded, h.delimiter)
                                                        for h in f.heredocs])
                  for f in reader.simple_commands(command, {"*": "<glob>"})]
-        # ChildShell compares as its offset alone, so its kind is compared on its own.
-        kinds = [[(int(s), s.kind, s.first_stage) for s in f.child_shell]
-                 for f in reader.simple_commands(command, {"*": "<glob>"})]
         found_again = [list(f) for f in reader.simple_commands("ls")]
     finally:
         reader.parser = real_parser
         reader._read_in_a_new_process = False
     check("when this process cannot load the installed parser, the command is read in a new process, "
-          "with the same result", found == expected, (found, expected))
-    check("the new process keeps each child shell's kind and whether a stage is its pipeline's first",
-          kinds == expected_kinds, (kinds, expected_kinds))
+          "with the same result, each child shell whole", found == expected, (found, expected))
     check("later commands in the same process are read in a new process too, with no second try at "
           "loading the parser", found_again == [["ls"]] and loads == [1], (found_again, loads))
 
