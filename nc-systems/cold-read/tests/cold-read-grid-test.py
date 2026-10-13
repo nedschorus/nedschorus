@@ -148,6 +148,16 @@ SYSTEM_DIRECTORY = Path(__file__).resolve().parent.parent
 REPO_ROOT = SYSTEM_DIRECTORY.parent.parent
 PROMPTS_DIR = REPO_ROOT / ".claude" / "skills" / "cold-read" / "prompts"
 
+# A variable that redirects git, left in this process, would send the scratch
+# repositories' git writes into the repository it names. Removed before any
+# git runs, so the programs this suite starts inherit the removal too.
+_git_environment_fixture_spec = importlib.util.spec_from_file_location(
+    "git_redirecting_environment_removal_test_fixture",
+    REPO_ROOT / "scripts" / "git-redirecting-environment-removal-test-fixture.py")
+_git_environment_fixture = importlib.util.module_from_spec(_git_environment_fixture_spec)
+_git_environment_fixture_spec.loader.exec_module(_git_environment_fixture)
+_git_environment_fixture.remove_git_redirecting_environment_variables_from_this_process()
+
 # The scratch repository every cold-read suite builds, defined once.
 _scratch_repository_fixture_spec = importlib.util.spec_from_file_location(
     "cold_read_scratch_repository_test_fixture",

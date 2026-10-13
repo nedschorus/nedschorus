@@ -21,10 +21,9 @@ it creates anything, the grid lists the cold-read-records in the log-store and
 in this checkout, counts those that froze this document, under its present
 path or an earlier one `git log --follow` shows, and hold a grid report written
 after origin/main last took a change to the document, prints
-"cold-read-full-run N of 3", and refuses a fourth. --user-ruled-another-cold-read-full-run
-says the user ruled to run again or to change the design: the run is number 1,
-and the marker file it leaves in its record starts the count again for later
-runs. A log-store or git history that cannot be read does not stop the read, as
+"cold-read-full-run N of 3", and refuses a fourth. A flag saying the user
+decided to run again or to change the design makes the run number 1, and the
+marker file it leaves in its record starts the count again for later runs. A log-store or git history that cannot be read does not stop the read, as
 with shipping: the run goes ahead and says COUNT NOT CHECKED instead of a
 count.
 
