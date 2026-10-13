@@ -63,7 +63,7 @@ class Harness:
     """A Watcher's outside world: verdicts to hand out, and every call recorded."""
 
     def __init__(self, log_directory, recovery_result=(0, "merge-lane-2: relaunched resuming x"),
-                 window_exit_codes=None, seat_window_results=None):
+                 window_exit_codes=None, seat_window_results=None, seat_session_alive=True):
         self.log_directory = log_directory
         self.state = watcher_module.read_state(log_directory / "no-state-yet.json")
         self.verdicts = {}
@@ -72,6 +72,9 @@ class Harness:
         self.window_exit_codes = list(window_exit_codes or [])
         self.seat_window_results = list(seat_window_results or [])
         self.seat_windows = []
+        # What tmux says of the seat's session: True, False (gone) or None (tmux cannot answer).
+        self.seat_session_alive = seat_session_alive
+        self.seat_session_check = None
         self.recoveries = []
         self.windows = []
         self.died_at = DIED_AT
@@ -111,7 +114,9 @@ class Harness:
                                             "--show-notice", path],
             stopped_on_purpose=lambda seat, detail: self.on_purpose,
             recorded_exit_question=recovery_module.restart_question_for_a_seat_with_a_recorded_exit,
-            open_seat_window=self.open_seat_window)
+            open_seat_window=self.open_seat_window,
+            seat_session_alive=(self.seat_session_check or
+                                (lambda seat: (self.seat_session_alive, "tmux's answer"))))
         watcher.run(list(seats))
 
     def decisions(self):
@@ -321,6 +326,60 @@ def run_decision_cases(root: Path):
     harness.run(SEEN_RUNNING + timedelta(minutes=17))
     check("a pending window leaves the list when a window is found already attached",
           harness.state["pending_notices"] == [], repr(harness.state["pending_notices"]))
+
+    harness = Harness(root / "seat-session-gone", recovery_result=window_not_opened,
+                      seat_window_results=[False, False, False])
+    crash_after_running(harness)
+    # The restart path's own handling of a dead seat is tested above; this case watches the window.
+    harness.verdicts["merge-lane-2"] = ("seat-already-running", "restarted")
+    harness.seat_session_alive = False
+    harness.run(SEEN_RUNNING + timedelta(minutes=17))
+    harness.run(SEEN_RUNNING + timedelta(minutes=18))
+    check("a pending window whose seat's tmux session is gone is dropped, logged, and not retried",
+          harness.state["pending_notices"] == [] and len(harness.seat_windows) == 2
+          and harness.notices() == []
+          and any(entry["decision"] == "pending window dropped: the seat's tmux session is gone"
+                  for entry in harness.decisions()),
+          repr((harness.state["pending_notices"], harness.seat_windows, harness.decisions())))
+
+    harness = Harness(root / "seat-session-unknown", recovery_result=window_not_opened,
+                      seat_window_results=[False, False], seat_session_alive=None)
+    crash_after_running(harness)
+    harness.run(SEEN_RUNNING + timedelta(minutes=17))
+    check("a pending window stays pending when tmux cannot say whether the seat's session exists",
+          harness.state["pending_notices"] == [{"attach_seat": "merge-lane-2"}],
+          repr(harness.state["pending_notices"]))
+
+    class TmuxAnswer:
+        def __init__(self, returncode, stderr=""):
+            self.returncode, self.stdout, self.stderr = returncode, "", stderr
+
+    real_run_tmux = recovery_module.run_tmux
+    harness = Harness(root / "seat-session-probe-error", recovery_result=window_not_opened,
+                      seat_window_results=[False, False, False])
+    crash_after_running(harness)
+    harness.verdicts["merge-lane-2"] = ("seat-already-running", "restarted")
+    # Through recovery's real check: a tmux that cannot talk to a running server is no answer.
+    recovery_module.run_tmux = lambda *arguments, socket_name=None, environment=None: TmuxAnswer(
+        1, "protocol version mismatch (client 9, server 8)")
+    harness.seat_session_check = recovery_module.tmux_session_alive_anywhere
+    try:
+        harness.run(SEEN_RUNNING + timedelta(minutes=17))
+        harness.run(SEEN_RUNNING + timedelta(minutes=18))
+    finally:
+        recovery_module.run_tmux = real_run_tmux
+    check("a pending window stays pending, with tmux's reason logged, when recovery's tmux check "
+          "fails with an error rather than answering",
+          harness.state["pending_notices"] == [{"attach_seat": "merge-lane-2"}]
+          and [entry["decision"] for entry in harness.decisions()
+               if "protocol version mismatch" in entry["decision"]]
+          == ["pending window kept, retried each run: recovery's tmux check could not say "
+              "whether the session exists, and said: tmux has-session on socket 'merge-lane-2' exited 1: protocol version mismatch "
+              "(client 9, server 8), so seat liveness cannot be checked — refusing rather "
+              "than guessing"]
+          and not any(entry["decision"].startswith("pending window dropped")
+                      for entry in harness.decisions()),
+          repr((harness.state["pending_notices"], harness.decisions())))
 
     harness = Harness(root / "no-seat-window-opener", recovery_result=window_not_opened)
     crash_after_running(harness)
@@ -793,6 +852,10 @@ def run_watch_wiring_cases(root: Path):
             return True, "opened"
 
         @staticmethod
+        def tmux_session_alive_anywhere(name):
+            return True, "alive"
+
+        @staticmethod
         def list_agent_seat_names_with_agent_session_records(*arguments):
             return []
 
@@ -825,6 +888,10 @@ def run_watch_wiring_cases(root: Path):
     check("watch() passes recovery's seat-window opener to the Watcher as open_seat_window",
           len(built) == 1 and built[0].get("open_seat_window")
           is FakeRecovery.agent_seat_mac_window_open_unless_tmux_client_already_attached,
+          repr(built))
+    check("watch() passes recovery's tmux session check to the Watcher as seat_session_alive",
+          len(built) == 1
+          and built[0].get("seat_session_alive") is FakeRecovery.tmux_session_alive_anywhere,
           repr(built))
 
 

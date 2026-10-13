@@ -294,14 +294,16 @@ def tmux_server_answers(panes_by_socket, tmux_cannot_be_run=False,
     """run_tmux for the real proof: which sockets hold the seat's session, and
     what `list-panes` prints for each (one "<pane pid>\\t<command>" per line)."""
     class Answer:
-        def __init__(self, returncode, stdout=""):
-            self.returncode, self.stdout, self.stderr = returncode, stdout, ""
+        def __init__(self, returncode, stdout="", stderr=""):
+            self.returncode, self.stdout, self.stderr = returncode, stdout, stderr
 
     def fake_run_tmux(*arguments_after_tmux, socket_name=None, environment=None):
         if tmux_cannot_be_run:
             return None
         if arguments_after_tmux[0] == "has-session":
-            return Answer(0 if socket_name in panes_by_socket else 1)
+            if socket_name in panes_by_socket:
+                return Answer(0)
+            return Answer(1, stderr=f"can't find session: {arguments_after_tmux[2][1:]}")
         if arguments_after_tmux[0] == "list-panes":
             if list_panes_exit_code:
                 return Answer(list_panes_exit_code)
@@ -626,6 +628,40 @@ def run_seat_listing_cases(root: Path):
     check("the seat listing leaves out a directory that never held a seat, and keeps one with a "
           "supervisor state, a handoff or transcripts",
           listed == ["had-a-handoff", "had-a-supervisor", "had-transcripts"], repr(listed))
+
+
+def run_tmux_has_session_answer_cases(root: Path):
+    """has-session's exit 1 is an answer only when tmux says the session or server is absent."""
+    class Answer:
+        def __init__(self, returncode, stderr=""):
+            self.returncode, self.stdout, self.stderr = returncode, "", stderr
+
+    def tmux_prints(returncode, stderr):
+        patch("run_tmux", lambda *arguments, socket_name=None, environment=None:
+              Answer(returncode, stderr))
+
+    patch("tmux_session_alive_anywhere", real_tmux_session_alive_anywhere)
+    patch("tmux_session_is_a_leftover_idle_shell", real_tmux_session_is_a_leftover_idle_shell)
+    for absent in ("can't find session: seat-a", "no server running on /tmp/tmux-1000/seat-a",
+                   "error connecting to /tmp/tmux-1000/seat-a (No such file or directory)",
+                   "error connecting to /tmp/tmux-1000/seat-a (Connection refused)"):
+        tmux_prints(1, absent)
+        alive, detail = recovery.tmux_session_alive_anywhere("seat-a")
+        check(f"tmux's {absent!r} answers that the session does not exist",
+              alive is False, repr((alive, detail)))
+    tmux_prints(1, "protocol version mismatch (client 9, server 8)")
+    alive, detail = recovery.tmux_session_alive_anywhere("seat-a")
+    check("a has-session that fails with any other message is no answer, and says tmux's reason",
+          alive is None and "exited 1: protocol version mismatch (client 9, server 8)" in detail
+          and detail.endswith("so seat liveness cannot be checked — refusing rather than guessing"),
+          repr((alive, detail)))
+    proven, panes, detail = recovery.tmux_session_is_a_leftover_idle_shell(
+        "seat-a", root / "has-session-error-seat")
+    check("the leftover-shell proof fails, with tmux's reason, when has-session fails with an "
+          "error rather than answering",
+          proven is False and panes == [] and "protocol version mismatch" in detail,
+          repr((proven, panes, detail)))
+    patch("run_tmux", real_run_tmux)
 
 
 def run_mac_window_cases(root: Path):
@@ -2510,7 +2546,7 @@ with tempfile.TemporaryDirectory() as temporary:
     (stub_directory / "tmux").write_text(
         '#!/bin/sh\n'
         'for argument in "$@"; do\n'
-        '  case "$argument" in (has-session) exit 1;; esac\n'
+        '  case "$argument" in (has-session) echo "can\'t find session" >&2; exit 1;; esac\n'
         'done\n'
         f'printf \'%s\\n\' "$@" >> "{capture_path}"\n'
         'exit 0\n', encoding="utf-8")
@@ -2864,6 +2900,7 @@ with tempfile.TemporaryDirectory() as temporary:
     run_came_up_cases(root)
     run_reach_clause_cases(root)
     run_seat_listing_cases(root)
+    run_tmux_has_session_answer_cases(root)
     run_mac_window_cases(root)
 
     # The same thing through recover_seat, on each path that can offer the
@@ -4603,8 +4640,8 @@ with tempfile.TemporaryDirectory() as temporary:
         retire is appended to events. Returns (exit code, every printed line,
         every logged line)."""
         class Answer:
-            def __init__(self, returncode, stdout=""):
-                self.returncode, self.stdout, self.stderr = returncode, stdout, ""
+            def __init__(self, returncode, stdout="", stderr=""):
+                self.returncode, self.stdout, self.stderr = returncode, stdout, stderr
 
         def fake_run_tmux(*arguments_after_tmux, socket_name=None, environment=None):
             asked = "question" in events
@@ -4612,7 +4649,8 @@ with tempfile.TemporaryDirectory() as temporary:
                 return None
             held = socket_name == "seat-a" and not (asked and after_the_question == "gone")
             if arguments_after_tmux[0] == "has-session":
-                return Answer(0 if held else 1)
+                return (Answer(0) if held else
+                        Answer(1, stderr=f"can't find session: {arguments_after_tmux[2][1:]}"))
             if arguments_after_tmux[0] == "list-panes" and held:
                 return Answer(0, "4242\tvim\n" if asked else "4242\tzsh\n")
             return Answer(1)
