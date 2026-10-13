@@ -38,6 +38,8 @@ from pathlib import Path
 # This fixture sits in nc-systems/cold-read/tests/; the system it copies is
 # one directory up.
 SYSTEM_DIRECTORY = Path(__file__).resolve().parent.parent
+GIT_OUTPUT_MODULE = (SYSTEM_DIRECTORY.parent / "general-tools"
+                     / "git-machine-readable-output-runner-and-parser-common.py")
 
 # The seed commit's author. One fixed name rather than a parameter: nothing
 # reads it, and it points a scratch checkout left behind by a crashed run
@@ -85,6 +87,9 @@ def commit_seeded_cold_read_scratch_repository(repository):
     # md-skills-seat-open-decisions-2026-09-20 item 3).
     shutil.copytree(SYSTEM_DIRECTORY, repository / "nc-systems" / "cold-read",
                     ignore=shutil.ignore_patterns("__pycache__"))
+    # The cell reads git status through the shared git-output module.
+    (repository / "nc-systems" / "general-tools").mkdir(parents=True)
+    shutil.copy2(GIT_OUTPUT_MODULE, repository / "nc-systems" / "general-tools")
     # The records tree is gitignored in the real repository, which is what
     # keeps a reviewer's own report out of the detector's sight.
     (repository / ".gitignore").write_text("cold-read-records/\n", encoding="utf-8")
