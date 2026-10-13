@@ -22,7 +22,10 @@ tree-sitter and tree-sitter-bash are compiled libraries, installed per user
 from compiled-python-libraries-pinned-requirements.txt beside this file. When
 they are missing, the first use installs them. ShellParserUnavailable means
 the install failed: the guard lets the command through and says so with
-parser_unavailable_hook_output, which asks for the user to be told. When the
+parser_unavailable_hook_output, which asks for the user to be told.
+ShellCommandUnreadable, a kind of it, means this module failed on the command;
+simple_commands raises no other error, and the guard lets the command through
+and says the reader failed on it. When the
 install succeeds but this process still holds a copy it could not use,
 the command is read in a new Python process, which loads the installed copy. A failed
 install is tried again after ten minutes, so that each command does not wait
@@ -37,6 +40,7 @@ Load it by path, under the snake_case form of its file name:
 # Deferred annotations let the module load on the Mac's system Python 3.9.
 from __future__ import annotations
 
+import codecs
 import collections
 import importlib
 import json
@@ -72,6 +76,31 @@ PIPE_OPERATORS = {"|", "|&"}
 DOUBLE_QUOTE_ESCAPABLE = set('"\\$`')
 
 
+# A decoded $'...' word may hold bytes that are not UTF-8, and text from a JSON payload may
+# hold lone surrogates. This handler keeps both through every decode and encode in this
+# module: a byte that is not UTF-8 stands as U+DC80 to U+DCFF, as surrogateescape writes
+# it, and any other surrogate as surrogatepass writes it.
+SHELL_TEXT_ERRORS = "nedschorus-shell-command-text"
+
+
+def _shell_text_errors(error):
+    if isinstance(error, UnicodeEncodeError):
+        out = bytearray()
+        for character in error.object[error.start:error.end]:
+            point = ord(character)
+            out += (bytes([point - 0xDC00]) if 0xDC80 <= point <= 0xDCFF
+                    else character.encode("utf-8", "surrogatepass"))
+        return bytes(out), error.end
+    surrogate = error.object[error.start:error.start + 3]
+    if len(surrogate) == 3 and surrogate[0] == 0xED and 0xA0 <= surrogate[1] <= 0xBF \
+            and 0x80 <= surrogate[2] <= 0xBF:
+        return surrogate.decode("utf-8", "surrogatepass"), error.start + 3
+    return chr(0xDC00 + error.object[error.start]), error.start + 1
+
+
+codecs.register_error(SHELL_TEXT_ERRORS, _shell_text_errors)
+
+
 class ShellParserUnavailable(Exception):
     """tree-sitter-bash could not be imported, and installing it failed.
 
@@ -81,6 +110,14 @@ class ShellParserUnavailable(Exception):
     def __init__(self, install_output):
         super().__init__(install_output)
         self.install_output = install_output
+
+
+class ShellCommandUnreadable(ShellParserUnavailable):
+    """This module failed on the command; install_output says how.
+
+    A kind of ShellParserUnavailable, so a guard that lets a command through
+    when the parser is missing does the same here.
+    """
 
 
 class ShellParserInstalledForANewProcess(ShellParserUnavailable):
@@ -392,6 +429,17 @@ def _session_unattended(environment):
 def parser_unavailable_hook_output(guard_name, error, environment=os.environ):
     """Return the PreToolUse JSON that lets the command through and says it was not checked."""
     host = socket.gethostname().split(".")[0]
+    if isinstance(error, ShellCommandUnreadable):
+        return json.dumps({"hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "additionalContext": (
+                f"{guard_name} let this command through without checking it: the shell command "
+                f"reader failed on it on {host} ({error.install_output}).\n"
+                f"If the command could do what {guard_name} guards against, check it by hand "
+                f"before relying on it.\n"
+                f"Tell the user, or, if you are a subagent, the agent that dispatched you, that "
+                f"the reader failed, with the command and the failure quoted as they are."),
+        }})
     not_checked = (f"{guard_name} let this command through without checking it: the shell parser "
                    f"tree-sitter-bash is missing on {host}, and installing it failed.")
     if _session_unattended(environment):
@@ -418,7 +466,7 @@ def parser_unavailable_hook_output(guard_name, error, environment=os.environ):
 
 
 def _text(node):
-    return node.text.decode("utf-8", "surrogatepass")
+    return node.text.decode("utf-8", SHELL_TEXT_ERRORS)
 
 
 def _unescape_unquoted(text, glob_markers):
@@ -478,7 +526,7 @@ def word_value(node, glob_markers=None):
             if child.type == '"':
                 continue
             gap = source[position - string.start_byte:child.start_byte - string.start_byte]
-            pieces.append(_unescape_double_quoted(gap.decode("utf-8", "surrogatepass")))
+            pieces.append(_unescape_double_quoted(gap.decode("utf-8", SHELL_TEXT_ERRORS)))
             if child.type == "string_content":
                 pieces.append(_unescape_double_quoted(_text(child)))
             else:
@@ -487,7 +535,7 @@ def word_value(node, glob_markers=None):
         closing = string.end_byte - 1
         pieces.append(_unescape_double_quoted(
             source[position - string.start_byte:closing - string.start_byte]
-            .decode("utf-8", "surrogatepass")))
+            .decode("utf-8", SHELL_TEXT_ERRORS)))
         return "".join(pieces)
     if kind == "concatenation":
         return "".join(word_value(child, glob_markers) for child in node.children)
@@ -497,6 +545,26 @@ def word_value(node, glob_markers=None):
     return _text(node)
 
 
+def _utf8_bytes_bash_writes(value):
+    """Return the bytes bash writes for \\u or \\U with this value, in a UTF-8 locale.
+
+    bash encodes any value below 2**31 in UTF-8's original form of up to six
+    bytes, surrogates and values above 0x10FFFF included, and writes nothing
+    for a larger one.
+    """
+    if value < 0x80:
+        return bytes([value])
+    for length, limit in ((2, 0x800), (3, 0x10000), (4, 0x200000), (5, 0x4000000),
+                          (6, 0x80000000)):
+        if value < limit:
+            tail = []
+            for _ in range(length - 1):
+                tail.insert(0, 0x80 | (value & 0x3F))
+                value >>= 6
+            return bytes([((0xFF << (8 - length)) & 0xFF) | value] + tail)
+    return b""
+
+
 ANSI_C_SIMPLE_ESCAPES = {"a": "\a", "b": "\b", "e": "\x1b", "E": "\x1b", "f": "\f", "n": "\n",
                          "r": "\r", "t": "\t", "v": "\v", "\\": "\\", "'": "'", '"': '"', "?": "?"}
 ANSI_C_NUMERIC_ESCAPE_PATTERN = re.compile(
@@ -504,18 +572,25 @@ ANSI_C_NUMERIC_ESCAPE_PATTERN = re.compile(
 
 
 def _ansi_c_decoded(text):
-    """Return the text inside $'...' as bash decodes it; a decoded NUL ends the word, as in bash."""
+    """Return the text inside $'...' as bash decodes it; a decoded NUL ends the word.
+
+    \\u and \\U are written as bash writes them in a UTF-8 locale; bytes that are
+    not UTF-8 stay bytes, held as SHELL_TEXT_ERRORS holds them.
+    """
     out = bytearray()
     index = 0
     while index < len(text):
         character = text[index]
         if character != "\\" or index + 1 >= len(text):
-            out += character.encode("utf-8", "surrogatepass")
+            out += character.encode("utf-8", SHELL_TEXT_ERRORS)
             index += 1
             continue
         escape = text[index + 1]
         numeric = ANSI_C_NUMERIC_ESCAPE_PATTERN.match(text, index + 1)
-        if escape in ANSI_C_SIMPLE_ESCAPES:
+        if escape in "uU" and numeric and (numeric.group(3) or numeric.group(4)):
+            out += _utf8_bytes_bash_writes(int(numeric.group(3) or numeric.group(4), 16))
+            index = numeric.end()
+        elif escape in ANSI_C_SIMPLE_ESCAPES:
             out += ANSI_C_SIMPLE_ESCAPES[escape].encode()
             index += 2
         elif escape == "c" and index + 2 < len(text):
@@ -527,14 +602,10 @@ def _ansi_c_decoded(text):
             out.append(int(numeric.group(1), 8) & 0xFF if numeric.group(1)
                        else int(numeric.group(2), 16))
             index = numeric.end()
-        elif numeric:
-            code_point = int(numeric.group(3) or numeric.group(4), 16)
-            out += chr(code_point).encode("utf-8", "surrogatepass")
-            index = numeric.end()
         else:
-            out += b"\\" + escape.encode("utf-8", "surrogatepass")
+            out += b"\\" + escape.encode("utf-8", SHELL_TEXT_ERRORS)
             index += 2
-    return bytes(out).split(b"\0", 1)[0].decode("utf-8", "surrogateescape")
+    return bytes(out).split(b"\0", 1)[0].decode("utf-8", SHELL_TEXT_ERRORS)
 
 
 def _heredoc_of(node):
@@ -772,7 +843,7 @@ class _Collector:
         if taken is None:
             redirects.append(pair)
             return []
-        body = taken.body.decode("utf-8", "surrogatepass")
+        body = taken.body.decode("utf-8", SHELL_TEXT_ERRORS)
         redirects.append(("<<", body))
         if taken.expanded:
             self.expanded_heredoc_body(taken, child_shell)
@@ -830,8 +901,19 @@ def simple_commands(command_text, glob_markers=None):
 
     glob_markers maps glob characters to marker strings; each glob character
     outside quotes and not escaped is replaced by its marker, so a caller can
-    tell which ones the shell would expand. Raises ShellParserUnavailable.
+    tell which ones the shell would expand. Raises ShellParserUnavailable, or
+    ShellCommandUnreadable when this module fails on the command; it raises
+    nothing else, so a guard is never stopped by an error it does not expect.
     """
+    try:
+        return _simple_commands_read(command_text, glob_markers)
+    except ShellParserUnavailable:
+        raise
+    except Exception as error:
+        raise ShellCommandUnreadable(f"{type(error).__name__}: {error}") from error
+
+
+def _simple_commands_read(command_text, glob_markers):
     if _read_in_a_new_process:
         return _simple_commands_in_a_new_process(command_text, glob_markers)
     try:
@@ -839,14 +921,29 @@ def simple_commands(command_text, glob_markers=None):
     except ShellParserInstalledForANewProcess:
         _use_a_new_process()
         return _simple_commands_in_a_new_process(command_text, glob_markers)
-    original = command_text.encode("utf-8", "surrogatepass")
+    original = command_text.encode("utf-8", SHELL_TEXT_ERRORS)
     text, source, tree, taken_out = _source_with_case_terminators_repaired(original, TEXT_NODE_TYPES)
     commands = _with_heredocs_put_back_into_commands(
         _collect(tree.root_node, glob_markers, source, taken_out), taken_out)
     if text != original:
         for command in commands:
             _words_put_back_as_written(command, command_text)
+    for command in commands:
+        command[:] = [_text_rejoined(word) for word in command]
+        command.redirects = [(operator, _text_rejoined(target))
+                             for operator, target in command.redirects]
     return commands
+
+
+def _text_rejoined(text):
+    """Return text with a character's bytes, decoded in separate pieces, decoded together again.
+
+    tree-sitter-bash can split a word inside a character it cannot read, such as a lone
+    surrogate's three bytes, and each piece then decodes to escaped bytes.
+    """
+    if not any("\ud800" <= character <= "\udfff" for character in text):
+        return text
+    return text.encode("utf-8", SHELL_TEXT_ERRORS).decode("utf-8", SHELL_TEXT_ERRORS)
 
 
 def _source_with_case_terminators_repaired(text, text_node_types, keep_first=False):
@@ -963,7 +1060,7 @@ def _heredoc_body_substitution_commands(body, glob_markers):
                 break
             # Inside backticks a backslash keeps $, ` and \ literal.
             inner = re.sub(r"\\([$`\\])", r"\1",
-                           source[index + 1:closing].decode("utf-8", "surrogatepass"))
+                           source[index + 1:closing].decode("utf-8", SHELL_TEXT_ERRORS))
             commands = _commands_read_again(commands, index, closing + 1, inner, glob_markers)
             index = closing + 1
         else:
@@ -1027,7 +1124,7 @@ def _simple_commands_in_a_new_process(command_text, glob_markers, runner=subproc
                          ensure_ascii=False)
     try:
         completed = runner([sys.executable, str(Path(__file__).resolve()), NEW_PROCESS_READ_FLAG],
-                           input=request.encode("utf-8", "surrogatepass"), capture_output=True,
+                           input=request.encode("utf-8", SHELL_TEXT_ERRORS), capture_output=True,
                            timeout=INSTALL_TIMEOUT_SECONDS)
     except (OSError, subprocess.SubprocessError) as error:
         raise ShellParserUnavailable(f"reading the command in a new process failed: {error}") \
@@ -1036,26 +1133,33 @@ def _simple_commands_in_a_new_process(command_text, glob_markers, runner=subproc
         raise ShellParserUnavailable(
             "reading the command in a new process failed: "
             + (completed.stderr.decode("utf-8", "replace").strip() or f"exit {completed.returncode}"))
+    read = json.loads(completed.stdout.decode("utf-8", SHELL_TEXT_ERRORS))
+    if isinstance(read, dict):
+        raise ShellCommandUnreadable(read["unreadable"])
     return [SimpleCommand(found["words"],
                           tuple(ChildShell(*shell) for shell in found["child_shell"]),
                           [tuple(pair) for pair in found["redirects"]],
                           [Heredoc(*heredoc) for heredoc in found["heredocs"]])
-            for found in json.loads(completed.stdout.decode("utf-8", "surrogatepass"))]
+            for found in read]
 
 
 NEW_PROCESS_READ_FLAG = "--read-command-on-standard-input"
 
 
 def _read_command_on_standard_input():
-    request = json.loads(sys.stdin.buffer.read().decode("utf-8", "surrogatepass"))
-    found = simple_commands(request["command"], request["glob_markers"])
+    request = json.loads(sys.stdin.buffer.read().decode("utf-8", SHELL_TEXT_ERRORS))
+    try:
+        found = simple_commands(request["command"], request["glob_markers"])
+    except ShellCommandUnreadable as error:
+        sys.stdout.buffer.write(json.dumps({"unreadable": error.install_output}).encode())
+        return
     sys.stdout.buffer.write(json.dumps([
         {"words": list(command),
          "child_shell": [list(shell) for shell in command.child_shell],
          "redirects": command.redirects,
          "heredocs": [(heredoc.body, heredoc.expanded, heredoc.delimiter)
                       for heredoc in command.heredocs]}
-        for command in found], ensure_ascii=False).encode("utf-8", "surrogatepass"))
+        for command in found], ensure_ascii=False).encode("utf-8", SHELL_TEXT_ERRORS))
 
 
 def _collect(root, glob_markers, source, heredocs_taken_out):
@@ -1143,10 +1247,10 @@ def _source_with_heredoc_bodies_taken_out(source, keep_first=False, edits=None):
         written = source[operator_start:delimiter_end]
         delimiter_as_written = source[delimiter_start:delimiter_end]
         taken[placeholder] = _HeredocTakenOut(
-            written.decode("utf-8", "surrogatepass"),
-            delimiter_as_written.decode("utf-8", "surrogatepass"), body,
+            written.decode("utf-8", SHELL_TEXT_ERRORS),
+            delimiter_as_written.decode("utf-8", SHELL_TEXT_ERRORS), body,
             not any(mark in delimiter_as_written for mark in (b"'", b'"', b"\\")),
-            source[body_end:resume].decode("utf-8", "surrogatepass"), index)
+            source[body_end:resume].decode("utf-8", SHELL_TEXT_ERRORS), index)
         replacement = b"<" + placeholder.encode()
         if edits is not None:
             edits.append((operator_start, delimiter_end - operator_start, len(replacement)))
@@ -1266,7 +1370,7 @@ def _with_heredocs_put_back(text, taken_out):
             text = text[:index] + taken.written + text[index + len(mark):]
             line_end = text.find("\n", index + len(taken.written))
             if line_end != -1:
-                text = (text[:line_end + 1] + taken.body.decode("utf-8", "surrogatepass")
+                text = (text[:line_end + 1] + taken.body.decode("utf-8", SHELL_TEXT_ERRORS)
                         + taken.ending + text[line_end + 1:])
             index = text.find(mark, index + len(taken.written))
     return text
@@ -1287,7 +1391,7 @@ def _follows_process_id(source, offset):
 
 
 # A comment may come between the terminator and esac.
-LAST_CASE_TERMINATOR_PATTERN = re.compile(rb";;?&((?:\s|#[^\n]*)*esac\b)")
+LAST_CASE_TERMINATOR_PATTERN = re.compile(rb";;?&((?:\s|#[^\n]*\n)*esac\b)")
 CASE_TERMINATOR_PATTERN = re.compile(rb";;?&")
 
 

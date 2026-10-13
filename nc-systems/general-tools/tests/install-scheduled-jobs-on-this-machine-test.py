@@ -1368,6 +1368,23 @@ with tempfile.TemporaryDirectory() as temporary:
         shell_reader.load_parser, shell_reader.STATE_DIRECTORY = real_load_parser, saved_state_directory
         shell_reader._parser = saved_parser
 
+    # A failure inside the shell reader stops this program the same way, naming the failure.
+    real_collect = shell_reader._collect
+
+    def failing_collect(*arguments, **keywords):
+        raise ValueError("injected")
+    shell_reader._collect = failing_collect
+    try:
+        stub = MachineStub(crontab=(BOX_MIRROR + "\n" + runs_directly + "\n").encode())
+        exit_code, printed, errors = run_main(["--remove-not-in-table"], NED_BOX, stub)
+    finally:
+        shell_reader._collect = real_collect
+    check("when the shell reader fails on a crontab line, --remove-not-in-table writes no crontab, "
+          "exits 2 and names the failure",
+          exit_code == 2 and stub.crontab_writes == [] and "ValueError: injected" in errors
+          and "reader failed on a crontab line" in errors,
+          (exit_code, printed, errors, stub.crontab_writes))
+
 print()
 if failures:
     print(f"{len(failures)} case(s) FAILED:")

@@ -186,16 +186,39 @@ check("each stage names the first stage of its own pipeline",
 bash_version = subprocess.run(["bash", "-c", "echo ${BASH_VERSINFO[0]}.${BASH_VERSINFO[1]}"],
                               capture_output=True, text=True).stdout.strip()
 ansi_c_words = [r"$'a\nb'", r"$'\t\x41\101\e\cA\c?'", r"$'it\'s \"x\" \?'", r"$'keep \q and \x and \u'",
-                r"$'nul\0after'", r"a$'\n'b", r"$'\c\\x'", r"$'\0101\x4142'", r"$'\a\b\f\r\v\E'"]
-# bash learned \u and \U in 4.2; the Mac's /bin/bash is 3.2.
-if tuple(int(part) for part in bash_version.split(".")) >= (4, 2):
-    ansi_c_words += [r"$'é\U0001F600☃x'"]
+                r"$'nul\0after'", r"a$'\n'b", r"$'\c\\x'", r"$'\0101\x4142'", r"$'\a\b\f\r\v\E'",
+                r"$'\xff\x80 \351 a\xc3 \0401'"]
+# bash writes \u and \U as UTF-8 only from 4.2 and in a UTF-8 locale; the Mac's /bin/bash is 3.2.
+bash_writes_unicode_escapes = subprocess.run(
+    ["bash", "-c", "printf %s $'\\u00e9'"], capture_output=True).stdout == "é".encode()
+if bash_writes_unicode_escapes:
+    ansi_c_words += [r"$'\u00e9\U0001F600\u2603x'", r"$'\U110000 \U7FFFFFFF a\UFFFFFFFFb \uD800\uDFFF'"]
 else:
-    print(f"SKIP  $'\\u...' cases: bash {bash_version} predates \\u")
+    print(f"SKIP  $'\\u...' cases: bash {bash_version} here does not write \\u as UTF-8 "
+          f"(bash before 4.2, or a locale that is not UTF-8)")
 for word in ansi_c_words:
     expected = subprocess.run(["bash", "-c", f"printf %s {word}"], capture_output=True).stdout
-    found = reader.simple_commands(f"printf %s {word}")[0][2].encode("utf-8", "surrogateescape")
+    found = reader.simple_commands(f"printf %s {word}")[0][2].encode("utf-8", reader.SHELL_TEXT_ERRORS)
     check(f"{word} is the word bash passes", found == expected, (found, expected))
+# A decoded word read again as a command keeps its bytes, whatever they are.
+for word in [r"$'\xe9; tmux send-keys -t g Enter'"] + (
+        [r"$'\U110000; tmux kill-server'", r"$'\uD800\xff; tmux kill-server'"]
+        if bash_writes_unicode_escapes else []):
+    inner = reader.simple_commands(f"sh -c {word}")[0][2]
+    again = reader.simple_commands(inner)
+    check(f"the decoded word {word} reads again as a command, bytes kept",
+          [list(f)[-1:] for f in again][-1] in (["Enter"], ["kill-server"])
+          and inner.encode("utf-8", reader.SHELL_TEXT_ERRORS)
+          == subprocess.run(["bash", "-c", f"printf %s {word}"], capture_output=True).stdout,
+          [list(f) for f in again])
+found = reader.simple_commands("echo \ud800x \udcff; tmux kill-server")
+check("a lone surrogate from a JSON payload, and a byte that is not UTF-8, keep their words",
+      [list(f) for f in found] == [["echo", "\ud800x", "\udcff"], ["tmux", "kill-server"]],
+      [list(f) for f in found])
+started = time.monotonic()
+reader.simple_commands("case x in x) :;& " + "#" * 60 + " y\nesac; case z in z) :;& " + "#" * 60)
+check("a run of # after a terminator is matched in linear time",
+      time.monotonic() - started < 2, time.monotonic() - started)
 found = reader.simple_commands("ssh h $'true\\ntmux kill-server'")
 check("an ANSI-C quoted remote command keeps its newline, so the command after it is seen",
       found[0][2] == "true\ntmux kill-server", list(found[0]))
@@ -822,6 +845,34 @@ with tempfile.TemporaryDirectory() as scratch:
     check("a new process that fails to read the command raises ShellParserUnavailable with its error",
           raised is not None and "no parser" in raised.install_output, raised)
 
+    # The reader failing in the new process reaches this process as ShellCommandUnreadable.
+    real_collect, real_stdin, real_stdout = reader._collect, sys.stdin, sys.stdout
+
+    def failing_collect(*arguments, **keywords):
+        raise ValueError("injected")
+
+    class Bytes:
+        def __init__(self, data=b""):
+            self.buffer = io.BytesIO(data)
+    child_out = Bytes()
+    reader._collect, sys.stdin, sys.stdout = (
+        failing_collect, Bytes(json.dumps({"command": "ls", "glob_markers": None}).encode()), child_out)
+    try:
+        reader._read_command_on_standard_input()
+    finally:
+        reader._collect, sys.stdin, sys.stdout = real_collect, real_stdin, real_stdout
+
+    def runner_answering(command, **kwargs):
+        return subprocess.CompletedProcess(command, 0, child_out.buffer.getvalue(), b"")
+    try:
+        reader._simple_commands_in_a_new_process("ls", None, runner_answering)
+        raised = None
+    except reader.ShellParserUnavailable as error:
+        raised = error
+    check("the reader failing in a new process raises ShellCommandUnreadable here, with the failure",
+          isinstance(raised, reader.ShellCommandUnreadable) and "ValueError: injected" in str(raised),
+          (raised, child_out.buffer.getvalue()))
+
     # A copy that imported but could not be used stays in sys.modules until it is forgotten.
     class CachedUnusableTreeSitter:
         @staticmethod
@@ -1056,6 +1107,28 @@ except r.ShellParserUnavailable as error:
             context = f"<{problem!r}: {stdout.getvalue()!r}>"
         check(f"with no parser, {relative} lets the command through and says it was not checked",
               code == 0 and context.startswith(guard_name + " let this command through"),
+              (code, context))
+
+    # A failure inside the reader reaches each guard as ShellCommandUnreadable, never as another
+    # error that would stop the guard.
+    for relative, guard_name in GUARDS:
+        guard = load(REPOSITORY_ROOT / relative, "guard_" + Path(relative).stem.replace("-", "_"))
+
+        def failing(*arguments, **keywords):
+            raise ValueError("injected")
+        guard.shell_reader._collect = failing
+        payload = {"tool_name": "Bash", "session_id": f"guard-{relative}", "cwd": scratch,
+                   "tool_input": {"command": "tmux kill-server; git push --force o b"}}
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            code = guard.main(stdin=io.StringIO(json.dumps(payload)))
+        try:
+            context = context_of(stdout.getvalue())
+        except (ValueError, KeyError, AssertionError) as problem:
+            context = f"<{problem!r}: {stdout.getvalue()!r}>"
+        check(f"when the reader fails inside, {relative} lets the command through and says so",
+              code == 0 and context.startswith(guard_name + " let this command through")
+              and "reader failed on it" in context and "ValueError: injected" in context,
               (code, context))
 
 if failures:

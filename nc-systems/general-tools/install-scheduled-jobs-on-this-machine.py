@@ -563,6 +563,12 @@ INTERPRETER_PROGRAM_NAME = re.compile(r"python[0-9.]*|bash|sh|dash|zsh|perl|ruby
 
 def shell_parser_refusal(error) -> Refusal:
     host = socket.gethostname().split(".")[0]
+    if isinstance(error, shell_reader.ShellCommandUnreadable):
+        return Refusal(
+            f"{PROGRAM}: not run — the shell command reader failed on a crontab line on {host} "
+            f"({error.install_output}). Nothing on this machine changed.",
+            "Tell the user, or, if you are a subagent, the agent that dispatched you, with the "
+            "failure quoted as it is.")
     install = (f"python3 -m pip install --user --break-system-packages "
                f"-r {shell_reader.REQUIREMENTS_FILE}")
     # The user sits at the Mac, and reaches ned-box over ssh.
