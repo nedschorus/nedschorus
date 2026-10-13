@@ -148,6 +148,13 @@ _uncommitted_work_snapshots_spec = importlib.util.spec_from_file_location(
 uncommitted_work_snapshots = importlib.util.module_from_spec(_uncommitted_work_snapshots_spec)
 _uncommitted_work_snapshots_spec.loader.exec_module(uncommitted_work_snapshots)
 
+_git_machine_readable_output_spec = importlib.util.spec_from_file_location(
+    "git_machine_readable_output_runner_and_parser_common",
+    Path(__file__).resolve().parents[2] / "nc-systems" / "general-tools"
+    / "git-machine-readable-output-runner-and-parser-common.py")
+git_machine_readable_output = importlib.util.module_from_spec(_git_machine_readable_output_spec)
+_git_machine_readable_output_spec.loader.exec_module(git_machine_readable_output)
+
 # The opening is an EMPTY_SUCCESSOR_MARKERS entry used to recognize a workless resume.
 RESUME_PROMPT_WHEN_A_SESSION_ENDED_WITHOUT_A_HANDOFF = (
     "This session was resumed by crash recovery (nedschorus#120): the "
@@ -183,6 +190,46 @@ HANDOFF_SUPERVISOR_WORKING_DIRECTORY_ENVIRONMENT_VARIABLE = (
     "NEDSCHORUS_HANDOFF_SUPERVISOR_WORKING_DIRECTORY"
 )
 HANDOFF_SUPERVISOR_SESSION_ID_ENVIRONMENT_VARIABLE = "NEDSCHORUS_HANDOFF_SUPERVISOR_SESSION_ID"
+
+# Claude Code (2.1.296) sets these for every command an agent-session runs, and they name that
+# agent-session. An agent that launches or recovers another agent-seat from its own shell would
+# otherwise hand them on: the new agent-session's commits name the wrong session, its messaging
+# points at the caller's socket, and an unattended caller's flag silences the new one's hooks.
+CLAUDE_CODE_AGENT_SESSION_IDENTITY_ENVIRONMENT_VARIABLE_NAMES = frozenset({
+    "CLAUDECODE",
+    "CLAUDE_PID",
+    "CLAUDE_EFFORT",
+    "CLAUDE_REMOTE_CONTROL_SESSION_NAME_PREFIX",
+    "CLAUDE_CODE_SESSION_ID",
+    "CLAUDE_CODE_CHILD_SESSION",
+    "CLAUDE_CODE_MESSAGING_SOCKET",
+    "CLAUDE_CODE_MESSAGING_TOKEN",
+    "CLAUDE_CODE_BRIDGE_SESSION_ID",
+    "CLAUDE_CODE_ENTRYPOINT",
+    "CLAUDE_CODE_EXECPATH",
+    "CLAUDE_CODE_SESSION_ATTENDED",
+})
+
+
+def handoff_supervisor_environment_copy_without_calling_agent_session_variables(environment) -> dict:
+    # The reincarnation variable is this project's own, set for a claude a program starts.
+    calling_only = {*CLAUDE_CODE_AGENT_SESSION_IDENTITY_ENVIRONMENT_VARIABLE_NAMES,
+                    "NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER"}
+    return {name: value for name, value in environment.items() if name not in calling_only}
+
+
+def agent_seat_launch_environment_without_calling_agent_session_tmux_and_supervisor_variables(environment) -> dict:
+    """Return the environment to start an agent-seat's launcher or tmux server with."""
+    # A new tmux server copies its starter's environment into every window, the after-exit shell
+    # included, so the caller's tmux and supervisor variables are dropped here too.
+    caller_only = {"TMUX", "TMUX_PANE",
+                   HANDOFF_SUPERVISOR_AGENT_NAME_ENVIRONMENT_VARIABLE,
+                   HANDOFF_SUPERVISOR_WORKING_DIRECTORY_ENVIRONMENT_VARIABLE,
+                   HANDOFF_SUPERVISOR_SESSION_ID_ENVIRONMENT_VARIABLE}
+    return {name: value
+            for name, value in handoff_supervisor_environment_copy_without_calling_agent_session_variables(
+                environment).items()
+            if name not in caller_only}
 
 # Heartbeat age serves login recovery and diagnostics; live ownership requires a process check.
 HEARTBEAT_INTERVAL_SECONDS = 10.0
@@ -381,13 +428,21 @@ def stamp_heartbeat(state_path: Path, state: dict) -> None:
 # Record presence distinguishes a supervised exit from a crash, even when the exit code is unknown.
 AGENT_EXIT_CODE_STATE_KEY = "agent_exit_code"
 AGENT_EXIT_RECORDED_AT_STATE_KEY = "agent_exit_recorded_at"
+# Set only when the supervisor stood the seat down at a dont-restart handoff, so a reader
+# can tell that stop from a later session's failure; the handoff file outlives both.
+AGENT_EXIT_REASON_STATE_KEY = "agent_exit_reason"
+AGENT_EXIT_REASON_STOPPED_AT_A_DONT_RESTART_HANDOFF = "dont-restart"
 
 
-def record_agent_exit_in_supervisor_state(state_path: Path, state: dict, exit_code) -> None:
+def record_agent_exit_in_supervisor_state(state_path: Path, state: dict, exit_code,
+                                          reason=None) -> None:
     # A signal exit code is negative; an adopted session's unknown code is None.
     state[AGENT_EXIT_CODE_STATE_KEY] = exit_code
     state[AGENT_EXIT_RECORDED_AT_STATE_KEY] = datetime.now(timezone.utc).isoformat(
         timespec="seconds")
+    # No reason to clear when reason is None: every launch and adoption clears it first.
+    if reason is not None:
+        state[AGENT_EXIT_REASON_STATE_KEY] = reason
     write_supervisor_state(state_path, state)
 
 
@@ -395,6 +450,11 @@ def clear_agent_exit_record_from_supervisor_state(state: dict) -> None:
     # Clear before launch or adoption so an old clean exit cannot mask a later crash.
     state.pop(AGENT_EXIT_CODE_STATE_KEY, None)
     state.pop(AGENT_EXIT_RECORDED_AT_STATE_KEY, None)
+    state.pop(AGENT_EXIT_REASON_STATE_KEY, None)
+
+
+def agent_exit_record_is_a_stop_at_a_dont_restart_handoff(state: dict) -> bool:
+    return state.get(AGENT_EXIT_REASON_STATE_KEY) == AGENT_EXIT_REASON_STOPPED_AT_A_DONT_RESTART_HANDOFF
 
 
 def agent_exit_record_from_supervisor_state(state: dict):
@@ -877,16 +937,25 @@ def overview_refresh_due_lines(working_directory: Path,
             working_directory, timeout=timeout)
         main_commit = overview_check_git_output(
             ["rev-parse", "--short", main_commit_full], working_directory, timeout=timeout)
-        listed = overview_check_git_output(
-            ["ls-tree", "-d", "--name-only", main_commit_full, "nc-systems/"],
-            working_directory, timeout=timeout)
+        # Bytes, so a directory name that is not valid UTF-8 is passed over below rather than stopping every system's check.
+        listed = git_machine_readable_output.run_git(
+            working_directory,
+            ["ls-tree", "-z", "-d", "--name-only", main_commit_full, "nc-systems/"],
+            timeout_seconds=timeout)
     except Exception as error:
         print(f"handoff-supervisor: overview check stopped: "
               f"{type(error).__name__}: {error}")
         return ()
     due = []
-    for system_directory in listed.splitlines():
+    for system_directory in git_machine_readable_output.nul_separated_fields(listed):
         system = system_directory.rsplit("/", 1)[-1]
+        # The reminder's commands take the name unquoted, and the mark script refuses any other name.
+        if not re.fullmatch(daily_overview_refresh_reminder_mark.SYSTEM_NAME_PATTERN, system):
+            printable = system.encode("utf-8", "surrogateescape").decode("utf-8", "backslashreplace")
+            print(f"handoff-supervisor: overview check for {printable} passed over: "
+                  f"the name does not match {daily_overview_refresh_reminder_mark.SYSTEM_NAME_PATTERN}, "
+                  f"the pattern daily-overview-refresh-reminder-mark.py accepts")
+            continue
         try:
             overview_path = SYSTEM_OVERVIEW_PATH_TEMPLATE.format(system=system)
             shown = subprocess.run(
@@ -1255,7 +1324,8 @@ def launch_agent_session(agent_command: str, session_id: str, working_directory:
         command += ["--append-system-prompt-file", appended_system_prompt_file]
     # The test stub reads the final argument as the prompt, so no flag may follow it.
     command.append(prompt)
-    session_environment = dict(os.environ)
+    # A supervisor started by hand from another agent's shell inherits that agent-session's variables.
+    session_environment = handoff_supervisor_environment_copy_without_calling_agent_session_variables(os.environ)
     session_environment[HANDOFF_SUPERVISOR_AGENT_NAME_ENVIRONMENT_VARIABLE] = handoff_supervisor_agent_name
     session_environment[HANDOFF_SUPERVISOR_WORKING_DIRECTORY_ENVIRONMENT_VARIABLE] = str(working_directory)
     session_environment[HANDOFF_SUPERVISOR_SESSION_ID_ENVIRONMENT_VARIABLE] = session_id
@@ -1574,12 +1644,14 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
                 if not sys.stdin.isatty():
                     print("handoff-supervisor: dont-restart, and no terminal to ask on; stopping")
                     state["consumed_counter"] = boot_counter
-                    record_agent_exit_in_supervisor_state(settings.state_path, state, None)
+                    record_agent_exit_in_supervisor_state(
+                        settings.state_path, state, None, reason=AGENT_EXIT_REASON_STOPPED_AT_A_DONT_RESTART_HANDOFF)
                     return 0
                 if input("handoff-supervisor: restart? y/n ").strip().lower() != "y":
                     print("handoff-supervisor: stopping at the agent's request")
                     state["consumed_counter"] = boot_counter
-                    record_agent_exit_in_supervisor_state(settings.state_path, state, None)
+                    record_agent_exit_in_supervisor_state(
+                        settings.state_path, state, None, reason=AGENT_EXIT_REASON_STOPPED_AT_A_DONT_RESTART_HANDOFF)
                     return 0
             generation += 1
             retiring_session_id = state.get(LAUNCHED_SESSION_ID_STATE_KEY)
@@ -1739,7 +1811,8 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
                 print("handoff-supervisor: stopping at the agent's request")
                 state["consumed_counter"] = counter_from(handoff_fields)
                 record_agent_exit_in_supervisor_state(settings.state_path, state,
-                                                      process.returncode)
+                                                      process.returncode,
+                                                      reason=AGENT_EXIT_REASON_STOPPED_AT_A_DONT_RESTART_HANDOFF)
                 return 0
 
         successor_session_id, ignition_plan = carry_over_to_successor(

@@ -44,6 +44,7 @@ Usage:
 import argparse
 import ast
 import difflib
+import importlib.util
 import json
 import os
 import re
@@ -53,6 +54,13 @@ import sys
 import traceback
 from pathlib import Path
 from urllib.parse import quote
+
+_git_output_spec = importlib.util.spec_from_file_location(
+    "git_machine_readable_output_runner_and_parser_common",
+    Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+    / "git-machine-readable-output-runner-and-parser-common.py")
+git_output = importlib.util.module_from_spec(_git_output_spec)
+_git_output_spec.loader.exec_module(git_output)
 
 REVIEW_TIER_ORDER = {"seat-alone": 0, "seat-and-codex": 1, "full-reviewer": 2}
 GITHUB_PULL_REQUEST_FIELDS = "number,title,url,state,author,headRefOid,baseRefName,mergeCommit"
@@ -540,12 +548,13 @@ def posting_rule_and_reason_for_author(author):
 
 
 def merged_tree_against_origin_main(repository, head):
-    result = run_git_in_repository(repository, "merge-tree", "--write-tree", "--name-only", "--no-messages", "origin/main", head)
+    result = run_git_in_repository(repository, "merge-tree", "--write-tree", "--name-only", "--no-messages", "-z", "origin/main", head)
     if result.returncode in (0, 1):
-        lines = result.stdout.splitlines()
-        if not lines or not is_full_commit_hash(lines[0]):
+        tree = result.stdout.split("\0", 1)[0]
+        if not is_full_commit_hash(tree):
             raise ValueError("git merge-tree did not return a tree hash")
-        return {"tree": lines[0], "conflicting_paths": [line for line in lines[1:] if line] if result.returncode == 1 else [], "error": None}
+        conflicting_paths = git_output.merge_tree_conflicted_names(result.stdout) if result.returncode == 1 else []
+        return {"tree": tree, "conflicting_paths": conflicting_paths, "error": None}
     return {"tree": None, "conflicting_paths": [], "error": first_output_line(result.stderr)}
 
 

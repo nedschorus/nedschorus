@@ -70,11 +70,6 @@ MAC_SURFACES = {
                         "scratch_trees": ["/tmp"]},
     "spellings": [["/private/tmp", "/tmp"]],
 }
-# Session transcripts, under projects/ and recovered/, are named by session ID: a name search cannot
-# find a file inside one, and the backup search the locator falls back on searches them.
-# The rest of the transcript mirror is searched, because its task lists, seat-briefs, CLAUDE.md
-# and handoffs outlive their originals. Keep the machine names aligned with
-# transcript-mirror-to-log-store.py's destinations.
 NED_BOX_SURFACES = {
     "machine": "ned-box",
     "surfaces": [
@@ -82,10 +77,7 @@ NED_BOX_SURFACES = {
          "roots": ["/home/nedlern/agents", "/home/nedlern/Projects",
                    "/tmp/claude-1000"],
          "git": True},
-        {"name": "log-store", "roots": ["/home/nedlern/nedschorus-logs"],
-         "prune": ["/home/nedlern/nedschorus-logs/transcripts/mac/projects",
-                   "/home/nedlern/nedschorus-logs/transcripts/ned-box/projects",
-                   "/home/nedlern/nedschorus-logs/transcripts/recovered"]},
+        {"name": "log-store", "roots": ["/home/nedlern/nedschorus-logs"]},
         {"name": "handoffs", "roots": ["/home/nedlern/.claude/handoffs"]},
     ],
     "this_repository": {"clones": ["/home/nedlern/Projects/nedschorus"],
@@ -333,7 +325,7 @@ def worktrees_listed_by(git_dir):
     # Git records worktree paths with symbolic links resolved.
     try:
         result = subprocess.run(
-            ["git", "--git-dir", git_dir, "worktree", "list", "--porcelain"],
+            ["git", "--git-dir", git_dir, "worktree", "list", "--porcelain", "-z"],
             capture_output=True,
             env=environment_without_git_redirecting_variables(),
             timeout=LOCAL_COMMAND_TIMEOUT_SECONDS)
@@ -342,9 +334,9 @@ def worktrees_listed_by(git_dir):
     if result.returncode != 0:
         lines = result.stderr.decode("utf-8", "replace").strip().splitlines()
         return [], lines[-1] if lines else "no message"
-    return [line[len("worktree "):] for line in
-            result.stdout.decode("utf-8", "surrogateescape").splitlines()
-            if line.startswith("worktree ")], None
+    # Parsed here, not by the shared git-output module: this file is sent over ssh alone.
+    return [os.fsdecode(field[len(b"worktree "):]) for field in result.stdout.split(b"\0")
+            if field.startswith(b"worktree ")], None
 
 
 def listed_worktrees_outside(layout, surfaces):
@@ -424,12 +416,9 @@ def git_blob_id(path: str, size: int):
     return digest.hexdigest()
 
 
-def find_command(directory, prune, stem, print_git_entries):
+def find_command(directory, stem, print_git_entries):
     """Build a find command for matching files and, when requested, Git entries."""
-    command = ["find", directory]
-    for path in prune:
-        command += ["-path", path, "-prune", "-o"]
-    command += ["-name", ".git", "-prune"]
+    command = ["find", directory, "-name", ".git", "-prune"]
     if print_git_entries:
         command += ["-print0"]
     command += ["-o", "("]
@@ -444,9 +433,8 @@ def find_command(directory, prune, stem, print_git_entries):
 def split_surface(surface, stem):
     """Return (directories to search, matching files, report) from a surface listing."""
     # Search child directories separately so slow roots can be searched in parallel.
-    prune = surface.get("prune", [])
     report = {"name": surface["name"], "roots": surface["roots"],
-              "absent": [], "prune": prune, "failures": []}
+              "absent": [], "failures": []}
     directories, files = [], []
     for root in surface["roots"]:
         if not os.path.isdir(root):
@@ -458,7 +446,6 @@ def split_surface(surface, stem):
             report["failures"].append(
                 f"{root} could not be listed: {error.strerror}")
             continue
-        # find tests its starting point too, so pruned roots need no separate handling.
         for entry in entries:
             try:
                 if entry.is_dir(follow_symlinks=False):
@@ -471,9 +458,9 @@ def split_surface(surface, stem):
     return directories, files, report
 
 
-def run_find(directory, prune, stem, print_git_entries):
+def run_find(directory, stem, print_git_entries):
     """Return (matching paths, Git entries, failure or None) for one directory."""
-    command = find_command(directory, prune, stem, print_git_entries)
+    command = find_command(directory, stem, print_git_entries)
     try:
         result = subprocess.run(command, capture_output=True,
                                 timeout=LOCAL_COMMAND_TIMEOUT_SECONDS)
@@ -632,8 +619,7 @@ def search_this_machine(machine_plan, stem, name, check_tracked=False):
             reports.append(report)
             file_paths += [(surface["name"], path) for path in files]
             for directory in directories:
-                future = pool.submit(run_find, directory,
-                                     surface.get("prune", []), stem,
+                future = pool.submit(run_find, directory, stem,
                                      surface.get("git", False))
                 pending[future] = (surface, report)
         for future in concurrent.futures.as_completed(pending):
@@ -928,12 +914,10 @@ def render(query, target, results, not_searched, elapsed):
             roots = ", ".join(
                 root + (" (absent)" if root in report["absent"] else "")
                 for root in report["roots"])
-            excepting = "".join(f", except {path}" for path in report["prune"])
             listed = report.get("listed_worktrees")
-            if listed:
-                excepting += (", and the worktree(s) the main clone lists "
-                              "outside them: " + ", ".join(listed))
-            lines.append(f"  {machine} {report['name']}: {roots}{excepting}")
+            listed_text = (", and the worktree(s) the main clone lists "
+                           "outside them: " + ", ".join(listed)) if listed else ""
+            lines.append(f"  {machine} {report['name']}: {roots}{listed_text}")
             failed += [f"{machine} {report['name']}: {failure}"
                        for failure in report["failures"]]
         git = result.get("git")

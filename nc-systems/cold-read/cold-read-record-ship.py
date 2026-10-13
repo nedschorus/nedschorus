@@ -282,6 +282,13 @@ in the nedschorus repository, which this machine also clones:
   head, one per commit, written by `scripts/pull-request-head-test-run.py`
 - `daily-memory-review-marks/` -- the daily memory review's started and done
   marks, written by `nc-systems/handoff/daily-memory-review-mark.py`
+- `handoff-agent-seat-died-without-session-handoff-restart-watcher/` -- each decision of ned-box's
+  crash watcher and the notices it showed the user, written by
+  `nc-systems/handoff/handoff-agent-seat-died-without-session-handoff-restart-watcher.py`
+- `uncommitted-work-snapshot-hook-real-claude-session-weekly-owner-checks/` -- each
+  machine's weekly check that the work-snapshot hook finds a real claude
+  session, written by
+  `nc-systems/handoff/uncommitted-work-snapshot-hook-real-claude-session-weekly-owner-check.py`
 
 To change this file, edit STORE_README in
 nc-systems/cold-read/cold-read-record-ship.py. The next shipment rewrites this file

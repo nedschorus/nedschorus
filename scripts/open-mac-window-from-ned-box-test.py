@@ -109,6 +109,25 @@ for words in (["tmux", "attach", "-t", "merge-lane-2"],
     check(f"round trip: the Mac opens a window running exactly these words on ned-box: {words!r}",
           result.returncode == 0 and opened == ["ssh", "-t", "--", "nedlern@ned-box", *words], (result.returncode, opened, result.stderr))
 
+result, sent, opened = run_caller(["--agent-seat", "merge-lane-2"], play_sshd=True)
+check("round trip: --agent-seat opens the Mac's own launch-claude-ubuntu window onto the seat, which reconnects",
+      result.returncode == 0 and opened is not None and len(opened) == 2
+      and opened[0].endswith("/launch-claude-ubuntu") and opened[1] == "merge-lane-2",
+      (result.returncode, opened, result.stderr))
+check("--agent-seat sends the open-agent-seat-window request",
+      sent is not None and sent[-1] == "open-agent-seat-window merge-lane-2", sent)
+
+for arguments in (["--agent-seat"], ["--agent-seat", "a", "b"], ["--agent-seat", "-v"], ["--agent-seat", "a;b"]):
+    result, sent, _ = run_caller(arguments)
+    check(f"--agent-seat with a name the Mac would refuse sends nothing: {arguments!r}",
+          result.returncode == 2 and sent is None, (result.returncode, sent, result.stderr))
+
+result, sent, _ = run_caller(["--agent-seat", "merge-lane-2"],
+                             ssh_body="echo 'ssh: connect to host 10.0.1.23 port 22: Operation timed out' >&2; exit 255")
+check("--agent-seat on an unreachable Mac names the cause first and the by-hand launcher",
+      result.returncode == 1 and result.stderr.splitlines()[0].startswith("open-mac-window-from-ned-box: could not reach the Mac")
+      and "scripts/launch-claude-ubuntu merge-lane-2" in result.stderr, result.stderr)
+
 print()
 if failures:
     print(f"{len(failures)} case(s) failed")

@@ -134,6 +134,8 @@ def run_dont_restart_without_a_terminal_case(workspace: Path):
           supervisor.agent_exit_record_from_supervisor_state(state) is not None
           and state.get(supervisor.AGENT_EXIT_CODE_STATE_KEY, "absent") is None,
           str(state))
+    check("dont-restart at boot records that the stop was at a dont-restart handoff",
+          supervisor.agent_exit_record_is_a_stop_at_a_dont_restart_handoff(state), str(state))
 
 
 def run_no_seat_recycle_refusal_case(workspace: Path):
@@ -251,7 +253,8 @@ def run_agent_exit_record_cases(workspace: Path):
           result.returncode == 0 and "no terminal to ask on; stopping" in result.stdout
           and state.get("consumed_counter") == 1
           and supervisor.agent_exit_record_from_supervisor_state(state) is not None
-          and state.get(supervisor.AGENT_EXIT_CODE_STATE_KEY) == -15,
+          and state.get(supervisor.AGENT_EXIT_CODE_STATE_KEY) == -15
+          and supervisor.agent_exit_record_is_a_stop_at_a_dont_restart_handoff(state),
           f"{state} {result.stdout[-300:]} {result.stderr[-300:]}")
 
     # --- In process: the paths a subprocess cannot reach -------------------
@@ -279,7 +282,8 @@ def run_agent_exit_record_cases(workspace: Path):
     supervisor.write_supervisor_state(settings.state_path, {
         "consumed_counter": None, "launched_session_id": "earlier-session", "generation": 2,
         supervisor.AGENT_EXIT_CODE_STATE_KEY: 0,
-        supervisor.AGENT_EXIT_RECORDED_AT_STATE_KEY: "2026-01-01T00:00:00+00:00"})
+        supervisor.AGENT_EXIT_RECORDED_AT_STATE_KEY: "2026-01-01T00:00:00+00:00",
+        supervisor.AGENT_EXIT_REASON_STATE_KEY: supervisor.AGENT_EXIT_REASON_STOPPED_AT_A_DONT_RESTART_HANDOFF})
     snapshots = []
     # No terminal, stated rather than inherited: exit code 9 is a death the
     # 2026-09-21 ruling resumes, and the no-terminal refusal is what
@@ -295,12 +299,14 @@ def run_agent_exit_record_cases(workspace: Path):
     check("EXIT RECORD: an earlier record is cleared from the state file before the launch",
           len(snapshots) == 1
           and supervisor.AGENT_EXIT_CODE_STATE_KEY not in snapshots[0]
-          and supervisor.AGENT_EXIT_RECORDED_AT_STATE_KEY not in snapshots[0],
+          and supervisor.AGENT_EXIT_RECORDED_AT_STATE_KEY not in snapshots[0]
+          and supervisor.AGENT_EXIT_REASON_STATE_KEY not in snapshots[0],
           str(snapshots))
     check("EXIT RECORD: and the launched session's own end is recorded afresh",
           supervisor.agent_exit_record_from_supervisor_state(state) is not None
           and state[supervisor.AGENT_EXIT_CODE_STATE_KEY] == 9
-          and state[supervisor.AGENT_EXIT_RECORDED_AT_STATE_KEY] != "2026-01-01T00:00:00+00:00",
+          and state[supervisor.AGENT_EXIT_RECORDED_AT_STATE_KEY] != "2026-01-01T00:00:00+00:00"
+          and not supervisor.agent_exit_record_is_a_stop_at_a_dont_restart_handoff(state),
           str(state))
 
     # Cleared at adoption too, and an adopted session's code is unknown — its
@@ -352,7 +358,29 @@ def run_agent_exit_record_cases(workspace: Path):
     check("EXIT RECORD: dont-restart answered n records the stopped session's code",
           state.get("consumed_counter") == 2
           and supervisor.agent_exit_record_from_supervisor_state(state) is not None
-          and state.get(supervisor.AGENT_EXIT_CODE_STATE_KEY) == -15,
+          and state.get(supervisor.AGENT_EXIT_CODE_STATE_KEY) == -15
+          and supervisor.agent_exit_record_is_a_stop_at_a_dont_restart_handoff(state),
+          str(state))
+
+    # dont-restart waiting at boot, answered n at the terminal: nothing launches, and
+    # the stop is recorded as one at a dont-restart handoff.
+    settings = settings_for("bootanswerednonlaunch")
+    supervisor.write_supervisor_state(settings.state_path, {"consumed_counter": 1})
+    settings.handoff_path.write_text(
+        "restart-counter: 2\nnext-step: stand down\ndont-restart: closing\n", encoding="utf-8")
+    launched = []
+    with supervisor_names_replaced(
+            launch_agent_session=lambda *arguments, **keywords: launched.append(1),
+            sync_working_branch_with_main=no_branch_sync,
+            input=lambda prompt: "n", stdin_isatty=True), \
+            contextlib.redirect_stdout(io.StringIO()):
+        supervisor.supervise_sessions(settings)
+    state = supervisor.read_supervisor_state(settings.state_path)
+    check("EXIT RECORD: dont-restart at boot answered n launches nothing and records a "
+          "dont-restart stop",
+          launched == [] and state.get("consumed_counter") == 2
+          and supervisor.agent_exit_record_from_supervisor_state(state) is not None
+          and supervisor.agent_exit_record_is_a_stop_at_a_dont_restart_handoff(state),
           str(state))
 
     # The dialog extraction fails, so no successor is launched: the stopped
@@ -372,7 +400,8 @@ def run_agent_exit_record_cases(workspace: Path):
     check("EXIT RECORD: a failed extraction records the stopped session, handoff unconsumed",
           state.get("consumed_counter") == 1
           and supervisor.agent_exit_record_from_supervisor_state(state) is not None
-          and state.get(supervisor.AGENT_EXIT_CODE_STATE_KEY) == -15,
+          and state.get(supervisor.AGENT_EXIT_CODE_STATE_KEY) == -15
+          and not supervisor.agent_exit_record_is_a_stop_at_a_dont_restart_handoff(state),
           str(state))
 
 

@@ -562,14 +562,17 @@ def run_repository_and_output_cases(fixture):
         check("posting rule for " + author, expected_text in plan["posting_rule"] and plan["author"] == author, plan)
 
     fixture.write_fixture_file("conflicting-example.txt", "pull request\n")
+    fixture.write_fixture_file("côté notes.md", "pull request\n")
     head = fixture.commit_fixture_changes("pull request conflict")
     fixture.git_command("checkout", "-q", "--detach", fixture.base_head)
     fixture.write_fixture_file("conflicting-example.txt", "main\n")
+    fixture.write_fixture_file("côté notes.md", "main\n")
     main_head = fixture.commit_fixture_changes("main conflict")
     fixture.git_command("update-ref", "refs/remotes/origin/main", main_head)
     fixture.configure_github_answers(head, live_base=main_head)
     plan = fixture.read_review_plan()
-    check("conflicting merged tree lists the path", plan["merged_tree"]["conflicting_paths"] == ["conflicting-example.txt"] and plan["merged_tree"]["error"] is None, plan)
+    check("conflicting merged tree lists each path as stored, a non-ASCII name with a space included",
+          plan["merged_tree"]["conflicting_paths"] == ["conflicting-example.txt", "côté notes.md"] and plan["merged_tree"]["error"] is None, plan)
 
     fixture.reset_fixture_to_base()
     fixture.write_fixture_file("scripts/example-program.py", BASELINE_FILE_CONTENTS["scripts/example-program.py"].replace('"old"', '"merged"'))

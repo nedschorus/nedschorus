@@ -83,6 +83,10 @@ NED_BOX_SESSION_DIALOGS_LINE = (
 NED_BOX_CLEAN_LINE = (
     "30 6 * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/scripts/"
     "clean-worktrees.py --remove >> /home/nedlern/.claude/daily-clean-worktrees.log 2>&1")
+NED_BOX_CRASH_RESTART_WATCHER_LINE = (
+    "* * * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/nc-systems/handoff/"
+    "handoff-agent-seat-died-without-session-handoff-restart-watcher.py >> "
+    "/home/nedlern/.claude/handoff-agent-seat-died-without-session-handoff-restart-watcher.log 2>&1")
 MAC_CLEAN_PLIST = {
     "Label": "com.nedschorus.daily-clean-worktrees",
     "ProgramArguments": ["/opt/homebrew/bin/python3",
@@ -93,6 +97,26 @@ MAC_CLEAN_PLIST = {
     "StartCalendarInterval": {"Hour": 6, "Minute": 30},
     "StandardOutPath": "/Users/el/.claude/daily-clean-worktrees.log",
     "StandardErrorPath": "/Users/el/.claude/daily-clean-worktrees.log",
+}
+# The weekly owner check of the work-snapshot hook in a real claude session, added after the daily jobs.
+NED_BOX_WEEKLY_LIVE_CHECK_LINE = (
+    "30 4 * * 0 /usr/bin/python3 /home/nedlern/Projects/nedschorus/nc-systems/handoff/"
+    "uncommitted-work-snapshot-hook-real-claude-session-weekly-owner-check.py >> "
+    "/home/nedlern/.claude/weekly-uncommitted-work-snapshot-hook-real-claude-session-owner-check.log "
+    "2>&1")
+MAC_WEEKLY_LIVE_CHECK_PLIST = {
+    "Label": "com.nedschorus.weekly-uncommitted-work-snapshot-hook-real-claude-session-owner-check",
+    "ProgramArguments": ["/opt/homebrew/bin/python3",
+                         "/Users/el/Projects/nedschorus/nc-systems/handoff/"
+                         "uncommitted-work-snapshot-hook-real-claude-session-weekly-owner-check.py"],
+    "EnvironmentVariables": {
+        "PATH": "/Users/el/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:"
+                "/usr/sbin:/sbin"},
+    "StartCalendarInterval": {"Weekday": 0, "Hour": 4, "Minute": 30},
+    "StandardOutPath":
+        "/Users/el/.claude/weekly-uncommitted-work-snapshot-hook-real-claude-session-owner-check.log",
+    "StandardErrorPath":
+        "/Users/el/.claude/weekly-uncommitted-work-snapshot-hook-real-claude-session-owner-check.log",
 }
 DOMAIN = f"gui/{os.getuid()}"
 
@@ -199,10 +223,16 @@ check("the Mac's daily worktree cleanup is a launchd job at 06:30, so a run miss
       clean["on"]["mac"]["scheduler"] == "launchd" and mac_clean_plist == MAC_CLEAN_PLIST
       and list(mac_clean_plist) == list(MAC_CLEAN_PLIST), mac_clean_plist)
 check("the table's jobs are the two typed by hand before this program, the daily worktree "
-      "cleanup and the session dialogs refresh, and no other",
+      "cleanup, ned-box's crash restart watcher, the weekly owner check of the work-snapshot "
+      "hook and the session dialogs refresh, and no other",
       sorted(real_jobs) == ["daily-clean-worktrees", "daily-full-test-run-of-main",
-                            "log-store-session-dialogs-refresh", "transcript-mirror-to-log-store"],
+                            "handoff-agent-seat-died-without-session-handoff-restart-watcher",
+                            "log-store-session-dialogs-refresh", "transcript-mirror-to-log-store",
+                            "weekly-uncommitted-work-snapshot-hook-real-claude-session-owner-check"],
       sorted(real_jobs))
+watcher = real_jobs["handoff-agent-seat-died-without-session-handoff-restart-watcher"]
+check("the crash restart watcher runs on ned-box only, every minute",
+      watcher["on"] == {"ned-box": {"scheduler": "cron", "schedule": "* * * * *"}}, watcher["on"])
 session_dialogs = real_jobs["log-store-session-dialogs-refresh"]
 check("the session dialogs refresh runs on ned-box alone, every 10 minutes, and its program "
       "documents the table's line",
@@ -218,26 +248,37 @@ check("every job's program is a file of this repository",
 mirror_documentation = (REPOSITORY_ROOT / mirror["program"]).read_text(encoding="utf-8")
 daily_documentation = (REPOSITORY_ROOT / daily["program"]).read_text(encoding="utf-8")
 clean_documentation = (REPOSITORY_ROOT / clean["program"]).read_text(encoding="utf-8")
+watcher_documentation = (REPOSITORY_ROOT / watcher["program"]).read_text(encoding="utf-8")
+weekly_live_check_documentation = (
+    REPOSITORY_ROOT / real_jobs["weekly-uncommitted-work-snapshot-hook-real-claude-session-owner-check"]
+    ["program"]).read_text(encoding="utf-8")
 check("the lines each program documents are the table's lines, and each names this installer",
       f"  Mac:     {MAC_MIRROR_LINE}\n" in mirror_documentation
       and f"  ned-box: {NED_BOX_MIRROR_LINE}\n" in mirror_documentation
       and f"    {NED_BOX_DAILY_LINE}\n" in daily_documentation
       and f"    {NED_BOX_CLEAN_LINE}\n" in clean_documentation
+      and f"    {NED_BOX_CRASH_RESTART_WATCHER_LINE}\n" in watcher_documentation
+      and f"    {NED_BOX_WEEKLY_LIVE_CHECK_LINE}\n" in weekly_live_check_documentation
       and all("nc-systems/general-tools/install-scheduled-jobs-on-this-machine.py" in text
-              for text in (mirror_documentation, daily_documentation, clean_documentation)))
+              for text in (mirror_documentation, daily_documentation, clean_documentation,
+                           watcher_documentation, weekly_live_check_documentation)))
 
 printed, errors = io.StringIO(), io.StringIO()
 stub = MachineStub()
 with redirect_stdout(printed), redirect_stderr(errors):
     exit_code = installer.main(["--print"], platform="linux", home=Path("/home/nedlern"), run=stub)
-check("--print as ned-box prints ned-box's four cron lines from the real table and runs nothing",
+check("--print as ned-box prints ned-box's six cron lines from the real table and runs nothing",
       exit_code == 0 and stub.commands == []
       and printed.getvalue().splitlines() == [
           "machine: ned-box (linux, /home/nedlern)",
           "transcript-mirror-to-log-store — cron line:", NED_BOX_MIRROR_LINE,
           "log-store-session-dialogs-refresh — cron line:", NED_BOX_SESSION_DIALOGS_LINE,
           "daily-full-test-run-of-main — cron line:", NED_BOX_DAILY_LINE,
-          "daily-clean-worktrees — cron line:", NED_BOX_CLEAN_LINE],
+          "daily-clean-worktrees — cron line:", NED_BOX_CLEAN_LINE,
+          "handoff-agent-seat-died-without-session-handoff-restart-watcher — cron line:",
+          NED_BOX_CRASH_RESTART_WATCHER_LINE,
+          "weekly-uncommitted-work-snapshot-hook-real-claude-session-owner-check — cron line:",
+          NED_BOX_WEEKLY_LIVE_CHECK_LINE],
       (exit_code, printed.getvalue(), errors.getvalue()))
 printed, errors = io.StringIO(), io.StringIO()
 with redirect_stdout(printed), redirect_stderr(errors):
@@ -245,9 +286,13 @@ with redirect_stdout(printed), redirect_stderr(errors):
 mac_printed = printed.getvalue()
 clean_heading = ("daily-clean-worktrees — launchd job, /Users/el/Library/LaunchAgents/"
                  "com.nedschorus.daily-clean-worktrees.plist:\n")
-daily_part, _, clean_part = mac_printed.partition(clean_heading)
-check("--print as the Mac prints the mirror's cron line and the two daily jobs' plists, and runs "
-      "nothing",
+weekly_heading = ("weekly-uncommitted-work-snapshot-hook-real-claude-session-owner-check — launchd job, "
+                  "/Users/el/Library/LaunchAgents/com.nedschorus.weekly-uncommitted-work-snapshot-"
+                  "hook-real-claude-session-owner-check.plist:\n")
+daily_part, _, clean_and_weekly_part = mac_printed.partition(clean_heading)
+clean_part, _, weekly_part = clean_and_weekly_part.partition(weekly_heading)
+check("--print as the Mac prints the mirror's cron line, the two daily jobs' plists and the weekly "
+      "owner check's plist, and runs nothing",
       exit_code == 0 and stub.commands == [] and clean_part.startswith("<?xml")
       and daily_part.startswith(
           "machine: mac (darwin, /Users/el)\ntranscript-mirror-to-log-store — cron line:\n"
@@ -255,7 +300,9 @@ check("--print as the Mac prints the mirror's cron line and the two daily jobs' 
           "LaunchAgents/com.nedschorus.daily-full-test-run-of-main.plist:\n<?xml")
       and plistlib.loads(daily_part[daily_part.index("<?xml"):].encode("utf-8"))
       == MAC_DAILY_PLIST
-      and plistlib.loads(clean_part.encode("utf-8")) == MAC_CLEAN_PLIST,
+      and plistlib.loads(clean_part.encode("utf-8")) == MAC_CLEAN_PLIST
+      and weekly_part.startswith("<?xml")
+      and plistlib.loads(weekly_part.encode("utf-8")) == MAC_WEEKLY_LIVE_CHECK_PLIST,
       (exit_code, mac_printed, errors.getvalue()))
 
 

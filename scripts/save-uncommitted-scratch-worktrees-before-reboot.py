@@ -75,6 +75,7 @@ clone could not be read.
 import argparse
 import datetime
 import hashlib
+import importlib.util
 import json
 import os
 import re
@@ -97,6 +98,13 @@ SSH_OPTIONS = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=10"]
 GIT_REDIRECTING_VARIABLES = ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY",
                              "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_COMMON_DIR")
 SEAT_COMPONENT = re.compile(r"^-(?:Users|home)-[^-]+-agents-(.+)$")
+_git_output_spec = importlib.util.spec_from_file_location(
+    "git_machine_readable_output_runner_and_parser_common",
+    Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+    / "git-machine-readable-output-runner-and-parser-common.py")
+git_output = importlib.util.module_from_spec(_git_output_spec)
+_git_output_spec.loader.exec_module(git_output)
+
 DIFF_NAME, TAR_NAME, MANIFEST_NAME = "changes.diff", "untracked.tar", "manifest.json"
 
 
@@ -115,16 +123,14 @@ def git(arguments, cwd, binary=False):
 
 
 def registered_worktrees(clone):
-    """Return one dict per worktree from `git worktree list --porcelain`."""
-    worktrees, current = [], {}
-    for line in git(["worktree", "list", "--porcelain"], clone).splitlines() + [""]:
-        if not line:
-            if current:
-                worktrees.append(current)
-            current = {}
-            continue
-        key, _, value = line.partition(" ")
-        current[key] = value if value else True
+    """Return one dict per worktree from `git worktree list --porcelain -z`."""
+    worktrees = []
+    for record in git_output.worktree_records(
+            git(["worktree", "list", "--porcelain", "-z"], clone, binary=True)):
+        worktree = {"worktree": record.path, "HEAD": record.head}
+        if record.branch is not None:
+            worktree["branch"] = record.branch
+        worktrees.append(worktree)
     return worktrees
 
 
@@ -157,7 +163,10 @@ def save_worktree(worktree, staging):
     """Write the diff, the untracked tar and the manifest into staging; return the manifest."""
     path = worktree["worktree"]
     staging.mkdir(parents=True)
-    status = git(["status", "--porcelain"], path)
+    status = [f"{entry.code} {entry.origin_path} -> {entry.path}" if entry.origin_path
+              else f"{entry.code} {entry.path}"
+              for entry in git_output.status_entries(
+                  git(["status", "--porcelain", "-z"], path, binary=True))]
     diff = git(["diff", "HEAD", "--binary", "--no-color"], path, binary=True)
     # git apply refuses an empty diff (exit 128), so an untracked-only save
     # writes none rather than one the restore step would trip on.
@@ -177,7 +186,7 @@ def save_worktree(worktree, staging):
               "sha256": sha256_of(staging / name)} for name in written]
     manifest = {"worktree": path, "branch": worktree.get("branch", "(detached)"),
                 "head": worktree.get("HEAD"), "seat": seat_of(path),
-                "status": status.splitlines(), "untracked_files": untracked,
+                "status": status, "untracked_files": untracked,
                 "nested_repositories": nested_repositories,
                 "diff_written": DIFF_NAME in written, "saved": saved}
     (staging / MANIFEST_NAME).write_text(json.dumps(manifest, indent=2) + "\n")

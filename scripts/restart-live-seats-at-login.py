@@ -21,11 +21,16 @@ there (the #116 design's window role; user-ruled 2026-09-14, box seats are
 not reconnected by hand): every login has lost the Mac's windows onto the
 box's seats, though the seats themselves run on. So on the Mac, after its
 own seats, a run asks the box over ssh which seats are alive and opens an
-iTerm window onto each, running launch-claude-ubuntu, which attaches. When
-the box does not answer — it may be rebooting too — the run retries for a
-bounded time and then reports the box's windows as missing, with the by-hand
-command, rather than opening nothing quietly. On the box this job does not
-exist: the box has no display.
+iTerm window onto each, running launch-claude-ubuntu, which attaches. A box
+seat that already has a window attached since the Mac booted gets no second
+one: recovery on the box opens a window on the Mac after each seat it brings
+up, and when the box restarts its seats while the Mac is logged in, that
+window can come first. When the box does not answer — it may be rebooting
+too — the run retries for a bounded time and then reports the box's windows
+as missing, with the by-hand command, rather than opening nothing quietly. On
+the box this job asks the Mac for no windows itself: recovery opens a window
+on the Mac after each seat it brings up, and a window that does not open
+makes this run exit nonzero, with the seat counted as come up.
 
 The rule, from docs/issues/116-fleet-survives-machine-restart-design.md
 § Ruled 2026-08-31 and its amendments:
@@ -190,14 +195,29 @@ BOX_QUERY_DEADLINE_SECONDS = 150.0
 BOX_QUERY_RETRY_SECONDS = 5.0
 # Seat homes exclude the fleet-anchor keep-alive session; after-exit shells still need windows.
 # The box launcher always uses ~/agents and reads no agents-root override.
-LIST_LIVE_BOX_SEATS_REMOTE_COMMAND = (
-    'for seat_socket_path in "${TMUX_TMPDIR:-/tmp}/tmux-$(id -u)"/*; do '
-    '[ -S "$seat_socket_path" ] || continue; '
-    'tmux -S "$seat_socket_path" list-sessions -F "#{session_name}" 2>/dev/null; '
-    'done | sort -u | while read -r seat_name; do '
-    '[ -d "$HOME/agents/$seat_name" ] && echo "$seat_name"; '
-    'done; true'
-)
+# A seat whose newest client attached at or after the Mac's boot already has a window from
+# this login; a client from before it is a window the reboot closed, whose ssh the box may
+# not have noticed yet, so it does not count.
+AGENT_SEAT_CLIENT_ATTACHED_SINCE_MAC_BOOT_LISTING_TEXT = "attached"
+
+
+def ned_box_running_agent_seats_list_command_marking_clients_attached_since_mac_boot(
+        mac_booted_at_epoch_seconds: int) -> str:
+    return (
+        'for seat_socket_path in "${TMUX_TMPDIR:-/tmp}/tmux-$(id -u)"/*; do '
+        '[ -S "$seat_socket_path" ] || continue; '
+        'tmux -S "$seat_socket_path" list-sessions -F "#{session_name}" 2>/dev/null '
+        '| while read -r seat_name; do '
+        'newest=$(tmux -S "$seat_socket_path" list-clients -t "=$seat_name" '
+        '-F "#{client_created}" 2>/dev/null | sort -n | tail -n 1); '
+        f'if [ "${{newest:-0}}" -ge {int(mac_booted_at_epoch_seconds)} ]; '
+        f'then echo "$seat_name {AGENT_SEAT_CLIENT_ATTACHED_SINCE_MAC_BOOT_LISTING_TEXT}"; '
+        'else echo "$seat_name"; fi; '
+        'done; '
+        'done | sort -u | while read -r seat_name attached; do '
+        '[ -d "$HOME/agents/$seat_name" ] && echo "$seat_name${attached:+ $attached}"; '
+        'done; true'
+    )
 
 
 def agent_box() -> str:
@@ -205,32 +225,52 @@ def agent_box() -> str:
     return os.environ.get("NEDSCHORUS_AGENT_BOX", "ned")
 
 
-def box_seat_query_command(box: str = None) -> list:
-    return ["ssh", *BOX_QUERY_SSH_OPTIONS, box or agent_box(), LIST_LIVE_BOX_SEATS_REMOTE_COMMAND]
+def box_seat_query_command(mac_booted_at: datetime, box: str = None) -> list:
+    return ["ssh", *BOX_QUERY_SSH_OPTIONS, box or agent_box(),
+            ned_box_running_agent_seats_list_command_marking_clients_attached_since_mac_boot(
+                int(mac_booted_at.timestamp()))]
 
 
-def ask_the_box_which_seats_are_alive(run=subprocess.run, deadline_seconds=BOX_QUERY_DEADLINE_SECONDS,
+def ned_box_agent_seat_listing_parse_into_needing_window_and_attached_since_mac_boot(listing: str):
+    """Return (seats to open a window onto, seats already attached since the Mac booted)."""
+    seats, already_attached = set(), set()
+    for line in listing.splitlines():
+        words = line.split()
+        if not words:
+            continue
+        if words[1:] == [AGENT_SEAT_CLIENT_ATTACHED_SINCE_MAC_BOOT_LISTING_TEXT]:
+            already_attached.add(words[0])
+        else:
+            seats.add(words[0])
+    # A seat listed on two sockets, one with a window, has its window.
+    return sorted(seats - already_attached), sorted(already_attached)
+
+
+def ask_the_box_which_seats_are_alive(mac_booted_at: datetime, run=subprocess.run,
+                                      deadline_seconds=BOX_QUERY_DEADLINE_SECONDS,
                                       retry_seconds=BOX_QUERY_RETRY_SECONDS, sleep=time.sleep,
                                       monotonic=time.monotonic):
-    """Return (seat names, detail), using None when the query fails."""
+    """Return (seats without a window, detail, seats already attached), seats None on failure."""
     started = monotonic()
     attempts = 0
     while True:
         attempts += 1
         try:
-            finished = run(box_seat_query_command(), stdout=subprocess.PIPE,
+            finished = run(box_seat_query_command(mac_booted_at), stdout=subprocess.PIPE,
                            stderr=subprocess.PIPE, text=True)
         except OSError as error:
-            return None, f"could not run ssh: {error}"
+            return None, f"could not run ssh: {error}", []
         if finished.returncode == 0:
-            return sorted({line.strip() for line in finished.stdout.splitlines()
-                           if line.strip()}), f"answered on attempt {attempts}"
+            seats, already_attached = (
+                ned_box_agent_seat_listing_parse_into_needing_window_and_attached_since_mac_boot(
+                    finished.stdout))
+            return seats, f"answered on attempt {attempts}", already_attached
         if finished.returncode != 255:
             return None, (f"the box answered with exit {finished.returncode}: "
-                          f"{finished.stderr.strip()}")
+                          f"{finished.stderr.strip()}"), []
         if monotonic() - started >= deadline_seconds:
             return None, (f"unreachable for {int(deadline_seconds)}s over {attempts} "
-                          f"attempt(s) (ssh exit 255: {finished.stderr.strip()})")
+                          f"attempt(s) (ssh exit 255: {finished.stderr.strip()})"), []
         sleep(retry_seconds)
 
 
@@ -257,16 +297,17 @@ def open_windows_onto_box_seats(seats, run=subprocess.run):
     return opened, reports
 
 
-def restore_box_windows(dry_run: bool, platform: str = sys.platform, run=subprocess.run,
-                        sleep=time.sleep, monotonic=time.monotonic):
-    """Return the attempted, answered, detail, seats, opened and reports fields."""
+def restore_box_windows(dry_run: bool, mac_booted_at: datetime, platform: str = sys.platform,
+                        run=subprocess.run, sleep=time.sleep, monotonic=time.monotonic):
+    """Return the attempted, answered, detail, seats, already_attached, opened and reports fields."""
     if platform != "darwin":
         return {"attempted": False}
-    seats, detail = ask_the_box_which_seats_are_alive(
-        run=run, deadline_seconds=0 if dry_run else BOX_QUERY_DEADLINE_SECONDS,
+    seats, detail, already_attached = ask_the_box_which_seats_are_alive(
+        mac_booted_at, run=run, deadline_seconds=0 if dry_run else BOX_QUERY_DEADLINE_SECONDS,
         sleep=sleep, monotonic=monotonic)
     outcome = {"attempted": True, "answered": seats is not None, "detail": detail,
-               "seats": seats, "opened": [], "reports": []}
+               "seats": seats, "already_attached": already_attached,
+               "opened": [], "reports": []}
     if seats and not dry_run:
         outcome["opened"], outcome["reports"] = open_windows_onto_box_seats(seats, run=run)
     return outcome
@@ -282,9 +323,11 @@ def recovery_command_for_seat(seat: str, handoff_directory: Path,
 
 
 def seat_came_up(exit_code, report: str) -> bool:
-    # A confirmed already-running supervisor counts as up even though no seat was launched.
-    return exit_code == 0 and not any(
-        marker in report for marker in recovery.SEAT_NOT_RECOVERED_REPORT_MARKERS)
+    # A confirmed already-running supervisor counts as up even though no seat was launched,
+    # and so does a seat whose window on the Mac did not open.
+    return (exit_code in (0, recovery.ALL_AGENT_SEATS_RECOVERED_BUT_MAC_WINDOW_OPEN_FAILED_EXIT_STATUS)
+            and not any(marker in report
+                        for marker in recovery.SEAT_NOT_RECOVERED_REPORT_MARKERS))
 
 
 def launch_seats_decided_restart(decisions, handoff_directory: Path,
@@ -338,7 +381,7 @@ def main(argv=None) -> int:
     else:
         launched, reports = launch_seats_decided_restart(decisions, arguments.handoff_dir)
     # Every Mac login loses the windows onto box seats, regardless of local seat verdicts.
-    box_windows = restore_box_windows(arguments.dry_run)
+    box_windows = restore_box_windows(arguments.dry_run, boot_at)
     recorded = None if arguments.dry_run else append_selection_to_run_log(
         arguments.handoff_dir, boot_at, anchor, anchor_is_the_stop, decisions, now,
         launched=launched, box_windows=box_windows)
@@ -385,11 +428,12 @@ def main(argv=None) -> int:
             print(f"  box {box}: did not answer ({box_windows['detail']}) — its windows are "
                   f"missing; when it is back, one window per seat by hand: "
                   f"{BOX_LAUNCHER_PATH} <seat>")
-        elif not box_windows["seats"]:
+        elif not box_windows["seats"] and not box_windows["already_attached"]:
             print(f"  box {box}: no live seats, so no windows to open")
         elif arguments.dry_run:
-            print(f"  box {box}: would open a window onto each live seat: "
-                  + ", ".join(box_windows["seats"]))
+            if box_windows["seats"]:
+                print(f"  box {box}: would open a window onto each live seat: "
+                      + ", ".join(box_windows["seats"]))
         else:
             for seat, opened, detail in box_windows["reports"]:
                 if opened:
@@ -398,6 +442,13 @@ def main(argv=None) -> int:
                     windows_not_opened.append(seat)
                     print(f"  box {box}: NO WINDOW onto {seat} — {detail}; by hand: "
                           f"{BOX_LAUNCHER_PATH} {seat}")
+        for seat in box_windows["already_attached"]:
+            print(f"  box {box}: {seat} already has a window attached since this Mac "
+                  "booted, so no other was opened")
+    # On the box, recovery opened each restarted seat's window on the Mac and reported
+    # one that did not open in that seat's line, printed above.
+    windows_not_opened += [seat for seat, came_up, report in reports
+                           if came_up and recovery.AGENT_SEAT_MAC_WINDOW_NOT_OPENED_REPORT_TEXT in report]
     did_not_come_back = [seat for seat, came_up, _ in reports if not came_up]
     if recorded is True:
         print(f"  recorded in {log_path}")

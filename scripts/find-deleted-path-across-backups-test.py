@@ -151,7 +151,7 @@ check("a dotfile still matches itself by suffix",
 git_dotfile = FakeRunner([
     ("rev-parse --git-dir", (0, ".git\n", "")),
     ("log --all --full-history -1 --format=%H", (0, "\n", "")),
-    ("--name-only", (0, "scripts/env\nREADME.md\n", "")),
+    ("--name-only", (0, "scripts/env\0README.md\0", "")),
     # scripts/env is alive and well in history; the fixture must let the
     # wrong match go all the way to a FOUND, or the case proves nothing.
     ("log --all --full-history --format=%H|%ad|%s", (0, "ba432e8e5|2026-08-20|add env\n", "")),
@@ -789,7 +789,7 @@ check("a git log that fails mid-search is UNAVAILABLE with git's words, not NOT 
 git_absent = FakeRunner([
     ("rev-parse --git-dir", (0, ".git\n", "")),
     ("log --all --full-history -1 --format=%H", (0, "\n", "")),
-    ("--name-only", (0, "docs/other.md\nREADME.md\n", "")),
+    ("--name-only", (0, "docs/other.md\0README.md\0", "")),
 ])
 report = finder.search_git("nowhere.md", "/repo", git_absent)
 check("git reports NOT FOUND when no ref ever had the path", report.status == NOT_FOUND)
@@ -907,6 +907,33 @@ with tempfile.TemporaryDirectory() as tmp:
     report = finder.search_git("/definitely/elsewhere/a/b.md", str(repo))
     check("real git: an absolute path outside the repository is UNAVAILABLE",
           report.status == UNAVAILABLE, "%s %s" % (report.status, report.lines))
+
+# git log --name-only without -z C-quotes a non-ASCII path, so a fragment of
+# it matched nothing and the git surface said NOT FOUND for a file it held.
+with tempfile.TemporaryDirectory() as tmp:
+    repo = Path(tmp, "non-ascii-repo")
+    repo.mkdir()
+    environment = dict(os.environ)
+    environment.pop("GIT_DIR", None)
+    environment.pop("GIT_WORK_TREE", None)
+
+    def fixture_git(*args):
+        subprocess.run(["git", "-C", str(repo), "-c", "commit.gpgsign=false", "-c", "user.name=fixture",
+                        "-c", "user.email=fixture@example.com"] + list(args),
+                       check=True, env=environment, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+    fixture_git("init", "-q", "-b", "main")
+    Path(repo, "docs", "notes").mkdir(parents=True)
+    Path(repo, "docs", "notes", "café.md").write_text("kept\n")
+    fixture_git("add", "-A")
+    fixture_git("commit", "-q", "-m", "add the notes")
+    fixture_git("rm", "-q", "docs/notes/café.md")
+    fixture_git("commit", "-q", "-m", "delete the notes")
+    report = finder.search_git("notes/café.md", str(repo))
+    check("real git: a fragment of a deleted non-ASCII path is FOUND",
+          report.status == FOUND and report.recovery
+          and report.recovery[0].endswith("docs/notes/café.md'"),
+          "%s %s %s" % (report.status, report.lines, report.recovery))
 
 # --------------------------------------------------------------------------
 # git reflog — commits no branch or tag reaches, which only a reflog names
@@ -2430,7 +2457,7 @@ check("exit 0 when a surface FOUND it", code == 0 and "Recoverable from: git." i
 mixed = FakeRunner([
     ("rev-parse --git-dir", (0, ".git\n", "")),
     ("log --all --full-history -1 --format=%H", (0, "\n", "")),
-    ("--name-only", (0, "docs/other.md\n", "")),
+    ("--name-only", (0, "docs/other.md\0", "")),
     ("ssh", (255, "", "ssh: connect to host ned-box port 22: No route to host\n")),
 ])
 code, text = run_main(["a/b.md", "--repo", "/repo", "--skip", "transcripts", "--skip", "timemachine",
@@ -2834,7 +2861,7 @@ check("condition 4 — an absolute path is a known path and does qualify",
 SPEAKS = [
     ("rev-parse --git-dir", (0, ".git\n", "")),
     ("log --all --full-history -1 --format=%H", (0, "\n", "")),
-    ("--name-only", (0, "docs/other.md\n", "")),
+    ("--name-only", (0, "docs/other.md\0", "")),
     DELETED_2026_08_13_NOON,
     ("tmutil destinationinfo", DESTINATION_INFO),
     ("diskutil info", DISKUTIL_MOUNTED),
@@ -2897,7 +2924,7 @@ check("... and the report names the rule as what carried it, not a warm credenti
 rule_installed_run = FakeRunner(RULE_INSTALLED + [
     ("rev-parse --git-dir", (0, ".git\n", "")),
     ("log --all --full-history -1 --format=%H", (0, "\n", "")),
-    ("--name-only", (0, "docs/other.md\n", "")),
+    ("--name-only", (0, "docs/other.md\0", "")),
     DELETED_2026_08_13_NOON,
 ])
 finder.build_report("docs/a/b.md", "/repo", "/nonexistent", "", "/snap", (),

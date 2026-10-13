@@ -159,6 +159,23 @@ def main():
               completed.returncode == 0 and "Other instructions.\n" in brief
               and INSTRUCTIONS not in brief, brief)
 
+        git(repository, "checkout", "-q", "topic")
+        git(repository, "mv", "scripts/thing.py", "scripts/thing renamed.py")
+        commit_file(repository, "docs/côté notes.md", "notes\n", "rename and a non-ASCII file")
+        rename_head = git(repository, "rev-parse", "HEAD")
+        git(repository, "checkout", "-q", "main")
+        completed = run_program(scratch, helpers, [{**fix_round, "tag": "7r3", "head": rename_head,
+                                                    "reviewed_before": fix_head}])
+        brief_file = helpers / "briefs" / "brief-7r3-mac-claude.md"
+        brief = brief_file.read_text() if brief_file.exists() else ""
+        check("a brief names a renamed file by both paths and a non-ASCII path as stored",
+              completed.returncode == 0
+              and ("- Files the new commit touches: `docs/côté notes.md` (+1/-0), "
+                   "`scripts/thing renamed.py` (renamed from `scripts/thing.py`, +0/-0).\n")
+              in brief,
+              f"exit {completed.returncode}\n{completed.stdout}{completed.stderr}"
+              f"\n--- brief ---\n{brief}")
+
         completed = run_program(scratch, helpers, [{**first_round, "tag": "8", "number": 8}])
         check("a pull request with no merged worktree exits 1, writing no brief",
               completed.returncode == 1 and "brief not composed" in completed.stderr

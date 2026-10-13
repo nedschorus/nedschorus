@@ -167,20 +167,24 @@ def main():
         author = scratch / "author"
         git(author, "checkout", "-q", "-b", "conflicting", main_commit)
         (author / "on-main.txt").write_text("the pull request's line\n")
-        git(author, "commit", "-q", "-am", "pull request 9 changes on-main.txt")
+        (author / "côté notes.md").write_text("the pull request's notes\n")
+        git(author, "add", "-A")
+        git(author, "commit", "-q", "-m", "pull request 9 changes on-main.txt")
         conflicting_head = git(author, "rev-parse", "HEAD")
         git(author, "checkout", "-q", "main")
         (author / "on-main.txt").write_text("main's later line\n")
-        git(author, "commit", "-q", "-am", "main changes on-main.txt")
+        (author / "côté notes.md").write_text("main's notes\n")
+        git(author, "add", "-A")
+        git(author, "commit", "-q", "-m", "main changes on-main.txt")
         later_main = git(author, "rev-parse", "HEAD")
         git(author, "push", "-q", str(scratch / "origin.git"), "main:refs/heads/main",
             "conflicting:refs/pull/9/head")
         git(checkout, "fetch", "-q", "origin")
         completed = run_program(helpers, checkout, "9", conflicting_head, later_main)
-        check("a head that conflicts with main exits 1, names the file and sends the "
-              "pull request back to its author",
+        check("a head that conflicts with main exits 1, names each file as stored, a "
+              "non-ASCII name with a space included, and sends the pull request back to its author",
               completed.returncode == 1 and "conflicts with main" in completed.stdout
-              and "on-main.txt" in completed.stdout
+              and "in: côté notes.md, on-main.txt\n" in completed.stdout
               and f"branch-conflict-check.py --head {conflicting_head} --pull-request 9"
               in completed.stdout
               and "back to its author" in completed.stdout,

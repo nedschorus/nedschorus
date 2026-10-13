@@ -13,6 +13,13 @@ PROGRAM = "stale-code-citation-check"
 SCRIPTS_DIRECTORY = pathlib.Path(__file__).resolve().parent
 REPOSITORY_ROOT = SCRIPTS_DIRECTORY.parent
 
+_git_machine_readable_output_spec = importlib.util.spec_from_file_location(
+    "git_machine_readable_output_runner_and_parser_common",
+    REPOSITORY_ROOT / "nc-systems" / "general-tools"
+    / "git-machine-readable-output-runner-and-parser-common.py")
+git_machine_readable_output = importlib.util.module_from_spec(_git_machine_readable_output_spec)
+_git_machine_readable_output_spec.loader.exec_module(git_machine_readable_output)
+
 EXIT_FINDINGS = 1
 EXIT_BAD_INVOCATION = 2
 
@@ -59,8 +66,10 @@ def load_md_drift_lint():
 
 
 def git_output(arguments, repository_root: pathlib.Path) -> str:
+    # surrogateescape: -z output carries each path's bytes as stored, which need not be UTF-8.
     completed = subprocess.run(["git", *arguments], cwd=str(repository_root),
-                               capture_output=True, text=True, check=False)
+                               capture_output=True, text=True, errors="surrogateescape",
+                               check=False)
     return completed.stdout
 
 
@@ -238,15 +247,16 @@ def changed_code_paths(base: str, repository_root: pathlib.Path, lint) -> dict:
                                   repository_root).strip()
     today = datetime.date.today().isoformat()
     moved_on_by_path = {}
-    for name in git_output(["diff", "--name-only", f"{base}...HEAD"],
-                           repository_root).split():
+    for name in git_machine_readable_output.nul_separated_fields(
+            git_output(["diff", "-z", "--name-only", f"{base}...HEAD"], repository_root)):
         if pathlib.PurePath(name).suffix in lint.CODE_SOURCE_EXTENSIONS:
             moved_on_by_path[name] = (
                 newest_commit_date_in_range(name, base, repository_root)
                 or head_commit_date)
-    for arguments in (["diff", "--name-only", "HEAD"],
-                      ["ls-files", "--others", "--exclude-standard"]):
-        for name in git_output(arguments, repository_root).split():
+    for arguments in (["diff", "-z", "--name-only", "HEAD"],
+                      ["ls-files", "-z", "--others", "--exclude-standard"]):
+        for name in git_machine_readable_output.nul_separated_fields(
+                git_output(arguments, repository_root)):
             if pathlib.PurePath(name).suffix in lint.CODE_SOURCE_EXTENSIONS:
                 moved_on_by_path[name] = today
     return moved_on_by_path

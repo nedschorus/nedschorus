@@ -13,8 +13,9 @@ the temporary directory:
     <layout>/scripts/git-client-side-hooks/pre-push
     <layout>/scripts/git-client-side-hooks-pre-push-conflict-check.py
     <layout>/scripts/branch-conflict-check.py
+    <layout>/nc-systems/general-tools/git-machine-readable-output-runner-and-parser-common.py
 So each case runs exactly what git runs on a seat's push. A case that needs
-the conflict check to misbehave puts a fake check at that last path, and
+the conflict check to misbehave puts a fake check at the check's path, and
 leaves the real one alone. No real repository's config is read or written:
 global and system git config are shut out, and every GIT_ variable is
 removed from each case's environment.
@@ -42,6 +43,8 @@ PRE_PUSH_HOOK = SCRIPTS_DIRECTORY / HOOK_DIRECTORY_NAME / "pre-push"
 PREPARE_COMMIT_MSG_HOOK = SCRIPTS_DIRECTORY / HOOK_DIRECTORY_NAME / "prepare-commit-msg"
 CONFLICT_CHECK_RUNNER = SCRIPTS_DIRECTORY / "git-client-side-hooks-pre-push-conflict-check.py"
 REAL_CONFLICT_CHECK = SCRIPTS_DIRECTORY / "branch-conflict-check.py"
+GIT_OUTPUT_MODULE_RELATIVE_PATH = Path(
+    "nc-systems/general-tools/git-machine-readable-output-runner-and-parser-common.py")
 
 TIME_BUDGET_VARIABLE = "NEDSCHORUS_PRE_PUSH_CONFLICT_CHECK_SECONDS"
 FAKE_CHECK_LOG_VARIABLE = "PRE_PUSH_TEST_FAKE_CHECK_LOG"
@@ -193,6 +196,9 @@ def make_layout(parent, name, conflict_check=REAL_CONFLICT_CHECK,
         shutil.copy2(CONFLICT_CHECK_RUNNER, runner)
     if isinstance(conflict_check, Path):
         shutil.copy2(conflict_check, scripts / REAL_CONFLICT_CHECK.name)
+        module = parent / name / GIT_OUTPUT_MODULE_RELATIVE_PATH
+        module.parent.mkdir(parents=True)
+        shutil.copy2(SCRIPTS_DIRECTORY.parent / GIT_OUTPUT_MODULE_RELATIVE_PATH, module)
     elif isinstance(conflict_check, str):
         (scripts / REAL_CONFLICT_CHECK.name).write_text(conflict_check)
     return hooks

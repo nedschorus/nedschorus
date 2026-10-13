@@ -155,6 +155,13 @@ _threshold_hook_spec = importlib.util.spec_from_file_location(
 threshold_hook = importlib.util.module_from_spec(_threshold_hook_spec)
 _threshold_hook_spec.loader.exec_module(threshold_hook)
 
+_git_output_spec = importlib.util.spec_from_file_location(
+    "git_machine_readable_output_runner_and_parser_common",
+    SCRIPT_DIRECTORY.parent / "nc-systems" / "general-tools"
+    / "git-machine-readable-output-runner-and-parser-common.py")
+git_output = importlib.util.module_from_spec(_git_output_spec)
+_git_output_spec.loader.exec_module(git_output)
+
 AGENT_BOX = os.environ.get("NEDSCHORUS_AGENT_BOX", "ned")
 DEFAULT_AGENTS_ROOT = Path(os.environ.get("NEDSCHORUS_AGENTS_ROOT", "~/agents")).expanduser()
 DEFAULT_SEAT_DIR = DEFAULT_AGENTS_ROOT / "ghi-info"
@@ -673,13 +680,13 @@ def fast_forward_seat_checkout(seat_dir: Path) -> str:
     if inside.returncode != 0 or inside.stdout.strip() != "true":
         return f"ghi-info-ask: {seat_dir} is not a git checkout; leaving it as it stands"
 
-    status = git(["status", "--porcelain"], timeout=30)
+    status = git(["status", "--porcelain", "-z"], timeout=30)
     if status.returncode != 0:
         # An unreadable tree reads as unsafe, never as clean — the same
         # silent-safety rule the freshness hook applies to the same question.
         return "ghi-info-ask: could not read the seat checkout's status; not refreshing it"
-    tracked_changes = [line for line in status.stdout.splitlines()
-                       if not line.startswith("??")]
+    tracked_changes = [entry for entry in git_output.status_entries(status.stdout)
+                       if entry.code != "??"]
     if tracked_changes:
         # ghi-info commits its own document-side link repairs and lands them
         # on main; work in progress here is real work, not debris.

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Open an iTerm window on this Mac, at ned-box's request, running ssh back to ned-box.
+"""Open an iTerm window on this Mac, at ned-box's request, running ssh back to ned-box or an agent-seat's launcher.
 
 This program is the forced command of one line in the Mac's
 ~/.ssh/authorized_keys, the line that admits ned-box's key. sshd runs it in
@@ -40,7 +40,24 @@ What the shape cannot express: shell syntax on ned-box (pipes, `;`, `$VAR`,
 globs), quoted words, words with spaces. A caller that needs those puts them in
 a script on ned-box and asks for a window running that script.
 
-THE SECOND ACCEPTED SHAPE, a file to open in Typora:
+THE SECOND ACCEPTED SHAPE, a window onto one of ned-box's agent-seats:
+
+    open-agent-seat-window <seat>
+
+- The verb is exactly `open-agent-seat-window`, followed by exactly one word,
+  the agent-seat's name, matching AGENT_SEAT_NAME_PATTERN: letters, digits,
+  `_` and `-`, not starting with `-`, at most 64 characters. These are the
+  names launch-claude-ubuntu accepts, so no request opens a window that its
+  launcher refuses at once.
+- The window runs this checkout's scripts/launch-claude-ubuntu <seat>, the
+  same window the Mac's login restore opens onto each live box seat. That
+  launcher reconnects when the ssh connection drops, which a window running
+  `ssh -t -- nedlern@ned-box tmux attach` does not.
+
+So the most this verb can do is open the window the user's own launcher opens
+onto a seat.
+
+THE THIRD ACCEPTED SHAPE, a file to open in Typora:
 
     open-in-typora <path>
 
@@ -83,6 +100,10 @@ from pathlib import Path
 
 PROGRAM = "mac-window-opened-for-ned-box-forced-command"
 REQUEST_VERB = "open-window"
+AGENT_SEAT_WINDOW_VERB = "open-agent-seat-window"
+# launch-claude-ubuntu refuses any other seat name; its test checks the two rules agree.
+AGENT_SEAT_NAME_PATTERN = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_-]{0,63}")
+LAUNCH_CLAUDE_UBUNTU_PATH = Path(__file__).with_name("launch-claude-ubuntu")
 SAFE_WORD_PATTERN = re.compile(r"[A-Za-z0-9_./:=@%+,-]+")
 MAXIMUM_WORD_COUNT = 32
 MAXIMUM_WORD_LENGTH = 256
@@ -140,6 +161,28 @@ def window_command_words(request):
 
 def window_command(command_words):
     return ["ssh", "-t", "--", NED_BOX_SSH_DESTINATION, *command_words]
+
+
+def agent_seat_window_seat_name(request):
+    """The agent-seat an open-agent-seat-window request names; raises RequestRefused."""
+    if request is None:
+        raise RequestRefused(
+            "no request: SSH_ORIGINAL_COMMAND is unset, so this login asked for an interactive shell, which this key is not allowed")
+    words = request.split(" ")
+    if words[0] != AGENT_SEAT_WINDOW_VERB:
+        raise RequestRefused(f"the request does not start with the verb {AGENT_SEAT_WINDOW_VERB!r}")
+    if len(words) != 2:
+        raise RequestRefused(
+            f"{AGENT_SEAT_WINDOW_VERB} takes exactly one agent-seat name, and the request has {len(words) - 1} words after the verb")
+    if not AGENT_SEAT_NAME_PATTERN.fullmatch(words[1]):
+        raise RequestRefused(
+            "the agent-seat name is empty, over 64 characters, starts with '-', "
+            "or holds a character other than letters, digits, _ and -")
+    return words[1]
+
+
+def agent_seat_window_command(seat):
+    return [str(LAUNCH_CLAUDE_UBUNTU_PATH), seat]
 
 
 def typora_path_on_ned_box(request, ned_box_home=NED_BOX_HOME):
@@ -242,13 +285,21 @@ def main():
     if request is not None and request.split(" ")[0] == TYPORA_VERB:
         return open_in_typora(request)
     try:
-        command_words = window_command_words(request)
+        if request is not None and request.split(" ")[0] == AGENT_SEAT_WINDOW_VERB:
+            command = agent_seat_window_command(agent_seat_window_seat_name(request))
+        else:
+            command = window_command(window_command_words(request))
     except RequestRefused as refusal:
         log_error = append_to_request_log("refused", request)
         print(f"{PROGRAM}: no window was opened, because {refusal}.", file=sys.stderr)
-        print(f"Send a request of the form: {REQUEST_VERB} <word> [<word> ...], each word made of letters, digits and _ . / : = @ % + , -", file=sys.stderr)
-        print("To open a file in Typora instead, run on ned-box: scripts/open-file-in-typora-on-mac-from-ned-box.py <path>", file=sys.stderr)
-        print("If the command needs shell syntax or quoted words, put it in a script on ned-box and ask for a window running that script.", file=sys.stderr)
+        if request is not None and request.split(" ")[0] == AGENT_SEAT_WINDOW_VERB:
+            print("To open an agent-seat's window, run on ned-box: scripts/open-mac-window-from-ned-box.py --agent-seat <seat>, "
+                  "naming one agent-seat.", file=sys.stderr)
+        else:
+            print(f"Send a request of the form: {REQUEST_VERB} <word> [<word> ...], each word made of letters, digits and _ . / : = @ % + , -", file=sys.stderr)
+            print("To open an agent-seat's window instead, run on ned-box: scripts/open-mac-window-from-ned-box.py --agent-seat <seat>", file=sys.stderr)
+            print("To open a file in Typora instead, run on ned-box: scripts/open-file-in-typora-on-mac-from-ned-box.py <path>", file=sys.stderr)
+            print("If the command needs shell syntax or quoted words, put it in a script on ned-box and ask for a window running that script.", file=sys.stderr)
         if log_error:
             print(f"The refusal could not be added to the request log {REQUEST_LOG_PATH} either: {log_error}", file=sys.stderr)
         return EXIT_REFUSED
@@ -258,7 +309,7 @@ def main():
         print("Every window ned-box opens on the Mac is logged first, so none opens unlogged. Tell the user this error.", file=sys.stderr)
         return EXIT_LOG_UNWRITABLE
     opener = os.environ.get("NEDSCHORUS_MAC_WINDOW_OPENER") or str(DEFAULT_WINDOW_OPENER)
-    result = subprocess.run(["/bin/sh", opener, *window_command(command_words)],
+    result = subprocess.run(["/bin/sh", opener, *command],
                             capture_output=True, text=True)
     if result.returncode != 0:
         log_error = append_to_request_log(f"opener-failed-{result.returncode}", request)
@@ -270,7 +321,7 @@ def main():
     log_error = append_to_request_log("opened", request)
     if result.stdout:
         sys.stdout.write(result.stdout)
-    print(f"{PROGRAM}: opened a window on the Mac running: {' '.join(window_command(command_words))}")
+    print(f"{PROGRAM}: opened a window on the Mac running: {' '.join(command)}")
     if log_error:
         print(f"{PROGRAM}: the window opened, but its outcome could not be added to the request log {REQUEST_LOG_PATH}: {log_error}", file=sys.stderr)
         print("Do not ask for the window again. Tell the user this error.", file=sys.stderr)

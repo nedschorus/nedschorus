@@ -30,6 +30,13 @@ SHELL_TOOL_NAME = "Bash"
 STATE_DIRECTORY = Path(tempfile.gettempdir()) / "new-shared-names-reminder-hook-state"
 SESSION_ID_SAFE_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
 LISTER_PATH = Path(__file__).resolve().parent / "new-shared-names-in-changed-files-list.py"
+
+_git_machine_readable_output_spec = importlib.util.spec_from_file_location(
+    "git_machine_readable_output_runner_and_parser_common",
+    Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+    / "git-machine-readable-output-runner-and-parser-common.py")
+git_machine_readable_output = importlib.util.module_from_spec(_git_machine_readable_output_spec)
+_git_machine_readable_output_spec.loader.exec_module(git_machine_readable_output)
 NAMING_PAGE_PATH = "docs/nedschorus-wiki/nedschorus-how-to-choose-a-name-for-files-code-and-glossary-terms.md"
 NAMING_FRESH_AGENT_NAME = "new-name-propose-and-check-fresh-agent"
 REPORTED_NAMES_FILE_NAME = "new-shared-names-reported.json"
@@ -75,7 +82,8 @@ def load_lister():
 def git_output(arguments, cwd: Path):
     try:
         finished = subprocess.run(["git", *arguments], cwd=str(cwd), capture_output=True,
-                                  text=True, check=False, timeout=GIT_CALL_TIMEOUT_SECONDS)
+                                  text=True, errors="surrogateescape", check=False,
+                                  timeout=GIT_CALL_TIMEOUT_SECONDS)
     except (OSError, ValueError, subprocess.TimeoutExpired):
         return None
     if finished.returncode != 0:
@@ -261,17 +269,17 @@ def worktree_fingerprint(checkout: Path):
     head = git_output(["rev-parse", "HEAD"], checkout)
     status = git_output(["status", "--porcelain", "--untracked-files=all"], checkout)
     diff = git_output(["diff", "HEAD"], checkout)
-    untracked = git_output(["ls-files", "--others", "--exclude-standard"], checkout)
+    untracked = git_output(["ls-files", "-z", "--others", "--exclude-standard"], checkout)
     if head is None or status is None or diff is None or untracked is None:
         return None
     parts = [head, status, diff]
-    for path in untracked.splitlines():
+    for path in git_machine_readable_output.nul_separated_fields(untracked):
         try:
             details = (checkout / path).stat()
         except OSError:
             continue
         parts.append(f"{path}\0{details.st_size}\0{details.st_mtime_ns}")
-    return hashlib.sha256("\n".join(parts).encode()).hexdigest()
+    return hashlib.sha256("\n".join(parts).encode("utf-8", "surrogateescape")).hexdigest()
 
 
 class BranchCheckFailure(Exception):

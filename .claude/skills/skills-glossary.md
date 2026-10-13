@@ -6,6 +6,7 @@ This page defines the system-terms of this project's skills: the terms they alon
 - **cold-read-fast-read** — one fast-clarify cold-read-cell on the fast cold-read-tier, run by `nc-systems/cold-read/cold-read-fast-read.py`; it is either the whole review or the step before a cold-read-full-run.
 - **cold-read-full-run** — the /cold-read skill's run of six cold-read-cells, four on the defect-hunt prompt and two on the terminology prompt, launched by `nc-systems/cold-read/cold-read-grid.py`.
 - **cold-read-record** — the directory holding the reports of one cold-read-full-run or cold-read-fast-read, a copy of its cold-read-target taken at launch, and, once its findings are triaged, `triage.md`; shipped to the log-store.
+- **cold-read-reviewer-test-case** — a document's first version, its corrected version, and the weighted list of the defects between them, kept frozen in `cold-read-reviewer-test-cases/` to score cold-read-cells.
 - **cold-read-target** — the document under review; a run that makes a cold-read-record copies it there at launch.
 - **cold-read-tier** — the label, `deep`, `second` or `fast`, that sets which model a cold-read-cell asks its agent-binary for, and at what reasoning effort.
 - **key-term** — in a cold-read-target, a term that is a project-term or a system-term, or should be one.

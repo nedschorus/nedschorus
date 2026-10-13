@@ -9,15 +9,12 @@ Every case works in a scratch clone with the programs copied into it, so the
 hook's own clone, and every ref written, is the scratch clone's. Git reads a
 scratch global config and no system config.
 
-The hook finds its owner by walking up to a process named claude. Both Linux
-and macOS name a process after the file it executes, so the suite stands one in
-with a binary named `claude`, trying in order: a copy of a shell; on macOS, that
-copy re-signed ad hoc, because macOS kills a copied system binary whose
-signature no longer holds; a small C program compiled with `cc`, which runs
-/bin/sh as its child; a copy of the Python binary. The cases that run the hook
-under it print SKIP, with what each candidate showed, only where none runs and
-is named claude.
-No case sends a signal: the stand-in ends when its stdin closes.
+The hook finds its owner by walking up its parent processes to one named
+claude. The cases run the hook's main() in this process, with that walk
+reading a fake /proc, so no binary named claude is needed; see
+FakeProcessTreeClaude. A real claude runs the hook once a week on each machine
+in nc-systems/handoff/uncommitted-work-snapshot-hook-real-claude-session-weekly-owner-check.py.
+No case sends a signal.
 
 Run: python3 nc-systems/handoff/tests/uncommitted-work-snapshots-test.py
 """
@@ -48,6 +45,8 @@ _fixture.remove_git_redirecting_environment_variables_from_this_process()
 MODULE_RELATIVE = Path("nc-systems/handoff/uncommitted-work-snapshots.py")
 HOOK_RELATIVE = Path("scripts/uncommitted-work-snapshot-hook.py")
 CLEANER_RELATIVE = Path("scripts/clean-worktrees.py")
+GIT_OUTPUT_MODULE_RELATIVE = Path(
+    "nc-systems/general-tools/git-machine-readable-output-runner-and-parser-common.py")
 
 
 def load(path, name):
@@ -97,196 +96,6 @@ GLOBAL_CONFIG.write_text(
 os.environ.update(HOME=str(HOME), GIT_CONFIG_GLOBAL=str(GLOBAL_CONFIG), GIT_CONFIG_NOSYSTEM="1")
 os.environ.pop("GIT_AUTHOR_NAME", None)
 
-# The stand-in for claude is a copy of a binary named claude: both Linux
-# (/proc/<pid>/comm) and macOS ps name a process after the file it executes, so
-# a shell script named claude would be named after its interpreter on macOS.
-CLAUDE_STAND_IN = SCRATCH / "bin" / "claude"
-CLAUDE_STAND_IN.parent.mkdir()
-# Each kind of stand-in: the script it runs under -c, with the hook's command as
-# its arguments, and a probe that prints a line and waits for stdin to close.
-# bash -c makes the first argument $0; python -c makes it sys.argv[1].
-CLAUDE_STAND_IN_SCRIPTS = {
-    "shell": (
-        'echo stand-in-ready\n'
-        'while read hook_input; do\n'
-        '  "$@" < "$hook_input"\n'
-        '  echo "hook-done $?"\n'
-        'done\n'),
-    "python": (
-        'import subprocess, sys\n'
-        'print("stand-in-ready", flush=True)\n'
-        'for line in sys.stdin:\n'
-        '    with open(line.strip()) as hook_input:\n'
-        '        exit_code = subprocess.run(sys.argv[2:], stdin=hook_input).returncode\n'
-        '    print(f"hook-done {exit_code}", flush=True)\n'),
-}
-# The compiled stand-in passes its arguments to /bin/sh, so it runs the shell's scripts.
-CLAUDE_STAND_IN_SCRIPTS["compiled"] = CLAUDE_STAND_IN_SCRIPTS["shell"]
-CLAUDE_STAND_IN_PROBES = {
-    "shell": "echo ready; read x",
-    "compiled": "echo ready; read x",
-    "python": "import sys; print('ready', flush=True); sys.stdin.readline()",
-}
-
-
-def copy_binary_as_claude_stand_in(source, destination):
-    """Copy the binary's bytes and make the copy executable.
-
-    The copy takes none of the source's metadata: macOS refuses to give a copy a
-    protected system binary's flags, so shutil.copy2 fails on /bin/bash there.
-    A failed earlier attempt can leave the destination unwritable, so it is
-    removed first.
-    """
-    destination = Path(destination)
-    destination.unlink(missing_ok=True)
-    shutil.copyfile(source, destination)
-    os.chmod(destination, 0o755)
-
-
-# Stays the parent of the shell it runs, so the hook's walk up the process tree
-# finds a process named claude; an exec would give the process the shell's name.
-CLAUDE_STAND_IN_C_SOURCE = r"""
-#include <errno.h>
-#include <spawn.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <sys/wait.h>
-
-extern char **environ;
-
-int main(int argc, char **argv) {
-    char **child_argv = calloc((size_t)argc + 1, sizeof(char *));
-    if (child_argv == NULL) {
-        perror("claude stand-in: calloc");
-        return 127;
-    }
-    child_argv[0] = "sh";
-    for (int i = 1; i < argc; i++) {
-        child_argv[i] = argv[i];
-    }
-    pid_t child;
-    int spawn_error = posix_spawn(&child, "/bin/sh", NULL, NULL, child_argv, environ);
-    if (spawn_error != 0) {
-        fprintf(stderr, "claude stand-in: posix_spawn /bin/sh failed: %d\n", spawn_error);
-        return 127;
-    }
-    int status;
-    while (waitpid(child, &status, 0) < 0) {
-        if (errno != EINTR) {
-            perror("claude stand-in: waitpid");
-            return 127;
-        }
-    }
-    if (WIFEXITED(status)) {
-        return WEXITSTATUS(status);
-    }
-    return 128 + WTERMSIG(status);
-}
-"""
-
-
-def compile_claude_stand_in(destination, compiler):
-    """Compile CLAUDE_STAND_IN_C_SOURCE to destination; raise OSError if cc fails."""
-    destination = Path(destination)
-    source = destination.parent / "claude-stand-in.c"
-    source.write_text(CLAUDE_STAND_IN_C_SOURCE)
-    destination.unlink(missing_ok=True)
-    result = subprocess.run([compiler, "-o", str(destination), str(source)],
-                            capture_output=True, text=True)
-    if result.returncode != 0:
-        raise OSError(f"{compiler} exited {result.returncode}: {result.stderr.strip()}")
-
-
-def copy_and_sign_claude_stand_in(source, destination, codesign):
-    """Copy the binary, then re-sign the copy ad hoc; raise OSError if codesign fails."""
-    copy_binary_as_claude_stand_in(source, destination)
-    result = subprocess.run([codesign, "--force", "-s", "-", str(destination)],
-                            capture_output=True, text=True)
-    if result.returncode != 0:
-        raise OSError(f"codesign exited {result.returncode}: {result.stderr.strip()}")
-
-
-def claude_stand_in_candidates(platform=sys.platform, which=shutil.which):
-    """Each candidate as (kind, label, prepare), in the order they are tried.
-
-    prepare(destination) puts the candidate binary at destination. The compiled
-    program runs the shell's scripts, so its kind's scripts are the shell's.
-    """
-    shells = []
-    for found in (which("bash"), "/bin/bash", which("sh"), "/bin/sh"):
-        if found and os.path.exists(found):
-            resolved = os.path.realpath(found)
-            if resolved not in shells:
-                shells.append(resolved)
-    candidates = [("shell", f"a copy of {shell}",
-                   lambda destination, shell=shell: copy_binary_as_claude_stand_in(
-                       shell, destination))
-                  for shell in shells]
-    codesign = which("codesign")
-    if platform == "darwin" and codesign:
-        candidates += [("shell", f"a copy of {shell} re-signed ad hoc",
-                        lambda destination, shell=shell: copy_and_sign_claude_stand_in(
-                            shell, destination, codesign))
-                       for shell in shells]
-    compiler = which("cc")
-    if compiler:
-        candidates.append(("compiled", f"a C program compiled with {compiler}",
-                           lambda destination: compile_claude_stand_in(destination, compiler)))
-    python = os.path.realpath(sys.executable)
-    candidates.append(("python", f"a copy of {python}",
-                       lambda destination: copy_binary_as_claude_stand_in(python, destination)))
-    return candidates
-
-
-def find_claude_stand_in(candidates=None, destination=CLAUDE_STAND_IN, launch=subprocess.Popen):
-    """Put each candidate at destination until one runs and is named claude.
-
-    launch starts the probe; a test passes a fake so it needs no binary that runs here.
-    Returns (kind, None) for the candidate that works, or (None, what was observed).
-    """
-    observed = []
-    for kind, label, prepare in (claude_stand_in_candidates() if candidates is None
-                                 else candidates):
-        try:
-            prepare(destination)
-            probe = launch([str(destination), "-c", CLAUDE_STAND_IN_PROBES[kind]],
-                           stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
-        except OSError as error:
-            observed.append(f"{label}: {error}")
-            continue
-        try:
-            ready = probe.stdout.readline().strip() == "ready"
-        except OSError:
-            ready = False
-        name, lookup_error = None, None
-        if ready:
-            try:
-                name = snapshots.process_command_name_and_parent(probe.pid)[0]
-            except (OSError, snapshots.WorkSnapshotError) as error:
-                lookup_error = error
-        probe.stdin.close()
-        probe.wait(timeout=30)
-        probe.stdout.close()
-        if name == snapshots.OWNER_PROCESS_COMMAND_NAME:
-            return kind, None
-        if not ready:
-            observed.append(f"{label} did not run (exit {probe.returncode})")
-        elif lookup_error is not None:
-            observed.append(f"{label} ran, but its process name could not be read: "
-                            f"{lookup_error}")
-        else:
-            observed.append(f"{label} is named {name!r}")
-    return None, "; ".join(observed) or "no candidate binary found"
-
-
-CLAUDE_STAND_IN_KIND, CLAUDE_STAND_IN_PROBLEM = find_claude_stand_in()
-CLAUDE_STAND_IN_WORKS = CLAUDE_STAND_IN_PROBLEM is None
-
-
-def stand_in_skip_reason():
-    return f"no claude stand-in that this platform names claude: {CLAUDE_STAND_IN_PROBLEM}"
-
-
 def dead_process_id():
     """The id of a process that has exited and been reaped, so no process has it."""
     gone = subprocess.Popen([sys.executable, "-c", "pass"])
@@ -317,7 +126,8 @@ def new_clone():
     git(SCRATCH, "init", "-q", "--bare", str(origin))
     main = base / "main"
     git(SCRATCH, "clone", "-q", str(origin), str(main))
-    for relative in (MODULE_RELATIVE, HOOK_RELATIVE, CLEANER_RELATIVE):
+    for relative in (MODULE_RELATIVE, HOOK_RELATIVE, CLEANER_RELATIVE,
+                     GIT_OUTPUT_MODULE_RELATIVE):
         (main / relative).parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(REPOSITORY_ROOT / relative, main / relative)
     (main / "tracked.txt").write_text("one\n")
@@ -334,52 +144,71 @@ def add_worktree(main, path, branch):
     return Path(path).resolve()
 
 
-class ClaudeStandIn:
-    """A process named claude that runs the clone's hook once per run_hook call."""
+# Above the largest process id Linux or macOS hands out.
+FAKE_HOOK_PARENT_PROCESS_ID = 2_000_000_001
+FAKE_HOOK_PROCESS_ID = 2_000_000_002
+
+
+class FakeProcessTreeClaude:
+    """Runs the clone's hook through its main(), in this process, as a session's claude would.
+
+    The hook finds its owner by walking up from its parent process to one
+    named claude. Here that walk reads a fake /proc in which this process's
+    parent leads, through this process, to a process named claude whose id is
+    a real helper process's, so the owner key and the owner's liveness are the
+    real platform's. The walk is the module's own function, given the fake
+    /proc. A real claude runs the hook once a week in
+    nc-systems/handoff/uncommitted-work-snapshot-hook-real-claude-session-weekly-owner-check.py.
+    """
 
     started = 0
 
-    def __init__(self, main, environment=None, binary=None, kind=None):
-        self.main = main
-        binary = binary or CLAUDE_STAND_IN
-        kind = kind or CLAUDE_STAND_IN_KIND
-        ClaudeStandIn.started += 1
-        self.inputs = SCRATCH / f"hook-inputs-{ClaudeStandIn.started}"
-        self.inputs.mkdir()
-        self.count = 0
+    def __init__(self, main, environment=None):
+        FakeProcessTreeClaude.started += 1
+        self.environment = environment or {}
         self.last_exit = None
-        self.process = subprocess.Popen(
-            [str(binary), "-c", CLAUDE_STAND_IN_SCRIPTS[kind],
-             "claude", sys.executable,
-             str(main / HOOK_RELATIVE)],
-            stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True,
-            env=dict(os.environ, **(environment or {})))
-        # Read only after the exec, so the owner key names the stand-in, not this process.
-        self.process.stdout.readline()
-        self.owner_key = snapshots.owner_key_of_process(self.process.pid)
+        # Lives until its stdin closes, so ending it sends no signal.
+        self.helper = subprocess.Popen([sys.executable, "-c", "import sys; sys.stdin.read()"],
+                                       stdin=subprocess.PIPE)
+        self.proc_root = SCRATCH / f"fake-proc-session-{FakeProcessTreeClaude.started}"
+        # The hook starts its walk at os.getppid(), which is 1 inside a test
+        # sandbox with its own process-ID space, where the walk would stop at
+        # once. So the fake tree stands that parent and this process in with
+        # ids above any real one.
+        fake_proc(self.proc_root, "0" * 32, {
+            FAKE_HOOK_PARENT_PROCESS_ID: ("python3", FAKE_HOOK_PROCESS_ID, 1),
+            FAKE_HOOK_PROCESS_ID: ("bash", self.helper.pid, 1),
+            self.helper.pid: ("claude", 1, 1)})
+        self.hook = load(main / HOOK_RELATIVE, f"hook_of_session_{FakeProcessTreeClaude.started}")
+        module = self.hook.load_snapshots_module()
+        real_walk = module.claude_owner_process_id
+        module.claude_owner_process_id = lambda start: real_walk(
+            FAKE_HOOK_PARENT_PROCESS_ID if start == os.getppid() else start,
+            str(self.proc_root), "linux")
+        self.hook.load_snapshots_module = lambda: module
+        self.owner_key = snapshots.owner_key_of_process(self.helper.pid)
 
     def run_hook(self, payload):
-        self.count += 1
-        path = self.inputs / f"{self.count}.json"
-        path.write_text(json.dumps(payload))
-        self.process.stdin.write(f"{path}\n")
-        self.process.stdin.flush()
-        output = []
-        while True:
-            line = self.process.stdout.readline()
-            if line.startswith("hook-done"):
-                self.last_exit = int(line.split()[1])
-                break
-            if not line:
-                break
-            output.append(line)
-        text = "".join(output).strip()
+        saved = {name: os.environ.get(name) for name in self.environment}
+        os.environ.update(self.environment)
+        output = io.StringIO()
+        real_stdin, real_stdout = sys.stdin, sys.stdout
+        sys.stdin, sys.stdout = io.StringIO(json.dumps(payload)), output
+        try:
+            self.last_exit = self.hook.main()
+        finally:
+            sys.stdin, sys.stdout = real_stdin, real_stdout
+            for name, value in saved.items():
+                if value is None:
+                    os.environ.pop(name, None)
+                else:
+                    os.environ[name] = value
+        text = output.getvalue().strip()
         return json.loads(text)["hookSpecificOutput"]["additionalContext"] if text else None
 
     def end(self):
-        self.process.stdin.close()
-        self.process.wait(timeout=30)
-        self.process.stdout.close()
+        self.helper.stdin.close()
+        self.helper.wait(timeout=30)
 
 
 def refs_of(main, owner_key=None):
@@ -407,8 +236,6 @@ def edit(path):
 
 def test_what_a_work_snapshot_holds():
     name = "a work-snapshot holds modified, deleted and new files, not ignored ones"
-    if not CLAUDE_STAND_IN_WORKS:
-        return skip(name, stand_in_skip_reason())
     main = new_clone()
     worktree = add_worktree(main, main / ".claude" / "worktrees" / "fork", "fork-branch")
     (worktree / "tracked.txt").write_text("two\n")
@@ -424,7 +251,7 @@ def test_what_a_work_snapshot_holds():
     index = Path(git(worktree, "rev-parse", "--path-format=absolute", "--git-path", "index"))
     index_before = index.read_bytes()
     head_before = git(worktree, "rev-parse", "HEAD")
-    claude = ClaudeStandIn(main, {"GIT_AUTHOR_NAME": "seat-one"})
+    claude = FakeProcessTreeClaude(main, {"GIT_AUTHOR_NAME": "seat-one"})
     message = claude.run_hook(edit(worktree / "tracked.txt"))
     check(message is None, "the hook says nothing when the work-snapshot is written", message)
     refs = refs_of(main, claude.owner_key)
@@ -473,15 +300,13 @@ def test_same_size_edit_in_the_index_second():
 
 def test_ref_names():
     name = "two worktrees with the same directory name get different refs; a space is legal"
-    if not CLAUDE_STAND_IN_WORKS:
-        return skip(name, stand_in_skip_reason())
     main = new_clone()
     first = add_worktree(main, main / ".claude" / "worktrees" / "a" / "same", "a-branch")
     second = add_worktree(main, main / ".claude" / "worktrees" / "b" / "same", "b-branch")
     spaced = add_worktree(main, main / ".claude" / "worktrees" / "with space", "spaced")
     for worktree in (first, second, spaced):
         (worktree / "tracked.txt").write_text("changed\n")
-    claude = ClaudeStandIn(main)
+    claude = FakeProcessTreeClaude(main)
     for worktree in (first, second, spaced):
         message = claude.run_hook(edit(worktree / "tracked.txt"))
         check(message is None, f"the hook wrote a work-snapshot for {worktree.name!r}", message)
@@ -492,12 +317,10 @@ def test_ref_names():
 
 def test_bash_commit_deletes_and_other_worktrees_follow():
     name = "a Bash call that commits everything deletes the ref"
-    if not CLAUDE_STAND_IN_WORKS:
-        return skip(name, stand_in_skip_reason())
     main = new_clone()
     fork = add_worktree(main, main / ".claude" / "worktrees" / "fork", "fork-branch")
     other = add_worktree(main, main / ".claude" / "worktrees" / "other", "other-branch")
-    claude = ClaudeStandIn(main)
+    claude = FakeProcessTreeClaude(main)
     (fork / "new.txt").write_text("work\n")
     claude.run_hook(bash(fork))
     fork_ref = snapshots.work_snapshot_ref(claude.owner_key, fork)
@@ -570,12 +393,10 @@ def test_operation_trailer():
 
 def test_hook_failure_is_reported():
     name = "a hook that cannot write reports it through additionalContext and exits 0"
-    if not CLAUDE_STAND_IN_WORKS:
-        return skip(name, stand_in_skip_reason())
     main = new_clone()
     worktree = add_worktree(main, main / ".claude" / "worktrees" / "fork", "fork-branch")
     (worktree / "tracked.txt").write_text("changed\n")
-    claude = ClaudeStandIn(main)
+    claude = FakeProcessTreeClaude(main)
     ref = snapshots.work_snapshot_ref(claude.owner_key, worktree)
     lock = Path(git(main, "rev-parse", "--path-format=absolute", "--git-common-dir")) / (
         ref + ".lock")
@@ -586,7 +407,6 @@ def test_hook_failure_is_reported():
           name, message)
     check(claude.last_exit == 0, "the hook exits 0 when it reports a failure",
           claude.last_exit)
-    check(claude.process.poll() is None, "the stand-in claude carried on after the failure")
     claude.end()
     hook = load(main / HOOK_RELATIVE, "hook_without_claude")
     hook.snapshots = hook.load_snapshots_module()
@@ -603,8 +423,6 @@ def test_hook_failure_is_reported():
 
 def test_other_repository_is_untouched():
     name = "an edit or a Bash call in another repository writes no work-snapshot there"
-    if not CLAUDE_STAND_IN_WORKS:
-        return skip(name, stand_in_skip_reason())
     main = new_clone()
     other = SCRATCH / f"unrelated-repository-{clone_count[0]}"
     git(SCRATCH, "init", "-q", str(other))
@@ -612,7 +430,7 @@ def test_other_repository_is_untouched():
     git(other, "add", "-A")
     git(other, "commit", "-q", "-m", "base")
     (other / "file.txt").write_text("two\n")
-    claude = ClaudeStandIn(main)
+    claude = FakeProcessTreeClaude(main)
     message = claude.run_hook(edit(other / "file.txt"))
     claude.run_hook(bash(other))
     claude.end()
@@ -620,6 +438,45 @@ def test_other_repository_is_untouched():
                      snapshots.WORK_SNAPSHOT_REF_PREFIX).split()
     check(other_refs == [] and refs_of(main) == [] and message is None, name,
           (other_refs, refs_of(main), message))
+
+
+def test_names_read_from_git_are_the_files_as_stored():
+    name = "changed files and repository discovery read git's output as stored, in any locale"
+    main = new_clone()
+    (main / "café notes.md").write_text("new\n")
+    git(main, "add", "-A")
+    git(main, "commit", "-q", "-m", "add the notes")
+    files = snapshots.changed_files(main, "HEAD")
+    check(files == [("A", "café notes.md")],
+          "changed_files names a non-ASCII path with a space as stored", files)
+    # A git that translates its messages unless LC_ALL=C, as git does where a
+    # translation is installed; ned-box has none installed.
+    stub_directory = SCRATCH / "translating-git-bin"
+    stub_directory.mkdir(exist_ok=True)
+    stub = stub_directory / "git"
+    stub.write_text("#!/bin/sh\n"
+                    f'if [ "$LC_ALL" = C ]; then exec {shutil.which("git")} "$@"; fi\n'
+                    f'{shutil.which("git")} "$@" 2>"{stub_directory}/stderr"\n'
+                    "code=$?\n"
+                    f"sed 's/not a git repository/kein Git-Repository/' \"{stub_directory}/stderr\" >&2\n"
+                    'exit "$code"\n')
+    stub.chmod(0o755)
+    outside = SCRATCH / "outside-every-repository-translated"
+    outside.mkdir(exist_ok=True)
+    path_before = os.environ["PATH"]
+    os.environ["PATH"] = f"{stub_directory}{os.pathsep}{path_before}"
+    try:
+        try:
+            found = snapshots.worktree_containing(outside)
+        except snapshots.WorkSnapshotError as error:
+            found = error
+        prompt = snapshots.first_prompt_text(outside, "seat-locale", SCRATCH / "handoffs-locale")
+    finally:
+        os.environ["PATH"] = path_before
+    check(found is None, "worktree_containing gives None outside any repository under a translating git",
+          found)
+    check(prompt == "", "first_prompt_text is empty outside any clone under a translating git",
+          prompt)
 
 
 def test_worktree_discovery_failure_is_reported():
@@ -663,6 +520,36 @@ def test_module_load_failure_is_reported():
 class FakePs:
     def __init__(self, returncode, stdout="", stderr=""):
         self.returncode, self.stdout, self.stderr = returncode, stdout, stderr
+
+
+def test_macos_owner_walk_reads_ps():
+    real_run_ps = snapshots.run_ps
+    tree = {300: "  200 /usr/bin/python3\n", 200: "  100 -bash\n",
+            100: "    1 /Users/el/.local/bin/claude\n"}
+    asked = []
+
+    def fake_run_ps(arguments):
+        asked.append(arguments)
+        process_id = int(arguments[-1])
+        return FakePs(0, tree[process_id]) if process_id in tree else FakePs(1)
+
+    try:
+        snapshots.run_ps = fake_run_ps
+        owner = snapshots.claude_owner_process_id(300, platform="darwin")
+        check(owner == 100 and asked[0] == ["-o", "ppid=,comm=", "-p", "300"],
+              "on macOS the owner walk reads each parent and command name from ps",
+              f"{owner} {asked}")
+        tree[200] = "  1 -bash\n"
+        check(snapshots.claude_owner_process_id(300, platform="darwin") is None,
+              "on macOS a walk that reaches process 1 without a claude finds no owner")
+        del tree[200]
+        try:
+            outcome = f"returned {snapshots.claude_owner_process_id(300, platform='darwin')}"
+        except snapshots.WorkSnapshotError:
+            outcome = "raised"
+        check(outcome == "raised", "on macOS a ps that cannot read a process raises", outcome)
+    finally:
+        snapshots.run_ps = real_run_ps
 
 
 def test_macos_ps_failure_is_not_a_dead_owner():
@@ -780,15 +667,13 @@ def test_owner_liveness():
 def test_live_and_dead_owners_listed():
     name = ("a dead owner's work-snapshot is listed when its worktree is gone or changed, "
             "not while the worktree still holds its changes")
-    if not CLAUDE_STAND_IN_WORKS:
-        return skip(name, stand_in_skip_reason())
     main = new_clone()
     kept = add_worktree(main, main / ".claude" / "worktrees" / "kept", "kept-branch")
     removed = add_worktree(main, main / ".claude" / "worktrees" / "removed", "removed-branch")
     changed = add_worktree(main, main / ".claude" / "worktrees" / "changed", "changed-branch")
     for worktree in (kept, removed, changed):
         (worktree / "new.txt").write_text("work\n")
-    claude = ClaudeStandIn(main, {"GIT_AUTHOR_NAME": "seat-two"})
+    claude = FakeProcessTreeClaude(main, {"GIT_AUTHOR_NAME": "seat-two"})
     for worktree in (kept, removed, changed):
         claude.run_hook(bash(worktree))
     handoffs = SCRATCH / "handoffs-listing"
@@ -1352,14 +1237,12 @@ def test_list_exits_nonzero_after_a_comparison_failure():
 
 def test_the_2026_10_05_loss_replayed():
     name = "the 2026-10-05 loss replayed: the restore brings both files back as a commit"
-    if not CLAUDE_STAND_IN_WORKS:
-        return skip(name, stand_in_skip_reason())
     main = new_clone()
     worktree = add_worktree(main, main / ".claude" / "worktrees" / "concurrency-step-1",
                             "concurrency-step-1")
     (worktree / "tracked.txt").write_text("edited by the fork\n")
     (worktree / "new-test.py").write_text("print('a new test')\n")
-    claude = ClaudeStandIn(main, {"GIT_AUTHOR_NAME": "seat-seven"})
+    claude = FakeProcessTreeClaude(main, {"GIT_AUTHOR_NAME": "seat-seven"})
     claude.run_hook(edit(worktree / "tracked.txt"))
     claude.run_hook(edit(worktree / "new-test.py"))
     claude.end()
@@ -1385,158 +1268,17 @@ def test_the_2026_10_05_loss_replayed():
         check(refs_of(main) == [], "step 4 deletes the ref")
 
 
-def test_stand_in_copy_takes_no_metadata():
-    name = "the claude stand-in is copied without the source's metadata"
-    source = SCRATCH / "protected-binary"
-    source.write_bytes(b"#!/bin/sh\necho copied\n")
-    destination = SCRATCH / "metadata-test" / "claude"
-    destination.parent.mkdir()
-    destination.write_text("left by a failed attempt\n")
-    destination.chmod(0o444)
-
-    def refuse(*arguments, **keywords):
-        raise PermissionError(1, "Operation not permitted")
-
-    real_copystat, real_chflags = shutil.copystat, getattr(os, "chflags", None)
-    shutil.copystat = refuse
-    if real_chflags is not None:
-        os.chflags = refuse
-    try:
-        copy_binary_as_claude_stand_in(source, destination)
-        copied = True
-    except OSError as error:
-        copied = error
-    finally:
-        shutil.copystat = real_copystat
-        if real_chflags is not None:
-            os.chflags = real_chflags
-    check(copied is True, name, f"{copied}")
-    check(destination.read_bytes() == source.read_bytes()
-          and destination.stat().st_mode & 0o777 == 0o755,
-          "the copy holds the source's bytes and is mode 755")
-
-
-def test_python_stand_in_runs_the_hook():
-    name = "a copy of the Python binary stands in for claude and runs the hook"
-    check(claude_stand_in_candidates()[-1][:2]
-          == ("python", f"a copy of {os.path.realpath(sys.executable)}"),
-          "the Python binary is the last stand-in candidate")
-    binary = SCRATCH / "python-stand-in" / "claude"
-    binary.parent.mkdir()
-    try:
-        copy_binary_as_claude_stand_in(os.path.realpath(sys.executable), binary)
-    except OSError as error:
-        return skip(name, f"the Python binary could not be copied: {error}")
-    main = new_clone()
-    worktree = add_worktree(main, main / ".claude" / "worktrees" / "py", "py-branch")
-    (worktree / "tracked.txt").write_text("python stand-in\n")
-    try:
-        claude = ClaudeStandIn(main, binary=binary, kind="python")
-    except (OSError, snapshots.WorkSnapshotError) as error:
-        return skip(name, f"the copied Python binary did not run as claude: {error}")
-    try:
-        command_name = snapshots.process_command_name_and_parent(claude.process.pid)[0]
-        if command_name != snapshots.OWNER_PROCESS_COMMAND_NAME:
-            return skip(name, f"a copy of the Python binary is named {command_name!r}")
-        claude.run_hook(edit(worktree / "tracked.txt"))
-        check(claude.last_exit == 0 and len(refs_of(main, claude.owner_key)) == 1, name,
-              f"exit {claude.last_exit}, refs {refs_of(main)}")
-    finally:
-        claude.end()
-
-
-def test_stand_in_candidate_order():
-    name = "stand-in candidates: shell copies, re-signed copies on macOS, compiled, Python"
-    tools = {"bash": "/bin/bash", "sh": "/bin/sh",
-             "codesign": "/usr/bin/codesign", "cc": "/usr/bin/cc"}
-    which = tools.get
-    shells = []
-    for shell in ("/bin/bash", "/bin/sh"):
-        if os.path.exists(shell) and os.path.realpath(shell) not in shells:
-            shells.append(os.path.realpath(shell))
-    on_macos = [label for _, label, _ in claude_stand_in_candidates("darwin", which)]
-    on_linux = [label for _, label, _ in claude_stand_in_candidates("linux", which)]
-    python = f"a copy of {os.path.realpath(sys.executable)}"
-    copies = [f"a copy of {shell}" for shell in shells]
-    check(on_macos == copies + [f"{copy} re-signed ad hoc" for copy in copies]
-          + ["a C program compiled with /usr/bin/cc", python], name, f"{on_macos}")
-    check(on_linux == copies + ["a C program compiled with /usr/bin/cc", python],
-          "off macOS no candidate is re-signed", f"{on_linux}")
-    without_tools = [label for _, label, _ in claude_stand_in_candidates(
-        "darwin", {"bash": "/bin/bash", "sh": "/bin/sh"}.get)]
-    check(without_tools == copies + [python],
-          "without codesign or cc those candidates are left out", f"{without_tools}")
-
-
-def test_stand_in_lookup_failure_is_named():
-    name = "a stand-in that ran but whose name could not be read says so"
-    destination = SCRATCH / "lookup-failure" / "claude"
-    candidates = [("shell", "a stand-in that reports ready", lambda target: None)]
-
-    class ReadyProbe:
-        """A probe that says ready and exits 0, whatever binary this platform can run."""
-
-        def __init__(self, *arguments, **keywords):
-            self.pid = os.getpid()
-            self.returncode = None
-            self.stdin = io.StringIO()
-            self.stdout = io.StringIO("ready\n")
-
-        def wait(self, timeout=None):
-            self.returncode = 0
-            return 0
-
-    def refuse(process_id, *arguments, **keywords):
-        raise snapshots.WorkSnapshotError("process lookup refused")
-
-    real_lookup = snapshots.process_command_name_and_parent
-    snapshots.process_command_name_and_parent = refuse
-    try:
-        kind, observed = find_claude_stand_in(candidates, destination, launch=ReadyProbe)
-    finally:
-        snapshots.process_command_name_and_parent = real_lookup
-    check(kind is None and observed == "a stand-in that reports ready ran, but its process "
-          "name could not be read: process lookup refused", name, f"{kind} {observed!r}")
-
-
-def test_compiled_stand_in_runs_the_hook():
-    name = "a C program compiled with cc stands in for claude and runs the hook"
-    compiler = shutil.which("cc")
-    if not compiler:
-        return skip(name, "no cc on PATH")
-    binary = SCRATCH / "compiled-stand-in" / "claude"
-    binary.parent.mkdir()
-    try:
-        compile_claude_stand_in(binary, compiler)
-    except OSError as error:
-        return check(False, name, f"the stand-in did not compile: {error}")
-    kind, observed = find_claude_stand_in(
-        [("compiled", "the compiled program", lambda target: None)], binary)
-    check(kind == "compiled", "the compiled stand-in runs and is named claude", observed)
-    main = new_clone()
-    worktree = add_worktree(main, main / ".claude" / "worktrees" / "cc", "cc-branch")
-    (worktree / "tracked.txt").write_text("compiled stand-in\n")
-    claude = ClaudeStandIn(main, binary=binary, kind="compiled")
-    try:
-        claude.run_hook(edit(worktree / "tracked.txt"))
-        check(claude.last_exit == 0 and len(refs_of(main, claude.owner_key)) == 1, name,
-              f"exit {claude.last_exit}, refs {refs_of(main)}")
-    finally:
-        claude.end()
-
-
 def main():
     try:
-        for case in (test_stand_in_copy_takes_no_metadata, test_stand_in_candidate_order,
-                     test_stand_in_lookup_failure_is_named, test_compiled_stand_in_runs_the_hook,
-                     test_python_stand_in_runs_the_hook,
-                     test_what_a_work_snapshot_holds, test_same_size_edit_in_the_index_second,
+        for case in (test_what_a_work_snapshot_holds, test_same_size_edit_in_the_index_second,
                      test_ref_names,
                      test_bash_commit_deletes_and_other_worktrees_follow,
                      test_overlapping_runs_end_on_the_final_state, test_operation_trailer,
                      test_hook_failure_is_reported, test_other_repository_is_untouched,
                      test_worktree_discovery_failure_is_reported,
+                     test_names_read_from_git_are_the_files_as_stored,
                      test_module_load_failure_is_reported, test_owner_liveness,
+                     test_macos_owner_walk_reads_ps,
                      test_macos_ps_failure_is_not_a_dead_owner,
                      test_live_and_dead_owners_listed, test_list_caps_and_failure,
                      test_supervisor_appends_the_list, test_restore_a_subset, test_cleaner,

@@ -14,6 +14,13 @@ PROGRAM = "dangling-path-citation-check"
 SCRIPTS_DIRECTORY = pathlib.Path(__file__).resolve().parent
 REPOSITORY_ROOT = SCRIPTS_DIRECTORY.parent
 
+_git_output_spec = importlib.util.spec_from_file_location(
+    "git_machine_readable_output_runner_and_parser_common",
+    REPOSITORY_ROOT / "nc-systems" / "general-tools"
+    / "git-machine-readable-output-runner-and-parser-common.py")
+git_output = importlib.util.module_from_spec(_git_output_spec)
+_git_output_spec.loader.exec_module(git_output)
+
 EXIT_FINDINGS = 1
 EXIT_BAD_INVOCATION = 2
 
@@ -68,9 +75,11 @@ def repository_paths_a_line_cites(line: str, citing_path: pathlib.Path, lint,
 
 
 def repository_root_directories(repository_root: pathlib.Path) -> tuple:
-    names = subprocess.run(["git", "ls-tree", "HEAD", "--name-only", "-d"],
-                           cwd=repository_root, capture_output=True, text=True, check=False)
-    return tuple(sorted(name for name in names.stdout.split() if name))
+    # surrogateescape here and below: -z output carries each path's bytes as stored, which need not be UTF-8.
+    names = subprocess.run(["git", "ls-tree", "-z", "HEAD", "--name-only", "-d"],
+                           cwd=repository_root, capture_output=True, text=True,
+                           errors="surrogateescape", check=False)
+    return tuple(sorted(git_output.nul_separated_fields(names.stdout)))
 
 
 def load_md_drift_lint():
@@ -109,7 +118,7 @@ def changed_lines_by_file(merge_base: str, repository_root: pathlib.Path) -> dic
             current = None
             continue
         if in_file_preamble and line.startswith("+++ "):
-            target = line[4:].strip()
+            target = git_output.patch_header_path(line[4:])
             current = None if target == "/dev/null" else target[2:] if target.startswith("b/") else target
             in_file_preamble = False
             continue
@@ -217,15 +226,19 @@ def findings_for_file(path: pathlib.Path, changed: set, lint, root_directories: 
 
 
 def name_status_rows_against_merge_base(merge_base: str, repository_root: pathlib.Path) -> list:
-    """Return tab-split name-status rows that carry paths."""
+    """Return name-status rows: [status, path], or [status, old path, new path]
+    for a rename or copy."""
     names = subprocess.run(
-        ["git", "diff", "--name-status", "--no-color", "--no-ext-diff", f"{merge_base}..HEAD"],
-        cwd=repository_root, capture_output=True, text=True, check=False)
+        ["git", "diff", "-z", "--name-status", "--no-color", "--no-ext-diff",
+         f"{merge_base}..HEAD"],
+        cwd=repository_root, capture_output=True, text=True, errors="surrogateescape",
+        check=False)
     if names.returncode != 0:
         fail_bad_invocation(f"git diff --name-status against {merge_base} failed: "
                             f"{names.stderr.strip() or names.returncode}")
-    return [fields for fields in (row.split("\t") for row in names.stdout.splitlines())
-            if len(fields) >= 2]
+    return [[entry.status, entry.origin_path, entry.path] if entry.origin_path is not None
+            else [entry.status, entry.path]
+            for entry in git_output.name_status_entries(names.stdout)]
 
 
 def paths_this_change_removed(name_status_rows: list, repository_root: pathlib.Path) -> list:
@@ -248,12 +261,13 @@ def ancestor_directories_of(relative: str) -> list:
 
 def directories_in_the_head_tree(repository_root: pathlib.Path) -> frozenset:
     # git mv can leave empty source directories on disk; HEAD gives the same answer in fresh and existing checkouts.
-    listed = subprocess.run(["git", "ls-tree", "-r", "-d", "--name-only", "HEAD"],
-                            cwd=repository_root, capture_output=True, text=True, check=False)
+    listed = subprocess.run(["git", "ls-tree", "-z", "-r", "-d", "--name-only", "HEAD"],
+                            cwd=repository_root, capture_output=True, text=True,
+                            errors="surrogateescape", check=False)
     if listed.returncode != 0:
         fail_bad_invocation(f"git ls-tree of HEAD failed: "
                             f"{listed.stderr.strip() or listed.returncode}")
-    return frozenset(name for name in listed.stdout.splitlines() if name)
+    return frozenset(git_output.nul_separated_fields(listed.stdout))
 
 
 def directories_this_change_emptied(removed_files: list, repository_root: pathlib.Path) -> list:
@@ -286,9 +300,10 @@ def files_that_might_name_a_removed_path(removed: list, repository_root: pathlib
         if not base_name:
             continue
         hits = subprocess.run(
-            ["git", "grep", "-l", "-I", "--no-color", "-F", base_name, "--", "."],
-            cwd=repository_root, capture_output=True, text=True, check=False)
-        candidates.update(row for row in hits.stdout.splitlines() if row)
+            ["git", "grep", "-z", "-l", "-I", "--no-color", "-F", base_name, "--", "."],
+            cwd=repository_root, capture_output=True, text=True, errors="surrogateescape",
+            check=False)
+        candidates.update(git_output.nul_separated_fields(hits.stdout))
     return candidates
 
 

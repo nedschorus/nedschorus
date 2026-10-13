@@ -5,9 +5,18 @@ GitHub can refuse a merge that git resolves cleanly, so a matching GitHub
 CONFLICTING verdict takes precedence. UNKNOWN is not evidence of a clean merge."""
 
 import argparse
+import importlib.util
 import subprocess
 import sys
 import time
+from pathlib import Path
+
+_git_output_spec = importlib.util.spec_from_file_location(
+    "git_machine_readable_output_runner_and_parser_common",
+    Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+    / "git-machine-readable-output-runner-and-parser-common.py")
+git_output = importlib.util.module_from_spec(_git_output_spec)
+_git_output_spec.loader.exec_module(git_output)
 
 DEFAULT_BASE = "origin/main"
 DEFAULT_FETCH_REMOTE = "origin"
@@ -71,18 +80,7 @@ def merge_tree_answer(base_hash, head_hash, runner=run):
     return runner(["git", "merge-tree", "--write-tree", "-z", base_hash, head_hash])
 
 
-def conflicted_paths(merge_tree_output):
-    """Return {path: set of index stages} for each conflicted path, in git's order."""
-    # With -z the tree hash comes first, then one "<mode> <object> <stage>\t<path>"
-    # field per conflicted stage, then an empty field before the messages.
-    stages = {}
-    for field in merge_tree_output.split("\0")[1:]:
-        meta, tab, path = field.partition("\t")
-        parts = meta.split(" ")
-        if not tab or len(parts) != 3:
-            break
-        stages.setdefault(path, set()).add(parts[2])
-    return stages
+conflicted_paths = git_output.merge_tree_conflicted_stages
 
 
 # merge-tree stages some conflicts under a path that is not the file's own, and

@@ -1,8 +1,8 @@
 ---
-issue: "[A small service on ned-box keeps one record of every agent-seat on both machines](https://github.com/nedschorus/nedschorus/issues/972)"
+issue: "[A small HTTP service with SQLite on ned-box keeps one record of every agent-seat on both machines](https://github.com/nedschorus/nedschorus/issues/972)"
 ---
 
-# A small service on ned-box keeps one record of every agent-seat on both machines
+# A small HTTP service with SQLite on ned-box keeps one record of every agent-seat on both machines
 
 This is a design. It proposes a small HTTP service on ned-box, in front of one SQLite database, that keeps one record of every agent-seat on both machines: which agent-seats exist, when each handoff-supervisor began and ended, how each agent-session ended where that was observed, which session-handoffs were written and consumed, and which restarts were attempted. Today four programs each answer part of that question from their own subset of about ten files, by their own rules. Nothing is installed or built yet. The user ruled every open point of this design in the approval-walk `agent-seat-database-on-ned-box-design-2026-10-02-3`, on 2026-10-03, and his rulings are written into the sections below. The next action is build-slice 1.
 

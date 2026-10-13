@@ -2,11 +2,14 @@
 """Open an iTerm window on the user's Mac that runs a command on ned-box.
 
 Usage, on ned-box: scripts/open-mac-window-from-ned-box.py <word> [<word> ...]
+               or: scripts/open-mac-window-from-ned-box.py --agent-seat <seat>
 
 for example `scripts/open-mac-window-from-ned-box.py tmux -L merge-lane-2 attach -t merge-lane-2`,
 which attaches to that agent-seat on its own tmux server.
 The Mac opens a window running `ssh -t -- nedlern@ned-box <word> ...`, so the
-user sees the command's output on his own screen.
+user sees the command's output on his own screen. With --agent-seat, the Mac
+instead opens the window its own scripts/launch-claude-ubuntu <seat> opens,
+which reconnects to the seat when the connection drops.
 
 The request goes over ssh with the key ~/.ssh/id_ed25519_mac_side_action. The
 Mac admits that key for one forced command only,
@@ -98,12 +101,31 @@ def send_request_to_mac(request, forced_command, program=PROGRAM, not_done="no w
     return EXIT_OPENED if result.returncode == 0 else EXIT_NOT_OPENED
 
 
+def agent_seat_window_request_for(seat, forced_command):
+    request = f"{forced_command.AGENT_SEAT_WINDOW_VERB} {seat}"
+    forced_command.agent_seat_window_seat_name(request)
+    return request
+
+
 def main(arguments):
     if not arguments:
-        print(f"usage: {PROGRAM} <word> [<word> ...]", file=sys.stderr)
-        print("Opens a window on the user's Mac running ssh -t -- nedlern@ned-box <word> ...", file=sys.stderr)
+        print(f"usage: {PROGRAM} <word> [<word> ...]  or  {PROGRAM} --agent-seat <seat>", file=sys.stderr)
+        print("Opens a window on the user's Mac running ssh -t -- nedlern@ned-box <word> ..., "
+              "or the Mac's launch-claude-ubuntu <seat>", file=sys.stderr)
         return EXIT_USAGE_OR_REFUSED
     forced_command = load_forced_command_module()
+    if arguments[0] == "--agent-seat":
+        if len(arguments) != 2:
+            print(f"{PROGRAM}: --agent-seat takes exactly one agent-seat name; no request was sent.", file=sys.stderr)
+            return EXIT_USAGE_OR_REFUSED
+        try:
+            request = agent_seat_window_request_for(arguments[1], forced_command)
+        except forced_command.RequestRefused as refusal:
+            print(f"{PROGRAM}: no request was sent, because {refusal}.", file=sys.stderr)
+            return EXIT_USAGE_OR_REFUSED
+        by_hand = (f"that the window opens by hand on the Mac with scripts/launch-claude-ubuntu "
+                   f"{arguments[1]} in the user's clone there")
+        return send_request_to_mac(request, forced_command, fallback=by_hand, timeout_fallback=by_hand)
     try:
         request = request_for(arguments, forced_command)
     except forced_command.RequestRefused as refusal:

@@ -323,6 +323,13 @@ _locator_spec = importlib.util.spec_from_file_location(
 locator = importlib.util.module_from_spec(_locator_spec)
 _locator_spec.loader.exec_module(locator)
 
+_git_output_spec = importlib.util.spec_from_file_location(
+    "git_machine_readable_output_runner_and_parser_common",
+    Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+    / "git-machine-readable-output-runner-and-parser-common.py")
+git_output = importlib.util.module_from_spec(_git_output_spec)
+_git_output_spec.loader.exec_module(git_output)
+
 PRINTED_GIT_INVOCATION_WITHOUT_REDIRECTING_VARIABLES = locator.PRINTED_GIT_INVOCATION_WITHOUT_REDIRECTING_VARIABLES
 
 FOUND = "FOUND"
@@ -799,19 +806,18 @@ def _git_candidate_paths(wanted, repo, runner, revisions=GIT_REVISIONS_EVERY_REF
         return [wanted]
 
     code, out, stderr = runner(
-        ["git", "-C", repo, "log"] + list(revisions) + ["--full-history", "--name-only", "--format="],
+        ["git", "-C", repo, "log"] + list(revisions) + ["--full-history", "--name-only", "--format=", "-z"],
         timeout=LONG_TIMEOUT_SECONDS,
     )
     if code != 0:
         # An empty list would falsely report NOT FOUND when git did not complete the search.
         raise _GitCommandFailed(stderr.strip() or "git log --name-only exited %s" % code)
     seen = []
-    for line in out.splitlines():
-        line = line.strip()
-        if not line or line in seen:
+    for path in git_output.nul_separated_fields(out):
+        if path in seen:
             continue
-        if path_matches(line, wanted):
-            seen.append(line)
+        if path_matches(path, wanted):
+            seen.append(path)
     return seen
 
 

@@ -31,6 +31,12 @@ _common_spec = importlib.util.spec_from_file_location(
 common = importlib.util.module_from_spec(_common_spec)
 _common_spec.loader.exec_module(common)
 run_all_test_suites = common.run_all_test_suites
+_git_output_spec = importlib.util.spec_from_file_location(
+    "git_machine_readable_output_runner_and_parser_common",
+    Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+    / "git-machine-readable-output-runner-and-parser-common.py")
+git_output = importlib.util.module_from_spec(_git_output_spec)
+_git_output_spec.loader.exec_module(git_output)
 
 
 class GitStepFailed(Exception):
@@ -84,11 +90,12 @@ def main(argv=None):
             git(merged_worktree, *MERGE_COMMIT_IDENTITY, "merge", "-q", "--no-edit", "--no-ff",
                 arguments.head_commit)
         except GitStepFailed:
-            conflicted = git(merged_worktree, "diff", "--name-only", "--diff-filter=U")
+            conflicted = git_output.nul_separated_fields(
+                git(merged_worktree, "diff", "-z", "--name-only", "--diff-filter=U"))
             if not conflicted:
                 raise
             git(merged_worktree, "merge", "--abort")
-            raise HeadConflictsWithMain(", ".join(conflicted.splitlines()))
+            raise HeadConflictsWithMain(", ".join(conflicted))
         head_short = git(head_worktree, "rev-parse", "--short", "HEAD")
         merged_short = git(merged_worktree, "rev-parse", "--short", "HEAD")
         merged_tree = git(merged_worktree, "rev-parse", "HEAD^{tree}")

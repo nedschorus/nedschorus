@@ -123,6 +123,13 @@ _work_snapshots_spec = importlib.util.spec_from_file_location(
 work_snapshots = importlib.util.module_from_spec(_work_snapshots_spec)
 _work_snapshots_spec.loader.exec_module(work_snapshots)
 
+_git_output_spec = importlib.util.spec_from_file_location(
+    "git_machine_readable_output_runner_and_parser_common",
+    REPO_ROOT / "nc-systems" / "general-tools"
+    / "git-machine-readable-output-runner-and-parser-common.py")
+git_output = importlib.util.module_from_spec(_git_output_spec)
+_git_output_spec.loader.exec_module(git_output)
+
 # Regenerable junk is left out of the list of files a removal discards.
 DISPOSABLE_JUNK_BASENAMES = (".DS_Store", "__pycache__")
 
@@ -154,45 +161,38 @@ def main_checkout_of(repo):
 
 def list_worktrees(repo, main_checkout):
     """Return (path, branch-or-None) pairs excluding the primary checkout."""
-    listing = run_git(repo, "worktree", "list", "--porcelain")
+    listing = run_git(repo, "worktree", "list", "--porcelain", "-z")
     worktrees = []
-    path, branch = None, None
-    for line in listing.stdout.splitlines() + [""]:
-        if line.startswith("worktree "):
-            path = Path(line.split(" ", 1)[1])
-        elif line.startswith("branch refs/heads/"):
-            branch = line.split("refs/heads/", 1)[1]
-        elif not line:
-            if path is not None and path.resolve() != main_checkout.resolve():
-                worktrees.append((path, branch))
-            path, branch = None, None
+    for record in git_output.worktree_records(listing.stdout):
+        path = Path(record.path)
+        if path.resolve() == main_checkout.resolve():
+            continue
+        branch = record.branch
+        if branch is not None and branch.startswith("refs/heads/"):
+            branch = branch[len("refs/heads/"):]
+        else:
+            branch = None
+        worktrees.append((path, branch))
     return worktrees
 
 
 def dead_worktree_registrations(repo):
     """Return (path, git reason) for unlocked prunable registrations."""
     # A prunable directory can still exist and hold work; report git's reason without inferring absence.
-    listing = run_git(repo, "worktree", "list", "--porcelain")
-    dead = []
-    path = None
-    for line in listing.stdout.splitlines():
-        if line.startswith("worktree "):
-            path = line.split(" ", 1)[1]
-        elif (line == "prunable" or line.startswith("prunable ")) and path:
-            reason = line[len("prunable"):].strip() or "no reason given"
-            dead.append((path, reason))
-            path = None
-    return dead
+    listing = run_git(repo, "worktree", "list", "--porcelain", "-z")
+    return [(record.path, record.prunable_reason or "no reason given")
+            for record in git_output.worktree_records(listing.stdout)
+            if record.prunable_reason is not None]
 
 
 def branch_refs_with_no_worktree_fully_on_main(repo):
-    listing = run_git(repo, "worktree", "list", "--porcelain")
+    listing = run_git(repo, "worktree", "list", "--porcelain", "-z")
     if listing.returncode != 0:
         return []
     attached = {
-        line.split("refs/heads/", 1)[1]
-        for line in listing.stdout.splitlines()
-        if line.startswith("branch refs/heads/")
+        record.branch[len("refs/heads/"):]
+        for record in git_output.worktree_records(listing.stdout)
+        if record.branch is not None and record.branch.startswith("refs/heads/")
     }
     # Use lstrip=2: :short can return heads/<name> when a same-named tag shadows a branch.
     landed = run_git(repo, "for-each-ref", "--format=%(refname:lstrip=2)",
@@ -286,14 +286,7 @@ def files_a_removal_discards(worktree):
                      "--untracked-files=all")
     if status.returncode != 0:
         return None, status.stderr.strip()[:80]
-    fields = iter([field for field in status.stdout.split("\0") if field])
-    paths = []
-    for entry in fields:
-        code, path = entry[:2], entry[3:]
-        # A rename or copy, in the index column or the worktree column, carries its old path as the next field.
-        if "R" in code or "C" in code:
-            next(fields, None)
-        paths.append(path)
+    paths = [entry.path for entry in git_output.status_entries(status.stdout)]
     return [path for path in paths if not is_disposable_junk(path)], None
 
 
