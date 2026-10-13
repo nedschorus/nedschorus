@@ -25,9 +25,7 @@ wiki page, ran `scripts/ghi-info-ask.py`, and found
 GHI [Candidate skill: write-test-plan — consequence-ranked test plan with observable oracles and traceability (likely FIRST build)](https://github.com/nedschorus/nedschorus/issues/18) already owned the
 subject with a sharper formulation. Nothing was written.
 
-**2. The enforcement, which is the half that matters.** A Stop hook that compares
-the working tree against `origin/main` for protected paths, **sets the change
-aside**, and tells the agent to walk it with the user.
+**2. The enforcement** is carried by GHI [Catch a guarded file changed without the user's approval, ask him, and keep every version](https://github.com/nedschorus/nedschorus/issues/1268), whose hook checks guarded files, the wiki included, after each tool call and asks the user instead of setting the change aside. The sections below on the Stop hook, setting aside and the open question are kept as the reasoning that led there; GHI 1268's GHI-MD settles the open question: the instruction-file guard stays as the check before the write.
 
 ## Why a Stop hook and not a PreToolUse block
 
@@ -70,9 +68,7 @@ git work at every turn end.
 
 ## Next action
 
-Build the Stop hook first: it has value whether or not the skill exists, and it
-is the half that does not depend on an agent remembering anything. Then the
-skill.
+Build the skill. The enforcement is built under GHI 1268.
 
 A new skill gets the full cold-read run of six fresh reviewers before it lands —
 user-ruled the same day: "I'd be very careful with skills."
