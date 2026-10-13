@@ -19,6 +19,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
@@ -114,6 +115,22 @@ check("if, then and fi are not words of the commands they hold",
       words_of("if git push -f o b; then echo y; fi") == [["git", "push", "-f", "o", "b"],
                                                           ["echo", "y"]],
       words_of("if git push -f o b; then echo y; fi"))
+
+# --- a descriptor written as 0 before a redirect ---
+for command, expected in [
+    ("bash 0<f", [(["bash"], [("0<", "f")])]),
+    ("bash 0<&-", [(["bash"], [("0<&-", "")])]),
+    ("bash 0<&3", [(["bash"], [("0<&", "3")])]),
+    ("bash 0<<<x z", [(["bash", "z"], [("0<<<", "x")])]),
+    ("x | bash 0>f", [(["x"], []), (["bash"], [("0>", "f")])]),
+    ("bash 10<f", [(["bash"], [("10<", "f")])]),
+    ("bash 0 <f", [(["bash", "0"], [("<", "f")])]),
+    ("bash 2>f", [(["bash"], [("2>", "f")])]),
+    ("bash 0<<E\ntmux kill-server\nE\nls", [(["bash"], [("<<", "tmux kill-server\n")]), (["ls"], [])]),
+    ("bash 0<<-E\n\tb\n\tE\nls", [(["bash"], [("<<", "b\n")]), (["ls"], [])]),
+]:
+    found = [(list(f), f.redirects) for f in reader.simple_commands(command)]
+    check(f"the 0 before a redirect is its descriptor, not a word: {command!r}", found == expected, found)
 
 # --- child shells: where a cd stays ---
 found = reader.simple_commands("(cd /tmp/other && make); git push --force-with-lease o b")
@@ -405,8 +422,27 @@ for command, expected in [
     # A heredoc inside a body's substitution is taken out before the substitution is read.
     ("cat <<A\n$(cat <<B; xz\nb\nB\n)\nA",
      [(["cat"], ["b\n"]), (["xz"], []), (["cat"], ["$(cat <<B; xz\nb\nB\n)\n"])]),
-    # A substitution that never closes takes the rest of the body: bash runs none of it.
-    ("cat <<A\n$(echo $(tmux send-keys -t a b)\nA", [(["cat"], ["$(echo $(tmux send-keys -t a b)\n"])]),
+    # bash rejects a body whose substitution never closes; it is still read, so a guard refuses
+    # a command bash would not run rather than pass one it would.
+    ("cat <<A\n$(echo $(tmux send-keys -t a b)\nA",
+     [(["tmux", "send-keys", "-t", "a", "b"], []), (["cat"], ["$(echo $(tmux send-keys -t a b)\n"])]),
+    # $(( that closes with )) is arithmetic, and its substitutions run; one that does not is a
+    # substitution holding a subshell.
+    ("cat <<A\n$(( $(tmux kill-server; printf 1) + 2 ))\nA",
+     [(["tmux", "kill-server"], []), (["printf", "1"], []),
+      (["cat"], ["$(( $(tmux kill-server; printf 1) + 2 ))\n"])]),
+    ("cat <<A\n$((tmux kill-server); printf x)\nA",
+     [(["tmux", "kill-server"], []), (["printf", "x"], []), (["cat"], ["$((tmux kill-server); printf x)\n"])]),
+    # Inside backticks \` opens a nested backticked command.
+    ("cat <<A\n`echo \\`xb\\``\nA", [(["xb"], []), (["echo", "`xb`"], []), (["cat"], ["`echo \\`xb\\``\n"])]),
+    # A body line that the reader's own delimiter would end.
+    ("cat <<A\nNEDSCHORUS_BODY_END\n'$(xa)'\nA", [(["xa"], []), (["cat"], ["NEDSCHORUS_BODY_END\n'$(xa)'\n"])]),
+    # A case ended by ;;& inside a body's substitution, and a substitution after it.
+    ("cat <<A\n$(case x in x) :;;& esac) $(tmux kill-server)\nA",
+     [([":"], []), (["tmux", "kill-server"], []), (["cat"], ["$(case x in x) :;;& esac) $(tmux kill-server)\n"])]),
+    # A backticked command that holds a substitution, an escaped backtick, and one never closed.
+    ("cat <<A\n`xa $(xb) xc` \\`xd\\` `xe\nA",
+     [(["xa", "xc"], []), (["xb"], []), (["cat"], ["`xa $(xb) xc` \\`xd\\` `xe\n"])]),
     # Substitutions run in the order written; $(( )) is arithmetic, $$( the process id.
     ("cat <<A\n$(xa) $(xb) `xc` $(xd)\nA",
      [(["xa"], []), (["xb"], []), (["xc"], []), (["xd"], []), (["cat"], ["$(xa) $(xb) `xc` $(xd)\n"])]),
@@ -415,6 +451,14 @@ for command, expected in [
 ]:
     found = [(list(f), [h.body for h in f.heredocs]) for f in reader.simple_commands(command)]
     check(f"heredoc read as bash reads it: {command!r}", found == expected, found)
+tabbed = "cat <<A\n$(cat <<-'B'\n" + "\tx\n" * 30 + "\tB\n)\n$(echo '$(tmux kill-server)')\nA"
+check("a <<- heredoc inside a body's substitution is read once, and quoted text after it is no command",
+      [list(f) for f in reader.simple_commands(tabbed)]
+      == [["cat"], ["echo", "$(tmux kill-server)"], ["cat"]], [list(f) for f in reader.simple_commands(tabbed)])
+started = time.monotonic()
+found = reader.simple_commands("cat <<A\n" + "$(printf 1)\n" * 3500 + "A")
+check("a body of 3,500 substitutions is read in one parse, well inside a guard's 30 s",
+      len(found) == 3501 and time.monotonic() - started < 3, (len(found), time.monotonic() - started))
 found = reader.simple_commands("cat <<A\n$(cd /x)\nA\ncat <<B\n$(git push -f o t)\nB")
 check("substitutions in two different bodies are different child shells, so a cd in one stays there",
       found[0].child_shell != found[2].child_shell
@@ -444,6 +488,13 @@ check("the lines tree-sitter-bash folds into a long pipeline's redirections are 
       [(list(f), f.child_shell) for f in found])
 
 # --- ;;& and ;& before esac ---
+found = words_of("cat <<'EOF'\nEOF2\ncat <<D\nEOF\ncase x in x) :;& esac\ntmux kill-server")
+check("a case after a body tree-sitter-bash misplaces is repaired, and the command after it is read",
+      found == [["cat"], [":"], ["tmux", "kill-server"]], found)
+found = reader.simple_commands("case x in x) :;& esac; cat <<'D'\n:;& esac\nD\nls")
+check("a ;& in a body that the case's error hid is left as written",
+      [list(f) for f in found] == [[":"], ["cat"], ["ls"]] and found[1].heredocs[0].body == ":;& esac\n",
+      [(list(f), f.heredocs) for f in found])
 found = words_of("tmux send-keys -t 'a;& esac' Enter; case x in x) :;;& esac")
 check("a ;& inside a quoted word is left as written when the case's ;;& is read as ;;",
       found[0] == ["tmux", "send-keys", "-t", "a;& esac", "Enter"], found)
