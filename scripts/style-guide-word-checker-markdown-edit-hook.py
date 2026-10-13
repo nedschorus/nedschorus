@@ -5,7 +5,11 @@ Use hookSpecificOutput.additionalContext: successful PostToolUse plain stdout re
 Read cwd from the payload; CLAUDE_PROJECT_DIR can name a different checkout in a forked session.
 
 Edit scans new_string alone, so an enclosing code fence may be invisible to the checker.
-Skip walk documents because quoted user wording is not the writer's to change."""
+Skip walk documents because quoted user wording is not the writer's to change.
+
+A fault, such as stdin that is not a JSON object, a checker that will not load or a git call that fails:
+one line on stderr naming the fault, nothing on stdout, exit 1.
+Claude Code records a PostToolUse exit 1 as a non-blocking error and keeps the write; exit 0 would read as "no words found"."""
 
 import importlib.util
 import json
@@ -43,16 +47,13 @@ MORE_HITS_LINE = ("{count} more hit(s) in the same text are not listed: reread t
 
 
 def _load_style_guide_word_checker():
-    """Return the checker module loaded by path, or None on failure."""
-    try:
-        specification = importlib.util.spec_from_file_location(
-            "style_guide_word_checker",
-            Path(__file__).resolve().with_name("style-guide-word-checker.py"))
-        module = importlib.util.module_from_spec(specification)
-        specification.loader.exec_module(module)
-        return module
-    except Exception:
-        return None
+    """Return the checker module loaded by path; raises when it will not load."""
+    specification = importlib.util.spec_from_file_location(
+        "style_guide_word_checker",
+        Path(__file__).resolve().with_name("style-guide-word-checker.py"))
+    module = importlib.util.module_from_spec(specification)
+    specification.loader.exec_module(module)
+    return module
 
 
 def run_git(arguments, working_directory: Path):
@@ -87,7 +88,11 @@ def checkout_relative_path(file_path: str, working_directory: Path):
 
 def git_would_track(root: Path, relative_path: str) -> bool:
     # check-ignore exits 0 for ignored, 1 for trackable, and 128 for failure; tracked files are never ignored.
-    return run_git(["check-ignore", "-q", "--", relative_path], root).returncode == 1
+    completed = run_git(["check-ignore", "-q", "--", relative_path], root)
+    if completed.returncode not in (0, 1):
+        first_line = (completed.stderr.strip().splitlines() or [""])[0]
+        raise RuntimeError(f"git check-ignore exited {completed.returncode} in {root}: {first_line}")
+    return completed.returncode == 1
 
 
 def hits_in_edit(checker, root: Path, relative_path: str, tool_input: dict):
@@ -152,12 +157,10 @@ def word_report(relative_path: str, hits, edit_text=None) -> str:
 
 
 def main() -> int:
-    try:
-        payload = json.loads(sys.stdin.read() or "{}")
-    except (json.JSONDecodeError, ValueError, OSError):
-        return 0
+    payload = json.loads(sys.stdin.read())
     if not isinstance(payload, dict):
-        return 0
+        raise ValueError(f"the payload Claude Code sent on stdin is a JSON "
+                         f"{type(payload).__name__}, not an object")
     tool_name = payload.get("tool_name")
     tool_input = payload.get("tool_input")
     if tool_name not in ("Edit", "Write") or not isinstance(tool_input, dict):
@@ -177,8 +180,6 @@ def main() -> int:
         return 0
 
     checker = _load_style_guide_word_checker()
-    if checker is None:
-        return 0
     if tool_name == "Edit":
         hits = hits_in_edit(checker, root, relative_path, tool_input)
         edit_text = tool_input.get("new_string")
@@ -198,6 +199,8 @@ def main() -> int:
 if __name__ == "__main__":
     try:
         sys.exit(main())
-    except Exception:
-        # A word report must not turn a successful write into an apparent tool failure.
-        sys.exit(0)
+    except Exception as error:
+        print(f"style-guide-word-checker-markdown-edit-hook: the text just written was not "
+              f"checked for style-guide words, because the hook failed; the write itself "
+              f"succeeded: {type(error).__name__}: {error}", file=sys.stderr)
+        sys.exit(1)

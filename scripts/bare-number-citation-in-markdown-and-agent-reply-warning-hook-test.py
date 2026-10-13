@@ -780,6 +780,23 @@ check("UserPromptSubmit: a transcript that cannot be read is reported on stderr,
       (result.returncode, result.stdout, result.stderr))
 
 
+# A checkout whose .git file names a git directory that does not exist: the
+# hook finds the checkout root, and git check-ignore exits 128 there. Read as
+# "git would not track the file", that failure would be silence.
+broken_checkout = SCRATCH / "checkout-whose-git-directory-is-gone"
+(broken_checkout / "docs").mkdir(parents=True)
+(broken_checkout / ".git").write_text("gitdir: " + str(SCRATCH / "no-such-git-directory") + "\n")
+broken_page = broken_checkout / "docs" / "page.md"
+broken_page.write_text("Cites PR 931.\n", encoding="utf-8")
+broken_payload = tool_payload("Edit", broken_page, old_string="x", new_string="Cites PR 931.")
+broken_payload["cwd"] = str(broken_checkout)
+result = run_hook(broken_payload)
+check("a git check-ignore that fails is reported on stderr, no note, exit 1",
+      result.returncode == 1 and result.stdout == ""
+      and "no check was made: RuntimeError: git check-ignore exited 128" in result.stderr,
+      (result.returncode, result.stdout, result.stderr))
+
+
 # --- Fail open on bad input ---------------------------------------------------
 
 result = run_hook("{oops")

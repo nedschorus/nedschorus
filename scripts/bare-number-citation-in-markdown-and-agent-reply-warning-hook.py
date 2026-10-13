@@ -545,7 +545,11 @@ def checkout_relative_path(file_path: str, working_directory: Path):
 
 def git_would_track(root: Path, relative_path: str) -> bool:
     # check-ignore exits 0 for ignored, 1 for trackable, and 128 for failure; tracked files are never ignored.
-    return run_git(["check-ignore", "-q", "--", relative_path], root).returncode == 1
+    completed = run_git(["check-ignore", "-q", "--", relative_path], root)
+    if completed.returncode not in (0, 1):
+        first_line = (completed.stderr.strip().splitlines() or [""])[0]
+        raise RuntimeError(f"git check-ignore exited {completed.returncode} in {root}: {first_line}")
+    return completed.returncode == 1
 
 
 def markdown_edit_note(payload: dict):
