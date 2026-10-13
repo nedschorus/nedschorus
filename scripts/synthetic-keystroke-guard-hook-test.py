@@ -312,6 +312,80 @@ for case_name, command in [
     check(f"and the probe runs over ssh: {case_name}",
           runner.calls and runner.calls[0][0] == "ssh" and "ned-box" in " ".join(runner.calls[0]),
           runner.calls)
+for case_name, command in [
+    ("send-keys in a heredoc fed to ssh host sudo bash is denied",
+     "ssh ned-box sudo bash <<'EOF'\ntmux send-keys -t gatekeeper Enter\nEOF"),
+    ("send-keys in a heredoc fed to ssh host env A=1 bash is denied",
+     "ssh ned-box env A=1 bash <<'EOF'\ntmux send-keys -t gatekeeper Enter\nEOF"),
+    ("send-keys in a heredoc fed to ssh host timeout 60 bash is denied",
+     "ssh ned-box timeout 60 bash <<'EOF'\ntmux send-keys -t gatekeeper Enter\nEOF"),
+]:
+    runner = StubRunner(stdout="1\n")
+    reason = decide(command, runner)
+    check(case_name, reason is not None and "attached client" in reason, reason)
+    check(f"and the probe runs over ssh: {case_name}",
+          runner.calls and runner.calls[0][0] == "ssh" and "ned-box" in " ".join(runner.calls[0]),
+          runner.calls)
+for case_name, command in [
+    ("send-keys in a heredoc fed to a local bash -s given the word ssh is denied",
+     "bash -s ssh <<'EOF'\ntmux send-keys -t gatekeeper Enter\nEOF"),
+    ("send-keys in a heredoc fed to a local bash -s -- ssh is denied",
+     "bash -s -- ssh <<'EOF'\ntmux send-keys -t gatekeeper Enter\nEOF"),
+]:
+    runner = StubRunner(stdout="1\n")
+    reason = decide(command, runner)
+    check(case_name, reason is not None and "attached client" in reason, reason)
+    check(f"and the probe runs locally: {case_name}",
+          runner.calls and runner.calls[0][0] != "ssh", runner.calls)
+for case_name, command in [
+    ("send-keys in a heredoc fed to bash - is denied: a lone - ends bash's options",
+     "bash - <<'EOF'\ntmux send-keys -t gatekeeper Enter\nEOF"),
+    ("send-keys in a heredoc fed to ssh host 'bash -' is denied",
+     "ssh ned-box 'bash -' <<'EOF'\ntmux send-keys -t gatekeeper Enter\nEOF"),
+    ("send-keys in a heredoc fed to a remote bash -eo pipefail is denied: -o takes pipefail",
+     "ssh ned-box bash -eo pipefail <<'EOF'\ntmux send-keys -t gatekeeper Enter\nEOF"),
+    ("send-keys in a heredoc fed to a remote bash --rcfile with a quoted path is denied",
+     "ssh ned-box \"bash --rcfile '/tmp/guard rc'\" <<'EOF'\ntmux send-keys -t gatekeeper Enter\nEOF"),
+    ("send-keys in a heredoc fed to ssh host 'cd /x && bash -s' is denied",
+     "ssh ned-box 'cd /x && bash -s' <<'EOF'\ntmux send-keys -t gatekeeper Enter\nEOF"),
+    ("send-keys in a heredoc fed to the second remote shell of 'bash setup.sh && bash -s' is denied",
+     "ssh ned-box 'bash setup.sh && bash -s' <<'EOF'\ntmux send-keys -t gatekeeper Enter\nEOF"),
+    ("send-keys in a heredoc fed to a remote bash in a substitution is denied: it inherits the input",
+     "ssh ned-box 'echo $(bash)' <<'EOF'\ntmux send-keys -t gatekeeper Enter\nEOF"),
+    ("send-keys in a heredoc fed to ssh host sudo -n bash is denied",
+     "ssh ned-box sudo -n bash <<'EOF'\ntmux send-keys -t gatekeeper Enter\nEOF"),
+    ("send-keys in a heredoc fed to ssh host sudo -u nedlern bash is denied",
+     "ssh ned-box sudo -u nedlern bash <<'EOF'\ntmux send-keys -t gatekeeper Enter\nEOF"),
+    ("send-keys in a heredoc fed to cat 2>/dev/null and piped to bash is denied",
+     "cat <<'EOF' 2>/dev/null | bash\ntmux send-keys -t gatekeeper Enter\nEOF"),
+]:
+    runner = StubRunner(stdout="1\n")
+    reason = decide(command, runner)
+    check(case_name, reason is not None and "attached client" in reason, reason)
+for case_name, command in [
+    ("a heredoc fed to tee /tmp/bash over ssh is data: the file's name is not a program",
+     "ssh ned-box 'tee /tmp/bash' <<'EOF'\ntmux send-keys -t gatekeeper Enter\nEOF"),
+    ("a heredoc fed to bash +sc is the +c command's standard input: bash reads +c as -c",
+     "bash +sc 'cat >f' <<'EOF'\ntmux send-keys -t gatekeeper Enter\nEOF"),
+    ("a heredoc fed to bash -- consumer.sh is that script's standard input",
+     "bash -- consumer.sh <<'EOF'\ntmux send-keys -t gatekeeper Enter\nEOF"),
+    ("a heredoc fed to bash - consumer.sh is that script's standard input",
+     "bash - consumer.sh <<'EOF'\ntmux send-keys -t gatekeeper Enter\nEOF"),
+]:
+    runner = StubRunner(stdout="1\n")
+    check(case_name, decide(command, runner) is None and not runner.calls, runner.calls)
+for case_name, command in [
+    ("a heredoc fed to a remote bash -lc is the -c command's standard input, not a script",
+     "ssh ned-box bash -lc 'cat >f' <<'EOF'\ntmux send-keys -t gatekeeper Enter\nEOF"),
+    ("a heredoc fed to a remote bash -sc is the -c command's standard input, though -s is given",
+     "ssh ned-box bash -sc 'cat >f' <<'EOF'\ntmux send-keys -t gatekeeper Enter\nEOF"),
+    ("a heredoc fed to a remote bash running a script file is that script's standard input",
+     "ssh ned-box 'bash consumer.sh' <<'EOF'\ntmux send-keys -t gatekeeper Enter\nEOF"),
+    ("a heredoc fed to a local bash running a script file is that script's standard input",
+     "bash consumer.sh <<'EOF'\ntmux send-keys -t gatekeeper Enter\nEOF"),
+]:
+    runner = StubRunner(stdout="1\n")
+    check(case_name, decide(command, runner) is None and not runner.calls, runner.calls)
 nested_heredocs_fed_to_bash = ("bash <<'EOF'\ncat <<'EOF2' >a\nx\nEOF2\ncat <<'EOF3' >b\ny\nEOF3\n"
                                "tmux send-keys -t gatekeeper Enter\nEOF")
 reason = decide(nested_heredocs_fed_to_bash, StubRunner(stdout="1\n"))

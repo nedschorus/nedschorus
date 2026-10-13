@@ -174,6 +174,17 @@ try:
     check("refused after cd with a relative path",
           run_main("cd .. && grep -l needle */*.jsonl", elsewhere) is not None)
 
+    # tree-sitter-bash folds a command bash runs in the parent shell into a pipeline
+    # stage in two shapes; the cd before or on the line after the pipeline still counts.
+    check("refused after a cd before a pipeline in which two stages have a redirection",
+          run_main(f"cd {scratch} && ls 2>/dev/null | head 2>/dev/null | cat; "
+                   f"grep -l needle */*.jsonl", elsewhere) is not None)
+    check("refused after a redirected cd on the line after a pipeline of three stages",
+          run_main(f"ls 2>&1 | tail -1 | sed s/a/b/\ncd {scratch} >/dev/null\n"
+                   f"grep -l needle */*.jsonl", elsewhere) is not None)
+    check("passes: a cd that is itself a pipeline stage runs in a child shell",
+          run_main(f"cd {scratch} | cat; grep -l needle */*.jsonl", elsewhere) is None)
+
     # A command substitution runs in a shell of its own: a `cd` inside a
     # double-quoted one, or inside one in a heredoc body, moves that shell
     # and no other. The search after it still runs in the folder it ran in.

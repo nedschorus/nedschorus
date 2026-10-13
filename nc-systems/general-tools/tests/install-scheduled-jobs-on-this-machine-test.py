@@ -1068,15 +1068,15 @@ with tempfile.TemporaryDirectory() as temporary:
     check("the program a crontab line runs is its first word, or an interpreter's first "
           "argument, and nothing for a line that sets a variable or gives an interpreter or "
           "env an option",
-          [installer.program_a_cron_line_runs(line) for line in (
+          [[program for program, _ in installer.programs_a_cron_line_runs(line)] for line in (
               path_setting, reads_the_clone, writes_into_the_clone, runs_directly,
               runs_through_env, runs_at_reboot, BOX_MIRROR, "", "# 0 4 * * * x",
               env_option_takes_a_clone_directory, interpreter_option)]
-          == [None, "/usr/bin/tar", "/usr/local/bin/other-tool",
-              f"{box_clone}/scripts/a-retired-shell-job.sh",
-              f"{box_clone}/scripts/a-retired-env-job.py",
-              f"{box_clone}/scripts/a-retired-reboot-job.py",
-              f"{box_clone}/scripts/transcript-mirror-to-log-store.py", None, None, None, None])
+          == [[], ["/usr/bin/tar"], ["/usr/local/bin/other-tool"],
+              [f"{box_clone}/scripts/a-retired-shell-job.sh"],
+              [f"{box_clone}/scripts/a-retired-env-job.py"],
+              [f"{box_clone}/scripts/a-retired-reboot-job.py"],
+              [f"{box_clone}/scripts/transcript-mirror-to-log-store.py"], [], [], [None], [None]])
     not_runs = [path_setting, reads_the_clone, writes_into_the_clone,
                 env_option_takes_a_clone_directory, interpreter_option]
     runs = [runs_directly, runs_through_env, runs_at_reboot]
@@ -1248,30 +1248,64 @@ with tempfile.TemporaryDirectory() as temporary:
                       f"{box_clone}/scripts/a-retired-redirect-first-job.py")
     check("a crontab line whose redirection comes before its program runs that program, and "
           "one whose command is only a comment runs nothing",
-          [installer.program_a_cron_line_runs(line)
+          [installer.programs_a_cron_line_runs(line)
            for line in (redirect_first, "0 5 * * * # paused")]
-          == [f"{box_clone}/scripts/a-retired-redirect-first-job.py", None],
-          [installer.program_a_cron_line_runs(line)
+          == [[(f"{box_clone}/scripts/a-retired-redirect-first-job.py", False)], []],
+          [installer.programs_a_cron_line_runs(line)
            for line in (redirect_first, "0 5 * * * # paused")])
 
     # A command substitution's command runs before the line's own command
     # but is not it, and a function the line defines may never be called;
     # reading either as the line's program would keep a retired job or remove
-    # a job that is not the project's.
+    # a job that is not the project's. A pipeline's later stage only reads the
+    # job's output; a ( ) subshell's command is a job of the line.
     substitution_cases = {
         f"0 5 * * * {box_clone}/scripts/a-retired-dated-log-job.py >> /tmp/x-$(date +\\%F).log 2>&1":
-            f"{box_clone}/scripts/a-retired-dated-log-job.py",
-        f"0 5 * * * /usr/bin/foo $({box_clone}/scripts/a-helper.py)": "/usr/bin/foo",
-        f"0 5 * * * /usr/bin/foo `{box_clone}/scripts/a-helper.py`": "/usr/bin/foo",
-        f"0 5 * * * /usr/bin/foo <({box_clone}/scripts/a-helper.py)": "/usr/bin/foo",
+            [(f"{box_clone}/scripts/a-retired-dated-log-job.py", False)],
+        f"0 5 * * * /usr/bin/foo $({box_clone}/scripts/a-helper.py)": [("/usr/bin/foo", False)],
+        f"0 5 * * * /usr/bin/foo `{box_clone}/scripts/a-helper.py`": [("/usr/bin/foo", False)],
+        f"0 5 * * * /usr/bin/foo <({box_clone}/scripts/a-helper.py)": [("/usr/bin/foo", False)],
         f"0 5 * * * {box_clone}/scripts/a-retired-job.py; /usr/bin/logger done":
-            f"{box_clone}/scripts/a-retired-job.py",
-        f"0 5 * * * f() {{ {box_clone}/scripts/a-helper.py; }}; /usr/bin/other": None,
+            [(f"{box_clone}/scripts/a-retired-job.py", False), ("/usr/bin/logger", False)],
+        f"0 5 * * * f() {{ {box_clone}/scripts/a-helper.py; }}; /usr/bin/other": [(None, False)],
+        f"0 5 * * * {box_clone}/scripts/a-retired-logged-job.py 2>&1 | /usr/bin/logger -t x":
+            [(f"{box_clone}/scripts/a-retired-logged-job.py", False), ("/usr/bin/logger", True)],
+        f"0 5 * * * ({box_clone}/scripts/a-retired-job.py) | (cat; /usr/bin/other-job)":
+            [(f"{box_clone}/scripts/a-retired-job.py", False), ("cat", False),
+             ("/usr/bin/other-job", False)],
+        f"0 5 * * * {box_clone}/scripts/a-retired-job.py | {{ cat; /usr/bin/other-job; }}":
+            [(f"{box_clone}/scripts/a-retired-job.py", False), ("cat", False),
+             ("/usr/bin/other-job", False)],
+        f"0 5 * * * (/usr/bin/other-job); {box_clone}/scripts/a-retired-job.py":
+            [("/usr/bin/other-job", False), (f"{box_clone}/scripts/a-retired-job.py", False)],
     }
-    read_programs = {line: installer.program_a_cron_line_runs(line) for line in substitution_cases}
-    check("a crontab line's program is its first command outside any substitution, and a line "
-          "that defines a function is not read",
+    read_programs = {line: installer.programs_a_cron_line_runs(line) for line in substitution_cases}
+    check("a crontab line runs each command outside a substitution, a later pipeline stage only "
+          "reads a job's output, a ( ) subshell's command is a job, and a line that defines a "
+          "function is not read",
           read_programs == substitution_cases, read_programs)
+
+    # --remove-not-in-table takes off a retired job piped to logger, and reports
+    # and keeps a line that also runs a job that is not the clone's.
+    piped_to_logger = (f"0 5 * * * {box_clone}/scripts/a-retired-logged-job.py 2>&1 | "
+                       f"/usr/bin/logger -t x")
+    mixed = f"0 6 * * * (/usr/bin/other-job); {box_clone}/scripts/a-retired-mixed-job.py"
+    stub = MachineStub(crontab="".join(
+        line + "\n" for line in [BOX_MIRROR, BOX_DAILY, BOX_ALONE, piped_to_logger, mixed]).encode())
+    exit_code, printed, errors = run_main(["--check"], NED_BOX, stub)
+    check("--check reports a retired job piped to logger, and a line that also runs another job, "
+          "saying --remove-not-in-table leaves that line in place",
+          exit_code == 1 and printed.count("NOT IN THE TABLE: ") == 2
+          and f"NOT IN THE TABLE: the crontab line {mixed} — " in printed
+          and "leaves the line in place" in printed and "take the retired job off that line by hand"
+          in printed, (exit_code, printed))
+    exit_code, printed, errors = run_main(["--remove-not-in-table"], NED_BOX, stub)
+    check("--remove-not-in-table removes the job piped to logger, keeps the line that also runs "
+          "another job, reports it as KEPT, and exits 1",
+          exit_code == 1 and stub.crontab_writes == ["".join(
+              line + "\n" for line in [BOX_MIRROR, BOX_DAILY, BOX_ALONE, mixed]).encode()]
+          and f"KEPT: not in the table — the crontab line {mixed}" in printed,
+          (exit_code, printed, stub.crontab_writes))
 
     # tree-sitter-bash missing: the module installs it, as on a Mac whose
     # Python has not run a guard yet; a failed install stops this program,

@@ -17,7 +17,9 @@ tree-sitter and tree-sitter-bash are compiled libraries, installed per user
 from compiled-python-libraries-pinned-requirements.txt beside this file. When
 they are missing, the first use installs them. ShellParserUnavailable means
 the install failed: the guard lets the command through and says so with
-parser_unavailable_hook_output, which asks for the user to be told. A failed
+parser_unavailable_hook_output, which asks for the user to be told. When the
+install succeeds but this process still holds a copy it could not use,
+the command is read in a new Python process, which loads the installed copy. A failed
 install is tried again after ten minutes, so that each command does not wait
 for its own failing install.
 
@@ -57,6 +59,13 @@ CHILD_SHELL_NODE_TYPES = {"command_substitution", "process_substitution", "subsh
 # Nodes that are a command name followed by words, as a guard reads them.
 SIMPLE_COMMAND_NODE_TYPES = {"command", "declaration_command", "unset_command"}
 REDIRECT_NODE_TYPES = {"file_redirect", "heredoc_redirect", "herestring_redirect"}
+# Nodes that only group commands; tree-sitter-bash's grouping of these is not trusted.
+SEQUENCE_NODE_TYPES = {"pipeline", "list", "redirected_statement", "negated_command"}
+PIPE_OPERATORS = {"|", "|&"}
+LIST_OPERATORS = {"&&", "||", ";", "&"}
+# What redirect() reads inside a heredoc_redirect; every other node there is commands.
+HEREDOC_PARTS_READ_BY_REDIRECT = REDIRECT_NODE_TYPES | {
+    "heredoc_start", "heredoc_body", "heredoc_end", "file_descriptor", "ERROR", "comment"}
 # Characters a backslash keeps literal inside double quotes; before any other, the backslash stays.
 DOUBLE_QUOTE_ESCAPABLE = set('"\\$`')
 
@@ -72,6 +81,15 @@ class ShellParserUnavailable(Exception):
         self.install_output = install_output
 
 
+class ShellParserInstalledForANewProcess(ShellParserUnavailable):
+    """The install succeeded, but this process still holds the unusable copy it loaded first.
+
+    A compiled module cannot be replaced inside a running process; a new
+    process loads the installed copy, so simple_commands reads the command
+    there.
+    """
+
+
 class Heredoc:
     """One heredoc: its body as written, and whether the shell expands it."""
 
@@ -84,15 +102,39 @@ class Heredoc:
         return f"Heredoc({self.body!r}, expanded={self.expanded})"
 
 
+SUBSTITUTION = "substitution"
+PIPELINE_STAGE = "pipeline stage"
+SUBSHELL = "subshell"
+
+
+class ChildShell(int):
+    """One child shell a command runs in: its start offset, and its kind.
+
+    kind is SUBSTITUTION for a command or process substitution, whose output
+    becomes words of another command, PIPELINE_STAGE for a stage of a pipeline
+    of two or more, and SUBSHELL for ( ... ). first_stage says whether a
+    pipeline stage is its pipeline's first.
+    """
+
+    def __new__(cls, offset, kind, first_stage=False):
+        shell = super().__new__(cls, offset)
+        shell.kind = kind
+        shell.first_stage = first_stage
+        return shell
+
+    def __repr__(self):
+        return f"ChildShell({int(self)}, {self.kind!r}, first_stage={self.first_stage})"
+
+
 class SimpleCommand(list):
     """The words of one simple command, assignments first, redirections left out.
 
-    child_shell names the enclosing command substitutions, process
-    substitutions and subshells, outermost first, by their start offsets; () is the
-    command line's own shell. A command whose child_shell starts with another's
-    runs inside it, so it sees that shell's cd but its own cd does not leak
-    out. redirects holds (operator, target) pairs, heredocs the heredocs fed
-    to this command or to the pipeline that starts on its heredoc line.
+    child_shell holds the enclosing child shells, outermost first, as ChildShell
+    values: offsets, each with its kind; () is the command line's own shell. A
+    command whose child_shell starts with another's runs inside it, so it sees
+    that shell's cd but its own cd does not leak out. redirects holds
+    (operator, target) pairs, heredocs the heredocs fed to this command or to
+    the pipeline that starts on its heredoc line.
     """
 
     def __init__(self, words, child_shell, redirects, heredocs):
@@ -100,6 +142,10 @@ class SimpleCommand(list):
         self.child_shell = child_shell
         self.redirects = redirects
         self.heredocs = heredocs
+
+    def inside_substitution(self):
+        """Return whether the command runs inside a command or process substitution."""
+        return any(shell.kind == SUBSTITUTION for shell in self.child_shell)
 
 
 def is_program(word, name):
@@ -137,17 +183,40 @@ def import_tree_sitter_bash():
     return tree_sitter, tree_sitter_bash
 
 
+FRESH_PROCESS_IMPORT_CHECK = (
+    "import tree_sitter, tree_sitter_bash; "
+    "tree_sitter.Parser(tree_sitter.Language(tree_sitter_bash.language()))")
+
+
+def imports_in_a_fresh_process(runner=subprocess.run):
+    """Return whether a new Python process can import and use tree-sitter-bash."""
+    try:
+        completed = runner([sys.executable, "-c", FRESH_PROCESS_IMPORT_CHECK], capture_output=True,
+                           timeout=INSTALL_TIMEOUT_SECONDS, stdin=subprocess.DEVNULL)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return completed.returncode == 0
+
+
 def load_parser(importer=import_tree_sitter_bash, installer=install_compiled_libraries,
-                clock=time.time):
+                clock=time.time, fresh_process_check=imports_in_a_fresh_process):
     """Return a tree-sitter Parser for bash, installing the libraries when they are missing."""
     try:
         tree_sitter, tree_sitter_bash = importer()
     except ImportError:
-        tree_sitter, tree_sitter_bash = _install_then_import(importer, installer, clock)
+        tree_sitter, tree_sitter_bash = _install_then_import(importer, installer, clock,
+                                                             fresh_process_check)
     return tree_sitter.Parser(tree_sitter.Language(tree_sitter_bash.language()))
 
 
-def _install_then_import(importer, installer, clock):
+def _forget_loaded_copies():
+    # A copy that imported but could not be used stays cached and would be returned again.
+    for name in [name for name in sys.modules
+                 if name.split(".")[0] in ("tree_sitter", "tree_sitter_bash")]:
+        del sys.modules[name]
+
+
+def _install_then_import(importer, installer, clock, fresh_process_check):
     # The guards run in parallel on each command, so they take turns, and only the first installs.
     try:
         STATE_DIRECTORY.mkdir(parents=True, exist_ok=True)
@@ -163,6 +232,7 @@ def _install_then_import(importer, installer, clock):
             pass  # Without the lock, two installs may run; each installs the same pinned files.
         # Another guard may have installed into a user site this process did not have at start-up.
         _refresh_import_paths()
+        _forget_loaded_copies()
         try:
             return importer()
         except ImportError:
@@ -177,22 +247,34 @@ def _install_then_import(importer, installer, clock):
         try:
             installer()
             _refresh_import_paths()
+            _forget_loaded_copies()
             try:
                 modules = importer()
             except ImportError as error:
+                if fresh_process_check():
+                    raise ShellParserInstalledForANewProcess(
+                        f"the install finished; this process still holds the copy it could not "
+                        f"use: {error}") from error
                 raise ShellParserUnavailable(
                     f"the install finished but importing still fails: {error}") from error
+        except ShellParserInstalledForANewProcess:
+            _forget_failure(failure_record)
+            raise
         except ShellParserUnavailable as error:
             try:
                 failure_record.write_text(error.install_output, encoding="utf-8")
             except OSError:
                 pass
             raise
-        try:
-            failure_record.unlink()
-        except OSError:
-            pass
+        _forget_failure(failure_record)
         return modules
+
+
+def _forget_failure(failure_record):
+    try:
+        failure_record.unlink()
+    except OSError:
+        pass
 
 
 def _refresh_import_paths():
@@ -341,10 +423,18 @@ def _redirect_parts(node, glob_markers):
                        if child.type in ("file_descriptor",) or not child.is_named)
     destinations = node.children_by_field_name("destination") or [
         child for child in node.named_children if child.type != "file_descriptor"][:1]
-    target = word_value(destinations[0], glob_markers) if destinations else ""
     # tree-sitter-bash reads the words after a redirect's target as more targets; bash
-    # passes them to the command as arguments.
-    return (operator, target), [word_value(extra, glob_markers) for extra in destinations[1:]]
+    # passes them to the command as arguments. It also splits a target such as
+    # `$X/push$i.log` after its last `$`; a part that touches the one before it is the same word.
+    words = []
+    for destination in destinations:
+        value = word_value(destination, glob_markers)
+        if words and destination.start_byte == previous_end:
+            words[-1] += value
+        else:
+            words.append(value)
+        previous_end = destination.end_byte
+    return (operator, words[0] if words else ""), words[1:]
 
 
 class _Collector:
@@ -354,7 +444,7 @@ class _Collector:
         self.skip_errors = skip_errors
         self.commands = []
 
-    def visit(self, node, child_shell, heredocs=(), redirects=(), trailing_words=()):
+    def visit(self, node, child_shell, heredocs=()):
         kind = node.type
         if kind == "comment":
             return
@@ -372,27 +462,14 @@ class _Collector:
             # tree-sitter-bash reads a backticked command's \` as text; bash reads a nested
             # backticked command there, once one level of backslashes is removed.
             inner = re.sub(r"\\([$`\\])", r"\1", _text(node)[1:-1])
-            self.adopt(simple_commands(inner, self.glob_markers), child_shell + (node.start_byte,))
+            self.adopt(simple_commands(inner, self.glob_markers),
+                       child_shell + (ChildShell(node.start_byte, SUBSTITUTION),))
             return
         if kind in CHILD_SHELL_NODE_TYPES:
-            child_shell = child_shell + (node.start_byte,)
-        if kind == "redirected_statement":
-            self.redirected_statement(node, child_shell, heredocs)
-            return
-        if kind == "pipeline":
-            # bash runs each stage of a pipeline in a child shell, but tree-sitter-bash reads
-            # `cd a && ls | head` as the pipeline `(cd a && ls) | head`, so a stage is not
-            # treated as a child shell: a cd there would otherwise stop counting.
-            stages = [child for child in node.named_children if child.type != "comment"]
-            for child in node.children:
-                # A redirection written after the pipeline belongs to its last stage.
-                if stages and child == stages[-1]:
-                    self.visit(child, child_shell, heredocs, redirects, trailing_words)
-                else:
-                    self.visit(child, child_shell, heredocs)
-            return
-        if kind in SIMPLE_COMMAND_NODE_TYPES:
-            self.simple_command(node, child_shell, heredocs, redirects, trailing_words)
+            child_shell = child_shell + (ChildShell(
+                node.start_byte, SUBSHELL if kind == "subshell" else SUBSTITUTION),)
+        if kind in SEQUENCE_NODE_TYPES or kind in SIMPLE_COMMAND_NODE_TYPES:
+            self.sequence(node, child_shell, heredocs)
             return
         if kind == "expansion":
             for child in node.children:
@@ -400,8 +477,8 @@ class _Collector:
                     # tree-sitter-bash leaves a backtick or a process substitution in a
                     # ${name:-...} default as one word; bash runs it.
                     found = simple_commands("echo " + _text(child), self.glob_markers)
-                    self.adopt([command for command in found if command.child_shell],
-                               child_shell + (child.start_byte,))
+                    self.adopt([command for command in found if command.inside_substitution()],
+                               child_shell + (ChildShell(child.start_byte, SUBSTITUTION),))
         for child in node.children:
             self.visit(child, child_shell, heredocs)
 
@@ -417,7 +494,7 @@ class _Collector:
         # tree-sitter-bash reads $( ) in a body but leaves backticks as text.
         for start, inner in backticked_commands(bytes(text).decode("utf-8", "surrogatepass")):
             self.adopt(simple_commands(inner, self.glob_markers),
-                       child_shell + (body.start_byte + start,))
+                       child_shell + (ChildShell(body.start_byte + start, SUBSTITUTION),))
 
     def adopt(self, commands, child_shell):
         """Add commands read from a second parse, inside the child shell they run in."""
@@ -439,54 +516,135 @@ class _Collector:
         """Visit the commands inside one word or redirect of a command."""
         self.visit(node, child_shell)
 
-    def redirected_statement(self, node, child_shell, heredocs):
-        heredocs = list(heredocs)
-        redirects, trailing_words = [], []
-        later = []
-        for child in node.children_by_field_name("redirect"):
-            if child.type == "heredoc_redirect":
-                heredoc = _heredoc_of(child)
-                heredocs.append(heredoc)
-                redirects.append(("<<", heredoc.body))
-                for inner in child.children:
-                    if inner.type == "heredoc_body":
-                        if heredoc.expanded:
-                            self.expanded_heredoc_body(inner, child_shell)
-                    elif inner.type in REDIRECT_NODE_TYPES:
-                        pair, extra = _redirect_parts(inner, self.glob_markers)
-                        redirects.append(pair)
-                        trailing_words.extend(extra)
-                    elif inner in child.children_by_field_name("argument"):
-                        # A word after the delimiter on the heredoc's line is the command's word.
-                        self.visit_inside(inner, child_shell)
-                        trailing_words.append(word_value(inner, self.glob_markers))
-                    elif inner.is_named and inner.type not in ("heredoc_start", "heredoc_end"):
-                        # A pipeline written after the heredoc's start shares the heredoc line.
-                        later.append(inner)
+    def sequence(self, node, child_shell, heredocs):
+        """Visit commands joined by |, |&, &&, ||, ; and & as bash groups them.
+
+        tree-sitter-bash groups some of these wrongly: it reads
+        `cd a && ls 2>/dev/null | head` as `(cd a && ls 2>/dev/null) | head`,
+        joins a redirected command on the next line onto the last stage of a
+        long pipeline, and puts `| bash` after `cat <<EOF` inside the heredoc.
+        So the commands, operators and redirections are taken in the order
+        they are written, and the pipelines are the commands joined by | or |&,
+        the operators bash splits pipelines on. Each stage of a pipeline of two
+        or more runs in a child shell.
+        """
+        items = []
+        self._flatten(node, items)
+        pipelines, current, joined = [], None, False
+        for item in items:
+            if item[0] == "unit":
+                if current is None or not joined:
+                    current = []
+                    pipelines.append(current)
+                current.append({"node": item[1], "children": item[2], "redirects": []})
+                joined = False
+            elif item[0] == "pipe":
+                joined = True
+            elif current:
+                # A redirection belongs to the command written just before it.
+                current[-1]["redirects"].append(item[1])
             else:
-                self.visit_inside(child, child_shell)
-                pair, extra = _redirect_parts(child, self.glob_markers)
+                # A statement that is only a redirection still runs its target's substitutions.
+                self.visit(item[1], child_shell)
+        for pipeline in pipelines:
+            shared_heredocs = list(heredocs)
+            for position, unit in enumerate(pipeline):
+                first = unit["children"][0] if unit["children"] else unit["node"]
+                unit_shell = (child_shell + (ChildShell(first.start_byte, PIPELINE_STAGE,
+                                                        position == 0),)
+                              if len(pipeline) > 1 else child_shell)
+                redirects, trailing_words = [], []
+                for redirect in unit["redirects"]:
+                    shared_heredocs.extend(
+                        self.redirect(redirect, unit_shell, redirects, trailing_words))
+                if unit["node"].type in SIMPLE_COMMAND_NODE_TYPES:
+                    self.simple_command(unit["node"], unit["children"], unit_shell,
+                                        list(shared_heredocs), redirects, trailing_words)
+                else:
+                    self.visit(unit["node"], unit_shell, list(shared_heredocs))
+
+    def _flatten(self, node, items):
+        """Append node's commands, operators and redirections to items, in the order written."""
+        kind = node.type
+        if kind in SEQUENCE_NODE_TYPES:
+            for child in node.children:
+                if child.type == "comment":
+                    continue
+                if child.type in REDIRECT_NODE_TYPES:
+                    items.append(("redirect", child))
+                    if child.type == "heredoc_redirect":
+                        self._flatten_heredoc_line(child, items)
+                elif child.is_named:
+                    self._flatten(child, items)
+                elif child.type in PIPE_OPERATORS:
+                    items.append(("pipe",))
+            return
+        if kind in SIMPLE_COMMAND_NODE_TYPES:
+            # tree-sitter-bash joins the next line's command onto the last stage of a pipeline
+            # of three or more when that command has a redirection; bash runs two commands.
+            part, previous_end = [], None
+            for child in node.children:
+                if previous_end is not None and part and _separates_commands(
+                        self.source[previous_end:child.start_byte]):
+                    items.append(("unit", node, part))
+                    part = []
+                part.append(child)
+                previous_end = child.end_byte
+            items.append(("unit", node, part))
+            return
+        items.append(("unit", node, None))
+
+    def _flatten_heredoc_line(self, heredoc_redirect, items):
+        """Append what tree-sitter-bash puts after a heredoc's delimiter, other than the heredoc's own parts.
+
+        tree-sitter-bash puts the rest of the heredoc's line, such as `| bash` or
+        `|| { … }`, inside the heredoc_redirect. Every node there is read as
+        commands, except the parts redirect() reads as the heredoc's.
+        """
+        arguments = heredoc_redirect.children_by_field_name("argument")
+        for inner in heredoc_redirect.children:
+            if inner.type in PIPE_OPERATORS:
+                items.append(("pipe",))
+            elif inner.is_named and inner not in arguments \
+                    and inner.type not in HEREDOC_PARTS_READ_BY_REDIRECT:
+                self._flatten(inner, items)
+
+    def redirect(self, node, child_shell, redirects, trailing_words):
+        """Add one redirection to a command's redirects; return the heredocs it feeds."""
+        self.visit_inside_redirect(node, child_shell)
+        if node.type != "heredoc_redirect":
+            pair, extra = _redirect_parts(node, self.glob_markers)
+            redirects.append(pair)
+            trailing_words.extend(extra)
+            return []
+        heredoc = _heredoc_of(node)
+        redirects.append(("<<", heredoc.body))
+        arguments = node.children_by_field_name("argument")
+        for inner in node.children:
+            if inner.type == "heredoc_body":
+                if heredoc.expanded:
+                    self.expanded_heredoc_body(inner, child_shell)
+            elif inner.type in REDIRECT_NODE_TYPES:
+                self.visit_inside(inner, child_shell)
+                pair, extra = _redirect_parts(inner, self.glob_markers)
                 redirects.append(pair)
                 trailing_words.extend(extra)
-        body = node.child_by_field_name("body")
-        if body is not None:
-            self.visit(body, child_shell, heredocs, redirects, trailing_words)
-        for inner in later:
-            self.visit(inner, child_shell, heredocs)
+            elif inner in arguments:
+                # A word after the delimiter on the heredoc's line is the command's word.
+                self.visit_inside(inner, child_shell)
+                trailing_words.append(word_value(inner, self.glob_markers))
+            elif inner.type == "ERROR":
+                self.visit_inside(inner, child_shell)
+        return [heredoc]
 
-    def simple_command(self, node, child_shell, heredocs, redirects, trailing_words=()):
+    def visit_inside_redirect(self, node, child_shell):
+        """Visit the substitutions in a file redirection's target."""
+        if node.type != "heredoc_redirect":
+            self.visit_inside(node, child_shell)
+
+    def simple_command(self, node, children, child_shell, heredocs, redirects, trailing_words):
         words, own_redirects = [], []
-        previous_end = None
-        for child in node.children:
-            if previous_end is not None and _separates_commands(
-                    self.source[previous_end:child.start_byte]):
-                # tree-sitter-bash joins the next line's command onto the last stage of a
-                # pipeline of three or more when that command has a redirection; bash runs
-                # them as two commands.
-                if words:
-                    self.commands.append(SimpleCommand(words, child_shell, own_redirects, []))
-                words, own_redirects = [], []
-            previous_end = child.end_byte
+        for child in children:
             self._read_command_part(child, child_shell, words, own_redirects)
         words.extend(trailing_words)
         if words:
@@ -559,13 +717,21 @@ def simple_commands(command_text, glob_markers=None):
     outside quotes and not escaped is replaced by its marker, so a caller can
     tell which ones the shell would expand. Raises ShellParserUnavailable.
     """
-    source = command_text.encode("utf-8", "surrogatepass")
+    if _read_in_a_new_process:
+        return _simple_commands_in_a_new_process(command_text, glob_markers)
+    try:
+        parser()
+    except ShellParserInstalledForANewProcess:
+        _use_a_new_process()
+        return _simple_commands_in_a_new_process(command_text, glob_markers)
+    source = _source_with_heredoc_delimiters_ended(command_text.encode("utf-8", "surrogatepass"))
     rewritten = _source_with_unique_heredoc_delimiters(source)
     restore = []
     if rewritten is None:
         tree = parser().parse(source)
     else:
         source, restore, tree = rewritten
+    source, tree = _source_with_heredoc_operators_after_their_words(source, tree)
     commands = None
     if tree.root_node.has_error:
         source, tree = _source_with_last_case_terminators_plain(source, tree)
@@ -576,6 +742,52 @@ def simple_commands(command_text, glob_markers=None):
     for command in commands:
         _restore_delimiters(command, restore)
     return commands
+
+
+_read_in_a_new_process = False
+
+
+def _use_a_new_process():
+    global _read_in_a_new_process
+    _read_in_a_new_process = True
+
+
+def _simple_commands_in_a_new_process(command_text, glob_markers, runner=subprocess.run):
+    """Return simple_commands(command_text) as read by a new Python process running this file."""
+    request = json.dumps({"command": command_text, "glob_markers": glob_markers},
+                         ensure_ascii=False)
+    try:
+        completed = runner([sys.executable, str(Path(__file__).resolve()), NEW_PROCESS_READ_FLAG],
+                           input=request.encode("utf-8", "surrogatepass"), capture_output=True,
+                           timeout=INSTALL_TIMEOUT_SECONDS)
+    except (OSError, subprocess.SubprocessError) as error:
+        raise ShellParserUnavailable(f"reading the command in a new process failed: {error}") \
+            from error
+    if completed.returncode != 0:
+        raise ShellParserUnavailable(
+            "reading the command in a new process failed: "
+            + (completed.stderr.decode("utf-8", "replace").strip() or f"exit {completed.returncode}"))
+    return [SimpleCommand(found["words"],
+                          tuple(ChildShell(*shell) for shell in found["child_shell"]),
+                          [tuple(pair) for pair in found["redirects"]],
+                          [Heredoc(*heredoc) for heredoc in found["heredocs"]])
+            for found in json.loads(completed.stdout.decode("utf-8", "surrogatepass"))]
+
+
+NEW_PROCESS_READ_FLAG = "--read-command-on-standard-input"
+
+
+def _read_command_on_standard_input():
+    request = json.loads(sys.stdin.buffer.read().decode("utf-8", "surrogatepass"))
+    found = simple_commands(request["command"], request["glob_markers"])
+    sys.stdout.buffer.write(json.dumps([
+        {"words": list(command),
+         "child_shell": [(int(shell), shell.kind, shell.first_stage)
+                         for shell in command.child_shell],
+         "redirects": command.redirects,
+         "heredocs": [(heredoc.body, heredoc.expanded, heredoc.delimiter)
+                      for heredoc in command.heredocs]}
+        for command in found], ensure_ascii=False).encode("utf-8", "surrogatepass"))
 
 
 def _restore_delimiters(command, restore):
@@ -614,9 +826,53 @@ def _heredoc_starts(node):
     return sorted(found, key=lambda start: start.start_byte)
 
 
+def _inside_heredoc_body(node):
+    """Return whether tree-sitter-bash itself placed node inside a heredoc body.
+
+    Such a heredoc start is inside a substitution in a body bash expands, so
+    bash reads it as a heredoc of its own.
+    """
+    parent = node.parent
+    while parent is not None:
+        if parent.type == "heredoc_body":
+            return True
+        parent = parent.parent
+    return False
+
+
 UNIQUE_DELIMITER_PREFIX = b"NEDSCHORUS_HEREDOC_END_"
 # Each pass corrects the heredocs the previous parse misplaced; real commands nest far less.
 MAX_HEREDOC_RENAMING_PASSES = 8
+
+
+def _source_with_heredoc_delimiters_ended(source):
+    """Return source with a space after each heredoc delimiter that an operator follows directly.
+
+    bash ends a delimiter word at ;, &, |, (, ), < or >, as in `cat <<EOF; ls`;
+    tree-sitter-bash takes everything up to a space as the delimiter.
+    """
+    tree = parser().parse(source)
+    ends = []
+    for start in _heredoc_starts(tree.root_node):
+        text, index, quote = start.text, 0, None
+        while index < len(text):
+            character = text[index:index + 1]
+            if quote:
+                quote = None if character == quote else quote
+            elif character == b"\\":
+                index += 1
+            elif character in (b"'", b'"'):
+                quote = character
+            elif character in b";&|()<>":
+                ends.append(start.start_byte + index)
+                break
+            index += 1
+    if not ends:
+        return source
+    spaced = bytearray(source)
+    for end in reversed(ends):
+        spaced[end:end] = b" "
+    return bytes(spaced)
 
 
 def _heredoc_delimiter(start):
@@ -659,20 +915,21 @@ def _source_with_unique_heredoc_delimiters(source):
     left alone; each pass reparses, until no start is left to rename.
     """
     original = source
-    replacements_made = []  # (unique, original delimiter text)
+    replacements_made = []  # (unique word, delimiter as written, delimiter after quote removal)
     tree = parser().parse(source)
     for _pass in range(MAX_HEREDOC_RENAMING_PASSES):
         replacements = []  # (start, end, new bytes, original bytes)
         bodies = []  # (first byte, byte after the end line) of each body placed in this pass
         body_resumes = 0
         for start in _heredoc_starts(tree.root_node):
-            if any(first <= start.start_byte < after for first, after in bodies):
+            nested = any(first <= start.start_byte < after for first, after in bodies)
+            if nested and not _inside_heredoc_body(start):
                 continue
             delimiter = _heredoc_delimiter(start)
             if not delimiter:
                 continue
             dashed = source[:start.start_byte].rstrip(b" \t").endswith(b"<<-")
-            line_end = source.find(b"\n", start.end_byte)
+            line_end = _logical_line_end(source, start.end_byte)
             if line_end == -1:
                 break
             renamed = delimiter.startswith(UNIQUE_DELIMITER_PREFIX)
@@ -686,7 +943,9 @@ def _source_with_unique_heredoc_delimiters(source):
                 replacements.append((start.start_byte, start.end_byte,
                                      b"'" + unique + b"'" if quoted else unique, start.text))
                 replacements_made.append((unique, start.text, delimiter))
-            body_first = position = max(line_end + 1, body_resumes)
+            # A heredoc in a substitution inside another's body starts on its own next line;
+            # heredocs that share a command line take their bodies one after another.
+            body_first = position = line_end + 1 if nested else max(line_end + 1, body_resumes)
             while position < len(source):
                 line_end = source.find(b"\n", position)
                 if line_end == -1:
@@ -725,6 +984,133 @@ def _source_with_unique_heredoc_delimiters(source):
     return source, restore, tree
 
 
+def _source_with_heredoc_operators_after_their_words(source, tree):
+    """Return (source, tree) with each heredoc's line rewritten so tree-sitter-bash reads it as bash does.
+
+    tree-sitter-bash misreads what follows a heredoc's delimiter on its line.
+    bash reads `git push <<EOF --force origin b | cat` as
+    `git push --force origin b <<EOF | cat`, since a redirection may stand
+    anywhere among a command's words, so the words and redirections after the
+    delimiter are moved in front of the `<<DELIMITER`, up to what ends the
+    command. tree-sitter-bash also misreads a `;` or `&` on a heredoc's line,
+    so the commands after the first one are moved to the line after the
+    heredoc's body, where bash runs them in the same order.
+    """
+    moved = bytearray(source)
+    changed = False
+    for start in reversed(_heredoc_starts(tree.root_node)):
+        operator = start.prev_sibling
+        line_end = _logical_line_end(source, start.end_byte)
+        if operator is None or operator.type not in ("<<", "<<-") or line_end == -1 \
+                or _inside_heredoc_body(start):
+            continue
+        # A file descriptor written before << goes with it, as in `3<<EOF`.
+        opening = start.parent.start_byte if start.parent.type == "heredoc_redirect" \
+            else operator.start_byte
+        rest = source[start.end_byte:line_end]
+        end, ended_by = _command_end(rest)
+        stretch, after = rest[:end], rest[end:].lstrip(b" \t")
+        # A heredoc in a substitution that closes on its own line stays inside the substitution.
+        if ended_by == ")":
+            continue
+        # Two heredocs on one line take their bodies in order, so neither is moved.
+        if b"<<" in stretch or (not stretch.strip() and after == rest.lstrip(b" \t")):
+            continue
+        words = stretch.strip() + b" " if stretch.strip() else b""
+        moved[opening:line_end] = (b" " + words + source[opening:start.end_byte] + b" " + after)
+        changed = True
+    if changed:
+        source = bytes(moved)
+        tree = parser().parse(source)
+    return _source_with_commands_after_heredoc_lines_moved_below_their_bodies(source, tree)
+
+
+def _source_with_commands_after_heredoc_lines_moved_below_their_bodies(source, tree):
+    for start in reversed(_heredoc_starts(tree.root_node)):
+        line_end = _logical_line_end(source, start.end_byte)
+        if line_end == -1 or _inside_heredoc_body(start):
+            continue
+        rest = source[start.end_byte:line_end]
+        separator = _first_list_separator(rest)
+        if separator is None or b"<<" in rest:
+            continue
+        later = rest[separator + 1:].strip()
+        body_end = _heredoc_body_end(source, line_end + 1, _heredoc_delimiter(start),
+                                     source[:start.start_byte].rstrip(b" \t").endswith(b"<<-"))
+        if not later or body_end is None:
+            continue
+        source = (source[:start.end_byte] + rest[:separator] + source[line_end:body_end]
+                  + later + b"\n" + source[body_end:])
+        tree = parser().parse(source)
+    return source, tree
+
+
+def _first_list_separator(text):
+    """Return the offset of the first ; or & that ends a command in text, outside any nesting, or None."""
+    probe = b": " + text
+    found = []
+    stack = [parser().parse(probe).root_node]
+    while stack:
+        node = stack.pop()
+        if node.type in CHILD_SHELL_NODE_TYPES or node.type in TEXT_NODE_TYPES \
+                or node.type in ("expansion", "simple_expansion", "compound_statement",
+                                 "if_statement", "while_statement", "for_statement",
+                                 "case_statement", "c_style_for_statement"):
+            continue
+        if not node.is_named and node.type in (";", "&"):
+            found.append(node.start_byte - 2)
+        stack.extend(node.children)
+    return min(found, default=None)
+
+
+def _heredoc_body_end(source, position, delimiter, dashed):
+    """Return the offset just after the line that ends a heredoc body starting at position, or None."""
+    while position < len(source):
+        line_end = source.find(b"\n", position)
+        line_end = len(source) if line_end == -1 else line_end
+        line = source[position:line_end]
+        if (line.lstrip(b"\t") if dashed else line) == delimiter:
+            return min(line_end + 1, len(source))
+        position = line_end + 1
+    return None
+
+
+def _logical_line_end(source, position):
+    """Return the offset of the line end at or after position that a backslash does not continue, or -1."""
+    while True:
+        line_end = source.find(b"\n", position)
+        if line_end == -1:
+            return -1
+        backslashes = len(source[:line_end]) - len(source[:line_end].rstrip(b"\\"))
+        if backslashes % 2 == 0:
+            return line_end
+        position = line_end + 1
+
+
+def _command_end(text):
+    """Return (offset, ended_by) for where the first command in text ends.
+
+    ended_by is the operator, ), or "#" for a comment, that ends it, or None at the end of text.
+    """
+    probe = b": " + text
+    ends = []
+    stack = [parser().parse(probe).root_node]
+    while stack:
+        node = stack.pop()
+        if node.type == "comment":
+            ends.append((node.start_byte, "#"))
+            continue
+        if node.type in CHILD_SHELL_NODE_TYPES or node.type in TEXT_NODE_TYPES \
+                or node.type in ("expansion", "simple_expansion"):
+            continue
+        if not node.is_named and (node.type in PIPE_OPERATORS or node.type in LIST_OPERATORS
+                                  or node.type == ")"):
+            ends.append((node.start_byte, node.type))
+        stack.extend(node.children)
+    end, ended_by = min(ends, default=(len(probe), None))
+    return max(0, end - 2), ended_by
+
+
 LAST_CASE_TERMINATOR_PATTERN = re.compile(rb";;?&(\s*esac\b)")
 
 
@@ -734,13 +1120,29 @@ def _source_with_last_case_terminators_plain(source, tree):
     tree-sitter-bash rejects a last case branch ended by ;;& or ;&, and loses
     every command after the case; before esac they act as ;; does.
     """
-    plain = LAST_CASE_TERMINATOR_PATTERN.sub(
-        lambda match: b";;" + b" " * (len(match.group(0)) - len(match.group(1)) - 2)
-        + match.group(1), source)
+    def plain_terminator(match):
+        if _inside_text(tree.root_node, match.start()):
+            return match.group(0)
+        return (b";;" + b" " * (len(match.group(0)) - len(match.group(1)) - 2)
+                + match.group(1))
+    plain = LAST_CASE_TERMINATOR_PATTERN.sub(plain_terminator, source)
     if plain == source:
         return source, tree
     plain_tree = parser().parse(plain)
     return (plain, plain_tree) if not plain_tree.root_node.has_error else (source, tree)
+
+
+TEXT_NODE_TYPES = {"raw_string", "string", "ansi_c_string", "heredoc_body", "comment"}
+
+
+def _inside_text(root, byte):
+    """Return whether byte lies in a quoted string, a heredoc body or a comment of the tree."""
+    node = root.descendant_for_byte_range(byte, byte + 1)
+    while node is not None:
+        if node.type in TEXT_NODE_TYPES:
+            return True
+        node = node.parent
+    return False
 
 
 def _reread_with_heredoc_bodies_apart(source, tree, glob_markers):
@@ -776,7 +1178,12 @@ def _reread_with_heredoc_bodies_apart(source, tree, glob_markers):
         body_source = (f"cat <<{wrapper}\n" + body + f"{wrapper}\n").encode("utf-8", "surrogatepass")
         inside = _collect(parser().parse(body_source).root_node, glob_markers, body_source,
                           skip_errors=True)
-        commands[:0] = [SimpleCommand(list(found), ("heredoc body",) + found.child_shell,
+        # Only the substitutions in an unquoted body run.
+        commands[:0] = [SimpleCommand(list(found), (ChildShell(-1, SUBSTITUTION),) + found.child_shell,
                                       found.redirects, found.heredocs)
-                        for found in inside if found[:1] != ["cat"] or found.child_shell]
+                        for found in inside if found[:1] != ["cat"] or found.inside_substitution()]
     return commands
+
+
+if __name__ == "__main__" and sys.argv[1:] == [NEW_PROCESS_READ_FLAG]:
+    _read_command_on_standard_input()
