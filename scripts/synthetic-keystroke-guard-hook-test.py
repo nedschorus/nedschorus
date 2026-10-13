@@ -423,6 +423,8 @@ for case_name, command in [
      "ssh ned-box '<f | bash' <<'EOF'\ntmux send-keys -t gatekeeper Enter\nEOF"),
     ("a heredoc fed to ssh host 'cat | x; cat <f | bash' is not read: bash's own first stage reads f",
      "ssh ned-box 'cat | x; cat <f | bash' <<'EOF'\ntmux send-keys -t gatekeeper Enter\nEOF"),
+    ("a heredoc fed to ssh host 'bash 0<s.sh' is not read: the remote bash reads s.sh",
+     "ssh ned-box 'bash 0<s.sh' <<'EOF'\ntmux send-keys -t gatekeeper Enter\nEOF"),
     ("a heredoc fed to ssh host 'cat < f | bash' reaches no command: the first stage reads f",
      "ssh ned-box 'cat < f | bash' <<'EOF'\ntmux send-keys -t gatekeeper Enter\nEOF"),
     ("a heredoc fed to ssh host 'bash -s < setup.sh' is not read: bash reads setup.sh",
