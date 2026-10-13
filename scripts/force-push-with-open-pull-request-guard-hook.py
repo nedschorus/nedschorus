@@ -173,23 +173,31 @@ def find_git_push_invocation(words):
         return None
     if wrapper_directory is not None:
         directory_override = (wrapper_directory if directory_override is None
-                              else os.path.join(wrapper_directory, directory_override))
+                              else directory_joined(wrapper_directory, directory_override))
     return {"sanctioned": sanctioned,
             "push_words": words[index + 1:],
             "directory_override": directory_override}
 
 
 def directory_a_wrapper_sets(words):
-    """Return the directory env -C or sudo -D in front of the program changes to, or None.
+    """Return the directory the wrappers in front of the program run it in, or None.
 
-    Each directory option is taken relative to the one before it, as the wrappers run in turn.
+    A wrapper given more than one directory option uses its last, as env does; a
+    wrapper inside another runs in a directory taken relative to the outer one's.
     """
     directory = None
-    options = shell_reader.simple_command_wrapper_options_and_values_parsed_from_words(words)
-    for wrapper, option, value in options:
-        if (wrapper, option) in WRAPPER_DIRECTORY_OPTIONS and value is not None:
-            directory = value if directory is None else os.path.join(directory, value)
+    wrappers = shell_reader.simple_command_wrapper_options_and_values_parsed_from_words(words)
+    for wrapper, options in wrappers:
+        own = [value for option, value in options if (wrapper, option) in WRAPPER_DIRECTORY_OPTIONS]
+        if own:
+            directory = directory_joined(directory, own[-1])
     return directory
+
+
+def directory_joined(base, target):
+    """Return target with ~ expanded, taken relative to base when base is given."""
+    target = os.path.expanduser(target)
+    return target if base is None else os.path.join(base, target)
 
 
 def parse_push_arguments(push_words):
