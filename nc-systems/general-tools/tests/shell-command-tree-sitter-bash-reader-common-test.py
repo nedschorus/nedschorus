@@ -250,6 +250,11 @@ for locale in ["C.UTF-8", "C"]:
     check(f"$'...' words are the words this machine's bash passes, with LC_ALL={locale} "
           f"(the reader read bash as writing \\u {found.stdout.split()[0] if found.stdout else '?'})",
           found.returncode == 0, found.stdout + found.stderr)
+# Each word in this process's locale too, so a disagreement names its word.
+for word in ANSI_C_WORDS:
+    expected = subprocess.run(["bash", "-c", f"printf %s {word}"], capture_output=True).stdout
+    found = reader.simple_commands(f"printf %s {word}")[0][2].encode("utf-8", reader.SHELL_TEXT_ERRORS)
+    check(f"{word} is the word bash passes", found == expected, (found, expected))
 for written, word, expected in [
         ("kept", r"$'\u00e9\U1F600x'", "\\u00e9\\U1F600x"),
         ("escaped", r"$'\u00e9\u41\U1F600 \U110000 a\U80000000b'", "\\u00E9A\\U0001F600 \\U00110000 ab"),
@@ -286,6 +291,36 @@ finally:
     reader._bash_ansi_c_escapes_written = real
 check("a bash that writes \\c? as 0x1F and takes one backslash after \\c gives $'\\c? \\c\\\\x' so",
       found == "\x1f \x1c\\x", found)
+# A decoded word read again as a command keeps its bytes, whatever they are.
+for word in [r"$'\xe9; tmux send-keys -t g Enter'", r"$'\U110000; tmux kill-server'",
+             r"$'\uD800\xff; tmux kill-server'"]:
+    inner = reader.simple_commands(f"sh -c {word}")[0][2]
+    again = reader.simple_commands(inner)
+    check(f"the decoded word {word} reads again as a command, bytes kept",
+          [list(f)[-1:] for f in again][-1] in (["Enter"], ["kill-server"])
+          and inner.encode("utf-8", reader.SHELL_TEXT_ERRORS)
+          == subprocess.run(["bash", "-c", f"printf %s {word}"], capture_output=True).stdout,
+          [list(f) for f in again])
+found = reader.simple_commands("echo \ud800x \udcff; tmux kill-server")
+check("a lone surrogate from a JSON payload, and a byte that is not UTF-8, keep their words",
+      [list(f) for f in found] == [["echo", "\ud800x", "\udcff"], ["tmux", "kill-server"]],
+      [list(f) for f in found])
+# Run in its own process under a deadline: a pattern that backtracks would hang this test.
+timing_code = ("import importlib.util, sys; s = importlib.util.spec_from_file_location('r', sys.argv[1]); "
+               "r = importlib.util.module_from_spec(s); s.loader.exec_module(r); "
+               "r.simple_commands('case x in x) :;& ' + '#' * 60 + ' y\\nesac; case z in z) :;& ' + '#' * 60)")
+try:
+    started = time.monotonic()
+    subprocess.run([sys.executable, "-c", timing_code, str(MODULE_PATH)], timeout=20, check=True,
+                   capture_output=True)
+    timing = time.monotonic() - started
+except (subprocess.TimeoutExpired, subprocess.CalledProcessError) as problem:
+    timing = repr(problem)
+check("a run of # after a terminator is matched in linear time",
+      isinstance(timing, float) and timing < 10, timing)
+found = reader.simple_commands("ssh h $'true\\ntmux kill-server'")
+check("an ANSI-C quoted remote command keeps its newline, so the command after it is seen",
+      found[0][2] == "true\ntmux kill-server", list(found[0]))
 
 found = words_of("echo 'a;&' 'a;;'; case x in x) :;& esac")
 check("a repaired ;& leaves a quoted ;; elsewhere in the command as written", found[0] == ["echo", "a;&", "a;;"], found)
@@ -305,6 +340,23 @@ except (subprocess.TimeoutExpired, subprocess.CalledProcessError) as problem:
     last, timing = None, repr(problem)
 check("a body holding 2,000 cases ended by ;& is repaired in one pass, and the command after them is read",
       isinstance(timing, float) and timing < 30 and last == "['tmux', 'kill-server']", (timing, last))
+# The offsets of the terminators one round writes are moved once, not once per terminator; with the
+# parse's own checks made free, 30,000 of them take seconds, and a quadratic shift takes minutes.
+timing_code = ("import importlib.util, sys; s = importlib.util.spec_from_file_location('r', sys.argv[1]); "
+               "r = importlib.util.module_from_spec(s); s.loader.exec_module(r); "
+               "r._inside_text = lambda *arguments, **options: False; "
+               "found = r._source_with_case_terminators_repaired("
+               "b'$(case x in x) :;& esac)\\n' * 30000, r.TEXT_NODE_TYPES, all_at_once=True); "
+               "print(len(found[3]))")
+try:
+    started = time.monotonic()
+    restored_count = subprocess.run([sys.executable, "-c", timing_code, str(MODULE_PATH)], timeout=60,
+                                    check=True, capture_output=True, text=True).stdout.strip()
+    timing = time.monotonic() - started
+except (subprocess.TimeoutExpired, subprocess.CalledProcessError) as problem:
+    restored_count, timing = None, repr(problem)
+check("30,000 terminators written in one round have their offsets moved in linear time",
+      isinstance(timing, float) and timing < 10 and restored_count == "30000", (timing, restored_count))
 # Each ;;& written as ;; shortens the text, so a later terminator's offset in the command as written is further on.
 found = words_of("case a in a) :;;& esac; " * 20 + "echo 'x;;' $(case b in b) :;& esac)")
 check("a terminator repaired after twenty that shortened the text is put back where it was written",
@@ -325,7 +377,12 @@ for command, expected in [
         ("cat <<A\n`echo $(case x in x) :;& esac)`\nA", ["echo", "$(case x in x) :;& esac)"]),
         ("echo `echo \\`case x in x) :;& esac\\``", ["echo", "`case x in x) :;& esac`"]),
         # The body taken out before the terminator moves its offset in the text parsed.
-        ("cat <<E\nbody line\nE\necho $(case x in x) :;& esac)", ["echo", "$(case x in x) :;& esac)"])]:
+        ("cat <<E\nbody line\nE\necho $(case x in x) :;& esac)", ["echo", "$(case x in x) :;& esac)"]),
+        # A ;;& written as ;; in the same round moves the terminator after it.
+        ("cat <<A\n$(echo $(case a in a) :;;& esac) $(case b in b) :;& esac))\nA",
+         ["echo", "$(case a in a) :;;& esac)", "$(case b in b) :;& esac)"]),
+        # A part of a word read in parts.
+        ("xa a$(case x in x) :;& esac)", ["xa", "a$(case x in x) :;& esac)"])]:
     found = words_of(command)
     check(f"a repaired terminator reads as written only in the word that holds it: {command!r}",
           expected in found, found)
@@ -1312,6 +1369,8 @@ def same_reading(first, second):
     """Return whether two readings agree in value, class and every attribute."""
     if type(first) is not type(second):
         return False
+    if isinstance(first, str):
+        return first == second
     if isinstance(first, (list, tuple)):
         if len(first) != len(second) or not all(map(same_reading, first, second)):
             return False
@@ -1322,6 +1381,35 @@ def same_reading(first, second):
 
 
 reader.simple_commands = _simple_commands_as_loaded
+check("two readings whose ~ words differ in text are not the same reading",
+      not same_reading([reader.ShellWordWithUnexpandedTildePrefixBashWouldExpand("~/a")], [reader.ShellWordWithUnexpandedTildePrefixBashWouldExpand("~/b")])
+      and same_reading([reader.ShellWordWithUnexpandedTildePrefixBashWouldExpand("~/a")], [reader.ShellWordWithUnexpandedTildePrefixBashWouldExpand("~/a")]))
+# A failure to send what the new process read is the reader failing on the command, not a missing parser.
+real_encoder, real_stdin, real_stdout = reader._reader_output_to_json, sys.stdin, sys.stdout
+reader._reader_output_to_json = lambda value: (_ for _ in ()).throw(TypeError("cannot send a float"))
+sys.stdin = io.TextIOWrapper(io.BytesIO(json.dumps({"command": "ls", "glob_markers": None}).encode()))
+sys.stdout = io.TextIOWrapper(io.BytesIO())
+# A new process whose reader raises exits 1 with the error on stderr, as Python does.
+child_exit, child_error = 0, b""
+try:
+    reader._read_command_on_standard_input()
+    sys.stdout.flush()
+    sent = sys.stdout.buffer.getvalue()
+except Exception as error:
+    sent, child_exit, child_error = b"", 1, f"{type(error).__name__}: {error}".encode()
+finally:
+    reader._reader_output_to_json, sys.stdin, sys.stdout = real_encoder, real_stdin, real_stdout
+try:
+    reader._simple_commands_in_a_new_process(
+        "ls", None,
+        runner=lambda *arguments, **options: subprocess.CompletedProcess(arguments, child_exit, sent,
+                                                                         child_error))
+    raised = None
+except reader.ShellParserUnavailable as error:
+    raised = error
+check("an encoder failure in the new process reaches the guard as the reader failing, quoting the error",
+      isinstance(raised, reader.ShellCommandUnreadable) and "TypeError: cannot send a float" in str(raised),
+      (sent, raised))
 command = reader.simple_commands("cat <<E >~/x\nb\nE")[0]
 command.added_attribute = (reader.ShellWordWithUnexpandedTildePrefixBashWouldExpand("~/y"), [1, None])
 command.heredocs[0].added_attribute = True

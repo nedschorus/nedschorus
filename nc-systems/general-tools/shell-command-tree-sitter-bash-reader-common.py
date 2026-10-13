@@ -41,6 +41,7 @@ Load it by path, under the snake_case form of its file name:
 # Deferred annotations let the module load on the Mac's system Python 3.9.
 from __future__ import annotations
 
+import bisect
 import codecs
 import collections
 import contextlib
@@ -1162,8 +1163,16 @@ def _source_with_case_terminators_repaired(text, text_node_types, keep_first=Fal
         starts = [(start, length) for start, length in starts if start is not None]
         if not starts:
             break
+        # Each terminator written as ;; shortens the text by its length less two, so an offset
+        # moves back by what the terminators before it in this round removed.
+        starts.sort()
+        before = [start for start, _ in starts]
+        removed = [0]
+        for _, length in starts:
+            removed.append(removed[-1] + length - 2)
+
         def after_this_round(offset):
-            return offset - sum(length - 2 for start, length in starts if start < offset)
+            return offset - removed[bisect.bisect_left(before, offset)]
         written = ([(after_this_round(offset), terminator) for offset, terminator in written]
                    + [(after_this_round(start), text[start:start + length])
                       for start, length in starts])
@@ -1343,11 +1352,15 @@ NEW_PROCESS_READ_FLAG = "--read-command-on-standard-input"
 def _read_command_on_standard_input():
     request = json.loads(sys.stdin.buffer.read().decode("utf-8", SHELL_TEXT_ERRORS))
     try:
-        found = simple_commands(request["command"], request["glob_markers"])
+        found = _reader_output_to_json(simple_commands(request["command"], request["glob_markers"]))
     except ShellCommandUnreadable as error:
         sys.stdout.buffer.write(json.dumps({"unreadable": error.install_output}).encode())
         return
-    sys.stdout.buffer.write(json.dumps({"commands": _reader_output_to_json(found)},
+    except Exception as error:
+        # A failure to send what was read is the reader failing on the command, not a missing parser.
+        sys.stdout.buffer.write(json.dumps({"unreadable": f"{type(error).__name__}: {error}"}).encode())
+        return
+    sys.stdout.buffer.write(json.dumps({"commands": found},
                                        ensure_ascii=False).encode("utf-8", SHELL_TEXT_ERRORS))
 
 
