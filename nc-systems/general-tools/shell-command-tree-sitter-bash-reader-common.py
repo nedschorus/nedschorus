@@ -1164,8 +1164,8 @@ def _source_with_case_terminators_repaired(text, text_node_types, keep_first=Fal
         if not starts:
             break
         # Each terminator written as ;; shortens the text by its length less two, so an offset
-        # moves back by what the terminators before it in this round removed.
-        starts.sort()
+        # moves back by what the terminators before it in this round removed. starts is in
+        # ascending order, as finditer finds them, which bisect needs.
         before = [start for start, _ in starts]
         removed = [0]
         for _, length in starts:
@@ -1356,8 +1356,11 @@ def _read_command_on_standard_input():
     except ShellCommandUnreadable as error:
         sys.stdout.buffer.write(json.dumps({"unreadable": error.install_output}).encode())
         return
+    except ShellParserUnavailable:
+        # A parser this process cannot load reaches the guard as a missing parser, with its install advice.
+        raise
     except Exception as error:
-        # A failure to send what was read is the reader failing on the command, not a missing parser.
+        # Any other failure, such as one sending what was read, is the reader failing on the command.
         sys.stdout.buffer.write(json.dumps({"unreadable": f"{type(error).__name__}: {error}"}).encode())
         return
     sys.stdout.buffer.write(json.dumps({"commands": found},
