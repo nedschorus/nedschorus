@@ -100,9 +100,9 @@ WHAT IT CANNOT SEE, so nobody mistakes a choice for an oversight:
   force-push guard, whose reading this shares.
 - A gh alias the user defined is not expanded.
 
-The tokenizer, the heredoc split and `is_program` are imported from
-scripts/synthetic-keystroke-guard-hook.py, the project's shared shell reader,
-as the force-push guard does: one reader, reviewed once.
+Commands are read with nc-systems/general-tools/shell-command-tree-sitter-bash-reader-common.py,
+the project's shared shell module on tree-sitter-bash, as the force-push guard
+does: one reader, reviewed once.
 """
 
 import importlib.util
@@ -113,14 +113,11 @@ import sys
 from pathlib import Path
 
 _REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
-_shell_reader_path = _REPOSITORY_ROOT / "scripts" / "synthetic-keystroke-guard-hook.py"
 _shell_reader_spec = importlib.util.spec_from_file_location(
-    "synthetic_keystroke_guard_hook", _shell_reader_path)
+    "shell_command_tree_sitter_bash_reader_common",
+    _REPOSITORY_ROOT / "nc-systems" / "general-tools" / "shell-command-tree-sitter-bash-reader-common.py")
 shell_reader = importlib.util.module_from_spec(_shell_reader_spec)
 _shell_reader_spec.loader.exec_module(shell_reader)
-
-split_out_heredocs = shell_reader.split_out_heredocs
-tokenize_simple_commands = shell_reader.tokenize_simple_commands
 is_program = shell_reader.is_program
 
 PROJECT_REPOSITORY = "nedschorus/nedschorus"
@@ -503,6 +500,8 @@ def refusal_for(subcommand, arguments, repository_from_environment,
     """The refusal text for one `gh issue` invocation, or None to let it run."""
     if subcommand not in VALUE_FLAGS:
         return None
+    if "--help" in arguments or "-h" in arguments:
+        return None  # gh prints the subcommand's help and writes nothing.
     flags, positionals = parse_arguments(subcommand, arguments)
     if names_another_repository(flags, positionals, repository_from_environment):
         return None
@@ -543,11 +542,8 @@ def refusal_for(subcommand, arguments, repository_from_environment,
 
 def analyze_command_text(command, working_directory=None):
     """The refusal for the first refused `gh issue` write in the command, or
-    None. Heredoc bodies are data and are dropped before reading."""
-    shell_view, _heredoc_bodies = split_out_heredocs(command)
-    for words in tokenize_simple_commands(shell_view):
-        if not words:
-            continue
+    None. Heredoc bodies are data."""
+    for words in shell_reader.simple_commands(command):
         invocation = find_gh_issue_invocation(words)
         if invocation is None:
             continue
@@ -578,7 +574,12 @@ def main(stdin=sys.stdin):
     working_directory = payload.get("cwd")
     if not isinstance(working_directory, str):
         working_directory = None
-    refusal = analyze_command_text(command, working_directory)
+    try:
+        refusal = analyze_command_text(command, working_directory)
+    except shell_reader.ShellParserUnavailable as error:
+        print(shell_reader.parser_unavailable_hook_output(
+            "The GHI write redirect guard", error, payload))
+        return 0
     if refusal:
         deny(refusal)
     return 0

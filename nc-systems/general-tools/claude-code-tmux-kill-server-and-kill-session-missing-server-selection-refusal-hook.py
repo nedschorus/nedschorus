@@ -7,12 +7,11 @@ does not redirect it while $TMUX is set. With $TMUX unset, it acts on the
 default server, which holds other sessions. Either way a bare kill can end
 agent-seats, their supervisors and every agent under them.
 
-Detection is literal, through the shared tokenizer, on every simple command:
-tmux is found wherever it stands in the command, so shell reserved words
-(do, then, !, {), prefixes (env, sudo, timeout, xargs) and assignments before
-it do not hide it. A simple command that starts with echo or printf is data.
-tmux's options are read the way tmux's getopt reads them, grouped flags and
-redirections included, and every command of a tmux command sequence is
+Detection is literal, through the shared shell module on tree-sitter-bash, on
+every simple command: tmux is found wherever it stands in the command, so
+prefixes (env, sudo, timeout, xargs) and assignments before it do not hide it. A simple command that starts with echo or printf is data.
+tmux's options are read the way tmux's getopt reads them, grouped flags
+included, and every command of a tmux command sequence is
 checked. Commands run by ssh, bash -c, eval or a script file are outside this
 guard's scope.
 """
@@ -25,24 +24,19 @@ import shlex
 import sys
 from pathlib import Path
 
-_keystroke_guard_path = (Path(__file__).resolve().parents[2] / "scripts"
-                         / "synthetic-keystroke-guard-hook.py")
-_keystroke_guard_spec = importlib.util.spec_from_file_location(
-    "synthetic_keystroke_guard_hook", _keystroke_guard_path)
-keystroke_guard = importlib.util.module_from_spec(_keystroke_guard_spec)
-_keystroke_guard_spec.loader.exec_module(keystroke_guard)
-
-split_out_heredocs = keystroke_guard.split_out_heredocs
-tokenize_simple_commands = keystroke_guard.tokenize_simple_commands
-is_program = keystroke_guard.is_program
-deny = keystroke_guard.deny
+_shell_reader_spec = importlib.util.spec_from_file_location(
+    "shell_command_tree_sitter_bash_reader_common",
+    Path(__file__).resolve().with_name("shell-command-tree-sitter-bash-reader-common.py"))
+shell_reader = importlib.util.module_from_spec(_shell_reader_spec)
+_shell_reader_spec.loader.exec_module(shell_reader)
+is_program = shell_reader.is_program
 
 # A simple command starting with one of these prints its words; it runs nothing.
 DATA_PRINTING_PROGRAMS = ("echo", "printf")
-# A word the shell would expand; the tokenizer has dropped its quotes, so the
+# A word the shell would expand; the reader has dropped its quotes, so the
 # hook cannot rebuild the word exactly and gives no suggested command for it.
 SHELL_EXPANSION_PATTERN = re.compile(r"[$`*?\[]")
-REDIRECTION_WORD_PATTERN = re.compile(r"^[0-9]*(?:>>|>&|>|<<<|<>|<)")
+ENVIRONMENT_ASSIGNMENT_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 
 # tmux's getopt string is "2c:CDdf:hlL:NqS:T:uUvV": these letters take a value.
 TMUX_SERVER_NAMING_LETTERS = "LS"
@@ -92,7 +86,7 @@ REFUSAL_WITHOUT_COMMAND_MESSAGE = (
 def find_tmux_invocation(words):
     """Return (tmux arguments, TMUX_TMPDIR set before tmux or None), or None."""
     first = next((word for word in words
-                  if not keystroke_guard.ENVIRONMENT_ASSIGNMENT_PATTERN.match(word)), None)
+                  if not ENVIRONMENT_ASSIGNMENT_PATTERN.match(word)), None)
     if first is None or any(is_program(first, name) for name in DATA_PRINTING_PROGRAMS):
         return None
     tmux_tmpdir = None
@@ -102,20 +96,6 @@ def find_tmux_invocation(words):
         elif is_program(word, "tmux"):
             return words[index + 1:], tmux_tmpdir
     return None
-
-
-def words_without_redirections(words):
-    """Drop redirections, which the tokenizer keeps as words."""
-    kept, index = [], 0
-    while index < len(words):
-        match = REDIRECTION_WORD_PATTERN.match(words[index])
-        if match:
-            # A bare operator such as 2> takes its target from the next word.
-            index += 2 if match.end() == len(words[index]) else 1
-            continue
-        kept.append(words[index])
-        index += 1
-    return kept
 
 
 def unnamed_server_kill(arguments):
@@ -158,13 +138,11 @@ def private_socket_path(tmux_tmpdir):
 
 
 def refusal_for(command):
-    shell_view, _heredoc_bodies = split_out_heredocs(command)
-    for words in tokenize_simple_commands(shell_view):
+    for words in shell_reader.simple_commands(command):
         invocation = find_tmux_invocation(list(words))
         if invocation is None:
             continue
-        raw_arguments, tmux_tmpdir = invocation
-        arguments = words_without_redirections(raw_arguments)
+        arguments, tmux_tmpdir = invocation
         kill_word = unnamed_server_kill(arguments)
         if kill_word is None:
             continue
@@ -192,10 +170,23 @@ def main(stdin=sys.stdin):
     command = (payload.get("tool_input") or {}).get("command")
     if not isinstance(command, str):
         return 0
-    reason = refusal_for(command)
+    try:
+        reason = refusal_for(command)
+    except shell_reader.ShellParserUnavailable as error:
+        print(shell_reader.parser_unavailable_hook_output(
+            "The tmux kill guard", error, payload))
+        return 0
     if reason:
         deny(reason)
     return 0
+
+
+def deny(reason):
+    print(json.dumps({"hookSpecificOutput": {
+        "hookEventName": "PreToolUse",
+        "permissionDecision": "deny",
+        "permissionDecisionReason": reason,
+    }}))
 
 
 if __name__ == "__main__":

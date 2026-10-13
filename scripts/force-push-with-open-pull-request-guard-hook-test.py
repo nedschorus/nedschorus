@@ -151,17 +151,16 @@ def run_main(payload, runner=None):
 
 # ---------------------------------------------------------------------------
 # The shared shell reader is really imported, and really splits invocations
-# from prose. A signature change in the keystroke guard fails HERE rather than
+# from prose. A change to the module's interface fails HERE rather than
 # failing open in front of a live push.
 # ---------------------------------------------------------------------------
 
-check("the shared tokenizer is imported from the keystroke guard",
-      callable(guard.tokenize_simple_commands) and callable(guard.split_out_heredocs)
-      and callable(guard.is_program))
-check("the shared tokenizer keeps quoted prose as one data word",
-      guard.tokenize_simple_commands('git commit -m "git push --force"')
+check("the shared shell module is imported",
+      callable(guard.shell_reader.simple_commands) and callable(guard.is_program))
+check("the shared shell module keeps quoted prose as one data word",
+      guard.shell_reader.simple_commands('git commit -m "git push --force"')
       == [["git", "commit", "-m", "git push --force"]],
-      repr(guard.tokenize_simple_commands('git commit -m "git push --force"')))
+      repr(guard.shell_reader.simple_commands('git commit -m "git push --force"')))
 
 # ---------------------------------------------------------------------------
 # The core decision: a force push at a branch with an open pull request.
@@ -479,9 +478,9 @@ for command in NOT_FORCING:
     check(f"and probes nothing: {command}", not runner.calls, str(runner.calls))
 
 # ---------------------------------------------------------------------------
-# A redirection is not a refspec. The shared tokenizer keeps redirections as
-# plain words, and read as a refspec one skipped the current-branch lookup, so
-# a bare force push with a trailing `2>&1` passed with no refusal and no note.
+# A redirection is not a refspec. A reader that kept redirections as plain
+# words read one as a refspec and skipped the current-branch lookup, so a bare
+# force push with a trailing `2>&1` passed with no refusal and no note.
 # Most pushes carry one: 35 of the forced pushes in this Mac's transcripts
 # over 14 days did. The first three commands are the reviewer's reproductions,
 # verbatim.

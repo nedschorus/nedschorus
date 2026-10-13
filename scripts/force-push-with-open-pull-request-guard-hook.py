@@ -7,8 +7,9 @@ bodies, and pushes of multiple branches are outside this guard's scope.
 The checkout determines the GitHub repository, regardless of the named remote;
 a push with no refspec is assumed to use push.default=simple.
 
-The shared tokenizer cuts at &, so a refspec after 2>&1 is lost and the push
-is judged as bare. Quoted prose is data, not an invocation.
+Commands are read with the shared shell module on tree-sitter-bash, which
+leaves redirections out of a command's words. Quoted prose is data, not an
+invocation.
 """
 
 import importlib.util
@@ -20,15 +21,13 @@ import sys
 import time
 from pathlib import Path
 
-_keystroke_guard_path = Path(__file__).with_name("synthetic-keystroke-guard-hook.py")
-_keystroke_guard_spec = importlib.util.spec_from_file_location(
-    "synthetic_keystroke_guard_hook", _keystroke_guard_path)
-keystroke_guard = importlib.util.module_from_spec(_keystroke_guard_spec)
-_keystroke_guard_spec.loader.exec_module(keystroke_guard)
-
-split_out_heredocs = keystroke_guard.split_out_heredocs
-tokenize_simple_commands = keystroke_guard.tokenize_simple_commands
-is_program = keystroke_guard.is_program
+_shell_reader_spec = importlib.util.spec_from_file_location(
+    "shell_command_tree_sitter_bash_reader_common",
+    Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+    / "shell-command-tree-sitter-bash-reader-common.py")
+shell_reader = importlib.util.module_from_spec(_shell_reader_spec)
+_shell_reader_spec.loader.exec_module(shell_reader)
+is_program = shell_reader.is_program
 
 # Stay below the hook timeout: overrunning it fails open silently.
 # Cap individual probes so one slow answer cannot consume the whole budget.
@@ -56,9 +55,6 @@ ENVIRONMENT_ASSIGNMENT_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 
 # An env option's value must not be mistaken for the program name.
 ENV_COMMAND_VALUE_OPTIONS = {"-u", "--unset"}
-
-# Redirection targets may share a word with the operator or occupy the next word.
-REDIRECTION_WORD_PATTERN = re.compile(r"^[0-9]*(?:>>|>|<<<|<>|<)")
 
 UNEXPANDED_PATTERN = re.compile(r"[$`*?]|\{\}")
 
@@ -197,25 +193,9 @@ def find_git_push_invocation(words):
             "directory_override": directory_override}
 
 
-def words_without_redirections(words):
-    # The shell removes redirections even after --; their words must never become refspecs.
-    kept = []
-    index = 0
-    while index < len(words):
-        match = REDIRECTION_WORD_PATTERN.match(words[index])
-        if match is None:
-            kept.append(words[index])
-            index += 1
-            continue
-        target_is_next_word = match.end() == len(words[index])
-        index += 2 if target_is_next_word else 1
-    return kept
-
-
 def parse_push_arguments(push_words):
     """Return (forced, refspecs) for the words after git push."""
     # Deletion is not a head rewrite; the guard's commit-on-top remedy would be wrong.
-    push_words = words_without_redirections(push_words)
     forced = False
     deletes = False
     positionals = []
@@ -419,13 +399,11 @@ def analyze_push(invocation, effective_directory, directory_is_unresolved, guard
 
 def analyze_command_text(command, payload_cwd, guard):
     """Return the first force-push decision while tracking literal directory changes."""
-    # A command substitution inherits its parent directory; its cd must not affect the parent.
-    shell_view, _heredoc_bodies = split_out_heredocs(command)
-    directories = {(): (payload_cwd, None)}  # Per substitution: (directory, unresolved cd target).
-    for words in tokenize_simple_commands(shell_view):
-        if not words:
-            continue
-        substitution = getattr(words, "substitution", ())
+    # A child shell, such as a command substitution or ( ... ), inherits its parent's
+    # directory; its cd must not affect the parent.
+    directories = {(): (payload_cwd, None)}  # Per child shell: (directory, unresolved cd target).
+    for words in shell_reader.simple_commands(command):
+        substitution = words.child_shell
         enclosing = substitution
         while enclosing not in directories:
             enclosing = enclosing[:-1]
@@ -485,7 +463,12 @@ def main(stdin=sys.stdin, runner=subprocess.run, clock=time.monotonic):
         return 0
     payload_cwd = payload.get("cwd") or os.getcwd()
     guard = GuardRun(runner, clock)
-    decision, reason = analyze_command_text(command, payload_cwd, guard)
+    try:
+        decision, reason = analyze_command_text(command, payload_cwd, guard)
+    except shell_reader.ShellParserUnavailable as error:
+        print(shell_reader.parser_unavailable_hook_output(
+            "The force-push guard", error, payload))
+        return 0
     if decision == "deny":
         deny(reason)
     elif decision == "unchecked":

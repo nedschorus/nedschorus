@@ -28,7 +28,6 @@ import tempfile
 from pathlib import Path
 
 HOOK_SCRIPT = Path(__file__).with_name("search-file-argument-read-as-option-guard-hook.py")
-KEYSTROKE_GUARD_SCRIPT = Path(__file__).with_name("synthetic-keystroke-guard-hook.py")
 
 _spec = importlib.util.spec_from_file_location("search_guard", HOOK_SCRIPT)
 guard = importlib.util.module_from_spec(_spec)
@@ -87,19 +86,11 @@ def run_in_shell(command, cwd):
 scratch = make_scratch_projects_folder()
 try:
     # -----------------------------------------------------------------------
-    # The shared shell reader is really imported, not copied.
+    # The shared shell module is really imported, not copied.
     # -----------------------------------------------------------------------
-    _keystroke_spec = importlib.util.spec_from_file_location(
-        "keystroke_guard_for_test", KEYSTROKE_GUARD_SCRIPT)
-    keystroke_guard = importlib.util.module_from_spec(_keystroke_spec)
-    _keystroke_spec.loader.exec_module(keystroke_guard)
-    check("the guard uses the keystroke guard's tokenizer and heredoc split",
-          guard.tokenize_simple_commands.__code__.co_code
-          == keystroke_guard.tokenize_simple_commands.__code__.co_code
-          and guard.split_out_heredocs.__code__.co_code
-          == keystroke_guard.split_out_heredocs.__code__.co_code
-          and guard.tokenize_simple_commands.__module__
-          == "synthetic_keystroke_guard_hook")
+    check("the guard reads commands with the shared shell module",
+          guard.shell_reader.__name__ == "shell_command_tree_sitter_bash_reader_common"
+          and guard.read_simple_commands("grep x *")[0][:2] == ["grep", "x"])
 
     # -----------------------------------------------------------------------
     # The misreading, on the real programs, before the guard is tested.
