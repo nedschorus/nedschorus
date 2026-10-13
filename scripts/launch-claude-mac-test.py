@@ -53,6 +53,7 @@ Run: python3 scripts/launch-claude-mac-test.py
 import errno
 import fcntl
 import os
+import pty
 import subprocess
 import sys
 import tempfile
@@ -61,6 +62,9 @@ from pathlib import Path
 
 LAUNCHER = Path(__file__).with_name("launch-claude-mac")
 UPDATE_LOCK_HELPER_NAME = "agent-binary-update-under-lock.py"
+# The bytes launch-claude-mac writes to colour an iTerm2 session's background:
+# iTerm2's SetColors sequence, OSC 1337 ... BEL, with the seat colour.
+ITERM2_PALE_PINK_BACKGROUND_SEQUENCE = "\x1b]1337;SetColors=bg=FFE6EE\x07"
 
 failures = []
 
@@ -220,7 +224,8 @@ class MacLaunchSandbox:
     def run(self, agents_root, seat_name="seat-t", attach=False,
             extra_arguments=None, update_timeout_seconds=None,
             seat_github_account=None, ambient_gh_token=None,
-            ambient_git_identity=None):
+            ambient_git_identity=None, term_program=None,
+            stdout_on_terminal=False):
         """Run the launcher in the sandbox. extra_arguments, when given, is
         placed in LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS the way
         recover-crashed-seats.py's launch_seat places it — after the strip
@@ -229,11 +234,15 @@ class MacLaunchSandbox:
         way, after the strip of ambient NEDSCHORUS_* values.
         ambient_gh_token puts a GH_TOKEN in the launcher's environment after
         the strip, standing in for the shell of a seat that already exports
-        one — which the merge-lane seat does by hand today."""
+        one — which the merge-lane seat does by hand today.
+        term_program sets TERM_PROGRAM, which is otherwise stripped so the
+        terminal the suite runs in cannot decide a case.
+        stdout_on_terminal gives the launcher a pseudo-terminal as stdout in
+        place of a pipe, and returns what it wrote there as result.stdout."""
         arguments = [seat_name] if attach else [seat_name, "--no-attach"]
         environment = {
             **{key: value for key, value in os.environ.items()
-               if key != "GH_TOKEN"
+               if key not in ("GH_TOKEN", "TERM_PROGRAM")
                and key not in GIT_IDENTITY_VARIABLES
                and not key.startswith(("NEDSCHORUS_", "LAUNCH_CLAUDE_",
                                        "CLAUDE_CODE_"))},
@@ -252,6 +261,11 @@ class MacLaunchSandbox:
             environment["GH_TOKEN"] = ambient_gh_token
         if ambient_git_identity is not None:
             environment.update(ambient_git_identity)
+        if term_program is not None:
+            environment["TERM_PROGRAM"] = term_program
+        if stdout_on_terminal:
+            return run_with_stdout_on_terminal(
+                [str(LAUNCHER), *arguments], str(self.workdir), environment)
         return subprocess.run(
             [str(LAUNCHER), *arguments],
             capture_output=True, text=True, check=False,
@@ -289,6 +303,37 @@ class MacLaunchSandbox:
         path = self.captures / "after-exit-cwd.txt"
         return (path.read_text(encoding="utf-8").strip()
                 if path.is_file() else "")
+
+
+def run_with_stdout_on_terminal(command, working_directory, environment):
+    """Run command with a pseudo-terminal as its stdout, so `[ -t 1 ]` holds
+    in it, and return a CompletedProcess whose stdout is what it wrote
+    there. The terminal is read while the command runs: a full terminal
+    buffer would otherwise block the command forever."""
+    controller, terminal = pty.openpty()
+    process = subprocess.Popen(
+        command, stdin=subprocess.DEVNULL, stdout=terminal,
+        stderr=subprocess.PIPE, cwd=working_directory, env=environment)
+    os.close(terminal)
+    written = bytearray()
+    while True:
+        try:
+            chunk = os.read(controller, 4096)
+        except OSError as error:
+            # Linux reports the last writer closing the terminal as EIO.
+            if error.errno != errno.EIO:
+                raise
+            break
+        if not chunk:
+            break
+        written.extend(chunk)
+    os.close(controller)
+    stderr = process.stderr.read().decode("utf-8", errors="replace")
+    process.stderr.close()
+    returncode = process.wait(timeout=60)
+    return subprocess.CompletedProcess(
+        command, returncode,
+        written.decode("utf-8", errors="replace"), stderr)
 
 
 class AnotherUpdateHoldsTheLock:
@@ -860,6 +905,40 @@ def main() -> int:
         check("attached: the after-exit shell keeps the seat's credential",
               sandbox.after_exit_environment().get("GH_TOKEN") == seat_token,
               sandbox.after_exit_environment().get("GH_TOKEN"))
+
+        # --- the iTerm2 background colour: written on an attached launch from
+        # an iTerm2 terminal, before tmux, and nowhere else. A pipe, another
+        # terminal program or a --no-attach launch must receive no escape
+        # bytes, and each must still reach tmux.
+        sandbox = MacLaunchSandbox(root / "iterm2-background-written")
+        result = sandbox.run("~/agents", seat_name="seat-t9", attach=True,
+                             term_program="iTerm.app",
+                             stdout_on_terminal=True)
+        check("iTerm2 background: an attached launch in iTerm2 on a terminal "
+              "writes the pale pink SetColors sequence",
+              result.returncode == 0
+              and ITERM2_PALE_PINK_BACKGROUND_SEQUENCE in result.stdout
+              and sandbox.tmux_argv(),
+              (result.returncode, repr(result.stdout[-300:]),
+               result.stderr[:300]))
+        for label, slug, term_program, stdout_on_terminal, attach in (
+                ("TERM_PROGRAM is another terminal", "other-terminal",
+                 "Apple_Terminal", True, True),
+                ("stdout is not a terminal", "stdout-pipe",
+                 "iTerm.app", False, True),
+                ("--no-attach", "no-attach", "iTerm.app", True, False)):
+            sandbox = MacLaunchSandbox(
+                root / f"iterm2-background-not-written-{slug}")
+            result = sandbox.run("~/agents", seat_name="seat-t10",
+                                 attach=attach, term_program=term_program,
+                                 stdout_on_terminal=stdout_on_terminal)
+            check(f"iTerm2 background: no escape sequence when {label}, "
+                  "and the launch still reaches tmux",
+                  result.returncode == 0
+                  and "\x1b]1337;" not in result.stdout
+                  and sandbox.tmux_argv(),
+                  (result.returncode, repr(result.stdout[-300:]),
+                   result.stderr[:300]))
 
         # --- an inherited GH_TOKEN is DROPPED, not kept. The seat's account
         # is decided by the launcher and never inherited from the shell that

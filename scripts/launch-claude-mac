@@ -604,7 +604,24 @@ cd '$QUOTED_AGENT_DIRECTORY'; exec \${SHELL:-/bin/sh}"
 # is tmux's, so copy-command pipes it to pbcopy to reach the Mac clipboard.
 # One format for both paths below, so the attach and --no-attach titles cannot drift apart.
 SEAT_WINDOW_TITLE_FORMAT='[mac] #S'
+
+# The background colour of the iTerm2 session a Mac seat is attached in, so a
+# Mac seat's window is told apart from a box seat's at a glance. Six hex digits
+# with no '#', the form iTerm2's SetColors takes. One value for every Mac seat
+# today; a seat that should look different gets its own value chosen here.
+SEAT_ITERM2_BACKGROUND_COLOUR=FFE6EE
+
 if [ "$ATTACH" = yes ]; then
+    # iTerm2's proprietary SetColors sequence, written before tmux starts
+    # because tmux does not pass it through to the terminal. Only on a
+    # terminal that is iTerm2 itself: inside tmux TERM_PROGRAM is tmux, and a
+    # pipe or another terminal would receive the bytes as garbage. iTerm2
+    # documents no sequence that restores the profile's own background, and
+    # the exec below leaves no point to send one from, so the session stays
+    # pink after the seat's tmux session ends.
+    if [ "${TERM_PROGRAM:-}" = iTerm.app ] && [ -t 1 ]; then
+        printf '\033]1337;SetColors=bg=%s\007' "$SEAT_ITERM2_BACKGROUND_COLOUR"
+    fi
     exec tmux -L "$SEAT_TMUX_SOCKET" new-session -A -s "$AGENT_NAME" -c "$AGENT_DIRECTORY" \
         "trap ':' INT QUIT; $SUPERVISOR_COMMAND; $AFTER_EXIT_COMMAND" \; \
         set-option -g set-titles on \; set-option -g set-titles-string "$SEAT_WINDOW_TITLE_FORMAT" \; \
