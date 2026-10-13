@@ -46,55 +46,56 @@ def refusal(command, tool_name="Bash"):
     return output.get("permissionDecisionReason") if output.get("permissionDecision") == "deny" else None
 
 
-REFUSED = {
-    "a bare codex exec with an argument prompt": 'codex exec -C /tmp/x "do the task"',
-    "codex exec in the background": 'codex exec -s workspace-write -o r.md "task" &',
-    "codex exec in a backgrounded subshell": '( codex exec -C x -o y "task"; echo done ) &',
-    "codex exec with stdin closed": 'codex exec -C x "task" < /dev/null',
-    "codex exec reading its prompt from a pipe": 'cat brief.md | codex exec -',
-    "the exec alias e": 'codex e "task"',
-    "codex exec by full path": '/opt/homebrew/bin/codex exec "task"',
-    "codex exec after a global option with a value": 'codex -c model="x" exec "task"',
-    "codex exec behind env, nohup and timeout": 'env A=1 nohup timeout 600 codex exec "task"',
-    "codex exec after an environment assignment": 'CODEX_HOME=/tmp/h codex exec "task"',
-    "codex exec after &&": 'cd /tmp && codex exec "task"',
-    "codex exec inside a command substitution": 'out=$(codex exec "task")',
-    "codex exec inside bash -c": "bash -c 'codex exec -C x \"task\"'",
-    "codex exec inside an ssh command": "ssh nedlern@ned-box 'cd ~/x && codex exec \"task\"'",
-    "codex exec reading a heredoc": 'codex exec - <<EOF\ndo the task\nEOF',
-    "codex exec after a global --search": 'timeout 1500 codex --search exec --skip-git-repo-check "task"',
-    "codex exec inside bash -lc": "bash -lc 'cd x; codex exec \"task\"'",
-    "codex exec inside bash -o pipefail -c": "bash -o pipefail -c 'codex exec \"task\" | tee log'",
-    "codex exec inside nohup bash -c": "nohup bash -c 'codex exec \"task\" > log 2>&1' &",
-    "codex exec inside ssh with options that take values":
-        "ssh -o ConnectTimeout=10 -p 22 nedlern@ned-box 'codex exec \"task\" < /dev/null'",
-    "codex exec in ssh's remote command given as several words": "ssh ned-box cd x '&&' codex exec task",
-    "codex exec inside bash -c inside ssh":
-        "ssh ned-box \"bash -c 'codex exec task'\"",
-    "codex exec inside a substitution inside double quotes": 'echo "$(codex exec task)"',
-    "codex review behind exec": 'codex exec review --uncommitted',
-    "codex exec behind env -u, whose option takes a value":
-        'env -u GIT_DIR -u GIT_WORK_TREE timeout 400 codex exec "task"',
-    "codex exec behind sandbox-exec -f": "sandbox-exec -f p.sb codex exec --sandbox danger-full-access task",
-    "codex exec in a heredoc that ssh runs": "ssh -o BatchMode=yes ned-box <<'EOF'\ncd x\ncodex exec task\nEOF",
-    "codex exec in a heredoc that a remote bash -s runs":
-        "ssh ned-box bash -s <<'EOF'\ncodex exec task < /dev/null\nEOF",
-    "codex exec behind setsid nohup over ssh":
-        "ssh -o ConnectTimeout=8 ned-box 'cd x && setsid nohup codex exec task > log 2>&1 &'",
-    "codex exec run by eval": "eval codex exec $ARGS -C . 'task'",
-    "codex exec in a heredoc that a local bash runs": "bash <<'EOF'\ncodex exec task\nEOF",
-    "codex exec writing its report to a file named help": "codex exec -o help 'task' &",
-    "codex exec whose prompt, after --, is --help": "codex exec -- '--help'",
-    "codex exec inside bash -c --": "bash -c -- 'codex exec task'",
-    "codex exec in a heredoc that bash -s runs with arguments":
-        "bash -s one two <<'EOF'\ncodex exec task\nEOF",
-    "codex exec resume whose later operand is help": "codex exec resume --last help",
-    "codex exec whose second operand is help": "codex exec task help",
-    "codex exec whose help may be a second image": "codex exec -i shot.png help",
-}
+REFUSED = [
+    ("a bare codex exec with an argument prompt", 'codex exec -C /tmp/x "do the task"'),
+    ("codex exec in the background", 'codex exec -s workspace-write -o r.md "task" &'),
+    ("codex exec in a backgrounded subshell", '( codex exec -C x -o y "task"; echo done ) &'),
+    ("codex exec with stdin closed", 'codex exec -C x "task" < /dev/null'),
+    ("codex exec reading its prompt from a pipe", 'cat brief.md | codex exec -'),
+    ("the exec alias e", 'codex e "task"'),
+    ("codex exec by full path", '/opt/homebrew/bin/codex exec "task"'),
+    ("codex exec after a global option with a value", 'codex -c model="x" exec "task"'),
+    ("codex exec behind env, nohup and timeout", 'env A=1 nohup timeout 600 codex exec "task"'),
+    ("codex exec after an environment assignment", 'CODEX_HOME=/tmp/h codex exec "task"'),
+    ("codex exec after &&", 'cd /tmp && codex exec "task"'),
+    ("codex exec inside a command substitution", 'out=$(codex exec "task")'),
+    ("codex exec inside bash -c", "bash -c 'codex exec -C x \"task\"'"),
+    ("codex exec inside an ssh command", "ssh nedlern@ned-box 'cd ~/x && codex exec \"task\"'"),
+    ("codex exec reading a heredoc", 'codex exec - <<EOF\ndo the task\nEOF'),
+    ("codex exec after a global --search", 'timeout 1500 codex --search exec --skip-git-repo-check "task"'),
+    ("codex exec inside bash -lc", "bash -lc 'cd x; codex exec \"task\"'"),
+    ("codex exec inside bash -o pipefail -c", "bash -o pipefail -c 'codex exec \"task\" | tee log'"),
+    ("codex exec inside nohup bash -c", "nohup bash -c 'codex exec \"task\" > log 2>&1' &"),
+    ("codex exec inside ssh with options that take values",
+        "ssh -o ConnectTimeout=10 -p 22 nedlern@ned-box 'codex exec \"task\" < /dev/null'"),
+    ("codex exec in ssh's remote command given as several words", "ssh ned-box cd x '&&' codex exec task"),
+    ("codex exec inside bash -c inside ssh",
+        "ssh ned-box \"bash -c 'codex exec task'\""),
+    ("codex exec inside a substitution inside double quotes", 'echo "$(codex exec task)"'),
+    ("codex review behind exec", 'codex exec review --uncommitted'),
+    ("codex exec behind env -u, whose option takes a value",
+        'env -u GIT_DIR -u GIT_WORK_TREE timeout 400 codex exec "task"'),
+    ("codex exec behind sandbox-exec -f", "sandbox-exec -f p.sb codex exec --sandbox danger-full-access task"),
+    ("codex exec in a heredoc that ssh runs", "ssh -o BatchMode=yes ned-box <<'EOF'\ncd x\ncodex exec task\nEOF"),
+    ("codex exec in a heredoc that a remote bash -s runs",
+        "ssh ned-box bash -s <<'EOF'\ncodex exec task < /dev/null\nEOF"),
+    ("codex exec behind setsid nohup over ssh",
+        "ssh -o ConnectTimeout=8 ned-box 'cd x && setsid nohup codex exec task > log 2>&1 &'"),
+    ("codex exec run by eval", "eval codex exec $ARGS -C . 'task'"),
+    ("codex exec in a heredoc that a local bash runs", "bash <<'EOF'\ncodex exec task\nEOF"),
+    ("codex exec writing its report to a file named help", "codex exec -o help 'task' &"),
+    ("codex exec whose prompt, after --, is --help", "codex exec -- '--help'"),
+    ("codex exec inside bash -c --", "bash -c -- 'codex exec task'"),
+    ("codex exec in a heredoc that bash -s runs with arguments",
+        "bash -s one two <<'EOF'\ncodex exec task\nEOF"),
+    ("codex exec resume whose later operand is help", "codex exec resume --last help"),
+    ("codex exec whose second operand is help", "codex exec task help"),
+    ("codex exec whose help may be a second image", "codex exec -i shot.png help"),
+]
 
-# Every member of the hook's option tables gets a case of its own, written out here rather than read
-# from the hook, so a member dropped from a table fails a case.
+# Every member of the hook's option tables gets a case of its own. The tables are written out here, not
+# read from the hook, so a member dropped from the hook fails its case; a check below compares each copy
+# with the hook's table, so a member added only to the hook fails too.
 CODEX_EXEC_VALUE_OPTIONS = (
     "-c", "--config", "--enable", "--disable", "-i", "--image", "-m", "--model",
     "--local-provider", "-p", "--profile", "-s", "--sandbox", "-C", "--cd", "--add-dir",
@@ -111,55 +112,76 @@ SHELL_VALUE_OPTIONS = ("-o", "+o", "-O", "+O")
 SSH_VALUE_LETTERS = "bceilmopBDEFIJLOPQRSwW"
 
 for option in CODEX_EXEC_VALUE_OPTIONS:
-    REFUSED[f"codex exec whose {option} takes the word help as its value"] = f"codex exec {option} help"
+    REFUSED.append((f"codex exec whose {option} takes the word help as its value", f"codex exec {option} help"))
 for option in CODEX_EXEC_MANY_VALUE_OPTIONS:
-    REFUSED[f"codex exec whose help may be a second value of {option}"] = f"codex exec {option} a.png help"
+    REFUSED.append((f"codex exec whose help may be a second value of {option}", f"codex exec {option} a.png help"))
 for prefix, options in COMMAND_RUNNING_PREFIX_VALUE_OPTIONS.items():
     duration = " 600" if prefix == "timeout" else ""
-    REFUSED[f"codex exec behind {prefix}"] = f"{prefix}{duration} codex exec task"
+    REFUSED.append((f"codex exec behind {prefix}", f"{prefix}{duration} codex exec task"))
     for option in options:
-        REFUSED[f"codex exec behind {prefix} {option}, whose value is skipped"] = (
-            f"{prefix} {option} value{duration} codex exec task")
+        REFUSED.append((f"codex exec behind {prefix} {option}, whose value is skipped",
+            f"{prefix} {option} value{duration} codex exec task"))
 for runner in SHELL_STRING_RUNNERS:
-    REFUSED[f"codex exec inside {runner} -c"] = f"{runner} -c 'codex exec task'"
+    REFUSED.append((f"codex exec inside {runner} -c, one case per shell", f"{runner} -c 'codex exec task'"))
 for option in SHELL_VALUE_OPTIONS:
-    REFUSED[f"codex exec inside bash {option} <value> -c"] = f"bash {option} pipefail -c 'codex exec task'"
+    REFUSED.append((f"codex exec inside bash {option} <value> -c", f"bash {option} pipefail -c 'codex exec task'"))
 for letter in SSH_VALUE_LETTERS:
-    REFUSED[f"codex exec over ssh -{letter}, whose value is skipped"] = (
-        f"ssh -{letter} value ned-box 'codex exec task'")
+    REFUSED.append((f"codex exec over ssh -{letter}, whose value is skipped",
+        f"ssh -{letter} value ned-box 'codex exec task'"))
 
-ALLOWED = {
-    "the new program": "python3 scripts/run-codex-task-from-brief.py -C . --brief b.md -o r.md",
-    "codex --version": "codex --version",
-    "codex exec --help": "codex exec --help",
-    "codex exec -h after its options": "codex exec -C x -h",
-    "codex exec help": "codex exec help",
-    "codex login status": "codex login status",
-    "a grep for the words codex exec": 'grep -rn "codex exec" docs/',
-    "an echo that mentions codex exec": "echo 'never type codex exec by hand'",
-    "a heredoc body that mentions codex exec": "cat > notes.md <<'EOF'\ncodex exec \"x\"\nEOF",
-    "a commit message that mentions codex exec": 'git commit -m "Refuse a hand-typed codex exec"',
-    "ps listing codex processes": "ps -axo pid,command | grep codex",
-    "pgrep for codex exec": "pgrep -fl 'git push|codex exec'",
-    "an ssh command that runs no codex": "ssh -o BatchMode=yes ned-box 'ls ~/codex-exec-notes'",
-    "an ssh session with no remote command": "ssh -p 22 ned-box",
-    "bash running a script file": "bash scripts/run.sh codex exec",
-    "a bash -c that mentions codex exec in quoted text": "bash -c 'echo \"codex exec\"'",
-    "a heredoc of notes appended over ssh": "ssh ned-box 'cat >> notes.md' <<'EOF'\nNever type `codex exec` by hand.\nEOF",
-    "an eval that runs no codex": "eval \"$(ssh-agent -s)\"",
-    "a heredoc fed to a bash script file": "bash run.sh <<'EOF'\ncodex exec task\nEOF",
-    "a python heredoc that mentions codex exec": "python3 - <<'EOF'\nprint('codex exec')\nEOF",
-    "a cold-read cell, which runs Codex itself":
-        "python3 nc-systems/cold-read/cold-read-codex-cell.py --prompt-file p.md -o r.md",
-    "a cold-read cell run over ssh":
-        "ssh nedlern@ned-box 'cd ~/x && python3 nc-systems/cold-read/cold-read-codex-cell.py --prompt-file p.md'",
+ALLOWED = [
+    ("the new program", "python3 scripts/run-codex-task-from-brief.py -C . --brief b.md -o r.md"),
+    ("codex --version", "codex --version"),
+    ("codex exec --help", "codex exec --help"),
+    ("codex exec -h after its options", "codex exec -C x -h"),
+    ("codex exec help", "codex exec help"),
+    ("codex login status", "codex login status"),
+    ("a grep for the words codex exec", 'grep -rn "codex exec" docs/'),
+    ("an echo that mentions codex exec", "echo 'never type codex exec by hand'"),
+    ("a heredoc body that mentions codex exec", "cat > notes.md <<'EOF'\ncodex exec \"x\"\nEOF"),
+    ("a commit message that mentions codex exec", 'git commit -m "Refuse a hand-typed codex exec"'),
+    ("ps listing codex processes", "ps -axo pid,command | grep codex"),
+    ("pgrep for codex exec", "pgrep -fl 'git push|codex exec'"),
+    ("an ssh command that runs no codex", "ssh -o BatchMode=yes ned-box 'ls ~/codex-exec-notes'"),
+    ("an ssh session with no remote command", "ssh -p 22 ned-box"),
+    ("bash running a script file", "bash scripts/run.sh codex exec"),
+    ("a bash -c that mentions codex exec in quoted text", "bash -c 'echo \"codex exec\"'"),
+    ("a heredoc of notes appended over ssh", "ssh ned-box 'cat >> notes.md' <<'EOF'\nNever type `codex exec` by hand.\nEOF"),
+    ("an eval that runs no codex", "eval \"$(ssh-agent -s)\""),
+    ("a heredoc fed to a bash script file", "bash run.sh <<'EOF'\ncodex exec task\nEOF"),
+    ("a python heredoc that mentions codex exec", "python3 - <<'EOF'\nprint('codex exec')\nEOF"),
+    ("a cold-read cell, which runs Codex itself",
+        "python3 nc-systems/cold-read/cold-read-codex-cell.py --prompt-file p.md -o r.md"),
+    ("a cold-read cell run over ssh",
+        "ssh nedlern@ned-box 'cd ~/x && python3 nc-systems/cold-read/cold-read-codex-cell.py --prompt-file p.md'"),
+]
+
+TABLE_COPIES = {
+    "CODEX_EXEC_SUBCOMMANDS": ({"exec", "e"}, set(hook.CODEX_EXEC_SUBCOMMANDS)),
+    "CODEX_EXEC_VALUE_OPTIONS": (set(CODEX_EXEC_VALUE_OPTIONS), set(hook.CODEX_EXEC_VALUE_OPTIONS)),
+    "CODEX_EXEC_MANY_VALUE_OPTIONS": (set(CODEX_EXEC_MANY_VALUE_OPTIONS), set(hook.CODEX_EXEC_MANY_VALUE_OPTIONS)),
+    "COMMAND_RUNNING_PREFIX_VALUE_OPTIONS": (
+        {prefix: set(options) for prefix, options in COMMAND_RUNNING_PREFIX_VALUE_OPTIONS.items()},
+        {prefix: set(options) for prefix, options in hook.COMMAND_RUNNING_PREFIX_VALUE_OPTIONS.items()}),
+    "SHELL_STRING_RUNNERS": (set(SHELL_STRING_RUNNERS), set(hook.SHELL_STRING_RUNNERS)),
+    "SHELL_VALUE_OPTIONS": (set(SHELL_VALUE_OPTIONS), set(hook.SHELL_VALUE_OPTIONS)),
+    "SSH_VALUE_LETTERS": (set(SSH_VALUE_LETTERS), set(hook.SSH_VALUE_LETTERS)),
 }
+for table, (copy, hooks_table) in TABLE_COPIES.items():
+    check(f"the test's copy of the hook's {table} has the hook's members, so each member has a case",
+          copy == hooks_table, f"test {copy!r} vs hook {hooks_table!r}")
 
-for name, command in REFUSED.items():
+for table_name, cases in (("REFUSED", REFUSED), ("ALLOWED", ALLOWED)):
+    names = [name for name, _command in cases]
+    repeated = sorted({name for name in names if names.count(name) > 1})
+    check(f"every {table_name} case has a name of its own, so no case replaces another",
+          not repeated, f"repeated names: {repeated}")
+
+for name, command in REFUSED:
     got = refusal(command)
     check(f"refused: {name}", got == hook.REFUSAL, f"got {got!r}")
 
-for name, command in ALLOWED.items():
+for name, command in ALLOWED:
     got = refusal(command)
     check(f"allowed: {name}", got is None, f"got {got!r}")
 
