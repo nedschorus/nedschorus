@@ -467,7 +467,7 @@ def main(stdin=sys.stdin, runner=subprocess.run, clock=time.monotonic):
         decision, reason = analyze_command_text(command, payload_cwd, guard)
     except shell_reader.ShellParserUnavailable as error:
         print(shell_reader.parser_unavailable_hook_output(
-            "The force-push guard", error, payload))
+            "The force-push guard", error))
         return 0
     if decision == "deny":
         deny(reason)

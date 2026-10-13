@@ -286,6 +286,38 @@ check("a heredoc fed to ssh that has a remote command of its own is that command
       decide("ssh ned-box 'cat > notes.md' <<'EOF'\ntmux send-keys -t gatekeeper Enter\nEOF",
              runner) is None and not runner.calls, runner.calls)
 
+# A remote shell reading its standard input, as `bash -s` does, runs the heredoc
+# too. The command below is a real Mac agent's (cold-read-research, 2026-09), whose
+# body has lines that only start with its delimiter, with a send-keys line added.
+REAL_MAC_SSH_BASH_S = (
+    "ssh -o BatchMode=yes nedlern@ned-box 'bash -s' <<'EOF'\n"
+    "S=$(mktemp -d /tmp/cold-read-heredoc-probe-XXXXXX); echo \"S=$S\"\n"
+    "for shell in bash sh; do\n"
+    "  small=$($shell -c 'cat <<EOF\nSMALL_OK\nEOF' 2>&1)\n"
+    "  big=$($shell -c \"cat <<'EOF' | wc -c\n$(head -c 100000 /dev/zero | tr '\\0' 'x')\nEOF\" 2>&1)\n"
+    "  echo \"$shell outside any sandbox: small=[$small] big=[$big]\"\n"
+    "done\n"
+    "cd /; rm -rf $S\n"
+    "tmux send-keys -t gatekeeper Enter\n"
+    "EOF")
+for case_name, command in [
+    ("send-keys in a real Mac ssh 'bash -s' heredoc with nested heredocs is denied",
+     REAL_MAC_SSH_BASH_S),
+    ("send-keys in a heredoc fed to ssh host bash is denied",
+     "ssh ned-box bash <<'EOF'\ntmux send-keys -t gatekeeper Enter\nEOF"),
+]:
+    runner = StubRunner(stdout="1\n")
+    reason = decide(command, runner)
+    check(case_name, reason is not None and "attached client" in reason, reason)
+    check(f"and the probe runs over ssh: {case_name}",
+          runner.calls and runner.calls[0][0] == "ssh" and "ned-box" in " ".join(runner.calls[0]),
+          runner.calls)
+nested_heredocs_fed_to_bash = ("bash <<'EOF'\ncat <<'EOF2' >a\nx\nEOF2\ncat <<'EOF3' >b\ny\nEOF3\n"
+                               "tmux send-keys -t gatekeeper Enter\nEOF")
+reason = decide(nested_heredocs_fed_to_bash, StubRunner(stdout="1\n"))
+check("send-keys after two heredocs in a body with a line starting with its delimiter is denied",
+      reason is not None and "attached client" in reason, reason)
+
 # tmux runs each command after a \; word as a command of its own.
 for case_name, command in [
     ("send-keys after a tmux \\; separator is denied",

@@ -322,7 +322,7 @@ def main(stdin=sys.stdin, clock=time.monotonic):
         refusal = analyze_command_text(command, payload_cwd, clock)
     except shell_reader.ShellParserUnavailable as error:
         print(shell_reader.parser_unavailable_hook_output(
-            "The search-file-argument guard", error, payload))
+            "The search-file-argument guard", error))
         return 0
     except (ExpansionBudgetSpent, OSError, ValueError, re.error):
         return 0

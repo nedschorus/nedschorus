@@ -143,6 +143,7 @@ try:
         "egrep -l needle */*.jsonl",
         "/usr/bin/grep -l needle */*.jsonl",
         "timeout 10 grep -l needle */*.jsonl",
+        "time grep -l needle */*.jsonl",
         "env LC_ALL=C grep -l needle */*.jsonl",
         "LC_ALL=C grep -l needle */*.jsonl",
         "echo $(grep -l needle */*.jsonl)",
@@ -155,6 +156,17 @@ try:
         f"grep -l needle {DASH_FOLDER}/*.jsonl",
     ]:
         check(f"refused: {command}", run_main(command, scratch) is not None)
+
+    # When the -- cannot be put into the whole command, the suggestion is the search alone,
+    # with its redirections, so that running it does what the agent meant.
+    real_whole_command = guard.command_with_double_dash_before_word
+    guard.command_with_double_dash_before_word = lambda *arguments: None
+    try:
+        refusal = run_main("grep -l needle */*.jsonl 2>/dev/null", scratch)
+    finally:
+        guard.command_with_double_dash_before_word = real_whole_command
+    check("the search-alone suggestion keeps the search's redirections",
+          (refusal or "").endswith("run: grep -l needle -- */*.jsonl 2>/dev/null"), refusal)
 
     elsewhere = scratch / "plain"
     check("refused after a literal cd into the folder from elsewhere",

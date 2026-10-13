@@ -79,6 +79,8 @@ EDIT_TITLE_FALLBACK = guard.edit_title_refusal(None)
 
 # Each refused form, and the refusal it must get.
 REFUSED = [
+    ("comment whose body is the word --help", "gh issue comment 46 --body --help",
+     COMMENT_FALLBACK),
     ("comment with --body", 'gh issue comment 46 --body "done"',
      COMMENT_FALLBACK),
     ("comment with -b", "gh issue comment 46 -b done", COMMENT_FALLBACK),

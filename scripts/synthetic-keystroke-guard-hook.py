@@ -473,16 +473,23 @@ def analyze_heredoc(words, body, ssh_context, verified, guard):
     if any(is_program(word, "osascript") for word in words):
         if APPLESCRIPT_TYPING_PATTERN.search(body):
             return SYNTHETIC_TYPING_REASON
-    if any(is_program(word, name) for word in words for name in SHELL_CONSUMER_PROGRAMS):
-        return analyze_command_text(body, ssh_context, verified, guard)
     ssh_index = next((index for index, word in enumerate(words) if is_program(word, "ssh")), None)
     if ssh_index is not None:
         host, carried, remote_words = parse_ssh_invocation(words[ssh_index + 1:])
-        # ssh with no remote command runs its standard input, the heredoc, in the remote shell.
-        if host is not None and not remote_words:
+        # ssh joins its remote words, and the remote shell splits them again.
+        remote = " ".join(remote_words).split()
+        # The remote shell runs the heredoc when ssh has no remote command, or when the remote
+        # command is a shell reading its standard input, such as bash -s.
+        if host is not None and (not remote or (
+                any(is_program(remote[0], name) for name in SHELL_CONSUMER_PROGRAMS)
+                and not any(word.startswith("-") and not word.startswith("--") and "c" in word
+                            for word in remote[1:]))):
             remote_context = ((NESTED_SSH_HOST, ()) if ssh_context is not None
                               else (host, tuple(carried)))
             return analyze_command_text(body, remote_context, verified, guard)
+        return None
+    if any(is_program(word, name) for word in words for name in SHELL_CONSUMER_PROGRAMS):
+        return analyze_command_text(body, ssh_context, verified, guard)
     return None
 
 
@@ -563,7 +570,7 @@ def main(stdin=sys.stdin, runner=subprocess.run, clock=time.monotonic):
         reason = analyze_command_text(command, None, False, guard)
     except shell_reader.ShellParserUnavailable as error:
         print(shell_reader.parser_unavailable_hook_output(
-            "The synthetic keystroke guard", error, payload))
+            "The synthetic keystroke guard", error))
         return 0
     if reason:
         deny(reason)

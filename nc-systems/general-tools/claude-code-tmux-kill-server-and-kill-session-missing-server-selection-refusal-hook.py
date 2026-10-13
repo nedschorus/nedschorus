@@ -174,7 +174,7 @@ def main(stdin=sys.stdin):
         reason = refusal_for(command)
     except shell_reader.ShellParserUnavailable as error:
         print(shell_reader.parser_unavailable_hook_output(
-            "The tmux kill guard", error, payload))
+            "The tmux kill guard", error))
         return 0
     if reason:
         deny(reason)

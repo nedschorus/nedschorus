@@ -500,9 +500,9 @@ def refusal_for(subcommand, arguments, repository_from_environment,
     """The refusal text for one `gh issue` invocation, or None to let it run."""
     if subcommand not in VALUE_FLAGS:
         return None
-    if "--help" in arguments or "-h" in arguments:
-        return None  # gh prints the subcommand's help and writes nothing.
     flags, positionals = parse_arguments(subcommand, arguments)
+    if "--help" in flags or "-h" in flags:
+        return None  # gh prints the subcommand's help and writes nothing.
     if names_another_repository(flags, positionals, repository_from_environment):
         return None
     if subcommand == "comment":
@@ -578,7 +578,7 @@ def main(stdin=sys.stdin):
         refusal = analyze_command_text(command, working_directory)
     except shell_reader.ShellParserUnavailable as error:
         print(shell_reader.parser_unavailable_hook_output(
-            "The GHI write redirect guard", error, payload))
+            "The GHI write redirect guard", error))
         return 0
     if refusal:
         deny(refusal)

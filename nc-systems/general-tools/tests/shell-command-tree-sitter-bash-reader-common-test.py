@@ -125,11 +125,9 @@ check("command and process substitutions run in child shells of their own",
       all(f.child_shell for f in found[:4]) and found[-1].child_shell == ()
       and len({f.child_shell for f in found[:4]}) == 3,
       [(list(f), f.child_shell) for f in found])
-found = reader.simple_commands("cd /x | true; git push")
-check("each stage of a pipeline runs in a child shell of its own",
-      found[0].child_shell and found[1].child_shell
-      and found[0].child_shell != found[1].child_shell and found[2].child_shell == (),
-      [(list(f), f.child_shell) for f in found])
+found = reader.simple_commands("cd /x && ls | head; git push")
+check("a cd before && in a pipeline's first stage counts for the commands after it",
+      all(f.child_shell == () for f in found), [(list(f), f.child_shell) for f in found])
 found = reader.simple_commands('echo "$(cd /a; echo "$(cd /b)")"')
 check("a substitution inside another runs inside the outer one's child shell",
       found[1].child_shell[:len(found[0].child_shell)] == found[0].child_shell
@@ -234,6 +232,74 @@ check("is_program matches a bare name or a path ending in it, and nothing else",
       and not reader.is_program("xtmux", "tmux") and not reader.is_program("tmux.sh", "tmux"))
 
 
+# --- heredoc bodies with lines that only start with a delimiter, and nested heredocs ---
+nested = ("bash <<'EOF'\ncat <<'EOF2' >a\nx\nEOF2\ncat <<'EOF3' >b\ny\nEOF3\n"
+          "tmux send-keys -t seat-a x\nEOF")
+found = reader.simple_commands(nested)
+inner = words_of(found[0].heredocs[0].body) if found and found[0].heredocs else []
+check("a body line starting with the outer delimiter, then a later heredoc: the body is whole",
+      [list(f) for f in found] == [["bash"]]
+      and "NEDSCHORUS_HEREDOC_END" not in found[0].heredocs[0].body
+      and inner[-1:] == [["tmux", "send-keys", "-t", "seat-a", "x"]],
+      ([(list(f), f.heredocs) for f in found], inner))
+# A real Mac agent's command (cold-read-research, 2026-09), with a guarded line added before its end.
+REAL_MAC_SSH_BASH_S = (
+    "ssh -o BatchMode=yes nedlern@ned-box 'bash -s' <<'EOF'\n"
+    "S=$(mktemp -d /tmp/cold-read-heredoc-probe-XXXXXX); echo \"S=$S\"\n"
+    "for shell in bash sh; do\n"
+    "  small=$($shell -c 'cat <<EOF\nSMALL_OK\nEOF' 2>&1)\n"
+    "  big=$($shell -c \"cat <<'EOF' | wc -c\n$(head -c 100000 /dev/zero | tr '\\0' 'x')\nEOF\" 2>&1)\n"
+    "  echo \"$shell outside any sandbox: small=[$small] big=[$big]\"\n"
+    "done\n"
+    "cd /; rm -rf $S\n"
+    "tmux send-keys -t seat-a x\n"
+    "EOF")
+found = reader.simple_commands(REAL_MAC_SSH_BASH_S)
+body = found[0].heredocs[0].body if found and found[0].heredocs else ""
+check("the real Mac ssh 'bash -s' heredoc keeps its whole body, with no renamed word in it",
+      "NEDSCHORUS_HEREDOC_END" not in body and body.endswith("tmux send-keys -t seat-a x\n")
+      and ["tmux", "send-keys", "-t", "seat-a", "x"] in words_of(body), body[-200:])
+found = words_of("cat <<OUTER\n$(tmux send-keys -t a Enter <<INNER\nx\nINNER\n)\nOUTER")
+check("a heredoc inside a substitution inside another heredoc's body is read",
+      ["tmux", "send-keys", "-t", "a", "Enter"] in found, found)
+found = words_of('cat <<"E\'OF"\nbody\nE\'OF\ntmux kill-server')
+check("a quote inside another quoting form in a delimiter ends the body at the bare word",
+      found == [["cat"], ["tmux", "kill-server"]], found)
+found = words_of("cat > n <<X\n$(a it's)\nEOF\nmore\nX\nls")
+check("a body bash rejects, holding an EOF line, is read whole and none of it is a command",
+      found == [["cat"], ["ls"]], found)
+
+found = words_of("bash <<'EOF'\nEOFA\ncat <<'Z'\nEOF\ncat <<'Q'\nQx\ntmux kill-server\nQ\nls")
+check("a heredoc the first parse lost inside a misplaced body is found on a later pass",
+      found == [["bash"], ["cat"], ["ls"]], found)
+found = words_of("cat > n <<X\nEOF\ntmux kill-server\n$(a it's)\nX\nls")
+check("a rejected unquoted body holding an EOF line is reread whole: its lines are not commands",
+      found == [["cat"], ["ls"]], found)
+
+# --- words the first parse gives to the wrong node ---
+for command, expected in [
+    ("cat | tmux 2>/dev/null kill-server", [["cat"], ["tmux", "kill-server"]]),
+    ("printf x | git push >err --force origin topic",
+     [["printf", "x"], ["git", "push", "--force", "origin", "topic"]]),
+    ("tmux <<EOF kill-server\nx\nEOF", [["tmux", "kill-server"]]),
+    # A real fleet-restart-at-login command (Mac, 2026-09), shortened: tree-sitter-bash joins
+    # the line after a pipeline of three or more onto its last stage when that line has a
+    # redirection.
+    ("diff <(cat a) <(cat b) | grep -c '^[<>]' | sed 's/^/x /'\n"
+     "gh issue edit 343 --body-file b.md 2>&1 | tail -1",
+     [["cat", "a"], ["cat", "b"], ["diff", "<(cat a)", "<(cat b)"], ["grep", "-c", "^[<>]"],
+      ["sed", "s/^/x /"], ["gh", "issue", "edit", "343", "--body-file", "b.md"], ["tail", "-1"]]),
+    ("a | b | c\ngit push -f o b 2>&1", [["a"], ["b"], ["c"], ["git", "push", "-f", "o", "b"]]),
+    ("echo a \\\nb", [["echo", "a", "b"]]),
+    ("case $v in a) b;;& esac; tmux kill-server", [["b"], ["tmux", "kill-server"]]),
+    ("case $v in a) b;& esac\ngit push -f", [["b"], ["git", "push", "-f"]]),
+]:
+    check(f"every word reaches its command: {command!r}", words_of(command) == expected,
+          words_of(command))
+found = words_of('echo "`echo \\`tmux send-keys -t a b\\` x`"')
+check("a backticked command nested in another, with escaped backticks, is read",
+      found[0] == ["tmux", "send-keys", "-t", "a", "b"], found)
+
 # --- the install of a missing parser ---
 class Clock:
     def __init__(self, now):
@@ -317,6 +383,67 @@ with tempfile.TemporaryDirectory() as scratch:
           raised is not None and "importing still fails" in raised.install_output, raised)
     record.unlink()
 
+    # The real importer, in a process whose user site did not exist when it started.
+    import tree_sitter as installed_tree_sitter
+    import tree_sitter_bash as installed_tree_sitter_bash
+    installed_site = Path(installed_tree_sitter.__file__).resolve().parents[1]
+    probe = f"""
+import importlib.util, json, shutil, site, sys
+from pathlib import Path
+spec = importlib.util.spec_from_file_location("r", {str(MODULE_PATH)!r})
+r = importlib.util.module_from_spec(spec); spec.loader.exec_module(r)
+r.STATE_DIRECTORY = Path(sys.argv[1]) / "state"
+installs = []
+def copy_libraries():
+    target = Path(site.getusersitepackages()); target.mkdir(parents=True, exist_ok=True)
+    for name in ("tree_sitter", "tree_sitter_bash"):
+        shutil.copytree(Path({str(installed_site)!r}) / name, target / name)
+def installer():
+    installs.append(1); copy_libraries(); return "installed"
+if sys.argv[2] == "installed-by-another-guard":
+    copy_libraries()
+try:
+    parser = r.load_parser(installer=installer)
+    print(json.dumps({{"ok": parser.parse(b"ls").root_node.type, "installs": len(installs)}}))
+except r.ShellParserUnavailable as error:
+    print(json.dumps({{"unavailable": error.install_output, "installs": len(installs)}}))
+"""
+    for situation, expected_installs in (("first-install", 1), ("installed-by-another-guard", 0)):
+        user_base = Path(scratch) / f"user-base-{situation}"
+        environment = {key: value for key, value in os.environ.items()
+                       if key not in ("PYTHONNOUSERSITE", "PYTHONPATH")}
+        environment["PYTHONUSERBASE"] = str(user_base)
+        completed = subprocess.run([sys.executable, "-c", probe, str(user_base), situation],
+                                   capture_output=True, text=True, env=environment, timeout=120)
+        try:
+            outcome = json.loads(completed.stdout.strip().splitlines()[-1])
+        except (ValueError, IndexError):
+            outcome = {"stdout": completed.stdout, "stderr": completed.stderr[-2000:]}
+        check(f"with a user site that did not exist at start-up ({situation}), the real import "
+              f"succeeds after {expected_installs} install(s)",
+              outcome.get("ok") == "program" and outcome.get("installs") == expected_installs,
+              outcome)
+
+    # A tree-sitter that imports but cannot build the bash language counts as missing.
+    class BrokenTreeSitter:
+        Parser = installed_tree_sitter.Parser
+
+        @staticmethod
+        def Language(_language):
+            raise TypeError("an incompatible tree-sitter version")
+    saved = sys.modules.get("tree_sitter")
+    sys.modules["tree_sitter"] = BrokenTreeSitter
+    try:
+        reader.import_tree_sitter_bash()
+        raised = None
+    except ImportError as error:
+        raised = error
+    finally:
+        sys.modules["tree_sitter"] = saved
+    check("an installed tree-sitter that cannot build the bash language raises ImportError, "
+          "so the pinned version is installed",
+          raised is not None and "cannot be used" in str(raised), raised)
+
     def runner_exiting(returncode, stdout="", stderr=""):
         def run(command, **kwargs):
             run.command, run.kwargs = command, kwargs
@@ -367,8 +494,6 @@ with tempfile.TemporaryDirectory() as scratch:
     check("a state directory that cannot be made raises ShellParserUnavailable saying so",
           raised is not None and "install lock" in raised.install_output
           and state["installs"] == 0, (raised, state))
-    check("an agent-session is still told when its marker cannot be written",
-          reader._claim_telling_the_user("session-unwritable"))
     reader.STATE_DIRECTORY = real_state_directory
 
     read_only = Path(scratch) / "read-only-state"
@@ -399,28 +524,20 @@ with tempfile.TemporaryDirectory() as scratch:
         assert "permissionDecision" not in hook_output, hook_output
         return hook_output["additionalContext"]
 
-    first = context_of(reader.parser_unavailable_hook_output(
-        "The force-push guard", error, {"session_id": "session-one"}, attended))
-    again = context_of(reader.parser_unavailable_hook_output(
-        "The tmux kill guard", error, {"session_id": "session-one"}, attended))
-    other = context_of(reader.parser_unavailable_hook_output(
-        "The tmux kill guard", error, {"session_id": "session-two"}, attended))
+    first = context_of(reader.parser_unavailable_hook_output("The force-push guard", error, {}))
+    again = context_of(reader.parser_unavailable_hook_output("The tmux kill guard", error, {}))
     unattended = context_of(reader.parser_unavailable_hook_output(
-        "The tmux kill guard", error, {"session_id": "session-three"},
-        {"CLAUDE_CODE_SESSION_ATTENDED": "0"}))
-    check("the first report in an agent-session says the command was not checked and has the "
-          "user told, with what the install printed",
+        "The tmux kill guard", error, {"CLAUDE_CODE_SESSION_ATTENDED": "0"}))
+    check("the message says the command was not checked and has the user told, with what the "
+          "install printed",
           "let this command through without checking it" in first
           and "Tell the user" in first and "network is unreachable" in first
           and str(reader.REQUIREMENTS_FILE) in first and "subagent" in first, first)
+    check("every report has the user told again; nothing is counted",
+          "Tell the user" in again and again.replace("tmux kill", "force-push") == first, again)
     on_ned_box = __import__("socket").gethostname().split(".")[0] == "ned-box"
     check("the install command for ned-box is given in the ssh form the user runs from the Mac",
           on_ned_box == ("ssh nedlern@ned-box 'python3 -m pip install" in first), first)
-    check("a later report in the same agent-session says the command was not checked, "
-          "and not to tell the user again",
-          "without checking it" in again and "Tell the user" not in again
-          and "do not tell the user again" in again and "An earlier message" in again, again)
-    check("another agent-session is told to tell the user", "Tell the user" in other, other)
     check("an agent-session no user attends is not told to tell the user",
           "Tell the user" not in unattended and "without checking it" in unattended
           and "No user attends" in unattended, unattended)
