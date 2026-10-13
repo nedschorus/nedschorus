@@ -38,9 +38,9 @@ turns have the voice "subagent" even when the session's agent wrote them, as
 it wrote each task. The subagent tracker,
 scripts/handoff-extract-conversation-subagent-tracker-nbd.py, finds them and
 says which records it reads. The tracker is nice-but-dirty: when it cannot be
-loaded or raises, the subagent turns are left out, and one note in the
-complete dialog says so and why, so the handoff still writes its dialog and
-exits 0. Because a report answers
+loaded or raises, the subagent turns are left out, and one note says so and
+why, in the header of the conversation-tail, of stdout and of the complete
+dialog, and on stderr, so the handoff still writes its dialog and exits 0. Because a report answers
 the session, the agent's short reply to one is kept, not dropped as an
 acknowledgement. Subagent turns go in the complete dialog only, every one
 whole: the tail, which the successor reads first, carries the user's and the
@@ -648,7 +648,7 @@ def main(argv=None) -> int:
         print(f"handoff-extract-conversation: {problem}", file=sys.stderr)
         return 4
 
-    # The tail and stdout leave out subagent turns, the note among them, so its failure is told here too.
+    # stderr also carries the note, so the supervisor's console shows the tracker's failure as it happens.
     for note in turns_left_out_notes(turns):
         print(f"handoff-extract-conversation: {note['text']}", file=sys.stderr)
 
