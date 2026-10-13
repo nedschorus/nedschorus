@@ -426,10 +426,16 @@ def log_store_copy_sha256_of_each_task_file(host, store_list_directory, file_nam
     except subprocess.TimeoutExpired:
         raise LogStoreUnreachable(f"ssh to {host} gave no answer in "
                                    f"{LOG_STORE_TASK_FILE_COPIES_HASH_SSH_TIMEOUT_SECONDS} seconds") from None
-    # sha256sum exits 1 when some named files are missing and still prints the rest.
+    # sha256sum exits 1 when some named files are missing and still prints the rest; it
+    # exits 1 too when it cannot read a file, and that is a failure, not a missing copy.
     if completed.returncode not in (0, 1):
         said = collapse_to_one_line(completed.stderr) or "nothing on stderr"
         raise LogStoreUnreachable(f"ssh to {host} exited {completed.returncode}: {said}")
+    unexplained = [line for line in completed.stderr.splitlines()
+                   if line.strip() and not line.rstrip().endswith(": No such file or directory")]
+    if completed.returncode == 1 and unexplained:
+        raise LogStoreUnreachable(f"sha256sum on {host} could not read every copy: "
+                                  f"{collapse_to_one_line(chr(10).join(unexplained))}")
     hashes = {}
     for line in completed.stdout.splitlines():
         digest, _, name = line.partition(" ")
@@ -487,19 +493,22 @@ def prune_completed_tasks_unguarded(next_step_text: str) -> str:
     for path in list_directory.iterdir():
         if not TASK_FILE_NAME_PATTERN.fullmatch(path.name):
             continue
+        # A task that cannot be read could be an open task whose links protect a completed one.
         try:
             content = path.read_bytes()
             task = json.loads(content)
-        except (OSError, ValueError):
-            task = None
-            content = b""
-        tasks[int(path.stem)] = (path, content, task if isinstance(task, dict) else None)
+            if not isinstance(task, dict):
+                raise ValueError("it does not hold a JSON object")
+        except (OSError, ValueError) as error:
+            return (f"kept every completed task in {list_name}, because the task file {path} "
+                    f"could not be read ({error}). Tell the user this line in your last message "
+                    "before you wait.")
+        tasks[int(path.stem)] = (path, content, task)
     if not tasks:
         return f"no tasks in {list_name}"
 
     def status_of(task_id: int):
-        entry = tasks.get(task_id)
-        return entry[2].get("status") if entry and entry[2] else None
+        return tasks[task_id][2].get("status")
 
     def linked_ids(task: dict):
         ids = set()
@@ -514,18 +523,20 @@ def prune_completed_tasks_unguarded(next_step_text: str) -> str:
         return f"no completed tasks in {list_name}"
     # An id with no task file links nothing: it would otherwise pin a completed task for good.
     open_ids = {task_id for task_id, (_, _, task) in tasks.items()
-                if task is not None and task.get("status") != "completed"}
+                if task.get("status") != "completed"}
     linked_to_open = set()
     for task_id in open_ids:
         linked_to_open |= linked_ids(tasks[task_id][2])
+    # A subject the next step wraps across a line break still cites its task.
+    next_step_words = " ".join(next_step_text.split())
     kept_linked, kept_cited, candidates = [], [], []
     for task_id in completed:
         task = tasks[task_id][2]
         if task_id in linked_to_open or linked_ids(task) & open_ids:
             kept_linked.append(task_id)
             continue
-        subject = str(task.get("subject") or "")
-        if re.search(rf"\b{task_id}\b", next_step_text) or (subject and subject in next_step_text):
+        subject = " ".join(str(task.get("subject") or "").split())
+        if re.search(rf"\b{task_id}\b", next_step_text) or (subject and subject in next_step_words):
             kept_cited.append(task_id)
             continue
         candidates.append(task_id)
@@ -710,9 +721,10 @@ def main(argv=None) -> int:
     write_handoff_file(handoff_path, next_step, counter, arguments.dont_restart, seat_directory,
                        spawned_subagent_lines=spawned_subagent_lines,
                        verbatim_lines=verbatim_lines)
-    print(f"handoff-write-and-check-supervisor: wrote {handoff_path} (restart-counter {counter})")
-    print(f"handoff-write-and-check-supervisor: {roster_report}")
-    print(f"handoff-write-and-check-supervisor: {prune_report}")
+    # Flushed at once: the supervisor may end this session soon after the handoff file appears.
+    print(f"handoff-write-and-check-supervisor: wrote {handoff_path} (restart-counter {counter})", flush=True)
+    print(f"handoff-write-and-check-supervisor: {roster_report}", flush=True)
+    print(f"handoff-write-and-check-supervisor: {prune_report}", flush=True)
     print(f"handoff-write-and-check-supervisor: {run_branch_protection_audit()}")
 
     alive, explanation = supervisor.supervisor_liveness(state_path)

@@ -1320,14 +1320,15 @@ def run_completed_task_prune_cases(workspace: Path):
     check("a pruning handoff is still written", fixture.handoff_written(), completed.stderr)
 
     fixture = PruneFixture(workspace, "links")
-    fixture.task("10.json", task_bytes(10, "completed", blocks=[11]))
+    fixture.task("10.json", task_bytes(10, "completed"))
     fixture.task("11.json", task_bytes(11, "pending", blocked_by=[10]))
     fixture.task("12.json", task_bytes(12, "completed", blocked_by=[11]))
     fixture.task("14.json", task_bytes(14, "completed", blocks=[15]))
     fixture.task("15.json", task_bytes(15, "completed", blocked_by=[14]))
     fixture.task("16.json", task_bytes(16, "completed", blocked_by=[99]))
     line = prune_line(fixture.run())
-    check("a completed task in an open task's blockedBy is kept", fixture.present("10.json"), line)
+    check("a completed task in an open task's blockedBy, with no link of its own, is kept",
+          fixture.present("10.json"), line)
     check("a completed task that names an open task is kept", fixture.present("12.json"), line)
     check("two completed tasks linked only to each other are both removed",
           not fixture.present("14.json") and not fixture.present("15.json"), line)
@@ -1344,6 +1345,12 @@ def run_completed_task_prune_cases(workspace: Path):
     check("a completed task whose subject the next step contains is kept", fixture.present("21.json"), line)
     check("an uncited completed task in the same list is removed", not fixture.present("22.json"), line)
 
+    fixture = PruneFixture(workspace, "citation-wrapped")
+    fixture.task("23.json", task_bytes(23, "completed", subject="Ship the shiny widget"))
+    line = prune_line(fixture.run("Then finish what Ship the\nshiny widget left.\n"))
+    check("a subject the next step wraps across a line break still keeps its task",
+          fixture.present("23.json"), line)
+
     fixture = PruneFixture(workspace, "high-water-mark")
     (fixture.list_directory / ".highwatermark").write_text("3", encoding="utf-8")
     fixture.task("1.json", task_bytes(1, "pending"))
@@ -1352,6 +1359,14 @@ def run_completed_task_prune_cases(workspace: Path):
     mark = (fixture.list_directory / ".highwatermark").read_text(encoding="utf-8")
     check("the high-water mark is raised to the highest task id before it is removed",
           not fixture.present("9.json") and mark.strip().isdigit() and int(mark) >= 9, f"{mark!r} {line}")
+
+    fixture = PruneFixture(workspace, "high-water-mark-higher")
+    (fixture.list_directory / ".highwatermark").write_text("500", encoding="utf-8")
+    fixture.task("9.json", task_bytes(9, "completed"))
+    line = prune_line(fixture.run())
+    mark = (fixture.list_directory / ".highwatermark").read_text(encoding="utf-8")
+    check("a high-water mark above every task id is never lowered",
+          not fixture.present("9.json") and mark == "500", f"{mark!r} {line}")
 
     fixture = PruneFixture(workspace, "high-water-mark-unreadable")
     (fixture.list_directory / ".highwatermark").write_text("not a number", encoding="utf-8")
@@ -1387,16 +1402,47 @@ def run_completed_task_prune_cases(workspace: Path):
           fixture.handoff_written() and completed.returncode == 1, f"exit {completed.returncode}")
 
     fixture = PruneFixture(workspace, "filtering")
-    fixture.task("7.json", b"{not json")
     fixture.task("notes.json", task_bytes(8, "completed"))
     fixture.task("08.json", task_bytes(8, "completed"))
-    fixture.task("11.json", b"[1]")
     fixture.task("6.json", task_bytes(6, "completed"))
     line = prune_line(fixture.run())
-    check("an unparsable task file and files not named <id>.json are kept",
-          fixture.present("7.json") and fixture.present("notes.json") and fixture.present("08.json")
-          and fixture.present("11.json"), line)
+    check("files not named <id>.json are kept", fixture.present("notes.json") and fixture.present("08.json"), line)
     check("a completed task beside them is still removed", not fixture.present("6.json"), line)
+
+    for slug, content in (("unparsable", b"{not json"), ("not-an-object", b"[1]")):
+        fixture = PruneFixture(workspace, slug)
+        fixture.task("7.json", content)
+        fixture.task("6.json", task_bytes(6, "completed"))
+        line = prune_line(fixture.run())
+        check(f"a task file that is {slug} stops the prune with every task kept, and the line names it",
+              fixture.present("6.json") and fixture.present("7.json") and "could not be read" in line
+              and "7.json" in line and "Tell the user" in line, line)
+
+    fixture = PruneFixture(workspace, "open-task-unreadable")
+    fixture.task("1.json", task_bytes(1, "completed", blocks=[2]))
+    fixture.task("2.json", task_bytes(2, "pending", blocked_by=[1]))
+    (fixture.list_directory / "2.json").chmod(0o000)
+    try:
+        completed = fixture.run()
+    finally:
+        (fixture.list_directory / "2.json").chmod(0o644)
+    line = prune_line(completed)
+    check("an open task whose file cannot be read stops the prune, so its linked task is kept",
+          fixture.present("1.json") and "could not be read" in line and "2.json" in line
+          and fixture.handoff_written(), line)
+
+    fixture = PruneFixture(workspace, "store-copy-unreadable")
+    fixture.task("1.json", task_bytes(1, "completed"))
+    (fixture.store_list_directory / "1.json").chmod(0o000)
+    try:
+        completed = fixture.run()
+    finally:
+        (fixture.store_list_directory / "1.json").chmod(0o644)
+    line = prune_line(completed)
+    check("an unexpected failure inside the prune keeps every task, says so, and still writes the handoff",
+          fixture.present("1.json") and "failed, every completed task kept" in line
+          and "PermissionError" in line and fixture.handoff_written()
+          and completed.returncode == 1, f"exit {completed.returncode}: {line}")
 
     fixture = PruneFixture(workspace, "unset")
     fixture.task("1.json", task_bytes(1, "completed"))
@@ -1461,6 +1507,16 @@ def run_completed_task_prune_remote_store_cases(workspace: Path):
     check("over ssh, a completed task the log-store lacks is kept", fixture.present("2.json"), line)
     check("over ssh, the prune line names the store in scp form",
           f"stubhost:{fixture.store_list_directory}" in line, line)
+
+    fixture = PruneFixture(workspace, "remote-unreadable")
+    fixture.task("1.json", task_bytes(1, "completed"))
+    stubs = stub_ssh_directory(fixture.root / "remote-unreadable-stubs",
+                               'echo "sha256sum: 1.json: Permission denied" >&2\nexit 1\n')
+    line = prune_line(fixture.run(
+        "carry on\n", TRANSCRIPT_MIRROR_DESTINATION=f"stubhost:{fixture.store_root}",
+        PATH=f"{stubs}{os.pathsep}{os.environ.get('PATH', '')}"))
+    check("over ssh, a copy sha256sum cannot read is a failure, not a missing copy",
+          fixture.present("1.json") and "Permission denied" in line and "kept every completed task" in line, line)
 
     stubs = stub_ssh_directory(workspace / "prune-silent-stubs", "sleep 5\n")
     original_path, original_timeout = os.environ.get("PATH", ""), writer.LOG_STORE_TASK_FILE_COPIES_HASH_SSH_TIMEOUT_SECONDS
