@@ -588,8 +588,10 @@ check("P2-2: absent socket file then per-seat-detached allows (no false deny)",
       decide("tmux send-keys -t seat-a x", runner) is None and len(runner.calls) == 2,
       runner.calls)
 
-# tmux 3.6's answer from a live server that holds no session at all.
-empty_server_answer = ("", "no current target", 1)
+# A live tmux 3.6 server that holds no session at all answers display-message -p
+# with rc 0 and empty stdout, the same as a server that does not know the session;
+# only has-session prints "no current target" there.
+empty_server_answer = ("", "", 0)
 runner = ScriptedProbeRunner([empty_server_answer, ("1\n", "", 0)])
 reason = decide("tmux send-keys -t seat-a x", runner)
 check("an empty default server is unknown, not unverifiable — fallback runs and denies",

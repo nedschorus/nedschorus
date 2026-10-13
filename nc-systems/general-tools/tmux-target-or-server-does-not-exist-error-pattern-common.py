@@ -15,7 +15,8 @@ import re
 
 # What tmux 3.6 prints when the target is absent: another session or window holds the
 # server ("can't find session", "can't find window", "can't find pane"), the server holds
-# none ("no current target"), the socket refuses ("no server running"), or no socket file.
+# none ("no current target", from has-session; display-message -p exits 0 and prints
+# nothing there), the socket refuses ("no server running"), or no socket file.
 TMUX_TARGET_OR_SERVER_DOES_NOT_EXIST_ERROR_PATTERN = re.compile(
     r"can't find (?:session|window|pane)|no current target|no server running"
     r"|error connecting to .*\(No such file or directory\)")
