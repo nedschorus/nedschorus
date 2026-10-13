@@ -540,7 +540,22 @@ PREPARE_UNLESS_RUNNING_COMMAND="{ $SEAT_EXISTS_COMMAND || { $PREPARE_COMMAND; };
 # One option chain for both paths below, so the attach and --no-attach
 # titles cannot drift apart.
 SEAT_TMUX_OPTIONS_CHAIN="\\; set-option -g set-titles on \\; set-option -g set-titles-string '[box] #S' \\; set-option -g mouse on"
+
+# The user's own iTerm2 profile, which an attached box seat's tab is switched
+# back to: launch-claude-mac colours its tab's background, and iTerm2 offers
+# no sequence that restores only the background, so a tab reused for a box
+# seat would otherwise keep a Mac seat's colour. Switching profile resets
+# every colour and font setting to that profile's.
+SEAT_ITERM2_PROFILE_NAME=Default
+
 if [ "$ATTACH" = yes ]; then
+    # iTerm2's proprietary SetProfile sequence, written to the Mac's terminal
+    # before ssh connects. Only on a terminal that is iTerm2 itself: inside
+    # tmux TERM_PROGRAM is tmux, and a pipe or another terminal would receive
+    # the bytes as garbage.
+    if [ "${TERM_PROGRAM:-}" = iTerm.app ] && [ -t 1 ]; then
+        printf '\033]1337;SetProfile=%s\007' "$SEAT_ITERM2_PROFILE_NAME"
+    fi
     # The wait doubles across failed attempts and resets once a session has
     # actually run: an ssh that lasted longer than RECONNECT_SESSION_SECONDS
     # was a live attach that dropped, not a failed retry, so the next
