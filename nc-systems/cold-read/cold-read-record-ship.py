@@ -271,6 +271,8 @@ in the nedschorus repository, which this machine also clones:
 - `transcripts/` -- each machine's session transcripts, handoffs, task
   lists, seat-briefs and global CLAUDE.md, mirrored by
   `scripts/transcript-mirror-to-log-store.py`
+- `session-dialogs/` -- each mirrored session's complete filtered dialog,
+  kept current by `scripts/log-store-session-dialogs-refresh.py`
 - `seats/` -- a seat's shared files, shipped by
   `scripts/seat-shared-file-ship.py`
 - `analysis/` -- analyses, placed by hand

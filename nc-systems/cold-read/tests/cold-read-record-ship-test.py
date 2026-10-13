@@ -148,10 +148,10 @@ with tempfile.TemporaryDirectory(prefix="cold-read-record-ship-test-") as scratc
     # 2026-09-27, walk file-naming-page-revision-2026-09-23, item 9): every
     # owner it names by path must exist, and no naming rule may come back.
     readme_text = (store_root / "README.md").read_text(encoding="utf-8")
-    check("the README lists all eleven kinds",
+    check("the README lists all twelve kinds",
           all(f"- `{kind}/` -- " in readme_text
               for kind in ("cold-read-records", "sanity-check-records", "walk",
-                           "transcripts", "seats", "analysis",
+                           "transcripts", "session-dialogs", "seats", "analysis",
                            "daily-full-test-runs", "pull-request-head-test-runs",
                            "daily-memory-review-marks",
                            "handoff-agent-seat-died-without-session-handoff-restart-watcher",
