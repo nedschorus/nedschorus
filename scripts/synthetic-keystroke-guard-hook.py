@@ -39,6 +39,7 @@ MAX_ANALYSIS_DEPTH = 4
 
 KEYSTROKE_VERBS = {"send-keys", "send", "paste-buffer", "pasteb"}
 SHELL_CONSUMER_PROGRAMS = {"sh", "bash", "zsh", "dash", "ksh"}
+SHELL_OPTIONS_WITH_A_VALUE = {"--rcfile", "--init-file"}
 
 TMUX_GLOBAL_VALUE_FLAGS = {"-S", "-L", "-f", "-c", "-T"}
 
@@ -479,24 +480,65 @@ def analyze_heredoc(words, body, ssh_context, verified, guard):
     if any(is_program(word, "osascript") for word in words):
         if APPLESCRIPT_TYPING_PATTERN.search(body):
             return SYNTHETIC_TYPING_REASON
-    ssh_index = next((index for index, word in enumerate(words) if is_program(word, "ssh")), None)
-    if ssh_index is not None:
-        host, carried, remote_words = parse_ssh_invocation(words[ssh_index + 1:])
+    # The first ssh or shell among the words is the program, as in analyze_simple_command; a
+    # wrapper such as sudo, env or timeout may come before it, and a later ssh is an argument.
+    index, kind = first_ssh_or_shell(words)
+    if kind == "ssh":
+        host, carried, remote_words = parse_ssh_invocation(words[index + 1:])
         # ssh joins its remote words, and the remote shell splits them again.
         remote = " ".join(remote_words).split()
+        remote_index, remote_kind = first_ssh_or_shell(remote)
         # The remote shell runs the heredoc when ssh has no remote command, or when the remote
         # command is a shell reading its standard input, such as bash -s.
         if host is not None and (not remote or (
-                any(is_program(remote[0], name) for name in SHELL_CONSUMER_PROGRAMS)
-                and not any(word.startswith("-") and not word.startswith("--") and "c" in word
-                            for word in remote[1:]))):
+                remote_kind == "shell" and shell_reads_standard_input(remote[remote_index + 1:]))):
             remote_context = ((NESTED_SSH_HOST, ()) if ssh_context is not None
                               else (host, tuple(carried)))
             return analyze_command_text(body, remote_context, verified, guard)
         return None
-    if any(is_program(word, name) for word in words for name in SHELL_CONSUMER_PROGRAMS):
+    if kind == "shell" and shell_reads_standard_input(words[index + 1:]):
         return analyze_command_text(body, ssh_context, verified, guard)
     return None
+
+
+def first_ssh_or_shell(words):
+    """Return (index, "ssh" or "shell") for the first ssh or shell program among words, or (None, None)."""
+    for index, word in enumerate(words):
+        if is_program(word, "ssh"):
+            return index, "ssh"
+        if any(is_program(word, name) for name in SHELL_CONSUMER_PROGRAMS):
+            return index, "shell"
+    return None, None
+
+
+def shell_reads_standard_input(arguments):
+    """Return whether a shell given these arguments runs the script on its standard input.
+
+    With -c the shell runs its argument; with a script file it runs the file and
+    leaves standard input to that script; -s, or no file at all, makes it read
+    standard input.
+    """
+    reads_standard_input = False
+    index = 0
+    while index < len(arguments):
+        word = arguments[index]
+        if word == "--":
+            return reads_standard_input or index + 1 >= len(arguments)
+        if word in SHELL_OPTIONS_WITH_A_VALUE:
+            index += 2
+            continue
+        if word.startswith("--"):
+            index += 1
+            continue
+        if word[:1] in ("-", "+") and len(word) > 1 and word[1:].isalpha():
+            if "c" in word[1:] and word[0] == "-":
+                return False
+            reads_standard_input = reads_standard_input or "s" in word[1:]
+            # -o and -O take the next word as their value, as in bash -eo pipefail.
+            index += 2 if word[-1] in "oO" else 1
+            continue
+        return reads_standard_input
+    return True
 
 
 def deny(reason):

@@ -127,7 +127,22 @@ check("command and process substitutions run in child shells of their own",
       [(list(f), f.child_shell) for f in found])
 found = reader.simple_commands("cd /x && ls | head; git push")
 check("a cd before && in a pipeline's first stage counts for the commands after it",
-      all(f.child_shell == () for f in found), [(list(f), f.child_shell) for f in found])
+      [f.child_shell == () for f in found] == [True, False, False, True],
+      [(list(f), f.child_shell) for f in found])
+# tree-sitter-bash reads this one as `(cd /x && ls 2>/dev/null) | head`.
+found = reader.simple_commands("cd /x && ls 2>/dev/null | head; git push")
+check("a cd before && counts after a pipeline whose first stage has a redirection, which stays on ls",
+      [f.child_shell == () for f in found] == [True, False, False, True]
+      and found[1].redirects == [("2>", "/dev/null")] and found[0].redirects == [],
+      [(list(f), f.child_shell, f.redirects) for f in found])
+found = reader.simple_commands("cd /tmp | cat; grep -l needle *")
+check("a cd that is a pipeline stage runs in a child shell, so the command after it is in the start directory",
+      found[0].child_shell != () and found[-1].child_shell == (),
+      [(list(f), f.child_shell) for f in found])
+found = reader.simple_commands("x | cd /a && ls >o | head")
+check("each stage of both pipelines in `x | cd /a && ls >o | head` runs in a child shell",
+      all(f.child_shell != () for f in found) and found[2].redirects == [(">", "o")],
+      [(list(f), f.child_shell, f.redirects) for f in found])
 found = reader.simple_commands('echo "$(cd /a; echo "$(cd /b)")"')
 check("a substitution inside another runs inside the outer one's child shell",
       found[1].child_shell[:len(found[0].child_shell)] == found[0].child_shell
@@ -232,6 +247,27 @@ check("is_program matches a bare name or a path ending in it, and nothing else",
       and not reader.is_program("xtmux", "tmux") and not reader.is_program("tmux.sh", "tmux"))
 
 
+# --- the words and redirections after a heredoc's delimiter, on its own line ---
+found = reader.simple_commands("git push <<EOF --force origin the-pr-branch >/dev/null\nx\nEOF")
+check("a redirection after the words that follow a heredoc delimiter stays a redirection",
+      [list(f) for f in found] == [["git", "push", "--force", "origin", "the-pr-branch"]]
+      and (">", "/dev/null") in found[0].redirects, [(list(f), f.redirects) for f in found])
+found = reader.simple_commands("cat <<EOF $(tmux send-keys -t a x) 2>&1 >out\nx\nEOF")
+check("a substitution among the words after a heredoc delimiter still runs, with the line read again",
+      ["tmux", "send-keys", "-t", "a", "x"] in [list(f) for f in found]
+      and [list(f) for f in found][-1][:1] == ["cat"], [(list(f), f.redirects) for f in found])
+
+# --- ;;& and ;& before esac ---
+found = words_of("tmux send-keys -t 'a;& esac' Enter; case x in x) :;;& esac")
+check("a ;& inside a quoted word is left as written when the case's ;;& is read as ;;",
+      found[0] == ["tmux", "send-keys", "-t", "a;& esac", "Enter"], found)
+found = words_of("cat <<'D'\n:;;& esac\nD\ncase x in x) :;& esac\ntmux kill-server")
+check("a ;;& inside a heredoc body is left as written",
+      found == [["cat"], [":"], ["tmux", "kill-server"]]
+      and reader.simple_commands("cat <<'D'\n:;;& esac\nD\ncase x in x) :;& esac\ntmux kill-server")
+      [0].heredocs[0].body == ":;;& esac\n", found)
+
+
 # --- heredoc bodies with lines that only start with a delimiter, and nested heredocs ---
 nested = ("bash <<'EOF'\ncat <<'EOF2' >a\nx\nEOF2\ncat <<'EOF3' >b\ny\nEOF3\n"
           "tmux send-keys -t seat-a x\nEOF")
@@ -262,6 +298,16 @@ check("the real Mac ssh 'bash -s' heredoc keeps its whole body, with no renamed 
 found = words_of("cat <<OUTER\n$(tmux send-keys -t a Enter <<INNER\nx\nINNER\n)\nOUTER")
 check("a heredoc inside a substitution inside another heredoc's body is read",
       ["tmux", "send-keys", "-t", "a", "Enter"] in found, found)
+found = reader.simple_commands("cat <<EOF\n$(cat <<X\nXfoo\ntmux send-keys -t a x\nX\n)\nEOF\n")
+check("a nested heredoc in a $( ) inside a body ends at its own delimiter line, not at a line starting with it",
+      ["tmux", "send-keys", "-t", "a", "x"] not in [list(f) for f in found]
+      and any(h.body == "Xfoo\ntmux send-keys -t a x\n" for f in found for h in f.heredocs),
+      [(list(f), f.heredocs) for f in found])
+found = reader.simple_commands("cat <<A\n$(cat <<B\nB)\ntmux send-keys -t s x\n")
+check("a body that holds a renamed nested delimiter gets the original delimiter back",
+      found and all("NEDSCHORUS_HEREDOC_END" not in h.body for f in found for h in f.heredocs)
+      and any("$(cat <<B\nB)" in h.body for f in found for h in f.heredocs),
+      [(list(f), f.heredocs) for f in found])
 found = words_of('cat <<"E\'OF"\nbody\nE\'OF\ntmux kill-server')
 check("a quote inside another quoting form in a delimiter ends the body at the bare word",
       found == [["cat"], ["tmux", "kill-server"]], found)
@@ -375,13 +421,81 @@ with tempfile.TemporaryDirectory() as scratch:
     def importer_never():
         raise ImportError("No module named 'tree_sitter_bash'")
     try:
-        reader.load_parser(importer_never, lambda: "installed", Clock(5000.0))
+        reader.load_parser(importer_never, lambda: "installed", Clock(5000.0), lambda: False)
         raised = None
     except reader.ShellParserUnavailable as error:
         raised = error
     check("an install that finishes but leaves the import failing raises ShellParserUnavailable",
-          raised is not None and "importing still fails" in raised.install_output, raised)
+          raised is not None and "importing still fails" in raised.install_output
+          and not isinstance(raised, reader.ShellParserInstalledForANewProcess), raised)
     record.unlink()
+
+    try:
+        reader.load_parser(importer_never, lambda: "installed", Clock(5100.0), lambda: True)
+        raised = None
+    except reader.ShellParserUnavailable as error:
+        raised = error
+    check("an install whose copy loads in a new process but not in this one is reported as "
+          "installed for a new process, and is not recorded as a failure",
+          isinstance(raised, reader.ShellParserInstalledForANewProcess) and not record.exists(),
+          (raised, record.exists()))
+    # This process cannot load the installed copy, so the command is read in a new process.
+    command = "cd /x && ls 2>/dev/null | head; cat <<'E' >o\nbody\nE\ntmux send-keys -t a x"
+    expected = [(list(f), f.child_shell, f.redirects, [(h.body, h.expanded, h.delimiter)
+                                                      for h in f.heredocs])
+                for f in reader.simple_commands(command, {"*": "<glob>"})]
+    real_parser = reader.parser
+
+    loads = []
+
+    def parser_installed_for_a_new_process():
+        loads.append(1)
+        raise reader.ShellParserInstalledForANewProcess("installed")
+    reader.parser = parser_installed_for_a_new_process
+    try:
+        found = [(list(f), f.child_shell, f.redirects, [(h.body, h.expanded, h.delimiter)
+                                                       for h in f.heredocs])
+                 for f in reader.simple_commands(command, {"*": "<glob>"})]
+        found_again = [list(f) for f in reader.simple_commands("ls")]
+    finally:
+        reader.parser = real_parser
+        reader._read_in_a_new_process = False
+    check("when this process cannot load the installed parser, the command is read in a new process, "
+          "with the same result", found == expected, (found, expected))
+    check("later commands in the same process are read in a new process too, with no second try at "
+          "loading the parser", found_again == [["ls"]] and loads == [1], (found_again, loads))
+
+    def runner_failing(command, **kwargs):
+        return subprocess.CompletedProcess(command, 1, b"", b"Traceback: no parser")
+    try:
+        reader._simple_commands_in_a_new_process("ls", None, runner_failing)
+        raised = None
+    except reader.ShellParserUnavailable as error:
+        raised = error
+    check("a new process that fails to read the command raises ShellParserUnavailable with its error",
+          raised is not None and "no parser" in raised.install_output, raised)
+
+    # A copy that imported but could not be used stays in sys.modules until it is forgotten.
+    class CachedUnusableTreeSitter:
+        @staticmethod
+        def Language(_language):
+            raise TypeError("an incompatible tree-sitter version")
+    saved_module = sys.modules.get("tree_sitter")
+    sys.modules["tree_sitter"] = CachedUnusableTreeSitter
+    installs = []
+    try:
+        parser = reader.load_parser(reader.import_tree_sitter_bash,
+                                    lambda: installs.append(1) or "installed", Clock(5200.0),
+                                    lambda: False)
+        raised = None
+    except reader.ShellParserUnavailable as error:
+        parser, raised = None, error
+    finally:
+        if sys.modules.get("tree_sitter") is CachedUnusableTreeSitter and saved_module is not None:
+            sys.modules["tree_sitter"] = saved_module
+    check("after an install, a cached copy that could not be used is dropped and the installed one loads",
+          raised is None and parser is not None and parser.parse(b"ls").root_node.type == "program"
+          and installs == [], (raised, installs))
 
     # The real importer, in a process whose user site did not exist when it started.
     import tree_sitter as installed_tree_sitter
