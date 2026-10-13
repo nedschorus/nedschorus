@@ -291,10 +291,13 @@ for name, text in (
         ("another repository", "[Some three words](https://github.com/other/repo/pull/1256)"),
         ("a bare URL", f"see {PULL_URL} now")):
     check(f"no title is checked for {name}", linked_numbers(text) == [], linked_numbers(text))
-for fragment in ("#issuecomment-12", "#pullrequestreview-34", "#discussion_r56"):
+for fragment in ("#issuecomment-12", "#pullrequestreview-34", "#discussion_r56", "/files#r78"):
     text = f"[Some three words]({PULL_URL}{fragment})"
     check(f"no title is checked for a link to a comment or a review: {fragment}",
           linked_numbers(text) == [], linked_numbers(text))
+check("no title is checked for text in escaped brackets, which is no link",
+      linked_numbers(f"\\[Some three words\\]({PULL_URL})") == [],
+      linked_numbers(f"\\[Some three words\\]({PULL_URL})"))
 angle = hook.repository_item_links_in(f"[Some three words](<{PULL_URL}>)")
 check("a link whose target is in angle brackets is checked, and its URL is given without them",
       [(url, number) for _, _, url, number in angle] == [(PULL_URL, 1256)], angle)
@@ -317,7 +320,8 @@ def prefixed_note(link_text, number=1256, title="Fix the parser"):
 
 
 for link_text in ('PR 1256, "Fix the parser"', "PR #1256: Fix the parser", "GHI 1256 - Fix the parser",
-                  "issue 1256 \u201cFix the parser\u201d", "#1256 Fix the parser", "pr 1256, fix the parser"):
+                  "issue 1256 \u201cFix the parser\u201d", "#1256 Fix the parser", "pr 1256, fix the parser",
+                  "PR \\#1256: Fix the parser", '"PR 1256: Fix the parser"'):
     check(f"a correct title behind an ID prefix with the link's number matches: {link_text}",
           prefixed_note(link_text) is None, prefixed_note(link_text))
 check("a correct title behind an ID prefix with another number is noted, with the wrong number",
@@ -476,6 +480,15 @@ result = run_hook(tool_payload("Write", REPOSITORY / "docs" / "linked.md",
 check("Write does not check the title of a link on a line HEAD already holds",
       result.returncode == 0 and result.stdout == "", result.stdout)
 
+result = run_hook(tool_payload("Write", REPOSITORY / "docs" / "wrong-number.md",
+                               content=f"See [GHI 1253, \"{TITLES['1196']}\"]({ISSUE_URL}).\n"),
+                  titles_environment)
+context = context_of(result)
+check("Write with a wrong number gets the Markdown note's own wrong-number instruction",
+      context is not None and hook.MARKDOWN_WRONG_NUMBER_LINE in context["additionalContext"]
+      and "the number 1253 in the link text is not the link's number 1196" in context["additionalContext"],
+      result.stdout)
+
 many_links = "".join(f"[Wrong title number {index}]({PULL_URL}).\n" for index in range(12))
 result = run_hook(tool_payload("Write", REPOSITORY / "docs" / "many.md", content=many_links),
                   titles_environment)
@@ -483,7 +496,8 @@ context = context_of(result)
 listed = [line for line in (context or {}).get("additionalContext", "").split("\n")
           if "; the title on GitHub is" in line]
 check("Write lists at most 10 title mismatches and counts the rest",
-      len(listed) == 10 and "2 more not listed" in (context or {}).get("additionalContext", ""),
+      len(listed) == 10 and hook.MORE_TITLE_HITS_LINE.format(count=2)
+      in (context or {}).get("additionalContext", ""),
       result.stdout)
 
 result = run_hook(tool_payload("Write", REPOSITORY / "notes.txt", content="PR 931\n"))
@@ -613,6 +627,17 @@ check("UserPromptSubmit: a correct title behind another number's prefix is noted
       context is not None
       and f"""the title on GitHub is "{TITLES['1256']}"; the number 1253 in the link text is not the link's number 1256"""
           in context["additionalContext"], result.stdout)
+check("UserPromptSubmit: a wrong number gets its own instruction, to make the text and the URL agree",
+      context is not None and hook.PREVIOUS_REPLY_WRONG_NUMBER_LINE in context["additionalContext"],
+      result.stdout)
+
+path = transcript(user("go"), assistant("m1", text_block(
+    f"Merged [PR 1256, \"Some wrong title\"]({PULL_URL}).")))
+result = run_hook(prompt_payload(path), titles_environment)
+context = context_of(result)
+check("UserPromptSubmit: a note with no wrong number has no wrong-number instruction",
+      context is not None and "the title on GitHub is" in context["additionalContext"]
+      and hook.PREVIOUS_REPLY_WRONG_NUMBER_LINE not in context["additionalContext"], result.stdout)
 
 path = transcript(user("go"), assistant("m1", text_block(
     f"GHI [{TITLES['1196']}]({ISSUE_URL}) and PR [\"{TITLES['1256']}\"]({PULL_URL}).")))
