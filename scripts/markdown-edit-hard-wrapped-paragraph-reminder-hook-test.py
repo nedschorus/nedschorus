@@ -387,6 +387,14 @@ def silent(result):
     return result.returncode == 0 and result.stdout.strip() == "" and result.stderr.strip() == ""
 
 
+def reported(result, fault_words):
+    """A fault: exit 1, no reminder on stdout, one stderr line naming the hook and the fault."""
+    lines = result.stderr.splitlines()
+    return (result.returncode == 1 and result.stdout == "" and len(lines) == 1
+            and lines[0].startswith("markdown-edit-hard-wrapped-paragraph-reminder: ")
+            and fault_words in lines[0])
+
+
 def agent_text(result):
     try:
         parsed = json.loads(result.stdout)
@@ -558,13 +566,20 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     result = run_hook(payload_for(checkout, "Write", undecodable_file, {"content": ""}))
     check("a file that is not UTF-8 is silent", silent(result), result.stdout + result.stderr)
 
-    result = run_hook("{not json")
-    check("a payload that does not parse as JSON is silent", silent(result),
-          result.stdout + result.stderr)
+    for case_name, payload, fault_words in (
+            ("a payload that does not parse as JSON", "{not json", "JSONDecodeError"),
+            ("a payload that is a JSON list", "[1, 2]", "a JSON list, not an object"),
+            ("an empty payload", "", "JSONDecodeError")):
+        result = run_hook(payload)
+        check(f"{case_name} is reported on stderr, exit 1",
+              reported(result, fault_words), result.stdout + result.stderr)
 
-    result = run_hook("[1, 2]")
-    check("a payload that is not a JSON object is silent", silent(result),
-          result.stdout + result.stderr)
+    # A Write payload naming a file that is not there: reading it raises
+    # FileNotFoundError, which only the top-level handler catches.
+    vanished_file = checkout / "docs" / "vanished.md"
+    result = run_hook(payload_for(checkout, "Write", vanished_file, {"content": BROKEN_TEXT}))
+    check("a written file that cannot be read is reported on stderr, exit 1",
+          reported(result, "FileNotFoundError"), result.stdout + result.stderr)
 
 if failures:
     print(f"\n{len(failures)} case(s) failed")

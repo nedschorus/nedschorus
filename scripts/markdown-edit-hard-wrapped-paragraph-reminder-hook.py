@@ -33,7 +33,13 @@ python3 -m pip install --user --break-system-packages markdown-it-py
 A file holding display math ($$) or a footnote definition ([^label]:) gets no
 reminder at all: CommonMark reads both as paragraphs, and judging their line
 breaks needs rules this hook does not carry, so it stays silent rather than tell
-an agent to join lines that must stay apart."""
+an agent to join lines that must stay apart.
+
+A fault, such as stdin that is not a JSON object, a written file that cannot be read
+or any exception: one line on stderr naming the hook and the fault, nothing on stdout,
+exit 1. Claude Code records a PostToolUse exit 1 as a non-blocking error and keeps the
+write; exit 0 would read as "no broken paragraph found". A file that is not UTF-8 is
+not a fault: the hook judges only UTF-8 text, and stays silent on other bytes."""
 
 import json
 import re
@@ -226,12 +232,9 @@ def markdown_has_hard_wrapped_paragraph(text: str) -> bool:
     return bool(markdown_broken_paragraph_line_ranges(text))
 
 def main() -> int:
-    try:
-        payload = json.loads(sys.stdin.read() or "{}")
-    except (json.JSONDecodeError, ValueError, OSError):
-        return 0
+    payload = json.loads(sys.stdin.read())
     if not isinstance(payload, dict):
-        return 0
+        raise ValueError(f"the hook payload is a JSON {type(payload).__name__}, not an object")
     tool_name = payload.get("tool_name")
     tool_input = payload.get("tool_input")
     if tool_name not in ("Edit", "Write") or not isinstance(tool_input, dict):
@@ -257,7 +260,7 @@ def main() -> int:
         return 0
     try:
         text = Path(file_path).read_bytes().decode("utf-8")
-    except (OSError, UnicodeDecodeError):
+    except UnicodeDecodeError:
         return 0
     try:
         broken_ranges = markdown_broken_paragraph_line_ranges(text)
@@ -286,6 +289,8 @@ def main() -> int:
 if __name__ == "__main__":
     try:
         sys.exit(main())
-    except Exception:
-        # A reminder must not turn a successful write into an apparent tool failure.
-        sys.exit(0)
+    except Exception as error:
+        print(f"markdown-edit-hard-wrapped-paragraph-reminder: the text just written was not "
+              f"checked for hard-wrapped paragraphs, because the hook failed; the write itself "
+              f"succeeded: {type(error).__name__}: {error}", file=sys.stderr)
+        sys.exit(1)

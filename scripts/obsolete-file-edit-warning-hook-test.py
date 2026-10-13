@@ -114,6 +114,14 @@ def silent(result) -> bool:
     return result.returncode == 0 and result.stdout.strip() == ""
 
 
+def reported(result, fault_words) -> bool:
+    """A fault: exit 1, no warning on stdout, one stderr line naming the hook and the fault."""
+    lines = result.stderr.splitlines()
+    return (result.returncode == 1 and result.stdout == "" and len(lines) == 1
+            and lines[0].startswith("obsolete-file-edit-warning-hook: ")
+            and fault_words in lines[0])
+
+
 with tempfile.TemporaryDirectory() as temporary_directory:
     tmp = Path(temporary_directory)
 
@@ -406,8 +414,7 @@ with tempfile.TemporaryDirectory() as temporary_directory:
           silent(result), result.stdout + result.stderr)
 
     # -----------------------------------------------------------------------
-    # BROKEN OR ABSENT INPUT. Every one of these exits 0 and prints nothing:
-    # a staleness warning must never be why an agent's edit reports a failure.
+    # ABSENT INPUT exits 0 and prints nothing: there is nothing to compare.
     # -----------------------------------------------------------------------
     no_file_path = hook_payload(checkout, edited_file)
     no_file_path["tool_input"] = {}
@@ -419,9 +426,26 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     check("a payload with no tool_input at all exits 0 and prints nothing",
           silent(run_hook(no_tool_input)), "")
 
-    check("an unreadable payload exits 0 and prints nothing",
-          silent(run_hook("{not json at all")), "")
-    check("empty stdin exits 0 and prints nothing", silent(run_hook("")), "")
+    # A payload that is not a JSON object is a fault, reported on stderr.
+    for case_name, payload, fault_words in (
+            ("an unreadable payload", "{not json at all", "JSONDecodeError"),
+            ("a payload that is a JSON list", "[1, 2]", "a JSON list, not an object"),
+            ("empty stdin", "", "JSONDecodeError")):
+        result = run_hook(payload)
+        check(f"{case_name} is reported on stderr, exit 1",
+              reported(result, fault_words), result.stdout + result.stderr)
+
+    # A hook copied away from checkout-freshness-catch-up.py: the load raises
+    # FileNotFoundError, which only the top-level handler catches.
+    lone_hook_directory = tmp / "hook-without-checkout-freshness"
+    lone_hook_directory.mkdir()
+    lone_hook = lone_hook_directory / SCRIPT_PATH.name
+    shutil.copy(str(SCRIPT_PATH), str(lone_hook))
+    result = subprocess.run([sys.executable, str(lone_hook)],
+                            input=json.dumps(hook_payload(checkout, edited_file)),
+                            capture_output=True, text=True, check=False)
+    check("checkout-freshness-catch-up.py failing to load is reported on stderr, exit 1",
+          reported(result, "FileNotFoundError"), result.stdout + result.stderr)
 
     not_a_repository = tmp / "not-a-repository"
     not_a_repository.mkdir()

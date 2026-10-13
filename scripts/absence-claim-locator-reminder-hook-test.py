@@ -6,7 +6,8 @@ Every hook case runs the hook as a subprocess, its real stdin-to-stdout path,
 with the log file and the once-per-session marker directory pointed into a
 directory this suite made, so no case writes the live log-store or
 ~/.local/state/claude. The exit code is asserted on every case: a Stop hook
-that exits 2 blocks the turn from ending, so "always 0" is a property.
+that exits 2 blocks the turn from ending, so the hook exits 0, or 1 with one
+stderr line on a fault, and never 2.
 
 The precision case reads the labelled replies the trigger was measured on,
 which stay in the log-store because they are transcript text and this
@@ -173,6 +174,14 @@ class Case:
         if not self.log.exists():
             return []
         return [json.loads(line) for line in self.log.read_text().splitlines()]
+
+
+def reported(result, fault_words):
+    """A fault: exit 1, no reminder on stdout, one stderr line naming the hook and the fault."""
+    lines = result.stderr.splitlines()
+    return (result.returncode == 1 and result.stdout == "" and len(lines) == 1
+            and lines[0].startswith("absence-claim-locator-reminder-hook: ")
+            and fault_words in lines[0])
 
 
 def blocked_reason(result):
@@ -374,23 +383,32 @@ result = case.run({"hook_event_name": "SubagentStop", "agent_id": "agent-three",
                    "transcript_path": str(case.transcript)})
 check("a SubagentStop without agent_transcript_path: silent", result.stdout == "", result.stdout)
 
-# --- faults: exit 0, nothing printed, the error logged -----------------------------
+# --- faults: exit 1, one stderr line, nothing on stdout, the error logged -----------
 
 case = Case()
 result = case.run({"transcript_path": str(case.root / "no-such-transcript.jsonl")})
-check("a missing transcript: exit 0, nothing printed",
-      result.returncode == 0 and result.stdout == "" and result.stderr == "",
-      (result.returncode, result.stdout, result.stderr))
+check("a missing transcript: reported on stderr, exit 1, nothing on stdout",
+      reported(result, "FileNotFoundError"), (result.returncode, result.stdout, result.stderr))
 check("a missing transcript: the error is logged",
       [line.get("outcome") for line in case.log_lines()] == ["error"]
       and "FileNotFoundError" in case.log_lines()[0].get("error", ""), case.log_lines())
 
+for case_name, stdin_text, fault_words in (
+        ("stdin that is not JSON", "not json", "JSONDecodeError"),
+        ("stdin that is a JSON list", "[1, 2]", "a JSON list, not an object"),
+        ("empty stdin", "", "JSONDecodeError")):
+    case = Case()
+    result = case.run(stdin_text=stdin_text)
+    check(f"{case_name}: reported on stderr, exit 1, error logged",
+          reported(result, fault_words)
+          and [line.get("outcome") for line in case.log_lines()] == ["error"],
+          (result.returncode, result.stdout, result.stderr, case.log_lines()))
+
 case = Case()
-result = case.run(stdin_text="not json")
-check("stdin that is not JSON: exit 0, nothing printed, error logged",
-      result.returncode == 0 and result.stdout == "" and result.stderr == ""
-      and [line.get("outcome") for line in case.log_lines()] == ["error"],
-      (result.returncode, result.stdout, result.stderr, case.log_lines()))
+case.log.mkdir()
+result = case.run({"transcript_path": str(case.root / "no-such-transcript.jsonl")})
+check("a fault whose error cannot be logged: still reported on stderr, exit 1",
+      reported(result, "FileNotFoundError"), (result.returncode, result.stdout, result.stderr))
 
 case = Case().user("Where are the transcripts?").assistant_text(B01_CLAIM).write()
 case.log.mkdir()

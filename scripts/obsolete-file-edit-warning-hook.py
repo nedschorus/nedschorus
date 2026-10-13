@@ -69,9 +69,15 @@ will rebase the branch at turn end. It will not, in this very case — an
 agent that just edited a file has a dirty tree, and
 rebase_never_pushed_branch() skips a dirty tree by design.
 
-EVERYTHING HERE EXITS 0 AND PRINTS NOTHING ON ANY FAULT: not a repository,
-git missing, no origin/main, an unreadable payload, a timeout, a failed
-import. A staleness warning must never be the reason an edit fails.
+NOTHING TO COMPARE AGAINST IS SILENCE, exit 0: a cwd in no repository, no
+origin/main, a git call that exits nonzero or times out, git missing, a file
+outside the checkout.
+
+A FAULT OF THE HOOK ITSELF, such as stdin that is not a JSON object,
+checkout-freshness-catch-up.py failing to load or any exception: one line on
+stderr naming the hook and the fault, nothing on stdout, exit 1. Claude Code
+records a PostToolUse exit 1 as a non-blocking error and keeps the edit; exit 0
+would read as "this file is not obsolete".
 """
 
 import importlib.util
@@ -157,24 +163,20 @@ MERGE_FILE_HIGHEST_CONFLICT_COUNT = 127
 
 
 def _load_checkout_freshness_module():
-    """checkout-freshness-catch-up.py as a module, or None.
+    """checkout-freshness-catch-up.py as a module; raises when it will not load.
 
     A script, not a package, so it is loaded the way this project loads one
     script from another (scripts/recover-crashed-seats.py loads
     handoff-supervisor.py the same way). Resolving this file's own directory
-    explicitly rather than trusting sys.path[0]: a hook that fails to import
-    is a hook that does not run, and here a failed import must be silence,
-    not a traceback on the agent's tool call.
+    explicitly rather than trusting sys.path[0]. A failed load reaches the
+    top-level handler, which reports it.
     """
-    try:
-        specification = importlib.util.spec_from_file_location(
-            "checkout_freshness_catch_up",
-            Path(__file__).resolve().with_name("checkout-freshness-catch-up.py"))
-        module = importlib.util.module_from_spec(specification)
-        specification.loader.exec_module(module)
-        return module
-    except Exception:
-        return None
+    specification = importlib.util.spec_from_file_location(
+        "checkout_freshness_catch_up",
+        Path(__file__).resolve().with_name("checkout-freshness-catch-up.py"))
+    module = importlib.util.module_from_spec(specification)
+    specification.loader.exec_module(module)
+    return module
 
 
 def checkout_facts(freshness, working_directory: Path):
@@ -394,12 +396,9 @@ def obsolete_file_warning_line(repository_path: str, commit_count, advice: str,
 
 
 def main() -> int:
-    try:
-        payload = json.loads(sys.stdin.read() or "{}")
-    except (json.JSONDecodeError, ValueError, OSError):
-        return 0
+    payload = json.loads(sys.stdin.read())
     if not isinstance(payload, dict):
-        return 0
+        raise ValueError(f"the hook payload is a JSON {type(payload).__name__}, not an object")
     tool_input = payload.get("tool_input")
     file_path = tool_input.get("file_path") if isinstance(tool_input, dict) else None
     if not file_path or not isinstance(file_path, str):
@@ -418,8 +417,6 @@ def main() -> int:
         return 0
 
     freshness = _load_checkout_freshness_module()
-    if freshness is None:
-        return 0
 
     facts = checkout_facts(freshness, working_directory)
     if facts is None:
@@ -454,9 +451,8 @@ def main() -> int:
 if __name__ == "__main__":
     try:
         sys.exit(main())
-    except Exception:
-        # A warning is never worth a failed tool call. Nothing above is
-        # expected to raise — every git call goes through run_git, which does
-        # not — but "expected" is not "guaranteed", and the cost of being
-        # wrong here is an agent's edit reported as failed.
-        sys.exit(0)
+    except Exception as error:
+        print(f"obsolete-file-edit-warning-hook: the edited file was not checked against "
+              f"origin/main, because the hook failed; the edit itself succeeded: "
+              f"{type(error).__name__}: {error}", file=sys.stderr)
+        sys.exit(1)
