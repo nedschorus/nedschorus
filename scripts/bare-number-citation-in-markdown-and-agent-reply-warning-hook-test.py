@@ -83,6 +83,12 @@ HOOK_ENVIRONMENT = {name: value for name, value in os.environ.items()
                     if name not in ("NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER",
                                     GH_STAND_IN_MODE_VARIABLE, GH_STAND_IN_TITLES_VARIABLE)}
 HOOK_ENVIRONMENT["CLAUDE_CODE_SESSION_ATTENDED"] = "1"
+# The hook keeps its record of noted replies under the temporary directory; a
+# run of this file must not write into the one real agent-sessions use.
+NOTE_RECORD_TEMPORARY_DIRECTORY = Path(tempfile.mkdtemp(
+    prefix="bare-number-citation-in-markdown-and-agent-reply-warning-hook-test-records-"))
+atexit.register(shutil.rmtree, str(NOTE_RECORD_TEMPORARY_DIRECTORY), True)
+HOOK_ENVIRONMENT["TMPDIR"] = str(NOTE_RECORD_TEMPORARY_DIRECTORY)
 
 failures = []
 
@@ -128,6 +134,21 @@ for text, expected in (
 
 check("an ID-type word with # is one hit, not also a hit for the # alone",
       found("PR #426 and #427") == ["PR #426", "#427"], found("PR #426 and #427"))
+
+for text in ("- **GHI 1196:** [Replace the hand-written parsers](https://github.com/nedschorus/nedschorus/issues/1196)",
+             '**Task #168,** "GHI 1121 build: freshness hook changes"',
+             '*PR 12:* "A title"',
+             'task #166, "GHI 1121 build: freshness hook changes"',
+             'task #166, \u201cGHI 1121 build\u201d'):
+    check(f"a reference named after a bold label or in a quoted subject is not reported: {text}",
+          found(text) == [], found(text))
+for text, expected in (("PR 12 **is blocked**", ["PR 12"]),
+                       ("**PR 1212**: merged", ["PR 1212"]),
+                       ("task #166 is about GHI 1121", ["task #166", "GHI 1121"]),
+                       ('task #166, "GHI 1121 build" and PR 12 too', ["PR 12"]),
+                       ('"GHI 1121 build" is quoted with no reference before it', ["GHI 1121"])):
+    check(f"a reference with no name after it is still reported: {text}",
+          found(text) == expected, found(text))
 
 for text in ("item 3 of 10", "it took 42 seconds", "the 1058 count",
              "&#123; is an entity", "page#12 is a fragment", "#1 is one digit",
@@ -615,9 +636,25 @@ def text_block(text):
     return {"type": "text", "text": text}
 
 
+PROMPT_PAYLOAD_SESSION_NUMBERS = iter(range(1, 10 ** 6))
+
+
 def prompt_payload(path, prompt="next question", **extra):
-    return {"hook_event_name": "UserPromptSubmit", "transcript_path": str(path),
-            "session_id": "s", "prompt": prompt, **extra}
+    """A fresh agent-session for each payload unless extra names one, so no
+    case's record of noted replies reaches another case."""
+    payload = {"hook_event_name": "UserPromptSubmit", "transcript_path": str(path),
+               "session_id": f"session-{next(PROMPT_PAYLOAD_SESSION_NUMBERS)}", "prompt": prompt}
+    payload.update(extra)
+    return payload
+
+
+def system_compact_boundary():
+    return {"type": "system", "subtype": "compact_boundary", "content": "Conversation compacted"}
+
+
+def note_of(result):
+    context = context_of(result)
+    return context["additionalContext"] if context else ""
 
 
 path = transcript(user("status?"),
@@ -762,6 +799,107 @@ check("UserPromptSubmit: when gh reports an error other than an absent item, tit
       result.returncode == 0 and context is not None
       and "because gh could not report the titles: gh api graphql failed: gh: stand-in gh: "
           "resource not accessible" in context["additionalContext"], result.stdout)
+
+# --- One note per reply, shortened after the first in an agent-session -------
+
+full_instruction = hook.PREVIOUS_REPLY_OPENING_LINES[1]
+NOTE_RECORD_DIRECTORY_NAME = "bare-number-citation-in-markdown-and-agent-reply-warning-hook-state"
+# getattr, so a hook without the short form fails these cases rather than stopping the file.
+short_instruction = getattr(hook, "PREVIOUS_REPLY_SHORT_OPENING_LINES", ("", "no short form"))[1]
+records = [user("go"), assistant("m1", text_block("See PR 12."))]
+path = transcript(*records)
+first = run_hook(prompt_payload(path, session_id="one-reply-session"))
+again = run_hook(prompt_payload(path, session_id="one-reply-session"))
+check("the first note on a reply is the full note",
+      full_instruction in note_of(first) and '"PR 12"' in note_of(first), first.stdout + first.stderr)
+check("two prompts over the same reply note it once",
+      again.returncode == 0 and again.stdout == "", again.stdout + again.stderr)
+check("the same reply in another agent-session is noted, in full",
+      full_instruction in note_of(run_hook(prompt_payload(path))), "")
+
+records += [user("next"), assistant("m2", text_block("See PR 13."))]
+path.write_text("".join(json.dumps(record) + "\n" for record in records), encoding="utf-8")
+later = run_hook(prompt_payload(path, session_id="one-reply-session"))
+check("a new reply in the same agent-session is noted again",
+      '"PR 13"' in note_of(later), later.stdout + later.stderr)
+check("and the repeated note is the short form, with its hits listed",
+      short_instruction in note_of(later) and full_instruction not in note_of(later)
+      and hook.PREVIOUS_REPLY_OPENING_LINES[2] not in note_of(later), note_of(later))
+
+records += [system_compact_boundary(), user("after"), assistant("m3", text_block("See PR 14."))]
+path.write_text("".join(json.dumps(record) + "\n" for record in records), encoding="utf-8")
+compacted = run_hook(prompt_payload(path, session_id="one-reply-session"))
+check("after a compaction the note is sent in full again",
+      full_instruction in note_of(compacted) and '"PR 14"' in note_of(compacted), note_of(compacted))
+
+records += [user("then"), assistant("m4", text_block("See PR 15."))]
+path.write_text("".join(json.dumps(record) + "\n" for record in records), encoding="utf-8")
+check("and the next note after that is short again",
+      short_instruction in note_of(run_hook(prompt_payload(path, session_id="one-reply-session"))), "")
+
+records = [user("go"), assistant("t1", text_block(
+    f"Merged PR [Bash guards: messages say why]({PULL_URL})."))]
+title_only = transcript(*records)
+title_note = note_of(run_hook(prompt_payload(title_only, session_id="title-first-session"),
+                              titles_environment))
+check("fixture: the first reply gets a link-title note and no bare-number note",
+      "under link text that is not the title" in title_note and full_instruction not in title_note,
+      title_note)
+records += [user("next"), assistant("t2", text_block("See PR 16."))]
+title_only.write_text("".join(json.dumps(record) + "\n" for record in records), encoding="utf-8")
+check("a note with link titles only does not count as the full bare-number note",
+      full_instruction in note_of(run_hook(prompt_payload(title_only, session_id="title-first-session"))),
+      "")
+
+no_id = {"type": "assistant", "message": {"role": "assistant", "content": [text_block("See PR 17.")]}}
+path = transcript(user("go"), no_id)
+run_hook(prompt_payload(path, session_id="no-message-id-session"))
+second = run_hook(prompt_payload(path, session_id="no-message-id-session"))
+check("a reply with no message id is noted every time, never matched to another reply",
+      '"PR 17"' in note_of(second), second.stdout + second.stderr)
+path = transcript(user("go"), no_id, user("next"),
+                  {"type": "assistant", "message": {"role": "assistant",
+                                                    "content": [text_block("See PR 18.")]}})
+check("a second reply with no message id, after one, is noted",
+      '"PR 18"' in note_of(run_hook(prompt_payload(path, session_id="no-message-id-session"))), "")
+
+path = transcript(user("go"), assistant("m5", text_block("Part one, PR 19.")),
+                  assistant("m5", {"type": "tool_use", "name": "Bash", "input": {"command": "ls"}}),
+                  assistant("m5", text_block("Part two, PR 20.")))
+first = run_hook(prompt_payload(path, session_id="assembled-reply-session"))
+check("a reply assembled from several records is scanned whole",
+      '"PR 19"' in note_of(first) and '"PR 20"' in note_of(first), note_of(first))
+check("and noted once",
+      run_hook(prompt_payload(path, session_id="assembled-reply-session")).stdout == "", "")
+
+blocked_records = SCRATCH / "a-file-where-the-record-directory-should-be"
+blocked_records.mkdir()
+(blocked_records / NOTE_RECORD_DIRECTORY_NAME).write_text("not a directory\n", encoding="utf-8")
+blocked_environment = dict(HOOK_ENVIRONMENT, TMPDIR=str(blocked_records))
+path = transcript(user("go"), assistant("m1", text_block("See PR 21.")))
+for attempt in ("first", "second"):
+    result = run_hook(prompt_payload(path, session_id="unwritable-record-session"), blocked_environment)
+    note = note_of(result)
+    check(f"a record that cannot be written: the {attempt} prompt still gets the full note, exit 0",
+          result.returncode == 0 and '"PR 21"' in note and full_instruction in note,
+          result.stdout + result.stderr)
+    check(f"a record that cannot be written: the {attempt} note says so and why",
+          note.split("\n")[-1].startswith(
+              "bare-number-citation-in-markdown-and-agent-reply-warning-hook: its record of the "
+              "replies it has noted, ") and "could not be written (" in note, note)
+
+garbled_records = SCRATCH / "garbled-record-temporary-directory"
+(garbled_records / NOTE_RECORD_DIRECTORY_NAME).mkdir(parents=True)
+(garbled_records / NOTE_RECORD_DIRECTORY_NAME / "garbled-record-session.json").write_text(
+    "{not json", encoding="utf-8")
+result = run_hook(prompt_payload(path, session_id="garbled-record-session"),
+                  dict(HOOK_ENVIRONMENT, TMPDIR=str(garbled_records)))
+check("a record that cannot be read: the full note is given and says the record could not be read",
+      '"PR 21"' in note_of(result) and full_instruction in note_of(result)
+      and "could not be read (JSONDecodeError" in note_of(result), result.stdout + result.stderr)
+check("and the record is written afresh, so the same reply is not noted again",
+      run_hook(prompt_payload(path, session_id="garbled-record-session"),
+               dict(HOOK_ENVIRONMENT, TMPDIR=str(garbled_records))).stdout == "", "")
 
 result = run_hook({"hook_event_name": "Stop", "transcript_path": str(path)})
 check("Stop is no longer handled", result.returncode == 0 and result.stdout == "", result.stdout)

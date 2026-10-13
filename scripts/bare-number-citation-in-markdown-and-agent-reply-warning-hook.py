@@ -39,7 +39,11 @@ barrier character no match can cross, so `PR [title](url) 2 hours` is not read
 as "PR 2". A reference followed at once by its name, a complete quoted name or
 a complete Markdown link, as the project's citation form for a task gives it
 (task #<number>, "<subject>"), is not reported; a quote that closes a quotation
-around the reference, or a bracket that starts no link, names nothing.
+around the reference, or a bracket that starts no link, names nothing. Emphasis
+markers may stand on either side of the separator, so a bold label such as
+`**GHI <n>:** [title](url)` names its item. A quoted name that names a
+reference is not scanned itself, so a task subject that mentions another item
+is not reported; a bare reference after the name still is.
 
 A LINK TITLE is checked for a Markdown link outside code whose target is
 https://github.com/nedschorus/nedschorus/pull/<n> or .../issues/<n>, not a
@@ -65,6 +69,19 @@ hookSpecificOutput.additionalContext with the hook's event name, listing up to
 HIT_LINES_LISTED_AT_MOST hits. The UserPromptSubmit half stays silent in a
 headless `claude -p` child, told apart as agent-seat-due-task-raise-hook.py
 does, where the prompt comes from a program, not from a reader of the reply.
+
+ONE NOTE PER REPLY. A reply is the assistant message Claude Code assembles
+from transcript records sharing one message id. The UserPromptSubmit half
+keeps, per agent-session, a record in the temporary directory of the last
+reply it noted, and does not note that reply again: a task notification or a
+message from another session submits a prompt with no reply in between. A
+reply with no message id is always noted, so no two replies can share a key.
+The bare-number part of the note is sent in full once per agent-session, and
+again after each compaction, which may drop it from the agent's context; after
+that its instructions shrink to one line, and the hits are listed as before.
+The link-title part is always sent in full. A record that cannot be read or
+written leaves the note as it would be without the record and adds a line
+saying so.
 Nothing found: nothing printed, exit 0. A fault: one line naming it on stderr,
 nothing on stdout, exit 1. Claude Code records a hook's exit 1 as a
 non-blocking error and keeps the write and the prompt; stderr after exit 0 is
@@ -77,6 +94,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 MARKDOWN_SUFFIXES = (".md", ".markdown")
@@ -90,6 +108,8 @@ EXCERPT_CHARACTERS_EACH_SIDE = 40
 REINCARNATION_OWNED_BY_CALLER_VARIABLE = "NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER"
 SESSION_ATTENDED_VARIABLE = "CLAUDE_CODE_SESSION_ATTENDED"
 SESSION_UNATTENDED_VALUE = "0"
+SESSION_ID_SAFE_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
+NOTE_RECORD_DIRECTORY_NAME = "bare-number-citation-in-markdown-and-agent-reply-warning-hook-state"
 
 ID_TYPE_WORD_FOLLOWED_BY_NUMBER = (
     r"\b(?:PRs?|pull\s+requests?|issues?|GHIs?|tasks?)(?:\s+#?|\s*#)\d+(?!\w)")
@@ -118,7 +138,9 @@ MARKDOWN_LINK_PATTERN = re.compile(
 # A double quote ends a URL, so a quoted URL's closing double quote stays in the line and is counted; an apostrophe is legal inside a URL.
 BARE_URL_PATTERN = re.compile(r"<?\b[a-z][a-z0-9+.-]*://[^\s>\"]+>?", re.IGNORECASE)
 # What may stand between a reference and its name.
-NAME_SEPARATOR_PATTERN = re.compile(r"[ \t]*[,:\u2014\u2013-]?[ \t]*")
+EMPHASIS_MARKER = r"(?:\*\*|__|\*|_)?"
+NAME_SEPARATOR_PATTERN = re.compile(
+    r"[ \t]*" + EMPHASIS_MARKER + r"[ \t]*[,:\u2014\u2013-]?[ \t]*" + EMPHASIS_MARKER + r"[ \t]*")
 STRAIGHT_QUOTED_NAME_PATTERN = re.compile(r"\"[^\"\n]+\"")
 CURLY_QUOTED_NAME_PATTERN = re.compile(r"\u201c[^\u201d\n]+\u201d")
 LINK_TEXT_AND_TARGET_PATTERN = re.compile(
@@ -165,6 +187,16 @@ PREVIOUS_REPLY_OPENING_LINES = (
     "Where your previous reply showed the bare form as an example of what not to write, "
     "such as 'not PR #<number>', nothing needs doing.",
 )
+# After the full note has been sent once in the agent-session, and since the last compaction.
+PREVIOUS_REPLY_SHORT_OPENING_LINES = (
+    PREVIOUS_REPLY_OPENING_LINES[0],
+    "Cite each one by its ID-type and its name, as this hook's earlier note in this agent-session "
+    "said. In your next reply, cite in full each one listed below that you mention again.",
+)
+NOTE_RECORD_FAILED_LINE = (
+    "bare-number-citation-in-markdown-and-agent-reply-warning-hook: its record of the replies it "
+    "has noted, {record}, could not be {action} ({reason}), so this note may be sent again for the "
+    "same reply, and in full. Nothing needs doing about the record.")
 MARKDOWN_TITLE_OPENING_LINES = (
     "bare-number-citation-in-markdown-and-agent-reply-warning-hook: the text just written to {path} links {count} pull "
     "request(s) or GitHub issue(s) under link text that is not the title GitHub reports, or "
@@ -297,19 +329,21 @@ def excerpt_around(line: str, start: int, end: int) -> str:
     return excerpt
 
 
-def name_follows(line: str, masked_line: str, start: int, end: int) -> bool:
-    """Whether the reference at line[start:end] is followed at once by its
-    name: a complete quoted name or a complete Markdown link. A straight quote
-    after an odd number of straight quotes closes a quotation, so it names
-    nothing; the quotes are counted in masked_line, so a quote inside a code
-    span does not count."""
+def name_follows(line: str, masked_line: str, start: int, end: int):
+    """Where the name ends when the reference at line[start:end] is followed
+    at once by its name, a complete quoted name or a complete Markdown link;
+    else None. A straight quote after an odd number of straight quotes closes
+    a quotation, so it names nothing; the quotes are counted in masked_line,
+    so a quote inside a code span does not count."""
     position = NAME_SEPARATOR_PATTERN.match(line, end).end()
-    if MARKDOWN_LINK_PATTERN.match(line, position):
-        return True
-    if CURLY_QUOTED_NAME_PATTERN.match(line, position):
-        return True
-    return (masked_line.count('"', 0, start) % 2 == 0
-            and STRAIGHT_QUOTED_NAME_PATTERN.match(line, position) is not None)
+    for name_pattern in (MARKDOWN_LINK_PATTERN, CURLY_QUOTED_NAME_PATTERN):
+        name = name_pattern.match(line, position)
+        if name:
+            return name.end()
+    if masked_line.count('"', 0, start) % 2 != 0:
+        return None
+    name = STRAIGHT_QUOTED_NAME_PATTERN.match(line, position)
+    return name.end() if name else None
 
 
 def bare_references_in(text: str, line_numbers_to_report=None):
@@ -321,8 +355,15 @@ def bare_references_in(text: str, line_numbers_to_report=None):
         line_number = index + 1
         if line_numbers_to_report is not None and line_number not in line_numbers_to_report:
             continue
+        # The finditer below scans the line as it was, so a name already
+        # accepted is skipped by position, not by changing the line.
+        name_end = -1
         for match in BARE_REFERENCE_PATTERN.finditer(line):
-            if name_follows(original_lines[index], line, match.start(), match.end()):
+            if match.start() < name_end:
+                continue
+            accepted_name_end = name_follows(original_lines[index], line, match.start(), match.end())
+            if accepted_name_end is not None:
+                name_end = accepted_name_end
                 continue
             found.append(BareReference(
                 line_number, match.group(0),
@@ -615,10 +656,7 @@ def _load_absence_claim_hook():
     return module
 
 
-def previous_reply(transcript_path: Path, is_turn_start) -> str:
-    """The text of the agent's last message in the transcript's last turn,
-    which, while the prompt being submitted is not yet written, is the
-    previous turn."""
+def transcript_records(transcript_path: Path):
     records = []
     with open(transcript_path, encoding="utf-8") as transcript:
         for line in transcript:
@@ -628,6 +666,18 @@ def previous_reply(transcript_path: Path, is_turn_start) -> str:
                 continue
             if isinstance(record, dict):
                 records.append(record)
+    return records
+
+
+def compaction_count(records) -> int:
+    return sum(1 for record in records
+               if record.get("type") == "system" and record.get("subtype") == "compact_boundary")
+
+
+def previous_reply(records, is_turn_start):
+    """(the text of the agent's last message in the transcript's last turn,
+    that message's id or None), which, while the prompt being submitted is not
+    yet written, is the previous turn."""
     starts = [index for index, record in enumerate(records) if is_turn_start(record)]
     turn = records[starts[-1] + 1:] if starts else records
     last_text_message_id = None
@@ -641,10 +691,47 @@ def previous_reply(transcript_path: Path, is_turn_start) -> str:
             continue
         for block in content:
             if isinstance(block, dict) and block.get("type") == "text":
+                # A record with no id is a message of its own; its id(), a key
+                # for this call only, is never returned as the message's id.
                 message_id = message.get("id") or id(record)
                 texts_by_message.setdefault(message_id, []).append(block.get("text", ""))
                 last_text_message_id = message_id
-    return "\n".join(texts_by_message.get(last_text_message_id, []))
+    reply = "\n".join(texts_by_message.get(last_text_message_id, []))
+    return reply, (last_text_message_id if isinstance(last_text_message_id, str) else None)
+
+
+def note_record_path_for(session_id):
+    """The agent-session's record of the replies noted, or None when the
+    payload names no session this hook can use as a file name."""
+    if not isinstance(session_id, str) or not SESSION_ID_SAFE_PATTERN.match(session_id):
+        return None
+    return Path(tempfile.gettempdir()) / NOTE_RECORD_DIRECTORY_NAME / f"{session_id}.json"
+
+
+def note_record_read(record_path):
+    """(record, None) or ({}, the reason it could not be read); a record not
+    yet written is empty."""
+    try:
+        record = json.loads(record_path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return {}, None
+    except (OSError, ValueError) as error:
+        return {}, f"{type(error).__name__}: {error}"
+    if not isinstance(record, dict):
+        return {}, f"a JSON {type(record).__name__}, not an object"
+    return record, None
+
+
+def note_record_write(record_path, record):
+    """None, or the reason the record could not be written."""
+    try:
+        record_path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = record_path.with_name(record_path.name + ".tmp")
+        temporary.write_text(json.dumps(record), encoding="utf-8")
+        os.replace(temporary, record_path)
+    except OSError as error:
+        return f"{type(error).__name__}: {error}"
+    return None
 
 
 def previous_reply_note(payload: dict, environment):
@@ -657,16 +744,35 @@ def previous_reply_note(payload: dict, environment):
     transcript_file = Path(transcript_path).expanduser()
     if not transcript_file.exists():
         return None
-    reply = previous_reply(transcript_file, _load_absence_claim_hook().is_human_or_parent_message)
+    records = transcript_records(transcript_file)
+    reply, message_id = previous_reply(records, _load_absence_claim_hook().is_human_or_parent_message)
     if not reply.strip():
+        return None
+    record_path = note_record_path_for(payload.get("session_id"))
+    record, read_failure = note_record_read(record_path) if record_path else ({}, None)
+    if message_id is not None and record.get("noted_message_id") == message_id:
         return None
     references = bare_references_in(reply)
     sections = title_note_lines(PREVIOUS_REPLY_TITLE_OPENING_LINES, PREVIOUS_REPLY_WRONG_NUMBER_LINE,
                                 link_title_mismatches_in(reply))
+    compactions = compaction_count(records)
     if references:
-        sections.insert(0, note_text(PREVIOUS_REPLY_OPENING_LINES, references))
+        full_note_sent = record.get("full_note_sent_after_compactions") == compactions
+        sections.insert(0, note_text(
+            PREVIOUS_REPLY_SHORT_OPENING_LINES if full_note_sent else PREVIOUS_REPLY_OPENING_LINES,
+            references))
+        record["full_note_sent_after_compactions"] = compactions
     if not sections:
         return None
+    if record_path is not None:
+        record["noted_message_id"] = message_id
+        if read_failure is not None:
+            sections.append(NOTE_RECORD_FAILED_LINE.format(record=record_path, action="read",
+                                                           reason=read_failure))
+        write_failure = note_record_write(record_path, record)
+        if write_failure is not None:
+            sections.append(NOTE_RECORD_FAILED_LINE.format(record=record_path, action="written",
+                                                           reason=write_failure))
     return hook_output("UserPromptSubmit", "\n".join(sections))
 
 
