@@ -195,8 +195,8 @@ def directory_a_wrapper_sets(words):
 
 
 def directory_joined(base, target):
-    """Return target with ~ expanded, taken relative to base when base is given."""
-    target = os.path.expanduser(target)
+    """Return target with a ~ bash expands expanded, taken relative to base when base is given."""
+    target = shell_reader.shell_word_tilde_prefix_expand_as_bash_would(target)
     return target if base is None else os.path.join(base, target)
 
 
@@ -264,7 +264,7 @@ def destination_branch(refspec):
 
 
 def resolve_directory(base, target):
-    expanded = os.path.expanduser(target)
+    expanded = shell_reader.shell_word_tilde_prefix_expand_as_bash_would(target)
     if os.path.isabs(expanded):
         return os.path.normpath(expanded)
     return os.path.normpath(os.path.join(base, expanded))
