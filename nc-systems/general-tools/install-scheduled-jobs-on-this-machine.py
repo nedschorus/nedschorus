@@ -581,21 +581,19 @@ def shell_parser_refusal(error, line) -> Refusal:
                 f"\"{PROGRAM} did not run, because the shell command reader failed on the "
                 f"crontab line {markdown_code_span(line)} on {host} "
                 f"({error.install_output}).\"").split("\n"),
-            f"Run {PROGRAM} again, with the same options, only after the shell command reader "
-            f"is fixed.")
-    install = (f"python3 -m pip install --user --break-system-packages "
-               f"-r {shell_reader.REQUIREMENTS_FILE}")
-    # The user sits at the Mac, and reaches ned-box over ssh.
-    by_hand = (f"from your Mac, run: ssh nedlern@ned-box '{install}'" if host == "ned-box"
-               else f"run on {host}: {install}")
+            f"Leave this run of {PROGRAM} undone; run it again, with the same options, only "
+            f"after the shell command reader is fixed.")
+    where, install = shell_reader.tree_sitter_bash_by_hand_install_instruction_for_user(host)
     return Refusal(
         f"{PROGRAM}: not run — the shell parser tree-sitter-bash, which this program uses to read "
         f"the crontab's commands, is missing on {host}, and installing it failed. Nothing on "
         f"this machine changed.",
         *shell_reader.report_to_user_or_dispatching_agent_instruction_build(
-            f"\"tree-sitter-bash could not be installed on {host}; to install it by hand, "
-            f"{by_hand}.\"").split("\n"),
-        f"Run {PROGRAM} again, with the same options, only after tree-sitter-bash is installed.",
+            f"\"tree-sitter-bash could not be installed on {host}. To install it by hand, run "
+            f"this command {where}:\" Then give the install command on a line of its own:\n"
+            f"{install}").split("\n"),
+        f"Leave this run of {PROGRAM} undone; run it again, with the same options, only after "
+        f"tree-sitter-bash is installed.",
         f"What the install printed: {error.install_output}")
 
 

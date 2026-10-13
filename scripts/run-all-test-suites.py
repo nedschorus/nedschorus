@@ -459,6 +459,13 @@ GIT_REDIRECTING_ENVIRONMENT_VARIABLES = (
     "GIT_COMMON_DIR",
 )
 
+# Whether a user attends the agent-session changes what some messages under test say, so a suite
+# is launched without them and each test sets them itself.
+AGENT_SESSION_ATTENDANCE_ENVIRONMENT_VARIABLES = (
+    "CLAUDE_CODE_SESSION_ATTENDED",
+    "NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER",
+)
+
 # Suites run as the same account as every agent-seat, so a stray kill(-1) or
 # killpg from a suite reaches all of them. In its own PID namespace a suite can
 # signal only the processes it started. Children of bwrap cannot start bwrap
@@ -1221,6 +1228,14 @@ def environment_without_git_redirecting_variables():
     return environment
 
 
+def test_suite_launch_environment_without_git_redirecting_and_agent_session_attendance_variables():
+    """Return the environment every path that launches a test suite gives the suite."""
+    environment = environment_without_git_redirecting_variables()
+    for variable in AGENT_SESSION_ATTENDANCE_ENVIRONMENT_VARIABLES:
+        environment.pop(variable, None)
+    return environment
+
+
 def being_traced():
     """Return whether Linux reports an attached tracer."""
     # A second strace cannot attach beneath an existing tracer.
@@ -1383,7 +1398,7 @@ def suite_process_started(process, status_read, note_suite_process):
 def run_one_suite(top, interpreter, suite, log_dir, recorder=None, sandbox_prefix=(),
                   note_suite_process=None):
     log_file = log_path_for(log_dir, suite)
-    environment = environment_without_git_redirecting_variables()
+    environment = test_suite_launch_environment_without_git_redirecting_and_agent_session_attendance_variables()
     command = ["sh", suite] if is_shell_test_suite(suite) else [interpreter, "-u", suite]
     if recorder is not None:
         recorder_dir, recording_dir, strace = recorder

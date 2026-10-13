@@ -1265,6 +1265,23 @@ except r.ShellParserUnavailable as error:
           and str(reader.REQUIREMENTS_FILE) in first and "subagent" in first, first)
     check("every report has the user told again; nothing is counted",
           "Tell the user" in again and again.replace("tmux kill", "force-push") == first, again)
+    this_host = __import__("socket").gethostname().split(".")[0]
+    install = reader.tree_sitter_bash_by_hand_install_instruction_for_user(this_host)[1]
+    check("the install command stands on a line of its own in the message",
+          install in first.splitlines(), first)
+    check("the words to report include the command, as a fenced code block, and what was undone",
+          reader.COMMAND_AS_FENCED_CODE_BLOCK_INSTRUCTION in first and "what you undid" in first
+          and "what you could not undo" in first, first)
+    where, install = reader.tree_sitter_bash_by_hand_install_instruction_for_user("ned-box")
+    check("for ned-box, the install command is the ssh form the user runs in a Terminal on the Mac",
+          where == "in a Terminal on your Mac"
+          and install == f"ssh nedlern@ned-box 'python3 -m pip install --user "
+          f"--break-system-packages -r {reader.REQUIREMENTS_FILE}'", (where, install))
+    where, install = reader.tree_sitter_bash_by_hand_install_instruction_for_user("Neds-MacBook")
+    check("for any other machine, the install command is run on that machine as it is",
+          where == "on Neds-MacBook"
+          and install == f"python3 -m pip install --user --break-system-packages "
+          f"-r {reader.REQUIREMENTS_FILE}", (where, install))
     on_ned_box = __import__("socket").gethostname().split(".")[0] == "ned-box"
     check("the install command for ned-box is given in the ssh form the user runs from the Mac",
           on_ned_box == ("ssh nedlern@ned-box 'python3 -m pip install" in first), first)
@@ -1314,8 +1331,11 @@ except r.ShellParserUnavailable as error:
           "do not tell the user" in unattended and "Tell the user" not in unattended
           and "If you are a subagent, tell the agent that dispatched you" in unattended, unattended)
     check("the reader-failed message says where the command goes, and in what form",
-          "After those words, give the command as a fenced code block of its own, between two lines "
-          "of three backticks" in attended, attended)
+          "After those words, give the command that ran as a fenced code block of its own, between "
+          "two lines of three backticks" in attended, attended)
+    check("in an agent-session no user attends, the condition that skips the report comes before it",
+          unattended.index("If you are not a subagent, skip the report below")
+          < unattended.index("If you are a subagent, tell the agent that dispatched you"), unattended)
     for session, attended_wanted in [((None, None), True), (("1", None), True), (("0", None), False),
                                      ((None, "1"), False)]:
         with reader.agent_session_attendance_environment_variables_temporarily_set_for_test(*session):

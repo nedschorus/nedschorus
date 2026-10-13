@@ -482,6 +482,20 @@ def agent_session_attendance_environment_variables_temporarily_set_for_test(atte
         put(saved)
 
 
+COMMAND_AS_FENCED_CODE_BLOCK_INSTRUCTION = (
+    "give the command that ran as a fenced code block of its own, between two lines of three "
+    "backticks, or of more backticks than the longest run of backticks in that command")
+
+
+def tree_sitter_bash_by_hand_install_instruction_for_user(host):
+    """Return (where, command): where to run tree-sitter-bash's install by hand, and the command."""
+    install = f"python3 -m pip install --user --break-system-packages -r {REQUIREMENTS_FILE}"
+    # The user sits at the Mac, and reaches ned-box over ssh.
+    if host == "ned-box":
+        return "in a Terminal on your Mac", f"ssh nedlern@ned-box '{install}'"
+    return f"on {host}", install
+
+
 def parser_unavailable_hook_output(guard_name, error, environment=os.environ):
     """Return the PreToolUse JSON that lets the command through and says it was not checked."""
     host = socket.gethostname().split(".")[0]
@@ -495,19 +509,14 @@ def parser_unavailable_hook_output(guard_name, error, environment=os.environ):
             + report_to_user_or_dispatching_agent_instruction_build(
                 f"\"{guard_name} let a command through unchecked on {host}, because the shell "
                 f"command reader failed on it ({error.install_output}).\" After those words, "
-                f"give the command as a fenced code block of its own, between two lines of three "
-                f"backticks, or of more backticks than the longest run of backticks in the "
-                f"command, then say whether it did what "
+                f"{COMMAND_AS_FENCED_CODE_BLOCK_INSTRUCTION}, then say whether it did what "
                 f"{guard_name} exists to stop, what you undid, and what you could not undo.",
                 environment))
         return json.dumps({"hookSpecificOutput": {
             "hookEventName": "PreToolUse",
             "additionalContext": message,
         }})
-    install = f"python3 -m pip install --user --break-system-packages -r {REQUIREMENTS_FILE}"
-    # The user sits at the Mac, and reaches ned-box over ssh.
-    by_hand = (f"from your Mac, run: ssh nedlern@ned-box '{install}'" if host == "ned-box"
-               else f"run on {host}: {install}")
+    where, install = tree_sitter_bash_by_hand_install_instruction_for_user(host)
     message = (
         f"{guard_name} let this command through without checking it, and the command has run: "
         f"the shell parser tree-sitter-bash is missing on {host}, and installing it failed.\n"
@@ -515,9 +524,13 @@ def parser_unavailable_hook_output(guard_name, error, environment=os.environ):
         f"undo what the command did, now, where you can.\n"
         + report_to_user_or_dispatching_agent_instruction_build(
             f"\"tree-sitter-bash is missing on {host} and could not be installed, so the "
-            f"project's Bash guards are not checking commands there. To install it by hand, "
-            f"{by_hand}\" Then pass on what the install printed, quoted as it is: "
-            f"{error.install_output}", environment)
+            f"project's Bash guards are not checking commands there. To install it by hand, run "
+            f"this command {where}:\" Then give the install command on a line of its own:\n"
+            f"{install}\n"
+            f"Then pass on what the install printed, quoted as it is: {error.install_output}\n"
+            f"Then {COMMAND_AS_FENCED_CODE_BLOCK_INSTRUCTION}, and say whether it did what "
+            f"{guard_name} exists to stop, what you undid, and what you could not undo.",
+            environment)
         + f"\nLater commands are let through unchecked too, each with this message, until an "
         f"install succeeds; the first command after {INSTALL_RETRY_SECONDS // 60} minutes "
         f"have passed tries the install again.")
@@ -534,10 +547,10 @@ def report_to_user_or_dispatching_agent_instruction_build(words, environment=os.
     attends the agent-session.
     """
     if _session_unattended(environment):
-        return (f"If you are a subagent, tell the agent that dispatched you, in these words: "
-                f"{words}\n"
-                f"No user attends this agent-session, so do not tell the user; if you are not "
-                f"a subagent, go on with your task.")
+        return (f"No user attends this agent-session, so do not tell the user. If you are not "
+                f"a subagent, skip the report below and go on with your task.\n"
+                f"If you are a subagent, tell the agent that dispatched you, in these words: "
+                f"{words}")
     return (f"Tell the user, or, if you are a subagent, the agent that dispatched you, in these "
             f"words: {words}")
 
