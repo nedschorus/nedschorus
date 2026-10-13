@@ -162,6 +162,14 @@ def silent(result):
     return result.returncode == 0 and result.stdout == "" and result.stderr == ""
 
 
+def reported(result, fault_words):
+    """A fault: exit 1, no raise on stdout, one stderr line naming the hook and the fault."""
+    lines = result.stderr.splitlines()
+    return (result.returncode == 1 and result.stdout == "" and len(lines) == 1
+            and lines[0].startswith("agent-seat-due-task-raise-hook: ")
+            and fault_words in lines[0])
+
+
 # --- due time passed raises, with the exact text -----------------------------
 seat = Seat()
 seat.task("7", metadata={"due_utc": PAST_DUE}, subject="Check the\nnightly run")
@@ -421,10 +429,13 @@ check("malformed task files beside a due task: the due task still raised",
 
 seat = Seat()
 seat.task("65", metadata={"due_utc": PAST_DUE})
-for name, stdin_text in (("not JSON", "not json at all"), ("a JSON list", "[1, 2]"),
-                         ("empty", "")):
+for name, stdin_text, fault_words in (
+        ("not JSON", "not json at all", "JSONDecodeError"),
+        ("a JSON list", "[1, 2]", "a JSON list, not an object"),
+        ("empty", "", "JSONDecodeError")):
     result = seat.run(stdin_text=stdin_text)
-    check(f"malformed payload ({name}): silent", silent(result), result)
+    check(f"malformed payload ({name}): reported on stderr, exit 1, no raise",
+          reported(result, fault_words), result)
 check("malformed payload: nothing recorded", not seat.state_path.exists())
 
 seat = Seat()
@@ -463,7 +474,8 @@ seat.task("70", metadata={"due_utc": PAST_DUE})
 seat.state_path.parent.parent.mkdir(parents=True)
 seat.state_path.parent.write_text("a file where the state directory should be")
 result = seat.run()
-check("state cannot be written: silent, so no raise goes unrecorded", silent(result), result)
+check("state cannot be written: reported on stderr, exit 1, and no raise goes unrecorded",
+      reported(result, "could not be written, so 1 due task(s) were not raised"), result)
 
 # --- task files are never written ------------------------------------------------
 seat = Seat()

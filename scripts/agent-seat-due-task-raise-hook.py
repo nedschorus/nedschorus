@@ -36,8 +36,9 @@ raised the task for, and does not raise the task again for the same value;
 changing either lets the task be raised again. The Stop hook's
 additionalContext continues the conversation, so a hook that said the same
 thing at every turn boundary would never let the agent stop. The record is
-written atomically BEFORE anything is printed, and nothing is printed if the
-write fails, so a raise whose record was lost cannot happen.
+written atomically BEFORE anything is printed, and no raise is printed if the
+write fails, so a raise whose record was lost cannot happen; the failed write
+is reported as a fault instead, as OUTPUT says.
 
 THE STATE FILE is
 `~/.local/state/claude/agent-seat-due-task-raise-state/<list id>.json`,
@@ -68,9 +69,13 @@ OUTPUT. Something to raise: one JSON object,
 which Claude Code delivers to the model as non-error feedback while the
 conversation continues. No `decision` field and no `systemMessage`: the text
 is for the agent. The text is one instruction per due task, then the
-instruction for a task that cannot be acted on yet. Nothing to raise, or any
-fault: nothing printed, exit 0. The hook never exits nonzero: a fault here
-must not stop a turn ending.
+instruction for a task that cannot be acted on yet. Nothing to raise:
+nothing printed, exit 0. A fault, such as a payload that is not a JSON
+object, a state file that cannot be written or any exception: one line on
+stderr naming the hook and the fault, nothing on stdout, exit 1. Claude Code
+records a Stop hook's exit 1 as a non-blocking error and still ends the turn.
+Exit 2 and additionalContext would both continue the conversation, and a
+fault that recurs at every stop would then never let the agent stop.
 
 ONLY THE AGENT-SEAT'S OWN SESSION IS RAISED, never a headless `claude -p`
 child an agent-seat's program starts. A child inherits the agent-seat's
@@ -248,8 +253,8 @@ def read_state(path: Path) -> dict:
     }
 
 
-def write_state_atomically(path: Path, state: dict) -> bool:
-    """Replace the state file in one rename; True only when it landed."""
+def write_state_atomically(path: Path, state: dict) -> None:
+    """Replace the state file in one rename; raises OSError when it did not land."""
     temporary_name = None
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -259,14 +264,13 @@ def write_state_atomically(path: Path, state: dict) -> bool:
             json.dump(state, handle, indent=2, sort_keys=True)
             handle.write("\n")
         os.replace(temporary_name, str(path))
-        return True
     except OSError:
         if temporary_name is not None:
             try:
                 os.unlink(temporary_name)
             except OSError:
                 pass
-        return False
+        raise
 
 
 class GitHubConditionChecker:
@@ -415,11 +419,15 @@ def due_task_lines(tasks: dict, directory: Path, state: dict, now: datetime) -> 
     return lines, state_changed or checker.changed
 
 
+class HookFault(Exception):
+    """A fault the hook reports on stderr instead of raising anything."""
+
+
 def run(stdin_text: str, environment, home: Path, now: datetime) -> "str | None":
-    """The JSON to print, or None for silence."""
+    """The JSON to print, or None for silence; raises on a fault."""
     payload = json.loads(stdin_text)
     if not isinstance(payload, dict):
-        return None
+        raise HookFault(f"the hook payload is a JSON {type(payload).__name__}, not an object")
     if environment.get(REINCARNATION_OWNED_BY_CALLER_VARIABLE):
         return None  # a caller's headless child: the raise would replace its answer
     if environment.get(SESSION_ATTENDED_VARIABLE) == SESSION_UNATTENDED_VALUE:
@@ -431,8 +439,12 @@ def run(stdin_text: str, environment, home: Path, now: datetime) -> "str | None"
     state_path = state_file_path(home, directory.name)
     state = read_state(state_path)
     lines, state_changed = due_task_lines(tasks, directory, state, now)
-    if state_changed and not write_state_atomically(state_path, state):
-        return None
+    if state_changed:
+        try:
+            write_state_atomically(state_path, state)
+        except OSError as error:
+            raise HookFault(f"the state file {state_path} could not be written, so "
+                            f"{len(lines)} due task(s) were not raised: {error}") from error
     if not lines:
         return None
     return json.dumps({
@@ -447,13 +459,13 @@ def main() -> int:
     try:
         output = run(sys.stdin.read(), os.environ, Path.home(),
                      datetime.now(timezone.utc))
-    except Exception:
-        return 0
-    if output is not None:
-        try:
+        if output is not None:
             print(output)
-        except Exception:
-            return 0
+    except Exception as error:
+        print(f"agent-seat-due-task-raise-hook: no due task was raised, because the "
+              f"hook failed; the turn ends as usual: {type(error).__name__}: {error}",
+              file=sys.stderr)
+        return 1
     return 0
 
 
