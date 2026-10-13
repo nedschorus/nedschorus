@@ -305,7 +305,10 @@ class Watcher:
             else:
                 result, output = self.open_seat_window(window["attach_seat"])
                 opened, exit_code = result is not False, None
-        if not opened and "attach_seat" in window and self.seat_session_gone(window["attach_seat"]):
+        session_gone, session_detail = False, ""
+        if not opened and "attach_seat" in window:
+            session_gone, session_detail = self.seat_session_gone(window["attach_seat"])
+        if session_gone:
             # A window has nothing to attach to; a seat that died is the restart path's to handle.
             if window in self.state["pending_notices"]:
                 self.state["pending_notices"].remove(window)
@@ -323,14 +326,25 @@ class Watcher:
             self.state["pending_notices"].append(window)
             self.log(None, "window not opened on the Mac; retried on every run",
                      window=what, exit_code=exit_code, opener_output=output)
+        if session_detail:
+            # Logged once per distinct error, so a tmux broken for days does not fill the log.
+            key = f"{window['attach_seat']}: session check: {session_detail}"
+            if key not in self.state["reported_errors"]:
+                self.state["reported_errors"].append(key)
+                self.log(window["attach_seat"],
+                         "pending window kept, retried each run: " + session_detail,
+                         window=what)
         return False
 
-    def seat_session_gone(self, seat) -> bool:
-        """True only when tmux answered that the seat's session does not exist."""
+    def seat_session_gone(self, seat):
+        """Return (gone, detail): gone only when tmux answered that the session does not exist."""
         if self.seat_session_alive is None:
-            return False
-        alive, _detail = self.seat_session_alive(seat)
-        return alive is False
+            return False, ""
+        alive, detail = self.seat_session_alive(seat)
+        if alive is None:
+            return False, ("recovery's tmux check could not say whether the session exists, "
+                           f"and said: {detail}")
+        return alive is False, ""
 
     def run(self, seat_names):
         for notice in list(self.state["pending_notices"]):

@@ -257,14 +257,35 @@ def run_tmux(*arguments_after_tmux, socket_name=None, environment=None):
         return None
 
 
+# What tmux prints when the session, or the server holding it, does not exist. Any other
+# failure, such as a client and server of different tmux versions, is no answer.
+TMUX_SAYS_NO_SUCH_SESSION_OR_SERVER = re.compile(
+    r"can't find session|no server running"
+    r"|error connecting to .*\((?:No such file or directory|Connection refused)\)")
+
+
+def tmux_has_session(name: str, socket_name: str):
+    """Return (held, detail), with held None when tmux cannot answer."""
+    completed = run_tmux("has-session", "-t", f"={name}", socket_name=socket_name)
+    if completed is None:
+        return None, "tmux cannot be run here"
+    if completed.returncode == 0:
+        return True, ""
+    reason = (completed.stderr or completed.stdout or "").strip()
+    if TMUX_SAYS_NO_SUCH_SESSION_OR_SERVER.search(reason):
+        return False, reason
+    return None, (f"tmux has-session on socket '{socket_name}' exited "
+                  f"{completed.returncode}: {reason or 'with no output'}")
+
+
 def tmux_session_alive_anywhere(name: str):
     """Return (alive, detail), with alive None when tmux cannot answer."""
     for socket_name in dict.fromkeys((name, "default")):
-        completed = run_tmux("has-session", "-t", f"={name}", socket_name=socket_name)
-        if completed is None:
-            return None, ("tmux cannot be run here, so seat liveness cannot be "
+        held, detail = tmux_has_session(name, socket_name)
+        if held is None:
+            return None, (f"{detail}, so seat liveness cannot be "
                           "checked — refusing rather than guessing")
-        if completed.returncode == 0:
+        if held:
             return True, f"tmux session '{name}' is alive on socket '{socket_name}'"
     return False, ""
 
@@ -335,11 +356,10 @@ def tmux_session_is_a_leftover_idle_shell(name: str, seat_directory: Path):
     pane_process_ids = []
     sockets_holding = []
     for socket_name in dict.fromkeys((name, "default")):
-        held = run_tmux("has-session", "-t", f"={name}", socket_name=socket_name)
+        held, detail = tmux_has_session(name, socket_name)
         if held is None:
-            return False, [], ("tmux cannot be run here, so the session cannot be shown "
-                               "to be an idle shell")
-        if held.returncode != 0:
+            return False, [], f"{detail}, so the session cannot be shown to be an idle shell"
+        if not held:
             continue
         panes = run_tmux("list-panes", "-s", "-t", f"={name}",
                          "-F", "#{pane_pid}\t#{pane_current_command}",

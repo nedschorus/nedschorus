@@ -74,6 +74,7 @@ class Harness:
         self.seat_windows = []
         # What tmux says of the seat's session: True, False (gone) or None (tmux cannot answer).
         self.seat_session_alive = seat_session_alive
+        self.seat_session_check = None
         self.recoveries = []
         self.windows = []
         self.died_at = DIED_AT
@@ -114,7 +115,8 @@ class Harness:
             stopped_on_purpose=lambda seat, detail: self.on_purpose,
             recorded_exit_question=recovery_module.restart_question_for_a_seat_with_a_recorded_exit,
             open_seat_window=self.open_seat_window,
-            seat_session_alive=lambda seat: (self.seat_session_alive, "tmux's answer"))
+            seat_session_alive=(self.seat_session_check or
+                                (lambda seat: (self.seat_session_alive, "tmux's answer"))))
         watcher.run(list(seats))
 
     def decisions(self):
@@ -347,6 +349,37 @@ def run_decision_cases(root: Path):
     check("a pending window stays pending when tmux cannot say whether the seat's session exists",
           harness.state["pending_notices"] == [{"attach_seat": "merge-lane-2"}],
           repr(harness.state["pending_notices"]))
+
+    class TmuxAnswer:
+        def __init__(self, returncode, stderr=""):
+            self.returncode, self.stdout, self.stderr = returncode, "", stderr
+
+    real_run_tmux = recovery_module.run_tmux
+    harness = Harness(root / "seat-session-probe-error", recovery_result=window_not_opened,
+                      seat_window_results=[False, False, False])
+    crash_after_running(harness)
+    harness.verdicts["merge-lane-2"] = ("seat-already-running", "restarted")
+    # Through recovery's real check: a tmux that cannot talk to a running server is no answer.
+    recovery_module.run_tmux = lambda *arguments, socket_name=None, environment=None: TmuxAnswer(
+        1, "protocol version mismatch (client 9, server 8)")
+    harness.seat_session_check = recovery_module.tmux_session_alive_anywhere
+    try:
+        harness.run(SEEN_RUNNING + timedelta(minutes=17))
+        harness.run(SEEN_RUNNING + timedelta(minutes=18))
+    finally:
+        recovery_module.run_tmux = real_run_tmux
+    check("a pending window stays pending, with tmux's reason logged, when recovery's tmux check "
+          "fails with an error rather than answering",
+          harness.state["pending_notices"] == [{"attach_seat": "merge-lane-2"}]
+          and [entry["decision"] for entry in harness.decisions()
+               if "protocol version mismatch" in entry["decision"]]
+          == ["pending window kept, retried each run: recovery's tmux check could not say "
+              "whether the session exists, and said: tmux has-session on socket 'merge-lane-2' exited 1: protocol version mismatch "
+              "(client 9, server 8), so seat liveness cannot be checked — refusing rather "
+              "than guessing"]
+          and not any(entry["decision"].startswith("pending window dropped")
+                      for entry in harness.decisions()),
+          repr((harness.state["pending_notices"], harness.decisions())))
 
     harness = Harness(root / "no-seat-window-opener", recovery_result=window_not_opened)
     crash_after_running(harness)
