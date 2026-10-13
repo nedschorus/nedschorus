@@ -62,8 +62,8 @@ DENY_REASON_TEMPLATE = (
     "Refused: branch {branch} has an open pull request, \"{title}\" ({url}). "
     "A force push would replace the commits under review.\n"
     "If you are force-pushing to restore what an earlier force push replaced, "
-    "stop: leave the branch as it is and message merge-lane (find its current "
-    "name with ListAgents).\n"
+    "stop: leave the branch as it is and message merge-lane-2 with SendMessage "
+    "(ListAgents lists its address).\n"
     "Otherwise, put your change in a new commit on top of the pushed branch, "
     "and push without --force.\n"
     "If the branch conflicts with main, clear the conflict with the hand-merge "
@@ -72,7 +72,7 @@ DENY_REASON_TEMPLATE = (
     "branch (git branch {branch}-rewritten), go back to the pushed head (git "
     "switch -C {branch} origin/{branch}), and redo your change as a new "
     "commit.\n"
-    "If merge-lane asked you for this force push, run it again with {escape} "
+    "If merge-lane-2 asked you for this force push, run it again with {escape} "
     "directly in front of the git push command."
 )
 
@@ -82,7 +82,7 @@ UNRESOLVED_REASON_TEMPLATE = (
     "Run the push again with the checkout path and the branch name written "
     "out, so this guard can check it: git -C <checkout path> push --force "
     "origin <branch>\n"
-    "If merge-lane asked you for this force push, run it again with {escape} "
+    "If merge-lane-2 asked you for this force push, run it again with {escape} "
     "directly in front of the git push command."
 )
 
@@ -93,15 +93,16 @@ UNCHECKED_NOTE_FIRST_LINE = (
 # A timeout or unreadable answer may succeed on retry.
 UNCHECKED_NOTE_RETRY_TEMPLATE = UNCHECKED_NOTE_FIRST_LINE + (
     "Run: gh pr list --state open --head {head_argument}\n"
-    "If that lists a pull request, or fails, message merge-lane (find its "
-    "current name with ListAgents) which branch you force-pushed, and do not "
+    "If that lists a pull request, or fails, message merge-lane-2 with SendMessage "
+    "(ListAgents lists its address) which branch you force-pushed, and do not "
     "force push again to undo it.\n"
     "If it lists nothing, no pull request was affected."
 )
 
 # A tool that cannot run needs intervention rather than another identical probe.
 UNCHECKED_NOTE_NO_RETRY_TEMPLATE = UNCHECKED_NOTE_FIRST_LINE + (
-    "Message merge-lane (find its current name with ListAgents) which branch "
+    "Message merge-lane-2 with SendMessage (ListAgents lists its address) "
+    "which branch "
     "you force-pushed, so it can check for an open pull request, and do not "
     "force push again to undo it."
 )
