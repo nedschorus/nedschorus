@@ -154,6 +154,77 @@ def is_program(word, name):
     return word == name or word.endswith("/" + name)
 
 
+ENVIRONMENT_ASSIGNMENT_PATTERN = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=")
+
+
+class Wrapper:
+    """A program that runs the command written after it.
+
+    options_with_a_value are the options, short or long, that take the next word
+    as their value; operands is how many words, such as timeout's duration or
+    flock's lock file, come after the options and before the command;
+    passes_standard_input says whether the command reads the wrapper's standard
+    input: xargs reads that input itself, as the arguments it adds.
+    """
+
+    def __init__(self, options_with_a_value=(), operands=0, passes_standard_input=True):
+        self.options_with_a_value = set(options_with_a_value)
+        self.operands = operands
+        self.passes_standard_input = passes_standard_input
+
+
+# flock's -c and env's -S take a command line as their value; the command they run is not
+# found, and the words after the value are taken as the program.
+WRAPPERS = {
+    "sudo": Wrapper({"-u", "-g", "-C", "-U", "-D", "-h", "-p", "-r", "-t", "--user",
+                     "--group", "--close-from", "--other-user", "--chdir", "--host",
+                     "--prompt", "--role", "--type"}),
+    "env": Wrapper({"-u", "-C", "-S", "--unset", "--chdir", "--split-string"}),
+    "timeout": Wrapper({"-s", "-k", "--signal", "--kill-after"}, operands=1),
+    "nice": Wrapper({"-n", "--adjustment"}),
+    "stdbuf": Wrapper({"-i", "-o", "-e", "--input", "--output", "--error"}),
+    "nohup": Wrapper(),
+    "exec": Wrapper({"-a"}),
+    "command": Wrapper(),
+    "time": Wrapper({"-f", "-o", "--format", "--output"}),
+    "setsid": Wrapper(),
+    "flock": Wrapper({"-w", "-E", "-c", "--timeout", "--wait", "--conflict-exit-code",
+                      "--command"}, operands=1),
+    "caffeinate": Wrapper({"-t", "-w"}),
+    "xargs": Wrapper({"-a", "-d", "-E", "-I", "-L", "-n", "-P", "-s", "--arg-file",
+                      "--delimiter", "--max-lines", "--max-args", "--max-procs",
+                      "--max-chars", "--process-slot-var"}, passes_standard_input=False),
+}
+
+
+def simple_command_program_index_skipping_wrappers(words):
+    """Return (index, receives_standard_input) for the program a simple command runs.
+
+    The program is the first word after environment assignments and after
+    wrappers such as sudo, timeout and xargs with their options and operands;
+    a later word, such as the file of `tee /tmp/bash`, is not the program.
+    index is None when no word is left to be the program. receives_standard_input
+    is false when a wrapper, such as xargs, keeps its standard input from the
+    program.
+    """
+    index = 0
+    receives_standard_input = True
+    while index < len(words):
+        word = words[index]
+        if ENVIRONMENT_ASSIGNMENT_PATTERN.match(word):
+            index += 1
+            continue
+        wrapper = WRAPPERS.get(word.rsplit("/", 1)[-1])
+        if wrapper is None:
+            return index, receives_standard_input
+        receives_standard_input = receives_standard_input and wrapper.passes_standard_input
+        index += 1
+        while index < len(words) and words[index].startswith("-"):
+            index += 2 if words[index] in wrapper.options_with_a_value else 1
+        index += wrapper.operands
+    return None, receives_standard_input
+
+
 def install_compiled_libraries(runner=subprocess.run):
     """Install the pinned requirements per user; return what pip printed, or raise ShellParserUnavailable."""
     command = [sys.executable, "-m", "pip", "install", "--user", "--break-system-packages",

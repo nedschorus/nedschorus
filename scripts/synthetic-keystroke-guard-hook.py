@@ -40,18 +40,6 @@ MAX_ANALYSIS_DEPTH = 4
 KEYSTROKE_VERBS = {"send-keys", "send", "paste-buffer", "pasteb"}
 SHELL_CONSUMER_PROGRAMS = {"sh", "bash", "zsh", "dash", "ksh"}
 SHELL_OPTIONS_WITH_A_VALUE = {"--rcfile", "--init-file"}
-# Programs that run the command written after them, with their options before it.
-# Programs that run the command written after them, each with its options that take a value.
-WRAPPER_OPTIONS_WITH_A_VALUE = {
-    "sudo": {"-u", "-g", "-C", "-U", "-D", "-h", "-p", "-r", "-t"},
-    "env": {"-u", "-C", "-S"},
-    "timeout": {"-s", "-k"},
-    "nice": {"-n"},
-    "stdbuf": {"-i", "-o", "-e"},
-    "nohup": set(), "exec": {"-a"}, "command": set(), "time": {"-f", "-o"}, "setsid": set(),
-}
-# A duration, count or priority given to a wrapper, as in timeout 60 or nice -n 10.
-WRAPPER_COUNT_PATTERN = re.compile(r"[0-9.]+[smhd]?")
 
 TMUX_GLOBAL_VALUE_FLAGS = {"-S", "-L", "-f", "-c", "-T"}
 
@@ -492,7 +480,9 @@ def analyze_heredoc(words, body, ssh_context, verified, guard):
     if any(is_program(word, "osascript") for word in words):
         if APPLESCRIPT_TYPING_PATTERN.search(body):
             return SYNTHETIC_TYPING_REASON
-    index, kind = ssh_or_shell_program(words)
+    index, kind, receives_standard_input = ssh_or_shell_program(words)
+    if not receives_standard_input:
+        return None
     if kind == "ssh":
         host, carried, remote_words = parse_ssh_invocation(words[index + 1:])
         # ssh joins its remote words, and the remote shell reads them again as a command line.
@@ -511,37 +501,37 @@ def analyze_heredoc(words, body, ssh_context, verified, guard):
     return None
 
 
-def shell_reads_the_heredoc(words):
-    """Return whether a command's program is a shell that reads its standard input."""
-    index, kind = ssh_or_shell_program(words)
-    return kind == "shell" and shell_reads_standard_input(words[index + 1:])
+def shell_reads_the_heredoc(command):
+    """Return whether a command of ssh's remote line is a shell that reads the heredoc.
+
+    The heredoc is ssh's standard input. A later stage of a pipeline reads the stage
+    before it instead, and a command with an input redirection reads what that names.
+    """
+    if any(shell.kind == shell_reader.PIPELINE_STAGE and not shell.first_stage
+           for shell in command.child_shell):
+        return False
+    if any(operator.startswith("<") for operator, _ in command.redirects):
+        return False
+    index, kind, receives_standard_input = ssh_or_shell_program(command)
+    return (kind == "shell" and receives_standard_input
+            and shell_reads_standard_input(command[index + 1:]))
 
 
 def ssh_or_shell_program(words):
-    """Return (index, "ssh" or "shell") when a command's program is ssh or a shell, or (None, None).
+    """Return (index, kind, receives_standard_input) for a command whose program is ssh or a shell.
 
-    The program is the first word after environment assignments and after wrappers such
-    as sudo, env and timeout with their options; a later word, such as the file of
-    `tee /tmp/bash` or the argument of `bash -s ssh`, is not the program.
+    kind is "ssh" or "shell"; for any other program the result is (None, None, False).
+    receives_standard_input is false when a wrapper, such as xargs, keeps the command's
+    standard input from the program.
     """
-    index = 0
-    while index < len(words):
-        word = words[index]
-        if ENVIRONMENT_ASSIGNMENT_PATTERN.match(word):
-            index += 1
-        elif is_program(word, "ssh"):
-            return index, "ssh"
-        elif any(is_program(word, name) for name in SHELL_CONSUMER_PROGRAMS):
-            return index, "shell"
-        elif any(is_program(word, name) for name in WRAPPER_OPTIONS_WITH_A_VALUE):
-            takes_a_value = WRAPPER_OPTIONS_WITH_A_VALUE[word.rsplit("/", 1)[-1]]
-            index += 1
-            while index < len(words) and (words[index].startswith("-")
-                                          or WRAPPER_COUNT_PATTERN.fullmatch(words[index])):
-                index += 2 if words[index] in takes_a_value else 1
-        else:
-            return None, None
-    return None, None
+    index, receives_standard_input = shell_reader.simple_command_program_index_skipping_wrappers(words)
+    if index is None:
+        return None, None, False
+    if is_program(words[index], "ssh"):
+        return index, "ssh", receives_standard_input
+    if any(is_program(words[index], name) for name in SHELL_CONSUMER_PROGRAMS):
+        return index, "shell", receives_standard_input
+    return None, None, False
 
 
 def shell_reads_standard_input(arguments):

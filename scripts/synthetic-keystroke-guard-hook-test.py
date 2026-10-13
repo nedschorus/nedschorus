@@ -358,6 +358,16 @@ for case_name, command in [
      "ssh ned-box sudo -u nedlern bash <<'EOF'\ntmux send-keys -t gatekeeper Enter\nEOF"),
     ("send-keys in a heredoc fed to cat 2>/dev/null and piped to bash is denied",
      "cat <<'EOF' 2>/dev/null | bash\ntmux send-keys -t gatekeeper Enter\nEOF"),
+    ("send-keys in a heredoc fed to ssh host timeout --signal=KILL 60 bash is denied",
+     "ssh ned-box timeout --signal=KILL 60 bash <<'EOF'\ntmux send-keys -t gatekeeper Enter\nEOF"),
+    ("send-keys in a heredoc fed to ssh host timeout --kill-after 5 60 bash is denied",
+     "ssh ned-box timeout --kill-after 5 60 bash <<'EOF'\ntmux send-keys -t gatekeeper Enter\nEOF"),
+    ("send-keys in a heredoc fed to ssh host sudo --user nedlern bash is denied",
+     "ssh ned-box sudo --user nedlern bash <<'EOF'\ntmux send-keys -t gatekeeper Enter\nEOF"),
+    ("send-keys in a heredoc fed to flock with a lock file and then bash -s is denied",
+     "flock -w 5 /tmp/guard.lock bash -s <<'EOF'\ntmux send-keys -t gatekeeper Enter\nEOF"),
+    ("send-keys in a heredoc fed to caffeinate -i bash is denied",
+     "caffeinate -i bash <<'EOF'\ntmux send-keys -t gatekeeper Enter\nEOF"),
 ]:
     runner = StubRunner(stdout="1\n")
     reason = decide(command, runner)
@@ -371,6 +381,14 @@ for case_name, command in [
      "bash -- consumer.sh <<'EOF'\ntmux send-keys -t gatekeeper Enter\nEOF"),
     ("a heredoc fed to bash - consumer.sh is that script's standard input",
      "bash - consumer.sh <<'EOF'\ntmux send-keys -t gatekeeper Enter\nEOF"),
+    ("a heredoc fed to xargs bash gives bash file names, not a script on its standard input",
+     "xargs bash <<'EOF'\ntmux send-keys -t gatekeeper Enter\nEOF"),
+    ("a heredoc fed to ssh host 'xargs bash' gives the remote bash file names",
+     "ssh ned-box 'xargs bash' <<'EOF'\ntmux send-keys -t gatekeeper Enter\nEOF"),
+    ("a heredoc fed to ssh host 'echo x | bash' reaches the echo, not the bash after the pipe",
+     "ssh ned-box 'echo x | bash' <<'EOF'\ntmux send-keys -t gatekeeper Enter\nEOF"),
+    ("a heredoc fed to ssh host 'bash -s < setup.sh' is not read: bash reads setup.sh",
+     "ssh ned-box 'bash -s < setup.sh' <<'EOF'\ntmux send-keys -t gatekeeper Enter\nEOF"),
 ]:
     runner = StubRunner(stdout="1\n")
     check(case_name, decide(command, runner) is None and not runner.calls, runner.calls)
