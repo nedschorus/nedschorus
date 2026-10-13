@@ -9,12 +9,13 @@ cannot). HOME is what decides the directory, because the threshold hook
 computes HANDOFF_DIRECTORY from Path.home() at import.
 
 The exit code is asserted on every case, including the malformed ones: exit 2
-from a SessionStart hook prevents the session starting at all, so "never 2" is
-the property this suite exists to keep. A case that merely checked the text
-would pass while the hook bricked the seat.
+from a SessionStart hook is never used, and a fault of the whole hook is exit 1
+with one stderr line, which Claude Code records as a non-blocking error.
 """
 
+import contextlib
 import importlib.util
+import io
 import json
 import os
 import subprocess
@@ -73,6 +74,14 @@ def assistant_record(text):
     return json.dumps({"type": "assistant",
                        "message": {"role": "assistant",
                                    "content": [{"type": "text", "text": text}]}})
+
+
+def reported(result, fault_words):
+    """A fault: exit 1, no context on stdout, one stderr line naming the hook and the fault."""
+    lines = result.stderr.splitlines()
+    return (result.returncode == 1 and result.stdout == "" and len(lines) == 1
+            and lines[0].startswith("post-compaction-session-continues-hook: ")
+            and fault_words in lines[0])
 
 
 def marker_for(home, session_id):
@@ -148,25 +157,39 @@ with tempfile.TemporaryDirectory() as workspace:
     result = run_hook({"session_id": "s-no-marker", "transcript_path": str(ordinary),
                        "source": "compact"}, home)
     check("an absent marker is not an error",
-          result.returncode == 0 and injected_context_of(result) is not None,
+          result.returncode == 0 and injected_context_of(result) is not None
+          and "failed" not in injected_context_of(result),
           f"code {result.returncode}, stderr {result.stderr[:160]}")
+
+    # A marker that cannot be removed: a directory in its place makes unlink raise
+    # an OSError other than FileNotFoundError.
+    stuck_marker = marker_for(home, "s-stuck-marker")
+    stuck_marker.mkdir()
+    result = run_hook({"session_id": "s-stuck-marker", "transcript_path": str(ordinary),
+                       "source": "compact"}, home)
+    context = injected_context_of(result)
+    check("a marker that cannot be cleared still says continue, exit 0",
+          result.returncode == 0 and context is not None
+          and hook.CONTINUE_INSTRUCTION_LINES[0] in context,
+          f"code {result.returncode}, stdout {result.stdout[:200]}")
+    check("a marker that cannot be cleared is named in the injected text",
+          context is not None
+          and "post-compaction-session-continues-hook: clearing the fired marker failed" in context
+          and f"Tell the user that {stuck_marker} was not deleted; it is safe to delete by hand."
+          in context,
+          (context or "")[:400])
+    stuck_marker.rmdir()
 
     # ---- malformed and missing input, none of which may exit 2 -----------
 
-    result = run_hook(None, home, raw_input_text="")
-    check("empty stdin exits 0 in silence",
-          result.returncode == 0 and not result.stdout.strip(),
-          f"code {result.returncode}")
-
-    result = run_hook(None, home, raw_input_text="{not json at all")
-    check("unparseable stdin exits 0 in silence",
-          result.returncode == 0 and not result.stdout.strip(),
-          f"code {result.returncode}")
-
-    result = run_hook(None, home, raw_input_text='["a list, not an object"]')
-    check("a non-object payload exits 0 in silence",
-          result.returncode == 0 and not result.stdout.strip(),
-          f"code {result.returncode}")
+    for case_name, raw_input_text, fault_words in (
+            ("empty stdin", "", "JSONDecodeError"),
+            ("unparseable stdin", "{not json at all", "JSONDecodeError"),
+            ("a non-object payload", '["a list, not an object"]', "a JSON list, not an object")):
+        result = run_hook(None, home, raw_input_text=raw_input_text)
+        check(f"{case_name} is reported on stderr, exit 1",
+              reported(result, fault_words), f"code {result.returncode}, "
+              f"stdout {result.stdout[:120]!r}, stderr {result.stderr[:200]!r}")
 
     result = run_hook({"source": "compact"}, home)
     context = injected_context_of(result)
@@ -410,6 +433,10 @@ with tempfile.TemporaryDirectory() as workspace:
     check("an absent extractor claims no tail it could not build",
           context is not None and hook.TAIL_HEADING not in context,
           "the tail heading was emitted with no extractor to fill it")
+    check("an absent extractor is named in the injected text",
+          context is not None and "post-compaction-session-continues-hook: recovering the "
+          "dialog tail failed, so no tail of this session's dialog is given below" in context,
+          f"injected context was {context!r}")
 
     no_threshold = hook_copied_beside(
         workspace / "no-threshold", [hook.EXTRACT_SCRIPT])
@@ -424,41 +451,42 @@ with tempfile.TemporaryDirectory() as workspace:
     check("an absent threshold hook still recovers the tail",
           context is not None and hook.TAIL_HEADING in context,
           "the tail was lost to an unrelated sibling going missing")
+    check("an absent threshold hook is named in the injected text",
+          context is not None and "post-compaction-session-continues-hook: loading "
+          "handoff-context-threshold-hook.py failed" in context,
+          f"injected context was {context!r}")
 
     # ---- the last-resort handler, which no end-to-end case can reach -----
 
-    # Every inner read already swallows its own failures, so main()'s outer
-    # handler is unreachable from outside the process: an end-to-end case
-    # asserting "never exits 2" passes whether that handler returns 0 or 2,
-    # and a mutation to it changed nothing measurable until this case existed.
-    # Calling main() here, with a collaborator replaced by one that raises, is
-    # what puts it in front of the condition it exists for. Same shape as
-    # run_hook_in_process() in handoff-context-threshold-hook-test.py, and for
-    # the same reason.
+    # Every inner step turns its own failure into a fault line, so main()'s
+    # outer handler is reached from outside the process only by a payload that
+    # is not a JSON object. Calling main() here, with a collaborator replaced by
+    # one that raises, puts the handler in front of any other exception. Same
+    # shape as run_hook_in_process() in handoff-context-threshold-hook-test.py.
     def raise_instead(*_arguments, **_keywords):
         raise RuntimeError("a collaborator failed in a way nothing anticipated")
 
     original_ceiling = hook.turns_within_injected_tail_ceiling
     try:
         hook.turns_within_injected_tail_ceiling = raise_instead
-        tail = hook.recovered_tail(str(ordinary))
+        tail, tail_fault = hook.recovered_tail(str(ordinary))
         check("a ceiling that fails costs the tail, not the instruction",
               tail == "" and hook.TAIL_HEADING not in hook.injected_context(tail)
               and hook.CONTINUE_INSTRUCTION_LINES[0] in hook.injected_context(tail),
               f"the recovered tail was {tail[:120]!r}")
+        check("a ceiling that fails is named in a fault line",
+              "recovering the dialog tail failed" in tail_fault
+              and "RuntimeError: a collaborator failed" in tail_fault, tail_fault)
     finally:
         hook.turns_within_injected_tail_ceiling = original_ceiling
 
-    # The render is the last step of recovered_tail and was the one statement
-    # outside its try blocks, so a raise there escaped a function whose
-    # docstring promises never to raise, and main()'s handler would return 0
-    # having emitted nothing -- the session losing the continue instruction,
-    # not merely the tail. Unreachable through the real extractor, which always
-    # yields {"voice", "text"} dicts; a separate program with other callers.
+    # A raise in the render, the last step of recovered_tail, must cost only
+    # the tail. Unreachable through the real extractor, which always yields
+    # {"voice", "text"} dicts; a separate program with other callers.
     original_render = hook.render_turns
     try:
         hook.render_turns = raise_instead
-        tail = hook.recovered_tail(str(ordinary))
+        tail, tail_fault = hook.recovered_tail(str(ordinary))
         check("a render that fails costs the tail, not the instruction",
               tail == "" and hook.TAIL_HEADING not in hook.injected_context(tail)
               and hook.CONTINUE_INSTRUCTION_LINES[0] in hook.injected_context(tail),
@@ -473,9 +501,16 @@ with tempfile.TemporaryDirectory() as workspace:
             "session_id": "s-in-process", "source": "compact",
             "transcript_path": str(ordinary)}
         hook.injected_context = raise_instead
-        returned = hook.main()
-        check("an unanticipated failure inside main still returns 0, never 2",
-              returned == 0, f"main() returned {returned}")
+        captured_stdout, captured_stderr = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(captured_stdout), contextlib.redirect_stderr(captured_stderr):
+            returned = hook.main()
+        stderr_lines = captured_stderr.getvalue().splitlines()
+        check("an unanticipated failure inside main returns 1, never 2, with one stderr line",
+              returned == 1 and captured_stdout.getvalue() == "" and len(stderr_lines) == 1
+              and stderr_lines[0].startswith("post-compaction-session-continues-hook: ")
+              and "RuntimeError: a collaborator failed" in stderr_lines[0],
+              f"main() returned {returned}; stdout {captured_stdout.getvalue()!r}; "
+              f"stderr {captured_stderr.getvalue()!r}")
     finally:
         hook.injected_context = original_injected_context
         hook.hook_payload_from_stdin = original_payload_reader
