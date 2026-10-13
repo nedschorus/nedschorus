@@ -850,10 +850,22 @@ def main() -> int:
         check("bad override: nothing was sent to the box",
               result["remote"] == "", result["remote"][:200])
 
+        # --help alone prints the usage and exits 0 before any side effect.
+        harness = LaunchHarness(root / "help-option-alone")
+        result = harness.run(["--help"])
+        check("--help alone: exit 0, printing the usage line on stdout",
+              result["launched"].returncode == 0
+              and "usage: launch-claude-ubuntu <name>" in result["launched"].stdout,
+              (result["launched"].returncode, result["launched"].stdout[:300],
+               result["launched"].stderr[:300]))
+        check("--help alone: nothing was sent to the box",
+              result["remote"] == "", result["remote"][:200])
+
         # A first argument starting with - is refused as a seat name: the
         # first argument is always the name, so the launcher would otherwise
         # launch a seat named after the option.
-        for label, arguments in (("--help typed first", ["--help"]),
+        for label, arguments in (("--help typed first, with another argument",
+                                  ["--help", "seat-x"]),
                                  ("an option typed before the name",
                                   ["--no-attach", "seat-x"])):
             harness = LaunchHarness(root / f"dash-seat-name-{arguments[0]}")

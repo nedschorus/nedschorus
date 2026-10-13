@@ -377,6 +377,9 @@ def lint_json(path: Path):
 
 def main(argv=None) -> int:
     arguments = sys.argv[1:] if argv is None else argv
+    if list(arguments) in (["--help"], ["-h"]):
+        print(__doc__)
+        return 0
     if not arguments:
         print(__doc__, file=sys.stderr)
         return 2

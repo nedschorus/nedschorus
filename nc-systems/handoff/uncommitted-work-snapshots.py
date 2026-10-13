@@ -760,6 +760,9 @@ def head_commit_or_raise(worktree):
 
 def main(argv=None):
     arguments = list(sys.argv[1:] if argv is None else argv)
+    if arguments in (["--help"], ["-h"]):
+        print(__doc__)
+        return 0
     repo = Path.cwd()
     if "--repo" in arguments:
         position = arguments.index("--repo")

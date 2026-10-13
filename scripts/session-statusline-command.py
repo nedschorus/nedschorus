@@ -267,6 +267,10 @@ def capture_payload(payload: dict) -> None:
 
 
 def main() -> int:
+    # Claude Code passes the status line command no arguments, so only a person running it by hand reaches this.
+    if sys.argv[1:] in (["--help"], ["-h"]):
+        print(__doc__)
+        return 0
     try:
         payload = json.loads(sys.stdin.read() or "{}")
         if not isinstance(payload, dict):

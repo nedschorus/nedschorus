@@ -810,15 +810,28 @@ def main() -> int:
               (sandbox.invoked_commands()[:200],
                sorted(str(p) for p in sandbox.workdir.iterdir())))
 
+        # --help alone prints the usage and exits 0 before any side effect.
+        sandbox = MacLaunchSandbox(root / "help-option-alone")
+        result = sandbox.run("~/agents", seat_name="--help", attach=True)
+        check("--help alone: exit 0, printing the usage line on stdout",
+              result.returncode == 0
+              and "usage: launch-claude-mac <name>" in result.stdout,
+              (result.returncode, result.stdout[:300], result.stderr[:300]))
+        check("--help alone: no side effect",
+              sandbox.invoked_commands() == ""
+              and not any(sandbox.workdir.iterdir()),
+              (sandbox.invoked_commands()[:200],
+               sorted(str(p) for p in sandbox.workdir.iterdir())))
+
         # A first argument starting with - is refused as a seat name: the
         # first argument is always the name, so the launcher would otherwise
         # launch a seat named after the option.
-        for label, first_argument in (("--help typed first", "--help"),
-                                      ("an option typed before the name",
-                                       "--no-attach")):
+        for label, first_argument, attach in (
+                ("--help typed first, with another argument", "--help", False),
+                ("an option typed before the name", "--no-attach", True)):
             sandbox = MacLaunchSandbox(root / f"dash-seat-name-{first_argument}")
             result = sandbox.run("~/agents", seat_name=first_argument,
-                                 attach=True)
+                                 attach=attach)
             check(f"{label}: refused with exit 2, naming the argument and "
                   "printing the usage line",
                   result.returncode == 2

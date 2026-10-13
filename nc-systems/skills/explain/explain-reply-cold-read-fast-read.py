@@ -154,6 +154,9 @@ def print_failure(cause: str, stderr: str = "") -> int:
 
 
 def main() -> int:
+    if sys.argv[1:] in (["--help"], ["-h"]):
+        print(__doc__)
+        return 0
     if len(sys.argv) > 1:
         for line in INPUT_SHAPE_INSTRUCTIONS:
             print(line)

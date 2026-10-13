@@ -404,6 +404,9 @@ def format_trace(played):
 
 
 def main(argv):
+    if argv[1:] in (["--help"], ["-h"]):
+        print(__doc__)
+        return 0
     if len(argv) != 2:
         sys.stderr.write("usage: %s <scenario.yaml>\n" % pathlib.Path(argv[0]).name)
         return EXIT_MALFORMED_SCENARIO

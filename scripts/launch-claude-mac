@@ -51,6 +51,21 @@
 
 set -eu
 
+# Answered before anything else runs, so asking for help never launches, lists or contacts an agent-seat.
+if [ $# -eq 1 ] && { [ "$1" = --help ] || [ "$1" = -h ]; }; then
+    echo "usage: launch-claude-mac <name> [--no-attach] [--first-prompt-file <path>]"
+    echo
+    echo "Reaches the agent-seat named <name> on this Mac: attaches to its tmux session"
+    echo "when one runs, and otherwise creates the session, whose handoff supervisor starts"
+    echo "claude in \$NEDSCHORUS_AGENTS_ROOT/<name> (default ~/agents/<name>)."
+    echo
+    echo "  --no-attach                create the session without attaching this terminal"
+    echo "  --first-prompt-file <path> the file whose text is the new agent-session's first prompt"
+    echo
+    echo "Work that need not run on the Mac goes to ned-box instead: launch-claude-ubuntu."
+    exit 0
+fi
+
 AGENTS_ROOT="${NEDSCHORUS_AGENTS_ROOT:-$HOME/agents}"
 # A literal-tilde value (a quoted export sends one) is resolved or refused,
 # never half-worked (PR #137 review P3 on the twin, user-ruled 2026-08-22:
@@ -123,7 +138,7 @@ usage() {
 case "$1" in
     (-*)
         printf '%s\n' "launch-claude-mac: refused to launch a seat named \"$1\": the first argument is always the seat name, and a seat name cannot start with -." >&2
-        echo "If you wanted help: this launcher has no help option; its usage line follows." >&2
+        echo "If you wanted help: run launch-claude-mac --help, with no other argument." >&2
         echo "If you meant an option: put the seat name first and the options after it." >&2
         usage_line
         exit 2 ;;

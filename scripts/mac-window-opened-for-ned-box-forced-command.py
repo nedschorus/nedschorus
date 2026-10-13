@@ -281,6 +281,10 @@ def open_in_typora(request):
 
 
 def main():
+    # sshd passes a forced command no arguments, so only a person running it by hand reaches this.
+    if sys.argv[1:] in (["--help"], ["-h"]):
+        print(__doc__)
+        return 0
     request = os.environ.get("SSH_ORIGINAL_COMMAND")
     if request is not None and request.split(" ")[0] == TYPORA_VERB:
         return open_in_typora(request)

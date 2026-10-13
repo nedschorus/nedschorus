@@ -144,6 +144,16 @@ RERUN_ONCE_JQ="Run the gate again once; if it fails the same way, tell the user 
 TOKEN_ONLY_MERGE_ACCOUNT="The gate reads GitHub only as the merge account, $MERGE_ACCOUNT, and stops rather than read as gh's stored account."
 TOKEN_TELL_THE_USER="Tell the user this message: only the user can restore the token."
 
+if [ $# -eq 1 ] && { [ "$1" = --help ] || [ "$1" = -h ]; }; then
+  echo "usage: scripts/merge-gate.sh <pull request number> <the head commit, all 40 characters> <reviewed-since: ISO 8601 time>"
+  echo
+  echo "Decides whether a pull request may merge: reads it from GitHub as the merge account"
+  echo "$MERGE_ACCOUNT and exits 0 only when every requirement is met, printing a merge"
+  echo "command pinned to the commit the latest approving review covered."
+  echo "Exit codes: 0 the merge may proceed; 1 the gate refuses, with the reason on stderr;"
+  echo "2 the gate could not run: bad invocation, missing jq or gh, unreadable token, or a failed read."
+  exit 0
+fi
 [ $# -eq 3 ] || cannot "merge-gate.sh takes exactly three arguments and was given $#." \
   "Call it as: scripts/merge-gate.sh <pull request number> <the head commit, all 40 characters> <reviewed-since: the submitted_at of your latest review as the merge account, or of the pin if that is later>"
 PR=$1; EXPECTED=$2; SINCE=$3
