@@ -1410,6 +1410,24 @@ except reader.ShellParserUnavailable as error:
 check("an encoder failure in the new process reaches the guard as the reader failing, quoting the error",
       isinstance(raised, reader.ShellCommandUnreadable) and "TypeError: cannot send a float" in str(raised),
       (sent, raised))
+# A new process that cannot load the parser reaches the guard as a missing parser, not as the reader
+# failing on the command, so the guard's message keeps the install advice.
+missing_parser_child = (
+    "import importlib.util, sys; s = importlib.util.spec_from_file_location('r', sys.argv[1]); "
+    "r = importlib.util.module_from_spec(s); s.loader.exec_module(r); "
+    "r.parser = lambda: (_ for _ in ()).throw(r.ShellParserUnavailable('pip exited 1: no network')); "
+    "r._read_command_on_standard_input()")
+try:
+    reader._simple_commands_in_a_new_process(
+        "ls", None, runner=lambda arguments, **options: subprocess.run(
+            [sys.executable, "-c", missing_parser_child, str(MODULE_PATH)], **options))
+    raised = None
+except reader.ShellParserUnavailable as error:
+    raised = error
+check("a parser the new process cannot load reaches the guard as a missing parser, with what pip said",
+      isinstance(raised, reader.ShellParserUnavailable)
+      and not isinstance(raised, reader.ShellCommandUnreadable) and "pip exited 1: no network" in str(raised),
+      raised)
 command = reader.simple_commands("cat <<E >~/x\nb\nE")[0]
 command.added_attribute = (reader.ShellWordWithUnexpandedTildePrefixBashWouldExpand("~/y"), [1, None])
 command.heredocs[0].added_attribute = True
