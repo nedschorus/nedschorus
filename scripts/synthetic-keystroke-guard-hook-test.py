@@ -391,10 +391,21 @@ for case_name, command in [
      "ssh ned-box 'bash -s </dev/stdin' <<'EOF'\ntmux send-keys -t gatekeeper Enter\nEOF"),
     ("send-keys in a heredoc fed to ssh host timeout 60 --signal=KILL bash -s is denied",
      "ssh ned-box timeout 60 --signal=KILL bash -s <<'EOF'\ntmux send-keys -t gatekeeper Enter\nEOF"),
+    ("send-keys in a heredoc fed to a remote bash -s that is a pipeline's first stage inside a body's substitution is denied",
+     "ssh ned-box 'cat <<X\n$(bash -s | cat)\nX' <<'EOF'\ntmux send-keys -t gatekeeper Enter\nEOF"),
 ]:
     runner = StubRunner(stdout="1\n")
     reason = decide(command, runner)
     check(case_name, reason is not None and "attached client" in reason, reason)
+# A reader that reads each command in a new process hands back each child shell whole.
+guard.shell_reader._read_in_a_new_process = True
+try:
+    reason = decide("ssh ned-box 'bash -s | tee log' <<'EOF'\ntmux send-keys -t gatekeeper Enter\nEOF",
+                    StubRunner(stdout="1\n"))
+finally:
+    guard.shell_reader._read_in_a_new_process = False
+check("read in a new process, send-keys in a heredoc fed to ssh host 'bash -s | tee log' is denied",
+      reason is not None and "attached client" in reason, reason)
 for case_name, command in [
     ("a heredoc fed to tee /tmp/bash over ssh is data: the file's name is not a program",
      "ssh ned-box 'tee /tmp/bash' <<'EOF'\ntmux send-keys -t gatekeeper Enter\nEOF"),

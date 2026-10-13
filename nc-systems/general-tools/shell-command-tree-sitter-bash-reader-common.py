@@ -37,6 +37,7 @@ Load it by path, under the snake_case form of its file name:
 # Deferred annotations let the module load on the Mac's system Python 3.9.
 from __future__ import annotations
 
+import collections
 import importlib
 import json
 import os
@@ -108,27 +109,32 @@ PIPELINE_STAGE = "pipeline stage"
 SUBSHELL = "subshell"
 
 
-class ChildShell(int):
-    """One child shell a command runs in: its start offset, and its kind.
+class ChildShell(collections.namedtuple(
+        "ChildShell", "offset kind shell_pipeline_first_stage_byte_offset", defaults=(None,))):
+    """One child shell a command runs in.
 
-    kind is SUBSTITUTION for a command or process substitution, whose output
-    becomes words of another command, PIPELINE_STAGE for a stage of a pipeline
-    of two or more, and SUBSHELL for ( ... ). first_stage says whether a
-    pipeline stage is its pipeline's first, and
-    shell_pipeline_first_stage_byte_offset is where that first stage starts, the
-    same for every stage of one pipeline.
+    offset is where it starts in the text read. kind is SUBSTITUTION for a
+    command or process substitution, whose output becomes words of another
+    command, PIPELINE_STAGE for a stage of a pipeline of two or more, and
+    SUBSHELL for ( ... ). For a pipeline stage,
+    shell_pipeline_first_stage_byte_offset is where its pipeline's first stage
+    starts, the same for every stage of one pipeline, and first_stage says
+    whether the stage is that first one. Two child shells are the same only
+    when all three fields agree, so a stage and the subshell that starts it are
+    different child shells.
     """
 
-    def __new__(cls, offset, kind, first_stage=False,
-                shell_pipeline_first_stage_byte_offset=None):
-        shell = super().__new__(cls, offset)
-        shell.kind = kind
-        shell.first_stage = first_stage
-        shell.shell_pipeline_first_stage_byte_offset = shell_pipeline_first_stage_byte_offset
-        return shell
+    __slots__ = ()
 
-    def __repr__(self):
-        return f"ChildShell({int(self)}, {self.kind!r}, first_stage={self.first_stage})"
+    @property
+    def first_stage(self):
+        return (self.kind == PIPELINE_STAGE
+                and self.offset == self.shell_pipeline_first_stage_byte_offset)
+
+    def placed(self, place):
+        """Return this child shell with each of its offsets passed through place."""
+        first = self.shell_pipeline_first_stage_byte_offset
+        return ChildShell(place(self.offset), self.kind, None if first is None else place(first))
 
 
 class SimpleCommand(list):
@@ -586,9 +592,9 @@ class _Collector:
         substitution is a child shell of its own, apart from every other body's.
         """
         for command in _heredoc_body_substitution_commands(taken.body, self.glob_markers):
-            identity = tuple(ChildShell(-1 - shell - taken.number * BODY_IDENTITY_STRIDE,
-                                        shell.kind, shell.first_stage)
-                             for shell in command.child_shell)
+            identity = tuple(shell.placed(
+                lambda offset: -1 - offset - taken.number * BODY_IDENTITY_STRIDE)
+                for shell in command.child_shell)
             self.commands.append(SimpleCommand(list(command), child_shell + identity,
                                                command.redirects, command.heredocs))
 
@@ -639,7 +645,7 @@ class _Collector:
             for position, unit in enumerate(pipeline):
                 first = unit["children"][0] if unit["children"] else unit["node"]
                 unit_shell = (child_shell + (ChildShell(first.start_byte, PIPELINE_STAGE,
-                                                        position == 0, pipeline_start),)
+                                                        pipeline_start),)
                               if len(pipeline) > 1 else child_shell)
                 redirects, trailing_words = [], []
                 for redirect, limit in unit["redirects"]:
@@ -824,7 +830,8 @@ def simple_commands(command_text, glob_markers=None):
     # after the case, a heredoc's included; before esac they act as ;; does. The earliest one
     # is repaired in the text as written, found where the bodies already taken out cannot be
     # mistaken for commands, and the text is read again.
-    for _ in range(len(LAST_CASE_TERMINATOR_PATTERN.findall(text))):
+    # A match found with a body taken out may span that body, so the rounds count terminators.
+    for _ in range(len(CASE_TERMINATOR_PATTERN.findall(text))):
         if not tree.root_node.has_error:
             break
         match = next((found for found in LAST_CASE_TERMINATOR_PATTERN.finditer(source)
@@ -832,7 +839,8 @@ def simple_commands(command_text, glob_markers=None):
         start = None if match is None else _offset_before_edits(match.start(), edits)
         if start is None:
             break
-        text = text[:start] + _plain_case_terminator(match) + text[start + len(match.group(0)):]
+        # Only the terminator is replaced: what follows it in source may lie elsewhere in text.
+        text = text[:start] + b";;" + text[start + match.start(1) - match.start():]
         edits = []
         source, tree, taken_out = _source_with_heredoc_bodies_taken_out(text, edits=edits)
     return _with_heredocs_put_back_into_commands(
@@ -877,7 +885,7 @@ def _heredoc_body_substitution_commands(body, glob_markers):
     source, tree, taken = _source_with_heredoc_bodies_taken_out(probe, keep_first=True)
     if tree.root_node.has_error:
         # In the body, text outside a substitution is never a command, so every match is repaired.
-        plain = LAST_CASE_TERMINATOR_PATTERN.sub(_plain_case_terminator, probe)
+        plain = LAST_CASE_TERMINATOR_PATTERN.sub(rb";;\1", probe)
         if plain != probe:
             source, tree, taken = _source_with_heredoc_bodies_taken_out(plain, keep_first=True)
     outer = next(_nodes_of_type(tree.root_node, "heredoc_body"), None)
@@ -902,14 +910,14 @@ def _heredoc_body_substitution_commands(body, glob_markers):
         for command in simple_commands(inner, glob_markers):
             command.child_shell = (ChildShell(offset, SUBSTITUTION),) + command.child_shell
             commands.append(command)
-    commands.sort(key=lambda command: int(command.child_shell[0]))
+    commands.sort(key=lambda command: command.child_shell[0].offset)
     return _with_heredocs_put_back_into_commands(commands, taken)
 
 
 def _runs_outside_arithmetic(command, arithmetic):
     """Return whether a command runs, given the offsets of the $(( )) it may sit in."""
     inside = [index for index, shell in enumerate(command.child_shell)
-              if shell.kind == SUBSTITUTION and shell in arithmetic]
+              if shell.kind == SUBSTITUTION and shell.offset in arithmetic]
     return not inside or any(shell.kind == SUBSTITUTION
                              for shell in command.child_shell[inside[-1] + 1:])
 
@@ -962,8 +970,7 @@ def _read_command_on_standard_input():
     found = simple_commands(request["command"], request["glob_markers"])
     sys.stdout.buffer.write(json.dumps([
         {"words": list(command),
-         "child_shell": [(int(shell), shell.kind, shell.first_stage)
-                         for shell in command.child_shell],
+         "child_shell": [list(shell) for shell in command.child_shell],
          "redirects": command.redirects,
          "heredocs": [(heredoc.body, heredoc.expanded, heredoc.delimiter)
                       for heredoc in command.heredocs]}
@@ -1200,11 +1207,7 @@ def _follows_process_id(source, offset):
 
 
 LAST_CASE_TERMINATOR_PATTERN = re.compile(rb";;?&(\s*esac\b)")
-
-
-def _plain_case_terminator(match):
-    """Return a ;;& or ;& before esac written as ;; with the same length."""
-    return (b";;" + b" " * (len(match.group(0)) - len(match.group(1)) - 2) + match.group(1))
+CASE_TERMINATOR_PATTERN = re.compile(rb";;?&")
 
 
 TEXT_NODE_TYPES = {"raw_string", "string", "ansi_c_string", "heredoc_body", "comment"}

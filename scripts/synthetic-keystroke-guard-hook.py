@@ -515,10 +515,11 @@ def shell_reads_the_heredoc(command, remote):
         return False
     for shell in command.child_shell:
         if shell.kind == shell_reader.PIPELINE_STAGE:
-            first = shell.shell_pipeline_first_stage_byte_offset
-            if all(replaces_standard_input(other) for other in remote if any(
-                    stage.kind == shell_reader.PIPELINE_STAGE and stage == first
-                    for stage in other.child_shell)):
+            first = shell_reader.ChildShell(shell.shell_pipeline_first_stage_byte_offset,
+                                            shell_reader.PIPELINE_STAGE,
+                                            shell.shell_pipeline_first_stage_byte_offset)
+            if all(replaces_standard_input(other)
+                   for other in remote if first in other.child_shell):
                 return False
     index, kind, receives_standard_input = ssh_or_shell_program(command)
     return (kind == "shell" and receives_standard_input
