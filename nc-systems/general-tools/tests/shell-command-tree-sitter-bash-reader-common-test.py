@@ -285,6 +285,44 @@ found = reader.simple_commands("git push <<EOF --force origin the-pr-branch >/de
 check("a redirection after the words that follow a heredoc delimiter stays a redirection",
       [list(f) for f in found] == [["git", "push", "--force", "origin", "the-pr-branch"]]
       and (">", "/dev/null") in found[0].redirects, [(list(f), f.redirects) for f in found])
+# What follows && or || on a heredoc's line is read, whatever kind of command it is.
+for operator in ("&&", "||"):
+    for compound in ("{ git push -f o t; }", "(git push -f o t)", "if true; then git push -f o t; fi",
+                     "while true; do git push -f o t; done", "case x in x) git push -f o t;; esac"):
+        command = f"python3 - <<'PY' {operator} {compound}\nprint(1)\nPY"
+        found = [list(f) for f in reader.simple_commands(command)]
+        check(f"a command after {operator} on a heredoc's line is read: {compound}",
+              ["git", "push", "-f", "o", "t"] in found and found[0][:1] == ["python3"], found)
+for separator, delimiter in ((";", "'EOF'"), ("&", "'EOF'"), (";", "EOF"), ("&", "EOF")):
+    found = reader.simple_commands(f"cat <<{delimiter}{separator} git push -f o t\nx\nEOF")
+    check(f"a command after {separator} on a heredoc's line is a command of its own, not cat's words",
+          [list(f) for f in found] == [["cat"], ["git", "push", "-f", "o", "t"]]
+          and found[0].heredocs[0].body == "x\n", [(list(f), f.heredocs) for f in found])
+found = reader.simple_commands("cat <<EOF|bash\nx\nEOF")
+check("a bare delimiter ends at |, as bash ends it, and the heredoc reaches the piped bash",
+      [list(f) for f in found] == [["cat"], ["bash"]] and found[1].heredocs
+      and found[1].heredocs[0].body == "x\n", [(list(f), f.heredocs) for f in found])
+for command, expected_words in [
+    ("cat <<EOF # a comment\nhi\nEOF", ["cat"]),
+    ("git push<<EOF --force origin b\nx\nEOF", ["git", "push", "--force", "origin", "b"]),
+    ("git push 3<<EOF --force origin b\nx\nEOF", ["git", "push", "--force", "origin", "b"]),
+    ("git push <<EOF \\\n --force origin b\nx\nEOF", ["git", "push", "--force", "origin", "b"]),
+]:
+    found = reader.simple_commands(command)
+    check(f"the heredoc keeps its body and its command its words: {command!r}",
+          [list(f) for f in found] == [expected_words] and found[0].heredocs
+          and found[0].heredocs[0].body in ("hi\n", "x\n"),
+          [(list(f), f.heredocs) for f in found])
+found = reader.simple_commands("x=$(git push <<EOF --force origin b)\nx\nEOF")
+check("words after the delimiter of a heredoc in a substitution that closes on its line stay the "
+      "command's words, and the heredoc keeps its body",
+      [list(f) for f in found][:1] == [["git", "push", "--force", "origin", "b"]]
+      and found[0].heredocs and found[0].heredocs[0].body == "x\n"
+      and ["x"] not in [list(f) for f in found], [(list(f), f.heredocs) for f in found])
+found = reader.simple_commands('>"/tmp/probe-$(tmux send-keys -t gatekeeper Enter)"')
+check("the substitution in a statement that is only a redirection is read",
+      [list(f) for f in found] == [["tmux", "send-keys", "-t", "gatekeeper", "Enter"]],
+      [list(f) for f in found])
 found = reader.simple_commands("git push <<EOF --force origin b | cat\nx\nEOF")
 check("words after a heredoc delimiter followed by a pipe stay the command's words",
       [list(f) for f in found] == [["git", "push", "--force", "origin", "b"], ["cat"]],
@@ -494,6 +532,8 @@ with tempfile.TemporaryDirectory() as scratch:
     expected = [(list(f), f.child_shell, f.redirects, [(h.body, h.expanded, h.delimiter)
                                                       for h in f.heredocs])
                 for f in reader.simple_commands(command, {"*": "<glob>"})]
+    expected_kinds = [[(int(s), s.kind, s.first_stage) for s in f.child_shell]
+                      for f in reader.simple_commands(command, {"*": "<glob>"})]
     real_parser = reader.parser
 
     loads = []
@@ -506,12 +546,17 @@ with tempfile.TemporaryDirectory() as scratch:
         found = [(list(f), f.child_shell, f.redirects, [(h.body, h.expanded, h.delimiter)
                                                        for h in f.heredocs])
                  for f in reader.simple_commands(command, {"*": "<glob>"})]
+        # ChildShell compares as its offset alone, so its kind is compared on its own.
+        kinds = [[(int(s), s.kind, s.first_stage) for s in f.child_shell]
+                 for f in reader.simple_commands(command, {"*": "<glob>"})]
         found_again = [list(f) for f in reader.simple_commands("ls")]
     finally:
         reader.parser = real_parser
         reader._read_in_a_new_process = False
     check("when this process cannot load the installed parser, the command is read in a new process, "
           "with the same result", found == expected, (found, expected))
+    check("the new process keeps each child shell's kind and whether a stage is its pipeline's first",
+          kinds == expected_kinds, (kinds, expected_kinds))
     check("later commands in the same process are read in a new process too, with no second try at "
           "loading the parser", found_again == [["ls"]] and loads == [1], (found_again, loads))
 

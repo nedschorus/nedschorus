@@ -40,6 +40,18 @@ MAX_ANALYSIS_DEPTH = 4
 KEYSTROKE_VERBS = {"send-keys", "send", "paste-buffer", "pasteb"}
 SHELL_CONSUMER_PROGRAMS = {"sh", "bash", "zsh", "dash", "ksh"}
 SHELL_OPTIONS_WITH_A_VALUE = {"--rcfile", "--init-file"}
+# Programs that run the command written after them, with their options before it.
+# Programs that run the command written after them, each with its options that take a value.
+WRAPPER_OPTIONS_WITH_A_VALUE = {
+    "sudo": {"-u", "-g", "-C", "-U", "-D", "-h", "-p", "-r", "-t"},
+    "env": {"-u", "-C", "-S"},
+    "timeout": {"-s", "-k"},
+    "nice": {"-n"},
+    "stdbuf": {"-i", "-o", "-e"},
+    "nohup": set(), "exec": {"-a"}, "command": set(), "time": {"-f", "-o"}, "setsid": set(),
+}
+# A duration, count or priority given to a wrapper, as in timeout 60 or nice -n 10.
+WRAPPER_COUNT_PATTERN = re.compile(r"[0-9.]+[smhd]?")
 
 TMUX_GLOBAL_VALUE_FLAGS = {"-S", "-L", "-f", "-c", "-T"}
 
@@ -480,17 +492,16 @@ def analyze_heredoc(words, body, ssh_context, verified, guard):
     if any(is_program(word, "osascript") for word in words):
         if APPLESCRIPT_TYPING_PATTERN.search(body):
             return SYNTHETIC_TYPING_REASON
-    # The first ssh or shell among the words is the program, as in analyze_simple_command; a
-    # wrapper such as sudo, env or timeout may come before it, and a later ssh is an argument.
-    index, kind = first_ssh_or_shell(words)
+    index, kind = ssh_or_shell_program(words)
     if kind == "ssh":
         host, carried, remote_words = parse_ssh_invocation(words[index + 1:])
         # ssh joins its remote words, and the remote shell reads them again as a command line.
-        remote, remote_index, remote_kind = remote_ssh_or_shell(" ".join(remote_words))
-        # The remote shell runs the heredoc when ssh has no remote command, or when the remote
-        # command is a shell reading its standard input, such as bash -s.
-        if host is not None and (not remote or (
-                remote_kind == "shell" and shell_reads_standard_input(remote[remote_index + 1:]))):
+        # The remote shell runs the heredoc when ssh has no remote command, or when a command
+        # of the remote line is a shell reading its standard input, such as bash -s; a command
+        # in a substitution there inherits that standard input too.
+        remote = shell_reader.simple_commands(" ".join(remote_words))
+        if host is not None and (not remote or any(
+                shell_reads_the_heredoc(command) for command in remote)):
             remote_context = ((NESTED_SSH_HOST, ()) if ssh_context is not None
                               else (host, tuple(carried)))
             return analyze_command_text(body, remote_context, verified, guard)
@@ -500,27 +511,36 @@ def analyze_heredoc(words, body, ssh_context, verified, guard):
     return None
 
 
-def remote_ssh_or_shell(remote_line):
-    """Return (words, index, kind) for the first command of a remote line that runs ssh or a shell.
+def shell_reads_the_heredoc(words):
+    """Return whether a command's program is a shell that reads its standard input."""
+    index, kind = ssh_or_shell_program(words)
+    return kind == "shell" and shell_reads_standard_input(words[index + 1:])
 
-    words is [] when ssh has no remote command; kind is None when no command runs either.
+
+def ssh_or_shell_program(words):
+    """Return (index, "ssh" or "shell") when a command's program is ssh or a shell, or (None, None).
+
+    The program is the first word after environment assignments and after wrappers such
+    as sudo, env and timeout with their options; a later word, such as the file of
+    `tee /tmp/bash` or the argument of `bash -s ssh`, is not the program.
     """
-    commands = [command for command in shell_reader.simple_commands(remote_line)
-                if not command.inside_substitution()]
-    for command in commands:
-        index, kind = first_ssh_or_shell(command)
-        if kind is not None:
-            return list(command), index, kind
-    return ([] if not commands else list(commands[0])), None, None
-
-
-def first_ssh_or_shell(words):
-    """Return (index, "ssh" or "shell") for the first ssh or shell program among words, or (None, None)."""
-    for index, word in enumerate(words):
-        if is_program(word, "ssh"):
+    index = 0
+    while index < len(words):
+        word = words[index]
+        if ENVIRONMENT_ASSIGNMENT_PATTERN.match(word):
+            index += 1
+        elif is_program(word, "ssh"):
             return index, "ssh"
-        if any(is_program(word, name) for name in SHELL_CONSUMER_PROGRAMS):
+        elif any(is_program(word, name) for name in SHELL_CONSUMER_PROGRAMS):
             return index, "shell"
+        elif any(is_program(word, name) for name in WRAPPER_OPTIONS_WITH_A_VALUE):
+            takes_a_value = WRAPPER_OPTIONS_WITH_A_VALUE[word.rsplit("/", 1)[-1]]
+            index += 1
+            while index < len(words) and (words[index].startswith("-")
+                                          or WRAPPER_COUNT_PATTERN.fullmatch(words[index])):
+                index += 2 if words[index] in takes_a_value else 1
+        else:
+            return None, None
     return None, None
 
 
@@ -545,7 +565,8 @@ def shell_reads_standard_input(arguments):
             index += 1
             continue
         if word[:1] in ("-", "+") and len(word) > 1 and word[1:].isalpha():
-            if "c" in word[1:] and word[0] == "-":
+            # bash reads +c as it reads -c.
+            if "c" in word[1:]:
                 return False
             reads_standard_input = reads_standard_input or "s" in word[1:]
             # -o and -O take the next word as their value, as in bash -eo pipefail.

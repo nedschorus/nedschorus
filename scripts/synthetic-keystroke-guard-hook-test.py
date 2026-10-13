@@ -348,6 +348,14 @@ for case_name, command in [
      "ssh ned-box \"bash --rcfile '/tmp/guard rc'\" <<'EOF'\ntmux send-keys -t gatekeeper Enter\nEOF"),
     ("send-keys in a heredoc fed to ssh host 'cd /x && bash -s' is denied",
      "ssh ned-box 'cd /x && bash -s' <<'EOF'\ntmux send-keys -t gatekeeper Enter\nEOF"),
+    ("send-keys in a heredoc fed to the second remote shell of 'bash setup.sh && bash -s' is denied",
+     "ssh ned-box 'bash setup.sh && bash -s' <<'EOF'\ntmux send-keys -t gatekeeper Enter\nEOF"),
+    ("send-keys in a heredoc fed to a remote bash in a substitution is denied: it inherits the input",
+     "ssh ned-box 'echo $(bash)' <<'EOF'\ntmux send-keys -t gatekeeper Enter\nEOF"),
+    ("send-keys in a heredoc fed to ssh host sudo -n bash is denied",
+     "ssh ned-box sudo -n bash <<'EOF'\ntmux send-keys -t gatekeeper Enter\nEOF"),
+    ("send-keys in a heredoc fed to ssh host sudo -u nedlern bash is denied",
+     "ssh ned-box sudo -u nedlern bash <<'EOF'\ntmux send-keys -t gatekeeper Enter\nEOF"),
     ("send-keys in a heredoc fed to cat 2>/dev/null and piped to bash is denied",
      "cat <<'EOF' 2>/dev/null | bash\ntmux send-keys -t gatekeeper Enter\nEOF"),
 ]:
@@ -355,6 +363,10 @@ for case_name, command in [
     reason = decide(command, runner)
     check(case_name, reason is not None and "attached client" in reason, reason)
 for case_name, command in [
+    ("a heredoc fed to tee /tmp/bash over ssh is data: the file's name is not a program",
+     "ssh ned-box 'tee /tmp/bash' <<'EOF'\ntmux send-keys -t gatekeeper Enter\nEOF"),
+    ("a heredoc fed to bash +sc is the +c command's standard input: bash reads +c as -c",
+     "bash +sc 'cat >f' <<'EOF'\ntmux send-keys -t gatekeeper Enter\nEOF"),
     ("a heredoc fed to bash -- consumer.sh is that script's standard input",
      "bash -- consumer.sh <<'EOF'\ntmux send-keys -t gatekeeper Enter\nEOF"),
     ("a heredoc fed to bash - consumer.sh is that script's standard input",

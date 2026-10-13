@@ -63,6 +63,9 @@ REDIRECT_NODE_TYPES = {"file_redirect", "heredoc_redirect", "herestring_redirect
 SEQUENCE_NODE_TYPES = {"pipeline", "list", "redirected_statement", "negated_command"}
 PIPE_OPERATORS = {"|", "|&"}
 LIST_OPERATORS = {"&&", "||", ";", "&"}
+# What redirect() reads inside a heredoc_redirect; every other node there is commands.
+HEREDOC_PARTS_READ_BY_REDIRECT = REDIRECT_NODE_TYPES | {
+    "heredoc_start", "heredoc_body", "heredoc_end", "file_descriptor", "ERROR", "comment"}
 # Characters a backslash keeps literal inside double quotes; before any other, the backslash stays.
 DOUBLE_QUOTE_ESCAPABLE = set('"\\$`')
 
@@ -537,11 +540,12 @@ class _Collector:
                 joined = False
             elif item[0] == "pipe":
                 joined = True
-            elif item[0] == "separator":
-                joined = False
             elif current:
                 # A redirection belongs to the command written just before it.
                 current[-1]["redirects"].append(item[1])
+            else:
+                # A statement that is only a redirection still runs its target's substitutions.
+                self.visit(item[1], child_shell)
         for pipeline in pipelines:
             shared_heredocs = list(heredocs)
             for position, unit in enumerate(pipeline):
@@ -569,17 +573,11 @@ class _Collector:
                 if child.type in REDIRECT_NODE_TYPES:
                     items.append(("redirect", child))
                     if child.type == "heredoc_redirect":
-                        # A pipeline written after the heredoc's start shares the heredoc line.
-                        for inner in child.named_children:
-                            if inner.type in SEQUENCE_NODE_TYPES \
-                                    or inner.type in SIMPLE_COMMAND_NODE_TYPES:
-                                self._flatten(inner, items)
+                        self._flatten_heredoc_line(child, items)
                 elif child.is_named:
                     self._flatten(child, items)
                 elif child.type in PIPE_OPERATORS:
                     items.append(("pipe",))
-                elif child.type in LIST_OPERATORS:
-                    items.append(("separator",))
             return
         if kind in SIMPLE_COMMAND_NODE_TYPES:
             # tree-sitter-bash joins the next line's command onto the last stage of a pipeline
@@ -589,13 +587,27 @@ class _Collector:
                 if previous_end is not None and part and _separates_commands(
                         self.source[previous_end:child.start_byte]):
                     items.append(("unit", node, part))
-                    items.append(("separator",))
                     part = []
                 part.append(child)
                 previous_end = child.end_byte
             items.append(("unit", node, part))
             return
         items.append(("unit", node, None))
+
+    def _flatten_heredoc_line(self, heredoc_redirect, items):
+        """Append what tree-sitter-bash puts after a heredoc's delimiter, other than the heredoc's own parts.
+
+        tree-sitter-bash puts the rest of the heredoc's line, such as `| bash` or
+        `|| { … }`, inside the heredoc_redirect. Every node there is read as
+        commands, except the parts redirect() reads as the heredoc's.
+        """
+        arguments = heredoc_redirect.children_by_field_name("argument")
+        for inner in heredoc_redirect.children:
+            if inner.type in PIPE_OPERATORS:
+                items.append(("pipe",))
+            elif inner.is_named and inner not in arguments \
+                    and inner.type not in HEREDOC_PARTS_READ_BY_REDIRECT:
+                self._flatten(inner, items)
 
     def redirect(self, node, child_shell, redirects, trailing_words):
         """Add one redirection to a command's redirects; return the heredocs it feeds."""
@@ -712,7 +724,7 @@ def simple_commands(command_text, glob_markers=None):
     except ShellParserInstalledForANewProcess:
         _use_a_new_process()
         return _simple_commands_in_a_new_process(command_text, glob_markers)
-    source = command_text.encode("utf-8", "surrogatepass")
+    source = _source_with_heredoc_delimiters_ended(command_text.encode("utf-8", "surrogatepass"))
     rewritten = _source_with_unique_heredoc_delimiters(source)
     restore = []
     if rewritten is None:
@@ -833,6 +845,36 @@ UNIQUE_DELIMITER_PREFIX = b"NEDSCHORUS_HEREDOC_END_"
 MAX_HEREDOC_RENAMING_PASSES = 8
 
 
+def _source_with_heredoc_delimiters_ended(source):
+    """Return source with a space after each heredoc delimiter that an operator follows directly.
+
+    bash ends a delimiter word at ;, &, |, (, ), < or >, as in `cat <<EOF; ls`;
+    tree-sitter-bash takes everything up to a space as the delimiter.
+    """
+    tree = parser().parse(source)
+    ends = []
+    for start in _heredoc_starts(tree.root_node):
+        text, index, quote = start.text, 0, None
+        while index < len(text):
+            character = text[index:index + 1]
+            if quote:
+                quote = None if character == quote else quote
+            elif character == b"\\":
+                index += 1
+            elif character in (b"'", b'"'):
+                quote = character
+            elif character in b";&|()<>":
+                ends.append(start.start_byte + index)
+                break
+            index += 1
+    if not ends:
+        return source
+    spaced = bytearray(source)
+    for end in reversed(ends):
+        spaced[end:end] = b" "
+    return bytes(spaced)
+
+
 def _heredoc_delimiter(start):
     """Return the word that ends a heredoc's body: the delimiter with bash's quote removal."""
     text, word, index = start.text, bytearray(), 0
@@ -887,7 +929,7 @@ def _source_with_unique_heredoc_delimiters(source):
             if not delimiter:
                 continue
             dashed = source[:start.start_byte].rstrip(b" \t").endswith(b"<<-")
-            line_end = source.find(b"\n", start.end_byte)
+            line_end = _logical_line_end(source, start.end_byte)
             if line_end == -1:
                 break
             renamed = delimiter.startswith(UNIQUE_DELIMITER_PREFIX)
@@ -943,56 +985,130 @@ def _source_with_unique_heredoc_delimiters(source):
 
 
 def _source_with_heredoc_operators_after_their_words(source, tree):
-    """Return (source, tree) with each `<<DELIMITER` moved after the words that follow it.
+    """Return (source, tree) with each heredoc's line rewritten so tree-sitter-bash reads it as bash does.
 
+    tree-sitter-bash misreads what follows a heredoc's delimiter on its line.
     bash reads `git push <<EOF --force origin b | cat` as
-    `git push --force origin b <<EOF | cat`: a redirection may stand
-    anywhere among a command's words. tree-sitter-bash misreads the words and
-    redirections written after a heredoc's delimiter, so they are moved in
-    front of it, up to the operator that ends the command.
+    `git push --force origin b <<EOF | cat`, since a redirection may stand
+    anywhere among a command's words, so the words and redirections after the
+    delimiter are moved in front of the `<<DELIMITER`, up to what ends the
+    command. tree-sitter-bash also misreads a `;` or `&` on a heredoc's line,
+    so the commands after the first one are moved to the line after the
+    heredoc's body, where bash runs them in the same order.
     """
     moved = bytearray(source)
     changed = False
     for start in reversed(_heredoc_starts(tree.root_node)):
         operator = start.prev_sibling
-        line_end = source.find(b"\n", start.end_byte)
+        line_end = _logical_line_end(source, start.end_byte)
         if operator is None or operator.type not in ("<<", "<<-") or line_end == -1 \
                 or _inside_heredoc_body(start):
             continue
+        # A file descriptor written before << goes with it, as in `3<<EOF`.
+        opening = start.parent.start_byte if start.parent.type == "heredoc_redirect" \
+            else operator.start_byte
         rest = source[start.end_byte:line_end]
-        end, closes_a_substitution = _command_end(rest)
-        stretch = rest[:end]
-        # Two heredocs on one line take their bodies in order, so neither is moved; a heredoc
-        # in a substitution that closes on its own line stays inside the substitution.
-        if not stretch.strip() or b"<<" in stretch or closes_a_substitution:
+        end, ended_by = _command_end(rest)
+        stretch, after = rest[:end], rest[end:].lstrip(b" \t")
+        # A heredoc in a substitution that closes on its own line stays inside the substitution.
+        if ended_by == ")":
             continue
-        after = rest[len(stretch):]
-        moved[operator.start_byte:line_end] = (
-            stretch.strip() + b" " + source[operator.start_byte:start.end_byte] + b" "
-            + after.lstrip(b" \t"))
+        # Two heredocs on one line take their bodies in order, so neither is moved.
+        if b"<<" in stretch or (not stretch.strip() and after == rest.lstrip(b" \t")):
+            continue
+        words = stretch.strip() + b" " if stretch.strip() else b""
+        moved[opening:line_end] = (b" " + words + source[opening:start.end_byte] + b" " + after)
         changed = True
-    if not changed:
-        return source, tree
-    moved = bytes(moved)
-    return moved, parser().parse(moved)
+    if changed:
+        source = bytes(moved)
+        tree = parser().parse(source)
+    return _source_with_commands_after_heredoc_lines_moved_below_their_bodies(source, tree)
+
+
+def _source_with_commands_after_heredoc_lines_moved_below_their_bodies(source, tree):
+    for start in reversed(_heredoc_starts(tree.root_node)):
+        line_end = _logical_line_end(source, start.end_byte)
+        if line_end == -1 or _inside_heredoc_body(start):
+            continue
+        rest = source[start.end_byte:line_end]
+        separator = _first_list_separator(rest)
+        if separator is None or b"<<" in rest:
+            continue
+        later = rest[separator + 1:].strip()
+        body_end = _heredoc_body_end(source, line_end + 1, _heredoc_delimiter(start),
+                                     source[:start.start_byte].rstrip(b" \t").endswith(b"<<-"))
+        if not later or body_end is None:
+            continue
+        source = (source[:start.end_byte] + rest[:separator] + source[line_end:body_end]
+                  + later + b"\n" + source[body_end:])
+        tree = parser().parse(source)
+    return source, tree
+
+
+def _first_list_separator(text):
+    """Return the offset of the first ; or & that ends a command in text, outside any nesting, or None."""
+    probe = b": " + text
+    found = []
+    stack = [parser().parse(probe).root_node]
+    while stack:
+        node = stack.pop()
+        if node.type in CHILD_SHELL_NODE_TYPES or node.type in TEXT_NODE_TYPES \
+                or node.type in ("expansion", "simple_expansion", "compound_statement",
+                                 "if_statement", "while_statement", "for_statement",
+                                 "case_statement", "c_style_for_statement"):
+            continue
+        if not node.is_named and node.type in (";", "&"):
+            found.append(node.start_byte - 2)
+        stack.extend(node.children)
+    return min(found, default=None)
+
+
+def _heredoc_body_end(source, position, delimiter, dashed):
+    """Return the offset just after the line that ends a heredoc body starting at position, or None."""
+    while position < len(source):
+        line_end = source.find(b"\n", position)
+        line_end = len(source) if line_end == -1 else line_end
+        line = source[position:line_end]
+        if (line.lstrip(b"\t") if dashed else line) == delimiter:
+            return min(line_end + 1, len(source))
+        position = line_end + 1
+    return None
+
+
+def _logical_line_end(source, position):
+    """Return the offset of the line end at or after position that a backslash does not continue, or -1."""
+    while True:
+        line_end = source.find(b"\n", position)
+        if line_end == -1:
+            return -1
+        backslashes = len(source[:line_end]) - len(source[:line_end].rstrip(b"\\"))
+        if backslashes % 2 == 0:
+            return line_end
+        position = line_end + 1
 
 
 def _command_end(text):
-    """Return (offset, closes) for where the first command in text ends, and whether at a )."""
+    """Return (offset, ended_by) for where the first command in text ends.
+
+    ended_by is the operator, ), or "#" for a comment, that ends it, or None at the end of text.
+    """
     probe = b": " + text
     ends = []
     stack = [parser().parse(probe).root_node]
     while stack:
         node = stack.pop()
+        if node.type == "comment":
+            ends.append((node.start_byte, "#"))
+            continue
         if node.type in CHILD_SHELL_NODE_TYPES or node.type in TEXT_NODE_TYPES \
                 or node.type in ("expansion", "simple_expansion"):
             continue
         if not node.is_named and (node.type in PIPE_OPERATORS or node.type in LIST_OPERATORS
                                   or node.type == ")"):
-            ends.append((node.start_byte, node.type == ")"))
+            ends.append((node.start_byte, node.type))
         stack.extend(node.children)
-    end, closes = min(ends, default=(len(probe), False))
-    return max(0, end - 2), closes
+    end, ended_by = min(ends, default=(len(probe), None))
+    return max(0, end - 2), ended_by
 
 
 LAST_CASE_TERMINATOR_PATTERN = re.compile(rb";;?&(\s*esac\b)")

@@ -1270,6 +1270,12 @@ with tempfile.TemporaryDirectory() as temporary:
         f"0 5 * * * f() {{ {box_clone}/scripts/a-helper.py; }}; /usr/bin/other": [(None, False)],
         f"0 5 * * * {box_clone}/scripts/a-retired-logged-job.py 2>&1 | /usr/bin/logger -t x":
             [(f"{box_clone}/scripts/a-retired-logged-job.py", False), ("/usr/bin/logger", True)],
+        f"0 5 * * * ({box_clone}/scripts/a-retired-job.py) | (cat; /usr/bin/other-job)":
+            [(f"{box_clone}/scripts/a-retired-job.py", False), ("cat", False),
+             ("/usr/bin/other-job", False)],
+        f"0 5 * * * {box_clone}/scripts/a-retired-job.py | {{ cat; /usr/bin/other-job; }}":
+            [(f"{box_clone}/scripts/a-retired-job.py", False), ("cat", False),
+             ("/usr/bin/other-job", False)],
         f"0 5 * * * (/usr/bin/other-job); {box_clone}/scripts/a-retired-job.py":
             [("/usr/bin/other-job", False), (f"{box_clone}/scripts/a-retired-job.py", False)],
     }

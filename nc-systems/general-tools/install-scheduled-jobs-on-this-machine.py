@@ -611,10 +611,19 @@ def programs_a_cron_line_runs(line: str) -> list:
     # A function's body may never run.
     if defines_a_function:
         return [(None, False)]
+    commands = [command for command in commands if not command.inside_substitution()]
+    stage_sizes = {}
+    for command in commands:
+        for shell in command.child_shell:
+            stage_sizes[shell] = stage_sizes.get(shell, 0) + 1
+    # Only a later stage that is one command and nothing more reads the output; a stage such
+    # as `(cat; /usr/bin/other-job)` runs other jobs of its own.
     return [(_program_of_a_cron_job(command),
-             any(shell.kind == shell_reader.PIPELINE_STAGE and not shell.first_stage
-                 for shell in command.child_shell))
-            for command in commands if not command.inside_substitution()]
+             bool(command.child_shell)
+             and command.child_shell[-1].kind == shell_reader.PIPELINE_STAGE
+             and not command.child_shell[-1].first_stage
+             and stage_sizes[command.child_shell[-1]] == 1)
+            for command in commands]
 
 
 def _program_of_a_cron_job(words):

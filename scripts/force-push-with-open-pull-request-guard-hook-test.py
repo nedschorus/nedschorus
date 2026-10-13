@@ -292,6 +292,11 @@ for case_name, command in [
     ("a cd before a pipeline in which two stages have a redirection",
      "cd /elsewhere/wt-fast-read && git log 2>/dev/null | head 2>/dev/null | cat; "
      "git push -f origin the-pr-branch"),
+    ("a cd and a push in a compound command after || on a heredoc's line",
+     "python3 - <<'PY' || { cd /elsewhere/wt-fast-read; git push -f origin the-pr-branch; }\n"
+     "print(1)\nPY"),
+    ("a cd and a push after ; on a heredoc's line",
+     "cat <<'EOF'; cd /elsewhere/wt-fast-read; git push -f origin the-pr-branch\nx\nEOF"),
     ("a redirected cd on the line after a pipeline of three stages",
      "make 2>&1 | tail -1 | sed s/a/b/\ncd /elsewhere/wt-fast-read >/dev/null\n"
      "git push -f origin the-pr-branch"),
