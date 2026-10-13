@@ -514,6 +514,21 @@ check("P2-2: absent socket file then per-seat-detached allows (no false deny)",
       decide("tmux send-keys -t seat-a x", runner) is None and len(runner.calls) == 2,
       runner.calls)
 
+# tmux 3.6's answer from a live server that holds no session at all.
+empty_server_answer = ("", "no current target", 1)
+runner = ScriptedProbeRunner([empty_server_answer, ("1\n", "", 0)])
+reason = decide("tmux send-keys -t seat-a x", runner)
+check("an empty default server is unknown, not unverifiable — fallback runs and denies",
+      reason is not None and "attached client" in reason and len(runner.calls) == 2,
+      (reason, runner.calls))
+
+permission_denied_answer = (
+    "", "error connecting to /private/tmp/tmux-501/default (Permission denied)", 1)
+runner = ScriptedProbeRunner([permission_denied_answer, ("0\n", "", 0)])
+reason = decide("tmux send-keys -t seat-a x", runner)
+check("a socket that answers with an error is unverifiable, not unknown — no fallback allow",
+      reason is not None and len(runner.calls) == 1, (reason, runner.calls))
+
 runner = ScriptedProbeRunner([("", "", 0)])
 check("P2-1: with the command's own -L flag, rc0+empty-stdout stays a single-probe allow",
       decide("tmux -L seat-b send-keys -t seat-b x", runner) is None
@@ -1006,7 +1021,7 @@ check("check mode: an empty answer is not read as 0 attached clients",
       status == 2 and printed.startswith("could not verify: "), (status, printed))
 status, printed = run_check(["seat-a"], ScriptedProbeRunner([
     ("", "no server running on /tmp/tmux-501/default", 1),
-    ("", "error connecting to /tmp/tmux-501/seat-a", 1)]))
+    ("", "error connecting to /tmp/tmux-501/seat-a (No such file or directory)", 1)]))
 check("check mode: no server knowing the session prints could not verify, not detached",
       status == 2 and printed.startswith("could not verify: "), (status, printed))
 

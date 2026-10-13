@@ -200,6 +200,13 @@ _resupervise_spec = importlib.util.spec_from_file_location(
 resupervise = importlib.util.module_from_spec(_resupervise_spec)
 _resupervise_spec.loader.exec_module(resupervise)
 
+_tmux_error_pattern_spec = importlib.util.spec_from_file_location(
+    "tmux_target_or_server_does_not_exist_error_pattern_common",
+    Path(__file__).resolve().parent.parent / "nc-systems" / "general-tools"
+    / "tmux-target-or-server-does-not-exist-error-pattern-common.py")
+tmux_error_pattern = importlib.util.module_from_spec(_tmux_error_pattern_spec)
+_tmux_error_pattern_spec.loader.exec_module(tmux_error_pattern)
+
 # A shared module avoids circular loading between recovery and the supervisor.
 # Re-export the names for callers that reach them through this module.
 _worth_resuming_spec = importlib.util.spec_from_file_location(
@@ -257,15 +264,6 @@ def run_tmux(*arguments_after_tmux, socket_name=None, environment=None):
         return None
 
 
-# What tmux prints when the session, or the server holding it, does not exist. Any other
-# failure, such as a client and server of different tmux versions, is no answer.
-# What tmux 3.6 prints for an absent session: another session holds the server, the server
-# holds none ("no current target"), the socket refuses ("no server running"), or no socket.
-TMUX_SAYS_NO_SUCH_SESSION_OR_SERVER = re.compile(
-    r"can't find session|no current target|no server running"
-    r"|error connecting to .*\(No such file or directory\)")
-
-
 def tmux_has_session(name: str, socket_name: str):
     """Return (held, detail), with held None when tmux cannot answer."""
     completed = run_tmux("has-session", "-t", f"={name}", socket_name=socket_name)
@@ -274,7 +272,7 @@ def tmux_has_session(name: str, socket_name: str):
     if completed.returncode == 0:
         return True, ""
     reason = (completed.stderr or completed.stdout or "").strip()
-    if TMUX_SAYS_NO_SUCH_SESSION_OR_SERVER.search(reason):
+    if tmux_error_pattern.tmux_error_text_says_target_or_server_does_not_exist(reason):
         return False, reason
     return None, (f"tmux has-session on socket '{socket_name}' exited "
                   f"{completed.returncode}: {reason or 'with no output'}")

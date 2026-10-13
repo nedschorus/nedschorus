@@ -22,6 +22,13 @@ shell_reader = importlib.util.module_from_spec(_shell_reader_spec)
 _shell_reader_spec.loader.exec_module(shell_reader)
 is_program = shell_reader.is_program
 
+_tmux_error_pattern_spec = importlib.util.spec_from_file_location(
+    "tmux_target_or_server_does_not_exist_error_pattern_common",
+    Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+    / "tmux-target-or-server-does-not-exist-error-pattern-common.py")
+tmux_error_pattern = importlib.util.module_from_spec(_tmux_error_pattern_spec)
+_tmux_error_pattern_spec.loader.exec_module(tmux_error_pattern)
+
 OPENER = "scripts/open-iterm-window-running-command"
 
 # Keep this budget below the registered hook timeout: timed-out hooks fail open.
@@ -290,8 +297,7 @@ def run_attachment_probe(target, server_flags, ssh_context, guard):
     if completed.returncode != 0:
         error_text = (completed.stderr or "").strip()
         # An unknown session or unavailable socket may exist on the next candidate server.
-        if ("can't find" in error_text or "no server running" in error_text
-                or "error connecting" in error_text):
+        if tmux_error_pattern.tmux_error_text_says_target_or_server_does_not_exist(error_text):
             return ("unknown", error_text)
         return ("unverifiable",
                 error_text or "probe exited %d" % completed.returncode)
