@@ -45,7 +45,7 @@ A note, never a refusal, handed to the agent with the user's next message, listi
 - GHI [Cite files by name, not by path](https://github.com/nedschorus/nedschorus/issues/610): how a file is cited in committed text so a search finds every reference. A reply's link is for the user to click; the two do not conflict.
 - GHI [cold-read-record-ship.py prints a citation without its host when it runs on ned-box, where the seats run](https://github.com/nedschorus/nedschorus/issues/299), closed: an earlier case of a citation that did not resolve from where the reader sat, fixed in one program.
 
-## What is not decided
+## Deferred-decisions
 
 1. **Sessions on the Mac.** A Mac agent-session can cite a document in its own clone or a ned-box document through the mount; the hook as proposed checks ned-box paths only and says nothing in a session on the Mac.
 2. **Documents that do not exist yet**, such as a report a reply says it will write: the finder skips them, so the hook says nothing.
