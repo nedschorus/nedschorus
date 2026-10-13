@@ -79,7 +79,8 @@ def check_and_install(host, runner=subprocess.run, installer=None,
                       state_directory=pinned_libraries_install.PINNED_REQUIREMENTS_INSTALL_STATE_DIRECTORY):
     """Return (exit status, report lines).
 
-    The install takes the same lock as the Bash guards' install, so the two never run pip at once.
+    The install holds the install lock, so it never runs pip at the same time as a Bash guard's
+    install; a guard that finds the lock held lets its command through instead of waiting.
     """
     if installer is None:
         def installer():
@@ -89,12 +90,12 @@ def check_and_install(host, runner=subprocess.run, installer=None,
     if not missing:
         return 0, [f"{host}: all {len(pins)} pinned compiled Python libraries are installed "
                    f"at their pinned versions."]
-    with pinned_libraries_install.pinned_requirements_install_lock(state_directory):
-        try:
+    try:
+        with pinned_libraries_install.pinned_requirements_install_lock(state_directory):
             install_output = installer()
-        except pinned_libraries_install.CompiledPythonLibrariesUnavailable as error:
-            install_output = error.install_output
-        still_missing = missing_libraries(pins, installed_versions(pins, runner))
+    except pinned_libraries_install.CompiledPythonLibrariesUnavailable as error:
+        install_output = error.install_output
+    still_missing = missing_libraries(pins, installed_versions(pins, runner))
     if not still_missing:
         return 0, [f"{host}: installed {'; '.join(missing)}; all {len(pins)} pinned compiled "
                    f"Python libraries are now at their pinned versions."]

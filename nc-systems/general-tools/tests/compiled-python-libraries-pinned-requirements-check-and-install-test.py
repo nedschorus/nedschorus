@@ -156,6 +156,24 @@ check("this python3's real installed versions are read, and an absent library re
       isinstance(versions.get("pip"), str) and versions["no-such-library-for-this-test"] is None,
       versions)
 
+import threading
+other_install = open(LOCK_DIRECTORY / install.INSTALL_LOCK_FILE_NAME, "w")
+fcntl.flock(other_install, fcntl.LOCK_EX)
+threading.Timer(0.5, other_install.close).start()
+installer = installer_that(None)
+status, lines = checker.check_and_install("ned-box", version_reader(ONE_MISSING, ALL_PINNED), installer)
+check("the script waits for an install another process is running, then installs",
+      status == 0 and installer.state["installs"] == 1, (status, lines))
+
+blocking_file = Path(tempfile.mkdtemp()) / "a-file-not-a-directory"
+blocking_file.write_text("x")
+installer = installer_that(None)
+status, lines = real_check_and_install_before_lock("ned-box", version_reader(ONE_MISSING), installer,
+                                                   blocking_file / "state")
+check("an install lock that cannot be opened is reported as the install's failure, not a traceback",
+      status == 1 and installer.state["installs"] == 0
+      and any("install lock" in line for line in lines), (status, lines))
+
 import contextlib
 import io
 real_check_and_install = checker.check_and_install

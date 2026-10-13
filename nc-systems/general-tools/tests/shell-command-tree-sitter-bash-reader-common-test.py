@@ -1245,6 +1245,32 @@ except r.ShellParserUnavailable as error:
     read_only.chmod(0o755)
     reader.STATE_DIRECTORY = real_state_directory
 
+    # Another process installing holds the lock; a guard must not wait out its hook timeout for it.
+    import fcntl
+    reader.STATE_DIRECTORY = Path(scratch) / "state-held-by-another-install"
+    reader.STATE_DIRECTORY.mkdir()
+    with open(reader.STATE_DIRECTORY / reader.INSTALL_LOCK_FILE_NAME, "w") as other_install:
+        fcntl.flock(other_install, fcntl.LOCK_EX)
+        importer, _installer, state = importer_after(99)
+        started = time.monotonic()
+        try:
+            reader.load_parser(importer, failing_installer(state), Clock(9500.0))
+            raised = None
+        except reader.ShellParserUnavailable as error:
+            raised = error
+        hook_output = (json.loads(reader.parser_unavailable_hook_output("The force-push guard", raised, {}))
+                       if raised is not None else None)
+        elapsed = time.monotonic() - started
+    check("while another process installs, a guard lets its command through at once, saying an "
+          "install is already running",
+          raised is not None and state["installs"] == 0 and elapsed < 5
+          and "already running" in raised.install_output
+          and "already running" in hook_output["hookSpecificOutput"]["additionalContext"]
+          and "permissionDecision" not in hook_output["hookSpecificOutput"]
+          and not (reader.STATE_DIRECTORY / reader.INSTALL_FAILURE_FILE_NAME).exists(),
+          (raised, state, elapsed))
+    reader.STATE_DIRECTORY = real_state_directory
+
     # --- the message when the parser is missing and the install failed ---
     error = reader.ShellParserUnavailable("pip: network is unreachable")
     attended = {}

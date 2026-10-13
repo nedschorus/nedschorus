@@ -182,6 +182,27 @@ with tempfile.TemporaryDirectory() as scratch:
           (raised, state))
     read_only.chmod(0o755)
 
+    import fcntl
+    held = Path(scratch) / "held-state"
+    held.mkdir()
+    with open(held / install.INSTALL_LOCK_FILE_NAME, "w") as other_install:
+        fcntl.flock(other_install, fcntl.LOCK_EX)
+        importer, installer, forget, state = libraries_after(1)
+        result, raised = install_then_import(held, importer, installer, forget, 9000.0)
+    check("while another process holds the install lock, the caller does not wait: it raises "
+          "CompiledPythonLibrariesUnavailable saying an install is already running, and records no failure",
+          raised is not None and "already running" in raised.install_output and state["installs"] == 0
+          and not (held / install.INSTALL_FAILURE_FILE_NAME).exists(), (raised, state))
+    with open(held / install.INSTALL_LOCK_FILE_NAME, "w") as other_install:
+        fcntl.flock(other_install, fcntl.LOCK_EX)
+        state = {"waited": False}
+        try:
+            with install.pinned_requirements_install_lock(held, wait=False):
+                state["waited"] = True
+        except install.CompiledPythonLibrariesUnavailable:
+            pass
+    check("the lock taken without waiting is refused while held", state["waited"] is False, state)
+
 
 def runner_exiting(returncode, stdout="", stderr=""):
     def run(command, **kwargs):
@@ -229,6 +250,23 @@ except install.CompiledPythonLibrariesUnavailable as error:
     raised = error
 check("pip timing out raises CompiledPythonLibrariesUnavailable saying it did not finish",
       raised is not None and "did not finish" in raised.install_output, raised)
+
+import shlex
+where, command = install.pinned_requirements_by_hand_install_command(
+    "ned-box", Path("/tmp/a dir/it's-requirements.txt"))
+ssh_words = shlex.split(command)
+check("the ssh form quotes the install so the remote shell reads the same words, a path with a "
+      "space and a quote included",
+      where == "in a Terminal on your Mac" and ssh_words[:2] == ["ssh", "nedlern@ned-box"]
+      and len(ssh_words) == 3
+      and shlex.split(ssh_words[2]) == [sys.executable, "-m", "pip", "install", "--user",
+                                        "--break-system-packages", "-r", "/tmp/a dir/it's-requirements.txt"],
+      (where, command))
+where, command = install.pinned_requirements_by_hand_install_command(
+    "Neds-MacBook-Pro", Path("/tmp/a dir/it's-requirements.txt"))
+check("the local form is quoted for the user's shell",
+      where == "on Neds-MacBook-Pro"
+      and shlex.split(command)[-1] == "/tmp/a dir/it's-requirements.txt", (where, command))
 
 print("all cases passed" if not failures else f"{failures} case(s) failed")
 sys.exit(1 if failures else 0)
