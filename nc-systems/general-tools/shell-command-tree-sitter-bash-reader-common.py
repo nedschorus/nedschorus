@@ -487,13 +487,20 @@ COMMAND_AS_FENCED_CODE_BLOCK_INSTRUCTION = (
     "backticks, or of more backticks than the longest run of backticks in that command")
 
 
-def tree_sitter_bash_by_hand_install_instruction_for_user(host):
-    """Return (where, command): where to run tree-sitter-bash's install by hand, and the command."""
+def tree_sitter_bash_install_failure_report_words_build(host, install_output, consequence):
+    """Return the words to report when tree-sitter-bash is missing on host and installing it failed.
+
+    consequence says what goes undone because of it; the words end with what the install printed.
+    """
     install = f"python3 -m pip install --user --break-system-packages -r {REQUIREMENTS_FILE}"
     # The user sits at the Mac, and reaches ned-box over ssh.
-    if host == "ned-box":
-        return "in a Terminal on your Mac", f"ssh nedlern@ned-box '{install}'"
-    return f"on {host}", install
+    where, install = (("in a Terminal on your Mac", f"ssh nedlern@ned-box '{install}'")
+                      if host == "ned-box" else (f"on {host}", install))
+    return (f"\"tree-sitter-bash is missing on {host} and could not be installed, so "
+            f"{consequence}. To install it by hand, run this command {where}:\" Then give the "
+            f"install command on a line of its own:\n"
+            f"{install}\n"
+            f"Then pass on what the install printed, quoted as it is: {install_output}")
 
 
 def parser_unavailable_hook_output(guard_name, error, environment=os.environ):
@@ -516,24 +523,21 @@ def parser_unavailable_hook_output(guard_name, error, environment=os.environ):
             "hookEventName": "PreToolUse",
             "additionalContext": message,
         }})
-    where, install = tree_sitter_bash_by_hand_install_instruction_for_user(host)
     message = (
         f"{guard_name} let this command through without checking it, and the command has run: "
         f"the shell parser tree-sitter-bash is missing on {host}, and installing it failed.\n"
         f"Look at what the command did. If the command did what {guard_name} exists to stop, "
         f"undo what the command did, now, where you can.\n"
-        + report_to_user_or_dispatching_agent_instruction_build(
-            f"\"tree-sitter-bash is missing on {host} and could not be installed, so the "
-            f"project's Bash guards are not checking commands there. To install it by hand, run "
-            f"this command {where}:\" Then give the install command on a line of its own:\n"
-            f"{install}\n"
-            f"Then pass on what the install printed, quoted as it is: {error.install_output}\n"
-            f"Then {COMMAND_AS_FENCED_CODE_BLOCK_INSTRUCTION}, and say whether it did what "
-            f"{guard_name} exists to stop, what you undid, and what you could not undo.",
-            environment)
-        + f"\nLater commands are let through unchecked too, each with this message, until an "
+        f"Later commands are let through unchecked too, each with this message, until an "
         f"install succeeds; the first command after {INSTALL_RETRY_SECONDS // 60} minutes "
-        f"have passed tries the install again.")
+        f"have passed tries the install again.\n"
+        + report_to_user_or_dispatching_agent_instruction_build(
+            tree_sitter_bash_install_failure_report_words_build(
+                host, error.install_output,
+                "the project's Bash guards are not checking commands there")
+            + f"\nThen {COMMAND_AS_FENCED_CODE_BLOCK_INSTRUCTION}, and say whether it did what "
+            f"{guard_name} exists to stop, what you undid, and what you could not undo.",
+            environment))
     return json.dumps({"hookSpecificOutput": {
         "hookEventName": "PreToolUse",
         "additionalContext": message,
@@ -544,11 +548,12 @@ def report_to_user_or_dispatching_agent_instruction_build(words, environment=os.
     """Return the text that tells the agent whom to report to, in the given words.
 
     A subagent always tells the agent that dispatched it; the user is told only when one
-    attends the agent-session.
+    attends the agent-session. The text ends the message it goes in: in an agent-session no
+    user attends, an agent that is not a subagent is told to skip the rest of the message.
     """
     if _session_unattended(environment):
         return (f"No user attends this agent-session, so do not tell the user. If you are not "
-                f"a subagent, skip the report below and go on with your task.\n"
+                f"a subagent, skip the rest of this message and go on with your task.\n"
                 f"If you are a subagent, tell the agent that dispatched you, in these words: "
                 f"{words}")
     return (f"Tell the user, or, if you are a subagent, the agent that dispatched you, in these "

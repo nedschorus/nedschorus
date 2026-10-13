@@ -1266,22 +1266,30 @@ except r.ShellParserUnavailable as error:
     check("every report has the user told again; nothing is counted",
           "Tell the user" in again and again.replace("tmux kill", "force-push") == first, again)
     this_host = __import__("socket").gethostname().split(".")[0]
-    install = reader.tree_sitter_bash_by_hand_install_instruction_for_user(this_host)[1]
+    install = reader.tree_sitter_bash_install_failure_report_words_build(
+        this_host, "", "").splitlines()[1]
     check("the install command stands on a line of its own in the message",
           install in first.splitlines(), first)
     check("the words to report include the command, as a fenced code block, and what was undone",
           reader.COMMAND_AS_FENCED_CODE_BLOCK_INSTRUCTION in first and "what you undid" in first
           and "what you could not undo" in first, first)
-    where, install = reader.tree_sitter_bash_by_hand_install_instruction_for_user("ned-box")
+    words = reader.tree_sitter_bash_install_failure_report_words_build(
+        "ned-box", "pip: no network", "nothing is checked there").splitlines()
     check("for ned-box, the install command is the ssh form the user runs in a Terminal on the Mac",
-          where == "in a Terminal on your Mac"
-          and install == f"ssh nedlern@ned-box 'python3 -m pip install --user "
-          f"--break-system-packages -r {reader.REQUIREMENTS_FILE}'", (where, install))
-    where, install = reader.tree_sitter_bash_by_hand_install_instruction_for_user("Neds-MacBook")
+          words[0].endswith("so nothing is checked there. To install it by hand, run this command "
+                            "in a Terminal on your Mac:\" Then give the install command on a line "
+                            "of its own:")
+          and words[1] == f"ssh nedlern@ned-box 'python3 -m pip install --user "
+          f"--break-system-packages -r {reader.REQUIREMENTS_FILE}'", words)
+    check("the words to report end with what the install printed, quoted as it is",
+          words[2:] == ["Then pass on what the install printed, quoted as it is: pip: no network"],
+          words)
+    words = reader.tree_sitter_bash_install_failure_report_words_build(
+        "Neds-MacBook", "pip: no network", "nothing is checked there").splitlines()
     check("for any other machine, the install command is run on that machine as it is",
-          where == "on Neds-MacBook"
-          and install == f"python3 -m pip install --user --break-system-packages "
-          f"-r {reader.REQUIREMENTS_FILE}", (where, install))
+          "run this command on Neds-MacBook:" in words[0]
+          and words[1] == f"python3 -m pip install --user --break-system-packages "
+          f"-r {reader.REQUIREMENTS_FILE}", words)
     on_ned_box = __import__("socket").gethostname().split(".")[0] == "ned-box"
     check("the install command for ned-box is given in the ssh form the user runs from the Mac",
           on_ned_box == ("ssh nedlern@ned-box 'python3 -m pip install" in first), first)
@@ -1333,9 +1341,30 @@ except r.ShellParserUnavailable as error:
     check("the reader-failed message says where the command goes, and in what form",
           "After those words, give the command that ran as a fenced code block of its own, between "
           "two lines of three backticks" in attended, attended)
+    skip_at = unattended.find("If you are not a subagent, skip the rest of this message")
+    report_at = unattended.find("If you are a subagent, tell the agent that dispatched you")
     check("in an agent-session no user attends, the condition that skips the report comes before it",
-          unattended.index("If you are not a subagent, skip the report below")
-          < unattended.index("If you are a subagent, tell the agent that dispatched you"), unattended)
+          0 <= skip_at < report_at, unattended)
+
+    # "Skip the rest of this message" skips only the report, so the report must end every message.
+    real_build = reader.report_to_user_or_dispatching_agent_instruction_build
+    built = []
+
+    def recording_build(words, environment=os.environ):
+        built.append(real_build(words, environment))
+        return built[-1]
+    reader.report_to_user_or_dispatching_agent_instruction_build = recording_build
+    try:
+        for label, failure in (("the parser is missing", error), ("the reader failed", unreadable)):
+            for session in ({}, {"CLAUDE_CODE_SESSION_ATTENDED": "0"}):
+                built.clear()
+                message = context_of(reader.parser_unavailable_hook_output(
+                    "The force-push guard", failure, session))
+                check(f"when {label}, with the session variables {session}, the guard's message "
+                      f"ends with the report", len(built) == 1 and message.endswith(built[0]),
+                      (built, message))
+    finally:
+        reader.report_to_user_or_dispatching_agent_instruction_build = real_build
     for session, attended_wanted in [((None, None), True), (("1", None), True), (("0", None), False),
                                      ((None, "1"), False)]:
         with reader.agent_session_attendance_environment_variables_temporarily_set_for_test(*session):
@@ -1467,6 +1496,19 @@ except reader.ShellParserUnavailable as error:
 check("a new process that fails outside the reader reaches the guard as its exception's line, not a traceback",
       raised is not None and raised.install_output
       == "reading the command in a new process failed: RuntimeError: the request could not be read",
+      raised and raised.install_output)
+# A new process killed by a signal prints nothing; its exit status is then the agent's only clue.
+killed_child = "import os, signal; os.kill(os.getpid(), signal.SIGKILL)"
+try:
+    reader._simple_commands_in_a_new_process(
+        "ls", None, runner=lambda arguments, **options: subprocess.run(
+            [sys.executable, "-c", killed_child], **options))
+    raised = None
+except reader.ShellParserUnavailable as error:
+    raised = error
+check("a new process killed by a signal, which prints nothing, reaches the guard as its exit status",
+      raised is not None
+      and raised.install_output == "reading the command in a new process failed: exit -9",
       raised and raised.install_output)
 command = reader.simple_commands("cat <<E >~/x\nb\nE")[0]
 command.added_attribute = (reader.ShellWordWithUnexpandedTildePrefixBashWouldExpand("~/y"), [1, None])
