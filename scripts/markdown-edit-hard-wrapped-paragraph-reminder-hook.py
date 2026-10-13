@@ -234,7 +234,7 @@ def markdown_has_hard_wrapped_paragraph(text: str) -> bool:
 def main() -> int:
     payload = json.loads(sys.stdin.read())
     if not isinstance(payload, dict):
-        raise ValueError(f"the hook payload is a JSON {type(payload).__name__}, not an object")
+        raise ValueError(f"the input on the hook's stdin is a JSON {type(payload).__name__}, not an object")
     tool_name = payload.get("tool_name")
     tool_input = payload.get("tool_input")
     if tool_name not in ("Edit", "Write") or not isinstance(tool_input, dict):

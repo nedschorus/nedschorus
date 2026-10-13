@@ -333,8 +333,9 @@ def overlap_line(freshness, checkout: Path, repository_path: str):
     with tempfile.TemporaryDirectory() as scratch:
         base_path = Path(scratch) / "merge-base-copy"
         main_path = Path(scratch) / "origin-main-copy"
-        base_path.write_text(base_copy.stdout, encoding="utf-8")
-        main_path.write_text(main_copy.stdout, encoding="utf-8")
+        # run_git decodes with surrogateescape; writing the same way restores bytes that are not UTF-8.
+        base_path.write_text(base_copy.stdout, encoding="utf-8", errors="surrogateescape")
+        main_path.write_text(main_copy.stdout, encoding="utf-8", errors="surrogateescape")
         merged = freshness.run_git(
             ["merge-file", "-p", "-q", str(working_copy), str(base_path), str(main_path)],
             checkout, timeout=MERGE_FILE_TIMEOUT_SECONDS)
@@ -398,7 +399,7 @@ def obsolete_file_warning_line(repository_path: str, commit_count, advice: str,
 def main() -> int:
     payload = json.loads(sys.stdin.read())
     if not isinstance(payload, dict):
-        raise ValueError(f"the hook payload is a JSON {type(payload).__name__}, not an object")
+        raise ValueError(f"the input on the hook's stdin is a JSON {type(payload).__name__}, not an object")
     tool_input = payload.get("tool_input")
     file_path = tool_input.get("file_path") if isinstance(tool_input, dict) else None
     if not file_path or not isinstance(file_path, str):

@@ -383,6 +383,13 @@ result = case.run({"hook_event_name": "SubagentStop", "agent_id": "agent-three",
                    "transcript_path": str(case.transcript)})
 check("a SubagentStop without agent_transcript_path: silent", result.stdout == "", result.stdout)
 
+case = Case()
+result = case.run({"hook_event_name": "SubagentStop", "agent_id": "agent-four",
+                   "agent_transcript_path": str(case.root / "subagents" / "agent-four.jsonl")})
+check("a SubagentStop whose agent_transcript_path does not exist: exit 0, silent, nothing logged",
+      result.returncode == 0 and result.stdout == "" and result.stderr == ""
+      and case.log_lines() == [], (result.returncode, result.stdout, result.stderr, case.log_lines()))
+
 # --- faults: exit 1, one stderr line, nothing on stdout, the error logged -----------
 
 case = Case()

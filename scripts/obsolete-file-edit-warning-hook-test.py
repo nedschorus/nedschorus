@@ -572,6 +572,10 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     shared_lines = [f"line {number}\n" for number in range(1, 11)]
     commit_file(detached_origin, "lib/shared.py", "".join(shared_lines), "shared file")
     commit_file(detached_origin, "lib/gone.py", "main will delete this\n", "a file main deletes")
+    latin1_lines = [f"ligne {number} \xe9t\xe9\n".encode("latin-1") for number in range(1, 11)]
+    (detached_origin / "lib" / "latin1.txt").write_bytes(b"".join(latin1_lines))
+    git(["add", "lib/latin1.txt"], detached_origin)
+    git(["commit", "-q", "-m", "a file that is not UTF-8"], detached_origin)
     detached = tmp / "detached-checkout"
     git(["clone", "-q", str(detached_origin), str(detached)], tmp)
     configure_identity(detached)
@@ -580,6 +584,11 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     changed_on_main = list(shared_lines)
     changed_on_main[1] = "line 2, as main rewrote it\n"
     commit_file(detached_origin, "lib/shared.py", "".join(changed_on_main), "main rewrites line 2")
+    latin1_on_main = list(latin1_lines)
+    latin1_on_main[1] = "ligne 2, r\xe9\xe9crite sur main\n".encode("latin-1")
+    (detached_origin / "lib" / "latin1.txt").write_bytes(b"".join(latin1_on_main))
+    git(["add", "lib/latin1.txt"], detached_origin)
+    git(["commit", "-q", "-m", "main rewrites line 2 of the file that is not UTF-8"], detached_origin)
     git(["rm", "-q", "lib/gone.py"], detached_origin)
     git(["commit", "-q", "-m", "main deletes gone.py"], detached_origin)
     git(["fetch", "-q", "origin"], detached)
@@ -608,6 +617,16 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     check("detached: the overlap check leaves the agent's file as the agent wrote it",
           shared_file.read_text(encoding="utf-8") == "".join(edited_far_away),
           shared_file.read_text(encoding="utf-8"))
+
+    latin1_file = detached / "lib/latin1.txt"
+    latin1_edited = list(latin1_lines)
+    latin1_edited[8] = "ligne 9, \xe9dit\xe9e par l'agent\n".encode("latin-1")
+    latin1_file.write_bytes(b"".join(latin1_edited))
+    result = run_hook(hook_payload(detached, latin1_file))
+    check("detached: a file that is not UTF-8 gets the overlap verdict, exit 0",
+          result.returncode == 0 and agent_text(result).split("\n")[-1] == (
+              "main's changes to lib/latin1.txt do not overlap this checkout's copy; a "
+              "rebase merges them cleanly."), result.stdout + result.stderr)
 
     edited_same_line = list(shared_lines)
     edited_same_line[1] = "line 2, as the agent edited it\n"

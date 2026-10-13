@@ -175,7 +175,8 @@ with tempfile.TemporaryDirectory() as workspace:
     check("a marker that cannot be cleared is named in the injected text",
           context is not None
           and "post-compaction-session-continues-hook: clearing the fired marker failed" in context
-          and "Tell the user, so that the marker can be removed by hand." in context,
+          and f"Tell the user that {stuck_marker} was not deleted; it is safe to delete by hand."
+          in context,
           (context or "")[:400])
     stuck_marker.rmdir()
 

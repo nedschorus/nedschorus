@@ -59,7 +59,10 @@ FAULT_LINE = PROGRAM + ": {what} failed, so {cost}: {error}"
 MARKER_NOT_CLEARED_COST = ("the handoff threshold hook's fired marker for this session"
                            " was not cleared and that hook will not ask for a handoff again"
                            " in this session")
-MARKER_NOT_CLEARED_INSTRUCTION = "Tell the user, so that the marker can be removed by hand."
+MARKER_NOT_CLEARED_INSTRUCTION = ("Tell the user, so that the marker can be removed by hand;"
+                                  " it is safe to delete.")
+MARKER_PATH_NOT_CLEARED_INSTRUCTION = ("Tell the user that {path} was not deleted; it is safe to"
+                                       " delete by hand.")
 TAIL_NOT_RECOVERED_COST = "no tail of this session's dialog is given below"
 
 # The extractor walks back to a user turn without a ceiling; cap injection to preserve freed context.
@@ -70,7 +73,7 @@ def hook_payload_from_stdin() -> dict:
     """Return the stdin payload; raise when it is not a JSON object."""
     payload = json.loads(sys.stdin.read())
     if not isinstance(payload, dict):
-        raise ValueError(f"the hook payload is a JSON {type(payload).__name__}, not an object")
+        raise ValueError(f"the input on the hook's stdin is a JSON {type(payload).__name__}, not an object")
     return payload
 
 
@@ -97,13 +100,17 @@ def clear_fired_marker(session_id: str) -> str:
     except Exception as error:
         return (fault_line(f"loading {THRESHOLD_SCRIPT}", MARKER_NOT_CLEARED_COST, error)
                 + "\n" + MARKER_NOT_CLEARED_INSTRUCTION)
+    marker = None
     try:
-        threshold.fired_marker_path(session_id).unlink()
+        marker = threshold.fired_marker_path(session_id)
+        marker.unlink()
     except FileNotFoundError:
         return ""
     except Exception as error:
+        instruction = (MARKER_NOT_CLEARED_INSTRUCTION if marker is None
+                       else MARKER_PATH_NOT_CLEARED_INSTRUCTION.format(path=marker))
         return (fault_line("clearing the fired marker", MARKER_NOT_CLEARED_COST, error)
-                + "\n" + MARKER_NOT_CLEARED_INSTRUCTION)
+                + "\n" + instruction)
     return ""
 
 

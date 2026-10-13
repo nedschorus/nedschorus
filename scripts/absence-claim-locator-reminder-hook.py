@@ -27,7 +27,10 @@ THE HOOK STAYS SILENT when any of these holds:
     or CLAUDE_CODE_SESSION_ATTENDED == "0". The reminder would otherwise
     become the child's last words, which its caller reads as the answer;
   - a SubagentStop payload names no agent_transcript_path: the main
-    transcript holds the parent's reply, not the subagent's.
+    transcript holds the parent's reply, not the subagent's;
+  - a SubagentStop payload names an agent_transcript_path that does not
+    exist: Claude Code sends that for most subagent stops, so it is the
+    ordinary case, not a fault, and nothing is logged for it.
 
 OUTPUT when it reminds: {"decision": "block", "reason": <reminder>}, which
 keeps the agent going with the reminder as its next instruction.
@@ -307,7 +310,7 @@ def run(stdin_text, environment, home, now):
     """Return the text to print, or None; append what it decided to the log."""
     payload = json.loads(stdin_text)
     if not isinstance(payload, dict):
-        raise ValueError(f"the hook payload is a JSON {type(payload).__name__}, not an object")
+        raise ValueError(f"the input on the hook's stdin is a JSON {type(payload).__name__}, not an object")
     event = payload.get("hook_event_name") or "Stop"
     if payload.get("stop_hook_active"):
         return None
@@ -316,6 +319,8 @@ def run(stdin_text, environment, home, now):
     else:
         transcript_path = payload.get("transcript_path")
     if not transcript_path:
+        return None
+    if event == "SubagentStop" and not Path(transcript_path).expanduser().exists():
         return None
     reply, locator_ran = read_turn(Path(transcript_path).expanduser())
     matches = absence_claim_matches(reply)
