@@ -1,22 +1,28 @@
 #!/usr/bin/env python3
-"""Tests for claude-code-session-transcript-project-directory-for-seat-common.py.
+"""Tests for claude-code-session-transcript-project-directory-for-agent-seat-common.py.
 
-Run: python3 scripts/claude-code-session-transcript-project-directory-for-seat-common-test.py
+Run: python3 scripts/claude-code-session-transcript-project-directory-for-agent-seat-common-test.py
 Prints one line per case and exits non-zero if any case fails.
 
-The expected folder names are hard-coded literals, not derived from the
-function under test, so a mangling bug cannot be mirrored into the
-expectation. Each seat path is rooted at a directory that exists on no
-machine, so resolve() passes it through unchanged.
+The three mangle cases expect hard-coded literal folder names, not ones
+derived from the function under test, so a mangling bug cannot be mirrored
+into the expectation; their seat paths are rooted at a directory that
+exists on no machine, so resolve() passes them through unchanged. The
+symlink case builds a real link in a temporary directory, because Claude
+Code names the folder after the resolved path the session runs in. That
+directory's path is known only at run time, so the case computes its
+expected name with its own character test, independent of the function
+under test.
 """
 
 import importlib.util
 import sys
+import tempfile
 from pathlib import Path
 
 _spec = importlib.util.spec_from_file_location(
-    "claude_code_session_transcript_project_directory_for_seat_common",
-    Path(__file__).with_name("claude-code-session-transcript-project-directory-for-seat-common.py"))
+    "claude_code_session_transcript_project_directory_for_agent_seat_common",
+    Path(__file__).with_name("claude-code-session-transcript-project-directory-for-agent-seat-common.py"))
 project_directory_module = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(project_directory_module)
 
@@ -56,6 +62,17 @@ def run_all_cases():
               Path("/mangle-probe-root/agents/x"), projects_root).parent == projects_root,
           project_directory_module.project_directory_for_seat(
               Path("/mangle-probe-root/agents/x"), projects_root))
+
+    with tempfile.TemporaryDirectory() as scratch:
+        real_seat = Path(scratch).resolve() / "real" / "seat"
+        real_seat.mkdir(parents=True)
+        linked_seat = Path(scratch) / "link-to-seat"
+        linked_seat.symlink_to(real_seat)
+        expected = "".join(c if c.isascii() and c.isalnum() else "-" for c in str(real_seat))
+        found = project_directory_module.project_directory_for_seat(
+            linked_seat, projects_root).name
+        check("a seat path reached through a symlink is named after the folder the link points to",
+              found == expected and "link-to-seat" not in found, (found, expected))
 
 
 if __name__ == "__main__":

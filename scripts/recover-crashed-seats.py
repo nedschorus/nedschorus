@@ -188,8 +188,8 @@ records_reader = importlib.util.module_from_spec(_records_reader_spec)
 _records_reader_spec.loader.exec_module(records_reader)
 
 _project_directory_spec = importlib.util.spec_from_file_location(
-    "claude_code_session_transcript_project_directory_for_seat_common",
-    Path(__file__).with_name("claude-code-session-transcript-project-directory-for-seat-common.py")
+    "claude_code_session_transcript_project_directory_for_agent_seat_common",
+    Path(__file__).with_name("claude-code-session-transcript-project-directory-for-agent-seat-common.py")
 )
 project_directory_module = importlib.util.module_from_spec(_project_directory_spec)
 _project_directory_spec.loader.exec_module(project_directory_module)
