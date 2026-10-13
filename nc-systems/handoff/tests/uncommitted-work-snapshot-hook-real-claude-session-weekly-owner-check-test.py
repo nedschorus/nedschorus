@@ -4,14 +4,19 @@
 Each case runs the check with --claude-program naming a fake claude, a Python
 script that does what one outcome of a real session would do, and with
 --record-directory in a scratch directory, so no case starts a real claude or
-writes to the log-store. For a passing session the fake writes the file and
-the work-snapshot itself, with its own process as the owner, through the
-scratch clone's copy of the module.
+writes to the log-store. In the passing case the fake writes the file and runs
+the hook command the scratch clone's settings register, as claude does after a
+Bash call; to be the claude process the hook looks for, the fake first replaces
+itself with a copy of this Python interpreter named claude. In the failing
+cases the fake writes the work-snapshot itself, through the scratch clone's
+copy of the module, with whatever owner, file or transcript the case needs.
 
 Run: python3 nc-systems/handoff/tests/uncommitted-work-snapshot-hook-real-claude-session-weekly-owner-check-test.py
 """
 
+import contextlib
 import importlib.util
+import io
 import json
 import os
 import signal
@@ -20,6 +25,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -41,14 +47,20 @@ os.environ.update(GIT_CONFIG_GLOBAL=str(GLOBAL_CONFIG), GIT_CONFIG_NOSYSTEM="1")
 
 FAKE_CLAUDE = SCRATCH / "fake-claude.py"
 FAKE_CLAUDE.write_text(r'''#!/usr/bin/env python3
-import importlib.util, json, os, sys, time
+import importlib.util, json, os, subprocess, sys, time
 from pathlib import Path
 mode = os.environ["FAKE_CLAUDE_MODE"]
 session = "11111111-2222-3333-4444-555555555555"
+if mode == "hook" and "FAKE_CLAUDE_RUNNING_AS_CLAUDE" not in os.environ:
+    os.environ["FAKE_CLAUDE_RUNNING_AS_CLAUDE"] = "1"
+    named_claude = os.environ["FAKE_CLAUDE_PYTHON_NAMED_CLAUDE"]
+    os.execv(named_claude, [named_claude, __file__, *sys.argv[1:]])
 if mode == "login-lapsed":
     print("Invalid API key · Please run /login", file=sys.stderr)
     sys.exit(1)
 if mode == "hang":
+    child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(600)"])
+    Path(os.environ["FAKE_CLAUDE_CHILD_PROCESS_ID_FILE"]).write_text(str(child.pid))
     Path(os.environ["FAKE_CLAUDE_PROCESS_ID_FILE"]).write_text(str(os.getpid()))
     time.sleep(600)
 if mode == "error-result":
@@ -59,10 +71,25 @@ if mode == "no-json":
     print("not json")
     sys.exit(0)
 clone = Path.cwd()
+settings = json.loads(Path(sys.argv[sys.argv.index("--settings") + 1]).read_text())
 Path(os.environ["FAKE_CLAUDE_ARGUMENTS_FILE"]).write_text(json.dumps({
-    "arguments": sys.argv[1:],
-    "settings": json.loads(Path(sys.argv[sys.argv.index("--settings") + 1]).read_text()),
-    "clone": str(clone)}))
+    "arguments": sys.argv[1:], "settings": settings, "clone": str(clone)}))
+if mode == "breaks-clone":
+    import shutil
+    shutil.rmtree(clone / ".git")
+    print(json.dumps({"is_error": False, "result": "done", "session_id": session}))
+    sys.exit(0)
+if mode == "hook":
+    (clone / "live-check.txt").write_text("live\n")
+    hook = subprocess.run(
+        settings["hooks"]["PostToolUse"][0]["hooks"][0]["command"], shell=True, text=True,
+        capture_output=True, input=json.dumps({
+            "session_id": session, "transcript_path": f"/transcripts/{session}.jsonl",
+            "cwd": str(clone), "hook_event_name": "PostToolUse", "tool_name": "Bash",
+            "tool_input": {"command": "echo live > live-check.txt"}}))
+    print(f"hook exited {hook.returncode}: {hook.stdout}{hook.stderr}", file=sys.stderr)
+    print(json.dumps({"is_error": False, "result": "done", "session_id": session}))
+    sys.exit(0)
 spec = importlib.util.spec_from_file_location(
     "m", clone / "nc-systems" / "handoff" / "uncommitted-work-snapshots.py")
 module = importlib.util.module_from_spec(spec)
@@ -77,9 +104,33 @@ print(json.dumps({"is_error": False, "result": "done", "session_id": session}))
 ''')
 FAKE_CLAUDE.chmod(0o755)
 FAKE_CLAUDE_PROCESS_ID_FILE = SCRATCH / "fake-claude-process-id"
+FAKE_CLAUDE_CHILD_PROCESS_ID_FILE = SCRATCH / "fake-claude-child-process-id"
 FAKE_CLAUDE_ARGUMENTS_FILE = SCRATCH / "fake-claude-arguments.json"
+
+
+def interpreter_image_of_this_process():
+    """The executable file this process runs, which is not always sys.executable: on macOS a
+    framework Python's bin/python3.x is a launcher that re-executes Python.app's Python, so a
+    copy of the launcher would run under the name Python, not claude."""
+    if sys.platform.startswith("linux"):
+        return Path(os.readlink("/proc/self/exe"))
+    ps = subprocess.run(["ps", "-o", "comm=", "-p", str(os.getpid())],
+                        capture_output=True, text=True, check=True)
+    image = Path(ps.stdout.strip())
+    if not image.is_absolute():
+        raise RuntimeError(f"ps reported {image!r} as this process's executable, not a full path")
+    return image
+
+
+# A copy, not a symbolic link: the process name the hook reads is the name of the executable
+# file the process runs.
+PYTHON_NAMED_CLAUDE = SCRATCH / "python-named-claude" / "claude"
+PYTHON_NAMED_CLAUDE.parent.mkdir()
+shutil.copy2(interpreter_image_of_this_process(), PYTHON_NAMED_CLAUDE)
 os.environ.update(FAKE_CLAUDE_PROCESS_ID_FILE=str(FAKE_CLAUDE_PROCESS_ID_FILE),
-                  FAKE_CLAUDE_ARGUMENTS_FILE=str(FAKE_CLAUDE_ARGUMENTS_FILE))
+                  FAKE_CLAUDE_CHILD_PROCESS_ID_FILE=str(FAKE_CLAUDE_CHILD_PROCESS_ID_FILE),
+                  FAKE_CLAUDE_ARGUMENTS_FILE=str(FAKE_CLAUDE_ARGUMENTS_FILE),
+                  FAKE_CLAUDE_PYTHON_NAMED_CLAUDE=str(PYTHON_NAMED_CLAUDE))
 
 _check_spec = importlib.util.spec_from_file_location("weekly_owner_check", CHECK)
 weekly_owner_check = importlib.util.module_from_spec(_check_spec)
@@ -99,25 +150,30 @@ def check(condition, name, detail=""):
 run_count = [0]
 
 
-def run_check(mode, *extra, claude_program=None, timeout=120):
+def run_check(mode, *extra, claude_program=None, timeout=120, environment=None):
     run_count[0] += 1
     records = SCRATCH / f"records-{run_count[0]}"
+    if "--timeout-seconds" not in extra:
+        # Under the check's own 300 s default, a fake claude that hangs would meet this
+        # function's timeout first and show as a bare TimeoutExpired, not the check's report.
+        extra = (*extra, "--timeout-seconds", str(timeout / 2))
     completed = subprocess.run(
         [sys.executable, str(CHECK), "--claude-program", str(claude_program or FAKE_CLAUDE),
          "--record-directory", str(records), *extra],
-        capture_output=True, text=True, env=dict(os.environ, FAKE_CLAUDE_MODE=mode),
-        timeout=timeout)
+        capture_output=True, text=True,
+        env=dict(os.environ, FAKE_CLAUDE_MODE=mode, **(environment or {})), timeout=timeout)
     written = list(records.glob("*.txt")) if records.is_dir() else []
     record = written[0].read_text() if written else ""
     return completed, record
 
 
 def test_a_session_that_finds_itself_passes():
-    completed, record = run_check("pass")
+    completed, record = run_check("hook")
     check(completed.returncode == 0 and "VERDICT: PASSED" in record
           and "FAIL" not in record
           and sum(line.startswith("PASS ") for line in record.splitlines()) == 5,
-          "a session whose hook wrote its own work-snapshot passes, and the record says so",
+          "a session that runs the scratch clone's hook, and whose hook wrote its own "
+          "work-snapshot, passes, and the record says so",
           completed.stdout + completed.stderr)
     check("record: " in completed.stdout, "the run prints the record's citation", completed.stdout)
     seen = json.loads(FAKE_CLAUDE_ARGUMENTS_FILE.read_text())
@@ -160,6 +216,19 @@ def test_failures_are_recorded():
               name, f"exit {completed.returncode}: {record or completed.stderr}")
 
 
+def process_is_running(process_id, wait_seconds=5):
+    """False once the process is gone or a zombie; an orphan's reaping can take a moment."""
+    deadline = time.monotonic() + wait_seconds
+    while True:
+        state = subprocess.run(["ps", "-o", "stat=", "-p", str(process_id)],
+                               capture_output=True, text=True)
+        if state.returncode != 0 or state.stdout.strip().startswith("Z"):
+            return False
+        if time.monotonic() > deadline:
+            return True
+        time.sleep(0.1)
+
+
 def test_claude_that_cannot_start_or_finish_fails():
     completed, record = run_check("pass", claude_program=SCRATCH / "no-such-claude")
     check(completed.returncode == 1 and "could not be started" in record,
@@ -168,17 +237,16 @@ def test_claude_that_cannot_start_or_finish_fails():
         completed, record = run_check("hang", "--timeout-seconds", "1", timeout=30)
     except subprocess.TimeoutExpired:
         completed, record = None, "the check itself did not finish within 30 s"
-    hung = int(FAKE_CLAUDE_PROCESS_ID_FILE.read_text())
-    try:
-        os.kill(hung, 0)
-        still_running = True
-        os.kill(hung, signal.SIGKILL)
-    except ProcessLookupError:
-        still_running = False
+    still_running = [process_id for process_id in (
+        int(FAKE_CLAUDE_PROCESS_ID_FILE.read_text()),
+        int(FAKE_CLAUDE_CHILD_PROCESS_ID_FILE.read_text())) if process_is_running(process_id)]
+    for process_id in still_running:
+        os.kill(process_id, signal.SIGKILL)
     check(completed is not None and completed.returncode == 1
           and "did not finish within 1.0 s" in record and not still_running,
-          "a claude that does not finish in time is killed and fails the check",
-          f"still running: {still_running}; {record or completed.stderr}")
+          "a claude that does not finish in time is killed with its child process "
+          "and fails the check",
+          f"still running: {still_running}; {record or (completed and completed.stderr)}")
 
 
 def test_the_record_goes_to_the_log_store_by_default():
@@ -205,20 +273,54 @@ def test_the_record_goes_to_the_log_store_by_default():
         mark.this_machine_is_ned_box, mark.run_on_ned_box_or_here = real
 
 
-def test_a_check_that_cannot_run_fails():
+def test_a_scratch_clone_that_cannot_be_made_fails():
     broken = SCRATCH / "broken-gitconfig"
     broken.write_text("[unclosed\n")
-    completed = subprocess.run(
-        [sys.executable, str(CHECK), "--claude-program", str(FAKE_CLAUDE),
-         "--record-directory", str(SCRATCH / "records-broken")],
-        capture_output=True, text=True,
-        env=dict(os.environ, FAKE_CLAUDE_MODE="pass", GIT_CONFIG_GLOBAL=str(broken)),
-        timeout=120)
-    records = list((SCRATCH / "records-broken").glob("*.txt"))
-    record = records[0].read_text() if records else ""
-    check(completed.returncode == 1 and "FAIL the check could not run: RuntimeError: git" in record,
-          "a scratch clone git cannot make fails the check, naming git's error",
+    no_git = SCRATCH / "a-path-without-git"
+    no_git.mkdir()
+    for program in ("mkdir", "cat"):  # the record is still written through these
+        (no_git / program).symlink_to(shutil.which(program))
+    cases = [
+        ({"GIT_CONFIG_GLOBAL": str(broken)}, "RuntimeError: git",
+         "a scratch clone git cannot make fails the check, naming git's error"),
+        ({"PATH": str(no_git)}, "FileNotFoundError",
+         "a scratch clone that cannot be made because git cannot be started fails the "
+         "check as a scratch clone failure, not as claude failing to start"),
+    ]
+    for environment, error, name in cases:
+        completed, record = run_check("pass", environment=environment)
+        check(completed.returncode == 1
+              and f"FAIL the scratch clone could not be made: {error}" in record,
+              name, record or completed.stderr)
+
+
+def test_a_check_that_cannot_run_fails():
+    completed, record = run_check("breaks-clone")
+    check(completed.returncode == 1 and "FAIL the check could not run: " in record,
+          "a scratch clone broken while claude runs fails the check, naming the error",
           record or completed.stderr)
+
+
+def test_an_error_after_claude_started_is_not_reported_as_a_failed_start():
+    def raise_process_lookup_error(process, timeout_seconds):
+        raise ProcessLookupError("no such process group")
+    real = weekly_owner_check.start_claude, weekly_owner_check.wait_for_claude
+    records = SCRATCH / "records-error-after-start"
+    try:
+        weekly_owner_check.start_claude = lambda program, clone, settings: object()
+        weekly_owner_check.wait_for_claude = raise_process_lookup_error
+        with contextlib.redirect_stdout(io.StringIO()):
+            exit_code = weekly_owner_check.main(
+                ["--claude-program", "claude", "--record-directory", str(records)])
+    finally:
+        weekly_owner_check.start_claude, weekly_owner_check.wait_for_claude = real
+    written = list(records.glob("*.txt"))
+    record = written[0].read_text() if written else ""
+    check(exit_code == 1
+          and "FAIL the check could not run: ProcessLookupError" in record
+          and "could not be started" not in record,
+          "an error while waiting for a started claude fails the check as "
+          "\"could not run\", not as claude failing to start", record)
 
 
 def test_a_record_that_cannot_be_written_is_reported():
@@ -240,7 +342,9 @@ def main():
         for case in (test_a_session_that_finds_itself_passes, test_failures_are_recorded,
                      test_claude_that_cannot_start_or_finish_fails,
                      test_the_record_goes_to_the_log_store_by_default,
+                     test_a_scratch_clone_that_cannot_be_made_fails,
                      test_a_check_that_cannot_run_fails,
+                     test_an_error_after_claude_started_is_not_reported_as_a_failed_start,
                      test_a_record_that_cannot_be_written_is_reported):
             try:
                 case()

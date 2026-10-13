@@ -59,8 +59,10 @@ A record that could not be written leaves the run's lines in that log file.
 import argparse
 import importlib.util
 import json
+import os
 import shlex
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -139,20 +141,29 @@ def process_id_in_owner_key(owner_key):
     return parts[1] if len(parts) == 3 else parts[0]
 
 
-def run_claude(claude_program, clone, settings_path, timeout_seconds):
-    """Return (claude's process id, exit code, stdout, stderr); raise OSError if it cannot start."""
+def start_claude(claude_program, clone, settings_path):
+    """Start claude in a session of its own; raise OSError if it cannot start."""
     environment = runner.environment_without_git_redirecting_variables()
     environment[snapshots.AGENT_SEAT_ENVIRONMENT_VARIABLE] = LIVE_CHECK_AGENT_SEAT
-    process = subprocess.Popen(
+    return subprocess.Popen(
         [claude_program, "-p", LIVE_CHECK_PROMPT, "--model", LIVE_CHECK_MODEL,
          "--allowedTools", "Bash", "--output-format", "json", "--no-session-persistence",
          "--settings", str(settings_path)],
         cwd=clone, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-        text=True, env=environment)
+        text=True, env=environment, start_new_session=True)
+
+
+def wait_for_claude(process, timeout_seconds):
+    """Return (claude's process id, exit code, stdout, stderr); the exit code is None on timeout.
+
+    A timeout kills claude's whole process group: a child left alive, such as a
+    hook or a Bash command, would keep claude's output pipes open and the read
+    after the kill would wait for that child.
+    """
     try:
         stdout, stderr = process.communicate(timeout=timeout_seconds)
     except subprocess.TimeoutExpired:
-        process.kill()
+        os.killpg(process.pid, signal.SIGKILL)
         stdout, stderr = process.communicate()
         return process.pid, None, stdout, stderr
     return process.pid, process.returncode, stdout, stderr
@@ -217,6 +228,26 @@ def write_record(record, record_directory, now):
     return citation
 
 
+def owner_check_result_lines(arguments, scratch):
+    """Make the scratch clone, run claude in it, and return the record's result lines."""
+    clone = scratch / "clone"
+    try:
+        make_scratch_clone(clone)
+        settings_path = scratch / "settings.json"
+        settings_path.write_text(hook_settings_json(clone))
+    except Exception as error:
+        return [f"FAIL the scratch clone could not be made: {type(error).__name__}: {error}"]
+    try:
+        process = start_claude(arguments.claude_program, clone, settings_path)
+    except OSError as error:
+        return [f"FAIL {arguments.claude_program} could not be started: "
+                f"{type(error).__name__}: {error}"]
+    claude_process_id, exit_code, stdout, stderr = wait_for_claude(
+        process, arguments.timeout_seconds)
+    return check_results(clone, claude_process_id, exit_code, stdout, stderr,
+                         arguments.timeout_seconds)
+
+
 def main(argv=None, now=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--claude-program", default=default_claude_program())
@@ -226,20 +257,9 @@ def main(argv=None, now=None):
     now = now or datetime.now(timezone.utc)
     scratch = Path(tempfile.mkdtemp(prefix=f"{PROGRAM}-"))
     try:
-        clone = scratch / "clone"
-        try:
-            make_scratch_clone(clone)
-            settings_path = scratch / "settings.json"
-            settings_path.write_text(hook_settings_json(clone))
-            claude_process_id, exit_code, stdout, stderr = run_claude(
-                arguments.claude_program, clone, settings_path, arguments.timeout_seconds)
-            lines = check_results(clone, claude_process_id, exit_code, stdout, stderr,
-                                  arguments.timeout_seconds)
-        except OSError as error:
-            lines = [f"FAIL {arguments.claude_program} could not be started: "
-                     f"{type(error).__name__}: {error}"]
-        except Exception as error:
-            lines = [f"FAIL the check could not run: {type(error).__name__}: {error}"]
+        lines = owner_check_result_lines(arguments, scratch)
+    except Exception as error:
+        lines = [f"FAIL the check could not run: {type(error).__name__}: {error}"]
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
     failed = any(line.startswith("FAIL") for line in lines)
