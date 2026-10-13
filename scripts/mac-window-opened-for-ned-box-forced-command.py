@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Open an iTerm window on this Mac, at ned-box's request, running ssh back to ned-box or an agent-seat's launcher.
 
+Usage: SSH_ORIGINAL_COMMAND='<request>' scripts/mac-window-opened-for-ned-box-forced-command.py
+
 This program is the forced command of one line in the Mac's
 ~/.ssh/authorized_keys, the line that admits ned-box's key. sshd runs it in
 place of whatever ned-box asked to run, and puts ned-box's request in
@@ -281,6 +283,10 @@ def open_in_typora(request):
 
 
 def main():
+    # sshd passes a forced command no arguments, so only a person running it by hand reaches this.
+    if sys.argv[1:] in (["--help"], ["-h"]):
+        print(__doc__)
+        return 0
     request = os.environ.get("SSH_ORIGINAL_COMMAND")
     if request is not None and request.split(" ")[0] == TYPORA_VERB:
         return open_in_typora(request)

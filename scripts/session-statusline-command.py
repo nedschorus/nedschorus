@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Print the status line from the harness's JSON payload on stdin.
 
+Usage: scripts/session-statusline-command.py < <payload.json>
+
 Configure as the statusLine command in settings.json. Missing or malformed
 fields omit their segments: a rendering fault must not blank the whole line.
 """
@@ -267,6 +269,10 @@ def capture_payload(payload: dict) -> None:
 
 
 def main() -> int:
+    # Claude Code passes the status line command no arguments, so only a person running it by hand reaches this.
+    if sys.argv[1:] in (["--help"], ["-h"]):
+        print(__doc__)
+        return 0
     try:
         payload = json.loads(sys.stdin.read() or "{}")
         if not isinstance(payload, dict):

@@ -64,6 +64,16 @@
 
 set -eu
 
+if [ $# -eq 1 ] && { [ "$1" = --help ] || [ "$1" = -h ]; }; then
+    echo "usage: open-iterm-window-running-command <command...>"
+    echo "Opens an iTerm2 window on this Mac running the command, passed as the session's"
+    echo "process, never as synthetic keystrokes, under a login shell so PATH is the user's."
+    echo "One argument is the whole command; several are joined with single spaces, and"
+    echo "are refused when one holds whitespace or quotes."
+    echo "OPEN_ITERM_WINDOW_DRY_RUN=1 prints the AppleScript instead of running it."
+    exit 0
+fi
+
 if [ $# -lt 1 ]; then
     echo "usage: open-iterm-window-running-command <command...>" >&2
     echo "Opens an iTerm2 window running the command — passed as the session's" >&2

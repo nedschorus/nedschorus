@@ -53,6 +53,21 @@
 
 set -eu
 
+# Answered before anything else runs, so asking for help never launches, lists or contacts an agent-seat.
+if [ $# -eq 1 ] && { [ "$1" = --help ] || [ "$1" = -h ]; }; then
+    echo "usage: launch-claude-ubuntu <name> [--no-attach] [--first-prompt-file <box-path>]"
+    echo
+    echo "Run on the Mac: reaches the agent-seat named <name> on ned-box over ssh, attaching"
+    echo "to its tmux session there when one runs, and otherwise creating the session, whose"
+    echo "handoff supervisor starts claude in ~/agents/<name> on ned-box."
+    echo
+    echo "  --no-attach                    create the session without attaching this terminal"
+    echo "  --first-prompt-file <box-path> the file on ned-box whose text is the new agent-session's first prompt"
+    echo
+    echo "Work that must run on the Mac goes to launch-claude-mac instead."
+    exit 0
+fi
+
 # NO AGENTS ROOT IS READ HERE (user-ruled 2026-09-22, in merge-lane-2's walk
 # merge-lane-2-questions-concerns-and-suggestions-2026-09-22, carried to PR
 # [The ubuntu launcher reads its own box-side agents root](https://github.com/nedschorus/nedschorus/pull/619)
@@ -122,7 +137,7 @@ usage() {
 case "$1" in
     (-*)
         printf '%s\n' "launch-claude-ubuntu: refused to launch a seat named \"$1\": the first argument is always the seat name, and a seat name cannot start with -." >&2
-        echo "If you wanted help: this launcher has no help option; its usage line follows." >&2
+        echo "If you wanted help: run launch-claude-ubuntu --help, with no other argument." >&2
         echo "If you meant an option: put the seat name first and the options after it." >&2
         usage_line
         exit 2 ;;

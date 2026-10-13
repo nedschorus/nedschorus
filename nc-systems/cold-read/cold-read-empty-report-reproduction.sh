@@ -33,6 +33,17 @@
 
 set -eu
 
+if [ $# -eq 1 ] && { [ "$1" = --help ] || [ "$1" = -h ]; }; then
+    echo "usage: sh nc-systems/cold-read/cold-read-empty-report-reproduction.sh"
+    echo
+    echo "Reproduces a cold-read-full-run that reports saved reviews having reviewed nothing:"
+    echo "runs cold-read-grid.py with stub claude and codex programs that exit 0 and print"
+    echo "nothing, then reports the grid's exit code and the content length of every report it saved."
+    echo "No model is called. It writes to a temporary directory, to cold-read-records/, and a"
+    echo "throwaway target file at the top of the checkout that it removes when it ends."
+    exit 0
+fi
+
 REPO_ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT

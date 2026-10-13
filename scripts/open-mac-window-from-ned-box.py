@@ -108,6 +108,9 @@ def agent_seat_window_request_for(seat, forced_command):
 
 
 def main(arguments):
+    if arguments in (["--help"], ["-h"]):
+        print(__doc__)
+        return 0
     if not arguments:
         print(f"usage: {PROGRAM} <word> [<word> ...]  or  {PROGRAM} --agent-seat <seat>", file=sys.stderr)
         print("Opens a window on the user's Mac running ssh -t -- nedlern@ned-box <word> ..., "
