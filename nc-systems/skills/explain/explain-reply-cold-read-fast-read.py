@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Run a cold-read-fast-read on a draft /explain reply and print actionable findings.
 
+Usage: nc-systems/skills/explain/explain-reply-cold-read-fast-read.py < <draft>
+
 Pipe a draft beginning with `The user wrote:` and containing a line
 `The reply to him:` followed by the reply. Exit 0 means a report was printed,
 1 means the fast read failed or timed out, and 64 means invalid input.

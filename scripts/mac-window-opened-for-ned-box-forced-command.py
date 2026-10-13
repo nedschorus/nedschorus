@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Open an iTerm window on this Mac, at ned-box's request, running ssh back to ned-box or an agent-seat's launcher.
 
+Usage: SSH_ORIGINAL_COMMAND='<request>' scripts/mac-window-opened-for-ned-box-forced-command.py
+
 This program is the forced command of one line in the Mac's
 ~/.ssh/authorized_keys, the line that admits ned-box's key. sshd runs it in
 place of whatever ned-box asked to run, and puts ned-box's request in

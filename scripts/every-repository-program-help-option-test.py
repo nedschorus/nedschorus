@@ -20,7 +20,12 @@ cannot keep a path that is gone.
 
 Each program runs as `<interpreter> <path> --help`, from an empty temporary
 directory with stdin closed, and passes when it exits 0 within
-HELP_TIMEOUT_SECONDS and prints something on stdout. A Python program runs
+HELP_TIMEOUT_SECONDS and prints a line starting with "usage" on stdout. A
+program that ignores --help would otherwise pass by doing its real work, so
+the run is confined: HOME is a scratch directory, and the commands in
+STUBBED_COMMANDS come first on PATH as stubs that record the call and exit
+nonzero; a program that starts one of them fails. The network stays reachable
+for anything that does not go through those commands. A Python program runs
 under the interpreter running this test; a shell program under the
 interpreter its `#!` line names, so a file without the executable bit is
 still checked.
@@ -30,6 +35,7 @@ Prints one line per case and exits 1 if any case fails.
 """
 
 import concurrent.futures
+import os
 import re
 import subprocess
 import sys
@@ -40,6 +46,11 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 HELP_TIMEOUT_SECONDS = 20
 MAIN_GUARD_PATTERN = re.compile(r"""^if __name__ == ["']__main__["']\s*:""", re.MULTILINE)
 SHELL_INTERPRETER_NAMES = ("sh", "bash", "zsh")
+USAGE_LINE_PATTERN = re.compile(r"^\s*usage\b", re.IGNORECASE | re.MULTILINE)
+# The commands through which a program reaches models, other machines, GitHub, git state or the Mac's desktop.
+STUBBED_COMMANDS = ("claude", "codex", "agy", "gemini", "ssh", "scp", "rsync", "gh", "git",
+                    "osascript", "open", "tmux", "launchctl", "crontab")
+STUB_CALLS_FILE_NAME = "stubbed-command-calls.log"
 
 EXCLUDED_KINDS = (
     ("a test suite, run by run-all-test-suites.py",
@@ -110,20 +121,43 @@ def excluded_kind(path):
     return None
 
 
+def confined_environment(scratch):
+    """An environment whose HOME is scratch/home and whose PATH starts with stubs of STUBBED_COMMANDS."""
+    home = scratch / "home"
+    stubs = scratch / "stubs"
+    home.mkdir()
+    stubs.mkdir()
+    calls = scratch / STUB_CALLS_FILE_NAME
+    for name in STUBBED_COMMANDS:
+        stub = stubs / name
+        stub.write_text(f'#!/bin/sh\nprintf "%s\\n" "{name} $*" >> "{calls}"\nexit 97\n')
+        stub.chmod(0o755)
+    environment = dict(os.environ, HOME=str(home), PATH=f"{stubs}{os.pathsep}{os.environ.get('PATH', '')}")
+    return environment, calls
+
+
 def help_option_problem(interpreter, program_path, timeout_seconds=HELP_TIMEOUT_SECONDS):
-    """None when `program_path --help` exits 0 with output on stdout, else what went wrong."""
-    with tempfile.TemporaryDirectory(prefix="help-option-test-") as empty_directory:
+    """None when `program_path --help` exits 0 printing a usage line and starts no stubbed command, else what went wrong."""
+    with tempfile.TemporaryDirectory(prefix="help-option-test-") as scratch:
+        scratch = Path(scratch)
+        working_directory = scratch / "empty"
+        working_directory.mkdir()
+        environment, calls = confined_environment(scratch)
         try:
             result = subprocess.run([*interpreter, str(program_path), "--help"],
-                                    cwd=empty_directory, stdin=subprocess.DEVNULL,
+                                    cwd=working_directory, env=environment, stdin=subprocess.DEVNULL,
                                     capture_output=True, text=True, timeout=timeout_seconds)
         except subprocess.TimeoutExpired:
             return f"--help did not finish within {timeout_seconds} seconds"
+        started = calls.read_text().strip() if calls.exists() else ""
+    if started:
+        return f"--help started {started.splitlines()[0]!r}, so the program did its work instead of printing help"
     if result.returncode != 0:
         return (f"--help exited {result.returncode}; stderr: "
                 f"{result.stderr.strip()[-300:]!r}")
-    if not result.stdout.strip():
-        return "--help exited 0 but printed nothing on stdout"
+    if not USAGE_LINE_PATTERN.search(result.stdout):
+        return ("--help exited 0 but printed no line starting with \"usage\" on stdout; "
+                f"stdout began {result.stdout.strip()[:120]!r}")
     return None
 
 
@@ -137,6 +171,10 @@ def check_the_checker_reports_each_failure():
             "prints nothing": "pass\n",
             "prints help only on stderr": "import sys\nprint('usage: x', file=sys.stderr)\n",
             "hangs": "import time\ntime.sleep(30)\n",
+            "ignores --help and prints its normal output":
+                "print('3 dialogs written, 0 failed')\n",
+            "ignores --help and starts claude":
+                "import subprocess\nsubprocess.run(['claude', '-p', 'x'])\nprint('usage: ran claude')\n",
         }
         for label, source in cases.items():
             program = directory / (label.replace(" ", "-") + ".py")

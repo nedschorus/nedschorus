@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Play a scenario through the real design-to-main machine in a throwaway repository.
 
-Run: python3 scripts/design-to-main/design-to-main-scenario-runner.py <scenario.yaml>
+Usage: python3 scripts/design-to-main/design-to-main-scenario-runner.py <scenario.yaml>
 A scenario supplies a name and steps, each `state: verdict`, or a mapping of
 `state`, `verdict` and optional `fields`. Unnamed states use the fixture's
 happy path until the supplied steps are spent.

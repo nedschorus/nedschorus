@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Print the status line from the harness's JSON payload on stdin.
 
+Usage: scripts/session-statusline-command.py < <payload.json>
+
 Configure as the statusLine command in settings.json. Missing or malformed
 fields omit their segments: a rendering fault must not blank the whole line.
 """
