@@ -29,7 +29,6 @@ The user approved merging them on 2026-10-11, as item 2 of the approval-walk `co
 
 It is a hook for every tool, registered under PostToolUse and PostToolUseFailure, since PostToolUse runs only after a tool call that succeeds. It does not run at Stop (user-ruled 2026-10-11). When nothing has changed it takes under 100 ms per tool call on ned-box (user-ruled 2026-10-11): it compares the stat data it stored at its previous run (change time, modification time, size, inode) and hashes only a file whose stat data differs, as git hashes it (`git hash-object --path=<path> <file>`). A throwaway prototype took about 40 ms per run on ned-box on 2026-10-11.
 
-
 ### Which files it checks
 
 - **In the checkout of the tool call's working directory:** every guarded file in it, tracked, untracked or ignored, decided with the guard's own functions, `is_protected`, `is_reusable_prompt` and `is_reviewed_document`, imported from `.claude/hooks/instruction-file-guard.py`, so the two hooks cannot disagree. Ignored files are listed with `git ls-files --others --ignored --exclude-standard` restricted to the paths the guard can protect (`CLAUDE.local.md` at any depth, and under `.claude/`, `.claude/settings.local.json` included), so the large ignored trees, such as `__pycache__/`, are never read.
@@ -124,19 +123,17 @@ Three PreToolUse hooks guard Edit, Write and NotebookEdit calls today:
 
 - `.claude/hooks/session-location-write-guard.py` refuses writes from a session whose checkout is on a detached HEAD and writes into the machine's shared reference checkout, each unless its own one-use marker `.location-write-approved` exists. It protects where work happens, not the user's approval, and stays.
 - `.claude/hooks/backup-and-snapshot-write-guard.py` refuses writes to Timeshift and Time Machine state. It stays.
-- `.claude/hooks/instruction-file-guard.py` refuses an Edit or Write of a guarded file unless a marker file holding some text exists; today it accepts any text in the marker, and checking that the text quotes the user is the work described below. This is the gate the user's one-gate principle bears on.
+- `.claude/hooks/instruction-file-guard.py` refuses an Edit or Write of a guarded file unless a marker file holding some text exists; today it accepts any text in the marker, and checking that the text quotes the user is the work described below. It stays, as the check before the write; the new hook is the check after it (user-ruled 2026-10-13).
 
-Built first, the new hook works beside the instruction-file guard, and the approved set's way 2 relies on the guard. Afterwards the guard's approval gate could go: an Edit would land, the hook would ask, and `--approve` would record the user's yes, one gate for Edit and the shell alike; way 2 would go with it. What would be lost:
+The new hook works beside the instruction-file guard, and the approved set's way 2 relies on the guard. The guard's approval gate stays because only the guard gives:
 
 - **Blocking before the write lands.** `.claude/settings.json` configures hooks, this hook included; a change that switches the hook off takes effect before anyone answers. The guard stops such an Edit before it lands; the new hook cannot.
-- **The memory-directory refusal,** which no marker overrides. It has nothing to do with approval and would stay as a small hook of its own.
+- **The memory-directory refusal,** which no marker overrides.
 - **The teaching moment.** The guard's refusal tells the agent how to get approval before it writes; the new hook's message tells it after.
-
-Whether to remove the guard's approval gate is decided after the new hook is built and working, not in this build (user-ruled 2026-10-12).
 
 ### Checking a quotation of the user
 
-The guard is to check a quotation of the user in a marker file against the transcripts, and refuse a marker whose quoted words the user never typed (user-ruled 2026-10-03). The check applies to the text in double quotation marks. A marker that begins "Obvious fix under CLAUDE.md's standing approval:" is not checked, as `CLAUDE.md` allows. The check reads the user's words with the functions `typed_by_user` and `queued_by_user` of `scripts/search-user-messages-in-transcripts.py`, in the session's own transcript and, for a subagent, its parent's; for a marker naming another session, in that session's transcript in the log-store's `transcripts/` copy, letting the write through with a warning when that copy ends before the quotation. The same check applies to the hook's `--approve`. The check shows that the user typed the words, not that he meant them for this change.
+The guard is to check a quotation of the user in a marker file against the transcripts, and refuse a marker whose quoted words the user never typed (user-ruled 2026-10-03). The check applies to the text in double quotation marks. A marker that begins "Obvious fix under CLAUDE.md's standing approval:" is not checked, as `CLAUDE.md` allows. The check reads the user's words with the functions `typed_by_user` and `queued_by_user` of `scripts/search-user-messages-in-transcripts.py`, in the session's own transcript and, for a subagent, its parent's; for a marker naming another session, in that session's transcript in the log-store's `transcripts/` copy, letting the write through with a warning when that copy ends before the quotation. The same check applies to the hook's `--approve`. The check shows that the user typed the words, not that he meant them for this change. Quotations of the user in commit messages are not checked (user-ruled 2026-10-13).
 
 ## Tests the build must include
 
@@ -179,11 +176,6 @@ The quotation check's tests: a marker quoting words the user typed passes; one q
 - **User-level files under `~/.claude/`** other than the two listed are not checked.
 - **A ned-box file reached from the Mac through `/Volumes/nedhome`** by a Mac session is kept in the Mac's backup directory under its `/Volumes/nedhome` path, with its own approved set, so a version approved on ned-box is asked about again there. Mac sessions work in the Mac's own clones, so this is rare.
 - **The hook's own file:** a shell command that deletes or breaks the hook stops it.
-
-## Open questions
-
-- Whether to remove the instruction-file guard's approval gate, decided after the build ("Does this replace the existing file protection?" above).
-- Whether to check quotations of the user in commit messages as well as in marker files (the agent-seat MD-skills' task #152, closed when this GHI took it over).
 
 ## Next action
 
