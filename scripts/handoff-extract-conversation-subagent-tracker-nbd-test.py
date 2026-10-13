@@ -572,6 +572,12 @@ with tempfile.TemporaryDirectory() as workspace:
         extractor._subagent_tracker_module = None
     check("a tracker that cannot be loaded leaves the handoff's exit 0 and its tail written",
           exit_code == 0 and output_path.is_file(), exit_code)
+    tail_header = output_path.read_text(encoding="utf-8").split("\n---\n", 1)[0]
+    check("a tracker that cannot be loaded is named in the tail's header",
+          "subagent tracker" in tail_header and "FileNotFoundError" in tail_header, tail_header)
+    stdout_header = stdout_text.getvalue().split("\n---\n", 1)[0]
+    check("a tracker that cannot be loaded is named in the header the extractor writes to stdout",
+          "FileNotFoundError" in stdout_header, stdout_header)
     check("a tracker that cannot be loaded is told on stderr, writing to a file or to stdout",
           "subagent tracker" in file_stderr.getvalue() and "FileNotFoundError" in file_stderr.getvalue()
           and stdout_exit_code == 0 and "FileNotFoundError" in stdout_stderr.getvalue()
@@ -595,6 +601,10 @@ with tempfile.TemporaryDirectory() as workspace:
         extractor._subagent_tracker_module = None
     check("a tracker that cannot be loaded adds no complete dialog to a handoff whose tail carries every turn",
           whole_output.is_file() and not (Path(workspace) / "whole-out-complete.md").exists())
+    whole_header = whole_output.read_text(encoding="utf-8").split("\n---\n", 1)[0]
+    check("a tracker that cannot be loaded is named in the tail's header when no complete dialog is written, "
+          "so the successor still reads it",
+          "FileNotFoundError" in whole_header, whole_header)
     complete_header = complete.split("\n---\n", 1)[0]
     check("the note is counted neither as a dialog turn nor as a subagent turn, and brings no subagent "
           "transcript pointer",

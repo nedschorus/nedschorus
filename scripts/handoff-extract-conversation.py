@@ -62,7 +62,7 @@ import importlib.util
 import json
 import re
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 PROJECTS_ROOT = Path.home() / ".claude" / "projects"
@@ -429,6 +429,7 @@ class ExtractionReport:
     total_turns: int
     skip_counts: dict
     companion_path: Path = None
+    left_out_notes: list = field(default_factory=list)
 
 
 def render_pointers(report: ExtractionReport) -> list:
@@ -516,6 +517,8 @@ def render_extraction(turns, report: ExtractionReport) -> str:
     skipped = ", ".join(f"{count} {name}" for name, count in report.skip_counts.items() if count)
     if skipped:
         lines.append(f"Records skipped while reading: {skipped}.")
+    # The tail holds no subagent turn, so a tracker-failure note is carried here, where the successor reads it.
+    lines += [note["text"] for note in report.left_out_notes]
 
     lines += ["", "---", ""]
 
@@ -656,6 +659,7 @@ def main(argv=None) -> int:
         turns_left_behind=start_index,
         total_turns=len(dialog),
         skip_counts=skip_counts,
+        left_out_notes=turns_left_out_notes(turns),
     )
 
     if arguments.output:
