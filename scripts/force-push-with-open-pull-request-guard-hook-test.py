@@ -616,6 +616,19 @@ try:
               decision == "deny"
               and ["git", "-C", "/elsewhere/wt-fast-read", "rev-parse", "--abbrev-ref", "HEAD"]
               in runner.calls, (decision, runner.calls))
+    # bash leaves a quoted ~, and one after --chdir=, as written: the push runs in a folder named ~.
+    for command, directory in [
+            ("env -C /nowhere env --chdir=~/wt-fast-read git push --force origin", "/nowhere/~/wt-fast-read"),
+            ("env -C '~/wt-fast-read' git push --force origin", f"{SESSION_WORKTREE}/~/wt-fast-read"),
+            ("git -C '~/wt-fast-read' push --force origin", f"{SESSION_WORKTREE}/~/wt-fast-read"),
+            ("cd \\~/wt-fast-read && git push --force origin", f"{SESSION_WORKTREE}/~/wt-fast-read"),
+            ("cd ~/wt-fast-read && git push --force origin", "/elsewhere/wt-fast-read")]:
+        runner = ProbeRunner(branch="the-pr-branch",
+                             open_pull_requests={"the-pr-branch": FAST_READ_PULL_REQUEST})
+        decision, _ = decide(command, runner)
+        check(f"the push is checked where bash runs it: {command}",
+              ["git", "-C", directory, "rev-parse", "--abbrev-ref", "HEAD"] in runner.calls,
+              (decision, runner.calls))
 finally:
     if saved_home is None:
         os.environ.pop("HOME", None)
@@ -625,25 +638,31 @@ finally:
 # bash and the real env are the oracle for where nested wrappers run a command.
 with tempfile.TemporaryDirectory() as place:
     place = os.path.realpath(place)
-    for relative in ("a/b", "c", "home/x"):
+    for relative in ("a/b", "c", "home/x", "a/~/x"):
         os.makedirs(os.path.join(place, relative))
-    for wrappers in [["env", "-C", f"{place}/a", "env", "-C", "b"],
-                     ["env", "-C", f"{place}/a", "env", "-C", f"{place}/c"],
-                     ["env", "-C", f"{place}/a", "env", "-C", "~/x"],
-                     ["env", "-C", f"{place}/c", "-C", f"{place}/a/b"]]:
-        # bash expands the ~ before env sees it, as it would for the agent's command.
-        real = subprocess.run(["bash", "-c", " ".join(wrappers + ["pwd"])], capture_output=True,
+    for wrappers in [f"env -C {place}/a env -C b",
+                     f"env -C {place}/a env -C {place}/c",
+                     f"env -C {place}/a env -C ~/x",
+                     f"env -C {place}/a env --chdir=~/x",
+                     f"env -C {place}/a env -C '~/x'",
+                     f"env -C {place}/a env -C \\~/x",
+                     f"env -C {place}/c -C {place}/a/b"]:
+        # The command text goes through bash and through the reader, so each decides what ~ is.
+        real = subprocess.run(["bash", "-c", f"{wrappers} pwd"], capture_output=True,
                               text=True, env={**os.environ, "HOME": f"{place}/home"}, cwd=place)
         if real.returncode != 0:
-            print(f"SKIP  {' '.join(wrappers)}: this env refuses it ({real.stderr.strip()[:80]})")
+            print(f"SKIP  {wrappers}: this env refuses it ({real.stderr.strip()[:80]})")
             continue
         saved_home = os.environ.get("HOME")
         os.environ["HOME"] = f"{place}/home"
         try:
-            found = guard.directory_a_wrapper_sets(wrappers + ["git", "push"])
+            found = guard.directory_a_wrapper_sets(list(guard.shell_reader.simple_commands(f"{wrappers} git push")[0]))
         finally:
-            os.environ["HOME"] = saved_home
-        check(f"the guard finds the directory the real env runs in: {' '.join(wrappers)}",
+            if saved_home is None:
+                os.environ.pop("HOME", None)
+            else:
+                os.environ["HOME"] = saved_home
+        check(f"the guard finds the directory the real env runs in: {wrappers}",
               os.path.normpath(os.path.join(place, found)) == real.stdout.strip(),
               (found, real.stdout.strip()))
 runner = ProbeRunner(branch="the-pr-branch", open_pull_requests={"the-pr-branch": FAST_READ_PULL_REQUEST})

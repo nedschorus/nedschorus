@@ -197,10 +197,9 @@ def refused_search(command, commands, command_index, program_index,
 
 
 def resolve_directory(base, target):
-    expanded = os.path.expanduser(target)
-    if os.path.isabs(expanded):
-        return os.path.normpath(expanded)
-    return os.path.normpath(os.path.join(base, expanded))
+    if os.path.isabs(target):
+        return os.path.normpath(target)
+    return os.path.normpath(os.path.join(base, target))
 
 
 def first_refused_search(command, payload_cwd, deadline, clock):
@@ -219,14 +218,15 @@ def first_refused_search(command, payload_cwd, deadline, clock):
             program_index += 1
         if program_index < len(words) and is_program(words[program_index], "cd"):
             target = (words[program_index + 1]
-                      if program_index + 1 < len(words) else "~")
-            target_is_absolute = os.path.isabs(os.path.expanduser(plain_word(target)))
+                      if program_index + 1 < len(words) else os.path.expanduser("~"))
+            target_path = plain_word(shell_reader.shell_word_tilde_prefix_expand_as_bash_would(target))
+            target_is_absolute = os.path.isabs(target_path)
             if (UNRESOLVABLE_DIRECTORY_PATTERN.search(target)
                     or word_holds_unquoted_glob(target)
                     or (directory is None and not target_is_absolute)):
                 directory = None
             else:
-                directory = resolve_directory(directory or "/", plain_word(target))
+                directory = resolve_directory(directory or "/", target_path)
             directories[substitution] = directory
             continue
         if directory is None:

@@ -179,6 +179,23 @@ try:
           run_main(f"cd {scratch} && grep -l needle */*.jsonl", elsewhere) is not None)
     check("refused after cd with a relative path",
           run_main("cd .. && grep -l needle */*.jsonl", elsewhere) is not None)
+    # bash expands only an unquoted leading ~; a quoted one starts a folder named ~.
+    saved_home = os.environ.get("HOME")
+    try:
+        os.environ["HOME"] = str(scratch.parent)
+        check("refused after cd ~/ into the folder",
+              run_main(f"cd ~/{scratch.name} && grep -l needle */*.jsonl", elsewhere) is not None)
+        for quoted in [f"'~/{scratch.name}'", f"\\~/{scratch.name}", f'~"/{scratch.name}"']:
+            check(f"passes: cd {quoted} names a folder called ~ under the current one",
+                  run_main(f"cd {quoted} && grep -l needle */*.jsonl", elsewhere) is None)
+        os.environ["HOME"] = str(scratch)
+        check("refused after a bare cd, which goes to HOME",
+              run_main("cd && grep -l needle */*.jsonl", elsewhere) is not None)
+    finally:
+        if saved_home is None:
+            os.environ.pop("HOME", None)
+        else:
+            os.environ["HOME"] = saved_home
 
     # tree-sitter-bash folds a command bash runs in the parent shell into a pipeline
     # stage in two shapes; the cd before or on the line after the pipeline still counts.

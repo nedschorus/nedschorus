@@ -46,6 +46,31 @@ def check(case_name, condition, detail=""):
         failures.append(case_name)
 
 
+ANSI_C_WORDS = [r"$'a\nb'", r"$'\t\x41\101\e\cA\c?'", r"$'it\'s \"x\" \?'", r"$'keep \q and \x and \u'",
+                r"$'nul\0after'", r"a$'\n'b", r"$'\c\\x'", r"$'\0101\x4142'", r"$'\a\b\f\r\v\E'",
+                r"$'\xff\x80 \351 a\xc3 \0401'", r"$'\777 \400'", r"$'\cé \c☃ \c\xe9'",
+                r"$'\u00e9\U0001F600\u2603x \u41\u7f\u80'",
+                r"$'\U110000 \U7FFFFFFF a\UFFFFFFFFb \uD800\uDFFF'", r"$'\uDC80\uDCFF a\uDCA0'"]
+
+
+def ansi_c_words_bash_disagrees_with():
+    """Return each of ANSI_C_WORDS whose decoded bytes differ from what bash passes, with both."""
+    disagreements = []
+    for word in ANSI_C_WORDS:
+        expected = subprocess.run(["bash", "-c", f"printf %s {word}"], capture_output=True).stdout
+        found = reader.simple_commands(f"printf %s {word}")[0][2].encode("utf-8", reader.SHELL_TEXT_ERRORS)
+        if found != expected:
+            disagreements.append((word, found, expected))
+    return disagreements
+
+
+# Run by the locale cases below, in a process whose locale they set.
+if sys.argv[1:] == ["--ansi-c-words-in-this-locale"]:
+    disagreements = ansi_c_words_bash_disagrees_with()
+    print(reader._bash_unicode_escapes_written(), disagreements)
+    sys.exit(1 if disagreements else 0)
+
+
 def words_of(command, glob_markers=None):
     return [list(found) for found in reader.simple_commands(command, glob_markers)]
 
@@ -126,13 +151,19 @@ for command, expected in [
     ("bash 10<f", [(["bash"], [("10<", "f")])]),
     ("bash 0 <f", [(["bash", "0"], [("<", "f")])]),
     ("bash 0 <<<x", [(["bash", "0"], [("<<<", "x")])]),
-    ("xa 0<(xb)", [(["xb"], []), (["xa", "0", "<(xb)"], [])]),
     ("bash 2>f", [(["bash"], [("2>", "f")])]),
     ("bash 0<<E\ntmux kill-server\nE\nls", [(["bash"], [("<<", "tmux kill-server\n")]), (["ls"], [])]),
     ("bash 0<<-E\n\tb\n\tE\nls", [(["bash"], [("<<", "b\n")]), (["ls"], [])]),
 ]:
     found = [(list(f), f.redirects) for f in reader.simple_commands(command)]
     check(f"the 0 before a redirect is its descriptor, not a word: {command!r}", found == expected, found)
+# bash passes 0<(xb) to xa as one word, and a wrapper's option value written so is one word too.
+found = [(list(f), f.redirects) for f in reader.simple_commands("xa 0<(xb)")]
+check("a 0 written against a process substitution is part of its word",
+      found == [(["xb"], []), (["xa", "0<(xb)"], [])], found)
+words = list(reader.simple_commands("env -u 0<(printf x) git push")[-1])
+check("a wrapper's option value written as 0<(...) leaves the program after it",
+      reader.simple_command_program_index_skipping_wrappers(words) == (3, True), words)
 
 # --- the program a command runs, after wrappers ---
 for words, expected in [
@@ -198,27 +229,35 @@ check("each stage names the first stage of its own pipeline",
       [f.child_shell[-1].shell_pipeline_first_stage_byte_offset for f in found] == [0, 0, 7, 7], [f.child_shell for f in found])
 
 # --- $'...' decoded as bash decodes it, with bash itself as the oracle ---
-bash_version = subprocess.run(["bash", "-c", "echo ${BASH_VERSINFO[0]}.${BASH_VERSINFO[1]}"],
-                              capture_output=True, text=True).stdout.strip()
-ansi_c_words = [r"$'a\nb'", r"$'\t\x41\101\e\cA\c?'", r"$'it\'s \"x\" \?'", r"$'keep \q and \x and \u'",
-                r"$'nul\0after'", r"a$'\n'b", r"$'\c\\x'", r"$'\0101\x4142'", r"$'\a\b\f\r\v\E'",
-                r"$'\xff\x80 \351 a\xc3 \0401'"]
-# bash writes \u and \U as UTF-8 only from 4.2 and in a UTF-8 locale; the Mac's /bin/bash is 3.2.
-bash_writes_unicode_escapes = subprocess.run(
-    ["bash", "-c", "printf %s $'\\u00e9'"], capture_output=True).stdout == "é".encode()
-if bash_writes_unicode_escapes:
-    ansi_c_words += [r"$'\u00e9\U0001F600\u2603x'", r"$'\U110000 \U7FFFFFFF a\UFFFFFFFFb \uD800\uDFFF'", r"$'\uDC80\uDCFF a\uDCA0'"]
-else:
-    print(f"SKIP  $'\\u...' cases: bash {bash_version} here does not write \\u as UTF-8 "
-          f"(bash before 4.2, or a locale that is not UTF-8)")
-for word in ansi_c_words:
-    expected = subprocess.run(["bash", "-c", f"printf %s {word}"], capture_output=True).stdout
-    found = reader.simple_commands(f"printf %s {word}")[0][2].encode("utf-8", reader.SHELL_TEXT_ERRORS)
-    check(f"{word} is the word bash passes", found == expected, (found, expected))
+for locale in ["C.UTF-8", "C"]:
+    found = subprocess.run([sys.executable, __file__, "--ansi-c-words-in-this-locale"], capture_output=True,
+                           text=True, env={**os.environ, "LC_ALL": locale})
+    check(f"$'...' words are the words this machine's bash passes, with LC_ALL={locale}",
+          found.returncode == 0 and found.stdout.split()[0] == {"C.UTF-8": "utf-8", "C": "escaped"}[locale],
+          found.stdout + found.stderr)
+for written, word, expected in [
+        ("kept", r"$'\u00e9\U1F600x'", "\\u00e9\\U1F600x"),
+        ("escaped", r"$'\u00e9\u41\U1F600 \U110000 a\U80000000b'", "\\u00E9A\\U0001F600 \\U00110000 ab"),
+        ("utf-8", r"$'\u00e9\u41\U1F600'", "éA\U0001F600")]:
+    real = reader._bash_unicode_escapes_written
+    reader._bash_unicode_escapes_written = lambda: written
+    try:
+        found = reader.simple_commands(f"printf %s {word}")[0][2]
+    finally:
+        reader._bash_unicode_escapes_written = real
+    check(f"a bash that writes \\u {written} gives {word} as {expected!r}", found == expected, found)
+real_run = reader.subprocess.run
+reader.subprocess.run = lambda *arguments, **options: (_ for _ in ()).throw(OSError("no bash"))
+reader._bash_unicode_escapes_written.cache_clear()
+try:
+    written = reader._bash_unicode_escapes_written()
+finally:
+    reader.subprocess.run = real_run
+    reader._bash_unicode_escapes_written.cache_clear()
+check("when bash cannot be run, \\u is written as UTF-8", written == "utf-8", written)
 # A decoded word read again as a command keeps its bytes, whatever they are.
-for word in [r"$'\xe9; tmux send-keys -t g Enter'"] + (
-        [r"$'\U110000; tmux kill-server'", r"$'\uD800\xff; tmux kill-server'"]
-        if bash_writes_unicode_escapes else []):
+for word in [r"$'\xe9; tmux send-keys -t g Enter'", r"$'\U110000; tmux kill-server'",
+             r"$'\uD800\xff; tmux kill-server'"]:
     inner = reader.simple_commands(f"sh -c {word}")[0][2]
     again = reader.simple_commands(inner)
     check(f"the decoded word {word} reads again as a command, bytes kept",
@@ -246,6 +285,57 @@ check("a run of # after a terminator is matched in linear time",
 found = reader.simple_commands("ssh h $'true\\ntmux kill-server'")
 check("an ANSI-C quoted remote command keeps its newline, so the command after it is seen",
       found[0][2] == "true\ntmux kill-server", list(found[0]))
+
+found = words_of("echo 'a;&' 'a;;'; case x in x) :;& esac")
+check("a repaired ;& leaves a quoted ;; elsewhere in the command as written", found[0] == ["echo", "a;&", "a;;"], found)
+found = words_of("cat <<A\n$(echo 'a;&' 'a;;'; case x in x) :;& esac)\nA")
+check("a repaired ;& in a body leaves a quoted ;; elsewhere in the body as written",
+      found[0] == ["echo", "a;&", "a;;"], found)
+timing_code = ("import importlib.util, sys; s = importlib.util.spec_from_file_location('r', sys.argv[1]); "
+               "r = importlib.util.module_from_spec(s); s.loader.exec_module(r); "
+               "print(list(r.simple_commands('cat <<A\\n' + '$(case x in x) :;& esac)\\n' * 2000 "
+               "+ '$(tmux kill-server)\\nA')[-2]))")
+try:
+    started = time.monotonic()
+    last = subprocess.run([sys.executable, "-c", timing_code, str(MODULE_PATH)], timeout=60, check=True,
+                          capture_output=True, text=True).stdout.strip()
+    timing = time.monotonic() - started
+except (subprocess.TimeoutExpired, subprocess.CalledProcessError) as problem:
+    last, timing = None, repr(problem)
+check("a body holding 2,000 cases ended by ;& is repaired in one pass, and the command after them is read",
+      isinstance(timing, float) and timing < 30 and last == "['tmux', 'kill-server']", (timing, last))
+# Each ;;& written as ;; shortens the text, so a later terminator's offset in the command as written is further on.
+found = words_of("case a in a) :;;& esac; " * 20 + "echo 'x;;' $(case b in b) :;& esac)")
+check("a terminator repaired after twenty that shortened the text is put back where it was written",
+      found[-1] == ["echo", "x;;", "$(case b in b) :;& esac)"], found[-1])
+found = words_of("cat <<A\n$( (xa) ) $((1 + 2))\nA")
+check("a body's $( ( ) ) with a space between the parentheses is a substitution, and its subshell runs",
+      found[0] == ["xa"], found)
+found = words_of("echo $(( $(printf 1 '(') + (tmux - send-keys) ))")
+check("arithmetic whose substitution holds a quoted ( is arithmetic, and only its substitution runs",
+      found == [["printf", "1", "("], ["echo", "$(( $(printf 1 '(') + (tmux - send-keys) ))"]], found)
+
+# --- a leading ~ that bash expands, with bash as the oracle ---
+tilde_words = ["~", "~/x", '"~/x"', "\\~/x", '~"/x"', "~'/x'", "--chdir=~/x", "-C~/x", "x~/y",
+               "~nosuchuser-here/x", '~/x"y"', "$'~/x'"]
+saved_home = os.environ.get("HOME")
+os.environ["HOME"] = "/home-for-test"
+try:
+    command = "printf '%s\\n' " + " ".join(tilde_words)
+    expected = subprocess.run(["bash", "-c", command], capture_output=True, text=True).stdout.split("\n")
+    found = [reader.shell_word_tilde_prefix_expand_as_bash_would(word)
+             for word in reader.simple_commands(command)[0][2:]]
+    for word, found_word, expected_word in zip(tilde_words, found, expected):
+        check(f"{word} is expanded as bash expands it", found_word == expected_word, (found_word, expected_word))
+    found = reader.simple_commands("ls ~/$(cat <<E\nx\nE\n)")[-1]
+    check("a word that held a heredoc keeps its leading ~ expanded",
+          reader.shell_word_tilde_prefix_expand_as_bash_would(found[1])
+          .startswith("/home-for-test/$(cat <<E"), list(found))
+finally:
+    if saved_home is None:
+        os.environ.pop("HOME", None)
+    else:
+        os.environ["HOME"] = saved_home
 
 # --- a heredoc body walked as bash expands it ---
 for body, expected in [

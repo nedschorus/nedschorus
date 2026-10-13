@@ -42,6 +42,7 @@ from __future__ import annotations
 
 import codecs
 import collections
+import functools
 import importlib
 import json
 import os
@@ -547,8 +548,37 @@ def _unescape_double_quoted(text):
     return "".join(out)
 
 
+class ShellWordWithUnexpandedTildePrefixBashWouldExpand(str):
+    """A word whose leading ~ bash expands, held as written: ~/x and ~user/x, not "~/x" or ~"/x".
+
+    A part cut from the word, such as the value after --chdir=, is a plain str, and
+    bash leaves its ~ as written too.
+    """
+
+
+def shell_word_tilde_prefix_expand_as_bash_would(word):
+    """Return word with its leading ~ expanded when bash expands it, else word as it is."""
+    if isinstance(word, ShellWordWithUnexpandedTildePrefixBashWouldExpand):
+        return os.path.expanduser(word)
+    return word
+
+
 def word_value(node, glob_markers=None):
-    """Return a word as the shell passes it, with quotes removed and expansions kept as written."""
+    """Return a word as the shell passes it, with quotes removed and expansions kept as written.
+
+    A word whose leading ~ bash expands is a
+    ShellWordWithUnexpandedTildePrefixBashWouldExpand: bash expands the characters
+    up to the first unquoted /, when none of them is quoted.
+    """
+    value = _word_value_without_tilde_mark(node, glob_markers)
+    first = node.children[0] if node.type == "concatenation" and node.children else node
+    if first.type == "word" and _text(first).startswith("~") \
+            and (first is node or "/" in _text(first)):
+        return ShellWordWithUnexpandedTildePrefixBashWouldExpand(value)
+    return value
+
+
+def _word_value_without_tilde_mark(node, glob_markers):
     kind = node.type
     if kind == "raw_string":
         return _text(node)[1:-1]
@@ -586,6 +616,24 @@ def word_value(node, glob_markers=None):
     return _text(node)
 
 
+@functools.lru_cache(maxsize=None)
+def _bash_unicode_escapes_written():
+    """Return how this machine's bash writes $'\\u00e9': "utf-8", "escaped" or "kept".
+
+    bash 4.2 and later writes UTF-8 in a UTF-8 locale and, in any other, writes
+    a character above 0x7F back as \\uHHHH or \\UHHHHHHHH, and nothing for one
+    from 0x80000000; an older bash, such as
+    the Mac's /bin/bash 3.2, keeps the escape as written. When bash cannot be run,
+    UTF-8 is assumed.
+    """
+    try:
+        written = subprocess.run(["bash", "-c", "printf %s $'\\u00e9'"], capture_output=True,
+                                 timeout=5).stdout
+    except (OSError, subprocess.SubprocessError):
+        return "utf-8"
+    return {"\\u00E9".encode(): "escaped", "\\u00e9".encode(): "kept"}.get(written, "utf-8")
+
+
 def _utf8_bytes_bash_writes(value):
     """Return the bytes bash writes for \\u or \\U with this value, in a UTF-8 locale.
 
@@ -615,8 +663,9 @@ ANSI_C_NUMERIC_ESCAPE_PATTERN = re.compile(
 def _ansi_c_decoded(text):
     """Return the text inside $'...' as bash decodes it; a decoded NUL ends the word.
 
-    \\u and \\U are written as bash writes them in a UTF-8 locale; bytes that are
-    not UTF-8 stay bytes, held as SHELL_TEXT_ERRORS holds them.
+    \\u and \\U are written as this machine's bash writes them, which depends on its
+    version and locale; bytes that are not UTF-8 stay bytes, held as
+    SHELL_TEXT_ERRORS holds them.
     """
     out = bytearray()
     index = 0
@@ -628,16 +677,23 @@ def _ansi_c_decoded(text):
             continue
         escape = text[index + 1]
         numeric = ANSI_C_NUMERIC_ESCAPE_PATTERN.match(text, index + 1)
-        if escape in "uU" and numeric and (numeric.group(3) or numeric.group(4)):
-            out += _utf8_bytes_bash_writes(int(numeric.group(3) or numeric.group(4), 16))
+        if escape in "uU" and numeric and (numeric.group(3) or numeric.group(4)) \
+                and _bash_unicode_escapes_written() != "kept":
+            value = int(numeric.group(3) or numeric.group(4), 16)
+            if _bash_unicode_escapes_written() == "utf-8" or value < 0x80:
+                out += _utf8_bytes_bash_writes(value)
+            elif value < 0x80000000:
+                out += (f"\\u{value:04X}" if value <= 0xFFFF else f"\\U{value:08X}").encode()
             index = numeric.end()
         elif escape in ANSI_C_SIMPLE_ESCAPES:
             out += ANSI_C_SIMPLE_ESCAPES[escape].encode()
             index += 2
         elif escape == "c" and index + 2 < len(text):
-            # \cX is the control character X; \c\\ is written with its backslash doubled.
-            control = text[index + 2]
-            out.append(0x7F if control == "?" else ord(control) & 0x1F)
+            # \cX is the control character X, made from X's first byte; \c\\ is written with
+            # its backslash doubled.
+            control = text[index + 2].encode("utf-8", SHELL_TEXT_ERRORS)
+            out.append(0x7F if control == b"?" else control[0] & 0x1F)
+            out += control[1:]
             index += 4 if text[index + 2:index + 4] == "\\\\" else 3
         elif numeric and (numeric.group(1) or numeric.group(2)):
             out.append(int(numeric.group(1), 8) & 0xFF if numeric.group(1)
@@ -892,8 +948,25 @@ class _Collector:
 
     def simple_command(self, node, children, child_shell, heredocs, redirects, trailing_words):
         words, own_redirects, own_heredocs = [], [], []
+        joined = None
         for child in children:
+            if joined is not None and child.type == "process_substitution" \
+                    and child.start_byte == joined.end_byte:
+                # bash passes 0<(cmd) as one word, the 0 joined to the substitution's path.
+                self._read_command_part(child, child_shell, words, own_redirects, own_heredocs)
+                words[-1] = _text(joined) + words[-1]
+                joined = None
+                continue
+            if joined is not None:
+                words.append(word_value(joined, self.glob_markers))
+                joined = None
+            if child.type == "number" and self.source[child.end_byte + 1:child.end_byte + 2] == b"(" \
+                    and self.source[child.end_byte:child.end_byte + 1] in (b"<", b">"):
+                joined = child
+                continue
             self._read_command_part(child, child_shell, words, own_redirects, own_heredocs)
+        if joined is not None:
+            words.append(word_value(joined, self.glob_markers))
         words.extend(trailing_words)
         if words:
             self.commands.append(SimpleCommand(words, child_shell, own_redirects + list(redirects),
@@ -963,12 +1036,11 @@ def _simple_commands_read(command_text, glob_markers):
         _use_a_new_process()
         return _simple_commands_in_a_new_process(command_text, glob_markers)
     original = command_text.encode("utf-8", SHELL_TEXT_ERRORS)
-    text, source, tree, taken_out = _source_with_case_terminators_repaired(original, TEXT_NODE_TYPES)
+    source, tree, taken_out, repaired = _source_with_case_terminators_repaired(
+        original, TEXT_NODE_TYPES)
     commands = _with_heredocs_put_back_into_commands(
         _collect(tree.root_node, glob_markers, source, taken_out), taken_out)
-    if text != original:
-        for command in commands:
-            _words_put_back_as_written(command, command_text)
+    _words_put_back_as_written(commands, original, repaired)
     for command in commands:
         command[:] = [_text_rejoined(word) for word in command]
         command.redirects = [(operator, _text_rejoined(target))
@@ -987,49 +1059,66 @@ def _text_rejoined(text):
     return text.encode("utf-8", SHELL_TEXT_ERRORS).decode("utf-8", SHELL_TEXT_ERRORS)
 
 
-def _source_with_case_terminators_repaired(text, text_node_types, keep_first=False):
-    """Return (text, source, tree, taken) for text with its heredocs taken out and its cases repaired.
+def _source_with_case_terminators_repaired(text, text_node_types, keep_first=False,
+                                           all_at_once=False):
+    """Return (source, tree, taken, repaired) for text with its heredocs taken out and its cases repaired.
 
     tree-sitter-bash rejects a last case branch ended by ;;& or ;&, and loses
     every command after the case, a heredoc's included; before esac they act as
     ;; does. The earliest one outside text_node_types is written as ;; in the
     text, where the bodies already taken out cannot be mistaken for commands, and
     the text is read again, until the parse holds no error or no such one is left.
+    all_at_once writes every such one in each round instead, for text in which no
+    heredoc can be hidden. repaired holds the offset in text, as given, of each
+    terminator written as ;;.
     """
-    edits = []
+    edits, repaired, shrinks = [], [], []
     source, tree, taken = _source_with_heredoc_bodies_taken_out(text, keep_first, edits)
     # A match found with a body taken out may span that body, so the rounds count terminators.
     for _ in range(len(CASE_TERMINATOR_PATTERN.findall(text))):
         if not tree.root_node.has_error:
             break
-        match = next((found for found in LAST_CASE_TERMINATOR_PATTERN.finditer(source)
-                      if not _inside_text(tree.root_node, found.start(), text_node_types)), None)
-        start = None if match is None else _offset_before_edits(match.start(), edits)
-        if start is None:
+        matches = [found for found in LAST_CASE_TERMINATOR_PATTERN.finditer(source)
+                   if not _inside_text(tree.root_node, found.start(), text_node_types)]
+        starts = [(_offset_before_edits(found.start(), edits), found.start(1) - found.start())
+                  for found in matches[:1]]
+        starts = [(start, length) for start, length in starts if start is not None]
+        if not starts:
             break
         # Only the terminator is replaced: what follows it in source may lie elsewhere in text.
-        text = text[:start] + b";;" + text[start + match.start(1) - match.start():]
+        for start, length in sorted(starts, reverse=True):
+            repaired.append(start + sum(shrink for at, shrink in shrinks if at < start))
+            text = text[:start] + b";;" + text[start + length:]
+        shrinks += [(start, length - 2) for start, length in starts]
         edits = []
         source, tree, taken = _source_with_heredoc_bodies_taken_out(text, keep_first, edits)
-    return text, source, tree, taken
+    return source, tree, taken, sorted(repaired)
 
 
-def _words_put_back_as_written(command, command_text):
-    """Put each ;; the case repair wrote in a command's words back as written.
+def _words_put_back_as_written(commands, original, repaired):
+    """Put each ;; the case repair wrote in the commands' words back as written.
 
-    Words carry no offsets, so each is found in the text as written, with any ;;
-    allowed to be ;;& or ;&, after the word before it; a word quote removal
+    Words carry no offsets, so a word holding ;; is found in the text as
+    written, with any ;; allowed to be ;;& or ;&, at a place that holds one of
+    the repaired terminators and that no other word took; a word quote removal
     changed is not found and stays as read.
     """
-    position = 0
-    for index, word in enumerate(command):
-        if ";;" not in word:
-            continue
-        pattern = "(?:;;&|;&|;;)".join(re.escape(part) for part in word.split(";;"))
-        written = re.compile(pattern).search(command_text, position)
-        if written is not None:
-            command[index] = written.group(0)
-            position = written.end()
+    if not repaired:
+        return
+    text = original.decode("utf-8", SHELL_TEXT_ERRORS)
+    repaired = [len(original[:offset].decode("utf-8", SHELL_TEXT_ERRORS)) for offset in repaired]
+    taken = set()
+    for command in commands:
+        for index, word in enumerate(command):
+            if ";;" not in word:
+                continue
+            pattern = "(?:;;&|;&|;;)".join(re.escape(part) for part in word.split(";;"))
+            for written in re.finditer(pattern, text):
+                if written.span() not in taken and any(
+                        written.start() <= offset < written.end() for offset in repaired):
+                    command[index] = written.group(0)
+                    taken.add(written.span())
+                    break
 
 
 def _with_heredocs_put_back_into_commands(commands, taken_out):
@@ -1067,14 +1156,15 @@ def _heredoc_body_substitution_commands(body, glob_markers):
         delimiter += b"_"
     prefix = b"cat <<" + delimiter + b"\n"
     probe = prefix + body + delimiter + b"\n"
-    # In the probe, the body is the code, so only quoted text and comments are not repaired.
-    _, source, tree, taken = _source_with_case_terminators_repaired(
-        probe, TEXT_NODE_TYPES - {"heredoc_body"}, keep_first=True)
+    # In the probe, the body is the code, so only quoted text and comments are not repaired;
+    # its heredocs are already taken out, so every terminator is repaired in each round.
+    source, tree, taken, repaired = _source_with_case_terminators_repaired(
+        probe, TEXT_NODE_TYPES - {"heredoc_body"}, keep_first=True, all_at_once=True)
     # tree-sitter-bash reads a body's $(( )) as a substitution holding a subshell; bash reads
-    # $(( as arithmetic when its inner ( closes right before the final ), and only
+    # $(( as arithmetic when that subshell is all the substitution holds, and only
     # substitutions run in arithmetic.
     arithmetic = {node.start_byte for node in _nodes_of_type(tree.root_node, "command_substitution")
-                  if _arithmetic_written(node.text)}
+                  if _arithmetic_written(node)}
     commands = [command for command in _collect(tree.root_node, glob_markers, source, taken)
                 if command.inside_substitution() and _runs_outside_arithmetic(command, arithmetic)]
     # The body's own extent, which tree-sitter-bash sometimes puts outside its heredoc_body node.
@@ -1107,7 +1197,9 @@ def _heredoc_body_substitution_commands(body, glob_markers):
         else:
             index += 1
     commands.sort(key=lambda command: command.child_shell[0].offset)
-    return _with_heredocs_put_back_into_commands(commands, taken)
+    commands = _with_heredocs_put_back_into_commands(commands, taken)
+    _words_put_back_as_written(commands, probe, repaired)
+    return commands
 
 
 def _commands_read_again(commands, start, end, text, glob_markers):
@@ -1123,14 +1215,11 @@ def _commands_read_again(commands, start, end, text, glob_markers):
 BODY_EXPANSION_NODE_TYPES = {"command_substitution", "expansion", "arithmetic_expansion"}
 
 
-def _arithmetic_written(text):
-    """Return whether a $(( ... )) is arithmetic as bash reads it: its inner ( closes just before the last )."""
-    depth = 0
-    for index in range(2, len(text)):
-        depth += {b"("[0]: 1, b")"[0]: -1}.get(text[index], 0)
-        if depth == 0:
-            return index == len(text) - 2 and text.endswith(b"))")
-    return False
+def _arithmetic_written(node):
+    """Return whether a $( ) node is arithmetic as bash reads it: one ( ) fills it from $( to )."""
+    inner = node.named_children
+    return (len(inner) == 1 and inner[0].type == "subshell"
+            and inner[0].start_byte == node.start_byte + 2 and inner[0].end_byte == node.end_byte - 1)
 
 
 def _runs_outside_arithmetic(command, arithmetic):
@@ -1403,6 +1492,9 @@ def _heredoc_body_start(source, delimiter_end):
 
 def _with_heredocs_put_back(text, taken_out):
     """Return text with each heredoc taken out of it put back as written, body included."""
+    if isinstance(text, ShellWordWithUnexpandedTildePrefixBashWouldExpand):
+        return ShellWordWithUnexpandedTildePrefixBashWouldExpand(
+            _with_heredocs_put_back(str(text), taken_out))
     for placeholder in reversed(list(taken_out)):
         taken = taken_out[placeholder]
         mark = "<" + placeholder
