@@ -1446,8 +1446,28 @@ except reader.ShellParserUnavailable as error:
     raised = error
 check("a parser the new process cannot load reaches the guard as a missing parser, with what pip said",
       isinstance(raised, reader.ShellParserUnavailable)
-      and not isinstance(raised, reader.ShellCommandUnreadable) and "pip exited 1: no network" in str(raised),
-      raised)
+      and not isinstance(raised, reader.ShellCommandUnreadable)
+      and raised.install_output == "pip exited 1: no network", raised)
+# The case repair shifts offsets by bisect over the starts of one round, which must be ascending: a
+# heredoc body holding terminators of two lengths before a word reads that word wrong otherwise.
+several_terminators = ("echo ';&'\ncat <<EOF\n`case $v in p0) x=$(case y in y) ls;;& esac);;& p1) cat <<E\n"
+                       ";;&\nE\n;;& p2) x=$(case y in y) ls;;& esac);; esac`\nEOF\n")
+read_words = [[str(word) for word in command] for command in reader.simple_commands(several_terminators)]
+check("a heredoc body with ;;& and ;; terminators before a word reads each word as written",
+      read_words == [["echo", ";&"], ["ls"], ["cat"], ["ls"], ["cat"]], read_words)
+# A new process that fails outside the reader exits with a traceback; the guard quotes only its last line.
+failing_child = "raise RuntimeError('the request could not be read')"
+try:
+    reader._simple_commands_in_a_new_process(
+        "ls", None, runner=lambda arguments, **options: subprocess.run(
+            [sys.executable, "-c", failing_child], **options))
+    raised = None
+except reader.ShellParserUnavailable as error:
+    raised = error
+check("a new process that fails outside the reader reaches the guard as its exception's line, not a traceback",
+      raised is not None and raised.install_output
+      == "reading the command in a new process failed: RuntimeError: the request could not be read",
+      raised and raised.install_output)
 command = reader.simple_commands("cat <<E >~/x\nb\nE")[0]
 command.added_attribute = (reader.ShellWordWithUnexpandedTildePrefixBashWouldExpand("~/y"), [1, None])
 command.heredocs[0].added_attribute = True
