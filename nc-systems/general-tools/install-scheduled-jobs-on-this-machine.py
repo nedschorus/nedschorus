@@ -561,8 +561,24 @@ CRON_ENVIRONMENT_ASSIGNMENT = re.compile(r"\s*[A-Za-z_][A-Za-z0-9_]*\s*=")
 INTERPRETER_PROGRAM_NAME = re.compile(r"python[0-9.]*|bash|sh|dash|zsh|perl|ruby|node|env")
 
 
-def shell_parser_refusal(error) -> Refusal:
+def shell_parser_refusal(error, line) -> Refusal:
     host = socket.gethostname().split(".")[0]
+    if isinstance(error, shell_reader.ShellCommandUnreadable):
+        stopped = (f"{PROGRAM}: not run — the shell command reader "
+                   f"({shell_reader.__file__.rsplit('/', 1)[-1]}) failed on the crontab line "
+                   f"{line} on {host} ({error.install_output}). Nothing on this machine changed.")
+        report = (f"in these words: \"{PROGRAM} did not run, because the shell command reader "
+                  f"failed on the crontab line {line} on {host} ({error.install_output}).\"")
+        again = (f"Run {PROGRAM} again, with the same options, only after the shell command reader "
+                 f"is fixed.")
+        if shell_reader._session_unattended(os.environ):
+            return Refusal(stopped,
+                           f"If you are a subagent, tell the agent that dispatched you, {report}",
+                           "No user attends this agent-session, so do not tell the user.", again)
+        return Refusal(stopped,
+                       f"Tell the user, or, if you are a subagent, the agent that dispatched you, "
+                       f"{report}",
+                       again)
     install = (f"python3 -m pip install --user --break-system-packages "
                f"-r {shell_reader.REQUIREMENTS_FILE}")
     # The user sits at the Mac, and reaches ned-box over ssh.
@@ -607,7 +623,7 @@ def programs_a_cron_line_runs(line: str) -> list:
         commands = shell_reader.simple_commands(fields[-1])
         defines_a_function = _defines_a_function(fields[-1])
     except shell_reader.ShellParserUnavailable as error:
-        raise shell_parser_refusal(error)
+        raise shell_parser_refusal(error, line)
     # A function's body may never run.
     if defines_a_function:
         return [(None, False)]

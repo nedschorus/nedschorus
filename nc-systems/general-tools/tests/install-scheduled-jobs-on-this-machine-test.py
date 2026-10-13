@@ -1368,6 +1368,39 @@ with tempfile.TemporaryDirectory() as temporary:
         shell_reader.load_parser, shell_reader.STATE_DIRECTORY = real_load_parser, saved_state_directory
         shell_reader._parser = saved_parser
 
+    # A failure inside the shell reader stops this program the same way, naming the failure.
+    real_collect = shell_reader._collect
+
+    def failing_collect(*arguments, **keywords):
+        raise ValueError("injected")
+    shell_reader._collect = failing_collect
+    try:
+        stub = MachineStub(crontab=(BOX_MIRROR + "\n" + runs_directly + "\n").encode())
+        exit_code, printed, errors = run_main(["--remove-not-in-table"], NED_BOX, stub)
+        saved_attended = os.environ.get("CLAUDE_CODE_SESSION_ATTENDED")
+        os.environ["CLAUDE_CODE_SESSION_ATTENDED"] = "0"
+        try:
+            unattended_exit, unattended_printed, unattended_errors = run_main(
+                ["--remove-not-in-table"], NED_BOX,
+                MachineStub(crontab=(BOX_MIRROR + "\n" + runs_directly + "\n").encode()))
+        finally:
+            if saved_attended is None:
+                os.environ.pop("CLAUDE_CODE_SESSION_ATTENDED", None)
+            else:
+                os.environ["CLAUDE_CODE_SESSION_ATTENDED"] = saved_attended
+    finally:
+        shell_reader._collect = real_collect
+    check("when the shell reader fails on a crontab line, --remove-not-in-table writes no crontab, "
+          "exits 2, and says what to tell the user, naming the line and the failure",
+          exit_code == 2 and stub.crontab_writes == [] and "ValueError: injected" in errors
+          and f"failed on the crontab line {runs_directly} on " in errors.splitlines()[0]
+          and f"failed on the crontab line {runs_directly} on " in errors.splitlines()[1]
+          and "in these words" in errors,
+          (exit_code, printed, errors, stub.crontab_writes))
+    check("in an agent-session no user attends, that refusal does not ask to tell the user",
+          unattended_exit == 2 and "do not tell the user" in unattended_errors
+          and "Tell the user" not in unattended_errors, unattended_errors)
+
 print()
 if failures:
     print(f"{len(failures)} case(s) FAILED:")

@@ -128,6 +128,7 @@ def refusal_cases():
         "a redirection written apart, before the command": "tmux 2> /dev/null kill-server",
         "a later command after a word ending in ;": "tmux new -d -s a x\\; kill-server",
         "a later command after a quoted word ending in ;": "tmux new -d 'sleep 1;' kill-server",
+        "a kill-server before an ANSI-C word above U+10FFFF": r"tmux kill-server; echo $'\U110000'",
     }
     for name, command in refused.items():
         reason = run_main(command)

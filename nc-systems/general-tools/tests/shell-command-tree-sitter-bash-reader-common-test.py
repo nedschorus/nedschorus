@@ -125,6 +125,8 @@ for command, expected in [
     ("x | bash 0>f", [(["x"], []), (["bash"], [("0>", "f")])]),
     ("bash 10<f", [(["bash"], [("10<", "f")])]),
     ("bash 0 <f", [(["bash", "0"], [("<", "f")])]),
+    ("bash 0 <<<x", [(["bash", "0"], [("<<<", "x")])]),
+    ("xa 0<(xb)", [(["xb"], []), (["xa", "0", "<(xb)"], [])]),
     ("bash 2>f", [(["bash"], [("2>", "f")])]),
     ("bash 0<<E\ntmux kill-server\nE\nls", [(["bash"], [("<<", "tmux kill-server\n")]), (["ls"], [])]),
     ("bash 0<<-E\n\tb\n\tE\nls", [(["bash"], [("<<", "b\n")]), (["ls"], [])]),
@@ -192,6 +194,93 @@ for words, expected in [
 found = reader.simple_commands("a | b; c | d")
 check("each stage names the first stage of its own pipeline",
       [f.child_shell[-1].shell_pipeline_first_stage_byte_offset for f in found] == [0, 0, 7, 7], [f.child_shell for f in found])
+
+# --- $'...' decoded as bash decodes it, with bash itself as the oracle ---
+bash_version = subprocess.run(["bash", "-c", "echo ${BASH_VERSINFO[0]}.${BASH_VERSINFO[1]}"],
+                              capture_output=True, text=True).stdout.strip()
+ansi_c_words = [r"$'a\nb'", r"$'\t\x41\101\e\cA\c?'", r"$'it\'s \"x\" \?'", r"$'keep \q and \x and \u'",
+                r"$'nul\0after'", r"a$'\n'b", r"$'\c\\x'", r"$'\0101\x4142'", r"$'\a\b\f\r\v\E'",
+                r"$'\xff\x80 \351 a\xc3 \0401'"]
+# bash writes \u and \U as UTF-8 only from 4.2 and in a UTF-8 locale; the Mac's /bin/bash is 3.2.
+bash_writes_unicode_escapes = subprocess.run(
+    ["bash", "-c", "printf %s $'\\u00e9'"], capture_output=True).stdout == "é".encode()
+if bash_writes_unicode_escapes:
+    ansi_c_words += [r"$'\u00e9\U0001F600\u2603x'", r"$'\U110000 \U7FFFFFFF a\UFFFFFFFFb \uD800\uDFFF'", r"$'\uDC80\uDCFF a\uDCA0'"]
+else:
+    print(f"SKIP  $'\\u...' cases: bash {bash_version} here does not write \\u as UTF-8 "
+          f"(bash before 4.2, or a locale that is not UTF-8)")
+for word in ansi_c_words:
+    expected = subprocess.run(["bash", "-c", f"printf %s {word}"], capture_output=True).stdout
+    found = reader.simple_commands(f"printf %s {word}")[0][2].encode("utf-8", reader.SHELL_TEXT_ERRORS)
+    check(f"{word} is the word bash passes", found == expected, (found, expected))
+# A decoded word read again as a command keeps its bytes, whatever they are.
+for word in [r"$'\xe9; tmux send-keys -t g Enter'"] + (
+        [r"$'\U110000; tmux kill-server'", r"$'\uD800\xff; tmux kill-server'"]
+        if bash_writes_unicode_escapes else []):
+    inner = reader.simple_commands(f"sh -c {word}")[0][2]
+    again = reader.simple_commands(inner)
+    check(f"the decoded word {word} reads again as a command, bytes kept",
+          [list(f)[-1:] for f in again][-1] in (["Enter"], ["kill-server"])
+          and inner.encode("utf-8", reader.SHELL_TEXT_ERRORS)
+          == subprocess.run(["bash", "-c", f"printf %s {word}"], capture_output=True).stdout,
+          [list(f) for f in again])
+found = reader.simple_commands("echo \ud800x \udcff; tmux kill-server")
+check("a lone surrogate from a JSON payload, and a byte that is not UTF-8, keep their words",
+      [list(f) for f in found] == [["echo", "\ud800x", "\udcff"], ["tmux", "kill-server"]],
+      [list(f) for f in found])
+# Run in its own process under a deadline: a pattern that backtracks would hang this test.
+timing_code = ("import importlib.util, sys; s = importlib.util.spec_from_file_location('r', sys.argv[1]); "
+               "r = importlib.util.module_from_spec(s); s.loader.exec_module(r); "
+               "r.simple_commands('case x in x) :;& ' + '#' * 60 + ' y\\nesac; case z in z) :;& ' + '#' * 60)")
+try:
+    started = time.monotonic()
+    subprocess.run([sys.executable, "-c", timing_code, str(MODULE_PATH)], timeout=20, check=True,
+                   capture_output=True)
+    timing = time.monotonic() - started
+except (subprocess.TimeoutExpired, subprocess.CalledProcessError) as problem:
+    timing = repr(problem)
+check("a run of # after a terminator is matched in linear time",
+      isinstance(timing, float) and timing < 10, timing)
+found = reader.simple_commands("ssh h $'true\\ntmux kill-server'")
+check("an ANSI-C quoted remote command keeps its newline, so the command after it is seen",
+      found[0][2] == "true\ntmux kill-server", list(found[0]))
+
+# --- a heredoc body walked as bash expands it ---
+for body, expected in [
+    # tree-sitter-bash splits a backticked command inside ${ }.
+    ("${v:-`echo $(printf x); tmux send-keys -t a b`}", [["printf", "x"], ["echo", "$(printf x)"],
+                                                       ["tmux", "send-keys", "-t", "a", "b"]]),
+    # tree-sitter-bash puts an escaped $( and the backticks after it outside the body's node.
+    ("\\$(echo `tmux send-keys -t a b`)\n$(printf x)", [["tmux", "send-keys", "-t", "a", "b"], ["printf", "x"]]),
+    # $(( whose inner ( closes before a ; is a substitution holding two subshells.
+    ("$((xa); (xb))", [["xa"], ["xb"]]),
+    ("$(( $(xc) + 1 ))", [["xc"]]),
+    # Order is by byte offset, after multi-byte text.
+    ("é" * 20 + " $(xa) `xb`", [["xa"], ["xb"]]),
+]:
+    found = [list(f) for f in reader.simple_commands(f"cat <<A\n{body}\nA")][:-1]
+    check(f"the body {body!r} runs the commands bash runs", found == expected, found)
+found = reader.simple_commands("cat <<A\n`cd /tmp; echo $(git push -f origin topic)`\nA")
+check("a substitution inside a backticked command runs in its child shell, after its cd",
+      [list(f) for f in found][:2] == [["cd", "/tmp"], ["git", "push", "-f", "origin", "topic"]]
+      and found[1].child_shell[:len(found[0].child_shell)] == found[0].child_shell,
+      [(list(f), f.child_shell) for f in found])
+found = reader.simple_commands("cat <<A\n$(tmux send-keys -t 'a;& esac' Enter) $(case x in x) :;& esac)\nA")
+check("a body's case repair leaves a quoted ;& esac inside a substitution as written",
+      list(found[0]) == ["tmux", "send-keys", "-t", "a;& esac", "Enter"], [list(f) for f in found])
+
+# --- ;& before a comment, and a repaired case inside a word ---
+check("a ;& followed by a comment and then esac is repaired, and the command after the case is read",
+      words_of("case x in x) :;& # note\nesac\ntmux kill-server")[-1] == ["tmux", "kill-server"],
+      words_of("case x in x) :;& # note\nesac\ntmux kill-server"))
+for command, word in [("echo $(case x in x) :;& esac)", "$(case x in x) :;& esac)"),
+                      ('echo "$(case x in x) :;;& esac)" y', "$(case x in x) :;;& esac)")]:
+    found = words_of(command)
+    check(f"a word holding a repaired case keeps its terminator as written: {command!r}",
+          found[-1][1] == word, found)
+found = words_of("echo $(case a in a) :;& esac) $(case a in a) :;; esac)")
+check("two words that differ only in their terminators each keep their own",
+      found[-1][1:] == ["$(case a in a) :;& esac)", "$(case a in a) :;; esac)"], found)
 
 # --- child shells: where a cd stays ---
 found = reader.simple_commands("(cd /tmp/other && make); git push --force-with-lease o b")
@@ -503,7 +592,7 @@ for command, expected in [
      [([":"], []), (["tmux", "kill-server"], []), (["cat"], ["$(case x in x) :;;& esac) $(tmux kill-server)\n"])]),
     # A backticked command that holds a substitution, an escaped backtick, and one never closed.
     ("cat <<A\n`xa $(xb) xc` \\`xd\\` `xe\nA",
-     [(["xa", "xc"], []), (["xb"], []), (["cat"], ["`xa $(xb) xc` \\`xd\\` `xe\n"])]),
+     [(["xb"], []), (["xa", "$(xb)", "xc"], []), (["cat"], ["`xa $(xb) xc` \\`xd\\` `xe\n"])]),
     # Substitutions run in the order written; $(( )) is arithmetic, $$( the process id.
     ("cat <<A\n$(xa) $(xb) `xc` $(xd)\nA",
      [(["xa"], []), (["xb"], []), (["xc"], []), (["xd"], []), (["cat"], ["$(xa) $(xb) `xc` $(xd)\n"])]),
@@ -778,6 +867,34 @@ with tempfile.TemporaryDirectory() as scratch:
     check("a new process that fails to read the command raises ShellParserUnavailable with its error",
           raised is not None and "no parser" in raised.install_output, raised)
 
+    # The reader failing in the new process reaches this process as ShellCommandUnreadable.
+    real_collect, real_stdin, real_stdout = reader._collect, sys.stdin, sys.stdout
+
+    def failing_collect(*arguments, **keywords):
+        raise ValueError("injected")
+
+    class Bytes:
+        def __init__(self, data=b""):
+            self.buffer = io.BytesIO(data)
+    child_out = Bytes()
+    reader._collect, sys.stdin, sys.stdout = (
+        failing_collect, Bytes(json.dumps({"command": "ls", "glob_markers": None}).encode()), child_out)
+    try:
+        reader._read_command_on_standard_input()
+    finally:
+        reader._collect, sys.stdin, sys.stdout = real_collect, real_stdin, real_stdout
+
+    def runner_answering(command, **kwargs):
+        return subprocess.CompletedProcess(command, 0, child_out.buffer.getvalue(), b"")
+    try:
+        reader._simple_commands_in_a_new_process("ls", None, runner_answering)
+        raised = None
+    except reader.ShellParserUnavailable as error:
+        raised = error
+    check("the reader failing in a new process raises ShellCommandUnreadable here, with the failure",
+          isinstance(raised, reader.ShellCommandUnreadable) and "ValueError: injected" in str(raised),
+          (raised, child_out.buffer.getvalue()))
+
     # A copy that imported but could not be used stays in sys.modules until it is forgotten.
     class CachedUnusableTreeSitter:
         @staticmethod
@@ -1012,6 +1129,39 @@ except r.ShellParserUnavailable as error:
             context = f"<{problem!r}: {stdout.getvalue()!r}>"
         check(f"with no parser, {relative} lets the command through and says it was not checked",
               code == 0 and context.startswith(guard_name + " let this command through"),
+              (code, context))
+
+    unreadable = reader.ShellCommandUnreadable("ValueError: injected")
+    attended = context_of(reader.parser_unavailable_hook_output("The force-push guard", unreadable, {}))
+    unattended = context_of(reader.parser_unavailable_hook_output(
+        "The force-push guard", unreadable, {"CLAUDE_CODE_SESSION_ATTENDED": "0"}))
+    check("when the reader fails, the guard's message says the command ran and what to check and undo",
+          "the command has run" in attended and "Look at what the command did" in attended
+          and "undo" in attended and "Tell the user" in attended and "ValueError: injected" in attended,
+          attended)
+    check("in an agent-session no user attends, the reader-failed message does not ask to tell the user",
+          "do not tell the user" in unattended and "Tell the user" not in unattended, unattended)
+
+    # A failure inside the reader reaches each guard as ShellCommandUnreadable, never as another
+    # error that would stop the guard.
+    for relative, guard_name in GUARDS:
+        guard = load(REPOSITORY_ROOT / relative, "guard_" + Path(relative).stem.replace("-", "_"))
+
+        def failing(*arguments, **keywords):
+            raise ValueError("injected")
+        guard.shell_reader._collect = failing
+        payload = {"tool_name": "Bash", "session_id": f"guard-{relative}", "cwd": scratch,
+                   "tool_input": {"command": "tmux kill-server; git push --force o b"}}
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            code = guard.main(stdin=io.StringIO(json.dumps(payload)))
+        try:
+            context = context_of(stdout.getvalue())
+        except (ValueError, KeyError, AssertionError) as problem:
+            context = f"<{problem!r}: {stdout.getvalue()!r}>"
+        check(f"when the reader fails inside, {relative} lets the command through and says so",
+              code == 0 and context.startswith(guard_name + " let this command through")
+              and "reader failed on it" in context and "ValueError: injected" in context,
               (code, context))
 
 if failures:
