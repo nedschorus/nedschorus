@@ -38,9 +38,11 @@ turns have the voice "subagent" even when the session's agent wrote them, as
 it wrote each task. The subagent tracker,
 scripts/handoff-extract-conversation-subagent-tracker-nbd.py, finds them and
 says which records it reads. The tracker is nice-but-dirty: when it cannot be
-loaded or raises, the subagent turns are left out, and one note in the
-complete dialog says so and why, so the handoff still writes its dialog and
-exits 0. Because a report answers
+loaded or raises, the subagent turns are left out, and one note says so and
+why: as a line in the header of the conversation-tail, which is also what
+stdout gets; as a section of its own, "Subagent tasks and reports left out",
+in the body of the complete dialog, when one is written; and on stderr. The
+handoff still writes its dialog and exits 0. Because a report answers
 the session, the agent's short reply to one is kept, not dropped as an
 acknowledgement. Subagent turns go in the complete dialog only, every one
 whole: the tail, which the successor reads first, carries the user's and the
@@ -62,7 +64,7 @@ import importlib.util
 import json
 import re
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 PROJECTS_ROOT = Path.home() / ".claude" / "projects"
@@ -429,6 +431,7 @@ class ExtractionReport:
     total_turns: int
     skip_counts: dict
     companion_path: Path = None
+    left_out_notes: list = field(default_factory=list)
 
 
 def render_pointers(report: ExtractionReport) -> list:
@@ -516,6 +519,8 @@ def render_extraction(turns, report: ExtractionReport) -> str:
     skipped = ", ".join(f"{count} {name}" for name, count in report.skip_counts.items() if count)
     if skipped:
         lines.append(f"Records skipped while reading: {skipped}.")
+    # The tail holds no subagent turn, so a tracker-failure note is carried here, where the successor reads it.
+    lines += [note["text"] for note in report.left_out_notes]
 
     lines += ["", "---", ""]
 
@@ -645,7 +650,7 @@ def main(argv=None) -> int:
         print(f"handoff-extract-conversation: {problem}", file=sys.stderr)
         return 4
 
-    # The tail and stdout leave out subagent turns, the note among them, so its failure is told here too.
+    # stderr also carries the note, so the supervisor's console shows the tracker's failure as it happens.
     for note in turns_left_out_notes(turns):
         print(f"handoff-extract-conversation: {note['text']}", file=sys.stderr)
 
@@ -656,6 +661,7 @@ def main(argv=None) -> int:
         turns_left_behind=start_index,
         total_turns=len(dialog),
         skip_counts=skip_counts,
+        left_out_notes=turns_left_out_notes(turns),
     )
 
     if arguments.output:

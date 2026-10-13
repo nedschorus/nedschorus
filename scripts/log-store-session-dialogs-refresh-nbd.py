@@ -54,9 +54,9 @@ also gets, as the first line of its dialog, a stale-dialog warning:
 because the cron log the FAILED lines go to is read by no one, and the
 reader of the dialog is the one the stale text would mislead. The warning
 keeps the time the failure began across passes, is the whole dialog when
-there was none before, and goes when a later pass rewrites the dialog. The
-warning's write gives the dialog the current time, never its transcript's
-change time, so the next pass tries the transcript again. A store with no
+there was none before, and goes when a later pass rewrites the dialog. A
+warned dialog is given modification time 0, which no transcript's change
+time equals, so the next pass tries the transcript again. A store with no
 transcripts/ directory is FAILED too: on ned-box that means the store is not
 where this program looks. Without --failures-only a pass ends with one line
 counting the dialogs written, the ones already current, and the failures.
