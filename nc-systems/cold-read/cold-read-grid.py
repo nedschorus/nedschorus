@@ -16,10 +16,11 @@ The cold-read-record holds one report per cold-read-cell, the reference-check
 file, and under target/ the exact bytes reviewed at the cold-read-target's own
 repository path (frozen at launch, the same read that fingerprints it).
 
-AT MOST THREE COLD-READ-FULL-RUNS OF A DOCUMENT, THEN THE USER DECIDES. Before
-it creates anything, the grid lists the log-store's cold-read-records, counts
-those of this document that hold a grid report, under its present file name
-and every earlier one `git log --follow` shows, prints
+AT MOST THREE COLD-READ-FULL-RUNS OF A CHANGE, THEN THE USER DECIDES. Before
+it creates anything, the grid lists the cold-read-records in the log-store and
+in this checkout, counts those that froze this document, under its present
+path or an earlier one `git log --follow` shows, and hold a grid report written
+after origin/main last took a change to the document, prints
 "cold-read-full-run N of 3", and refuses a fourth. --user-ruled-another-cold-read-full-run
 says the user ruled to run again or to change the design: the run is number 1,
 and the marker file it leaves in its record starts the count again for later
@@ -232,33 +233,40 @@ class FullRunCountUnavailable(Exception):
     """The log-store or the document's git history could not be read."""
 
 
-def record_names_of_target_and_earlier_names(target: pathlib.Path) -> set:
-    """The record names of target's present file name and of every name git
-    shows it had before, so a renamed document keeps its count."""
-    names = {record_name_for_target(target)}
-    inside = subprocess.run(
-        ["git", "-C", str(target.parent), "rev-parse", "--show-toplevel"],
-        capture_output=True, text=True, check=False)
-    if inside.returncode != 0:
-        return names  # A document outside any git repository has no earlier names.
-    history = subprocess.run(
-        ["git", "-C", str(target.parent), "log", "--follow", "--name-only",
-         "--format=", "--", target.name],
-        capture_output=True, text=True, check=False)
-    if history.returncode != 0:
+def git_output(target: pathlib.Path, *arguments) -> str:
+    completed = subprocess.run(["git", "-C", str(target.parent), *arguments],
+                               capture_output=True, text=True, check=False)
+    if completed.returncode != 0:
         raise FullRunCountUnavailable(
-            f"git log --follow on {target} exited {history.returncode}: "
-            f"{history.stderr.strip()}")
-    names.update(record_name_for_target(pathlib.Path(line))
-                 for line in history.stdout.splitlines() if line.strip())
-    return names
+            f"git {' '.join(arguments)} on {target} exited {completed.returncode}: "
+            f"{completed.stderr.strip()}")
+    return completed.stdout
 
 
-def log_store_record_file_listing() -> list:
-    """Every '<record directory>/<file>' in the log-store's cold-read-records."""
-    host, store = record_shipper.destination_for_this_machine()
-    command = ["find", str(store), "-mindepth", "2", "-maxdepth", "2",
-               "-type", "f", "-printf", "%P\n"]
+def frozen_paths_and_landing_time(target: pathlib.Path) -> tuple:
+    """The paths a record freezes this document under -- its present one and
+    every earlier one git shows -- and when main last took a change to it, so
+    that only the runs reviewing the change in hand count. A document outside
+    any git repository has one path and no landing time."""
+    resolved = target.resolve()
+    top = subprocess.run(["git", "-C", str(target.parent), "rev-parse", "--show-toplevel"],
+                         capture_output=True, text=True, check=False)
+    if top.returncode != 0:
+        return {str(pathlib.Path(*resolved.parts[1:]))}, None
+    relative = str(resolved.relative_to(pathlib.Path(top.stdout.strip()).resolve()))
+    history = git_output(target, "log", "--follow", "--name-only", "--format=", "--", target.name)
+    paths = {relative} | {line for line in history.splitlines() if line.strip()}
+    has_main = subprocess.run(
+        ["git", "-C", str(target.parent), "rev-parse", "--verify", "--quiet", "origin/main"],
+        capture_output=True, text=True, check=False).returncode == 0
+    landed = git_output(target, "log", "-1", "--format=%ct", "origin/main", "--", target.name).strip() \
+        if has_main else ""
+    return paths, float(landed) if landed else None
+
+
+def record_file_listing(host, store) -> list:
+    """Every '<record directory>/<path>\t<mtime>' under one cold-read-records tree."""
+    command = ["find", str(store), "-mindepth", "2", "-type", "f", "-printf", "%P\t%T@\n"]
     if host:
         command = record_shipper.SSH_COMMAND + [host, shlex.join(command)]
     listing = subprocess.run(command, capture_output=True, text=True, check=False)
@@ -269,27 +277,38 @@ def log_store_record_file_listing() -> list:
     return listing.stdout.splitlines()
 
 
-def earlier_full_runs_since_count_start(record_names_of_target: set, listing: list) -> list:
-    """The record directories of this document's cold-read-full-runs, oldest
-    first, from the last one started on the user's ruling onward."""
-    patterns = [re.compile(
-        rf"^(?:{re.escape(name)}-(?P<new_date>{record_names.RECORD_DATE_PATTERN})"
-        rf"|(?P<old_date>{record_names.RECORD_DATE_PATTERN})-{re.escape(name)})"
-        rf"(?:-(?P<suffix>\d+))?$") for name in record_names_of_target]
-    files_by_directory = {}
+def earlier_full_runs_since_count_start(frozen_paths: set, landed_at, listing: list) -> list:
+    """The record directories of this document's cold-read-full-runs since
+    main last took a change to it, oldest first, from the last one started on
+    the user's ruling onward."""
+    records = {}
     for line in listing:
-        directory, _, file_name = line.partition("/")
-        files_by_directory.setdefault(directory, set()).add(file_name)
-    runs = []
-    for directory, file_names in files_by_directory.items():
-        match = next(filter(None, (p.match(directory) for p in patterns)), None)
-        if match and any(FULL_RUN_REPORT_NAME_PATTERN.match(f) for f in file_names):
-            day = match.group("new_date") or match.group("old_date")
-            runs.append((day, int(match.group("suffix") or 1), directory,
-                         USER_RULED_ANOTHER_RUN_MARKER_NAME in file_names))
-    runs.sort()
-    restarts = [index for index, run in enumerate(runs) if run[3]]
-    return [run[2] for run in runs[restarts[-1] if restarts else 0:]]
+        path, _, mtime = line.rpartition("\t")
+        directory, _, inside = path.partition("/")
+        record = records.setdefault(directory, {"frozen": False, "reported": None, "marked": False})
+        frozen = inside.removeprefix(record_names.FROZEN_TARGET_DIRECTORY_NAME + "/")
+        if frozen != inside and any(frozen == p or frozen.endswith("/" + p) for p in frozen_paths):
+            record["frozen"] = True
+        elif FULL_RUN_REPORT_NAME_PATTERN.match(inside):
+            record["reported"] = max(record["reported"] or 0.0, float(mtime))
+        elif inside == USER_RULED_ANOTHER_RUN_MARKER_NAME:
+            record["marked"] = True
+    runs = sorted((record["reported"], directory, record["marked"])
+                  for directory, record in records.items()
+                  if record["frozen"] and record["reported"]
+                  and (landed_at is None or record["reported"] > landed_at))
+    restarts = [index for index, run in enumerate(runs) if run[2]]
+    return [run[1] for run in runs[restarts[-1] if restarts else 0:]]
+
+
+def earlier_full_runs_of(target: pathlib.Path) -> list:
+    """Counted from the log-store and from this checkout's own records, which
+    hold a run whose shipping failed."""
+    frozen_paths, landed_at = frozen_paths_and_landing_time(target)
+    listing = record_file_listing(*record_shipper.destination_for_this_machine())
+    if RECORDS_DIR.is_dir():
+        listing += record_file_listing(None, RECORDS_DIR)
+    return earlier_full_runs_since_count_start(frozen_paths, landed_at, listing)
 
 
 def make_record_dir(target: pathlib.Path, now: datetime.datetime) -> pathlib.Path:
@@ -734,21 +753,24 @@ def main() -> int:
     count_unavailable = None
     earlier_runs = []
     try:
-        earlier_runs = earlier_full_runs_since_count_start(
-            record_names_of_target_and_earlier_names(target), log_store_record_file_listing())
+        earlier_runs = earlier_full_runs_of(target)
     except FullRunCountUnavailable as error:
         count_unavailable = str(error)
     run_number = 1 if user_ruled_another_run else len(earlier_runs) + 1
     if run_number > FULL_RUN_LIMIT and count_unavailable is None:
         print(f"cold-read-grid: refusing cold-read-full-run {run_number} of "
-              f"{target.name}: a document gets at most {FULL_RUN_LIMIT} before the "
-              f"user decides whether it gets more, and the log-store holds "
-              f"{len(earlier_runs)}: {', '.join(earlier_runs)}. No reviewer was "
+              f"{target.name}: a change to a document gets at most {FULL_RUN_LIMIT} "
+              f"before the user decides whether it gets more, and {len(earlier_runs)} "
+              f"were made since origin/main last took a change to it: "
+              f"{', '.join(earlier_runs)}. No reviewer was "
               f"launched and no record directory was created.\n"
               f"Bring the user the number of findings each of those runs' triage.md "
-              f"recorded, and ask whether to stop, run again, or change the design.\n"
-              f"If the user rules to run again or to change the design, run again "
-              f"with {USER_RULED_ANOTHER_RUN_FLAG}.\n"
+              f"in the log-store lists, and ask whether to stop, run again, or change "
+              f"the document's design.\n"
+              f"If the user rules to run again, run again with "
+              f"{USER_RULED_ANOTHER_RUN_FLAG}.\n"
+              f"If the user rules to change the design, make the change first, then "
+              f"run again with {USER_RULED_ANOTHER_RUN_FLAG}.\n"
               f"If the user rules to stop, give the user the document to read as it "
               f"stands.", file=sys.stderr)
         return 2

@@ -397,12 +397,18 @@ def run_grid(repository, stub_directory, environment_overrides=None,
     )
 
 
-def seed_log_store_record(repository, directory_name, file_names):
-    """A record in the scratch log-store, as an earlier run would have left it."""
-    directory = repository / SCRATCH_LOG_STORE_RELATIVE / directory_name
-    directory.mkdir(parents=True)
-    for file_name in file_names:
-        (directory / file_name).write_text("earlier run\n", encoding="utf-8")
+def seed_log_store_record(repository, directory_name, file_names,
+                          frozen_relative=TARGET_RELATIVE_PATH, written_at=None,
+                          tree=SCRATCH_LOG_STORE_RELATIVE):
+    """A record as an earlier run would have left it: its files, and the
+    document it froze under target/."""
+    directory = repository / tree / directory_name
+    for relative in [*file_names, f"target/{frozen_relative}"]:
+        path = directory / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("earlier run\n", encoding="utf-8")
+        if written_at is not None:
+            os.utime(path, (written_at, written_at))
 
 
 def record_directory_of(repository):
@@ -1610,24 +1616,31 @@ with tempfile.TemporaryDirectory() as scratch:
           and result.returncode == 0, f"exit {result.returncode}; stdout={result.stdout!r}")
 
     repository = build_scratch_repository(scratch, "full-run-count-refused")
-    for day in ("2026-09-01", "2026-09-02", "2026-09-03"):
+    for day in ("2026-09-01", "2026-09-02"):
         seed_log_store_record(repository, f"cold-read-grid-test-target-{day}",
                               ["claude-hunt-deep.md", "reference-check.md"])
-    # A fast read of the same document and a full run of another one do not count.
+    # A run whose shipping failed is only in the checkout, and counts.
+    seed_log_store_record(repository, "cold-read-grid-test-target-2026-09-03",
+                          ["codex-hunt-deep.md"], tree=Path("cold-read-records"))
+    # A fast read of the same document, and a full run of a document with the
+    # same file name in another directory, do not count.
     seed_log_store_record(repository, "cold-read-grid-test-target-2026-09-04", ["fast-read.md"])
-    seed_log_store_record(repository, "other-document-2026-09-04", ["claude-hunt-deep.md"])
+    seed_log_store_record(repository, "cold-read-grid-test-target-2026-09-05",
+                          ["claude-hunt-deep.md"],
+                          frozen_relative="docs/other/cold-read-grid-test-target.md")
     result = run_grid(repository, stubs / "full-run-count-refused")
     check("a fourth full run is refused with exit 2 and the three earlier records named",
           result.returncode == 2 and "refusing cold-read-full-run 4" in result.stderr
           and "cold-read-grid-test-target-2026-09-03" in result.stderr
-          and "2026-09-04" not in result.stderr,
+          and "2026-09-04" not in result.stderr and "2026-09-05" not in result.stderr,
           f"exit {result.returncode}; stderr={result.stderr!r}")
     check("the refusal tells the agent what to do on each of the user's answers",
           "--user-ruled-another-cold-read-full-run" in result.stderr
           and "If the user rules to stop" in result.stderr, result.stderr)
     check("a refused run creates no record and launches no reviewer",
-          record_directory_of(repository) is None and "saved:" not in result.stdout,
-          f"record {record_directory_of(repository)}; stdout={result.stdout!r}")
+          sorted(p.name for p in (repository / "cold-read-records").iterdir())
+          == ["cold-read-grid-test-target-2026-09-03"] and "saved:" not in result.stdout,
+          f"records {sorted((repository / 'cold-read-records').iterdir())}; stdout={result.stdout!r}")
 
     flagged = run_grid(repository, stubs / "full-run-count-refused",
                        extra_arguments=["--user-ruled-another-cold-read-full-run"])
@@ -1657,11 +1670,29 @@ with tempfile.TemporaryDirectory() as scratch:
                    check=True, capture_output=True)
     for day in ("2026-09-01", "2026-09-02", "2026-09-03"):
         seed_log_store_record(repository, f"earlier-name-of-the-target-{day}",
-                              ["codex-hunt-deep.md"])
+                              ["codex-hunt-deep.md"], frozen_relative=earlier_relative)
     result = run_grid(repository, stubs / "full-run-count-renamed")
     check("runs under a document's earlier file name count toward its three",
           result.returncode == 2 and "earlier-name-of-the-target-2026-09-03" in result.stderr,
           f"exit {result.returncode}; stderr={result.stderr!r}")
+
+    # Runs of an earlier change, made before main last took the document, do
+    # not count toward the change in hand.
+    repository = build_scratch_repository(scratch, "full-run-count-earlier-change")
+    subprocess.run(["git", "-C", str(repository), "update-ref", "refs/remotes/origin/main", "HEAD"],
+                   check=True, capture_output=True)
+    landed_at = int(subprocess.run(
+        ["git", "-C", str(repository), "log", "-1", "--format=%ct"],
+        check=True, capture_output=True, text=True).stdout)
+    for day in ("2026-09-01", "2026-09-02", "2026-09-03"):
+        seed_log_store_record(repository, f"cold-read-grid-test-target-{day}",
+                              ["claude-hunt-deep.md"], written_at=landed_at - 3600)
+    seed_log_store_record(repository, "cold-read-grid-test-target-2026-09-04",
+                          ["claude-hunt-deep.md"], written_at=landed_at + 3600)
+    result = run_grid(repository, stubs / "full-run-count-earlier-change")
+    check("only runs written after main last took the document count",
+          result.returncode == 0 and "cold-read-full-run 2 of 3 for" in result.stdout,
+          f"exit {result.returncode}; stdout={result.stdout!r}; stderr={result.stderr!r}")
 
     # A log-store that cannot be listed does not stop the read, as with
     # shipping, and the run says it went uncounted rather than counting zero.
