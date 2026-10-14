@@ -1351,6 +1351,12 @@ def run_completed_task_prune_cases(workspace: Path):
     check("a subject the next step wraps across a line break still keeps its task",
           fixture.present("23.json"), line)
 
+    fixture = PruneFixture(workspace, "citation-subject-spaced")
+    fixture.task("24.json", task_bytes(24, "completed", subject="Ship  the\twidget"))
+    line = prune_line(fixture.run("Then finish what Ship the widget left.\n"))
+    check("a subject holding runs of spaces or a tab still matches the next step's single spaces",
+          fixture.present("24.json"), line)
+
     fixture = PruneFixture(workspace, "high-water-mark")
     (fixture.list_directory / ".highwatermark").write_text("3", encoding="utf-8")
     fixture.task("1.json", task_bytes(1, "pending"))
@@ -1517,6 +1523,8 @@ def run_completed_task_prune_remote_store_cases(workspace: Path):
         PATH=f"{stubs}{os.pathsep}{os.environ.get('PATH', '')}"))
     check("over ssh, a copy sha256sum cannot read is a failure, not a missing copy",
           fixture.present("1.json") and "Permission denied" in line and "kept every completed task" in line, line)
+    check("over ssh, a copy sha256sum cannot read gets its own remedy naming the copy, not the ssh remedy",
+          f"`ls -l` on 1.json in {fixture.store_list_directory}" in line and "ssh stubhost true" not in line, line)
 
     stubs = stub_ssh_directory(workspace / "prune-silent-stubs", "sleep 5\n")
     original_path, original_timeout = os.environ.get("PATH", ""), writer.LOG_STORE_TASK_FILE_COPIES_HASH_SSH_TIMEOUT_SECONDS

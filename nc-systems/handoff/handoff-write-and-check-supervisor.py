@@ -409,6 +409,14 @@ class LogStoreUnreachable(Exception):
     """The log-store's copy of the task list could not be checked at all."""
 
 
+class LogStoreCopyUnreadable(Exception):
+    """ssh reached the log-store, but sha256sum could not read some copies."""
+
+    def __init__(self, said: str, unreadable_names: list):
+        super().__init__(said)
+        self.unreadable_names = unreadable_names
+
+
 def log_store_copy_sha256_of_each_task_file(host, store_list_directory, file_names) -> dict:
     """Return {file name: sha256 hex} for the named files the log-store holds."""
     if host is None:
@@ -434,8 +442,9 @@ def log_store_copy_sha256_of_each_task_file(host, store_list_directory, file_nam
     unexplained = [line for line in completed.stderr.splitlines()
                    if line.strip() and not line.rstrip().endswith(": No such file or directory")]
     if completed.returncode == 1 and unexplained:
-        raise LogStoreUnreachable(f"sha256sum on {host} could not read every copy: "
-                                  f"{collapse_to_one_line(chr(10).join(unexplained))}")
+        raise LogStoreCopyUnreadable(
+            f"sha256sum on {host} could not read every copy: {collapse_to_one_line(chr(10).join(unexplained))}",
+            [name for name in file_names if any(f": {name}:" in line for line in unexplained)])
     hashes = {}
     for line in completed.stdout.splitlines():
         digest, _, name = line.partition(" ")
@@ -554,6 +563,14 @@ def prune_completed_tasks_unguarded(next_step_text: str) -> str:
                 f"{store_text} could not be checked ({error}). Check that ned-box is up and that "
                 f"`ssh {host} true` works; the next handoff prunes them. Tell the user this line "
                 "in your last message before you wait.")
+    except LogStoreCopyUnreadable as error:
+        # ssh worked, so the ssh remedy would send the reader the wrong way.
+        copies = ", ".join(error.unreadable_names) or "the copies sha256sum named"
+        return (f"kept every completed task in {list_name}, because ned-box answered but the "
+                f"log-store copy at {store_text} could not be read ({error}). On ned-box, run "
+                f"`ls -l` on {copies} in {store_list_directory} and make each a file nedlern can "
+                "read; the next handoff prunes them. Tell the user this line in your last message "
+                "before you wait.")
     verified = [task_id for task_id in candidates
                 if store_hashes.get(tasks[task_id][0].name)
                 == hashlib.sha256(tasks[task_id][1]).hexdigest()]
