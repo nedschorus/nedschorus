@@ -31,9 +31,6 @@ _git_environment_fixture.remove_git_redirecting_environment_variables_from_this_
 
 HOOK_SCRIPT = Path(__file__).with_name("cold-read-fast-read-due-for-linked-document-reminder-hook.py")
 STORE_VARIABLE = "NEDSCHORUS_LOG_STORE_COLD_READ_RECORDS_DIRECTORY"
-# Cases' file times are in 1970, so an agent-session started in 2100 leaves
-# every case to the file-time rules unless the case sets its own start.
-LATER_THAN_EVERY_FILE_TIME = 4_102_444_800
 SUITE_ROOT = Path(tempfile.mkdtemp(prefix="cold-read-fast-read-due-for-linked-document-test-"))
 failures = []
 
@@ -86,17 +83,23 @@ class Case:
         return directory
 
     def run(self, reply, payload_extra=None, stdin_text=None, environment_extra=None,
-            session_start=LATER_THAN_EVERY_FILE_TIME):
-        user_record = {"type": "user", "message": {"role": "user", "content": "please write it"}}
-        if session_start is not None:
-            user_record["timestamp"] = datetime.fromtimestamp(
-                session_start, timezone.utc).isoformat().replace("+00:00", "Z")
+            fast_reads=()):
+        """fast_reads: (command, epoch time) pairs, written as this agent-session's Bash calls."""
         records = [
-            user_record,
+            {"type": "assistant", "cwd": str(self.checkout),
+             "timestamp": datetime.fromtimestamp(called, timezone.utc).isoformat().replace("+00:00", "Z"),
+             "message": {"id": f"msg_read_{index}", "role": "assistant", "content": [
+                 {"type": "tool_use", "name": "Bash", "input": {"command": command}}]}}
+            for index, (command, called) in enumerate(fast_reads)]
+        records += [
+            {"type": "user", "message": {"role": "user", "content": "please write it"}},
             {"type": "assistant", "message": {"id": "msg_1", "role": "assistant",
                                               "content": [{"type": "text", "text": reply}]}},
         ]
         self.transcript.write_text("".join(json.dumps(record) + "\n" for record in records))
+        return self.run_on_written_transcript(payload_extra, stdin_text, environment_extra)
+
+    def run_on_written_transcript(self, payload_extra=None, stdin_text=None, environment_extra=None):
         payload = {"hook_event_name": "Stop", "session_id": "s1",
                    "transcript_path": str(self.transcript), "cwd": str(self.checkout)}
         payload.update(payload_extra or {})
@@ -319,35 +322,50 @@ def main():
           and len(completed.stderr.strip().splitlines()) == 1,
           f"exit {completed.returncode}, stdout {completed.stdout!r}, stderr {completed.stderr!r}")
 
+    fast_read = "python3 nc-systems/cold-read/cold-read-fast-read.py --target docs/plan-of-record.md"
     case = Case()
     document = case.document("docs/plan-of-record.md", modified=5_000_000)
-    case.record("plan-of-record-2026-10-14", 4_000_000, "docs/plan-of-record.md", "before the fix\n")
-    expect("a document fast-read in this agent-session, then changed, is not raised again",
-           case.run("Applied the findings to docs/plan-of-record.md.", session_start=3_000_000),
-           None)
-    expect("the same document read before this agent-session started is raised",
-           case.run("Applied the findings to docs/plan-of-record.md.", session_start=4_500_000),
+    case.record("plan-of-record-2026-10-14", 4_000_100, "docs/plan-of-record.md", "before the fix\n")
+    expect("a document this agent-session fast-read, then changed, is not raised again",
+           case.run("Applied the findings to docs/plan-of-record.md.",
+                    fast_reads=[(fast_read, 4_000_000)]), None)
+    expect("another agent-session's fast read, then this agent-session's change, is raised",
+           case.run("Applied the findings to docs/plan-of-record.md."), [document])
+    expect("this agent-session's fast read of another document does not count",
+           case.run("Applied the findings to docs/plan-of-record.md.",
+                    fast_reads=[(fast_read.replace("plan-of-record", "other"), 4_000_000)]),
            [document])
+    expect("a record older than this agent-session's fast-read call is another read, and does not count",
+           case.run("Applied the findings to docs/plan-of-record.md.",
+                    fast_reads=[(fast_read, 4_500_000)]), [document])
+    expect("an absolute --target counts, after the script's other flags",
+           case.run("Applied the findings to docs/plan-of-record.md.",
+                    fast_reads=[("python3 cold-read-fast-read.py --cells 1 --target "
+                                 f"'{document}'", 4_000_000)]), None)
 
     case = Case()
     draft = case.document("docs/walk/naming-rules-draft.md", modified=5_000_000)
-    case.document("docs/walk/naming-rules-suggestions.md", modified=4_000_000)
-    expect("a walk-document whose suggestions file was written in this agent-session is not raised",
-           case.run("The walk-document is docs/walk/naming-rules-draft.md.", session_start=3_000_000),
-           None)
+    case.document("docs/walk/naming-rules-suggestions.md", modified=4_000_100)
+    expect("a walk-document this agent-session fast-read, then changed, is not raised again",
+           case.run("The walk-document is docs/walk/naming-rules-draft.md.",
+                    fast_reads=[(fast_read.replace("plan-of-record", "walk/naming-rules-draft"),
+                                 4_000_000)]), None)
 
     case = Case()
-    document = case.document("docs/plan-of-record.md", modified=5_000_000)
-    case.record("plan-of-record-2026-10-14", 4_000_000, "docs/plan-of-record.md", "before\n")
-    completed = case.run("Applied the findings to docs/plan-of-record.md.", session_start=None)
-    expect("a transcript with no timestamp falls back to file times and still reports",
-           completed, [document])
+    case.document("docs/plan-of-record.md", modified=5_000_000)
+    case.run("Updated docs/plan-of-record.md.")
+    case.transcript.chmod(0)
+    try:
+        completed = case.run_on_written_transcript()
+    finally:
+        case.transcript.chmod(0o644)
     context = (json.loads(completed.stdout)["hookSpecificOutput"]["additionalContext"]
-               if completed.stdout.strip() else "")
-    check("a transcript with no timestamp is reported in the reminder and on stderr",
-          "could not read when this agent-session started" in context
-          and "could not read when this agent-session started" in completed.stderr,
-          f"context {context!r}, stderr {completed.stderr!r}")
+               if completed.returncode == 0 and completed.stdout.strip() else "")
+    check("a transcript that cannot be read is reported to the agent and on stderr, exit 0",
+          completed.returncode == 0
+          and "could not read this agent-session's transcript" in context
+          and "could not read this agent-session's transcript" in completed.stderr,
+          f"exit {completed.returncode}, stdout {completed.stdout!r}, stderr {completed.stderr!r}")
 
     # The Mac mount maps to ned-box's /home/nedlern; point that prefix at a scratch directory.
     specification = importlib.util.spec_from_file_location("hook_under_test", HOOK_SCRIPT)

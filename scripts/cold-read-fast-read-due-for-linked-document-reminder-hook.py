@@ -38,15 +38,19 @@ modification time is later than the newest file time in its newest record;
 the shipper copies with rsync -a, which keeps file times, so a stored record
 carries the time of the read.
 
-ONCE PER AGENT-SESSION. A document is not due when its newest record, or a
-walk-document's suggestions file, is newer than the start of this
-agent-session, whatever the document's own time. Applying a fast read's
-findings changes the document, so without this rule the reminder came back
-every time the agent linked the document again while working on it. The
-start is the first timestamp in the transcript, so the hook keeps no list of
-its own; a reminder the agent ignores comes back, because no read was
-recorded. When the start cannot be read, the hook says so on stderr and in
-the reminder, and judges by file times alone. git runs without the variables that redirect
+ONCE PER AGENT-SESSION FOR ITS OWN READS. A document this agent-session
+fast-read is not due again in this agent-session, whatever the document's own
+time: applying a fast read's findings changes the document, which would
+otherwise make it due again every time the agent linked it. A read is this
+agent-session's own when its transcript holds a Bash call of
+cold-read-fast-read.py --target <the document>, the target resolved against
+that entry's cwd, and a record of the document, or a walk-document's
+suggestions file, is at least as new as that call's timestamp. A record from
+another agent-session counts only by the file-time rule above, so this
+agent-session is reminded about its own later change to a document someone
+else read. The hook keeps no list of its own: a reminder the agent ignores
+comes back, because no read ran. When the transcript cannot be read, the hook
+checks nothing and tells the agent so, in additionalContext and on stderr. git runs without the variables that redirect
 it, which scripts/run-all-test-suites.py lists, so a leaked GIT_DIR cannot
 name the wrong checkout.
 
@@ -92,10 +96,17 @@ WALK_DIRECTORY_PARTS = ("docs", "walk")
 WALK_DRAFT_SUFFIX = "-draft.md"
 WALK_SUGGESTIONS_SUFFIX = "-suggestions.md"
 GIT_TIMEOUT_SECONDS = 5
-SESSION_START_UNREADABLE_NOTE = (
-    "This hook could not read when this agent-session started ({reason}), so a "
-    "document fast-read earlier in this agent-session may be listed again.")
 FAST_READ_PROGRAM = "nc-systems/cold-read/cold-read-fast-read.py"
+TRANSCRIPT_UNREADABLE_LINES = (
+    "cold-read-fast-read due check skipped: this hook could not read this "
+    "agent-session's transcript ({reason}), so it did not check the documents "
+    "your last reply linked.",
+    "If your last reply linked a document you changed since its last "
+    "cold-read-fast-read, run on it, from your checkout: python3 " + FAST_READ_PROGRAM
+    + " --target <document path>",
+)
+FAST_READ_TARGET_PATTERN = re.compile(
+    r"cold-read-fast-read\.py\b.*?--target[= ]+(\"[^\"]+\"|'[^']+'|[^\s;&|)]+)")
 
 TRANSCRIPT_READER_FILE = Path(__file__).with_name("absence-claim-locator-reminder-hook.py")
 SUITE_RUNNER_FILE = Path(__file__).with_name("run-all-test-suites.py")
@@ -150,24 +161,47 @@ def last_reply_text(transcript_path):
     return reply
 
 
-def agent_session_start_time(transcript_path):
-    """Return the epoch time of the transcript's first timestamp; raise ValueError with the reason."""
-    try:
-        with open(transcript_path, encoding="utf-8") as transcript:
-            for line in transcript:
+def own_fast_read_times(transcript_path, fallback_cwd):
+    """Map each document this agent-session fast-read to the epoch time of its first such call.
+
+    Raises OSError or UnicodeDecodeError when the transcript cannot be read. A
+    call without a readable timestamp is left out, so its document is judged
+    by file times.
+    """
+    reads = {}
+    with open(transcript_path, encoding="utf-8") as transcript:
+        for line in transcript:
+            try:
+                entry = json.loads(line)
+            except ValueError:
+                continue
+            if not isinstance(entry, dict) or entry.get("type") != "assistant":
+                continue
+            content = (entry.get("message") or {}).get("content")
+            if not isinstance(content, list):
+                continue
+            for block in content:
+                if not (isinstance(block, dict) and block.get("type") == "tool_use"
+                        and block.get("name") == "Bash"):
+                    continue
+                match = FAST_READ_TARGET_PATTERN.search(str((block.get("input") or {}).get("command", "")))
+                if match is None:
+                    continue
                 try:
-                    entry = json.loads(line)
+                    called = datetime.fromisoformat(
+                        str(entry.get("timestamp")).replace("Z", "+00:00")).timestamp()
                 except ValueError:
                     continue
-                stamp = entry.get("timestamp") if isinstance(entry, dict) else None
-                if isinstance(stamp, str):
-                    try:
-                        return datetime.fromisoformat(stamp.replace("Z", "+00:00")).timestamp()
-                    except ValueError:
-                        raise ValueError(f"its first timestamp {stamp!r} is not a date") from None
-    except (OSError, UnicodeDecodeError) as error:
-        raise ValueError(f"the transcript could not be read: {error}") from None
-    raise ValueError("the transcript holds no timestamp")
+                target = Path(match[1].strip("\"'")).expanduser()
+                if not target.is_absolute():
+                    base = entry.get("cwd") or fallback_cwd
+                    if base is None:
+                        continue
+                    target = Path(base) / target
+                target = target.resolve()
+                if target not in reads or called < reads[target]:
+                    reads[target] = called
+    return reads
 
 
 def checkout_top(directory, git_environment):
@@ -250,12 +284,12 @@ def walk_draft_suggestions_path(document):
 
 
 def document_is_due(document, record_directories, document_top, record_names,
-                    session_start=None):
+                    own_read_time=None):
     suggestions = walk_draft_suggestions_path(document)
     if suggestions is not None and suggestions.is_file():
         suggestions_time = suggestions.stat().st_mtime
         if (suggestions_time >= document.stat().st_mtime
-                or (session_start is not None and suggestions_time >= session_start)):
+                or (own_read_time is not None and suggestions_time >= own_read_time)):
             return False
     pattern = record_names.record_directory_name_pattern_for_target(document)
     current_bytes = document.read_bytes()
@@ -287,7 +321,7 @@ def document_is_due(document, record_directories, document_top, record_names,
                 newest_record_time = record_time
     if newest_record_time is None:
         return True
-    if session_start is not None and newest_record_time >= session_start:
+    if own_read_time is not None and newest_record_time >= own_read_time:
         return False
     return document.stat().st_mtime > newest_record_time
 
@@ -309,19 +343,21 @@ def run(stdin_text, environment):
     if not store.is_dir():
         return None
     log_store_directory = store.resolve().parent
+    cwd = Path(payload["cwd"]) if payload.get("cwd") else None
+    try:
+        own_reads = own_fast_read_times(Path(transcript_path).expanduser(), cwd)
+    except (OSError, UnicodeDecodeError) as error:
+        lines = [line.format(reason=error) for line in TRANSCRIPT_UNREADABLE_LINES]
+        print(f"cold-read-fast-read-due-for-linked-document-reminder-hook: {lines[0]}",
+              file=sys.stderr)
+        return json.dumps({"hookSpecificOutput": {
+            "hookEventName": "Stop",
+            "additionalContext": "\n".join(lines),
+        }}, ensure_ascii=False)
     reply = last_reply_text(Path(transcript_path).expanduser())
     if not reply:
         return None
-    session_start_note = None
-    try:
-        session_start = agent_session_start_time(Path(transcript_path).expanduser())
-    except ValueError as error:
-        session_start = None
-        session_start_note = SESSION_START_UNREADABLE_NOTE.format(reason=error)
-        print(f"cold-read-fast-read-due-for-linked-document-reminder-hook: {session_start_note}",
-              file=sys.stderr)
     git_environment = environment_without_git_redirection()
-    cwd = Path(payload["cwd"]) if payload.get("cwd") else None
     session_top = checkout_top(cwd, git_environment) if cwd else None
     due = []
     documents = find_markdown_file_paths_linked_or_named_in_agent_reply(
@@ -333,14 +369,13 @@ def run(stdin_text, environment):
         for top in (document_top, session_top):
             if top is not None and top / record_names.RECORDS_DIRECTORY_NAME not in stores:
                 stores.append(top / record_names.RECORDS_DIRECTORY_NAME)
-        if document_is_due(document, stores, document_top, record_names, session_start):
+        if document_is_due(document, stores, document_top, record_names,
+                           own_reads.get(document)):
             due.append(document)
     if not due:
         return None
     lines = [REMINDER_OPENING] + [f"  {document}" for document in due]
     lines += list(REMINDER_INSTRUCTIONS)
-    if session_start_note:
-        lines.append(session_start_note)
     return json.dumps({"hookSpecificOutput": {
         "hookEventName": "Stop",
         "additionalContext": "\n".join(lines),
