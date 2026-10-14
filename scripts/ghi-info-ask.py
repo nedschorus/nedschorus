@@ -48,9 +48,9 @@ words are still read for a while; see RETIRED_BOUNDARY_REPLY_WORDS.
 A draft that conflicts with a ruling the user made gets the ruling question,
 not a verdict line. too-similar is a soft block an agent may pass on its own
 judgment, and a ruling is the user's to settle; the GHI write tool writes the
-issue and records the question on it for the user. Every ruling question opens
-with the number of the issue holding the ruling, so that record can cite the
-ruling. The prompt reaches ghi-info at a cold start, so a session started
+issue and records the question in a proposed-improvements-or-changes-file
+beside its GHI-MD. Every ruling question opens with the number of the issue
+holding the ruling, so that record can cite the ruling. The prompt reaches ghi-info at a cold start, so a session started
 earlier keeps its old prompt until it is next reincarnated.
 
 Seat and machine: ghi-info lives ONLY on the Ubuntu box, at ~/agents/ghi-info
@@ -331,8 +331,11 @@ NOT_ABOUT_ISSUES_MESSAGE = (
     '--state all --search "<terms>"')
 RULING_QUESTION_MESSAGE_TEMPLATE = (
     "ghi-info found a ruling of the user's that it cannot tell still applies: {sentence}\n"
-    "Ask the user whether that ruling still applies, and put the question on your task list.\n"
-    "Do not file or edit the issue until he answers.")
+    "If you file or edit the GHI, scripts/ghi-issue-write.py records this question beside the GHI-MD, and you dispatch a subagent to settle it.\n"
+    "Otherwise, ask the user whether that ruling still applies, and put the question on your task list.")
+# What follows the sentence when it opened with the number of the issue
+# holding the ruling; scripts/ghi-issue-write.py reads the number back from it.
+RULING_QUESTION_HELD_IN_TEMPLATE = " (held in GHI {number})"
 # Printed on stderr after an answer asked without --include-closed. stderr,
 # because stdout is the answer that callers such as ghi-issue-write.py parse.
 # The command names the question asked, shell-quoted, so it runs as printed.
@@ -352,13 +355,19 @@ def open_issues_only_include_closed_hint_message(question: str, repo: str) -> st
 def caller_message_for_passthrough_reply(text: str):
     """(message, exit code) for a not-about-issues or ask-user-about-ruling:
     reply, or None for any other reply. The ruling sentence is carried over
-    as ghi-info wrote it, with the prefix and surrounding whitespace removed."""
+    as ghi-info wrote it, with the prefix and surrounding whitespace removed;
+    a leading `#<n>` is moved to the end as RULING_QUESTION_HELD_IN_TEMPLATE."""
     stripped = text.strip()
     if stripped.lower() in NOT_ABOUT_ISSUES_REPLY_WORDS:
         return NOT_ABOUT_ISSUES_MESSAGE, EXIT_NOT_ABOUT_ISSUES
     for prefix in ASK_USER_ABOUT_RULING_REPLY_PREFIXES:
         if stripped.lower().startswith(prefix):
             sentence = stripped[len(prefix):].strip()
+            numbered = re.match(r"#(\d+)\s*(.*)", sentence, re.DOTALL)
+            if numbered:
+                sentence = (numbered.group(2).strip()
+                            + RULING_QUESTION_HELD_IN_TEMPLATE.format(
+                                number=numbered.group(1)))
             return (RULING_QUESTION_MESSAGE_TEMPLATE.format(sentence=sentence),
                     EXIT_RULING_QUESTION)
     return None

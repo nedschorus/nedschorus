@@ -573,8 +573,8 @@ ESCALATE_SENTENCE = ("the 2026-09-19 body ruling in #46 may not hold after "
 APPROVED_RULING_QUESTION_MESSAGE = (
     "ghi-info found a ruling of the user's that it cannot tell still applies: "
     + ESCALATE_SENTENCE + "\n"
-    "Ask the user whether that ruling still applies, and put the question on your task list.\n"
-    "Do not file or edit the issue until he answers.\n")
+    "If you file or edit the GHI, scripts/ghi-issue-write.py records this question beside the GHI-MD, and you dispatch a subagent to settle it.\n"
+    "Otherwise, ask the user whether that ruling still applies, and put the question on your task list.\n")
 
 # Typed out rather than read from the module, like the two messages above, so
 # a change to the hint's text fails this file.
@@ -632,7 +632,7 @@ try:
             check(f"a {prefix} reply prints nothing on stdout", out == "", out)
 
         # ghi-info opens every ruling question with the issue holding the
-        # ruling. The number reaches the caller first in the sentence, and,
+        # ruling. The number reaches the caller after the sentence, and,
         # the reply being a ruling question, it is not checked against the
         # mirror: the issue it names is not open there, and no drift turn is asked
         # (the fake answers two turns only).
@@ -643,10 +643,13 @@ try:
         exit_code, out, err = main_with_reply(
             seat_numbered, "ask-user-about-ruling: " + numbered)
         check("a ruling question opening with its issue number reaches the "
-              "caller with the number first, and asks ghi-info nothing more",
+              "caller with the number moved to the end, and asks ghi-info "
+              "nothing more",
               exit_code == 3 and out == ""
               and ("ghi-info found a ruling of the user's that it cannot tell "
-                   "still applies: " + numbered + "\n") in err,
+                   "still applies: the ruling that a closed issue is frozen "
+                   "may not cover a reopened issue (held in GHI 783)\n")
+              in err,
               (exit_code, out, err))
 
         seat_list = root / "seat-reading-list"
