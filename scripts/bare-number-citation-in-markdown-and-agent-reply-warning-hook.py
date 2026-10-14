@@ -81,7 +81,8 @@ again after each compaction, which may drop it from the agent's context; after
 that its instructions shrink to one line, and the hits are listed as before.
 The link-title part is always sent in full. A record that cannot be read or
 written leaves the note as it would be without the record and adds a line
-saying so.
+saying so. A reply with nothing to note reports no record failure: no note is
+lost, and the next reply that has a note reports the failure.
 Nothing found: nothing printed, exit 0. A fault: one line naming it on stderr,
 nothing on stdout, exit 1. Claude Code records a hook's exit 1 as a
 non-blocking error and keeps the write and the prompt; stderr after exit 0 is
@@ -755,25 +756,29 @@ def previous_reply_note(payload: dict, environment):
     references = bare_references_in(reply)
     sections = title_note_lines(PREVIOUS_REPLY_TITLE_OPENING_LINES, PREVIOUS_REPLY_WRONG_NUMBER_LINE,
                                 link_title_mismatches_in(reply))
-    compactions = compaction_count(records)
-    if references:
-        full_note_sent = record.get("full_note_sent_after_compactions") == compactions
-        sections.insert(0, note_text(
-            PREVIOUS_REPLY_SHORT_OPENING_LINES if full_note_sent else PREVIOUS_REPLY_OPENING_LINES,
-            references))
-        record["full_note_sent_after_compactions"] = compactions
-    if not sections:
+    if not references and not sections:
         return None
+    compactions = compaction_count(records)
+    full_note_sent = record.get("full_note_sent_after_compactions") == compactions
+    failures = []
     if record_path is not None:
+        if references:
+            record["full_note_sent_after_compactions"] = compactions
         record["noted_message_id"] = message_id
         if read_failure is not None:
-            sections.append(NOTE_RECORD_FAILED_LINE.format(record=record_path, action="read",
+            failures.append(NOTE_RECORD_FAILED_LINE.format(record=record_path, action="read",
                                                            reason=read_failure))
         write_failure = note_record_write(record_path, record)
         if write_failure is not None:
-            sections.append(NOTE_RECORD_FAILED_LINE.format(record=record_path, action="written",
+            # A record that cannot be written counts as no record: the full note is sent.
+            full_note_sent = False
+            failures.append(NOTE_RECORD_FAILED_LINE.format(record=record_path, action="written",
                                                            reason=write_failure))
-    return hook_output("UserPromptSubmit", "\n".join(sections))
+    if references:
+        sections.insert(0, note_text(
+            PREVIOUS_REPLY_SHORT_OPENING_LINES if full_note_sent else PREVIOUS_REPLY_OPENING_LINES,
+            references))
+    return hook_output("UserPromptSubmit", "\n".join(sections + failures))
 
 
 def run(stdin_text: str, environment):

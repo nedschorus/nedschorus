@@ -901,6 +901,30 @@ check("and the record is written afresh, so the same reply is not noted again",
       run_hook(prompt_payload(path, session_id="garbled-record-session"),
                dict(HOOK_ENVIRONMENT, TMPDIR=str(garbled_records))).stdout == "", "")
 
+clean_path = transcript(user("go"), assistant("c1", text_block("Nothing to cite here.")))
+result = run_hook(prompt_payload(clean_path, session_id="garbled-record-session"),
+                  dict(HOOK_ENVIRONMENT, TMPDIR=str(garbled_records)))
+check("a reply with nothing to note gives no line, even when the record cannot be read",
+      result.returncode == 0 and result.stdout == "", result.stdout + result.stderr)
+
+# A directory that can be read and not written: the record reads, its write fails.
+read_only_records = SCRATCH / "read-only-record-temporary-directory"
+(read_only_records / NOTE_RECORD_DIRECTORY_NAME).mkdir(parents=True)
+(read_only_records / NOTE_RECORD_DIRECTORY_NAME / "read-only-record-session.json").write_text(
+    json.dumps({"noted_message_id": "earlier", "full_note_sent_after_compactions": 0}),
+    encoding="utf-8")
+(read_only_records / NOTE_RECORD_DIRECTORY_NAME).chmod(0o555)
+path = transcript(user("go"), assistant("m6", text_block("See PR 22.")))
+try:
+    result = run_hook(prompt_payload(path, session_id="read-only-record-session"),
+                      dict(HOOK_ENVIRONMENT, TMPDIR=str(read_only_records)))
+finally:
+    (read_only_records / NOTE_RECORD_DIRECTORY_NAME).chmod(0o755)
+note = note_of(result)
+check("a record that says the full note was sent, then cannot be written: the note is the full one",
+      '"PR 22"' in note and full_instruction in note and short_instruction not in note
+      and "could not be written (" in note, result.stdout + result.stderr)
+
 result = run_hook({"hook_event_name": "Stop", "transcript_path": str(path)})
 check("Stop is no longer handled", result.returncode == 0 and result.stdout == "", result.stdout)
 
