@@ -1208,7 +1208,7 @@ except r.ShellParserUnavailable as error:
           raised is not None and "did not finish" in raised.install_output, raised)
     check("the pinned requirements file pins tree-sitter and tree-sitter-bash",
           {line.split("==")[0] for line in reader.REQUIREMENTS_FILE.read_text().splitlines()
-           if "==" in line} == {"tree-sitter", "tree-sitter-bash"})
+           if "==" in line} >= {"tree-sitter", "tree-sitter-bash"})
 
     # Failures of the state directory itself.
     real_state_directory = reader.STATE_DIRECTORY

@@ -75,12 +75,13 @@ def missing_libraries(pins, versions):
             for name in sorted(pins) if versions.get(name) != pins[name]]
 
 
-def check_and_install(host, runner=subprocess.run, installer=None):
+def check_and_install(host, runner=subprocess.run, installer=None,
+                      requirements_file=pinned_libraries_install.PINNED_REQUIREMENTS_FILE):
     """Return (exit status, report lines)."""
     if installer is None:
         def installer():
             return pinned_libraries_install.pinned_requirements_pip_install(INSTALL_TIMEOUT_SECONDS, runner)
-    pins = pinned_versions()
+    pins = pinned_versions(requirements_file)
     missing = missing_libraries(pins, installed_versions(pins, runner))
     if not missing:
         return 0, [f"{host}: all {len(pins)} pinned compiled Python libraries are installed "
