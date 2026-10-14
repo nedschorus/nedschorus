@@ -1504,6 +1504,22 @@ with tempfile.TemporaryDirectory() as exception_scratch:
           "carries 1 merge commit(s) from main" in agent_text(clean_result),
           clean_result.stdout)
 
+    # --- two catch-up merges are counted and named, newest first -------------
+    twice_origin, twice_seat = seat_on_main("two-catch-up-merges")
+    commit_file(twice_seat, "seat-own.txt", "mine\n", "the seat's own work")
+    commit_file(twice_origin, "scripts/unrelated-one.py", "main's\n", "main advances once")
+    check("(fixture) the first catch-up merge lands without a conflict",
+          merge_main_into(twice_seat) == 0)
+    older_merge = git(["rev-parse", "--short=12", "HEAD"], twice_seat).stdout.strip()
+    commit_file(twice_origin, "scripts/unrelated-two.py", "main's\n", "main advances twice")
+    check("(fixture) the second catch-up merge lands without a conflict",
+          merge_main_into(twice_seat) == 0)
+    newer_merge = git(["rev-parse", "--short=12", "HEAD"], twice_seat).stdout.strip()
+    twice_result = run_catch_up(["--cwd", str(twice_seat)])
+    check("a branch with two catch-up merges is told both, counted and named",
+          f"seat carries 2 merge commit(s) from main ({newer_merge}, {older_merge})."
+          in agent_text(twice_result), twice_result.stdout)
+
     # --- a merge that RESOLVED a conflict is not reported --------------------
     def hand_resolved_seat(name: str):
         """A seat that merged main by hand and resolved a real conflict — the

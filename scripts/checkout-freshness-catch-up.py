@@ -740,7 +740,7 @@ def merge_parents_conflict(checkout: Path, first_parent: str, second_parent: str
     runs that check: the check prints VERDICT: CONFLICT, CLAUDE.md sends the
     author to the hand-merge, and git's own merge stops until it is resolved by
     hand. With the no-renames re-merge alone this function would return False
-    for that hand-merge, and the user would be told the branch had made a
+    for that hand-merge, and the agent would be told the branch had made a
     banned catch-up merge. merges_from_main's docstring says why asking both
     ways loses nothing.
 
@@ -786,7 +786,7 @@ def merges_from_main(checkout: Path):
     A merge of another topic branch is not the banned thing, so the second
     parent is tested for being on main rather than every merge being flagged.
     A branch that carries older catch-up merges is flagged once, which is
-    correct: those merges are real and the user has not been told of them.
+    correct: those merges are real and the agent has not been told of them.
 
     WHY A CLEAN RE-MERGE IS THE TEST. CLAUDE.md allows one exception: a branch
     that genuinely CONFLICTS with main merges origin/main in by hand, once,
