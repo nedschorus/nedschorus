@@ -19,6 +19,7 @@ import marshal
 import py_compile
 import os
 import pathlib
+import shutil
 import signal
 import subprocess
 import sys
@@ -140,6 +141,18 @@ def worktrees(repository):
     listed = subprocess.run(["git", "-C", str(repository), "worktree", "list", "--porcelain"],
                             capture_output=True, text=True, check=True).stdout
     return [line.split(" ", 1)[1] for line in listed.splitlines() if line.startswith("worktree ")]
+
+
+def temporary_directory_environment(scratch, name):
+    """An environment whose TMPDIR is a fresh directory of its own under scratch."""
+    directory = scratch / f"tmpdir-{name}"
+    directory.mkdir()
+    return {**os.environ, "TMPDIR": str(directory)}
+
+
+def work_directories_left(scratch, name):
+    """The program's temporary directories left in that TMPDIR."""
+    return sorted(path.name for path in (scratch / f"tmpdir-{name}").glob(f"{program.PROGRAM}-*"))
 
 
 def unchanged(repository):
@@ -549,6 +562,62 @@ with tempfile.TemporaryDirectory() as scratch_name:
             signal.signal(signal.SIGINT, signal.default_int_handler)
         return code, output.getvalue(), ran
 
+    # Every exit of main ends in a VERDICT line; a failure of the program is not run, exit 2,
+    # never exit 1, which reads as a surviving mutant.
+    original_run = program.run
+
+    def failing_run(arguments, platform):
+        raise UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte")
+    program.run = failing_run
+    output, errors = io.StringIO(), io.StringIO()
+    try:
+        with contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors):
+            code = program.main(["doubling-test.py", "--checkout", str(repository),
+                                 "--lock-file", str(scratch / "run.lock")])
+    except BaseException as escaped:
+        # An exception that escapes main is the failure under test: fail this case, not the file.
+        code = f"escaped: {type(escaped).__name__}: {escaped}"
+    finally:
+        program.run = original_run
+        signal.signal(signal.SIGTERM, signal.SIG_DFL)
+        signal.signal(signal.SIGHUP, signal.SIG_DFL)
+        signal.signal(signal.SIGINT, signal.default_int_handler)
+    last = output.getvalue().strip().splitlines()[-1] if output.getvalue().strip() else ""
+    check("an exception the program does not expect is 'not run', exit 2, quoting the "
+          "exception, with its traceback on stderr",
+          code == program.EXIT_NOT_RUN and last.startswith("VERDICT: not run — this program "
+                                                          "failed: UnicodeDecodeError: ")
+          and "Traceback (most recent call last)" in errors.getvalue(), (code, output.getvalue()))
+    output, errors = io.StringIO(), io.StringIO()
+    try:
+        with contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors):
+            code = program.main(["doubling-test.py", "--no-such-option"])
+    except BaseException as escaped:
+        code = f"escaped: {type(escaped).__name__}: {escaped}"
+    check("arguments that cannot be read are 'not run', exit 2, with a VERDICT line after "
+          "argparse's error",
+          code == program.EXIT_NOT_RUN
+          and output.getvalue().strip().splitlines()[-1].startswith("VERDICT: not run")
+          and "--no-such-option" in errors.getvalue(), (code, output.getvalue(), errors.getvalue()))
+    shown = subprocess.run([sys.executable, str(PROGRAM_PATH), "--help"], capture_output=True,
+                           text=True, timeout=60, stdin=subprocess.DEVNULL, check=False)
+    check("--help prints the usage and exits 0, with no VERDICT line",
+          shown.returncode == 0 and "usage:" in shown.stdout and "VERDICT" not in shown.stdout,
+          (shown.returncode, shown.stdout[-300:], shown.stderr[-300:]))
+    broken = scratch / "runner-cannot-load"
+    (broken / "scripts").mkdir(parents=True)
+    shutil.copy2(PROGRAM_PATH, broken / "scripts" / PROGRAM_PATH.name)
+    (broken / "scripts" / "run-all-test-suites.py").write_text("raise ImportError('injected')\n")
+    loaded = subprocess.run([sys.executable, str(broken / "scripts" / PROGRAM_PATH.name),
+                             "doubling-test.py"], capture_output=True, text=True, timeout=60,
+                            stdin=subprocess.DEVNULL, check=False)
+    lines = loaded.stdout.strip().splitlines()
+    check("when scripts/run-all-test-suites.py cannot be loaded, the program is 'not run', exit "
+          "2, naming the failure",
+          loaded.returncode == program.EXIT_NOT_RUN and bool(lines)
+          and lines[-1].startswith("VERDICT: not run — scripts/run-all-test-suites.py")
+          and "ImportError: injected" in lines[-1], (loaded.returncode, loaded.stdout, loaded.stderr))
+
     subreaper_calls = []
     code, output, ran = main_with_nothing_run("freebsd14")
     check("on a platform other than Linux and macOS, nothing runs and the exit is 2",
@@ -679,7 +748,11 @@ else:
         # mutant's size; the mutant must still be what runs, and the original afterwards.
         killing = patch_file(scratch, repository, "kills.patch", "number * 2", "number * 3")
         completed, last = run_program(scratch, repository, "doubling-test.py",
-                                      "--mutant", str(killing))
+                                      "--mutant", str(killing),
+                                      environment=temporary_directory_environment(scratch, "killed"))
+        check("after a run that ends in a verdict, the program's temporary directory is gone",
+              last.startswith("VERDICT: ") and work_directories_left(scratch, "killed") == [],
+              work_directories_left(scratch, "killed"))
         check("a mutant the suite catches is 'mutant killed', exit 0",
               completed.returncode == 0 and last.startswith("VERDICT: mutant killed")
               and "FAIL: double(3)" in completed.stdout, (completed.returncode, completed.stdout))
@@ -736,7 +809,11 @@ else:
 
         # A suite that fails without the mutant cannot show that the mutant was caught.
         completed, last = run_program(scratch, repository, "fails-without-mutant-test.py",
-                                      "--mutant", str(surviving))
+                                      "--mutant", str(surviving),
+                                      environment=temporary_directory_environment(scratch, "not-run"))
+        check("after a run that is not run, the program's temporary directory is gone",
+              last.startswith("VERDICT: not run") and work_directories_left(scratch, "not-run") == [],
+              work_directories_left(scratch, "not-run"))
         check("a suite that fails without the mutant is 'not run', exit 2, the mutant not applied",
               completed.returncode == 2 and "fails without the mutant" in last
               and "mutant applied" not in completed.stdout and unchanged(repository),
@@ -830,7 +907,7 @@ else:
              str(terminating), "--checkout", str(repository),
              "--lock-file", str(scratch / "run.lock")],
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-            stdin=subprocess.DEVNULL)
+            stdin=subprocess.DEVNULL, env=temporary_directory_environment(scratch, "terminated"))
         seen = []
         for output_line in process.stdout:
             seen.append(output_line)
@@ -845,6 +922,9 @@ else:
               process.returncode == 2 and "interrupted" in last and unchanged(repository)
               and worktrees(repository) == [str(repository)],
               (process.returncode, stdout, stderr, (repository / "doubling.py").read_text()))
+        check("terminated by SIGTERM, the program leaves no temporary directory behind",
+              work_directories_left(scratch, "terminated") == [],
+              work_directories_left(scratch, "terminated"))
 
         # --- An interrupted run leaves no process of the suite running ---------
         heartbeat = scratch / "heartbeat"
