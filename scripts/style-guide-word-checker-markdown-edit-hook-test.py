@@ -42,6 +42,10 @@ _git_environment_fixture.remove_git_redirecting_environment_variables_from_this_
 
 HOOK_PATH = Path(__file__).with_name("style-guide-word-checker-markdown-edit-hook.py")
 CHECKER_PATH = Path(__file__).with_name("style-guide-word-checker.py")
+SHARED_GIT_TRACKING_CHECK_RELATIVE_PATH = Path(
+    "nc-systems", "general-tools", "edited-file-path-within-checkout-root-and-git-check-ignore-common.py")
+SHARED_GIT_TRACKING_CHECK_PATH = (Path(__file__).resolve().parents[1]
+                                  / SHARED_GIT_TRACKING_CHECK_RELATIVE_PATH)
 
 GIT_REDIRECTING_VARIABLES = ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE",
                              "GIT_OBJECT_DIRECTORY", "GIT_COMMON_DIR",
@@ -74,8 +78,15 @@ def load_module(name, path):
 FIXTURE_PAGE = '# Style guide (test fixture)\n\n## Words to avoid\n\n| Word | Forms flagged | Forms not flagged | Write instead | Applies to |\n|---|---|---|---|---|\n| `land` | `land`, `lands`, `landed`, `landing` | | "merge", "merges", "merged" or "merging", matching the form written | files, messages to other agents, messages to the user |\n| `home` | `home`, `homes` | `agent-home`, `/home/`, `home directory` | agent-home for the directory an agent-seat works in; canonical location for the one authoritative place a document or fact is kept | files, messages to other agents, messages to the user |\n| `draft` | `draft`, `drafts` | `-draft`, `docs/drafts/`, `draft pull request` | -draft for the filename suffix; "pending approval" for text that waits for the user\'s approval; "the `draft` label" for the GitHub label; `docs/drafts/` for the directory | files, messages to other agents, messages to the user |\n| `walk` | `walk`, `walks`, `walked`, `walking` | `approval-walk`, `approved-by-walk`, `walk-document`, `walk-minutes`, `/walk-me-through`, `docs/walk/` | approval-walk for the event; walk-document for the file `docs/walk/<name>.md`; approved-by-walk for what the user approved in an approval-walk; "put to the user in an approval-walk" for the act | files, messages to other agents, messages to the user |\n| `seat` | `seat`, `seats`, `seated` | `agent-seat`, `seat-branch`, `seat-brief`, `reincarnate-seat`, `retire-seat` | agent-seat for the identity; agent-session for one running conversation; "the agent-seat\'s name" for the name of an agent-seat; working directory for where an agent-session works when that is not its agent-seat\'s agent-home; cold-read-cell for one reviewer in a cold-read-full-run | files, messages to other agents, messages to the user |\n| `head` | `head`, `heads` | `head commit`, `frozen-head`, `HEAD`, `head branch` | head commit for the commit at the tip of a pull request\'s branch; frozen-head when the point is that the pushed head commit must not be amended; `HEAD`, in capitals, for what a Git checkout has checked out | files, messages to other agents, messages to the user |\n| `drain` | `drain`, `drains`, `drained`, `draining` | `queue-drain` | queue-drain for the procedure that empties the four queue directories and `docs/drafts/`; "is promoted to" for an item that leaves a queue for its approved location | files, messages to other agents, messages to the user |\n| `it` | `it` | | the noun the pronoun stands for, unless the noun is in the same sentence and no other noun there could be meant; a pronoun with no noun behind it, as in "it is raining", stays | messages to other agents, messages to the user |\n| `its` | `its` | | the noun the pronoun stands for, unless the noun is in the same sentence and no other noun there could be meant; a pronoun with no noun behind it, as in "it is raining", stays | messages to other agents, messages to the user |\n| `they` | `they` | | the noun the pronoun stands for, unless the noun is in the same sentence and no other noun there could be meant; a pronoun with no noun behind it, as in "it is raining", stays | messages to other agents, messages to the user |\n| `this` | `this` | | where "this" is used as a pronoun, the noun it stands for, unless the noun is in the same sentence and no other noun there could be meant; a pronoun with no noun behind it, as in "it is raining", stays | messages to other agents, messages to the user |\n| `that` | `that` | | where "that" is used as a pronoun, the noun it stands for, unless the noun is in the same sentence and no other noun there could be meant; a pronoun with no noun behind it, as in "it is raining", stays | messages to other agents, messages to the user |\n'
 
 
+def copy_shared_git_tracking_check(root):
+    """Copy the module the hook loads its git helpers from into root, where the hook looks for it."""
+    shared_copy = Path(root) / SHARED_GIT_TRACKING_CHECK_RELATIVE_PATH
+    shared_copy.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy(str(SHARED_GIT_TRACKING_CHECK_PATH), str(shared_copy))
+
+
 def build_checker_tree(root, page_text):
-    """Lay out scripts/ and the style guide page under root; return (checker, hook) paths."""
+    """Lay out scripts/, the shared git helpers and the style guide page under root; return (checker, hook) paths."""
     scripts_directory = Path(root) / "scripts"
     scripts_directory.mkdir(parents=True)
     page_path = Path(root) / "docs" / "nedschorus-wiki" / "nedschorus-style-guide.md"
@@ -85,6 +96,7 @@ def build_checker_tree(root, page_text):
     hook_copy = scripts_directory / HOOK_PATH.name
     shutil.copy(str(CHECKER_PATH), str(checker_copy))
     shutil.copy(str(HOOK_PATH), str(hook_copy))
+    copy_shared_git_tracking_check(root)
     return checker_copy, hook_copy
 
 
@@ -613,14 +625,25 @@ with tempfile.TemporaryDirectory() as temporary_directory:
         check(f"{case_name} on stdin is reported on stderr, exit 1",
               reported(result, fault_words), result.stdout + result.stderr)
 
-    lone_hook_directory = tmp / "hook-without-its-checker"
-    lone_hook_directory.mkdir()
+    lone_hook_directory = tmp / "hook-without-its-checker" / "scripts"
+    lone_hook_directory.mkdir(parents=True)
+    copy_shared_git_tracking_check(lone_hook_directory.parent)
     lone_hook = lone_hook_directory / HOOK_PATH.name
     shutil.copy(str(HOOK_PATH), str(lone_hook))
     new_page = checkout / "docs" / "new-page.md"
     result = run_hook(write_payload(checkout, new_page, "The seat.\n"), hook_path=lone_hook)
     check("a checker that fails to load is reported on stderr, exit 1",
-          reported(result, "FileNotFoundError"), result.stdout + result.stderr)
+          reported(result, "FileNotFoundError") and CHECKER_PATH.name in result.stderr,
+          result.stdout + result.stderr)
+
+    # The hook without the shared module it loads its git helpers from.
+    hook_without_shared_module = tmp / "hook-without-its-git-helpers" / "scripts" / HOOK_PATH.name
+    hook_without_shared_module.parent.mkdir(parents=True)
+    shutil.copy(str(HOOK_PATH), str(hook_without_shared_module))
+    result = run_hook(write_payload(checkout, new_page, "The seat.\n"),
+                      hook_path=hook_without_shared_module)
+    check("a shared git-helper module that fails to load is reported on stderr, exit 1",
+          reported(result, SHARED_GIT_TRACKING_CHECK_PATH.name), result.stdout + result.stderr)
 
     # A checker whose style guide page is missing raises at import, and the hook
     # reports that rather than flagging against no list.
@@ -629,6 +652,7 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     pageless_hook = pageless_scripts_directory / HOOK_PATH.name
     shutil.copy(str(HOOK_PATH), str(pageless_hook))
     shutil.copy(str(CHECKER_PATH), str(pageless_scripts_directory / CHECKER_PATH.name))
+    copy_shared_git_tracking_check(pageless_scripts_directory.parent)
     result = run_hook(write_payload(checkout, new_page, "The seat.\n"), hook_path=pageless_hook)
     check("a checker without its style guide page is reported on stderr, exit 1",
           reported(result, "nedschorus-style-guide.md"), result.stdout + result.stderr)
@@ -650,8 +674,8 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     check("a hook whose style guide page is broken is reported on stderr, exit 1",
           reported(result, "StyleGuidePageError"), result.stdout + result.stderr)
 
-    # The last-resort handler: git missing from PATH raises FileNotFoundError
-    # inside the hook, and the top-level handler reports it in one line.
+    # git missing from PATH: the shared module raises GitIgnoreCheckFailed,
+    # and the top-level handler reports it in one line.
     empty_path_directory = tmp / "empty-path-directory"
     empty_path_directory.mkdir()
     reset_committed_file()
@@ -660,7 +684,16 @@ with tempfile.TemporaryDirectory() as temporary_directory:
                             capture_output=True, text=True, check=False,
                             env=dict(CLEAN_ENVIRONMENT, PATH=str(empty_path_directory)))
     check("a hook whose git cannot be found is reported on stderr, exit 1",
-          reported(no_git, "FileNotFoundError"), no_git.stdout + no_git.stderr)
+          reported(no_git, "GitIgnoreCheckFailed: git check-ignore could not run"),
+          no_git.stdout + no_git.stderr)
+    # The Write path runs git show HEAD:<path> first.
+    no_git = subprocess.run([sys.executable, str(HOOK_PATH)],
+                            input=json.dumps(write_payload(checkout, new_page, "The seat.\n")),
+                            capture_output=True, text=True, check=False,
+                            env=dict(CLEAN_ENVIRONMENT, PATH=str(empty_path_directory)))
+    check("a Write whose git cannot be found is reported on stderr, exit 1",
+          reported(no_git, "GitIgnoreCheckFailed: git show could not run"),
+          no_git.stdout + no_git.stderr)
 
     # A checkout whose .git file names a git directory that does not exist:
     # the hook finds the checkout root, and git check-ignore exits 128 there.

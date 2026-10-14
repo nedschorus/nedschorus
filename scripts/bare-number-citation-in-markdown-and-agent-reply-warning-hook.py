@@ -81,7 +81,6 @@ from pathlib import Path
 
 MARKDOWN_SUFFIXES = (".md", ".markdown")
 HIT_LINES_LISTED_AT_MOST = 10
-GIT_TIMEOUT_SECONDS = 10
 GH_TIMEOUT_SECONDS = 5
 GITHUB_REPOSITORY_OWNER = "nedschorus"
 GITHUB_REPOSITORY_NAME = "nedschorus"
@@ -510,43 +509,15 @@ def hook_output(event_name: str, text: str) -> str:
 
 # --- PostToolUse: the Markdown file just written ---------------------------
 
-def run_git(arguments, working_directory: Path):
-    return subprocess.run(["git", *arguments], cwd=str(working_directory),
-                          capture_output=True, text=True, encoding="utf-8",
-                          errors="replace", timeout=GIT_TIMEOUT_SECONDS, check=False)
-
-
-def enclosing_checkout_root(directory: Path):
-    """Return the nearest checkout root at or above directory, or None."""
-    for candidate in (directory, *directory.parents):
-        git_marker = candidate / ".git"
-        try:
-            if git_marker.is_file() or (git_marker / "HEAD").is_file():
-                return candidate
-        except OSError:
-            continue
-    return None
-
-
-def checkout_relative_path(file_path: str, working_directory: Path):
-    """Return (checkout root, Git-relative path), or None outside the session checkout."""
-    # Resolve both paths so macOS /tmp and /private/tmp compare equal.
-    try:
-        root = enclosing_checkout_root(working_directory.resolve())
-        if root is None:
-            return None
-        return root, Path(file_path).resolve().relative_to(root).as_posix()
-    except (ValueError, OSError, RuntimeError):
-        return None
-
-
-def git_would_track(root: Path, relative_path: str) -> bool:
-    # check-ignore exits 0 for ignored, 1 for trackable, and 128 for failure; tracked files are never ignored.
-    completed = run_git(["check-ignore", "-q", "--", relative_path], root)
-    if completed.returncode not in (0, 1):
-        first_line = (completed.stderr.strip().splitlines() or [""])[0]
-        raise RuntimeError(f"git check-ignore exited {completed.returncode} in {root}: {first_line}")
-    return completed.returncode == 1
+def _load_edited_file_path_within_checkout_root_and_git_check_ignore():
+    """Return the shared checkout and git-tracking helpers, loaded by path; raises when they will not load."""
+    specification = importlib.util.spec_from_file_location(
+        "edited_file_path_within_checkout_root_and_git_check_ignore_common",
+        Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+        / "edited-file-path-within-checkout-root-and-git-check-ignore-common.py")
+    module = importlib.util.module_from_spec(specification)
+    specification.loader.exec_module(module)
+    return module
 
 
 def markdown_edit_note(payload: dict):
@@ -560,7 +531,8 @@ def markdown_edit_note(payload: dict):
     working_directory = payload.get("cwd")
     if not isinstance(working_directory, str) or not Path(working_directory).is_dir():
         return None
-    located = checkout_relative_path(file_path, Path(working_directory))
+    checks = _load_edited_file_path_within_checkout_root_and_git_check_ignore()
+    located = checks.checkout_relative_path(file_path, Path(working_directory))
     if located is None:
         return None
     root, relative_path = located
@@ -569,7 +541,7 @@ def markdown_edit_note(payload: dict):
         new_string = tool_input.get("new_string")
         if not isinstance(new_string, str) or not new_string.strip():
             return None
-        if not git_would_track(root, relative_path):
+        if not checks.git_would_track(root, relative_path):
             return None
         references = bare_references_in(new_string)
         checked = link_title_mismatches_in(new_string)
@@ -578,12 +550,8 @@ def markdown_edit_note(payload: dict):
         content = tool_input.get("content")
         if not isinstance(content, str) or not content.strip():
             return None
-        committed = run_git(["show", "HEAD:" + relative_path], root)
-        if committed.returncode == 0:
-            committed_lines = set(line.rstrip() for line in committed.stdout.split("\n"))
-        elif git_would_track(root, relative_path):
-            committed_lines = set()
-        else:
+        committed_lines = checks.file_lines_at_head_unless_git_ignores_file(root, relative_path)
+        if committed_lines is None:
             return None
         new_line_numbers = set(
             index + 1 for index, line in enumerate(content.split("\n"))

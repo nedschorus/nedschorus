@@ -41,14 +41,13 @@ exit 1. Claude Code records a PostToolUse exit 1 as a non-blocking error and kee
 write; exit 0 would read as "no broken paragraph found". A file that is not UTF-8 is
 not a fault: the hook judges only UTF-8 text, and stays silent on other bytes."""
 
+import importlib.util
 import json
 import re
-import subprocess
 import sys
 from pathlib import Path
 
 MARKDOWN_SUFFIXES = (".md", ".markdown")
-GIT_TIMEOUT_SECONDS = 10
 
 REMINDER_MESSAGE = (
     "markdown-edit-hard-wrapped-paragraph-reminder: the text you just wrote in {path} holds a "
@@ -79,53 +78,15 @@ class MarkdownParserMissing(Exception):
     """markdown-it-py cannot be imported."""
 
 
-class GitIgnoreCheckFailed(Exception):
-    """git check-ignore could not say whether the file is ignored."""
-
-def run_git(arguments, working_directory: Path):
-    return subprocess.run(["git", *arguments], cwd=str(working_directory),
-                          capture_output=True, text=True, encoding="utf-8",
-                          errors="replace", timeout=GIT_TIMEOUT_SECONDS, check=False)
-
-
-def enclosing_checkout_root(directory: Path):
-    """Return the nearest checkout root at or above directory, or None."""
-    for candidate in (directory, *directory.parents):
-        git_marker = candidate / ".git"
-        try:
-            if git_marker.is_file() or (git_marker / "HEAD").is_file():
-                return candidate
-        except OSError:
-            continue
-    return None
-
-
-def checkout_relative_path(file_path: str, working_directory: Path):
-    """Return (checkout root, Git-relative path), or None outside the session checkout."""
-    # Resolve both paths so macOS /tmp and /private/tmp compare equal.
-    try:
-        root = enclosing_checkout_root(working_directory.resolve())
-        if root is None:
-            return None
-        return root, Path(file_path).resolve().relative_to(root).as_posix()
-    except (ValueError, OSError, RuntimeError):
-        return None
-
-
-def git_would_track(root: Path, relative_path: str) -> bool:
-    """Return whether git would track relative_path; raise GitIgnoreCheckFailed when git cannot say."""
-    # check-ignore exits 0 for ignored, 1 for trackable, and 128 for failure; tracked files are never ignored.
-    try:
-        completed = run_git(["check-ignore", "-q", "--", relative_path], root)
-    except (OSError, subprocess.SubprocessError) as error:
-        raise GitIgnoreCheckFailed(f"git check-ignore could not run: {error}") from error
-    if completed.returncode == 1:
-        return True
-    if completed.returncode == 0:
-        return False
-    detail = completed.stderr.strip().splitlines()
-    raise GitIgnoreCheckFailed(
-        f"git check-ignore exited {completed.returncode}" + (f": {detail[0]}" if detail else ""))
+def _load_edited_file_path_within_checkout_root_and_git_check_ignore():
+    """Return the shared checkout and git-tracking helpers, loaded by path; raises when they will not load."""
+    specification = importlib.util.spec_from_file_location(
+        "edited_file_path_within_checkout_root_and_git_check_ignore_common",
+        Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+        / "edited-file-path-within-checkout-root-and-git-check-ignore-common.py")
+    module = importlib.util.module_from_spec(specification)
+    specification.loader.exec_module(module)
+    return module
 
 
 def markdown_parser():
@@ -246,13 +207,14 @@ def main() -> int:
     if not isinstance(working_directory, str) or not Path(working_directory).is_dir():
         return 0
 
-    located = checkout_relative_path(file_path, Path(working_directory))
+    checks = _load_edited_file_path_within_checkout_root_and_git_check_ignore()
+    located = checks.checkout_relative_path(file_path, Path(working_directory))
     if located is None:
         return 0
     root, relative_path = located
     try:
-        trackable = git_would_track(root, relative_path)
-    except GitIgnoreCheckFailed as error:
+        trackable = checks.git_would_track(root, relative_path)
+    except checks.GitIgnoreCheckFailed as error:
         print(f"markdown-edit-hard-wrapped-paragraph-reminder: {error}, so no reminder check was made.",
               file=sys.stderr)
         return 1
