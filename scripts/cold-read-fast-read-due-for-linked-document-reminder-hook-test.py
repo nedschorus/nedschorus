@@ -84,13 +84,14 @@ class Case:
 
     def run(self, reply, payload_extra=None, stdin_text=None, environment_extra=None,
             fast_reads=()):
-        """fast_reads: (command, epoch time) pairs, written as this agent-session's Bash calls."""
+        """fast_reads: (command, epoch time[, cwd]) tuples, written as this agent-session's
+        Bash calls; cwd defaults to the case's checkout."""
         records = [
-            {"type": "assistant", "cwd": str(self.checkout),
-             "timestamp": datetime.fromtimestamp(called, timezone.utc).isoformat().replace("+00:00", "Z"),
+            {"type": "assistant", "cwd": str(read[2] if len(read) > 2 else self.checkout),
+             "timestamp": datetime.fromtimestamp(read[1], timezone.utc).isoformat().replace("+00:00", "Z"),
              "message": {"id": f"msg_read_{index}", "role": "assistant", "content": [
-                 {"type": "tool_use", "name": "Bash", "input": {"command": command}}]}}
-            for index, (command, called) in enumerate(fast_reads)]
+                 {"type": "tool_use", "name": "Bash", "input": {"command": read[0]}}]}}
+            for index, read in enumerate(fast_reads)]
         records += [
             {"type": "user", "message": {"role": "user", "content": "please write it"}},
             {"type": "assistant", "message": {"id": "msg_1", "role": "assistant",
@@ -342,6 +343,28 @@ def main():
            case.run("Applied the findings to docs/plan-of-record.md.",
                     fast_reads=[("python3 cold-read-fast-read.py --cells 1 --target "
                                  f"'{document}'", 4_000_000)]), None)
+
+    elsewhere = case.root / "elsewhere"
+    elsewhere.mkdir()
+    expect("a relative --target after a cd out of the entry's cwd counts, matched within the checkout",
+           case.run("Applied the findings to docs/plan-of-record.md.",
+                    fast_reads=[(f"cd {case.checkout} && {fast_read}", 4_000_000, elsewhere)]), None)
+    expect("a relative --target with the script at an absolute path counts against that script's checkout",
+           case.run("Applied the findings to docs/plan-of-record.md.",
+                    fast_reads=[(fast_read.replace("nc-systems/", f"{case.checkout}/nc-systems/"),
+                                 4_000_000, elsewhere)]), None)
+    expect("a relative --target with the script in another checkout does not count",
+           case.run("Applied the findings to docs/plan-of-record.md.",
+                    fast_reads=[(fast_read.replace("nc-systems/", f"{elsewhere}/nc-systems/"),
+                                 4_000_000)]), [document])
+    expect("every fast read in one Bash call counts",
+           case.run("Applied the findings to docs/plan-of-record.md.",
+                    fast_reads=[(fast_read.replace("plan-of-record", "other") + " && " + fast_read,
+                                 4_000_000)]), None)
+    expect("a --target the hook cannot expand, such as one holding a shell variable, does not count",
+           case.run("Applied the findings to docs/plan-of-record.md.",
+                    fast_reads=[(fast_read.replace("docs/", 'docs/"$sub"/../'), 4_000_000)]),
+           [document])
 
     case = Case()
     draft = case.document("docs/walk/naming-rules-draft.md", modified=5_000_000)
