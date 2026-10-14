@@ -17,6 +17,7 @@ A term used by one system alone is defined in that system's glossary, not here. 
 - **-nbd** — the end of the name of a file whose whole content is nice-but-dirty, just before any extension, such as `scripts/log-store-session-dialogs-refresh-nbd.py`; no file without the suffix holds nice-but-dirty code.
 - **agent-arbitrator** — a fresh-agent, used to resolve conflicts between agents.
 - **agent-binary** — the installed program a cold-read-cell or a sanity-check-cell runs its model through, `claude` or `codex`.
+- **agent-crash-watcher** — the program on ned-box that restarts an agent-seat whose agent-session stopped without writing a session-handoff, at most once an hour, and otherwise shows the user a failed-restart-notice. The program is `nc-systems/handoff/handoff-agent-seat-died-without-session-handoff-restart-watcher.py`.
 - **agent-facing-message** — text that a program in this repository writes for an agent to read and act on, such as a hook's refusal, warning or reminder, or the error a script prints. Its source is in the repository, so every agent-facing-message can be found, cold-read, tested and rewritten. Text that the agent-binary, `claude` or `codex`, adds on its own, such as Claude Code's "hook error" label, is not part of an agent-facing-message. An agent-facing-message that never reaches the agent is a defect of the program that writes it.
 - **agent-home** — the directory an agent-seat works in, `~/agents/<seat name>` on the agent-seat's machine: a git worktree on the agent-seat's seat-branch.
 - **agent-instructions** — prompts or Markdown files that instruct agents, wherever an agent reads them, such as CLAUDE.md, a skill, a seat-brief or AGENTS.md.
@@ -32,6 +33,7 @@ A term used by one system alone is defined in that system's glossary, not here. 
 - **design-contract** — the file beside a design listing what the component promises its component-consumers, one testable clause per observable effect.
 - **design-to-main** — the workflow that takes an approved design to code, tests and a pull request; its design and its own glossary are in `docs/design-to-main/`.
 - **edit-GHI** — the ghi-write-tool operation that merges an edit of a filed GHI-MD into main and updates the GHI from main.
+- **failed-restart-notice** — the window the agent-crash-watcher opens on the user's Mac when it cannot restart an agent-seat, with the command to restart it himself.
 - **fix-round** — one cycle of a pull request answering review findings, written by a forked subagent that inherits the author's full context, as one commit on top of the frozen-head.
 - **fresh-agent** — a minimal-context agent: one that has read only its agent-instructions, the documents selected for it to read, and (recursively) the documents linked from the selected documents.
 - **fresh-reader** — a fresh-agent, or a person, reading a document with no context beyond the document and what it links.
@@ -47,6 +49,7 @@ A term used by one system alone is defined in that system's glossary, not here. 
 - **ID-type** — the kind of thing an identifier names, and the word written before its name in a citation: `GHI` for a GitHub issue, `PR` for a pull request, agent-seat for an agent-seat, and the ordinary word for a commit, task or session.
 - **initial-agent-instructions** — the agent-instructions in the prompt that starts an agent or a subagent.
 - **instruction-file guard** — the hook `.claude/hooks/instruction-file-guard.py`, which refuses an edit to an agent-instructions file or a Claude Code settings file until the user's approval is written for it.
+- **leftover-shell** — the shell an agent-seat's tmux window drops to after its agent-session stops; `scripts/recover-crashed-seats.py` asks before closing it.
 - **link-only-GHI** — a GHI whose body is only links to its GHI-MD and supporting documents; the GHI-MD holds the text.
 - **log-store** — the directory on ned-box, `/home/nedlern/nedschorus-logs/`, holding the byproducts of the work that are not the system, cold-read records first.
 - **main-gatekeeper** — the program that will be the only way a change reaches main. Until it is live, changes reach main by PR through merge-lane.
