@@ -1245,31 +1245,82 @@ except r.ShellParserUnavailable as error:
     read_only.chmod(0o755)
     reader.STATE_DIRECTORY = real_state_directory
 
-    # Another process installing holds the lock; a guard must not wait out its hook timeout for it.
+    # Another process installing holds the lock; a guard waits for it only until its deadline.
+    # The guard runs in a child with a timeout, so a guard that waits too long prints FAIL here
+    # instead of hanging the suite. The child's deadline is argv[3] seconds. Its importer finds
+    # tree-sitter-bash only once the marker file argv[4] exists, which the other install writes
+    # when it finishes.
     import fcntl
-    reader.STATE_DIRECTORY = Path(scratch) / "state-held-by-another-install"
-    reader.STATE_DIRECTORY.mkdir()
-    with open(reader.STATE_DIRECTORY / reader.INSTALL_LOCK_FILE_NAME, "w") as other_install:
+    import threading
+    held_state = Path(scratch) / "state-held-by-another-install"
+    held_state.mkdir()
+    held_lock_guard_code = (
+        "import importlib.util, json, sys, time\n"
+        "from pathlib import Path\n"
+        "spec = importlib.util.spec_from_file_location('r', sys.argv[1])\n"
+        "r = importlib.util.module_from_spec(spec); spec.loader.exec_module(r)\n"
+        "r.STATE_DIRECTORY = Path(sys.argv[2])\n"
+        "r.pinned_libraries_install.INSTALL_LOCK_WAIT_SECONDS = float(sys.argv[3])\n"
+        "installed_marker = Path(sys.argv[4])\n"
+        "installs = []\n"
+        "def importer():\n"
+        "    if not installed_marker.exists():\n"
+        "        raise ImportError('No module named tree_sitter')\n"
+        "    return r.import_tree_sitter_bash()\n"
+        "def installer():\n"
+        "    installs.append(1)\n"
+        "    raise r.ShellParserUnavailable('pip: network is unreachable')\n"
+        "started = time.monotonic()\n"
+        "try:\n"
+        "    parser = r.load_parser(importer, installer, lambda: 9500.0)\n"
+        "    outcome = {'checked': parser.parse(b'ls').root_node.type == 'program'}\n"
+        "except r.ShellParserUnavailable as error:\n"
+        "    outcome = {'raised': error.install_output, 'class': type(error).__name__,\n"
+        "               'hook': json.loads(r.parser_unavailable_hook_output('The force-push guard', error, {}))}\n"
+        "outcome.update(installs=len(installs), elapsed=time.monotonic() - started)\n"
+        "print(json.dumps(outcome))\n")
+
+    def guard_while_another_install_runs(wait_seconds, finishes_after=None):
+        marker = held_state / "installed"
+        if marker.exists():
+            marker.unlink()
+        other_install = open(held_state / reader.INSTALL_LOCK_FILE_NAME, "w")
         fcntl.flock(other_install, fcntl.LOCK_EX)
-        importer, _installer, state = importer_after(99)
-        started = time.monotonic()
+
+        def finish():
+            marker.write_text("")
+            other_install.close()
+        if finishes_after is not None:
+            threading.Timer(finishes_after, finish).start()
         try:
-            reader.load_parser(importer, failing_installer(state), Clock(9500.0))
-            raised = None
-        except reader.ShellParserUnavailable as error:
-            raised = error
-        hook_output = (json.loads(reader.parser_unavailable_hook_output("The force-push guard", raised, {}))
-                       if raised is not None else None)
-        elapsed = time.monotonic() - started
-    check("while another process installs, a guard lets its command through at once, saying an "
-          "install is already running",
-          raised is not None and state["installs"] == 0 and elapsed < 5
-          and "already running" in raised.install_output
-          and "already running" in hook_output["hookSpecificOutput"]["additionalContext"]
-          and "permissionDecision" not in hook_output["hookSpecificOutput"]
-          and not (reader.STATE_DIRECTORY / reader.INSTALL_FAILURE_FILE_NAME).exists(),
-          (raised, state, elapsed))
-    reader.STATE_DIRECTORY = real_state_directory
+            child = subprocess.run([sys.executable, "-c", held_lock_guard_code, str(MODULE_PATH),
+                                    str(held_state), str(wait_seconds), str(marker)],
+                                   capture_output=True, text=True, timeout=20)
+            return json.loads(child.stdout) if child.returncode == 0 else {"child": child.stderr[-500:]}
+        except subprocess.TimeoutExpired:
+            return {"child": "waited for the lock until the 20 s timeout"}
+        finally:
+            if finishes_after is None:
+                other_install.close()
+
+    outcome = guard_while_another_install_runs(1)
+    hook = outcome.get("hook", {}).get("hookSpecificOutput", {})
+    context = hook.get("additionalContext", "")
+    check("when another process is still installing at the deadline, a guard lets its command "
+          "through, saying an install is still running, not that the install failed",
+          outcome.get("class") == "ShellParserInstallAlreadyRunning" and outcome.get("installs") == 0
+          and 1 <= outcome.get("elapsed", 0) < 10 and "permissionDecision" not in hook
+          and "was still installing the shell parser tree-sitter-bash" in context
+          and "That install has not failed" in context
+          and "Later commands are checked once that install finishes" in context
+          and "installing it failed" not in context and "pip install" not in context
+          and not (held_state / reader.INSTALL_FAILURE_FILE_NAME).exists(), outcome)
+    # The other install finishes 2 s after it starts; the child's own start-up uses part of that.
+    outcome = guard_while_another_install_runs(15, finishes_after=2)
+    check("when another process's install finishes within the deadline, a guard waits, then "
+          "checks the command, without installing",
+          outcome.get("checked") is True and outcome.get("installs") == 0
+          and 0.5 <= outcome.get("elapsed", 0) < 10, outcome)
 
     # --- the message when the parser is missing and the install failed ---
     error = reader.ShellParserUnavailable("pip: network is unreachable")

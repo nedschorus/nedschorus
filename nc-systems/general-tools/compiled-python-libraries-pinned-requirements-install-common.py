@@ -9,10 +9,12 @@ CompiledPythonLibrariesUnavailable, whose install_output says what the install
 printed, and says so in its own message.
 
 Only one process installs at a time: each install holds a lock file. A
-caller inside a hook, such as a Bash guard, never waits for that lock, since
-an install can outlast the hook's timeout: when another process holds it, the
-caller gets CompiledPythonLibrariesUnavailable at once and lets its command
-through. A failed install is recorded, and for ten minutes later callers get
+caller inside a hook, such as a Bash guard, waits for that lock at most
+INSTALL_LOCK_WAIT_SECONDS, so that guards running in parallel on one command
+take turns and only the first installs; when another process still holds the
+lock at that deadline, the caller gets
+CompiledPythonLibrariesInstallAlreadyRunning and lets its command through. A
+failed install is recorded, and for ten minutes later callers get
 the recorded output instead of waiting for an install that fails again.
 
 A compiled module cannot be replaced inside a running process. When the
@@ -36,16 +38,23 @@ import shlex
 import site
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 PINNED_REQUIREMENTS_FILE = Path(__file__).resolve().with_name(
     "compiled-python-libraries-pinned-requirements.txt")
 INSTALL_RETRY_SECONDS = 600
-# Every caller that installs the pinned file takes its turn on the lock here. The directory keeps
-# the name the shell reader, its first caller, gave it.
+# Every process that installs the pinned file holds the lock here. The directory keeps the name
+# the shell reader, its first caller, gave it.
 PINNED_REQUIREMENTS_INSTALL_STATE_DIRECTORY = Path.home() / ".cache" / "nedschorus-shell-command-reader"
 INSTALL_LOCK_FILE_NAME = "install.lock"
 INSTALL_FAILURE_FILE_NAME = "last-install-failure.txt"
+# A Bash guard runs under Claude Code's 30-second hook timeout, and a guard the timeout kills
+# never prints the words that let its command through. So its wait for another process's install
+# must stay well under 30 seconds, leaving room for the guard's own install (the shell reader
+# allows it 8 seconds) and its message.
+INSTALL_LOCK_WAIT_SECONDS = 15
+INSTALL_LOCK_POLL_SECONDS = 0.1
 
 
 class CompiledPythonLibrariesUnavailable(Exception):
@@ -61,6 +70,13 @@ class CompiledPythonLibrariesUnavailable(Exception):
 
 class CompiledPythonLibrariesInstalledForANewProcess(CompiledPythonLibrariesUnavailable):
     """The install succeeded, but this process still holds the unusable copy it loaded first."""
+
+
+class CompiledPythonLibrariesInstallAlreadyRunning(CompiledPythonLibrariesUnavailable):
+    """Another process still held the install lock when the wait's deadline came.
+
+    That install has not failed; it may still succeed.
+    """
 
 
 def pinned_requirements_pip_install_command(requirements_file=PINNED_REQUIREMENTS_FILE, *quiet_options):
@@ -84,10 +100,12 @@ def pinned_requirements_by_hand_install_command(host, requirements_file=PINNED_R
 
 @contextlib.contextmanager
 def pinned_requirements_install_lock(state_directory, unavailable_error=CompiledPythonLibrariesUnavailable,
-                                     wait=True):
+                                     wait_seconds=None,
+                                     already_running_error=CompiledPythonLibrariesInstallAlreadyRunning):
     """Hold the install lock in state_directory, so only one process installs at a time.
 
-    With wait=False, raise unavailable_error at once when another process holds the lock.
+    With wait_seconds None, wait as long as another process holds the lock; otherwise raise
+    already_running_error when it is still held after wait_seconds.
     """
     try:
         state_directory.mkdir(parents=True, exist_ok=True)
@@ -98,15 +116,29 @@ def pinned_requirements_install_lock(state_directory, unavailable_error=Compiled
     with lock:
         try:
             import fcntl
-            fcntl.flock(lock, fcntl.LOCK_EX if wait else fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError as error:
-            raise unavailable_error(
-                f"an install of the pinned libraries is already running in another process, "
-                f"which holds {state_directory / INSTALL_LOCK_FILE_NAME}; this command did not wait "
-                f"for it") from error
+            if wait_seconds is None:
+                fcntl.flock(lock, fcntl.LOCK_EX)
+            else:
+                _lock_within_deadline(fcntl, lock, wait_seconds, state_directory, already_running_error)
         except (ImportError, OSError):
             pass  # Without the lock, two installs may run; each installs the same pinned files.
         yield
+
+
+def _lock_within_deadline(fcntl, lock, wait_seconds, state_directory, already_running_error):
+    # flock has no timeout, so the lock is tried without blocking until the deadline.
+    deadline = time.monotonic() + wait_seconds
+    while True:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return
+        except BlockingIOError as error:
+            if time.monotonic() >= deadline:
+                raise already_running_error(
+                    f"an install of the pinned libraries was still running in another process, "
+                    f"which holds {state_directory / INSTALL_LOCK_FILE_NAME}, after {wait_seconds:g} "
+                    f"seconds of waiting") from error
+        time.sleep(INSTALL_LOCK_POLL_SECONDS)
 
 
 def pinned_requirements_pip_install(timeout_seconds, runner=subprocess.run,
@@ -130,7 +162,8 @@ def pinned_requirements_pip_install(timeout_seconds, runner=subprocess.run,
 def compiled_python_libraries_install_then_import(
         importer, installer, clock, fresh_process_check, state_directory, forget_loaded_copies,
         unavailable_error=CompiledPythonLibrariesUnavailable,
-        installed_for_new_process_error=CompiledPythonLibrariesInstalledForANewProcess):
+        installed_for_new_process_error=CompiledPythonLibrariesInstalledForANewProcess,
+        already_running_error=CompiledPythonLibrariesInstallAlreadyRunning, lock_wait_seconds=None):
     """Install with installer(), unless another caller already has, and return importer()'s result.
 
     Call it after importer() has failed once.
@@ -139,10 +172,14 @@ def compiled_python_libraries_install_then_import(
     installer raises unavailable_error when the install fails.
     fresh_process_check returns whether a new Python process can import the libraries.
     forget_loaded_copies drops this process's cached copies, so the next import loads the disk copy.
-    The lock and the failure record live in state_directory.
+    The lock and the failure record live in state_directory. The wait for another process's
+    install ends after lock_wait_seconds, INSTALL_LOCK_WAIT_SECONDS when None, with
+    already_running_error.
     """
-    # A hook must not wait: an install another process runs can outlast the hook's timeout.
-    with pinned_requirements_install_lock(state_directory, unavailable_error, wait=False):
+    if lock_wait_seconds is None:
+        lock_wait_seconds = INSTALL_LOCK_WAIT_SECONDS
+    with pinned_requirements_install_lock(state_directory, unavailable_error, lock_wait_seconds,
+                                          already_running_error):
         # Another caller may have installed into a user site this process did not have at start-up.
         _refresh_import_paths()
         forget_loaded_copies()
