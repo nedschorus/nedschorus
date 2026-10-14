@@ -303,25 +303,36 @@ with tempfile.TemporaryDirectory() as temporary_directory:
           agent_text(cleared))
 
     # -----------------------------------------------------------------------
-    # MISBEHAVIOUR is the only thing the user hears. Ruled 2026-09-15: "If the
-    # agents are doing the wrong thing, or not doing the right thing, that's
-    # when I probably need to be told."
+    # MISBEHAVIOUR is told to the agent, with what to do about it, and never
+    # put on the user's display.
     # -----------------------------------------------------------------------
-    # A merge from main on a working branch: the thing #324 removed. Note the
-    # branch is 0 behind after it — a drift-first design would never look.
+    # A merge from main on a working branch. Note the branch is 0 behind after
+    # it — a drift-first design would never look.
     merge_seat = tmp / "merge-only-worktree"
     git(["worktree", "add", "-q", "-b", "merge-only", str(merge_seat), "main~1"], reference)
     configure_identity(merge_seat)
     git(["fetch", "-q", "origin"], merge_seat)
     git(["-c", "core.editor=true", "merge", "--no-ff", "--no-edit", "origin/main"], merge_seat)
     result = run_catch_up(["--cwd", str(merge_seat)])
-    check("a merge from main on a working branch is reported to the USER",
-          "carries 1 merge commit(s) from main" in display_text(result)
-          and "nedschorus#324" in display_text(result), result.stdout)
-    check("a user line does not carry the agent's not-for-the-user sentence",
-          display_text(result) != "" and NOT_FOR_THE_USER_LINE not in display_text(result),
-          display_text(result))
-    check("and only once", display_text(run_catch_up(["--cwd", str(merge_seat)])) == "")
+    merge_sha = git(["rev-parse", "--short=12", "HEAD"], merge_seat).stdout.strip()
+    merge_note = agent_text(result)
+    check("a merge from main on a working branch is told to the AGENT, with its merge commit",
+          f"checkout-freshness: merge-only carries 1 merge commit(s) from main ({merge_sha})."
+          in merge_note, result.stdout)
+    for instruction_line in (
+            "This project brings a branch up to date by rebasing it onto main, not by "
+            "merging main into it.",
+            "If the branch was never pushed, rebase it onto origin/main.",
+            "If it was pushed, leave its history and tell the agent-seat merge-lane-2, with "
+            "SendMessage, which merge commits it carries."):
+        check(f"the merge note says: {instruction_line}",
+              instruction_line in merge_note, merge_note)
+    check("the merge note is not put on the user's display (systemMessage)",
+          display_text(result) == "", result.stdout)
+    check("the merge note ends with the agent's not-for-the-user sentence",
+          merge_note.endswith("\n" + NOT_FOR_THE_USER_LINE), merge_note)
+    check("and only once",
+          "merge commit(s) from main" not in agent_text(run_catch_up(["--cwd", str(merge_seat)])))
     # A merge of another topic branch is not the banned thing.
     topic_seat = tmp / "topic-merge-worktree"
     git(["worktree", "add", "-q", "-b", "topic-a", str(topic_seat), "main"], reference)
@@ -335,7 +346,7 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     git(["-c", "core.editor=true", "merge", "--no-ff", "--no-edit", "topic-b"], topic_seat)
     result = run_catch_up(["--cwd", str(topic_seat)])
     check("a merge of another topic branch is NOT reported as a merge from main",
-          "merge commit(s) from main" not in display_text(result), display_text(result))
+          "merge commit(s) from main" not in agent_text(result), agent_text(result))
 
     # -----------------------------------------------------------------------
     # A PUSHED branch is never moved. The agent is told once per update of
@@ -416,13 +427,25 @@ with tempfile.TemporaryDirectory() as temporary_directory:
 
     # A REWRITTEN pushed head: amend after push. The second misbehaviour.
     git(["commit", "-q", "--amend", "--no-edit", "-m", "amended after push"], seat)
+    amended_head = git(["rev-parse", "--short=12", "HEAD"], seat).stdout.strip()
+    pushed_head = git(["rev-parse", "--short=12", "origin/seat"], seat).stdout.strip()
     result = run_catch_up(["--cwd", str(seat)])
-    check("an amend after a push is reported to the USER as a rewritten head",
-          "rewrote its pushed head" in display_text(result)
-          and "no longer an ancestor" in display_text(result), result.stdout)
+    rewritten_note = agent_text(result)
+    check("an amend after a push is told to the AGENT as a rewritten head",
+          f"checkout-freshness: seat's HEAD ({amended_head}) no longer contains its pushed "
+          f"head origin/seat ({pushed_head}): an amend or a rebase rewrote pushed commits, "
+          f"which moves the code under its reviewer." in rewritten_note, result.stdout)
+    for instruction_line in (
+            "Do not push this HEAD.",
+            "Put your change back as one commit on top of origin/seat, then push."):
+        check(f"the rewritten-head note says: {instruction_line}",
+              instruction_line in rewritten_note, rewritten_note)
+    check("the rewritten-head note is not put on the user's display (systemMessage)",
+          display_text(result) == "", result.stdout)
     check("and the state is recorded as diverged",
           stamp_of(seat).get("head_state") == "diverged-from-remote", str(stamp_of(seat)))
-    check("reported once", display_text(run_catch_up(["--cwd", str(seat)])) == "")
+    check("reported once",
+          "no longer contains its pushed head" not in agent_text(run_catch_up(["--cwd", str(seat)])))
     git(["reset", "-q", "--hard", "origin/seat"], seat)
 
     # never-pushed -> pushed flips the advice, so the push re-tells once.
@@ -1477,8 +1500,8 @@ with tempfile.TemporaryDirectory() as exception_scratch:
     check("(fixture) and its parents re-merge cleanly",
           merge_tree_status(clean_seat, ["-X", "no-renames"]) == 0)
     clean_result = run_catch_up(["--cwd", str(clean_seat)])
-    check("a catch-up merge whose parents merge cleanly is still reported to the USER",
-          "carries 1 merge commit(s) from main" in display_text(clean_result),
+    check("a catch-up merge whose parents merge cleanly is still told to the agent",
+          "carries 1 merge commit(s) from main" in agent_text(clean_result),
           clean_result.stdout)
 
     # --- a merge that RESOLVED a conflict is not reported --------------------
@@ -1502,7 +1525,7 @@ with tempfile.TemporaryDirectory() as exception_scratch:
               conflict_seat).stdout.strip() == "1")
     conflict_result = run_catch_up(["--cwd", str(conflict_seat)])
     check("a merge that resolved a real conflict is NOT reported: the author had no choice",
-          "merge commit(s) from main" not in display_text(conflict_result),
+          "merge commit(s) from main" not in agent_text(conflict_result),
           conflict_result.stdout)
 
     # --- the shape of that pull request's head: a file main RENAMED out ----
@@ -1525,7 +1548,7 @@ with tempfile.TemporaryDirectory() as exception_scratch:
     rename_result = run_catch_up(["--cwd", str(rename_seat)])
     check("the hand merge of a file main renamed away is NOT reported — the shape "
           "of the head of the pull request that added the exception",
-          "merge commit(s) from main" not in display_text(rename_result),
+          "merge commit(s) from main" not in agent_text(rename_result),
           rename_result.stdout)
 
     # --- an error from merge-tree is not an answer: the merge is reported ----
@@ -1561,13 +1584,13 @@ with tempfile.TemporaryDirectory() as exception_scratch:
     old_git_seat, _ = hand_resolved_seat("merge-tree-unsupported-seat")
     old_git_result = run_catch_up(["--cwd", str(old_git_seat)], path_prefix=str(old_git))
     check("a git too old for the re-merge reports the merge, as the hook did before the exception",
-          "carries 1 merge commit(s) from main" in display_text(old_git_result),
+          "carries 1 merge commit(s) from main" in agent_text(old_git_result),
           old_git_result.stdout + old_git_result.stderr)
     unresolvable_seat, _ = hand_resolved_seat("merge-tree-exits-one-seat")
     unresolvable_result = run_catch_up(["--cwd", str(unresolvable_seat)],
                                        path_prefix=str(unresolvable))
     check("merge-tree exiting 1 with no answer is an error, not a conflict: still reported",
-          "carries 1 merge commit(s) from main" in display_text(unresolvable_result),
+          "carries 1 merge commit(s) from main" in agent_text(unresolvable_result),
           unresolvable_result.stdout + unresolvable_result.stderr)
     check("and the hook still exits 0 under both, blocking no turn",
           old_git_result.returncode == 0 and unresolvable_result.returncode == 0
@@ -1663,8 +1686,8 @@ with tempfile.TemporaryDirectory() as exception_scratch:
               "which is all this hook once asked",
               merge_tree_status(shape_seat, ["-X", "no-renames"]) == 0)
         shape_result = run_catch_up(["--cwd", str(shape_seat)])
-        check(case_name, "merge commit(s) from main" not in display_text(shape_result),
-              display_text(shape_result))
+        check(case_name, "merge commit(s) from main" not in agent_text(shape_result),
+              agent_text(shape_result))
 
     # --- one re-merge errors: the other one's answer decides -----------------
     # The hook re-merges twice, without rename detection and with it. An error
@@ -1749,7 +1772,7 @@ with tempfile.TemporaryDirectory() as exception_scratch:
               statuses == expected_statuses, str(statuses))
         combination_result = run_catch_up(["--cwd", str(combination_seat)],
                                           path_prefix=str(shim_directory))
-        reported = "carries 1 merge commit(s) from main" in display_text(combination_result)
+        reported = "carries 1 merge commit(s) from main" in agent_text(combination_result)
         check(case_name, reported is expected_reported,
               combination_result.stdout + combination_result.stderr)
         check(f"and the hook exits 0 and blocks no turn ({combination_name})",

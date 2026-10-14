@@ -17,15 +17,12 @@ Wired as a Stop hook, so it runs at every turn boundary. Each run:
      is always safe — it is the MERGE that needs guarding).
   3. Runs the MISBEHAVIOUR detectors, every turn, before anything else: a
      merge commit from main on the working branch whose parents merge cleanly
-     both with git's rename detection and without it (ruled out 2026-09-14,
-     nedschorus#324; one whose parents CONFLICT either way is the hand-merge
-     the user allowed 2026-09-21 and is not reported), or a pushed
-     head whose history was rewritten (an amend or rebase after a push, ruled
-     out 2026-09-08). What they find is the ONLY thing the user hears from
-     this hook — "If the agents are doing the wrong thing, or not doing the
-     right thing, that's when I probably need to be told" (ruled 2026-09-15).
-     Routine drift is never reported to the user; the stamp carries the
-     numbers for the status line.
+     both with git's rename detection and without it (one whose parents
+     CONFLICT either way is the allowed hand-merge and is not reported), or a
+     pushed head whose history was rewritten (an amend or rebase after a
+     push). What they find is told to the AGENT, once per distinct finding,
+     with what to do about it. Routine drift is never reported to the user;
+     the stamp carries the numbers for the status line.
   4. If the branch is behind origin/main and has NEVER been pushed, REBASES
      it onto origin/main here, and tells the agent at its next turn what
      moved and which files changed. Skips a dirty tree; aborts cleanly on a
@@ -584,7 +581,7 @@ def head_state(checkout: Path, branch: str):
     if ancestor.returncode != 0:
         # Neither side contains the other: the pushed history was rewritten —
         # an amend or a rebase after a push, which moves a frozen head under
-        # its reviewer (CLAUDE.md's frozen-head rule). Named to the user.
+        # its reviewer (CLAUDE.md's frozen-head rule). Told to the agent.
         return "diverged-from-remote", (f"head has diverged from origin/{branch}: the pushed "
                                         f"history was rewritten after the push")
     return "pushed-with-local-commits", (f"head pushed, with {count} local commit(s) not "
@@ -763,7 +760,7 @@ def merge_parents_conflict(checkout: Path, first_parent: str, second_parent: str
     is skipped only when that one positively shows a conflict, and is reported
     when that one is clean or errors as well. With both erroring this detector
     degrades to exactly what it did before this exception existed — it reports
-    every merge from main. A false report is visible to the user and corrects
+    every merge from main. A false report is visible to the agent and corrects
     itself in one exchange; a misbehaviour that is skipped is invisible for
     good. Nothing here can block a turn either way: the caller only shortens a
     list.
@@ -912,8 +909,7 @@ def catch_up_session_checkout(checkout: Path, interval_seconds: int) -> None:
       1. Misbehaviour detectors run EVERY turn, before and independent of the
          drift path — a branch that merged main into itself is 0 behind, which
          is exactly where a drift-first design would return early. What they
-         find goes to the USER, and it is the only thing the user hears: agents
-         doing the wrong thing, or not doing the right thing. Routine drift is
+         find is told to the AGENT, with what to do about it. Routine drift is
          not reported to the user at all.
       2. Drift is counted. If none, every "already said" key is cleared.
       3. A never-pushed branch is REBASED onto origin/main here, and the agent
@@ -930,7 +926,7 @@ def catch_up_session_checkout(checkout: Path, interval_seconds: int) -> None:
     branch = run_git(["rev-parse", "--abbrev-ref", "HEAD"], checkout, timeout=15).stdout.strip()
     state_key, state_text = head_state(checkout, branch)
 
-    # 1. Misbehaviour, to the user, once per distinct finding.
+    # 1. Misbehaviour, to the agent, once per distinct finding.
     found = {}
     merged = merges_from_main(checkout)
     if merged:
@@ -941,14 +937,18 @@ def catch_up_session_checkout(checkout: Path, interval_seconds: int) -> None:
         found["rewritten_head"] = [head, remote]
     if found and stamp.get("last_misbehaviour") != found:
         if "merges_from_main" in found:
-            report(f"catch-up: {branch} carries {len(merged)} merge commit(s) from main "
-                   f"({', '.join(merged)}); merging main into a working branch was ruled "
-                   f"out 2026-09-14 (nedschorus#324)")
+            tell(f"checkout-freshness: {branch} carries {len(merged)} merge commit(s) from "
+                 f"main ({', '.join(merged)}). This project brings a branch up to date by "
+                 f"rebasing it onto main, not by merging main into it. If the branch was "
+                 f"never pushed, rebase it onto origin/main. If it was pushed, leave its "
+                 f"history and tell the agent-seat merge-lane-2, with SendMessage, which "
+                 f"merge commits it carries.")
         if "rewritten_head" in found:
             head, remote = found["rewritten_head"]
-            report(f"catch-up: {branch} rewrote its pushed head — origin/{branch} ({remote}) "
-                   f"is no longer an ancestor of HEAD ({head}); an amend or rebase after a "
-                   f"push moves a frozen head under its reviewer (ruled 2026-09-08)")
+            tell(f"checkout-freshness: {branch}'s HEAD ({head}) no longer contains its pushed "
+                 f"head origin/{branch} ({remote}): an amend or a rebase rewrote pushed "
+                 f"commits, which moves the code under its reviewer. Do not push this HEAD. "
+                 f"Put your change back as one commit on top of origin/{branch}, then push.")
     if found:
         stamp["last_misbehaviour"] = found
     else:
