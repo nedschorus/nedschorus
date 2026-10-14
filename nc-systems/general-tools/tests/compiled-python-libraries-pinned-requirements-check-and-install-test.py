@@ -37,9 +37,23 @@ def check(name, condition, detail=None):
         print(f"FAIL  {name}: {detail!r}")
 
 
-PINS = checker.pinned_versions()
+# The cases below read a fixture list of their own, so a library added to the real pinned list
+# changes none of them.
+FIXTURE_DIRECTORY = tempfile.TemporaryDirectory()
+FIXTURE = Path(FIXTURE_DIRECTORY.name) / "pinned-requirements.txt"
+FIXTURE.write_text("# a comment line\ntree-sitter==0.25.2\n\ntree-sitter-bash==0.25.1  # a trailing comment\n",
+                   encoding="utf-8")
+PINS = checker.pinned_versions(FIXTURE)
 check("the pinned file's lines are read as name and version, and its comments skipped",
       PINS == {"tree-sitter": "0.25.2", "tree-sitter-bash": "0.25.1"}, PINS)
+
+def check_and_install_with_fixture(host, runner, installer):
+    return checker.check_and_install(host, runner, installer, requirements_file=FIXTURE)
+
+
+real_pins = checker.pinned_versions()
+check("the real pinned file parses and pins tree-sitter and tree-sitter-bash, which the shell reader needs",
+      {"tree-sitter", "tree-sitter-bash"} <= set(real_pins), real_pins)
 
 with tempfile.TemporaryDirectory() as scratch:
     bad = Path(scratch) / "requirements.txt"
@@ -84,26 +98,26 @@ def installer_that(outcome):
 
 
 installer = installer_that(None)
-status, lines = checker.check_and_install("ned-box", version_reader(ALL_PINNED), installer)
+status, lines = check_and_install_with_fixture("ned-box", version_reader(ALL_PINNED), installer)
 check("when every library is at its pin, no install runs and one line says so",
       status == 0 and installer.state["installs"] == 0 and len(lines) == 1
       and "all 2 pinned" in lines[0], (status, lines))
 
 installer = installer_that(None)
-status, lines = checker.check_and_install("ned-box", version_reader(ONE_MISSING, ALL_PINNED), installer)
+status, lines = check_and_install_with_fixture("ned-box", version_reader(ONE_MISSING, ALL_PINNED), installer)
 check("a missing library is installed, and the one line names what was installed",
       status == 0 and installer.state["installs"] == 1 and len(lines) == 1
       and "tree-sitter-bash: wanted 0.25.1, found none" in lines[0], (status, lines))
 
 installer = installer_that(None)
-status, lines = checker.check_and_install(
+status, lines = check_and_install_with_fixture(
     "ned-box", version_reader({"tree-sitter": "0.24.0", "tree-sitter-bash": "0.25.1"}, ALL_PINNED),
     installer)
 check("a library at another version counts as missing and is installed",
       status == 0 and installer.state["installs"] == 1 and "found 0.24.0" in lines[0], lines)
 
 installer = installer_that("`pip ...` exited 1: no network")
-status, lines = checker.check_and_install("ned-box", version_reader(ONE_MISSING), installer)
+status, lines = check_and_install_with_fixture("ned-box", version_reader(ONE_MISSING), installer)
 text = "\n".join(lines)
 check("a failed install exits 1, naming the machine, what is missing and what the install printed",
       status == 1 and "ned-box:" in lines[0] and "tree-sitter-bash: wanted 0.25.1, found none" in text
@@ -112,20 +126,20 @@ check("on ned-box the by-hand command is the ssh form the user runs from the Mac
       lines[-1] == f"To install them by hand, run this command in a Terminal on your Mac: "
                    f"ssh nedlern@ned-box '{sys.executable} -m pip install --user "
                    f"--break-system-packages -r {install.PINNED_REQUIREMENTS_FILE}'", lines[-1])
-status, lines = checker.check_and_install("Neds-MacBook-Pro", version_reader(ONE_MISSING),
+status, lines = check_and_install_with_fixture("Neds-MacBook-Pro", version_reader(ONE_MISSING),
                                           installer_that("no network"))
 check("on another machine the by-hand command is run there as it is",
       lines[-1].startswith(f"To install them by hand, run this command on Neds-MacBook-Pro: "
                            f"{sys.executable} -m pip install --user"), lines[-1])
 
-status, lines = checker.check_and_install("ned-box", version_reader(ONE_MISSING),
+status, lines = check_and_install_with_fixture("ned-box", version_reader(ONE_MISSING),
                                           installer_that(None))
 check("an install that succeeds but leaves a library missing exits 1, quoting what the install printed",
       status == 1 and "What the install printed: Successfully installed tree-sitter-bash-0.25.1"
       in lines, lines)
 
 try:
-    checker.check_and_install("ned-box", version_reader(1), installer_that(None))
+    check_and_install_with_fixture("ned-box", version_reader(1), installer_that(None))
     raised = None
 except RuntimeError as error:
     raised = error
