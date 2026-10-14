@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Tests for scripts/git-client-side-hooks/pre-push, the hook that refuses to
-push a branch that conflicts with main, and for the Python file it runs,
-scripts/git-client-side-hooks-pre-push-conflict-check.py.
+push a branch that conflicts with main, or whose selective test run has a
+failing suite, and for the Python files it runs,
+scripts/git-client-side-hooks-pre-push-conflict-check.py and
+scripts/git-client-side-hooks-pre-push-selective-test-run.py.
 
 Run: python3 scripts/git-client-side-hooks-pre-push-test.py
 Prints one line per case and exits non-zero if any case fails.
@@ -13,6 +15,9 @@ the temporary directory:
     <layout>/scripts/git-client-side-hooks/pre-push
     <layout>/scripts/git-client-side-hooks-pre-push-conflict-check.py
     <layout>/scripts/branch-conflict-check.py
+    <layout>/scripts/git-client-side-hooks-pre-push-selective-test-run.py
+    <layout>/scripts/run-all-test-suites.py, always a fake that passes
+    unless a case gives another fake; the real one is never run by a push here
     <layout>/nc-systems/general-tools/git-machine-readable-output-runner-and-parser-common.py
 So each case runs exactly what git runs on a seat's push. A case that needs
 the conflict check to misbehave puts a fake check at the check's path, and
@@ -30,6 +35,7 @@ that hangs fails its case instead of wedging the suite.
 import contextlib
 import importlib.util
 import io
+import json
 import os
 import shutil
 import signal
@@ -48,11 +54,15 @@ CONFLICT_CHECK_RUNNER = SCRIPTS_DIRECTORY / "git-client-side-hooks-pre-push-conf
 MUTATION_TESTING_WORKTREE_CHECK = (SCRIPTS_DIRECTORY / "git-client-side-hooks-pre-push-mutation-"
                                    "testing-worktree-push-refusal.py")
 REAL_CONFLICT_CHECK = SCRIPTS_DIRECTORY / "branch-conflict-check.py"
+SELECTIVE_TEST_RUN_CHECK = SCRIPTS_DIRECTORY / "git-client-side-hooks-pre-push-selective-test-run.py"
+REAL_TEST_SUITES_RUNNER = SCRIPTS_DIRECTORY / "run-all-test-suites.py"
 GIT_OUTPUT_MODULE_RELATIVE_PATH = Path(
     "nc-systems/general-tools/git-machine-readable-output-runner-and-parser-common.py")
 
 TIME_BUDGET_VARIABLE = "NEDSCHORUS_PRE_PUSH_CONFLICT_CHECK_SECONDS"
 FAKE_CHECK_LOG_VARIABLE = "PRE_PUSH_TEST_FAKE_CHECK_LOG"
+FAKE_TEST_SUITES_RUNNER_LOG_VARIABLE = "PRE_PUSH_TEST_FAKE_TEST_SUITES_RUNNER_LOG"
+SELECTIVE_TEST_RUN_BUDGET_VARIABLE = "NEDSCHORUS_PRE_PUSH_SELECTIVE_TEST_RUN_SECONDS"
 SESSION_VARIABLE = "CLAUDE_CODE_BRIDGE_SESSION_ID"
 LOCAL_SESSION_VARIABLE = "CLAUDE_CODE_SESSION_ID"
 FAKE_SESSION = "session_0FakePrePushTestSessionAAAA"
@@ -179,16 +189,97 @@ time.sleep(FAKE_HANG_SECONDS)
 """
 
 
+# --- Fake run-all-test-suites.py files -------------------------------------
+# Each is written to <layout>/scripts/run-all-test-suites.py. Each first
+# appends its arguments, as one JSON list, to the file
+# FAKE_TEST_SUITES_RUNNER_LOG_VARIABLE names, so a case can tell whether the
+# selective test run started, and with which arguments.
+
+SELECTIVE_TEST_RUN_STARTING = "pre-push: starting the selective test run on "
+SELECTIVE_TEST_RUN_PASSED = "pre-push: the selective test run passed. "
+SELECTIVE_TEST_RUN_REFUSED = ("pre-push: a test suite failed in the selective test run, so this "
+                              "push is refused. ")
+SELECTIVE_TEST_RUN_NOT_RUN_END = ", so this push goes ahead without the selective test run"
+SELECTIVE_TEST_RUN_HAND_RUN_LINE = (
+    "Run it by hand from your worktree: python3 scripts/run-all-test-suites.py "
+    "--only-suites-whose-recorded-inputs-changed-since origin/main --wait-for-lock-seconds 600")
+FAKE_LOG_DIRECTORY = "/fake/run-all-test-suites-logs"
+FAKE_FAILING_SUITE_LINE = "FAIL scripts/fake-failing-test.py exit 1 — log /fake/fake-failing-test.log"
+FAKE_FAILED_SUMMARY = "SUMMARY: 2 passed, 1 failed, 3 total; 0 cases skipped in 0 suites"
+FAKE_PASSED_SUMMARY = "SUMMARY: 3 passed, 0 failed, 3 total; 0 cases skipped in 0 suites"
+FAKE_LOCK_HOLDER_LINE = ("run-all-test-suites: not run — waited 60 s for /fake/lock, the lock "
+                         "that keeps test runs on one machine apart, and it was still held by "
+                         "process 4242, checkout /fake/other.")
+
+FAKE_TEST_SUITES_RUNNER_PREAMBLE = """\
+import json, os, sys
+FAKE_HANG_SECONDS = %d
+_log = os.environ.get("%s")
+if _log:
+    with open(_log, "a") as _handle:
+        _handle.write(json.dumps(sys.argv[1:]) + "\\n")
+print("run-all-test-suites: /fake at abc (clean); 9 suites listed by git; -j 4; logs in %s",
+      flush=True)
+""" % (FAKE_HANG_SECONDS, FAKE_TEST_SUITES_RUNNER_LOG_VARIABLE, FAKE_LOG_DIRECTORY)
+
+FAKE_TEST_SUITES_RUNNER_PASSES = FAKE_TEST_SUITES_RUNNER_PREAMBLE + """\
+print("PASS scripts/a-test.py (0.1s)")
+print(%r)
+""" % FAKE_PASSED_SUMMARY
+
+FAKE_TEST_SUITES_RUNNER_FAILS = FAKE_TEST_SUITES_RUNNER_PREAMBLE + """\
+print("FAIL scripts/fake-failing-test.py exit 1 (0.1s)")
+print("")
+print("1 failed:")
+print(%r)
+print(%r)
+sys.exit(1)
+""" % (FAKE_FAILING_SUITE_LINE, FAKE_FAILED_SUMMARY)
+
+FAKE_TEST_SUITES_RUNNER_LOCKED = FAKE_TEST_SUITES_RUNNER_PREAMBLE + """\
+print("run-all-test-suites: waiting up to 60 s for /fake/lock", file=sys.stderr)
+print(%r, file=sys.stderr)
+print("Otherwise, tell the user which process holds the lock.", file=sys.stderr)
+sys.exit(3)
+""" % FAKE_LOCK_HOLDER_LINE
+
+FAKE_TEST_SUITES_RUNNER_CANNOT_START = FAKE_TEST_SUITES_RUNNER_PREAMBLE + """\
+print("run-all-test-suites: not run — /fake is not a checkout's top directory", file=sys.stderr)
+sys.exit(2)
+"""
+
+FAKE_TEST_SUITES_RUNNER_KILLED = FAKE_TEST_SUITES_RUNNER_PREAMBLE + """\
+import signal
+os.kill(os.getpid(), signal.SIGKILL)
+"""
+
+# The shape a real overrun takes: the suites the run started keep running, so
+# stopping the run alone would leave them. The child's pid is written beside
+# the log, so the case can see that the whole process group was stopped.
+FAKE_TEST_SUITES_RUNNER_HANGS_WITH_CHILD = FAKE_TEST_SUITES_RUNNER_PREAMBLE + """\
+import subprocess, time
+_child = subprocess.Popen([sys.executable, "-c",
+                           "import time; time.sleep(%d)" % FAKE_HANG_SECONDS])
+with open(_log + ".child-pid", "w") as _handle:
+    _handle.write(str(_child.pid))
+time.sleep(FAKE_HANG_SECONDS)
+"""
+
+
 # --- Layouts and repositories ---------------------------------------------
 
 def make_layout(parent, name, conflict_check=REAL_CONFLICT_CHECK,
                 runner_text=None, include_runner=True, mutation_testing_worktree_check_text=None,
-                include_mutation_testing_worktree_check=True):
+                include_mutation_testing_worktree_check=True,
+                test_suites_runner_text=None, include_test_suites_runner=True,
+                selective_test_run_check_text=None, include_selective_test_run_check=True):
     """A copy of this checkout's hooks, laid out as the hook expects.
 
     conflict_check is a Path to copy, a string of fake check source, or None
-    for no check at all. runner_text replaces the Python file the hook runs.
-    Returns the hooks directory, for core.hooksPath.
+    for no check at all. runner_text replaces the Python file the hook runs
+    for the conflict check. test_suites_runner_text replaces the fake
+    run-all-test-suites.py that passes, and selective_test_run_check_text the
+    selective test run check. Returns the hooks directory, for core.hooksPath.
     """
     scripts = parent / name / "scripts"
     hooks = scripts / HOOK_DIRECTORY_NAME
@@ -205,6 +296,15 @@ def make_layout(parent, name, conflict_check=REAL_CONFLICT_CHECK,
         mutation_testing_worktree_check.write_text(mutation_testing_worktree_check_text)
     elif include_mutation_testing_worktree_check:
         shutil.copy2(MUTATION_TESTING_WORKTREE_CHECK, mutation_testing_worktree_check)
+    selective_test_run_check = scripts / SELECTIVE_TEST_RUN_CHECK.name
+    if selective_test_run_check_text is not None:
+        selective_test_run_check.write_text(selective_test_run_check_text)
+    elif include_selective_test_run_check:
+        shutil.copy2(SELECTIVE_TEST_RUN_CHECK, selective_test_run_check)
+    if include_test_suites_runner:
+        (scripts / REAL_TEST_SUITES_RUNNER.name).write_text(
+            test_suites_runner_text if test_suites_runner_text is not None
+            else FAKE_TEST_SUITES_RUNNER_PASSES)
     if isinstance(conflict_check, Path):
         shutil.copy2(conflict_check, scripts / REAL_CONFLICT_CHECK.name)
         module = parent / name / GIT_OUTPUT_MODULE_RELATIVE_PATH
@@ -250,6 +350,7 @@ class Scenario:
         self.empty_global_config = parent / (name + "-empty-gitconfig")
         self.empty_global_config.write_text("")
         self.fake_check_log = parent / (name + "-fake-check-log.txt")
+        self.fake_test_suites_runner_log = parent / (name + "-fake-test-suites-runner-log.txt")
         self.path_override = path_override
         self.extra_environment = {}
         self.git(parent, "init", "--quiet", "--bare", str(self.origin))
@@ -280,6 +381,7 @@ class Scenario:
         env["GIT_CONFIG_GLOBAL"] = str(self.empty_global_config)
         env["GIT_CONFIG_NOSYSTEM"] = "1"
         env[FAKE_CHECK_LOG_VARIABLE] = str(self.fake_check_log)
+        env[FAKE_TEST_SUITES_RUNNER_LOG_VARIABLE] = str(self.fake_test_suites_runner_log)
         if self.path_override is not None:
             env["PATH"] = self.path_override
         env.update(self.extra_environment)
@@ -353,6 +455,13 @@ class Scenario:
         return PushResult(process.returncode, stdout, stderr,
                           time.monotonic() - started, timed_out)
 
+    def fake_test_suites_runner_calls(self):
+        """The argument lists the fake run-all-test-suites.py was started with."""
+        if not self.fake_test_suites_runner_log.exists():
+            return []
+        return [json.loads(line) for line in
+                self.fake_test_suites_runner_log.read_text().splitlines() if line]
+
     def fake_check_calls(self):
         if not self.fake_check_log.exists():
             return []
@@ -379,6 +488,12 @@ def stop_leftover_process(pid):
         os.kill(pid, signal.SIGKILL)
     except (ProcessLookupError, PermissionError):
         pass
+
+
+def conflict_check_said_nothing(stderr):
+    """True when every pre-push line is the selective test run's own start or pass line."""
+    return all(line.startswith((SELECTIVE_TEST_RUN_STARTING, SELECTIVE_TEST_RUN_PASSED))
+               for line in stderr.splitlines() if line.startswith("pre-push:"))
 
 
 def went_through(result):
@@ -479,7 +594,8 @@ def run_unit_cases():
     try:
         hooks = make_layout(layout_parent, "filter", conflict_check=None,
                             include_runner=False,
-                            mutation_testing_worktree_check_text="import sys\nsys.exit(0)\n")
+                            mutation_testing_worktree_check_text="import sys\nsys.exit(0)\n",
+                            selective_test_run_check_text="import sys\nsys.exit(0)\n")
         expected_first_line_end = NO_BRANCH_CHECKED % ", ".join(
             [branch_entry("topic", sha), branch_entry("renamed-on-push", other)])
         for shell in SHELLS_FOR_THE_HOOK:
@@ -528,8 +644,8 @@ def run_push_cases(scratch):
     check("and arrives at origin",
           scenario.origin_ref("clean") == scenario.head("clean"),
           repr(scenario.origin_ref("clean")))
-    check("and the hook says nothing",
-          "pre-push:" not in result.stderr, result.describe())
+    check("and the conflict check says nothing",
+          conflict_check_said_nothing(result.stderr), result.describe())
 
     result = scenario.push("origin", "conflicting")
     check("a branch that conflicts with origin/main is refused",
@@ -668,8 +784,8 @@ def run_push_cases(scratch):
               failing.origin_ref("conflicting") == failing.head("conflicting"),
               repr(failing.origin_ref("conflicting")))
         if silent:
-            check("%s: and the hook says nothing" % label,
-                  "pre-push:" not in outcome.stderr, outcome.describe())
+            check("%s: and the conflict check says nothing" % label,
+                  conflict_check_said_nothing(outcome.stderr), outcome.describe())
         else:
             check("%s: and says why it did not check" % label,
                   expected_text in outcome.stderr, outcome.describe())
@@ -863,6 +979,202 @@ def run_push_cases(scratch):
           os.access(PRE_PUSH_HOOK, os.X_OK), str(PRE_PUSH_HOOK))
 
 
+# --- The selective test run -------------------------------------------------
+
+def run_selective_test_run_cases(scratch):
+    def lines_from(stderr, first):
+        """The stderr lines from the first one starting with `first`, or []."""
+        lines = stderr.splitlines()
+        index = next((i for i, line in enumerate(lines) if line.startswith(first)), None)
+        return [] if index is None else lines[index:]
+
+    real = make_layout(scratch, "layout-selective-passes")
+    scenario = Scenario(scratch, "selective-passes", real)
+    result = scenario.push("origin", "clean")
+    check("selective test run passes: the push goes through and arrives at origin",
+          went_through(result) and scenario.origin_ref("clean") == scenario.head("clean"),
+          result.describe())
+    check("selective test run passes: the hook says it started, then that it passed, with "
+          "the run's summary",
+          SELECTIVE_TEST_RUN_STARTING + str(scenario.clone) in result.stderr
+          and SELECTIVE_TEST_RUN_PASSED + FAKE_PASSED_SUMMARY in result.stderr.splitlines(),
+          result.describe())
+    calls = scenario.fake_test_suites_runner_calls()
+    check("the run is the selective test run on the clone's top directory, waiting 60 seconds "
+          "for the lock",
+          calls == [["--checkout", str(scenario.clone),
+                     "--only-suites-whose-recorded-inputs-changed-since", "origin/main",
+                     "--wait-for-lock-seconds", "60"]], repr(calls))
+
+    help_text = subprocess.run([sys.executable, str(REAL_TEST_SUITES_RUNNER), "--help"],
+                               capture_output=True, text=True, timeout=60).stdout
+    check("every option the check passes is one the real run-all-test-suites.py offers",
+          all(option in help_text for option in calls[0] if option.startswith("--"))
+          if calls else False, help_text)
+
+    worktree = scratch / "selective-passes-worktree"
+    scenario.git(scenario.clone, "worktree", "add", "--quiet", "-b", "selective-worktree",
+                 str(worktree), scenario.base)
+    scenario.commit("selective-worktree.txt", "w\n", "Worktree work", cwd=worktree)
+    scenario.fake_test_suites_runner_log.unlink()
+    result = scenario.push("origin", "selective-worktree", cwd=worktree)
+    calls = scenario.fake_test_suites_runner_calls()
+    check("from a linked worktree, the run tests that worktree, not the clone",
+          went_through(result) and len(calls) == 1 and calls[0][:2] == ["--checkout", str(worktree)],
+          repr(calls) + result.describe())
+
+    # The pushes the hook checks nothing on start no run.
+    scenario.fake_test_suites_runner_log.unlink()
+    scenario.git(scenario.clone, "push", "--quiet", "--no-verify", "origin", "clean-second")
+    for label, arguments in (("a deletion", ("origin", "--delete", "clean-second")),
+                             ("a tag", ("origin", "refs/heads/clean:refs/tags/selective-tag")),
+                             ("main", ("origin", "main"))):
+        result = scenario.push(*arguments)
+        check("a push of %s goes through without the selective test run" % label,
+              went_through(result) and scenario.fake_test_suites_runner_calls() == []
+              and "selective test run" not in result.stderr, result.describe())
+    backup = scratch / "selective-backup.git"
+    scenario.git(scratch, "init", "--quiet", "--bare", str(backup))
+    scenario.git(scenario.clone, "remote", "add", "backup", str(backup))
+    result = scenario.push("backup", "clean")
+    check("a push to a remote not named origin goes through without the selective test run",
+          went_through(result) and scenario.fake_test_suites_runner_calls() == [],
+          result.describe())
+    result = scenario.push("origin", "conflicting")
+    check("a push the conflict check refuses never starts the selective test run",
+          was_refused(result) and scenario.fake_test_suites_runner_calls() == [],
+          result.describe())
+
+    # A failing suite refuses the push.
+    hooks = make_layout(scratch, "layout-selective-fails",
+                        test_suites_runner_text=FAKE_TEST_SUITES_RUNNER_FAILS)
+    failing = Scenario(scratch, "selective-fails", hooks)
+    result = failing.push("origin", "clean")
+    check("a failing suite: the push is refused and the branch never reaches origin",
+          was_refused(result) and failing.origin_ref("clean") is None, result.describe())
+    refusal = lines_from(result.stderr, SELECTIVE_TEST_RUN_REFUSED)
+    check("a failing suite: the refusal carries the summary, each failing suite with its log, "
+          "and the whole report's path",
+          refusal[:3] == [SELECTIVE_TEST_RUN_REFUSED + FAKE_FAILED_SUMMARY,
+                          FAKE_FAILING_SUITE_LINE,
+                          "The whole report: %s/report.txt" % FAKE_LOG_DIRECTORY],
+          result.describe())
+    check("a failing suite: then says to fix and push again, and when to tell the user",
+          len(refusal) >= 6 and refusal[3].startswith("Fix what each failing suite's log shows")
+          and refusal[5].startswith("If it fails a second time, tell the user"),
+          result.describe())
+    check("a failing suite: the refusal does not offer --no-verify",
+          "--no-verify" not in result.stderr, result.describe())
+
+    def not_run_case(label, runner_text, expected_cause, tell_user, budget=None,
+                     include_test_suites_runner=True):
+        hooks = make_layout(scratch, "layout-selective-" + label,
+                            test_suites_runner_text=runner_text,
+                            include_test_suites_runner=include_test_suites_runner)
+        outcome_scenario = Scenario(scratch, "selective-" + label, hooks)
+        if budget is not None:
+            outcome_scenario.extra_environment[SELECTIVE_TEST_RUN_BUDGET_VARIABLE] = budget
+        outcome = outcome_scenario.push("origin", "clean")
+        check("%s: the push goes through" % label,
+              went_through(outcome)
+              and outcome_scenario.origin_ref("clean") == outcome_scenario.head("clean"),
+              outcome.describe())
+        message = lines_from(outcome.stderr, "pre-push: " + expected_cause)
+        check("%s: says why the selective test run gave no verdict, and how to run it by hand"
+              % label,
+              bool(message) and message[0].endswith(SELECTIVE_TEST_RUN_NOT_RUN_END + ".")
+              and message[1:3] == [SELECTIVE_TEST_RUN_HAND_RUN_LINE,
+                                   "If a suite fails, fix it, commit the fix and push again."],
+              outcome.describe())
+        check("%s: %s the user" % (label, "tells" if tell_user else "does not tell"),
+              (message[3:4] == [TELL_USER_LINE]) == tell_user
+              and (TELL_USER_LINE in outcome.stderr) == tell_user, outcome.describe())
+        return outcome_scenario, outcome
+
+    _, outcome = not_run_case(
+        "lock held", FAKE_TEST_SUITES_RUNNER_LOCKED,
+        "another run of the test suites still held this machine's test lock after 60 seconds: "
+        + FAKE_LOCK_HOLDER_LINE, tell_user=False)
+    check("lock held: the runner's advice to its own caller is not passed on",
+          "Otherwise, tell the user" not in outcome.stderr, outcome.describe())
+    not_run_case("cannot start", FAKE_TEST_SUITES_RUNNER_CANNOT_START,
+                 "the selective test run gave no verdict, because it exited 2: run-all-test-"
+                 "suites: not run — /fake is not a checkout's top directory", tell_user=True)
+    not_run_case("killed", FAKE_TEST_SUITES_RUNNER_KILLED,
+                 "the selective test run gave no verdict, because it was killed by signal 9",
+                 tell_user=True)
+    not_run_case("runner missing", None,
+                 "the selective test run did not start, because %s is missing"
+                 % (scratch / "layout-selective-runner missing" / "scripts"
+                    / REAL_TEST_SUITES_RUNNER.name),
+                 tell_user=True, include_test_suites_runner=False)
+
+    hanging, outcome = not_run_case(
+        "overrun", FAKE_TEST_SUITES_RUNNER_HANGS_WITH_CHILD,
+        "the selective test run had not finished when the 1-second time budget ran out, and "
+        "was stopped; the logs of the suites it ran are in " + FAKE_LOG_DIRECTORY,
+        tell_user=False, budget=HANGING_CHECK_BUDGET_SECONDS)
+    check("overrun: the push is not held for long",
+          outcome.seconds < HANGING_CASE_WALL_CLOCK_LIMIT_SECONDS, "%.1f seconds" % outcome.seconds)
+    calls = hanging.fake_test_suites_runner_calls()
+    check("overrun: the lock wait is cut to fit a budget shorter than 60 seconds",
+          len(calls) == 1 and calls[0][-2:] == ["--wait-for-lock-seconds", "1"], repr(calls))
+    child_pid_file = Path(str(hanging.fake_test_suites_runner_log) + ".child-pid")
+    child_pid = int(child_pid_file.read_text()) if child_pid_file.exists() else None
+    check("(setup) the overrunning run's child recorded its pid", child_pid is not None)
+    if child_pid is not None:
+        check("overrun: the run's child, a suite, was stopped too",
+              process_gone_within(child_pid, seconds=5), "pid %d still running" % child_pid)
+        stop_leftover_process(child_pid)
+
+    # The shell hook in front of the check.
+    for label, options, expected in (
+            ("check missing", {"include_selective_test_run_check": False},
+             "the selective test run did not start, because %s is missing"
+             % (scratch / "layout-selective-check-missing" / "scripts"
+                / SELECTIVE_TEST_RUN_CHECK.name)),
+            ("check fails", {"selective_test_run_check_text": "raise RuntimeError('broken')\n"},
+             "the selective test run check, %s, exited with status 1"
+             % (scratch / "layout-selective-check-fails" / "scripts"
+                / SELECTIVE_TEST_RUN_CHECK.name))):
+        hooks = make_layout(scratch, "layout-selective-" + label.replace(" ", "-"), **options)
+        broken = Scenario(scratch, "selective-" + label.replace(" ", "-"), hooks)
+        outcome = broken.push("origin", "clean")
+        message = lines_from(outcome.stderr, "pre-push: " + expected)
+        check("selective test run %s: the push goes through" % label,
+              went_through(outcome) and broken.origin_ref("clean") == broken.head("clean"),
+              outcome.describe())
+        check("selective test run %s: the hook names the branch, the hand run, and tells the "
+              "user" % label,
+              message[:1] == ["pre-push: %s%s: %s." % (expected, SELECTIVE_TEST_RUN_NOT_RUN_END,
+                                                      branch_entry("clean", broken.head("clean")))]
+              and message[1:4] == [SELECTIVE_TEST_RUN_HAND_RUN_LINE,
+                                   "If a suite fails, fix it, commit the fix and push again.",
+                                   TELL_USER_LINE],
+              outcome.describe())
+
+    # A missing conflict check does not end the hook before the selective test run.
+    hooks = make_layout(scratch, "layout-selective-conflict-check-missing", conflict_check=None,
+                        test_suites_runner_text=FAKE_TEST_SUITES_RUNNER_FAILS)
+    missing = Scenario(scratch, "selective-conflict-check-missing", hooks)
+    outcome = missing.push("origin", "clean")
+    check("with the conflict check missing, the selective test run still runs and refuses",
+          was_refused(outcome) and SELECTIVE_TEST_RUN_REFUSED in outcome.stderr,
+          outcome.describe())
+
+    selective = types.ModuleType("selective_test_run_check_under_test")
+    selective.__file__ = str(SELECTIVE_TEST_RUN_CHECK)
+    exec(compile(SELECTIVE_TEST_RUN_CHECK.read_text(), str(SELECTIVE_TEST_RUN_CHECK), "exec"),
+         selective.__dict__)
+    for configured, expected in (("", 480.0), ("abc", 480.0), ("-5", 480.0), ("0", 480.0),
+                                 ("90", 90.0)):
+        got = selective.time_budget_seconds({SELECTIVE_TEST_RUN_BUDGET_VARIABLE: configured})
+        check("a time budget configured as %r is %g seconds" % (configured, expected),
+              got == expected, repr(got))
+    check("a time budget left unconfigured is 480 seconds",
+          selective.time_budget_seconds({}) == 480.0)
+
+
 # --- Pushes from a mutation-testing worktree ------------------------------
 def run_mutation_testing_worktree_cases(scratch):
     real = make_layout(scratch, "layout-mutation-testing-worktree")
@@ -946,6 +1258,7 @@ def main():
     scratch = Path(tempfile.mkdtemp(prefix="pre-push-test-")).resolve()
     try:
         run_push_cases(scratch)
+        run_selective_test_run_cases(scratch)
         run_mutation_testing_worktree_cases(scratch)
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
