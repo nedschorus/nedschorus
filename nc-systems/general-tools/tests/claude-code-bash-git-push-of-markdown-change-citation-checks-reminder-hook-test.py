@@ -160,6 +160,7 @@ def main():
 
         for command in ("git status && git push origin markdown-branch",
                         "git branch -v && git push origin markdown-branch",
+                        "git branch --merged && git push origin markdown-branch",
                         "git fetch -q origin && git push origin markdown-branch"):
             text = run_main(command, repository)
             check(f"a git command that moves no ref, earlier in the call, leaves the push reminded: {command}",
