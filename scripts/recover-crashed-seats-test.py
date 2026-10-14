@@ -1354,7 +1354,8 @@ with tempfile.TemporaryDirectory() as temporary:
     # F1: an unanswerable tmux axis refuses (fail closed, like lsof).
     workspace = Workspace(root / "r1")
     patch("tmux_session_alive_anywhere",
-          lambda name: (None, "tmux cannot be run here, so seat liveness cannot be "
+          lambda name: (None, "tmux could not be run, or did not answer within 30 seconds, "
+                              "so seat liveness cannot be "
                               "checked — refusing rather than guessing"))
     patch("seat_directory_occupied",
           lambda directory, apart_from_process_ids=(): (False, ""))
@@ -2873,7 +2874,8 @@ with tempfile.TemporaryDirectory() as temporary:
     # RUNNING (below), so the refusal here is one that means something is wrong
     # whatever the lock says: tmux could not be asked.
     patch("tmux_session_alive_anywhere",
-          lambda name: (None, "tmux cannot be run here, so seat liveness cannot be "
+          lambda name: (None, "tmux could not be run, or did not answer within 30 seconds, "
+                              "so seat liveness cannot be "
                               "checked — refusing rather than guessing"))
     exit_code = recovery.main(["seat-a",
                                "--agents-root", str(workspace.agents_root),
@@ -2882,7 +2884,7 @@ with tempfile.TemporaryDirectory() as temporary:
     after_refusal = log_path.read_text(encoding="utf-8") if log_path.is_file() else ""
     check("LOG: a refusal is a decision too — logged, run exits 1",
           exit_code == 1 and after_refusal.startswith(log_text)
-          and "seat-a: REFUSED — tmux cannot be run here" in after_refusal[len(log_text):],
+          and "seat-a: REFUSED — tmux could not be run, or did not answer within 30 seconds" in after_refusal[len(log_text):],
           (exit_code, after_refusal))
     patch("tmux_session_alive_anywhere",
           lambda name: (True, f"tmux session '{name}' is alive on socket '{name}'"))
@@ -3062,7 +3064,8 @@ with tempfile.TemporaryDirectory() as temporary:
 
     def refused_for_tmux_that_cannot_be_asked(workspace):
         patch("tmux_session_alive_anywhere",
-              lambda name: (None, "tmux cannot be run here, so seat liveness cannot be "
+              lambda name: (None, "tmux could not be run, or did not answer within 30 seconds, "
+                                  "so seat liveness cannot be "
                                   "checked — refusing rather than guessing"))
 
     def refused_for_an_occupied_seat_directory(workspace):
@@ -4739,7 +4742,7 @@ with tempfile.TemporaryDirectory() as temporary:
     exit_code, printed, logged = main_at_a_terminal_answering_yes_over_a_tmux_server(
         workspace, events, "unanswerable")
     refused_as_tmux_cannot_be_run = (
-        "seat-a: REFUSED — tmux cannot be run here, so seat liveness cannot be checked — "
+        "seat-a: REFUSED — tmux could not be run, or did not answer within 30 seconds, so seat liveness cannot be checked — "
         "refusing rather than guessing")
     check("LEFTOVER SHELL: when tmux cannot answer at the recheck, nothing is closed and the "
           "seat is REFUSED in the liveness check's words, byte for byte",
@@ -4895,7 +4898,7 @@ with tempfile.TemporaryDirectory() as temporary:
     proven, panes, detail = recovery.tmux_session_is_a_leftover_idle_shell(
         "seat-a", workspace.seat_directory)
     check("IDLE SHELL PROOF: tmux that cannot answer proves nothing",
-          proven is False and "tmux cannot be run here" in detail, (proven, panes, detail))
+          proven is False and "tmux could not be run, or did not answer within 30 seconds" in detail, (proven, panes, detail))
 
     tmux_server_answers({"seat-a": "27178\tzsh\n"}, list_panes_exit_code=1)
     proven, panes, detail = recovery.tmux_session_is_a_leftover_idle_shell(

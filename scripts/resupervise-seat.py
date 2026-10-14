@@ -182,8 +182,13 @@ def directory_occupancy_keep_reason(directory: Path):
     return "no live process is rooted in the seat directory"
 
 
+# run_tmux returns None both when tmux cannot run and when it times out, so a
+# message about a None answer must be true for both.
+TMUX_GAVE_NO_ANSWER = "tmux could not be run, or did not answer within 30 seconds"
+
+
 def run_tmux(*arguments_after_tmux, socket_name=None):
-    """Run tmux, returning None if the command cannot run."""
+    """Run tmux, returning None if the command cannot run or times out after 30 seconds."""
     # Without socket_name, tmux uses $TMUX inside a session and the default socket outside one.
     if shutil.which("tmux") is None:
         return None
@@ -207,7 +212,7 @@ def tmux_has_session(name: str, socket_name: str, run=None):
     """
     completed = (run or run_tmux)("has-session", "-t", f"={name}", socket_name=socket_name)
     if completed is None:
-        return None, "tmux cannot be run here"
+        return None, TMUX_GAVE_NO_ANSWER
     if completed.returncode == 0:
         return True, ""
     reason = (completed.stderr or completed.stdout or "").strip()
@@ -232,7 +237,7 @@ def tmux_sockets_holding_seat_session(name: str):
         held, detail = tmux_has_session(name, socket_name)
         if held is None:
             return holding, (f"could not tell whether the tmux session {name} is still there "
-                             f"(server socket {socket_name}): {detail}")
+                             f"(tmux socket name {socket_name}): {detail}")
         if held:
             holding.append(socket_name)
     return holding, None
@@ -247,10 +252,10 @@ def retire_seat_tmux_session(name: str):
     for socket_name in holding:
         killed = run_tmux("kill-session", "-t", f"={name}", socket_name=socket_name)
         if killed is None or killed.returncode != 0:
-            detail = "tmux could not be run" if killed is None else (
+            detail = TMUX_GAVE_NO_ANSWER if killed is None else (
                 killed.stderr.strip() or "no detail")
             return killed_sockets, (f"could not kill the stale tmux session {name} "
-                                    f"(server socket {socket_name}): {detail}")
+                                    f"(tmux socket name {socket_name}): {detail}")
         killed_sockets.append(socket_name)
     return killed_sockets, None
 
@@ -413,7 +418,7 @@ def main(argv=None) -> int:
     if arguments.dry_run:
         stale_sockets, probe_failure = tmux_sockets_holding_seat_session(arguments.name)
         if probe_failure is not None:
-            return refuse(probe_failure)
+            return refuse(f"{probe_failure}. This was a dry run: nothing was killed or started")
         would_launch = ("stop there (--prepare-only)" if arguments.prepare_only
                         else f"run {launcher} {arguments.name}")
         print(f"resupervise-seat: DRY RUN -- would "
@@ -424,9 +429,10 @@ def main(argv=None) -> int:
     killed_sockets, retire_failure = retire_seat_tmux_session(arguments.name)
     for socket_name in killed_sockets:
         print(f"resupervise-seat: killed the stale tmux session {arguments.name} "
-              f"(server socket {socket_name})")
+              f"(tmux socket name {socket_name})")
     if retire_failure is not None:
-        return refuse(retire_failure)
+        nothing_killed = "" if killed_sockets else " and no tmux session was killed"
+        return refuse(f"{retire_failure}. No agent was started{nothing_killed}")
     if not killed_sockets:
         print(f"resupervise-seat: no tmux session named {arguments.name} to clear "
               "on its own server or the default one")

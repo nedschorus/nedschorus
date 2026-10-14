@@ -527,7 +527,7 @@ def run_per_seat_server_end_to_end_case(workspace: Path):
         check("a seat on its own tmux server is cleared there",
               still_there.returncode != 0, result.stdout + result.stderr)
         check("the kill record names the per-seat server socket",
-              f"(server socket {session})" in result.stdout, result.stdout)
+              f"(tmux socket name {session})" in result.stdout, result.stdout)
     finally:
         subprocess.run(["tmux", "-L", session, "kill-server"],
                        capture_output=True, check=False)
@@ -598,22 +598,50 @@ def run_tmux_probe_failure_cases(workspace: Path):
         shutil.which = real_which  # the module's shutil is this process's shutil
 
 
-def check_dry_run_probe_failure_case(workspace: Path, resupervise, stub_answers):
-    """A dry run whose probe got no answer refuses, rather than promising a clean launch."""
+def run_main_capturing(resupervise, arguments):
+    """Return (exit code, stdout, stderr) of resupervise.main(arguments)."""
     import contextlib
     import io
-    resupervise.shutil.which = lambda program: "/usr/bin/tmux"
-    stub_answers({})  # every tmux call gets no answer, as when tmux times out
-    write_handoff(workspace, "dryprobe", counter=1)
     errors = io.StringIO()
     with contextlib.redirect_stdout(io.StringIO()) as output, contextlib.redirect_stderr(errors):
-        code = resupervise.main(["dryprobe", "--handoff-dir", str(workspace),
-                                 "--agents-root", str(workspace / "agents"),
-                                 "--dry-run", "--prepare-only"])
-    check("a dry run whose tmux probe got no answer refuses instead of reporting a clean launch",
-          code == 1 and "could not tell whether the tmux session dryprobe is still there"
-          in errors.getvalue() and "DRY RUN" not in output.getvalue(),
-          f"exit {code}; stdout {output.getvalue()!r}; stderr {errors.getvalue()!r}")
+        code = resupervise.main(arguments)
+    return code, output.getvalue(), errors.getvalue()
+
+
+def check_dry_run_probe_failure_case(workspace: Path, resupervise, stub_answers):
+    """A probe that got no answer refuses, rather than promising or making a clean launch."""
+    resupervise.shutil.which = lambda program: "/usr/bin/tmux"
+    seat_arguments = ["dryprobe", "--handoff-dir", str(workspace),
+                      "--agents-root", str(workspace / "agents"), "--prepare-only"]
+    no_answer_refusal = ("resupervise-seat: could not tell whether the tmux session dryprobe "
+                         "is still there (tmux socket name dryprobe): tmux could not be run, "
+                         "or did not answer within 30 seconds")
+
+    stub_answers({})  # every tmux call gets no answer, as when tmux times out
+    write_handoff(workspace, "dryprobe", counter=1)
+    code, output, errors = run_main_capturing(resupervise, [*seat_arguments, "--dry-run"])
+    check("a dry run whose tmux probe got no answer refuses with words true for a timeout",
+          code == 1 and errors == (f"{no_answer_refusal}. This was a dry run: "
+                                   "nothing was killed or started\n")
+          and "DRY RUN" not in output,
+          f"exit {code}; stdout {output!r}; stderr {errors!r}")
+
+    stub_answers({})
+    code, output, errors = run_main_capturing(resupervise, seat_arguments)
+    check("a run whose tmux probe got no answer refuses, saying nothing was killed or started",
+          code == 1 and errors == (f"{no_answer_refusal}. No agent was started "
+                                   "and no tmux session was killed\n"),
+          f"exit {code}; stdout {output!r}; stderr {errors!r}")
+
+    stub_answers({("has-session", "dryprobe"): (0, ""),
+                  ("has-session", "default"): (1, "can't find session: dryprobe\n")})
+    code, output, errors = run_main_capturing(resupervise, seat_arguments)
+    check("a kill-session that got no answer refuses with words true for a timeout",
+          code == 1 and errors == ("resupervise-seat: could not kill the stale tmux session "
+                                   "dryprobe (tmux socket name dryprobe): tmux could not be "
+                                   "run, or did not answer within 30 seconds. No agent was "
+                                   "started and no tmux session was killed\n"),
+          f"exit {code}; stdout {output!r}; stderr {errors!r}")
 
 
 def check_tmux_probe_failure_cases(resupervise, calls, stub_answers):
@@ -631,7 +659,8 @@ def check_tmux_probe_failure_cases(resupervise, calls, stub_answers):
     stub_answers({("has-session", "probeseat"): (1, "no server running on /tmp/x\n")})
     killed, failure = resupervise.retire_seat_tmux_session("probeseat")
     check("a has-session that does not answer refuses instead of reading as no session",
-          failure is not None and "tmux cannot be run here" in failure and killed == [],
+          failure is not None and "tmux could not be run, or did not answer within 30 seconds"
+          in failure and killed == [],
           f"killed={killed} failure={failure}")
     check("nothing is killed after a probe that did not answer",
           not any(command == "kill-session" for command, _ in calls), str(calls))
