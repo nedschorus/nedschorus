@@ -257,6 +257,35 @@ def read_codex_exec(guard, command, working_directory, search_file_directory):
     return "refused" if reason else "passed", reason
 
 
+class MarkdownChangingCheckoutProbeRunner(StubbedProbeRunner):
+    """Answers the Markdown push reminder's git as a checkout whose every ref changes one Markdown file.
+
+    The checkout is the ref's own, which holds both citation programs the reminder looks for, and
+    every ref is the commit checked out, so the reminder's outcome depends only on the command.
+    """
+
+    def __call__(self, argv, **keywords):
+        argv = list(argv)
+        # The checkout's path differs between the base and head checkouts, so it is named, not written.
+        self.calls.append(" ".join(argv[:5]).replace(WORKER["checkout"], "<checkout>"))
+        arguments = argv[3:]  # After git -C <directory>.
+        if arguments[:2] == ["rev-parse", "--show-toplevel"]:
+            return subprocess.CompletedProcess(argv, 0, WORKER["checkout"] + "\n", "")
+        if arguments[:1] == ["diff"]:
+            return subprocess.CompletedProcess(argv, 0, "docs/changed-page.md\0", "")
+        if arguments[:1] == ["branch"]:
+            return subprocess.CompletedProcess(argv, 0, "the-pull-request-branch\n", "")
+        return subprocess.CompletedProcess(argv, 0, "0" * 40 + "\n", "")
+
+
+def read_markdown_push_reminder(guard, command, working_directory, search_file_directory):
+    runner = MarkdownChangingCheckoutProbeRunner()
+    messages = guard.messages_for_command(command, working_directory, runner)
+    # The hook never refuses; what it adds to the agent's context is its verdict.
+    return [["added context" if messages else "passed", sorted(set(runner.calls))],
+            "\n\n".join(messages) or None]
+
+
 # Every Bash PreToolUse hook in .claude/settings.json, by the file it runs, with the function
 # that reads one command through it. check_guards_match_settings() names each hook missing here,
 # so a new guard is one line: its file and a reading function like the ones above.
@@ -267,6 +296,8 @@ GUARDS = {
     "nc-systems/general-tools/claude-code-tmux-kill-server-and-kill-session-missing-server-selection-refusal-hook.py": read_tmux_kill,
     "scripts/search-file-argument-read-as-option-guard-hook.py": read_search_file,
     "scripts/hand-typed-codex-exec-redirect-hook.py": read_codex_exec,
+    "nc-systems/general-tools/claude-code-bash-git-push-of-markdown-change-citation-checks-reminder-hook.py":
+        read_markdown_push_reminder,
 }
 SEARCH_FILE_GUARD = "scripts/search-file-argument-read-as-option-guard-hook.py"
 
