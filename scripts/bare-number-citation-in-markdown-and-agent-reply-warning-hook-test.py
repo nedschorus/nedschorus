@@ -794,7 +794,7 @@ broken_payload["cwd"] = str(broken_checkout)
 result = run_hook(broken_payload)
 check("a git check-ignore that fails is reported on stderr, no note, exit 1",
       result.returncode == 1 and result.stdout == ""
-      and "no check was made: RuntimeError: git check-ignore exited 128" in result.stderr,
+      and "no check was made: GitIgnoreCheckFailed: git check-ignore exited 128" in result.stderr,
       (result.returncode, result.stdout, result.stderr))
 
 
