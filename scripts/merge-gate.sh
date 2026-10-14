@@ -15,7 +15,7 @@
 # Where a page of JSON must be combined, the capture and the jq run are separate
 # statements over a here-string, never a pipe.
 #
-# THE PIN (user-ruled 2026-08-29). The gate derives the commit to merge from the
+# THE PIN. The gate derives the commit to merge from the
 # LATEST APPROVING REVIEW's recorded commit_id, not from the head it happens to
 # observe, and prints a merge command pinned to it with --match-head-commit. An
 # approval then only ever merges the exact code that approval covered: GitHub
@@ -23,13 +23,11 @@
 # window between this gate passing and `gh pr merge` running. dismiss_stale_reviews
 # stays OFF; the no-approval case still refuses here.
 #
-# MEASURED before relying on it (2026-08-29, PR #156): a review's commit_id is
-# STABLE when the head moves. #156's head was 560936804 while its 2026-08-24
-# reviews still recorded 8d4305f55. This is NOT true of comments -- see the note
+# MEASURED before relying on it: a review's commit_id is STABLE when the head
+# moves. This is NOT true of comments -- see the note
 # on the comment channels below -- so the two are read differently on purpose.
 #
-# WHY EVERY CHANNEL READ PAGINATES (F1, the worst of seven false passes an
-# independent review demonstrated 2026-09-22 against the pre-repository copy).
+# WHY EVERY CHANNEL READ PAGINATES (F1).
 # GitHub returns 30 items per page, OLDEST FIRST, on all three channels. Without
 # --paginate everything newer than the 30th item is invisible, so a "nothing new
 # since" check counts zero on exactly the pull requests that have the most
@@ -48,11 +46,9 @@
 # The second half exists for pull requests the merge account itself opened.
 # GitHub refuses an approval from a pull request's author, so there mac-claude
 # approves (the pin) and the merge account then posts its required review as
-# COMMENTED. Bounded by the pin alone, that flow was refused at every SINCE: at
-# or before the approval its own review counted as new activity, after the
-# approval SINCE was out of bounds. The last nine pull requests the merge
-# account opened before 2026-09-23T23:45Z, 616 to 687, all have this shape (PR
-# 687 is the case in the suite). What this allows: a SINCE at the merge account's own latest review,
+# COMMENTED. Bounded by the pin alone, that flow would be refused at every
+# SINCE: at or before the approval its own review would count as new activity,
+# after the approval SINCE would be out of bounds. What this allows: a SINCE at the merge account's own latest review,
 # so activity by any account between the pin and that review is not counted --
 # the same trust the ordinary flow already places in SINCE, which is the merge
 # account's own approval there. A review with findings from any account still
@@ -66,12 +62,10 @@
 # A different-but-valid RFC 3339 spelling is refused with its reason, which is a
 # false refusal by design and cheap to correct at the call site.
 #
-# WHY ANY ACCOUNT'S APPROVAL MAY BE THE PIN. The 2026-09-22 cleanup added a
-# filter refusing an approval by the merge account, on the belief that the
-# approval must come from the commissioned independent reviewer. The merge
-# account approves every pull request it merges, and on 13 of the 20 merges
-# before 2026-09-23T22:44Z its approval was the only one at the head, so the
-# filter refused most real merges. The user ruled it out 2026-09-23. GitHub's
+# WHY ANY ACCOUNT'S APPROVAL MAY BE THE PIN. The merge account approves every
+# pull request it merges, and its approval is often the only one at the head,
+# so a filter refusing an approval by the merge account would refuse most real
+# merges; the user decided against such a filter. GitHub's
 # required review already refuses an approval from the pull request's author.
 #
 # WHY THE REVIEW CHANNEL NO LONGER EXCLUDES AN ACCOUNT (F5). It excluded every

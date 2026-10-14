@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-"""Fail when a Python comment or docstring carries a history marker: an ISO
-date, a ruling, a pull request or issue number, or a commit hash.
+"""Fail when a comment or docstring in a tracked Python file, or a comment in a
+tracked shell script, carries a history marker: an ISO date, a ruling, a pull
+request or issue number, or a commit hash.
 
 History belongs in the commit message and the pull request. Agents copy the
 comment style of the code around them, so one history comment breeds more.
@@ -25,7 +26,7 @@ _git_environment_fixture_spec.loader.exec_module(_git_environment_fixture)
 _git_environment_fixture.remove_git_redirecting_environment_variables_from_this_process()
 
 REPOSITORY = Path(__file__).resolve().parent.parent
-SUITE = "scripts/python-comments-carry-no-history-markers-test.py"
+SUITE = "scripts/code-comments-carry-no-history-markers-test.py"
 
 MARKER_PATTERNS = {
     "date": re.compile(r"\b20\d\d-[01]\d-[0-3]\d\b"),
@@ -161,7 +162,66 @@ ALLOWED_DATA_LINES = {
 }
 
 
-def comment_and_docstring_lines(source):
+SHELL_SHEBANG = re.compile(rb"^#!\S*(?:/|\s)(?:ba|da|z)?sh\b")
+SHELL_HEREDOC = re.compile(r"(?<!<)<<(-?)[ \t]*(?:'([^']+)'|\"([^\"]+)\"|\\?([A-Za-z_]\w*))")
+
+
+class ShellScriptDoesNotLex(ValueError):
+    pass
+
+
+def shell_comment_lines(source):
+    """Return [(line number, text)] for every comment in a shell script.
+
+    Text inside quotes and here-document bodies is not a comment. Raise
+    ShellScriptDoesNotLex when a quote or a here-document never closes, because
+    every comment after that point would go unread.
+    """
+    comments, quote, heredocs, heredoc_open_line = [], None, [], 0
+    lines = source.splitlines()
+    for number, line in enumerate(lines, start=1):
+        if heredocs:
+            strip_tabs, delimiter = heredocs[0]
+            if (line.lstrip("\t") if strip_tabs else line) == delimiter:
+                heredocs.pop(0)
+            continue
+        if number == 1 and line.startswith("#!"):
+            continue
+        index = 0
+        while index < len(line):
+            character = line[index]
+            if quote == "'":
+                if character == "'":
+                    quote = None
+            elif quote == '"':
+                if character == "\\":
+                    index += 1
+                elif character == '"':
+                    quote = None
+            elif character == "\\":
+                index += 1
+            elif character in "'\"":
+                quote = character
+            elif character == "#" and (index == 0 or line[index - 1] in " \t;|&()<>"):
+                comments.append((number, line[index:]))
+                break
+            elif character == "<":
+                heredoc = SHELL_HEREDOC.match(line, index)
+                if heredoc:
+                    heredocs.append((heredoc.group(1) == "-",
+                                     next(group for group in heredoc.groups()[1:] if group)))
+                    heredoc_open_line = number
+                    index = heredoc.end() - 1
+            index += 1
+    if quote:
+        raise ShellScriptDoesNotLex(f"a {quote} quote never closes")
+    if heredocs:
+        raise ShellScriptDoesNotLex(
+            f"the here-document opened on line {heredoc_open_line} never reaches {heredocs[0][1]}")
+    return comments
+
+
+def python_comment_and_docstring_lines(source):
     """Yield (line number, text) for every comment and docstring line."""
     try:
         for token in tokenize.generate_tokens(io.StringIO(source).readline):
@@ -182,10 +242,11 @@ def comment_and_docstring_lines(source):
                     yield first.lineno + offset, text
 
 
-def markers_in(path, source):
+def markers_in(path, source, language="python"):
     """Return [(line, kind, marker)] for the history markers in one file."""
     found = []
-    for line, text in comment_and_docstring_lines(source):
+    lines = shell_comment_lines(source) if language == "shell" else python_comment_and_docstring_lines(source)
+    for line, text in lines:
         if f"{path}:{line}" in ALLOWED_DATA_LINES:
             continue
         for kind, pattern in MARKER_PATTERNS.items():
@@ -193,24 +254,41 @@ def markers_in(path, source):
     return found
 
 
+def language_of(repository, path):
+    """Return "python", "shell", or None for a file this suite does not read."""
+    if path.endswith(".py"):
+        return "python"
+    if path.endswith(".sh"):
+        return "shell"
+    if "." in Path(path).name or not (repository / path).is_file():
+        return None
+    with open(repository / path, "rb") as file:
+        return "shell" if SHELL_SHEBANG.match(file.readline()) else None
+
+
 def scan_tree(repository):
-    """Return (failures, paths that do not parse, number of .py files listed)."""
-    paths = subprocess.run(["git", "-C", str(repository), "ls-files", "*.py"],
-                           capture_output=True, text=True, check=True).stdout.split()
-    failures, unparseable = [], []
-    for path in paths:
+    """Return (failures, paths that do not parse, {language: number of files listed})."""
+    paths = subprocess.run(["git", "-C", str(repository), "ls-files", "-z"],
+                           capture_output=True, text=True, check=True).stdout.split("\0")
+    failures, unparseable, listed = [], [], {"python": 0, "shell": 0}
+    for path in filter(None, paths):
+        language = language_of(repository, path)
+        if language is None:
+            continue
+        listed[language] += 1
         source = (repository / path).read_text(encoding="utf-8")
         try:
-            ast.parse(source)
-            list(tokenize.generate_tokens(io.StringIO(source).readline))
-        except (SyntaxError, tokenize.TokenError):
+            if language == "python":
+                ast.parse(source)
+                list(tokenize.generate_tokens(io.StringIO(source).readline))
+            found = markers_in(path, source, language)
+        except (SyntaxError, tokenize.TokenError, ShellScriptDoesNotLex):
             unparseable.append(path)
             continue
-        found = markers_in(path, source)
         ceiling = FILES_AWAITING_THE_COMMENT_TRIM.get(path, 0)
         if len(found) > ceiling:
             failures.append((path, found, ceiling))
-    return failures, unparseable, len(paths)
+    return failures, unparseable, listed
 
 
 def a_file_that_does_not_parse_is_reported():
@@ -220,7 +298,20 @@ def a_file_that_does_not_parse_is_reported():
         (scratch / "broken.py").write_text("def (:\n", encoding="utf-8")
         subprocess.run(["git", "-C", str(scratch), "add", "broken.py"], check=True)
         _, unparseable, listed = scan_tree(scratch)
-    return unparseable == ["broken.py"] and listed == 1
+    return unparseable == ["broken.py"] and listed == {"python": 1, "shell": 0}
+
+
+def a_shell_script_that_does_not_lex_is_reported():
+    with tempfile.TemporaryDirectory() as scratch:
+        scratch = Path(scratch)
+        subprocess.run(["git", "init", "-q", str(scratch)], check=True)
+        (scratch / "unclosed-quote").write_text("#!/bin/sh\necho 'never closed\n# PR 931\n",
+                                                encoding="utf-8")
+        (scratch / "unclosed-heredoc.sh").write_text("cat <<EOF\n# PR 931\n", encoding="utf-8")
+        subprocess.run(["git", "-C", str(scratch), "add", "."], check=True)
+        _, unparseable, listed = scan_tree(scratch)
+    return sorted(unparseable) == ["unclosed-heredoc.sh", "unclosed-quote"] \
+        and listed == {"python": 0, "shell": 2}
 
 
 def the_suite_run_with_git_dir_set_still_scans_this_repository():
@@ -230,7 +321,7 @@ def the_suite_run_with_git_dir_set_still_scans_this_repository():
         environment = dict(os.environ, GIT_DIR=scratch, HISTORY_MARKER_SUITE_CHILD="1")
         child = subprocess.run([sys.executable, __file__], capture_output=True, text=True,
                                env=environment)
-    return child.returncode == 0 and "PASS  git ls-files lists this repository's .py files" in child.stdout
+    return child.returncode == 0 and "PASS  git ls-files lists this repository's .py files and shell scripts" in child.stdout
 
 
 def report(failures):
@@ -261,6 +352,16 @@ def main():
               == ["pull request or issue number"]),
         check("plain words and hex-free numbers are not markers",
               markers_in("x.py", "# deadbeef retries 1234567 times; feed the cafe\n") == []),
+        check("a shell comment's markers are found, at a line's start and after code",
+              [(line, kind) for line, kind, _ in markers_in(
+                  "x.sh", "#!/bin/sh\n# see PR 931\necho hi  # 2026-09-30\n", "shell")]
+              == [(2, "pull request or issue number"), (3, "date")]),
+        check("a shell script's shebang, quoted text, $#, ${#x} and here-document bodies are not comments",
+              markers_in("x.sh", "#!/bin/sh\n"
+                                 "echo '# PR 931' \"# 2026-09-30\" \\# GHI 12 $# ${#x} PR 931\n"
+                                 "cat <<'EOF'\n# PR 931\nEOF\n"
+                                 "cat <<-END\n\t# PR 931\n\tEND\n"
+                                 "tr a b <<<\"$x\" # ok\n", "shell") == []),
         check("a line in ALLOWED_DATA_LINES is skipped",
               all(not markers_in(key.rsplit(":", 1)[0], "") for key in ALLOWED_DATA_LINES)),
     ]
@@ -269,13 +370,18 @@ def main():
                              the_suite_run_with_git_dir_set_still_scans_this_repository()))
         results.append(check("a tracked .py file that does not parse is reported, not skipped",
                              a_file_that_does_not_parse_is_reported()))
+        results.append(check("a tracked shell script whose quote or here-document never closes "
+                             "is reported, not skipped",
+                             a_shell_script_that_does_not_lex_is_reported()))
     failures, unparseable, listed = scan_tree(REPOSITORY)
-    results.append(check("git ls-files lists this repository's .py files", listed > 0))
-    results.append(check("every tracked .py file parses"
+    results.append(check("git ls-files lists this repository's .py files and shell scripts",
+                         listed["python"] > 0 and listed["shell"] > 0))
+    results.append(check("every tracked .py file parses and every tracked shell script lexes"
                          + (f"; these do not: {', '.join(unparseable)}" if unparseable else ""),
                          not unparseable))
     report(failures)
-    results.append(check("no tracked .py file carries more history markers than it is allowed", not failures))
+    results.append(check("no tracked .py file or shell script carries more history markers than it is allowed",
+                         not failures))
     if all(results):
         print("all cases passed")
         return 0
