@@ -2312,7 +2312,7 @@ time.sleep(300)
         DRIVER_HOLD_LAST_REPORT_CHECK holds the second cell to finish, after
         its agent-binary has exited and before its report is saved, until that
         file exists (`<file>.held` again); with
-        DRIVER_SIGNAL_THE_HELD_CELL_THREAD also set, that cell's thread waits
+        DRIVER_HELD_CELL_SENDS_SIGTERM_TO_ITS_OWN_THREAD also set, that cell's thread waits
         for the other cell to finish and then sends SIGTERM to itself, as Linux
         may hand a signal sent to the process to any of its threads.
         DRIVER_PROBE_VERSIONS, set to any
@@ -2363,7 +2363,7 @@ if report_check_hold:
     def last_report_check_held(*arguments, **keywords):
         reports_checked.append(1)
         if len(reports_checked) == 2:
-            if os.environ.get("DRIVER_SIGNAL_THE_HELD_CELL_THREAD"):
+            if os.environ.get("DRIVER_HELD_CELL_SENDS_SIGTERM_TO_ITS_OWN_THREAD"):
                 import signal, threading
                 # Once the other cell has finished, so nothing but this
                 # held cell could wake a main thread waiting for the cells;
@@ -3089,7 +3089,7 @@ sys.exit(module.main())
         environment = runner_process_environment(
             programs, recorded, codex="report", claude="report")
         environment["DRIVER_HOLD_LAST_REPORT_CHECK"] = str(report_check_hold)
-        environment["DRIVER_SIGNAL_THE_HELD_CELL_THREAD"] = "1"
+        environment["DRIVER_HELD_CELL_SENDS_SIGTERM_TO_ITS_OWN_THREAD"] = "1"
         environment["DRIVER_STOP_WALK_DONE"] = str(walk_done)
         process = subprocess.Popen(
             [sys.executable, "-B", str(runner_driver(base, repo)),
