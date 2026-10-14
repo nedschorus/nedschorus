@@ -541,7 +541,8 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     result = write_then_run(broken_checkout, broken_checkout / "notes.md", BROKEN_TEXT)
     check("when git check-ignore exits 128 the hook reports git's failure and exits 1",
           result.returncode == 1 and result.stdout.strip() == ""
-          and "git check-ignore exited 128" in result.stderr,
+          and "git check-ignore -q -- notes.md in" in result.stderr
+          and "failed (exit 128" in result.stderr,
           f"exit {result.returncode}: {result.stdout + result.stderr}")
 
     # git missing from PATH: the hook runs by absolute path, so only git is absent.
@@ -554,7 +555,8 @@ with tempfile.TemporaryDirectory() as temporary_directory:
         env={**CLEAN_ENVIRONMENT, "PATH": str(tmp / "empty-path-directory")})
     check("when git is missing the hook reports it and exits 1",
           result.returncode == 1 and result.stdout.strip() == ""
-          and "git check-ignore could not run" in result.stderr,
+          and "git check-ignore -q -- " in result.stderr
+          and "could not start git" in result.stderr,
           f"exit {result.returncode}: {result.stdout + result.stderr}")
 
     # The hook without the shared module it loads its git helpers from.

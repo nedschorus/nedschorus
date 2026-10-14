@@ -22,7 +22,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 SHARED_MODULE = (REPO_ROOT / "nc-systems" / "general-tools"
                  / "edited-file-path-within-checkout-root-and-git-check-ignore-common.py")
 SHARED_NAMES = ("enclosing_checkout_root", "checkout_relative_path", "git_would_track",
-                "file_lines_at_head_unless_git_ignores_file", "GitIgnoreCheckFailed")
+                "file_lines_at_head_unless_git_ignores_file")
 
 failures = []
 
