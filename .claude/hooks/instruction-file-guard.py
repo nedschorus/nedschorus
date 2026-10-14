@@ -96,14 +96,14 @@ REVIEWED_DOCUMENT_DENY_MESSAGE = (
 ) + ROUTE_AROUND_LINES
 
 MEMORY_WRITE_DENY_MESSAGE = (
-    "Refusing to write {path}: it is in a Claude Code memory directory. Nothing makes a "
-    "later agent read a memory file at the moment it would matter, and a note read later, "
-    "without the conversation that produced it, often makes little sense or no longer fits "
-    "the situation.\n"
+    "Refusing to write {path}: it is in a Claude Code memory directory, where nothing "
+    "recalls a note at the moment it applies.\n"
     "If what you meant to save would change how agents work, propose to the user the exact "
     "edit, with its wording, to the instruction file, skill or program where an agent would "
     "meet it.\n"
-    "Otherwise drop it: do not show the note to the user.\n"
+    "If you cannot tell where it belongs, tell the user in one sentence what you meant to "
+    "remember, and ask him where to save it so that an agent recalls it when it applies.\n"
+    "If it matters only to this conversation, drop it.\n"
     "If you are a subagent, put this to the agent that dispatched you instead.\n"
     "No {marker} marker lets a write into a memory directory through, so do not write one "
     "for this."
