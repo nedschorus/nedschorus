@@ -16,6 +16,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from datetime import datetime, timezone
 from pathlib import Path
 
 # Before anything runs git: a GIT_DIR or similar variable inherited from the
@@ -30,6 +31,9 @@ _git_environment_fixture.remove_git_redirecting_environment_variables_from_this_
 
 HOOK_SCRIPT = Path(__file__).with_name("cold-read-fast-read-due-for-linked-document-reminder-hook.py")
 STORE_VARIABLE = "NEDSCHORUS_LOG_STORE_COLD_READ_RECORDS_DIRECTORY"
+# Cases' file times are in 1970, so an agent-session started in 2100 leaves
+# every case to the file-time rules unless the case sets its own start.
+LATER_THAN_EVERY_FILE_TIME = 4_102_444_800
 SUITE_ROOT = Path(tempfile.mkdtemp(prefix="cold-read-fast-read-due-for-linked-document-test-"))
 failures = []
 
@@ -81,9 +85,14 @@ class Case:
             os.utime(frozen, (modified, modified))
         return directory
 
-    def run(self, reply, payload_extra=None, stdin_text=None, environment_extra=None):
+    def run(self, reply, payload_extra=None, stdin_text=None, environment_extra=None,
+            session_start=LATER_THAN_EVERY_FILE_TIME):
+        user_record = {"type": "user", "message": {"role": "user", "content": "please write it"}}
+        if session_start is not None:
+            user_record["timestamp"] = datetime.fromtimestamp(
+                session_start, timezone.utc).isoformat().replace("+00:00", "Z")
         records = [
-            {"type": "user", "message": {"role": "user", "content": "please write it"}},
+            user_record,
             {"type": "assistant", "message": {"id": "msg_1", "role": "assistant",
                                               "content": [{"type": "text", "text": reply}]}},
         ]
@@ -309,6 +318,36 @@ def main():
           and "made no check" in completed.stderr
           and len(completed.stderr.strip().splitlines()) == 1,
           f"exit {completed.returncode}, stdout {completed.stdout!r}, stderr {completed.stderr!r}")
+
+    case = Case()
+    document = case.document("docs/plan-of-record.md", modified=5_000_000)
+    case.record("plan-of-record-2026-10-14", 4_000_000, "docs/plan-of-record.md", "before the fix\n")
+    expect("a document fast-read in this agent-session, then changed, is not raised again",
+           case.run("Applied the findings to docs/plan-of-record.md.", session_start=3_000_000),
+           None)
+    expect("the same document read before this agent-session started is raised",
+           case.run("Applied the findings to docs/plan-of-record.md.", session_start=4_500_000),
+           [document])
+
+    case = Case()
+    draft = case.document("docs/walk/naming-rules-draft.md", modified=5_000_000)
+    case.document("docs/walk/naming-rules-suggestions.md", modified=4_000_000)
+    expect("a walk-document whose suggestions file was written in this agent-session is not raised",
+           case.run("The walk-document is docs/walk/naming-rules-draft.md.", session_start=3_000_000),
+           None)
+
+    case = Case()
+    document = case.document("docs/plan-of-record.md", modified=5_000_000)
+    case.record("plan-of-record-2026-10-14", 4_000_000, "docs/plan-of-record.md", "before\n")
+    completed = case.run("Applied the findings to docs/plan-of-record.md.", session_start=None)
+    expect("a transcript with no timestamp falls back to file times and still reports",
+           completed, [document])
+    context = (json.loads(completed.stdout)["hookSpecificOutput"]["additionalContext"]
+               if completed.stdout.strip() else "")
+    check("a transcript with no timestamp is reported in the reminder and on stderr",
+          "could not read when this agent-session started" in context
+          and "could not read when this agent-session started" in completed.stderr,
+          f"context {context!r}, stderr {completed.stderr!r}")
 
     # The Mac mount maps to ned-box's /home/nedlern; point that prefix at a scratch directory.
     specification = importlib.util.spec_from_file_location("hook_under_test", HOOK_SCRIPT)
