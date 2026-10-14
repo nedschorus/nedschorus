@@ -42,7 +42,7 @@ name the wrong checkout.
 
 SILENT when nothing is due, when this Stop ends the agent's answer to a Stop
 hook's output (the shared rule of
-nc-systems/general-tools/claude-code-stop-hook-silent-while-agent-answers-a-stop-hook-common.py), when the agent-session is a
+nc-systems/general-tools/claude-code-stop-hooks-stay-silent-while-agent-answers-a-stop-hook-rule-common.py), when the agent-session is a
 headless `claude -p` child (its last words are its caller's answer), when the
 transcript file does not exist, and when the log-store's cold-read-records
 directory does not exist, as on the Mac, because without it every document
@@ -66,12 +66,12 @@ from pathlib import Path
 from urllib.parse import unquote
 
 # Every Stop hook obeys this rule first: see the module's docstring.
-_answer_loop_guard_specification = importlib.util.spec_from_file_location(
-    "claude_code_stop_hook_silent_while_agent_answers_a_stop_hook_common",
+_stop_hooks_stay_silent_rule_specification = importlib.util.spec_from_file_location(
+    "claude_code_stop_hooks_stay_silent_while_agent_answers_a_stop_hook_rule_common",
     Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
-    / "claude-code-stop-hook-silent-while-agent-answers-a-stop-hook-common.py")
-answer_loop_guard = importlib.util.module_from_spec(_answer_loop_guard_specification)
-_answer_loop_guard_specification.loader.exec_module(answer_loop_guard)
+    / "claude-code-stop-hooks-stay-silent-while-agent-answers-a-stop-hook-rule-common.py")
+stop_hooks_stay_silent_rule = importlib.util.module_from_spec(_stop_hooks_stay_silent_rule_specification)
+_stop_hooks_stay_silent_rule_specification.loader.exec_module(stop_hooks_stay_silent_rule)
 
 LOG_STORE_DIRECTORY = Path("/home/nedlern/nedschorus-logs")
 LOG_STORE_COLD_READ_RECORDS_ENVIRONMENT_VARIABLE = "NEDSCHORUS_LOG_STORE_COLD_READ_RECORDS_DIRECTORY"
@@ -256,7 +256,7 @@ def document_is_due(document, record_directories, document_top, record_names):
 def run(stdin_text, environment):
     """Return the text to print, or None."""
     payload = json.loads(stdin_text)
-    if answer_loop_guard.stop_hook_stays_silent_while_agent_answers_a_stop_hook(payload):
+    if stop_hooks_stay_silent_rule.stop_hook_stays_silent_while_agent_answers_a_stop_hook(payload):
         return None
     if (environment.get("NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER")
             or environment.get("CLAUDE_CODE_SESSION_ATTENDED") == "0"):

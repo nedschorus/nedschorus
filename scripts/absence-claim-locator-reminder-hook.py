@@ -16,7 +16,7 @@ text and block quotes do not count.
 
 THE HOOK STAYS SILENT when any of these holds:
   - this Stop ends the agent's answer to a Stop hook's output (the shared
-    rule of nc-systems/general-tools/claude-code-stop-hook-silent-while-agent-answers-a-stop-hook-common.py);
+    rule of nc-systems/general-tools/claude-code-stop-hooks-stay-silent-while-agent-answers-a-stop-hook-rule-common.py);
   - the agent ran the locator this turn (a Bash command naming
     locate-file-copies-across-machines.py) or invoked the skill
     locate-before-saying-a-file-is-missing;
@@ -70,12 +70,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 # Every Stop hook obeys this rule first: see the module's docstring.
-_answer_loop_guard_specification = importlib.util.spec_from_file_location(
-    "claude_code_stop_hook_silent_while_agent_answers_a_stop_hook_common",
+_stop_hooks_stay_silent_rule_specification = importlib.util.spec_from_file_location(
+    "claude_code_stop_hooks_stay_silent_while_agent_answers_a_stop_hook_rule_common",
     Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
-    / "claude-code-stop-hook-silent-while-agent-answers-a-stop-hook-common.py")
-answer_loop_guard = importlib.util.module_from_spec(_answer_loop_guard_specification)
-_answer_loop_guard_specification.loader.exec_module(answer_loop_guard)
+    / "claude-code-stop-hooks-stay-silent-while-agent-answers-a-stop-hook-rule-common.py")
+stop_hooks_stay_silent_rule = importlib.util.module_from_spec(_stop_hooks_stay_silent_rule_specification)
+_stop_hooks_stay_silent_rule_specification.loader.exec_module(stop_hooks_stay_silent_rule)
 
 SKILL_NAME = "locate-before-saying-a-file-is-missing"
 LOCATOR_PROGRAM_NAME = "locate-file-copies-across-machines.py"
@@ -321,7 +321,7 @@ def run(stdin_text, environment, home, now):
     if not isinstance(payload, dict):
         raise ValueError(f"the input on the hook's stdin is a JSON {type(payload).__name__}, not an object")
     event = payload.get("hook_event_name") or "Stop"
-    if answer_loop_guard.stop_hook_stays_silent_while_agent_answers_a_stop_hook(payload):
+    if stop_hooks_stay_silent_rule.stop_hook_stays_silent_while_agent_answers_a_stop_hook(payload):
         return None
     if event == "SubagentStop":
         transcript_path = payload.get("agent_transcript_path")

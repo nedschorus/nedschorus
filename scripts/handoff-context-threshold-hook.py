@@ -14,12 +14,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 # Every Stop hook obeys this rule first: see the module's docstring.
-_answer_loop_guard_specification = importlib.util.spec_from_file_location(
-    "claude_code_stop_hook_silent_while_agent_answers_a_stop_hook_common",
+_stop_hooks_stay_silent_rule_specification = importlib.util.spec_from_file_location(
+    "claude_code_stop_hooks_stay_silent_while_agent_answers_a_stop_hook_rule_common",
     Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
-    / "claude-code-stop-hook-silent-while-agent-answers-a-stop-hook-common.py")
-answer_loop_guard = importlib.util.module_from_spec(_answer_loop_guard_specification)
-_answer_loop_guard_specification.loader.exec_module(answer_loop_guard)
+    / "claude-code-stop-hooks-stay-silent-while-agent-answers-a-stop-hook-rule-common.py")
+stop_hooks_stay_silent_rule = importlib.util.module_from_spec(_stop_hooks_stay_silent_rule_specification)
+_stop_hooks_stay_silent_rule_specification.loader.exec_module(stop_hooks_stay_silent_rule)
 
 HANDOFF_DIRECTORY = Path.home() / ".claude" / "handoffs"
 
@@ -291,7 +291,7 @@ def main(argv=None) -> int:
         return 0
 
     payload = hook_payload_from_stdin()
-    if answer_loop_guard.stop_hook_stays_silent_while_agent_answers_a_stop_hook(payload):
+    if stop_hooks_stay_silent_rule.stop_hook_stays_silent_while_agent_answers_a_stop_hook(payload):
         return 0
     session_id = payload.get("session_id", "")
     if not session_id:

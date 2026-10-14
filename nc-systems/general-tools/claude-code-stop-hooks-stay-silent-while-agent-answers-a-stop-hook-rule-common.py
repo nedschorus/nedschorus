@@ -5,12 +5,12 @@ THE RULE. A Stop or SubagentStop hook says nothing at a Stop that ends the
 agent's answer to a Stop hook's output. Every such hook registered in
 .claude/settings.json obeys it by making this its first act on the payload:
 
-    if answer_loop_guard.stop_hook_stays_silent_while_agent_answers_a_stop_hook(payload):
+    if stop_hooks_stay_silent_rule.stop_hook_stays_silent_while_agent_answers_a_stop_hook(payload):
         exit 0, printing nothing and writing nothing
 
 before it reads files, writes state, fetches, or prints. Load this module by
 file path, as scripts/checkout-freshness-catch-up.py does.
-scripts/registered-stop-hooks-obey-the-answer-loop-guard-first-test.py fails
+scripts/registered-stop-hooks-stay-silent-while-agent-answers-a-stop-hook-test.py fails
 any registered Stop or SubagentStop hook that does not call the function.
 
 WHY: THE LOOP. When a Stop hook prints `decision: "block"`, prints
