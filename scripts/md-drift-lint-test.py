@@ -554,6 +554,223 @@ with tempfile.TemporaryDirectory() as frozen_workspace:
           findings == [], str(findings))
 
 
+# An architecture overview gets the overview checks of
+# docs/nedschorus-wiki/nedschorus-how-to-write-an-architecture-overview.md on
+# top of the ordinary ones; any other Markdown file does not.
+OVERVIEW_NAME = "docs/nedschorus-wiki/nedschorus-demo-architecture-overview.md"
+OVERVIEW_PATH_MODULE = LINT_SCRIPT.with_name(
+    "architecture-overview-path-template-and-checked-against-commit-reader.py")
+
+
+def overview_repository(root: Path):
+    (root / "docs" / "nedschorus-wiki").mkdir(parents=True)
+    (root / "scripts").mkdir()
+    (root / ".claude").mkdir()
+    (root / ".claude" / "settings.json").write_text(
+        '{"hooks": {"Stop": [{"hooks": [{"type": "command", "command": '
+        '"python3 \\"$CLAUDE_PROJECT_DIR\\"/scripts/registered-hook.py"}]}]}}',
+        encoding="utf-8")
+    for name in ("registered-hook.py", "unregistered-hook.py"):
+        (root / "scripts" / name).write_text("print()\n", encoding="utf-8")
+    (root / "scripts" / "lock-holder.py").write_text(
+        'LOCK = "demo-update.lock"\nSUFFIX = "-seat-demo.lock"\n'
+        'VARIABLE = "DEMO_TASK_LIST_ID"\n', encoding="utf-8")
+
+
+with tempfile.TemporaryDirectory() as overview_workspace:
+    root = Path(overview_workspace)
+    overview_repository(root)
+
+    findings = problems_for(
+        "- `scripts/registered-hook.py`, a `Stop` hook: does a thing.\n", root, OVERVIEW_NAME)
+    check("a hook registered under its event is not reported", findings == [], str(findings))
+    findings = problems_for(
+        "- `scripts/registered-hook.py`, the demo hook, a `Stop` hook: does it.\n",
+        root, OVERVIEW_NAME)
+    check("a hook with a name between path and event is checked and passes",
+          findings == [], str(findings))
+    findings = problems_for(
+        "- `scripts/registered-hook.py`, the demo hook, a `SessionStart` hook: does it.\n",
+        root, OVERVIEW_NAME)
+    check("a hook with a name between, under the wrong event, is reported",
+          findings == ["hook scripts/registered-hook.py is not registered under "
+                       "SessionStart in .claude/settings.json"], str(findings))
+    findings = problems_for(
+        "- `scripts/unregistered-hook.py`, a `Stop` hook: does a thing.\n", root, OVERVIEW_NAME)
+    check("a hook registered under no event is reported",
+          findings == ["hook scripts/unregistered-hook.py is not registered under "
+                       "Stop in .claude/settings.json"], str(findings))
+    with tempfile.TemporaryDirectory() as outside_workspace:
+        outside = Path(outside_workspace) / "nedschorus-demo-architecture-overview.md"
+        outside.write_text("- `scripts/unregistered-hook.py`, a `Stop` hook.\n",
+                           encoding="utf-8")
+        findings = [problem for _, problem in lint.lint_markdown(outside, root)]
+        check("a file outside the repository is not taken for an architecture overview",
+              findings == [], str(findings))
+    findings = problems_for(
+        "- `scripts/<name>-hook.py`, a `Stop` hook: a template.\n", root, OVERVIEW_NAME)
+    check("a hook path holding a placeholder is skipped", findings == [], str(findings))
+    findings = problems_for(
+        "- `scripts/unregistered-hook.py`, a `Stop` hook: does a thing.\n", root,
+        "docs/nedschorus-wiki/ordinary-page.md")
+    check("a file that is not an architecture overview gets no hook check",
+          findings == [], str(findings))
+
+    findings = problems_for(
+        "- `demo-update.lock`: taken by `lock-holder.py`.\n"
+        "- `<seat>-demo.lock`: held by `scripts/lock-holder.py`.\n"
+        "- `DEMO_TASK_LIST_ID`: set by `lock-holder.py` and `registered-hook.py`.\n",
+        root, OVERVIEW_NAME)
+    check("a lock name and an environment variable found in a named component pass",
+          findings == [], str(findings))
+    findings = problems_for(
+        "- `other.lock` and `OTHER_VARIABLE`: used by `registered-hook.py`.\n",
+        root, OVERVIEW_NAME)
+    check("a lock name and an environment variable absent from the named component are reported",
+          findings == ["other.lock does not appear in the source of registered-hook.py",
+                       "OTHER_VARIABLE does not appear in the source of registered-hook.py"],
+          str(findings))
+    findings = problems_for(
+        "- `<seat>-other.lock`: held by `lock-holder.py`.\n", root, OVERVIEW_NAME)
+    check("a placeholder lock name whose fixed part is absent is reported",
+          findings == ["<seat>-other.lock does not appear in the source of lock-holder.py"],
+          str(findings))
+    findings = problems_for(
+        "- Every launcher sets `OTHER_VARIABLE`.\n", root, OVERVIEW_NAME)
+    check("a line naming no component is not checked for its environment variable",
+          findings == [], str(findings))
+
+    # The GitHub query is replaced here; the real one is exercised below through a fake gh.
+    asked = []
+    real_query = lint.github_issue_states_and_titles
+
+    def answering_query(numbers):
+        asked.append(sorted(numbers))
+        return {1: {"state": "OPEN", "title": "Open one"},
+                2: {"state": "CLOSED", "title": "Closed one"},
+                3: {"state": "OPEN", "title": "Renamed on GitHub"},
+                4: None}
+
+    lint.github_issue_states_and_titles = answering_query
+    try:
+        url = "https://github.com/nedschorus/nedschorus/issues/"
+        findings = problems_for(
+            "# Demo\n\n## Planned work\n\n"
+            f"- GHI [Open one]({url}1)\n"
+            f"- GHI [Closed one]({url}2)\n"
+            f"- GHI [Old title]({url}3)\n"
+            f"- GHI [Missing]({url}4)\n"
+            "- A task with no GHI\n\n"
+            "**Checked against:** commit [abc1234](https://example.invalid)\n",
+            root, OVERVIEW_NAME)
+        check("Planned work: an open GHI with its title passes, the rest are reported",
+              findings == ["Planned work line is not written - GHI [<title>](<issue url>)",
+                           "GHI 2 is closed, not open",
+                           "GHI 3's link text is not its title: Renamed on GitHub",
+                           "GHI 4 does not exist on GitHub"], str(findings))
+        check("Planned work GHIs are asked for in one query", asked == [[1, 2, 3, 4]], str(asked))
+        asked.clear()
+        problems_for(f"## Components\n\n- GHI [Open one]({url}1)\n", root, OVERVIEW_NAME)
+        check("a GHI outside Planned work is not asked about", asked == [], str(asked))
+    finally:
+        lint.github_issue_states_and_titles = real_query
+
+    system = root / "nc-systems" / "demo"
+    (system / "tests").mkdir(parents=True)
+    (system / "named-program.py").write_text("", encoding="utf-8")
+    (system / "unnamed-program.py").write_text("", encoding="utf-8")
+    (system / "supervisor.py").write_text("", encoding="utf-8")
+    (system / "unnamed-launcher").write_text("#!/bin/sh\n", encoding="utf-8")
+    (system / "design.md").write_text("", encoding="utf-8")
+    (system / "tests" / "unnamed-program-test.py").write_text("", encoding="utf-8")
+    overview = root / OVERVIEW_NAME
+    overview.write_text("- `nc-systems/demo/named-program.py`, and `demo-supervisor.py`.\n",
+                        encoding="utf-8")
+    unnamed = lint.architecture_overview_unnamed_programs(overview, root)
+    check("the programs under nc-systems/<system>/ the overview does not name are listed, "
+          "tests/ and documents left out",
+          unnamed == ["nc-systems/demo/supervisor.py", "nc-systems/demo/unnamed-launcher",
+                      "nc-systems/demo/unnamed-program.py"], str(unnamed))
+
+with tempfile.TemporaryDirectory() as unsettled_workspace:
+    unsettled_root = Path(unsettled_workspace)
+    overview_repository(unsettled_root)
+    (unsettled_root / ".claude" / "settings.json").unlink()
+    findings = problems_for(
+        "- `scripts/registered-hook.py`, a `Stop` hook: does a thing.\n",
+        unsettled_root, OVERVIEW_NAME)
+    check("with no .claude/settings.json, a named hook is reported as unregistered",
+          findings == ["hook scripts/registered-hook.py is not registered under "
+                       "Stop in .claude/settings.json"], str(findings))
+
+
+
+# The lint run as a program, with a fake gh first on PATH: a GitHub that cannot
+# answer stops the check with an error, never a clean result.
+def run_lint_with_fake_gh(gh_source):
+    with tempfile.TemporaryDirectory() as workspace:
+        root = Path(workspace)
+        overview_repository(root)
+        for script in (LINT_SCRIPT, OVERVIEW_PATH_MODULE):
+            (root / "scripts" / script.name).write_text(
+                script.read_text(encoding="utf-8"), encoding="utf-8")
+        (root / "nc-systems" / "demo").mkdir(parents=True)
+        (root / "nc-systems" / "demo" / "unnamed-program.py").write_text("", encoding="utf-8")
+        (root / OVERVIEW_NAME).write_text(
+            "## Planned work\n\n"
+            "- GHI [Open one](https://github.com/nedschorus/nedschorus/issues/1)\n",
+            encoding="utf-8")
+        fake_bin = root / "fake-bin"
+        fake_bin.mkdir()
+        if gh_source is not None:
+            (fake_bin / "gh").write_text(f"#!{sys.executable}\n{gh_source}", encoding="utf-8")
+            (fake_bin / "gh").chmod(0o755)
+        completed = subprocess.run(
+            [sys.executable, str(root / "scripts" / LINT_SCRIPT.name), OVERVIEW_NAME],
+            cwd=str(root), env={"PATH": str(fake_bin)}, capture_output=True, text=True)
+        return completed.returncode, completed.stdout, completed.stderr
+
+
+ANSWER_OPEN = ('{"data": {"repository": {"n1": {"state": "OPEN", "title": "Open one"}}}}')
+returncode, stdout, stderr = run_lint_with_fake_gh(
+    f"import sys\nsys.stdout.write({ANSWER_OPEN!r})\n")
+check("an open GHI with its title exits 0, with the unnamed program as a note only",
+      returncode == 0 and stdout.strip() == (
+          f"{OVERVIEW_NAME}: note: nc-systems/demo/unnamed-program.py "
+          "is a program the overview does not name"),
+      f"{returncode} {stdout!r} {stderr!r}")
+
+returncode, stdout, stderr = run_lint_with_fake_gh(
+    "import sys\nsys.stderr.write('could not resolve host: api.github.com\\n')\nsys.exit(1)\n")
+check("gh failing stops the check with exit 3 and says why on stderr",
+      returncode == 3 and "could not resolve host" in stderr and stdout == "",
+      f"{returncode} {stdout!r} {stderr!r}")
+
+returncode, stdout, stderr = run_lint_with_fake_gh(None)
+check("gh missing from PATH stops the check with exit 3",
+      returncode == 3 and "gh could not be run" in stderr, f"{returncode} {stderr!r}")
+
+ANSWER_FORBIDDEN = ('{"data": {"repository": {"n1": null}}, '
+                    '"errors": [{"type": "FORBIDDEN", "message": "no access"}]}')
+returncode, stdout, stderr = run_lint_with_fake_gh(
+    f"import sys\nsys.stdout.write({ANSWER_FORBIDDEN!r})\nsys.exit(1)\n")
+check("a GitHub error other than NOT_FOUND stops the check with exit 3",
+      returncode == 3 and "gh api graphql failed" in stderr, f"{returncode} {stderr!r}")
+
+returncode, stdout, stderr = run_lint_with_fake_gh(
+    f"import sys\nsys.stdout.write({ANSWER_OPEN!r})\nsys.exit(1)\n")
+check("gh exiting nonzero with no GitHub error stops the check with exit 3",
+      returncode == 3 and "gh api graphql failed" in stderr, f"{returncode} {stderr!r}")
+
+ANSWER_NOT_FOUND = ('{"data": {"repository": {"n1": null}}, '
+                    '"errors": [{"type": "NOT_FOUND", "message": "no issue"}]}')
+returncode, stdout, stderr = run_lint_with_fake_gh(
+    f"import sys\nsys.stdout.write({ANSWER_NOT_FOUND!r})\nsys.exit(1)\n")
+check("a GHI GitHub reports NOT_FOUND is a finding, not a stopped check",
+      returncode == 1 and f"{OVERVIEW_NAME}:3: GHI 1 does not exist on GitHub" in stdout,
+      f"{returncode} {stdout!r} {stderr!r}")
+
+
 print()
 if failures:
     print(f"{len(failures)} case(s) failed: {', '.join(failures)}")

@@ -32,6 +32,8 @@ _git_environment_fixture.remove_git_redirecting_environment_variables_from_this_
 
 CHECK_SCRIPT = Path(__file__).with_name("dangling-path-citation-check.py")
 LINT_SCRIPT = Path(__file__).with_name("md-drift-lint.py")
+LINT_OVERVIEW_PATH_MODULE = Path(__file__).with_name(
+    "architecture-overview-path-template-and-checked-against-commit-reader.py")
 GIT_OUTPUT_MODULE = (Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
                      / "git-machine-readable-output-runner-and-parser-common.py")
 
@@ -54,15 +56,15 @@ def git(root, *arguments, check_exit=True):
 
 
 def build_repository(root: Path):
-    """A repository whose scripts/ holds this program and the lint it calls,
-    so the copy under test resolves its sibling import the way it will in
-    the real tree."""
+    """A repository whose scripts/ holds this program, the lint it calls and
+    the module the lint loads, so the copy under test resolves its sibling
+    imports the way it will in the real tree."""
     git(root, "init", "-q")
     git(root, "config", "user.email", "test@nedschorus.invalid")
     git(root, "config", "user.name", "test")
     (root / "scripts").mkdir()
     (root / "docs").mkdir()
-    for source in (CHECK_SCRIPT, LINT_SCRIPT):
+    for source in (CHECK_SCRIPT, LINT_SCRIPT, LINT_OVERVIEW_PATH_MODULE):
         (root / "scripts" / source.name).write_text(source.read_text(encoding="utf-8"),
                                                    encoding="utf-8")
     (root / "nc-systems" / "general-tools").mkdir(parents=True)

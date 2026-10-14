@@ -35,6 +35,8 @@ _git_environment_fixture.remove_git_redirecting_environment_variables_from_this_
 SCRIPTS = Path(__file__).resolve().parent
 PROGRAM = SCRIPTS / "stale-code-citation-check.py"
 LINT = SCRIPTS / "md-drift-lint.py"
+LINT_OVERVIEW_PATH_MODULE = (
+    SCRIPTS / "architecture-overview-path-template-and-checked-against-commit-reader.py")
 GIT_OUTPUT_MODULE = (SCRIPTS.parent / "nc-systems" / "general-tools"
                      / "git-machine-readable-output-runner-and-parser-common.py")
 
@@ -67,11 +69,12 @@ def git(root: Path, *arguments, date=None):
 
 
 def new_repository(workspace: str) -> Path:
-    """A repository holding the two scripts, committed before every test date."""
+    """A repository holding the two scripts and the modules they load, committed before every test date."""
     root = Path(workspace)
     (root / "scripts").mkdir()
     shutil.copy(PROGRAM, root / "scripts" / PROGRAM.name)
     shutil.copy(LINT, root / "scripts" / LINT.name)
+    shutil.copy(LINT_OVERVIEW_PATH_MODULE, root / "scripts" / LINT_OVERVIEW_PATH_MODULE.name)
     (root / "nc-systems" / "general-tools").mkdir(parents=True)
     shutil.copy(GIT_OUTPUT_MODULE, root / "nc-systems" / "general-tools" / GIT_OUTPUT_MODULE.name)
     git(root, "init", "-q", "-b", "main")

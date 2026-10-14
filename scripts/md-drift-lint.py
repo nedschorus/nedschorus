@@ -30,17 +30,39 @@ Checks, per file type:
           JSON that parsers resolve silently: the second value wins and an
           edit to the first does nothing)
 
+An architecture overview, a file at the path
+scripts/architecture-overview-path-template-and-checked-against-commit-reader.py
+gives, gets the overview checks of
+docs/nedschorus-wiki/nedschorus-how-to-write-an-architecture-overview.md too:
+        - a component written "`<path>`, a `<event>` hook", or with a name
+          between, "`<path>`, the <name>, a `<event>` hook", is registered
+          under that event in .claude/settings.json (a <placeholder> path is
+          skipped)
+        - a lock name (`<name>.lock`) or environment variable in backticks
+          appears in the source of a file named in backticks on the same line,
+          a <placeholder> in a lock name matching anything; a line naming no
+          such file is not checked
+        - each line under "## Planned work" is written
+          "- GHI [<title>](https://github.com/nedschorus/nedschorus/issues/<number>)",
+          and the GHI is open on GitHub with that title
+        and, as a note that is not a finding, each program (.py, .sh, or a
+        file starting "#!") under nc-systems/<system>/, outside tests/, whose
+        file name the overview does not contain.
+
 Usage:
   scripts/md-drift-lint.py FILE [FILE ...]
 
 A file under a frozen-measured-data directory is skipped whole; see
 FROZEN_MEASURED_DATA_DIRECTORIES.
 
-Output: one "path:line: problem" per finding on stdout.
-Exit codes: 0 clean, 1 findings, 2 bad invocation.
+Output: one "path:line: problem" per finding on stdout, then one
+"path: note: ..." per note.
+Exit codes: 0 clean, 1 findings, 2 bad invocation, 3 GitHub could not be
+queried for an overview's Planned work, so the check did not finish.
 """
 
 import calendar
+import importlib.util
 import json
 import os
 import re
@@ -49,6 +71,21 @@ import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+
+
+def _load_architecture_overview_path_reader():
+    path = Path(__file__).resolve().with_name(
+        "architecture-overview-path-template-and-checked-against-commit-reader.py")
+    specification = importlib.util.spec_from_file_location(
+        "architecture_overview_path_template_and_checked_against_commit_reader", path)
+    module = importlib.util.module_from_spec(specification)
+    specification.loader.exec_module(module)
+    return module
+
+
+ARCHITECTURE_OVERVIEW_PATH = re.compile(
+    re.escape(_load_architecture_overview_path_reader().PATH_TEMPLATE).replace(
+        re.escape("{system}"), r"(?P<system>[^/]+)"))
 
 PATH_EXTENSIONS = (".py", ".md", ".json", ".sh", ".toml", ".yml", ".yaml", ".txt", ".jsonl")
 
@@ -308,6 +345,190 @@ def check_markdown_links(line: str, md_path: Path, repo_root: Path):
             yield f"link target does not exist: {bare}"
 
 
+def architecture_overview_system(path: Path, repo_root: Path):
+    """Return the system an architecture overview at path describes, or None."""
+    try:
+        relative = path.resolve().relative_to(repo_root.resolve()).as_posix()
+    except ValueError:
+        return None
+    match = ARCHITECTURE_OVERVIEW_PATH.fullmatch(relative)
+    return match.group("system") if match else None
+
+
+HOOK_COMPONENT = re.compile(
+    r"`(?P<path>[^`\s]+)`(?:, the [^,`]+)?, an? `(?P<event>[A-Za-z]+)` hook\b")
+
+
+def registered_hook_commands(repo_root: Path) -> dict:
+    """Map each hook event in .claude/settings.json to its hooks' commands."""
+    settings = repo_root / ".claude" / "settings.json"
+    if not settings.is_file():
+        return {}
+    events = json.loads(settings.read_text(encoding="utf-8")).get("hooks", {})
+    return {
+        event: [hook.get("command", "") for group in groups for hook in group.get("hooks", [])]
+        for event, groups in events.items()
+    }
+
+
+def check_overview_hooks(line: str, repo_root: Path):
+    for match in HOOK_COMPONENT.finditer(line):
+        path, event = match.group("path"), match.group("event")
+        if PLACEHOLDER_SPAN.search(path):
+            continue
+        # Commands name the script after "$CLAUDE_PROJECT_DIR"/, so the path may follow a slash.
+        named = re.compile(rf"(?:^|[\s\"'/]){re.escape(path.lstrip('/'))}(?=$|[\s\"'])")
+        if not any(named.search(command)
+                   for command in registered_hook_commands(repo_root).get(event, [])):
+            yield f"hook {path} is not registered under {event} in .claude/settings.json"
+
+
+LOCK_NAME = re.compile(r"[^\s/]+\.lock")
+ENVIRONMENT_VARIABLE = re.compile(r"[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+")
+
+
+def files_named_in_backticks(line: str, md_path: Path, repo_root: Path):
+    """Return the distinct existing files a line names in backticks, by path or file name."""
+    found = {}
+    for match in BACKTICK_TOKEN.finditer(line):
+        for word in match.group(1).split():
+            if any(marker in word for marker in SKIP_MARKERS):
+                continue
+            named = resolve(without_line_suffix(word), md_path, repo_root)
+            if named is not None and named.is_file() and named.resolve() != md_path.resolve():
+                found[named.resolve()] = named
+    return list(found.values())
+
+
+def check_overview_lock_and_environment_variable_sources(line: str, md_path: Path,
+                                                         repo_root: Path):
+    claims = [match.group(1).strip() for match in BACKTICK_TOKEN.finditer(line)
+              if LOCK_NAME.fullmatch(match.group(1).strip())
+              or ENVIRONMENT_VARIABLE.fullmatch(match.group(1).strip())]
+    if not claims:
+        return
+    components = files_named_in_backticks(line, md_path, repo_root)
+    if not components:
+        return
+    sources = [component.read_text(encoding="utf-8", errors="replace")
+               for component in components]
+    for claim in claims:
+        fixed_parts = [part for part in PLACEHOLDER_SPAN.split(claim) if part]
+        if not any(all(part in source for part in fixed_parts) for source in sources):
+            names = ", ".join(sorted(component.name for component in components))
+            yield f"{claim} does not appear in the source of {names}"
+
+
+GITHUB_REPOSITORY = "nedschorus/nedschorus"
+PLANNED_WORK_HEADING = "## Planned work"
+PLANNED_WORK_GHI_LINE = re.compile(
+    r"- GHI \[(?P<title>.+)\]\(https://github\.com/" + re.escape(GITHUB_REPOSITORY)
+    + r"/issues/(?P<number>\d+)\)")
+GITHUB_QUERY_TIMEOUT_SECONDS = 60
+
+
+class GithubIssueQueryFailed(Exception):
+    """GitHub did not answer the Planned work query, so the check cannot finish."""
+
+
+def github_issue_states_and_titles(numbers) -> dict:
+    """Map each issue number to {"state", "title"}, or to None when there is no
+    such issue, by one gh call. Raises GithubIssueQueryFailed."""
+    owner, name = GITHUB_REPOSITORY.split("/")
+    fields = " ".join(f"n{number}: issue(number: {number}) {{ state title }}"
+                      for number in sorted(set(numbers)))
+    query = f'query {{ repository(owner: "{owner}", name: "{name}") {{ {fields} }} }}'
+    try:
+        completed = subprocess.run(
+            ["gh", "api", "graphql", "-f", f"query={query}"], capture_output=True,
+            text=True, encoding="utf-8", errors="replace",
+            timeout=GITHUB_QUERY_TIMEOUT_SECONDS, check=False)
+    except (subprocess.TimeoutExpired, OSError) as error:
+        raise GithubIssueQueryFailed(f"gh could not be run or did not answer: {error}")
+    detail = (completed.stderr.strip() or completed.stdout.strip()
+              or f"exit {completed.returncode}").splitlines()[0]
+    try:
+        answer = json.loads(completed.stdout)
+        repository = answer["data"]["repository"]
+        errors = answer.get("errors") or []
+    except (ValueError, KeyError, TypeError):
+        raise GithubIssueQueryFailed(f"gh api graphql failed: {detail}")
+    # A number with no issue makes gh exit 1 with a NOT_FOUND error while the
+    # other issues still arrive; any other error means an answer may be missing.
+    if (not isinstance(repository, dict)
+            or any(not isinstance(error, dict) or error.get("type") != "NOT_FOUND"
+                   for error in errors)
+            or (completed.returncode != 0 and not errors)):
+        raise GithubIssueQueryFailed(f"gh api graphql failed: {detail}")
+    return {number: repository.get(f"n{number}") for number in set(numbers)}
+
+
+def planned_work_lines(lines):
+    in_planned_work = False
+    for line_number, line in enumerate(lines, 1):
+        if line.startswith("#"):
+            in_planned_work = line.strip() == PLANNED_WORK_HEADING
+        elif in_planned_work and line.startswith("- "):
+            yield line_number, line.rstrip()
+
+
+def check_overview_planned_work(lines):
+    listed = []
+    for line_number, line in planned_work_lines(lines):
+        match = PLANNED_WORK_GHI_LINE.fullmatch(line)
+        if match is None:
+            yield line_number, ("Planned work line is not written "
+                                "- GHI [<title>](<issue url>)")
+            continue
+        listed.append((line_number, match.group("title"), int(match.group("number"))))
+    if not listed:
+        return
+    issues = github_issue_states_and_titles([number for _, _, number in listed])
+    for line_number, title, number in listed:
+        issue = issues.get(number)
+        if not isinstance(issue, dict):
+            yield line_number, f"GHI {number} does not exist on GitHub"
+            continue
+        if issue.get("state") != "OPEN":
+            yield line_number, f"GHI {number} is {str(issue.get('state')).lower()}, not open"
+        if issue.get("title") != title:
+            yield line_number, f"GHI {number}'s link text is not its title: {issue.get('title')}"
+
+
+PROGRAM_SUFFIXES = (".py", ".sh")
+
+
+def is_program(path: Path) -> bool:
+    if path.suffix in PROGRAM_SUFFIXES:
+        return True
+    if path.suffix:
+        return False
+    with path.open("rb") as handle:
+        return handle.read(2) == b"#!"
+
+
+def architecture_overview_unnamed_programs(path: Path, repo_root: Path):
+    """Return the programs under the overview's nc-systems/<system>/, outside
+    tests/, whose file name the overview does not contain."""
+    system = architecture_overview_system(path, repo_root)
+    if system is None:
+        return []
+    system_directory = repo_root / "nc-systems" / system
+    if not system_directory.is_dir():
+        return []
+    text = path.read_text(encoding="utf-8")
+    unnamed = []
+    for candidate in sorted(system_directory.rglob("*")):
+        parts = candidate.relative_to(system_directory).parts
+        if (not candidate.is_file() or "tests" in parts[:-1]
+                or "__pycache__" in parts or not is_program(candidate)):
+            continue
+        # The lookbehind keeps handoff-supervisor.py from naming supervisor.py.
+        if not re.search(rf"(?<![\w.-]){re.escape(candidate.name)}(?![\w-])", text):
+            unnamed.append(candidate.relative_to(repo_root).as_posix())
+    return unnamed
+
+
 def find_duplicate_keys(pairs, collisions):
     """Record all duplicate keys and return the last value for each key."""
     seen = {}
@@ -341,8 +562,10 @@ def in_frozen_measured_data(path: Path, repo_root: Path) -> bool:
 def lint_markdown(path: Path, repo_root: Path):
     if in_frozen_measured_data(path, repo_root):
         return
+    lines = path.read_text(encoding="utf-8").splitlines()
+    overview = architecture_overview_system(path, repo_root) is not None
     in_code_fence = False
-    for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+    for line_number, line in enumerate(lines, 1):
         if line.lstrip().startswith("```"):
             in_code_fence = not in_code_fence
             continue
@@ -357,9 +580,16 @@ def lint_markdown(path: Path, repo_root: Path):
                 check_markdown_links(line, path, repo_root),
                 check_code_numbers(line, path, repo_root),
             )
+            if overview:
+                checks += (
+                    check_overview_hooks(line, repo_root),
+                    check_overview_lock_and_environment_variable_sources(line, path, repo_root),
+                )
         for check in checks:
             for problem in check:
                 yield line_number, problem
+    if overview:
+        yield from check_overview_planned_work(lines)
 
 
 def lint_json(path: Path):
@@ -385,6 +615,7 @@ def main(argv=None) -> int:
         return 2
 
     findings = 0
+    notes = []
     for name in arguments:
         path = Path(name)
         if not path.is_file():
@@ -398,10 +629,20 @@ def main(argv=None) -> int:
             problems = lint_json(path)
         else:
             problems = lint_markdown(path, REPO_ROOT)
-        for line_number, problem in problems:
-            print(f"{name}:{line_number}: {problem}")
-            findings += 1
+            notes += [
+                f"{name}: note: {program} is a program the overview does not name"
+                for program in architecture_overview_unnamed_programs(path, REPO_ROOT)]
+        try:
+            for line_number, problem in problems:
+                print(f"{name}:{line_number}: {problem}")
+                findings += 1
+        except GithubIssueQueryFailed as error:
+            print(f"md-drift-lint: {name}: the Planned work GHIs could not be checked, "
+                  f"so the check stopped unfinished: {error}", file=sys.stderr)
+            return 3
 
+    for note in notes:
+        print(note)
     return 1 if findings else 0
 
 
