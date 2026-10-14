@@ -1153,6 +1153,51 @@ with tempfile.TemporaryDirectory() as bare_scratch:
           and "line 5: #419" in result.stderr,
           repr(result.stderr))
 
+# A git failure other than finding no worktree is reported, not taken to mean
+# "no worktree", which would send a walk draft to the records route unsaid.
+with tempfile.TemporaryDirectory() as git_failure_scratch:
+    git_failure_scratch = Path(git_failure_scratch).resolve()
+    failing_git_directory = git_failure_scratch / "failing-git-bin"
+    failing_git_directory.mkdir()
+    failing_git = failing_git_directory / "git"
+    failing_git.write_text(
+        "#!/bin/sh\necho \"fatal: detected dubious ownership in repository\" >&2\nexit 128\n",
+        encoding="utf-8")
+    failing_git.chmod(0o755)
+    # Should the read get past git, as under a mutant, it must reach no model
+    # and ship nothing to the real log-store.
+    failing_agy = failing_git_directory / "agy"
+    failing_agy.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+    failing_agy.chmod(0o755)
+    draft_git_cannot_place = git_failure_scratch / "docs/walk/a-walk-item-draft.md"
+    draft_git_cannot_place.parent.mkdir(parents=True)
+    draft_git_cannot_place.write_text("## Item 1 of 1\n", encoding="utf-8")
+    path_before = os.environ["PATH"]
+    os.environ["PATH"] = f"{failing_git_directory}{os.pathsep}{path_before}"
+    try:
+        try:
+            warning_module.checkout_root_holding(draft_git_cannot_place)
+            git_failure_raised = ""
+        except warning_module.CheckoutRootUnreadable as error:
+            git_failure_raised = str(error)
+        git_failure_environment = dict(os.environ)
+        git_failure_environment["HOME"] = str(git_failure_scratch)
+        git_failure_environment[RECORD_SHIP_DESTINATION_VARIABLE] = str(
+            git_failure_scratch / "log-store")
+        git_failure_run = subprocess.run(
+            [sys.executable, str(SYSTEM_DIRECTORY / "cold-read-fast-read.py"),
+             "--target", str(draft_git_cannot_place)],
+            capture_output=True, text=True, check=False, env=git_failure_environment)
+    finally:
+        os.environ["PATH"] = path_before
+    check("a git failure other than finding no worktree is raised, not read as no worktree",
+          "dubious ownership" in git_failure_raised, repr(git_failure_raised))
+    check("the read fails and says why when git cannot place the target",
+          git_failure_run.returncode == 1
+          and "FAILED (could not tell which checkout holds" in git_failure_run.stdout
+          and "dubious ownership" in git_failure_run.stderr,
+          f"exit {git_failure_run.returncode}; {git_failure_run.stdout!r}; {git_failure_run.stderr!r}")
+
 print()
 if failures:
     print(f"{len(failures)} case(s) failed: {', '.join(failures)}")

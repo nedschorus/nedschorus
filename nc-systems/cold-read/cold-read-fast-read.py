@@ -210,21 +210,36 @@ FULL_RUN_NAME_SUFFIXES = (
 FAST_READ_ONLY_NAMES = ("CLAUDE.md", "CLAUDE.local.md")
 
 
+# git's own words when it finds no worktree; LC_ALL=C keeps them in English.
+GIT_FOUND_NO_WORKTREE_MESSAGES = ("not a git repository", "cannot change to")
+
+
+class CheckoutRootUnreadable(RuntimeError):
+    """git failed for a reason other than finding no worktree."""
+
+
 def checkout_root_holding(target: pathlib.Path) -> pathlib.Path:
     """The top of the git worktree holding `target`, or REPO_ROOT when git
     finds none (the target's directory is missing or in no repository).
+    Any other git failure raises CheckoutRootUnreadable: answering REPO_ROOT
+    then would send a walk draft to the records route without saying why.
     GIT_DIR and GIT_WORK_TREE are dropped for this one call: set in the
     environment they override -C and would name the wrong worktree."""
     environment = {name: value for name, value in os.environ.items()
                    if name not in ("GIT_DIR", "GIT_WORK_TREE")}
+    environment["LC_ALL"] = "C"
     completed = subprocess.run(
         ["git", "-C", str(target.parent), "rev-parse", "--show-toplevel"],
         capture_output=True, stdin=subprocess.DEVNULL, text=True,
         env=environment, check=False)
     top = completed.stdout.strip()
-    if completed.returncode != 0 or not top:
+    if completed.returncode == 0 and top:
+        return pathlib.Path(top).resolve()
+    if any(message in completed.stderr for message in GIT_FOUND_NO_WORKTREE_MESSAGES):
         return REPO_ROOT
-    return pathlib.Path(top).resolve()
+    raise CheckoutRootUnreadable(
+        f"git rev-parse --show-toplevel in {target.parent} failed "
+        f"(exit {completed.returncode}): {completed.stderr.strip() or 'no message'}")
 
 
 def full_run_class_of_target(target: pathlib.Path):
@@ -713,12 +728,18 @@ def main() -> int:
         print(f"FAILED (target not found: {target})")
         return EXIT_BAD_INVOCATION
 
-    full_run_class_name = full_run_class_of_target(target)
+    try:
+        full_run_class_name = full_run_class_of_target(target)
+        report = fast_read_report_path_for_target(target, record_clock_reading())
+    except CheckoutRootUnreadable as error:
+        print(f"{PROGRAM}: could not tell which checkout holds the target, so "
+              f"could not tell where its report goes: {error}", file=sys.stderr)
+        print(f"FAILED (could not tell which checkout holds {target})")
+        return 1
     if full_run_class_name is not None:
         print(f"{PROGRAM}: {full_run_required_line(full_run_class_name)}",
               file=sys.stderr)
 
-    report = fast_read_report_path_for_target(target, record_clock_reading())
     # A walk draft's report lands in docs/walk/ and is not a cold-read-record;
     # only the records route freezes the cold-read-target and ships.
     on_records_route = RECORDS_DIR in report.parents

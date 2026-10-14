@@ -17,9 +17,10 @@ fast read's own report.
 
 WHEN A DOCUMENT IS DUE. A document is not due when a fast read of its
 current text is on record. A walk-document named docs/walk/<name>-draft.md
-fast-read from its own checkout writes docs/walk/<name>-suggestions.md beside
-it, so a suggestions file newer than the walk-document counts as that read;
-read from another checkout, it gets a cold-read-record like any document.
+in any git worktree, fast-read from that checkout or another, writes
+docs/walk/<name>-suggestions.md beside it, so a suggestions file newer than
+the walk-document counts as that read; only a draft in no git worktree gets a
+cold-read-record like any document.
 Records are the directories in the log-store's cold-read-records/ and in a
 cold-read-records/ at the top of the document's checkout or the session's
 checkout whose names match the document by
