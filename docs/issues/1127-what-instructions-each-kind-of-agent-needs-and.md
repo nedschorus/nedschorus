@@ -42,3 +42,7 @@ Checked on ned-box and on main, 2026-10-09. Agent-seats on the Mac, and their `C
 ## Next action
 
 Put points 1 to 4 to the user, with the table above, in an approval-walk. From his rulings write the design, then reopen task 161, named under Why, or replace it.
+
+## Provisional additions (not yet vetted by the user)
+
+- The agent-seat cold-read-improvement (2026-10-14): an audit of `CLAUDE.md` for instructions that belong in a skill, a program's output or a hook, cutting `CLAUDE.md` from 2,593 words; it is being walked with the user in approval-walk open-decisions-unpushed-branches-memory-claude-md-root-cause-and-cold-read-2026-10-14, Part 3.
