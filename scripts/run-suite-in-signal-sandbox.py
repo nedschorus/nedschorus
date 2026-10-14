@@ -100,7 +100,12 @@ def load_run_all_test_suites():
     return module
 
 
-runner = load_run_all_test_suites()
+# Loaded here, so tests can reach it; a failure is kept for main(), which turns it into a verdict.
+try:
+    runner = load_run_all_test_suites()
+    runner_load_failure = None
+except Exception as error:
+    runner, runner_load_failure = None, error
 
 
 class NotRun(Exception):
@@ -563,6 +568,11 @@ def suite_relative_to_top(given, top):
 
 def main(argv=None, platform=None):
     argv = sys.argv[1:] if argv is None else argv
+    if runner_load_failure is not None:
+        print(f"VERDICT: not run — scripts/run-all-test-suites.py, which this program uses, could "
+              f"not be loaded: {type(runner_load_failure).__name__}: {runner_load_failure}",
+              flush=True)
+        return EXIT_NOT_RUN
     if argv[:1] == [INSIDE_CHECK_OPTION]:
         return inside_check_then_exec(argv[1], argv[3:])
     try:

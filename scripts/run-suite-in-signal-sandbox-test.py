@@ -19,6 +19,7 @@ import marshal
 import py_compile
 import os
 import pathlib
+import shutil
 import signal
 import subprocess
 import sys
@@ -571,6 +572,9 @@ with tempfile.TemporaryDirectory() as scratch_name:
         with contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors):
             code = program.main(["doubling-test.py", "--checkout", str(repository),
                                  "--lock-file", str(scratch / "run.lock")])
+    except BaseException as escaped:
+        # An exception that escapes main is the failure under test: fail this case, not the file.
+        code = f"escaped: {type(escaped).__name__}: {escaped}"
     finally:
         program.run = original_run
         signal.signal(signal.SIGTERM, signal.SIG_DFL)
@@ -583,13 +587,34 @@ with tempfile.TemporaryDirectory() as scratch_name:
                                                           "failed: UnicodeDecodeError: ")
           and "Traceback (most recent call last)" in errors.getvalue(), (code, output.getvalue()))
     output, errors = io.StringIO(), io.StringIO()
-    with contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors):
-        code = program.main(["doubling-test.py", "--no-such-option"])
+    try:
+        with contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors):
+            code = program.main(["doubling-test.py", "--no-such-option"])
+    except BaseException as escaped:
+        code = f"escaped: {type(escaped).__name__}: {escaped}"
     check("arguments that cannot be read are 'not run', exit 2, with a VERDICT line after "
           "argparse's error",
           code == program.EXIT_NOT_RUN
           and output.getvalue().strip().splitlines()[-1].startswith("VERDICT: not run")
           and "--no-such-option" in errors.getvalue(), (code, output.getvalue(), errors.getvalue()))
+    shown = subprocess.run([sys.executable, str(PROGRAM_PATH), "--help"], capture_output=True,
+                           text=True, timeout=60, stdin=subprocess.DEVNULL, check=False)
+    check("--help prints the usage and exits 0, with no VERDICT line",
+          shown.returncode == 0 and "usage:" in shown.stdout and "VERDICT" not in shown.stdout,
+          (shown.returncode, shown.stdout[-300:], shown.stderr[-300:]))
+    broken = scratch / "runner-cannot-load"
+    (broken / "scripts").mkdir(parents=True)
+    shutil.copy2(PROGRAM_PATH, broken / "scripts" / PROGRAM_PATH.name)
+    (broken / "scripts" / "run-all-test-suites.py").write_text("raise ImportError('injected')\n")
+    loaded = subprocess.run([sys.executable, str(broken / "scripts" / PROGRAM_PATH.name),
+                             "doubling-test.py"], capture_output=True, text=True, timeout=60,
+                            stdin=subprocess.DEVNULL, check=False)
+    lines = loaded.stdout.strip().splitlines()
+    check("when scripts/run-all-test-suites.py cannot be loaded, the program is 'not run', exit "
+          "2, naming the failure",
+          loaded.returncode == program.EXIT_NOT_RUN and bool(lines)
+          and lines[-1].startswith("VERDICT: not run — scripts/run-all-test-suites.py")
+          and "ImportError: injected" in lines[-1], (loaded.returncode, loaded.stdout, loaded.stderr))
 
     subreaper_calls = []
     code, output, ran = main_with_nothing_run("freebsd14")
