@@ -43,11 +43,15 @@ PROGRAM = pathlib.Path(
 PLAN_VARIABLE = "LOCATE_FILE_COPIES_ACROSS_MACHINES_PLAN"
 FAKE_BOX = "fake-box"
 # The variables that point git at another repository, stripped from every git
-# this suite runs: the same set scripts/run-all-test-suites.py strips, so the
-# suite is as safe run directly as it is under the runner.
-GIT_REDIRECTING_VARIABLES = (
-    "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY",
-    "GIT_COMMON_DIR", "GIT_ALTERNATE_OBJECT_DIRECTORIES")
+# this suite runs: the shared module's list, the one scripts/run-all-test-suites.py
+# strips, so the suite is as safe run directly as it is under the runner.
+_git_redirecting_removal_spec = importlib.util.spec_from_file_location(
+    "git_redirecting_environment_variables_removal_common",
+    SCRIPTS_DIR.parent / "nc-systems" / "general-tools"
+    / "git-redirecting-environment-variables-removal-common.py")
+git_redirecting_removal = importlib.util.module_from_spec(_git_redirecting_removal_spec)
+_git_redirecting_removal_spec.loader.exec_module(git_redirecting_removal)
+GIT_REDIRECTING_ENVIRONMENT_VARIABLES = git_redirecting_removal.GIT_REDIRECTING_ENVIRONMENT_VARIABLES
 
 STAND_IN_SSH = """#!/usr/bin/env python3
 import json, os, subprocess, sys, time
@@ -142,6 +146,25 @@ def load_program(module_name):
 
 program = load_program("locate_file_copies_under_test")
 
+# The program keeps its own copy of the list, because it is sent over ssh alone.
+check("the program's list of variables that redirect git is the shared module's",
+      tuple(program.GIT_REDIRECTING_ENVIRONMENT_VARIABLES) == GIT_REDIRECTING_ENVIRONMENT_VARIABLES,
+      (program.GIT_REDIRECTING_ENVIRONMENT_VARIABLES, GIT_REDIRECTING_ENVIRONMENT_VARIABLES))
+_saved_redirecting = {name: os.environ.get(name) for name in GIT_REDIRECTING_ENVIRONMENT_VARIABLES}
+try:
+    for _name in GIT_REDIRECTING_ENVIRONMENT_VARIABLES:
+        os.environ[_name] = "/elsewhere/.git"
+    _left = sorted(set(program.environment_without_git_redirecting_variables())
+                   & set(GIT_REDIRECTING_ENVIRONMENT_VARIABLES))
+    check("the environment the program runs git with has none of the six variables "
+          "that redirect git", not _left, _left)
+finally:
+    for _name, _value in _saved_redirecting.items():
+        if _value is None:
+            os.environ.pop(_name, None)
+        else:
+            os.environ[_name] = _value
+
 
 def write(path, text, mtime=None):
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -156,7 +179,7 @@ def git(cwd, *arguments):
     (hooks, signing) kept out of it."""
     environment = dict(os.environ, GIT_CONFIG_GLOBAL=os.devnull,
                        GIT_CONFIG_NOSYSTEM="1")
-    for variable in GIT_REDIRECTING_VARIABLES:
+    for variable in GIT_REDIRECTING_ENVIRONMENT_VARIABLES:
         environment.pop(variable, None)
     return subprocess.run(
         ["git", "-c", "user.name=Test", "-c", "user.email=test@example.com",
@@ -241,7 +264,7 @@ def program_environment(base, mode="ok", plan=None, backup_mode="not-found"):
     ssh first on PATH, the stand-in backup search, and no variable that
     points git elsewhere."""
     environment = dict(os.environ)
-    for variable in GIT_REDIRECTING_VARIABLES:
+    for variable in GIT_REDIRECTING_ENVIRONMENT_VARIABLES:
         environment.pop(variable, None)
     environment[PLAN_VARIABLE] = json.dumps(plan or make_plan(base))
     environment["PATH"] = f"{base / 'stand-in-bin'}{os.pathsep}{environment['PATH']}"
@@ -626,7 +649,7 @@ with scratch() as directory:
     check("the backup search starts with none of the variables that point git "
           "at another repository, and the answer is still exit 1",
           code == 1 and len(runs) == 1
-          and not set(runs[0]["git_variables"]) & set(GIT_REDIRECTING_VARIABLES),
+          and not set(runs[0]["git_variables"]) & set(GIT_REDIRECTING_ENVIRONMENT_VARIABLES),
           (runs, output))
 
     code, output, runs = handed("never-anywhere.md", backup_mode="found")
@@ -1748,7 +1771,7 @@ with scratch() as directory:
     write(checkout / "strip-probe.md", "untracked here")
     decoy = base / "decoy"
     commit_files(decoy, {"strip-probe.md": "tracked in the decoy"}, "Decoy")
-    saved = {name: os.environ.get(name) for name in GIT_REDIRECTING_VARIABLES}
+    saved = {name: os.environ.get(name) for name in GIT_REDIRECTING_ENVIRONMENT_VARIABLES}
     os.environ["GIT_DIR"] = str(decoy / ".git")
     os.environ["GIT_WORK_TREE"] = str(decoy)
     try:
@@ -1785,7 +1808,7 @@ with scratch() as directory:
     commit_files(decoy, {"README.md": "the decoy"}, "Decoy")
     decoy_worktree = base / "decoy-clone-wt"
     git(decoy, "worktree", "add", "-q", "-b", "decoy-topic", str(decoy_worktree))
-    saved = {name: os.environ.get(name) for name in GIT_REDIRECTING_VARIABLES}
+    saved = {name: os.environ.get(name) for name in GIT_REDIRECTING_ENVIRONMENT_VARIABLES}
     os.environ["GIT_COMMON_DIR"] = str(decoy / ".git")
     try:
         worktrees, listing_failure = program.worktrees_listed_by(
@@ -1848,14 +1871,14 @@ for machine, opening in (("mac-host", ""),
     printed = program.read_command(read_it_hit, machine)
     tokens = (shlex.split(printed[len(opening):])
               if printed.startswith(opening) else [])
-    count = len(GIT_REDIRECTING_VARIABLES)
+    count = len(GIT_REDIRECTING_ENVIRONMENT_VARIABLES)
     check(f"a read-it command printed for {machine} begins with env, unsets "
           "each of the six git redirect variables once, then runs git on the "
           "clone it names",
           tokens[:1] == ["env"]
           and tokens[1:1 + 2 * count:2] == ["-u"] * count
           and sorted(tokens[2:2 + 2 * count:2])
-          == sorted(GIT_REDIRECTING_VARIABLES)
+          == sorted(GIT_REDIRECTING_ENVIRONMENT_VARIABLES)
           and tokens[1 + 2 * count:]
           == ["git", "--git-dir=/r/.git", "show", "0123456789ab:docs/x.md"],
           printed)
@@ -1884,13 +1907,13 @@ with scratch() as directory:
 
     def shell_run(command, variable):
         environment = {key: value for key, value in os.environ.items()
-                       if key not in GIT_REDIRECTING_VARIABLES}
+                       if key not in GIT_REDIRECTING_ENVIRONMENT_VARIABLES}
         environment[variable] = str(decoy_values[variable])
         return subprocess.run(["/bin/sh", "-c", command or "false"],
                               cwd=base, env=environment,
                               capture_output=True, text=True)
 
-    for variable in GIT_REDIRECTING_VARIABLES:
+    for variable in GIT_REDIRECTING_ENVIRONMENT_VARIABLES:
         as_printed = shell_run(printed, variable)
         check(f"with {variable} naming another clone in the shell that runs "
               "it, the printed read-it command prints the asked clone's file",

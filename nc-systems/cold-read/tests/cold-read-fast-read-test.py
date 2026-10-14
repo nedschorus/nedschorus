@@ -881,8 +881,7 @@ check("a file outside the checkout is not classified",
 # for the seat's. A directory in no repository keeps the old answer.
 with tempfile.TemporaryDirectory() as worktree_scratch:
     worktree_scratch = Path(worktree_scratch).resolve()
-    git_environment = {name: value for name, value in os.environ.items()
-                       if name not in ("GIT_DIR", "GIT_WORK_TREE")}
+    git_environment = _fast_read.git_redirecting_removal.environment_without_git_redirecting_variables()
 
     def git(*arguments, cwd):
         subprocess.run(["git", "-c", "user.name=test", "-c", "user.email=test@local",

@@ -37,11 +37,8 @@ _git_environment_fixture.remove_git_redirecting_environment_variables_from_this_
 
 HOOK_PATH = Path(__file__).with_name("markdown-edit-hard-wrapped-paragraph-reminder-hook.py")
 
-GIT_REDIRECTING_VARIABLES = ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE",
-                             "GIT_OBJECT_DIRECTORY", "GIT_COMMON_DIR",
-                             "GIT_ALTERNATE_OBJECT_DIRECTORIES")
 CLEAN_ENVIRONMENT = {name: value for name, value in os.environ.items()
-                     if name not in GIT_REDIRECTING_VARIABLES}
+                     if name not in _git_environment_fixture.GIT_REDIRECTING_ENVIRONMENT_VARIABLES}
 
 failures = []
 

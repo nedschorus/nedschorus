@@ -26,12 +26,15 @@ REMOTE_TIMEOUT_SECONDS = 30
 LOCAL_COMMAND_TIMEOUT_SECONDS = 30
 
 # Remove Git redirects so each command answers for the named repository.
-GIT_REDIRECTING_VARIABLES = (
+# A copy of nc-systems/general-tools/git-redirecting-environment-variables-removal-common.py's
+# list, the one copy allowed: this file is sent over ssh alone, so it cannot load the module.
+# Its test fails when the two lists differ.
+GIT_REDIRECTING_ENVIRONMENT_VARIABLES = (
     "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY",
-    "GIT_COMMON_DIR", "GIT_ALTERNATE_OBJECT_DIRECTORIES")
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_COMMON_DIR")
 # Printed recovery commands must also remove redirects from the shell where they are pasted.
 PRINTED_GIT_INVOCATION_WITHOUT_REDIRECTING_VARIABLES = "env %s git" % " ".join(
-    "-u %s" % name for name in GIT_REDIRECTING_VARIABLES)
+    "-u %s" % name for name in GIT_REDIRECTING_ENVIRONMENT_VARIABLES)
 
 PLAN_ENVIRONMENT_VARIABLE = "LOCATE_FILE_COPIES_ACROSS_MACHINES_PLAN"
 THIS_MACHINE_JSON_FLAG = "--this-machine-json"
@@ -293,7 +296,7 @@ def place_of_file(path, layout, spellings, this_git_dirs, cache):
 def environment_without_git_redirecting_variables():
     # Keep this helper local: the complete program is sent over ssh without sibling modules.
     return {key: value for key, value in os.environ.items()
-            if key not in GIT_REDIRECTING_VARIABLES}
+            if key not in GIT_REDIRECTING_ENVIRONMENT_VARIABLES}
 
 
 def tracked_in_checkout(root, relative_paths):

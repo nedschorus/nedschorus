@@ -107,6 +107,13 @@ _worth_resuming_spec = importlib.util.spec_from_file_location(
 worth_resuming = importlib.util.module_from_spec(_worth_resuming_spec)
 _worth_resuming_spec.loader.exec_module(worth_resuming)
 
+_git_redirecting_removal_spec = importlib.util.spec_from_file_location(
+    "git_redirecting_environment_variables_removal_common",
+    REPOSITORY_ROOT / "nc-systems" / "general-tools"
+    / "git-redirecting-environment-variables-removal-common.py")
+git_redirecting_removal = importlib.util.module_from_spec(_git_redirecting_removal_spec)
+_git_redirecting_removal_spec.loader.exec_module(git_redirecting_removal)
+
 _agent_binary_update_under_lock_spec = importlib.util.spec_from_file_location(
     "agent_binary_update_under_lock",
     SCRIPTS_DIRECTORY / "agent-binary-update-under-lock.py")
@@ -1138,10 +1145,9 @@ def remove_finished_worktrees_at_handoff(
         working_directory: Path,
         timeout_seconds: int = FINISHED_WORKTREE_REMOVAL_TIMEOUT_SECONDS) -> str:
     """Run worktree cleanup and return a report without blocking the handoff on failure."""
-    # Remove git environment overrides so deletions cannot target another repository.
+    # Remove the variables that redirect git so deletions cannot target another repository.
     # Unbuffered output preserves partial counts; a separate process group lets timeout stop git and lsof too.
-    environment = {name: value for name, value in os.environ.items()
-                   if name not in ("GIT_DIR", "GIT_WORK_TREE")}
+    environment = git_redirecting_removal.environment_without_git_redirecting_variables()
     try:
         cleaner = subprocess.Popen(
             [sys.executable, "-u", str(CLEAN_WORKTREES_PATH), "--remove",

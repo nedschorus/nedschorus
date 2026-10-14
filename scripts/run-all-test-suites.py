@@ -159,7 +159,8 @@ launched by this program and is not protected by this. Such a suite protects
 itself: a suite or fixture that runs `git init` first takes the variables
 listed above out of its own process, through
 scripts/git-redirecting-environment-removal-test-fixture.py, which reads
-GIT_REDIRECTING_ENVIRONMENT_VARIABLES from this file, and
+GIT_REDIRECTING_ENVIRONMENT_VARIABLES from the module this file reads it
+from, nc-systems/general-tools/git-redirecting-environment-variables-removal-common.py, and
 scripts/test-suites-run-directly-ignore-git-redirecting-environment-test.py
 checks that each one does. That is nedschorus#639's "Next action" item 2.
 
@@ -428,6 +429,7 @@ import datetime
 import fcntl
 import functools
 import hashlib
+import importlib.util
 import json
 import os
 import re
@@ -449,15 +451,14 @@ SHELL_TEST_SUITE_PATHSPEC = "*-test.sh"
 SKIPPED_CASE_LINE = re.compile(r"^SKIP\s")
 
 # Git redirection variables can send scratch-repository writes into a live repository.
-# Keep GIT_CEILING_DIRECTORIES: removing it widens repository discovery.
-GIT_REDIRECTING_ENVIRONMENT_VARIABLES = (
-    "GIT_DIR",
-    "GIT_WORK_TREE",
-    "GIT_INDEX_FILE",
-    "GIT_OBJECT_DIRECTORY",
-    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
-    "GIT_COMMON_DIR",
-)
+# The list is the shared module's; programs that load this runner read it here too.
+_git_redirecting_removal_spec = importlib.util.spec_from_file_location(
+    "git_redirecting_environment_variables_removal_common",
+    Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+    / "git-redirecting-environment-variables-removal-common.py")
+git_redirecting_removal = importlib.util.module_from_spec(_git_redirecting_removal_spec)
+_git_redirecting_removal_spec.loader.exec_module(git_redirecting_removal)
+GIT_REDIRECTING_ENVIRONMENT_VARIABLES = git_redirecting_removal.GIT_REDIRECTING_ENVIRONMENT_VARIABLES
 
 # Whether a user attends the agent-session changes what some messages under test say, so a suite
 # is launched without them and each test sets them itself.
@@ -1221,11 +1222,8 @@ def skipped_case_lines(log_file):
 
 
 def environment_without_git_redirecting_variables():
-    # Use a fresh dict because suites launch concurrently.
-    environment = dict(os.environ)
-    for variable in GIT_REDIRECTING_ENVIRONMENT_VARIABLES:
-        environment.pop(variable, None)
-    return environment
+    # A fresh dict each call, because suites launch concurrently.
+    return git_redirecting_removal.environment_without_git_redirecting_variables()
 
 
 def test_suite_launch_environment_without_git_redirecting_and_agent_session_attendance_variables():

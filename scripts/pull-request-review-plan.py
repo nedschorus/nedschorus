@@ -61,6 +61,12 @@ _git_output_spec = importlib.util.spec_from_file_location(
     / "git-machine-readable-output-runner-and-parser-common.py")
 git_output = importlib.util.module_from_spec(_git_output_spec)
 _git_output_spec.loader.exec_module(git_output)
+_git_redirecting_removal_spec = importlib.util.spec_from_file_location(
+    "git_redirecting_environment_variables_removal_common",
+    Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+    / "git-redirecting-environment-variables-removal-common.py")
+git_redirecting_removal = importlib.util.module_from_spec(_git_redirecting_removal_spec)
+_git_redirecting_removal_spec.loader.exec_module(git_redirecting_removal)
 
 REVIEW_TIER_ORDER = {"seat-alone": 0, "seat-and-codex": 1, "full-reviewer": 2}
 GITHUB_PULL_REQUEST_FIELDS = "number,title,url,state,author,headRefOid,baseRefName,mergeCommit"
@@ -69,10 +75,6 @@ DIFF_HUNK_HEADER_PATTERN = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))?
 REGISTERED_HOOK_PATH_PATTERN = re.compile(r'\$CLAUDE_PROJECT_DIR"?/([^"\s]+)')
 AGENT_STRING_NAME_SUFFIXES = ("_ADVICE", "_MESSAGE", "_TEMPLATE", "_LINE", "_LINES", "_REFUSAL")
 PROSE_DIRECTORY_CODE_EXTENSIONS = {".py", ".sh", ".json", ".yaml", ".yml", ".toml", ".js"}
-GIT_REDIRECTING_ENVIRONMENT_VARIABLES = (
-    "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY",
-    "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_COMMON_DIR",
-)
 
 
 class ReviewPlanRefusal(Exception):
@@ -94,9 +96,7 @@ def first_output_line(text):
 
 def run_git_in_repository(repository, *arguments):
     # -C must select the stated repository even in a seat with ambient GIT_DIR.
-    environment = dict(os.environ)
-    for variable in GIT_REDIRECTING_ENVIRONMENT_VARIABLES:
-        environment.pop(variable, None)
+    environment = git_redirecting_removal.environment_without_git_redirecting_variables()
     environment["GIT_OPTIONAL_LOCKS"] = "0"
     try:
         return subprocess.run(["git", "-C", str(repository), *arguments],
