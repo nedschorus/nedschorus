@@ -16,7 +16,6 @@ import shutil
 import subprocess
 import sys
 import tempfile
-from datetime import datetime, timezone
 from pathlib import Path
 
 # Before anything runs git: a GIT_DIR or similar variable inherited from the
@@ -82,17 +81,8 @@ class Case:
             os.utime(frozen, (modified, modified))
         return directory
 
-    def run(self, reply, payload_extra=None, stdin_text=None, environment_extra=None,
-            fast_reads=()):
-        """fast_reads: (command, epoch time[, cwd]) tuples, written as this agent-session's
-        Bash calls; cwd defaults to the case's checkout."""
+    def run(self, reply, payload_extra=None, stdin_text=None, environment_extra=None):
         records = [
-            {"type": "assistant", "cwd": str(read[2] if len(read) > 2 else self.checkout),
-             "timestamp": datetime.fromtimestamp(read[1], timezone.utc).isoformat().replace("+00:00", "Z"),
-             "message": {"id": f"msg_read_{index}", "role": "assistant", "content": [
-                 {"type": "tool_use", "name": "Bash", "input": {"command": read[0]}}]}}
-            for index, read in enumerate(fast_reads)]
-        records += [
             {"type": "user", "message": {"role": "user", "content": "please write it"}},
             {"type": "assistant", "message": {"id": "msg_1", "role": "assistant",
                                               "content": [{"type": "text", "text": reply}]}},
@@ -323,56 +313,52 @@ def main():
           and len(completed.stderr.strip().splitlines()) == 1,
           f"exit {completed.returncode}, stdout {completed.stdout!r}, stderr {completed.stderr!r}")
 
-    fast_read = "python3 nc-systems/cold-read/cold-read-fast-read.py --target docs/plan-of-record.md"
+    def name_agent_session(report, session_id, target):
+        """What cold-read-fast-read.py writes beside a finished report."""
+        written = report.parent / (report.name + ".agent-session.json")
+        written.write_text(
+            json.dumps({"agent_session_id": session_id, "target": str(target.resolve())}))
+        os.utime(written, (4_000_000, 4_000_000))
+
     case = Case()
     document = case.document("docs/plan-of-record.md", modified=5_000_000)
-    case.record("plan-of-record-2026-10-14", 4_000_100, "docs/plan-of-record.md", "before the fix\n")
-    expect("a document this agent-session fast-read, then changed, is not raised again",
-           case.run("Applied the findings to docs/plan-of-record.md.",
-                    fast_reads=[(fast_read, 4_000_000)]), None)
-    expect("another agent-session's fast read, then this agent-session's change, is raised",
+    record = case.record("plan-of-record-2026-10-14", 4_000_000, "docs/plan-of-record.md",
+                         "before the fix\n")
+    expect("a record with no agent-session file, then a change, is raised",
            case.run("Applied the findings to docs/plan-of-record.md."), [document])
-    expect("this agent-session's fast read of another document does not count",
-           case.run("Applied the findings to docs/plan-of-record.md.",
-                    fast_reads=[(fast_read.replace("plan-of-record", "other"), 4_000_000)]),
+    name_agent_session(record / "fast-read.md", "s1", document)
+    expect("a document this agent-session fast-read, then changed, is not raised again",
+           case.run("Applied the findings to docs/plan-of-record.md."), None)
+    expect("another agent-session's fast read, then this agent-session's change, is raised",
+           case.run("Applied the findings to docs/plan-of-record.md.", {"session_id": "s2"}),
            [document])
-    expect("a record older than this agent-session's fast-read call is another read, and does not count",
-           case.run("Applied the findings to docs/plan-of-record.md.",
-                    fast_reads=[(fast_read, 4_500_000)]), [document])
-    expect("an absolute --target counts, after the script's other flags",
-           case.run("Applied the findings to docs/plan-of-record.md.",
-                    fast_reads=[("python3 cold-read-fast-read.py --cells 1 --target "
-                                 f"'{document}'", 4_000_000)]), None)
-
-    elsewhere = case.root / "elsewhere"
-    elsewhere.mkdir()
-    expect("a relative --target after a cd out of the entry's cwd counts, matched within the checkout",
-           case.run("Applied the findings to docs/plan-of-record.md.",
-                    fast_reads=[(f"cd {case.checkout} && {fast_read}", 4_000_000, elsewhere)]), None)
-    expect("a relative --target with the script at an absolute path counts against that script's checkout",
-           case.run("Applied the findings to docs/plan-of-record.md.",
-                    fast_reads=[(fast_read.replace("nc-systems/", f"{case.checkout}/nc-systems/"),
-                                 4_000_000, elsewhere)]), None)
-    expect("a relative --target with the script in another checkout does not count",
-           case.run("Applied the findings to docs/plan-of-record.md.",
-                    fast_reads=[(fast_read.replace("nc-systems/", f"{elsewhere}/nc-systems/"),
-                                 4_000_000)]), [document])
-    expect("every fast read in one Bash call counts",
-           case.run("Applied the findings to docs/plan-of-record.md.",
-                    fast_reads=[(fast_read.replace("plan-of-record", "other") + " && " + fast_read,
-                                 4_000_000)]), None)
-    expect("a --target the hook cannot expand, such as one holding a shell variable, does not count",
-           case.run("Applied the findings to docs/plan-of-record.md.",
-                    fast_reads=[(fast_read.replace("docs/", 'docs/"$sub"/../'), 4_000_000)]),
+    expect("a payload with no session_id judges by file times",
+           case.run("Applied the findings to docs/plan-of-record.md.", {"session_id": None}),
            [document])
+    name_agent_session(record / "fast-read.md", "s1", case.checkout / "docs" / "other.md")
+    expect("this agent-session's fast read of another document with the same stem does not count",
+           case.run("Applied the findings to docs/plan-of-record.md."), [document])
+    (record / "fast-read.md.agent-session.json").write_text("not json\n")
+    completed = case.run("Applied the findings to docs/plan-of-record.md.")
+    check("an agent-session file that is not JSON is a fault: exit 1, one stderr line, no output",
+          completed.returncode == 1 and completed.stdout == ""
+          and "made no check" in completed.stderr
+          and len(completed.stderr.strip().splitlines()) == 1,
+          f"exit {completed.returncode}, stdout {completed.stdout!r}, stderr {completed.stderr!r}")
+    (record / "fast-read.md.agent-session.json").write_text('{"agent_session_id": "s1"}\n')
+    completed = case.run("Applied the findings to docs/plan-of-record.md.")
+    check("an agent-session file without a target is a fault: exit 1",
+          completed.returncode == 1 and "not an agent-session record" in completed.stderr,
+          f"exit {completed.returncode}, stderr {completed.stderr!r}")
 
     case = Case()
     draft = case.document("docs/walk/naming-rules-draft.md", modified=5_000_000)
-    case.document("docs/walk/naming-rules-suggestions.md", modified=4_000_100)
+    suggestions = case.document("docs/walk/naming-rules-suggestions.md", modified=4_000_000)
+    expect("a walk-document changed after another agent-session's read is raised",
+           case.run("The walk-document is docs/walk/naming-rules-draft.md."), [draft])
+    name_agent_session(suggestions, "s1", draft)
     expect("a walk-document this agent-session fast-read, then changed, is not raised again",
-           case.run("The walk-document is docs/walk/naming-rules-draft.md.",
-                    fast_reads=[(fast_read.replace("plan-of-record", "walk/naming-rules-draft"),
-                                 4_000_000)]), None)
+           case.run("The walk-document is docs/walk/naming-rules-draft.md."), None)
 
     case = Case()
     case.document("docs/plan-of-record.md", modified=5_000_000)

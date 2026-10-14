@@ -44,24 +44,19 @@ ONCE PER AGENT-SESSION FOR ITS OWN READS. A document this agent-session
 fast-read is not due again in this agent-session, whatever the document's own
 time: applying a fast read's findings changes the document, which would
 otherwise make it due again every time the agent linked it. A read is this
-agent-session's own when its transcript holds a Bash call of
-cold-read-fast-read.py --target <the document>, and a record of the document,
-or a walk-document's suggestions file, is at least as new as that call's
-timestamp. Every such call in one Bash command counts. The fast read resolves
-a relative --target against the top of the checkout that holds the script, so
-the hook does the same when the call names the script by an absolute path;
-otherwise the shell's directory after a cd is unknown, and the call matches
-the document at that path relative to the document's own checkout, the way a
-record's frozen copy is matched. A target holding $ or a backquote is left
-unmatched, because the hook cannot expand it; that document is judged by file
-times. A command that only mentions the call, such as an echo, also counts;
-it silences the reminder only when a finished record of the document is
-written after it. A record from another agent-session counts only by the
-file-time rule above, so this agent-session is reminded about its own later
-change to a document someone else read. The hook keeps no list of its own: a
-reminder the agent ignores comes back, because no read ran. When the
-transcript cannot be read, the hook checks nothing and tells the agent so, in
-additionalContext and on stderr.
+agent-session's own when the file a finished fast read writes beside its
+report (nc-systems/cold-read/cold-read-record-names.py,
+fast_read_agent_session_path) names the payload's session_id and the
+document's resolved path. The fast read takes the ID from
+CLAUDE_CODE_SESSION_ID, which a subagent's Bash shares with its parent, so a
+fast read a subagent runs counts as its parent agent-session's own. A record
+without that file, as older reads and reads run without the variable leave,
+or naming another agent-session, counts only by the file-time rule above, so
+this agent-session is reminded about its own later change to a document
+someone else read. The hook keeps no list of its own: a reminder the agent
+ignores comes back, because no read ran. When the transcript cannot be read,
+the hook checks nothing and tells the agent so, in additionalContext and on
+stderr.
 
 SILENT when nothing is due, when this Stop ends the agent's answer to a Stop
 hook's output (the shared rule of
@@ -85,7 +80,6 @@ import os
 import re
 import subprocess
 import sys
-from datetime import datetime
 from pathlib import Path
 from urllib.parse import unquote
 
@@ -114,10 +108,6 @@ TRANSCRIPT_UNREADABLE_LINES = (
     "cold-read-fast-read, run on it, from your checkout: python3 " + FAST_READ_PROGRAM
     + " --target <document path>",
 )
-FAST_READ_TARGET_PATTERN = re.compile(
-    r"([^\s;&|()'\"]*cold-read-fast-read\.py)\b.*?--target[= ]+(\"[^\"]+\"|'[^']+'|[^\s;&|)]+)")
-# The fast read's checkout top is this many directories above its script.
-FAST_READ_PROGRAM_DEPTH_BELOW_CHECKOUT_TOP = len(Path(FAST_READ_PROGRAM).parts)
 
 TRANSCRIPT_READER_FILE = Path(__file__).with_name("absence-claim-locator-reminder-hook.py")
 SUITE_RUNNER_FILE = Path(__file__).with_name("run-all-test-suites.py")
@@ -170,73 +160,6 @@ def last_reply_text(transcript_path):
     reader = load_module("absence_claim_locator_reminder_hook", TRANSCRIPT_READER_FILE)
     reply, _ = reader.read_turn(transcript_path)
     return reply
-
-
-def own_fast_read_times(transcript_path):
-    """Return the epoch time of this agent-session's first fast-read call of each document.
-
-    Returns two maps: resolved absolute paths, and paths relative to a
-    checkout top for calls whose checkout the hook cannot know. Raises OSError
-    or UnicodeDecodeError when the transcript cannot be read. A call without a
-    readable timestamp is left out, so its document is judged by file times.
-    """
-    absolute, relative = {}, {}
-
-    def note(reads, key, called):
-        if key not in reads or called < reads[key]:
-            reads[key] = called
-
-    with open(transcript_path, encoding="utf-8") as transcript:
-        for line in transcript:
-            try:
-                entry = json.loads(line)
-            except ValueError:
-                continue
-            if not isinstance(entry, dict) or entry.get("type") != "assistant":
-                continue
-            content = (entry.get("message") or {}).get("content")
-            if not isinstance(content, list):
-                continue
-            for block in content:
-                if not (isinstance(block, dict) and block.get("type") == "tool_use"
-                        and block.get("name") == "Bash"):
-                    continue
-                matches = list(FAST_READ_TARGET_PATTERN.finditer(
-                    str((block.get("input") or {}).get("command", ""))))
-                if not matches:
-                    continue
-                try:
-                    called = datetime.fromisoformat(
-                        str(entry.get("timestamp")).replace("Z", "+00:00")).timestamp()
-                except ValueError:
-                    continue
-                for match in matches:
-                    raw_target = match[2].strip("\"'")
-                    if "$" in raw_target or "`" in raw_target:
-                        continue
-                    target = Path(raw_target).expanduser()
-                    script = Path(match[1]).expanduser()
-                    if target.is_absolute():
-                        note(absolute, target.resolve(), called)
-                    elif script.is_absolute():
-                        top = script.parents[FAST_READ_PROGRAM_DEPTH_BELOW_CHECKOUT_TOP - 1]
-                        note(absolute, (top / target).resolve(), called)
-                    else:
-                        note(relative, Path(os.path.normpath(target)), called)
-    return absolute, relative
-
-
-def own_read_time(document, document_top, own_reads):
-    absolute, relative = own_reads
-    times = [absolute[document]] if document in absolute else []
-    if document_top is not None:
-        try:
-            key = document.relative_to(document_top)
-        except ValueError:
-            key = None
-        if key in relative:
-            times.append(relative[key])
-    return min(times) if times else None
 
 
 def checkout_top(directory, git_environment):
@@ -318,13 +241,16 @@ def walk_draft_suggestions_path(document):
     return None
 
 
+def read_by_agent_session(report, document, session_id, record_names):
+    return record_names.fast_read_agent_session_read_target(report, session_id) == document
+
+
 def document_is_due(document, record_directories, document_top, record_names,
-                    own_read_time=None):
+                    session_id=None):
     suggestions = walk_draft_suggestions_path(document)
     if suggestions is not None and suggestions.is_file():
-        suggestions_time = suggestions.stat().st_mtime
-        if (suggestions_time >= document.stat().st_mtime
-                or (own_read_time is not None and suggestions_time >= own_read_time)):
+        if (suggestions.stat().st_mtime >= document.stat().st_mtime
+                or read_by_agent_session(suggestions, document, session_id, record_names)):
             return False
     pattern = record_names.record_directory_name_pattern_for_target(document)
     current_bytes = document.read_bytes()
@@ -338,6 +264,10 @@ def document_is_due(document, record_directories, document_top, record_names,
             if (not pattern.match(record.name) or not record.is_dir()
                     or not record_names.record_holds_completed_report(record)):
                 continue
+            if any(read_by_agent_session(report, document, session_id, record_names)
+                   for report in record.iterdir()
+                   if record_names.COMPLETED_REPORT_NAME_PATTERN.match(report.name)):
+                return False
             if (record / record_names.FROZEN_TARGET_DIRECTORY_NAME).is_dir():
                 frozen = next((candidate for candidate in
                                record_names.frozen_target_candidate_paths(
@@ -356,8 +286,6 @@ def document_is_due(document, record_directories, document_top, record_names,
                 newest_record_time = record_time
     if newest_record_time is None:
         return True
-    if own_read_time is not None and newest_record_time >= own_read_time:
-        return False
     return document.stat().st_mtime > newest_record_time
 
 
@@ -380,7 +308,7 @@ def run(stdin_text, environment):
     log_store_directory = store.resolve().parent
     cwd = Path(payload["cwd"]) if payload.get("cwd") else None
     try:
-        own_reads = own_fast_read_times(Path(transcript_path).expanduser())
+        reply = last_reply_text(Path(transcript_path).expanduser())
     except (OSError, UnicodeDecodeError) as error:
         lines = [line.format(reason=error) for line in TRANSCRIPT_UNREADABLE_LINES]
         print(f"cold-read-fast-read-due-for-linked-document-reminder-hook: {lines[0]}",
@@ -389,7 +317,6 @@ def run(stdin_text, environment):
             "hookEventName": "Stop",
             "additionalContext": "\n".join(lines),
         }}, ensure_ascii=False)
-    reply = last_reply_text(Path(transcript_path).expanduser())
     if not reply:
         return None
     git_environment = environment_without_git_redirection()
@@ -405,7 +332,7 @@ def run(stdin_text, environment):
             if top is not None and top / record_names.RECORDS_DIRECTORY_NAME not in stores:
                 stores.append(top / record_names.RECORDS_DIRECTORY_NAME)
         if document_is_due(document, stores, document_top, record_names,
-                           own_read_time(document, document_top, own_reads)):
+                           payload.get("session_id")):
             due.append(document)
     if not due:
         return None
