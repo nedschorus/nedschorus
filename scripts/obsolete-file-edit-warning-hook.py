@@ -66,8 +66,8 @@ A WARNING IS NOT REPEATED WORD FOR WORD. The cache also holds, for each path
 already warned about, the text of the last warning given. An edit whose
 warning would be that same text again is silent; a warning whose text changed,
 such as a detached HEAD's verdict going from "do not overlap" to "overlap",
-is given. A warning that reports a git step failing is never held back, and is
-not recorded. Because the record lives in the path-set cache, a commit here or
+is given. A warning that reports a git step failing is recorded like any other
+but never held back. Because the record lives in the path-set cache, a commit here or
 a fetch that moves main clears it, and the warning is given again. The record
 belongs to the worktree, not to an agent-session: a second agent-session in
 the same worktree is not warned about a file an earlier one was warned about
