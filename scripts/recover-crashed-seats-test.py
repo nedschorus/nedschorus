@@ -21,6 +21,7 @@ import io
 import json
 import os
 import shlex
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -52,6 +53,15 @@ recovery.agents_root_is_movable_on_this_machine = lambda: True
 # one through --checkout.
 recovery.durable_checkout = SCRIPT_PATH.resolve().parent.parent
 
+# Off macOS, launch_seat writes the folder-trust and onboarding presets into
+# ~/.claude.json before it starts a supervisor. No case may write the real one:
+# every case writes this scratch file instead, and the "CLAUDE.JSON PRESETS:"
+# cases read it.
+CLAUDE_JSON_SCRATCH_DIRECTORY = Path(tempfile.mkdtemp(prefix="recover-crashed-seats-claude-json-"))
+atexit.register(shutil.rmtree, CLAUDE_JSON_SCRATCH_DIRECTORY, True)
+CLAUDE_JSON_SCRATCH_PATH = CLAUDE_JSON_SCRATCH_DIRECTORY / ".claude.json"
+recovery.claude_json_presets.claude_json_path = lambda: CLAUDE_JSON_SCRATCH_PATH
+
 # A real run on ned-box opens a window on the user's Mac after each seat it brings
 # up. No case may reach the Mac: every case records its window requests here, the
 # "MAC WINDOW:" cases put the real opener back on purpose behind a stub opener, and
@@ -79,6 +89,7 @@ CALLING_AGENT_SESSION_TEST_VARIABLES = {
     "NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER": "calling-program",
     "TMUX": "/tmp/tmux-1000/calling-seat,1,0",
     "TMUX_PANE": "%0",
+    "IS_DEMO": "1",
     "NEDSCHORUS_HANDOFF_SUPERVISOR_AGENT_NAME": "calling-seat",
     "NEDSCHORUS_HANDOFF_SUPERVISOR_WORKING_DIRECTORY": "/calling/seat/directory",
     "NEDSCHORUS_HANDOFF_SUPERVISOR_SESSION_ID": "calling-supervisor-session",
@@ -901,6 +912,74 @@ def run_mac_window_cases(root: Path):
         seat_comes_up()
 
 
+def run_claude_json_presets_cases(root: Path):
+    """Off macOS, launch_seat starts the supervisor in tmux itself, without a
+    launcher, so it writes the launchers' presets: the supervisor starts
+    agent-sessions with IS_DEMO=1, which skips the folder-trust dialog."""
+    real_launcher_path = recovery.launcher_path
+    real_run_tmux = recovery.run_tmux
+    launch_seat_before_these_cases = recovery.launch_seat
+    patch("launch_seat", real_launch_seat)
+    workspace = Workspace(root / "claude-json-presets")
+    tmux_calls = []
+
+    def capture_tmux(*arguments_after_tmux, socket_name=None, environment=None):
+        # What the file held when tmux was asked to start the supervisor.
+        tmux_calls.append(CLAUDE_JSON_SCRATCH_PATH.read_text(encoding="utf-8")
+                          if CLAUDE_JSON_SCRATCH_PATH.exists() else None)
+
+        class Done:
+            returncode = 0
+        return Done()
+
+    recovery.launcher_path = lambda: None
+    recovery.run_tmux = capture_tmux
+    try:
+        CLAUDE_JSON_SCRATCH_PATH.unlink(missing_ok=True)
+        exit_code = real_launch_seat(workspace.name, workspace.seat_directory,
+                                     workspace.handoffs, "")
+        held = json.loads(tmux_calls[0]) if tmux_calls and tmux_calls[0] else {}
+        check("CLAUDE.JSON PRESETS: the box branch trusts the seat's folder before tmux "
+              "starts its supervisor",
+              exit_code == 0 and held.get("projects", {}).get(
+                  str(workspace.seat_directory), {}).get("hasTrustDialogAccepted") is True,
+              (exit_code, held))
+        check("CLAUDE.JSON PRESETS: and records onboarding done, with a theme",
+              held.get("hasCompletedOnboarding") is True and held.get("theme") == "light",
+              held)
+
+        unparseable = '{"oauthAccount": {"accountUuid": "not-a-real'
+        CLAUDE_JSON_SCRATCH_PATH.write_text(unparseable, encoding="utf-8")
+        tmux_calls.clear()
+        stderr = io.StringIO()
+        with redirect_stderr(stderr):
+            exit_code = real_launch_seat(workspace.name, workspace.seat_directory,
+                                         workspace.handoffs, "")
+        check("CLAUDE.JSON PRESETS: a ~/.claude.json that is not valid JSON stops the launch "
+              "with exit 1, before tmux, and names the file",
+              exit_code == 1 and tmux_calls == []
+              and str(CLAUDE_JSON_SCRATCH_PATH) in stderr.getvalue()
+              and "not launched" in stderr.getvalue(),
+              (exit_code, tmux_calls, stderr.getvalue()))
+        check("CLAUDE.JSON PRESETS: and leaves that file as it was",
+              CLAUDE_JSON_SCRATCH_PATH.read_text(encoding="utf-8") == unparseable,
+              CLAUDE_JSON_SCRATCH_PATH.read_text(encoding="utf-8"))
+
+        # The report a failed launch_seat gives: the seat is still down.
+        CLAUDE_JSON_SCRATCH_PATH.write_text(unparseable, encoding="utf-8")
+        all_dead()
+        seat_comes_up(True, "")
+        with redirect_stderr(io.StringIO()):
+            report = workspace.recover()
+        check("CLAUDE.JSON PRESETS: recovery reports that launch as LAUNCH FAILED",
+              "LAUNCH FAILED" in report, report)
+    finally:
+        recovery.launcher_path = real_launcher_path
+        recovery.run_tmux = real_run_tmux
+        patch("launch_seat", launch_seat_before_these_cases)
+        CLAUDE_JSON_SCRATCH_PATH.unlink(missing_ok=True)
+
+
 def run_came_up_cases(root: Path):
     """nedschorus#242 change 4: a launch exiting zero says the launcher ran, not
     that the seat came back. A resume whose session dies inside Claude leaves the
@@ -1337,7 +1416,8 @@ with tempfile.TemporaryDirectory() as temporary:
             else:
                 os.environ[name] = value
     started = started_environments[0] if started_environments else {}
-    seat_owned = ("TMUX", "TMUX_PANE", "NEDSCHORUS_HANDOFF_SUPERVISOR_AGENT_NAME",
+    # IS_DEMO is the supervisor's own: launch_agent_session sets it for every agent-session.
+    seat_owned = ("TMUX", "TMUX_PANE", "IS_DEMO", "NEDSCHORUS_HANDOFF_SUPERVISOR_AGENT_NAME",
                   "NEDSCHORUS_HANDOFF_SUPERVISOR_WORKING_DIRECTORY",
                   "NEDSCHORUS_HANDOFF_SUPERVISOR_SESSION_ID")
     leaked = sorted(name for name in CALLING_AGENT_SESSION_TEST_VARIABLES
@@ -2916,6 +2996,7 @@ with tempfile.TemporaryDirectory() as temporary:
           completed.returncode != 0 and "different recoveries" in completed.stderr,
           completed.stderr)
 
+    run_claude_json_presets_cases(root)
     run_came_up_cases(root)
     run_reach_clause_cases(root)
     run_seat_listing_cases(root)
