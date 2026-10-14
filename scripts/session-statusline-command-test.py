@@ -23,6 +23,34 @@ _statusline_spec = importlib.util.spec_from_file_location(
 statusline = importlib.util.module_from_spec(_statusline_spec)
 _statusline_spec.loader.exec_module(statusline)
 
+# A whole-line render reads three live inputs unless they are redirected: the
+# backup checker's Timeshift paths, Claude Code's session registry, and the
+# freshness stamp under the payload's directory. Every case renders against
+# scratch state instead, so no result depends on the machine running the suite.
+isolation_directory = tempfile.TemporaryDirectory()
+isolation_root = Path(isolation_directory.name)
+healthy_timeshift_log_directory = isolation_root / "timeshift-log"
+healthy_timeshift_log_directory.mkdir()
+(healthy_timeshift_log_directory / "backup.log").write_text("ran\n", encoding="utf-8")
+healthy_timeshift_snapshot_directory = isolation_root / "timeshift-snapshots"
+(healthy_timeshift_snapshot_directory / "scheduled-snapshot").mkdir(parents=True)
+(healthy_timeshift_snapshot_directory / "scheduled-snapshot" / "info.json").write_text(
+    json.dumps({"created": str(int(time.time())), "tags": "hourly"}), encoding="utf-8")
+HEALTHY_BACKUP_ENVIRONMENT = {
+    # The checker needs a mount point; "/" is one on both machines, and a scratch directory never is.
+    "NEDSCHORUS_BACKUP_MOUNT": "/",
+    "NEDSCHORUS_TIMESHIFT_LOG_DIRECTORY": str(healthy_timeshift_log_directory),
+    "NEDSCHORUS_TIMESHIFT_SNAPSHOT_DIRECTORY": str(healthy_timeshift_snapshot_directory),
+}
+os.environ.update(HEALTHY_BACKUP_ENVIRONMENT)
+empty_session_registry_directory = isolation_root / "session-registry"
+empty_session_registry_directory.mkdir()
+statusline.CLAUDE_CODE_LIVE_SESSION_REGISTRY_DIRECTORY = empty_session_registry_directory
+# Its own .git stops the freshness lookup from walking up into whatever checkout holds the temporary directory.
+payload_checkout = isolation_root / "nedschorus"
+(payload_checkout / ".git").mkdir(parents=True)
+(payload_checkout / ".git" / "HEAD").write_text("ref: refs/heads/seat\n", encoding="utf-8")
+
 failures = []
 
 
@@ -36,7 +64,7 @@ def check(case_name, condition, detail=""):
 
 payload = {
     "session_id": "test-session",
-    "workspace": {"current_dir": "/Users/el/Projects/nedschorus"},
+    "workspace": {"current_dir": str(payload_checkout)},
     "model": {"display_name": "Fable 5"},
     "effort": {"level": "high"},
     "context_window": {"remaining_percentage": 62.4},
@@ -169,6 +197,21 @@ empty_line = statusline.status_line_text({})
 check("status line survives an empty payload", statusline.status_line_this_machine_short_name() in empty_line, empty_line)
 check("an empty payload adds no stray separators", statusline.SEPARATOR not in empty_line, empty_line)
 
+# The backup warning leads the line, in red, when the checker reports a failure.
+try:
+    os.environ["NEDSCHORUS_BACKUP_MOUNT"] = str(isolation_root / "absent-backup-drive")
+    os.environ["NEDSCHORUS_TIMESHIFT_SNAPSHOT_DIRECTORY"] = str(isolation_root / "no-snapshots")
+    failing_backup_line = statusline.status_line_text(payload)
+    check("a failing backup leads the line as a red warning",
+          failing_backup_line.startswith(
+              statusline.colored("⚠ BACKUP DRIVE GONE unknown", statusline.RED_BOLD)
+              + statusline.SEPARATOR),
+          repr(failing_backup_line))
+finally:
+    os.environ.update(HEALTHY_BACKUP_ENVIRONMENT)
+healthy_backup_line = statusline.status_line_text(payload)
+check("a healthy backup shows no warning", "⚠" not in healthy_backup_line, repr(healthy_backup_line))
+
 # Every case above asserts what this script BELIEVES the harness sends.
 # That belief was wrong once and the suite could not tell: resets_at is epoch
 # seconds, the fixture sent an ISO string, and both countdowns were blank in
@@ -248,6 +291,8 @@ if "--canary" in sys.argv:
     run_payload_contract_canary()
 else:
     print("\n(skipped the payload contract canary; pass --canary to run it)")
+
+isolation_directory.cleanup()
 
 print()
 if failures:
