@@ -403,6 +403,7 @@ def case_agent_seat_branch_in_its_agent_home_is_not_reported(root):
 def case_agent_home_check_failure_is_told_and_no_branch_reported(root):
     clone = make_clone(root, BASE_MAIN_FILES)
     git(["switch", "-q", "-c", "topic-while-home-unknown"], clone)
+    write(clone, "scripts/file-added-while-home-unknown.py", "print('x')\n")
     hook = load_module("hook_for_home_failure_case", HOOK_PATH)
     real_home = Path.home
 
@@ -418,6 +419,11 @@ def case_agent_home_check_failure_is_told_and_no_branch_reported(root):
     check("a failed agent-home check is told to the agent",
           "could not resolve the home directory's agents directory" in context, context)
     check("a failed agent-home check reports no branch", "(branch)" not in context, context)
+    check("a failed agent-home check still lists the new names in changed files",
+          "scripts/file-added-while-home-unknown.py (file-path)" in context, context)
+    check("a failed agent-home check's line says names in changed files are still listed",
+          "new names in changed files are still listed" in context
+          and "no names are being listed" not in context, context)
 
 
 def case_branch_origin_already_has_is_not_reported(root):
@@ -1078,6 +1084,8 @@ def case_hook_reports_failure_once(root):
     code, first = run_hook(lonely, state_root, {"tool_name": "Write", "tool_input": {"file_path": "a.md"}})
     check("a failing check exits 0", code == 0)
     check("a failing check tells the agent the check failed", "failed" in first and "origin/main" in first, first)
+    check("a failing check of changed files says no names are being listed",
+          "no names are being listed" in first and "still listed" not in first, first)
     _, second = run_hook(lonely, state_root, {"tool_name": "Write", "tool_input": {"file_path": "a.md"}})
     check("the failure text is short", len(first) < 800, str(len(first)))
     check("the same failure is told only once per agent-session", second == "", second)

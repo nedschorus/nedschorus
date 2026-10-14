@@ -73,6 +73,12 @@ FAILURE_TEMPLATE = (
     "edit.\n"
     "Until it works, check new names by hand against {page}."
 )
+BRANCH_CHECK_FAILURE_TEMPLATE = (
+    "new-shared-names-reminder: the check of whether this branch's name is new failed, so "
+    "the branch's name is not being listed; new names in changed files are still listed: {error}\n"
+    "The check runs again after your next edit.\n"
+    "Until it works, if you chose this branch's name, check it by hand against {page}."
+)
 
 
 def load_lister():
@@ -346,13 +352,13 @@ def unreported_new_branch(checkout: Path, reported) -> str:
     return branch
 
 
-def failure_report_once(state: dict, error: str):
+def failure_report_once(state: dict, error: str, template: str = FAILURE_TEMPLATE):
     """Return the failure text the first time this error is seen in the agent-session, else None."""
     failures = set(state.get("reported_failures", []))
     if error in failures:
         return None
     state["reported_failures"] = sorted(failures | {error})
-    return FAILURE_TEMPLATE.format(error=error, page=NAMING_PAGE_PATH)
+    return template.format(error=error, page=NAMING_PAGE_PATH)
 
 
 def reminder_text(new_names) -> str:
@@ -446,7 +452,7 @@ def main() -> int:
         new_branch = unreported_new_branch(checkout, reported)
     except BranchCheckFailure as failure:
         new_branch = ""
-        failure_text = failure_report_once(state, str(failure))
+        failure_text = failure_report_once(state, str(failure), BRANCH_CHECK_FAILURE_TEMPLATE)
         if failure_text:
             messages.append(failure_text)
     # A shell command that changed no file and left no new branch has nothing new to list.
