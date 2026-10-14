@@ -47,11 +47,14 @@ def git(directory, *arguments):
 
 
 def raised(function, *arguments):
-    """Return the GitIgnoreCheckFailed message function raised, or None when it returned."""
+    """Return the GitIgnoreCheckFailed message function raised, None when it returned,
+    or "other exception: ..." when it raised anything else, which no case accepts."""
     try:
         function(*arguments)
     except checks.GitIgnoreCheckFailed as error:
         return str(error)
+    except Exception as error:
+        return f"other exception: {type(error).__name__}: {error}"
     return None
 
 
@@ -115,6 +118,32 @@ with tempfile.TemporaryDirectory(prefix="edited-file-path-within-checkout-root-a
     message = raised(checks.file_lines_at_head_unless_git_ignores_file, broken_checkout, "notes.md")
     check("a git that cannot say whether the file is ignored raises GitIgnoreCheckFailed",
           message is not None and "git check-ignore exited 128" in message, message)
+
+    os.environ["PATH"] = str(scratch / "empty-path-directory")
+    try:
+        message = raised(checks.file_lines_at_head_unless_git_ignores_file, checkout, "docs/committed.md")
+    finally:
+        os.environ["PATH"] = original_path
+    check("a git show that cannot start raises GitIgnoreCheckFailed",
+          message is not None and "git show could not run" in message, message)
+
+    # A git that never answers: a stand-in that sleeps past a shortened timeout.
+    slow_git_directory = scratch / "slow-git"
+    slow_git_directory.mkdir()
+    slow_git = slow_git_directory / "git"
+    slow_git.write_text("#!/bin/sh\nexec sleep 30\n", encoding="utf-8")
+    slow_git.chmod(0o755)
+    original_timeout = checks.GIT_TIMEOUT_SECONDS
+    checks.GIT_TIMEOUT_SECONDS = 0.5
+    os.environ["PATH"] = f"{slow_git_directory}{os.pathsep}{original_path}"
+    try:
+        message = raised(checks.file_lines_at_head_unless_git_ignores_file, checkout, "docs/committed.md")
+    finally:
+        os.environ["PATH"] = original_path
+        checks.GIT_TIMEOUT_SECONDS = original_timeout
+    check("a git show that times out raises GitIgnoreCheckFailed",
+          message is not None and "git show could not run" in message
+          and "timed out" in message, message)
 
 print()
 if failures:

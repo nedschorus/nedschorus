@@ -686,6 +686,14 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     check("a hook whose git cannot be found is reported on stderr, exit 1",
           reported(no_git, "GitIgnoreCheckFailed: git check-ignore could not run"),
           no_git.stdout + no_git.stderr)
+    # The Write path runs git show HEAD:<path> first.
+    no_git = subprocess.run([sys.executable, str(HOOK_PATH)],
+                            input=json.dumps(write_payload(checkout, new_page, "The seat.\n")),
+                            capture_output=True, text=True, check=False,
+                            env=dict(CLEAN_ENVIRONMENT, PATH=str(empty_path_directory)))
+    check("a Write whose git cannot be found is reported on stderr, exit 1",
+          reported(no_git, "GitIgnoreCheckFailed: git show could not run"),
+          no_git.stdout + no_git.stderr)
 
     # A checkout whose .git file names a git directory that does not exist:
     # the hook finds the checkout root, and git check-ignore exits 128 there.

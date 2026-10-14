@@ -2,9 +2,10 @@
 """Find the checkout an edited file is in, and ask git whether git would track the file.
 
 The hooks that check a Markdown file after an Edit or Write share these helpers,
-so a git failure is reported the same way in each: git_would_track raises
-GitIgnoreCheckFailed when git cannot answer, and never reads the failure as
-"not tracked". The caller reports the exception as its own failure.
+so a git failure is reported the same way in each: every function here that
+runs git raises GitIgnoreCheckFailed when git fails, cannot start or times
+out, and never reads the failure as "not tracked". The caller reports the
+exception as its own failure.
 
 Load it by path, under the snake_case form of its file name:
 
@@ -23,13 +24,17 @@ GIT_TIMEOUT_SECONDS = 10
 
 
 class GitIgnoreCheckFailed(Exception):
-    """git check-ignore could not say whether the file is ignored."""
+    """git could not say whether the file is ignored, or what HEAD holds of it."""
 
 
 def _run_git(arguments, working_directory: Path):
-    return subprocess.run(["git", *arguments], cwd=str(working_directory),
-                          capture_output=True, text=True, encoding="utf-8",
-                          errors="replace", timeout=GIT_TIMEOUT_SECONDS, check=False)
+    """Run git; raise GitIgnoreCheckFailed when git cannot start or times out."""
+    try:
+        return subprocess.run(["git", *arguments], cwd=str(working_directory),
+                              capture_output=True, text=True, encoding="utf-8",
+                              errors="replace", timeout=GIT_TIMEOUT_SECONDS, check=False)
+    except (OSError, subprocess.SubprocessError) as error:
+        raise GitIgnoreCheckFailed(f"git {arguments[0]} could not run: {error}") from error
 
 
 def enclosing_checkout_root(directory: Path):
@@ -59,10 +64,7 @@ def checkout_relative_path(file_path: str, working_directory: Path):
 def git_would_track(root: Path, relative_path: str) -> bool:
     """Return whether git would track relative_path; raise GitIgnoreCheckFailed when git cannot say."""
     # check-ignore exits 0 for ignored, 1 for trackable, and 128 for failure; tracked files are never ignored.
-    try:
-        completed = _run_git(["check-ignore", "-q", "--", relative_path], root)
-    except (OSError, subprocess.SubprocessError) as error:
-        raise GitIgnoreCheckFailed(f"git check-ignore could not run: {error}") from error
+    completed = _run_git(["check-ignore", "-q", "--", relative_path], root)
     if completed.returncode == 1:
         return True
     if completed.returncode == 0:

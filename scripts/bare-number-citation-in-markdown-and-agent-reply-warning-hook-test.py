@@ -797,6 +797,33 @@ check("a git check-ignore that fails is reported on stderr, no note, exit 1",
       and "no check was made: GitIgnoreCheckFailed: git check-ignore exited 128" in result.stderr,
       (result.returncode, result.stdout, result.stderr))
 
+# git missing from PATH on the Write path, where the hook first runs git show HEAD:<path>.
+empty_path_directory = SCRATCH / "empty-path-directory"
+empty_path_directory.mkdir()
+result = run_hook(tool_payload("Write", REPOSITORY / "docs" / "new.md",
+                               content="Title\n\nMerged in PR 931.\n"),
+                  environment={**HOOK_ENVIRONMENT, "PATH": str(empty_path_directory)})
+check("a Write whose git cannot be found is reported on stderr, no note, exit 1",
+      result.returncode == 1 and result.stdout == "" and len(result.stderr.splitlines()) == 1
+      and "no check was made: GitIgnoreCheckFailed: git show could not run"
+      in result.stderr,
+      (result.returncode, result.stdout, result.stderr))
+
+# The hook without the shared module it loads its git helpers from.
+SHARED_MODULE_NAME = "edited-file-path-within-checkout-root-and-git-check-ignore-common.py"
+hook_without_shared_module = SCRATCH / "hook-without-its-git-helpers" / "scripts" / HOOK_PATH.name
+hook_without_shared_module.parent.mkdir(parents=True)
+shutil.copy(str(HOOK_PATH), str(hook_without_shared_module))
+result = subprocess.run([sys.executable, str(hook_without_shared_module)],
+                        input=json.dumps(tool_payload("Write", REPOSITORY / "docs" / "new.md",
+                                                      content="Merged in PR 931.\n")),
+                        capture_output=True, text=True, timeout=60, env=HOOK_ENVIRONMENT)
+check("a shared git-helper module that fails to load is reported on stderr, no note, exit 1",
+      result.returncode == 1 and result.stdout == "" and len(result.stderr.splitlines()) == 1
+      and "no check was made: FileNotFoundError" in result.stderr
+      and SHARED_MODULE_NAME in result.stderr,
+      (result.returncode, result.stdout, result.stderr))
+
 
 # --- Fail open on bad input ---------------------------------------------------
 
