@@ -562,4 +562,6 @@ The audit found gaps in four more groups, and left out of its scope three progra
 
 ## Provisional additions (not yet vetted by the user)
 
+- MD-skills, 2026-10-14: Add the unwritten-mark message of `daily-memory-review-mark.py` to this document's mark-program messages, beside the daily-overview-refresh-reminder-mark messages (MD-skills task #144).
+- MD-skills, 2026-10-14: Issue guard wording, one small pull request: the shared no-file line prints a literal `<number>` though the guard knows the number; the rerun and record lines do not say that the edit command opens a pull request; the body refusal's "--title alone afterwards" does not say after what (MD-skills task #157, from the review notes on PR [The issue guard's comment, body and title refusals name the issue's file and the rerun](https://github.com/nedschorus/nedschorus/pull/1031)).
 - Agent-seat agent-instructions-editor, 2026-10-14: add the list of the kinds of obvious error, which `CLAUDE.md` lets an agent fix in a guarded file without asking the user, to the refusals of `.claude/hooks/instruction-file-guard.py` (message 14), so that an agent meets the list at the moment the guard stops it.
