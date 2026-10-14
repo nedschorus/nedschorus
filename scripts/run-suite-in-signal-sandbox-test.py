@@ -135,6 +135,13 @@ def run_program(scratch, repository, *arguments, environment=None):
     return completed, (lines[-1] if lines else "")
 
 
+def worktrees(repository):
+    """Return the paths git lists as worktrees of repository."""
+    listed = subprocess.run(["git", "-C", str(repository), "worktree", "list", "--porcelain"],
+                            capture_output=True, text=True, check=True).stdout
+    return [line.split(" ", 1)[1] for line in listed.splitlines() if line.startswith("worktree ")]
+
+
 def unchanged(repository):
     return (repository / "doubling.py").read_bytes() == MODULE_SOURCE.encode() and \
         subprocess.run(["git", "-C", str(repository), "status", "--porcelain"],
@@ -186,7 +193,9 @@ check("a suite killed by a signal with the mutant in is 'mutant killed' naming t
 # --- Process 1 check ----------------------------------------------------------
 
 with tempfile.TemporaryDirectory() as scratch_name:
-    scratch = pathlib.Path(scratch_name)
+    # Resolved, because git prints resolved paths: on macOS the temporary directory is under
+    # /var, a symlink to /private/var.
+    scratch = pathlib.Path(scratch_name).resolve()
     (scratch / "bwrap-comm").write_text("bwrap\n")
     (scratch / "init-comm").write_text("systemd\n")
     check("process 1 named bwrap passes the check",
@@ -321,7 +330,7 @@ if not sys.platform.startswith("linux"):
           "/proc, which only Linux has")
 else:
     with tempfile.TemporaryDirectory() as scratch_name:
-        leftover_file = pathlib.Path(scratch_name) / "leftover-pid"
+        leftover_file = pathlib.Path(scratch_name).resolve() / "leftover-pid"
         # The leader starts a sleeper in its own process group, records it, and exits 5.
         leader = subprocess.Popen(
             [sys.executable, "-c",
@@ -414,7 +423,7 @@ check("a pgrep that fails is reported, not read as an empty group", pgrep_failur
 
 # run_suite_confined on macOS must stop leftovers by process group, never through /proc.
 with tempfile.TemporaryDirectory() as scratch_name:
-    scratch = pathlib.Path(scratch_name)
+    scratch = pathlib.Path(scratch_name).resolve()
     (scratch / "quiet-test.py").write_text("pass\n")
     stops = []
     original_group_stop = program.stop_process_group_then_reap
@@ -498,7 +507,7 @@ with tempfile.TemporaryDirectory() as scratch_name:
 # --- Refusals that run nothing ------------------------------------------------
 
 with tempfile.TemporaryDirectory() as scratch_name:
-    scratch = pathlib.Path(scratch_name)
+    scratch = pathlib.Path(scratch_name).resolve()
     repository = scratch_checkout(scratch)
     def main_with_nothing_run(platform, sandbox=None, mutant=None, sandbox_function=None):
         """Run main in this process with the suite run replaced; return (exit, output, runs).
@@ -641,7 +650,7 @@ if not sys.platform.startswith("linux") or not bwrap_usable():
 else:
     # --- Runs without a mutant ------------------------------------------------
     with tempfile.TemporaryDirectory() as scratch_name:
-        scratch = pathlib.Path(scratch_name)
+        scratch = pathlib.Path(scratch_name).resolve()
         repository = scratch_checkout(scratch)
 
         completed, last = run_program(scratch, repository, "doubling-test.py")
@@ -676,6 +685,45 @@ else:
               and "FAIL: double(3)" in completed.stdout, (completed.returncode, completed.stdout))
         check("after a killed mutant, the mutated file is back byte for byte",
               unchanged(repository), (repository / "doubling.py").read_text())
+        copy_line = next((line for line in completed.stdout.splitlines()
+                          if "in the mutation-testing worktree " in line), "")
+        copy = copy_line.split("in the mutation-testing worktree ", 1)[-1].split(";", 1)[0]
+        check("the mutant is applied in a copy whose name ends in -mutation-testing-worktree, not in the "
+              "checkout, and the copy is removed after the run",
+              copy.endswith(program.MUTATION_TESTING_WORKTREE_LABEL) and str(repository) not in copy
+              and not pathlib.Path(copy).exists() and worktrees(repository) == [str(repository)],
+              (copy_line, worktrees(repository)))
+
+        # The copy holds the checkout's files as they are: an untracked suite is copied, and a
+        # tracked file deleted in the checkout is deleted in the copy.
+        (repository / "where-test.py").write_text(
+            "import os, sys\n"
+            "print('runs in:', os.getcwd())\n"
+            "print('deleted file present:', os.path.exists('fails-test.sh'))\n"
+            "sys.path.insert(0, '.')\n"
+            "import doubling\n"
+            "sys.exit(0 if doubling.double(2) == 4 else 1)\n")
+        (repository / "fails-test.sh").unlink()
+        status_before = subprocess.run(["git", "-C", str(repository), "status", "--porcelain"],
+                                       capture_output=True, text=True, check=True).stdout
+        completed, last = run_program(scratch, repository, "where-test.py",
+                                      "--mutant", str(killing))
+        status_after = subprocess.run(["git", "-C", str(repository), "status", "--porcelain"],
+                                      capture_output=True, text=True, check=True).stdout
+        ran_in = [line.split("runs in: ", 1)[1] for line in completed.stdout.splitlines()
+                  if line.startswith("runs in: ")]
+        check("the suite runs in the mutation-testing worktree, which holds an untracked suite and "
+              "lacks a tracked file deleted in the checkout",
+              completed.returncode == 0 and last.startswith("VERDICT: mutant killed")
+              and len(ran_in) == 2 and all(place.endswith(program.MUTATION_TESTING_WORKTREE_LABEL)
+                                           for place in ran_in)
+              and "deleted file present: False" in completed.stdout
+              and (repository / "doubling.py").read_bytes() == MODULE_SOURCE.encode()
+              and status_after == status_before,
+              (completed.returncode, completed.stdout, status_before, status_after))
+        subprocess.run(["git", "-C", str(repository), "checkout", "-q", "--", "fails-test.sh"],
+                       check=True)
+        (repository / "where-test.py").unlink()
 
         surviving = patch_file(scratch, repository, "survives.patch", "return 1", "return 2")
         completed, last = run_program(scratch, repository, "doubling-test.py",
@@ -792,8 +840,10 @@ else:
         stdout, stderr = process.communicate(timeout=120)
         stdout = "".join(seen) + stdout
         last = stdout.strip().splitlines()[-1] if stdout.strip() else ""
-        check("terminated with the mutant in, the program puts the file back and says not run",
-              process.returncode == 2 and "interrupted" in last and unchanged(repository),
+        check("terminated with the mutant in, the program removes its mutation-testing worktree, leaves "
+              "the checkout unchanged and says not run",
+              process.returncode == 2 and "interrupted" in last and unchanged(repository)
+              and worktrees(repository) == [str(repository)],
               (process.returncode, stdout, stderr, (repository / "doubling.py").read_text()))
 
         # --- An interrupted run leaves no process of the suite running ---------
@@ -838,101 +888,113 @@ else:
         (repository / "spawns-test.py").unlink()
         (repository / "heartbeat-child.py").unlink()
 
-        # --- Restore failure is reported, not hidden --------------------------
-        keep = scratch / "keep"
-        keep.mkdir()
-        (repository / "doubling.py").write_text("mutated\n")
-        original_write_back = program.write_back
-        program.write_back = lambda top, originals: ["doubling.py (read back differs)"]
-        try:
-            program.restore_originals(repository, {"doubling.py": kept(repository, MODULE_SOURCE.encode())}, keep)
-        except program.RestoreFailed as error:
-            check("a file that does not read back as its original is RestoreFailed naming "
-                  "the file and where its original is kept",
-                  "doubling.py" in str(error) and str(keep) in str(error), str(error))
-        else:
-            check("a file that does not read back as its original is RestoreFailed naming "
-                  "the file and where its original is kept", False, "no exception")
-        finally:
-            program.write_back = original_write_back
-        failed = program.write_back(repository,
-                                    {"doubling.py": kept(repository, MODULE_SOURCE.encode())})
-        check("write_back puts the bytes back and reports nothing when they read back",
-              failed == [] and unchanged(repository), failed)
-        failed = program.write_back(repository, {"no-dir/x.py": program.KeptOriginal(
-            b"x", 0o644, (0, 0))})
-        check("write_back reports a file it cannot write", failed and "no-dir/x.py" in failed[0],
-              failed)
-        original_read_bytes = pathlib.Path.read_bytes
-        doubling_kept = kept(repository, MODULE_SOURCE.encode())
-        pathlib.Path.read_bytes = lambda self: b"something else"
-        try:
-            failed = program.write_back(repository, {"doubling.py": doubling_kept})
-        finally:
-            pathlib.Path.read_bytes = original_read_bytes
-        check("write_back reports a file that does not read back as written",
-              failed == ["doubling.py (read back differs)"], failed)
+        # --- Each failure while making, filling or removing the copy -----------
+        def main_in_this_process(*arguments, git_fails_on=None, fill=None):
+            """Run main here, with runner.git failing on the git subcommand git_fails_on."""
+            real_git, real_fill = program.runner.git, program.mutation_testing_worktree_fill
+            saved_handlers = {number: signal.getsignal(number)
+                              for number in program.INTERRUPTING_SIGNALS}
 
-        original_chmod = program.os.chmod
-        program.os.chmod = lambda *arguments, **options: None
-        try:
-            failed = program.write_back(repository, {"doubling.py": program.KeptOriginal(
-                MODULE_SOURCE.encode(), 0o600, (0, 0))})
-        finally:
-            program.os.chmod = original_chmod
-        check("write_back reports a file whose mode does not read back as the original's",
-              len(failed) == 1 and "doubling.py (mode" in failed[0], failed)
+            def git(top, *git_arguments):
+                if git_fails_on is not None and git_arguments[:len(git_fails_on)] == git_fails_on:
+                    return subprocess.CompletedProcess(git_arguments, 128, "", "fatal: injected")
+                return real_git(top, *git_arguments)
+            program.runner.git = git
+            if fill is not None:
+                program.mutation_testing_worktree_fill = fill
+            output = io.StringIO()
+            try:
+                with contextlib.redirect_stdout(output), contextlib.redirect_stderr(output):
+                    code = program.main([*arguments, "--checkout", str(repository),
+                                         "--lock-file", str(scratch / "run.lock")])
+            finally:
+                program.runner.git, program.mutation_testing_worktree_fill = real_git, real_fill
+                for number, handler in saved_handlers.items():
+                    signal.signal(number, handler)
+            lines = output.getvalue().strip().splitlines()
+            return code, (lines[-1] if lines else ""), output.getvalue()
 
-        # SIGTERM during the restore waits until every file is written.
-        written = []
+        for failing, wanted in ((("worktree", "add"), "could not be made: fatal: injected"),
+                                (("ls-files", "-z", "--cached"), "git ls-files failed in"),
+                                (("ls-files", "-z"), "git ls-files failed in")):
+            if failing == ("ls-files", "-z"):
+                # Only the listing in the copy: the listing in the checkout passes --cached.
+                real_git = program.runner.git
 
-        def write_back_terminated_half_way(top, originals):
-            os.kill(os.getpid(), signal.SIGTERM)
-            written.append("all files")
-            return []
+                def failing_in_copy(top, *git_arguments, real_git=real_git):
+                    if git_arguments == ("ls-files", "-z"):
+                        return subprocess.CompletedProcess(git_arguments, 128, "", "fatal: injected")
+                    return real_git(top, *git_arguments)
+                program.runner.git = failing_in_copy
+                try:
+                    code, last, output = main_in_this_process("doubling-test.py", "--mutant",
+                                                              str(killing))
+                finally:
+                    program.runner.git = real_git
+            else:
+                code, last, output = main_in_this_process("doubling-test.py", "--mutant",
+                                                          str(killing), git_fails_on=failing)
+            check(f"when git {' '.join(failing)} fails, the run is not run, says so, and leaves "
+                  f"no worktree", code == program.EXIT_NOT_RUN and last.startswith("VERDICT: not run")
+                  and wanted in last and worktrees(repository) == [str(repository)]
+                  and unchanged(repository), (code, output, worktrees(repository)))
 
-        original_write_back = program.write_back
-        program.write_back = write_back_terminated_half_way
-        signal.signal(signal.SIGTERM, program.raise_terminated)
-        try:
-            program.restore_originals(repository,
-                                      {"doubling.py": kept(repository, MODULE_SOURCE.encode())},
-                                      keep)
-            terminated = False
-        except program.Terminated:
-            terminated = True
-        finally:
-            program.write_back = original_write_back
-            for restored in program.INTERRUPTING_SIGNALS:
-                signal.signal(restored, signal.SIG_DFL)
-            signal.signal(signal.SIGINT, signal.default_int_handler)
-        check("a SIGTERM that arrives during the restore takes effect only after every file "
-              "is written", terminated and written == ["all files"], (terminated, written))
+        for raised in (program.Terminated("SIGTERM"), OSError("disk full")):
+            def failing_fill(top, copy, raised=raised):
+                raise raised
+            code, last, output = main_in_this_process("doubling-test.py", "--mutant",
+                                                      str(killing), fill=failing_fill)
+            check(f"a {type(raised).__name__} while the copy is filled leaves no worktree "
+                  f"registered and ends in a not-run verdict, exit 2",
+                  worktrees(repository) == [str(repository)] and unchanged(repository)
+                  and code == program.EXIT_NOT_RUN and last.startswith("VERDICT: not run"),
+                  (code, output, worktrees(repository)))
 
-        # A restore that fails while a SIGTERM is pending is reported as a failed restore.
-        def write_back_fails_and_terminated(top, originals):
-            os.kill(os.getpid(), signal.SIGTERM)
-            return ["doubling.py (read back differs)"]
+        code, last, output = main_in_this_process("doubling-test.py", "--mutant", str(killing),
+                                                  git_fails_on=("worktree", "remove"))
+        left = [path for path in worktrees(repository) if path != str(repository)]
+        check("a mutation-testing worktree that cannot be removed makes the run not run, not a "
+              "killed mutant, and names the command that removes it and what the run found",
+              code == program.EXIT_NOT_RUN and last.startswith("VERDICT: not run")
+              and "could not be removed (fatal: injected)" in last
+              and f"git -C {repository} worktree remove --force" in last
+              and f"git -C {repository} worktree prune" in last
+              and "then run this again. The run itself ended with: mutant killed" in last
+              and "it counts as not run, because it left the worktree behind." in last
+              and last.count("VERDICT") == 1
+              and len(left) == 1, (code, output, left))
+        for path in left:
+            subprocess.run(["git", "-C", str(repository), "worktree", "remove", "--force", path],
+                           capture_output=True, check=True)
 
-        program.write_back = write_back_fails_and_terminated
-        signal.signal(signal.SIGTERM, program.raise_terminated)
-        try:
-            program.restore_originals(repository,
-                                      {"doubling.py": kept(repository, MODULE_SOURCE.encode())},
-                                      keep)
-            outcome = "no exception"
-        except program.RestoreFailed as error:
-            outcome = f"RestoreFailed: {error}"
-        except program.Terminated as error:
-            outcome = f"Terminated: {error}"
-        finally:
-            program.write_back = original_write_back
-            for restored in program.INTERRUPTING_SIGNALS:
-                signal.signal(restored, signal.SIG_DFL)
-            signal.signal(signal.SIGINT, signal.default_int_handler)
-        check("a restore that fails while a SIGTERM is pending is RestoreFailed, not an "
-              "interruption", outcome.startswith("RestoreFailed") and "doubling.py" in outcome
-              and "SIGTERM" in outcome, outcome)
+        # --- A staged deletion and a staged rename are carried into the copy ---
+        for name in ("staged-removed.txt", "renamed-from.txt"):
+            (repository / name).write_text(name + "\n")
+        for git_arguments in (["add", "-A"], ["-c", "user.name=t", "-c", "user.email=t@t",
+                                              "commit", "-qm", "b"],
+                              ["rm", "-q", "staged-removed.txt"],
+                              ["mv", "renamed-from.txt", "renamed-to.txt"]):
+            subprocess.run(["git", "-C", str(repository), *git_arguments],
+                           capture_output=True, check=True)
+        (repository / "sees-test.py").write_text(
+            "import os, sys\n"
+            "for name in ('staged-removed.txt', 'renamed-from.txt', 'renamed-to.txt'):\n"
+            "    print('present:', name, os.path.exists(name))\n"
+            "sys.path.insert(0, '.')\n"
+            "import doubling\n"
+            "sys.exit(0 if doubling.double(2) == 4 else 1)\n")
+        completed, last = run_program(scratch, repository, "sees-test.py", "--mutant", str(killing))
+        check("a file staged for deletion, and the old name of a staged rename, are not in the "
+              "mutation-testing worktree; the new name is",
+              last.startswith("VERDICT: mutant killed")
+              and "present: staged-removed.txt False" in completed.stdout
+              and "present: renamed-from.txt False" in completed.stdout
+              and "present: renamed-to.txt True" in completed.stdout,
+              (completed.returncode, completed.stdout))
+        (repository / "sees-test.py").unlink()
+        for git_arguments in (["reset", "-q", "--hard", "HEAD~1"],):
+            subprocess.run(["git", "-C", str(repository), *git_arguments],
+                           capture_output=True, check=True)
 
         # --- The lock ---------------------------------------------------------
         lock_path = scratch / "run.lock"
@@ -941,12 +1003,33 @@ else:
             holder.truncate(0)
             holder.write("pid 1, checkout elsewhere, started then\n")
             holder.flush()
+            started = time.monotonic()
             completed, last = run_program(scratch, repository, "doubling-test.py",
-                                          "--mutant", str(killing))
-        check("while another run holds the lock, nothing runs, nothing is mutated, exit 3",
+                                          "--mutant", str(killing),
+                                          "--wait-for-lock-seconds", "1")
+            waited = time.monotonic() - started
+        check("while another run holds the lock past the wait, nothing runs, nothing is "
+              "mutated, exit 3, and the verdict names the wait and the holder",
               completed.returncode == 3 and "lock held" in last and "checkout elsewhere" in last
+              and "after waiting 1 s" in last and waited >= 1
               and "all cases passed" not in completed.stdout and unchanged(repository),
               (completed.returncode, completed.stdout))
+        check("while it waits for the lock it has said so, first, on stdout",
+              completed.stdout.startswith(
+                  f"run-suite-in-signal-sandbox: waiting up to 1 s for {lock_path}\n"),
+              completed.stdout)
+        with contextlib.redirect_stderr(io.StringIO()) as refused_negative:
+            try:
+                program.parse_arguments(["a-test.py", "--wait-for-lock-seconds", "-1"])
+                negative_exit = None
+            except SystemExit as stopped:
+                negative_exit = stopped.code
+        check("a negative --wait-for-lock-seconds is a bad invocation, exit 2",
+              negative_exit == 2 and "at least 0" in refused_negative.getvalue(),
+              (negative_exit, refused_negative.getvalue()))
+        check("the wait for the lock defaults to the runner's suggested hour",
+              program.parse_arguments(["a-test.py"]).wait_for_lock_seconds
+              == program.runner.MACHINE_LOCK_WAIT_SECONDS_SUGGESTED == 3600)
 
         # A killed run of scripts/run-all-test-suites.py left traces; its run record
         # shows nothing of it still runs, so this program removes them as that runner would.

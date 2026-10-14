@@ -311,9 +311,14 @@ def run_missing_launcher_case(workspace: Path):
     # uncommitted-work-snapshots.py reads git's output with the shared module.
     general_tools_home = workspace / "nc-systems" / "general-tools"
     general_tools_home.mkdir(parents=True)
-    # resupervise-seat.py reads tmux's absent-session answers with the shared pattern module.
-    for general_tools_module in ("git-machine-readable-output-runner-and-parser-common.py",
-                                 "tmux-target-or-server-does-not-exist-error-pattern-common.py"):
+    # resupervise-seat.py reads tmux's absent-session answers with the shared
+    # pattern module; the Stop hooks the supervisor loads from scripts/ load
+    # from here the shared rule that Stop hooks stay silent while the agent
+    # answers a Stop hook.
+    for general_tools_module in (
+            "git-machine-readable-output-runner-and-parser-common.py",
+            "tmux-target-or-server-does-not-exist-error-pattern-common.py",
+            "claude-code-stop-hooks-stay-silent-while-agent-answers-a-stop-hook-rule-common.py"):
         (general_tools_home / general_tools_module).write_text(
             (SUPERVISOR_SCRIPT.parents[1] / "general-tools" / general_tools_module)
             .read_text(encoding="utf-8"), encoding="utf-8")

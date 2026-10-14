@@ -44,6 +44,23 @@ REMINDER_FOR_B01 = (
     "If your reply was not about a stored file or record, carry on; this "
     "reminder comes once per session."
 )
+SUBAGENT_REMINDER_FOR_B01 = (
+    "absence-claim reminder: your reply says a file or record is gone, missing "
+    "or cannot be found (\"are gone\"), and you have not run the locator this "
+    "turn. Files agents call missing are often in another checkout, the "
+    "log-store, a transcript or a backup.\n"
+    "Before you tell anyone it does not exist, run: python3 "
+    "scripts/locate-file-copies-across-machines.py <the file's name>\n"
+    "The agent that dispatched you receives only your last message, so what "
+    "you write now replaces your report unless it contains the report.\n"
+    "If the locator finds it, end with your whole report again, with that "
+    "claim corrected to say where the file is.\n"
+    "If the locator finds nothing, end with your whole report again, with "
+    "that claim saying where you looked, not that the file does not exist.\n"
+    "If your reply was not about a stored file or record, say so in one line, "
+    "then end with your whole report again, unchanged; this reminder comes "
+    "once per subagent."
+)
 
 failures = []
 SUITE_ROOT = Path(tempfile.mkdtemp(prefix="absence-claim-locator-reminder-test-"))
@@ -217,8 +234,19 @@ for case_name, text in [
     ("B03's claim fires", 'I did not locate your "y" to item 5 itself or to item 2, and the review says so.'),
     ("no reply in between fires", "There was no reply from you in between those two messages."),
     ("a ruling never given fires", "That item rests on a ruling you never gave."),
+    ("a backquoted home path fires", "`~/.local/state/claude/fires.jsonl` is gone."),
+    ("a backquoted file name fires", "`fires.jsonl` is gone."),
 ]:
     check(f"trigger: {case_name}", bool(hook.absence_claim_matches(text)), text)
+
+# Pattern 2 fires only after a word naming a stored artifact, so a sentence
+# whose only such word comes from a backquoted path tests the FILE substitution.
+for case_name, text in [
+    ("a backquoted home path", "`~/.local/state/claude/fires.jsonl` is gone."),
+    ("a backquoted file name", "`fires.jsonl` is gone."),
+]:
+    check(f"strip_noise: {case_name} becomes the word FILE",
+          hook.strip_noise(text).split() == ["FILE", "is", "gone."], hook.strip_noise(text))
 
 for case_name, text in [
     ("processes gone are not files", "The child processes are gone now, so the file lock is free."),
@@ -241,6 +269,7 @@ for case_name, text in [
     ("before saying it is gone", "I ran the locator before saying the transcript is gone."),
     ("a glossary entry", "The glossary file is missing an entry for that term."),
     ("nothing is lost", "Nothing in the record is lost by the rename."),
+    ("a backquoted lone tilde", "- **Lost `~` mark:** the mark on `~` words is lost when the reader runs in a separate process."),
 ]:
     check(f"trigger: silent on {case_name}", not hook.absence_claim_matches(text),
           hook.absence_claim_matches(text))
@@ -371,14 +400,14 @@ subagent_payload = {"hook_event_name": "SubagentStop", "agent_id": "agent-one",
                     "transcript_path": "/nonexistent-parent.jsonl",
                     "agent_transcript_path": str(case.transcript)}
 result = case.run(subagent_payload)
-check("a subagent's claim: reminded, read from agent_transcript_path",
-      result.returncode == 0 and blocked_reason(result) == REMINDER_FOR_B01, result.stdout)
+check("a subagent's claim: reminded, read from agent_transcript_path, told to resend its report",
+      result.returncode == 0 and blocked_reason(result) == SUBAGENT_REMINDER_FOR_B01, result.stdout)
 check("a subagent's claim: logged with its event and agent",
       [(line.get("event"), line.get("agent_id")) for line in case.log_lines()]
       == [("SubagentStop", "agent-one")], case.log_lines())
 result = case.run(dict(subagent_payload, agent_id="agent-two"))
 check("another subagent in the same session is reminded on its own",
-      blocked_reason(result) == REMINDER_FOR_B01, result.stdout)
+      blocked_reason(result) == SUBAGENT_REMINDER_FOR_B01, result.stdout)
 result = case.run({"hook_event_name": "SubagentStop", "agent_id": "agent-three",
                    "transcript_path": str(case.transcript)})
 check("a SubagentStop without agent_transcript_path: silent", result.stdout == "", result.stdout)
@@ -390,15 +419,45 @@ check("a SubagentStop whose agent_transcript_path does not exist: exit 0, silent
       result.returncode == 0 and result.stdout == "" and result.stderr == ""
       and case.log_lines() == [], (result.returncode, result.stdout, result.stderr, case.log_lines()))
 
-# --- faults: exit 1, one stderr line, nothing on stdout, the error logged -----------
-
 case = Case()
 result = case.run({"transcript_path": str(case.root / "no-such-transcript.jsonl")})
-check("a missing transcript: reported on stderr, exit 1, nothing on stdout",
-      reported(result, "FileNotFoundError"), (result.returncode, result.stdout, result.stderr))
-check("a missing transcript: the error is logged",
-      [line.get("outcome") for line in case.log_lines()] == ["error"]
-      and "FileNotFoundError" in case.log_lines()[0].get("error", ""), case.log_lines())
+check("a Stop whose transcript_path does not exist: exit 0, silent, nothing logged",
+      result.returncode == 0 and result.stdout == "" and result.stderr == ""
+      and case.log_lines() == [], (result.returncode, result.stdout, result.stderr, case.log_lines()))
+
+# --- faults: exit 1, one stderr line, nothing on stdout, the error logged -----------
+
+
+def run_with_unsearchable_transcript(case, payload_key="transcript_path", **payload):
+    """Run the hook on a transcript inside a directory without search permission."""
+    locked_directory = case.root / "locked"
+    locked_directory.mkdir()
+    (locked_directory / "transcript.jsonl").write_text(case.transcript.read_text())
+    locked_directory.chmod(0)
+    try:
+        return case.run(dict(payload, **{payload_key: str(locked_directory / "transcript.jsonl")}))
+    finally:
+        locked_directory.chmod(0o700)
+
+
+if os.geteuid() == 0:
+    print("SKIP  a transcript that cannot be read: root reads through a directory without "
+          "search permission")
+else:
+    case = Case().user("Where are the transcripts?").assistant_text(B01_CLAIM).write()
+    result = run_with_unsearchable_transcript(case)
+    check("a transcript that cannot be read: reported on stderr, exit 1, nothing on stdout",
+          reported(result, "PermissionError"), (result.returncode, result.stdout, result.stderr))
+    check("a transcript that cannot be read: the error is logged",
+          [line.get("outcome") for line in case.log_lines()] == ["error"]
+          and "PermissionError" in case.log_lines()[0].get("error", ""), case.log_lines())
+
+    case = Case().user("Where are the transcripts?").assistant_text(B01_CLAIM).write()
+    result = run_with_unsearchable_transcript(
+        case, payload_key="agent_transcript_path", hook_event_name="SubagentStop",
+        agent_id="agent-five")
+    check("a subagent transcript that cannot be read: reported on stderr, exit 1",
+          reported(result, "PermissionError"), (result.returncode, result.stdout, result.stderr))
 
 for case_name, stdin_text, fault_words in (
         ("stdin that is not JSON", "not json", "JSONDecodeError"),
@@ -413,9 +472,9 @@ for case_name, stdin_text, fault_words in (
 
 case = Case()
 case.log.mkdir()
-result = case.run({"transcript_path": str(case.root / "no-such-transcript.jsonl")})
+result = case.run(stdin_text="not json")
 check("a fault whose error cannot be logged: still reported on stderr, exit 1",
-      reported(result, "FileNotFoundError"), (result.returncode, result.stdout, result.stderr))
+      reported(result, "JSONDecodeError"), (result.returncode, result.stdout, result.stderr))
 
 case = Case().user("Where are the transcripts?").assistant_text(B01_CLAIM).write()
 case.log.mkdir()

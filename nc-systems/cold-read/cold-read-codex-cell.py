@@ -65,12 +65,16 @@ CREDENTIAL_DIRECTORIES in nc-systems/cold-read/cold-read-cell-common.py).
 `--sandbox workspace-write` lets a reviewer read anything, so the cell runs
 under a named permission profile instead: it extends Codex's `:workspace`
 profile, which writes where workspace-write did, and denies the credential
-directories and file names. Those writable roots are the checkout and the
-temporary directories, so a report outside the checkout, such as a walk draft's
-suggestions in another checkout, would be refused with "Operation not permitted".
-The reviewer writes such a report into a fresh, empty temporary directory, added
-with `--add-dir`, and the shared module moves it to its destination after the
-run; the documents beside the destination never become writable. Codex refuses the two together, so `--sandbox`
+directories and file names. Those writable roots are the checkout and, on
+macOS only, the temporary directories (on Linux they are read-only, below), so a
+report outside the checkout, such as a walk draft's suggestions in another
+checkout, would be refused with "Operation not permitted". The reviewer writes
+such a report into a fresh, empty temporary directory, added with `--add-dir`,
+and the shared module moves it to its destination after the run; the documents
+beside the destination never become writable. A directory added with `--add-dir`
+is writable even inside the read-only /tmp on Linux (measured on ned-box with
+codex-cli 0.159.3: the profile plus `--add-dir` of a fresh mkdtemp() directory,
+and a write there succeeded). Codex refuses the two together, so `--sandbox`
 is gone. Measured 2026-09-28 with canary files, on both machines: under
 workspace-write the reviewer read all three canaries; under the profile it
 read none, still read README.md, and wrote its report. Codex expands a deny
