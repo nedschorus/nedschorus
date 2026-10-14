@@ -448,15 +448,16 @@ def main() -> int:
     reported = record.get(record_key, set())
     # Pruned on every run, so a branch deleted and later recreated under the same name starts fresh.
     record_merge_prune_and_write_telling_failures(set())
+    branch_check_error = None
     try:
         new_branch = unreported_new_branch(checkout, reported)
     except BranchCheckFailure as failure:
         new_branch = ""
-        failure_text = failure_report_once(state, str(failure), BRANCH_CHECK_FAILURE_TEMPLATE)
-        if failure_text:
-            messages.append(failure_text)
+        branch_check_error = str(failure)
+    branch_check_error_untold = (branch_check_error is not None
+                                 and branch_check_error not in state.get("reported_failures", []))
     # A shell command that changed no file and left no new branch has nothing new to list.
-    if (tool_name == SHELL_TOOL_NAME and not new_branch and not messages
+    if (tool_name == SHELL_TOOL_NAME and not new_branch and not messages and not branch_check_error_untold
             and fingerprint == state.get("worktree_fingerprint")):
         return 0
     state["worktree_fingerprint"] = fingerprint
@@ -471,6 +472,13 @@ def main() -> int:
         failure_text = failure_report_once(state, str(failure) or type(failure).__name__)
         if failure_text:
             messages.append(failure_text)
+    else:
+        # Told only when the lister worked, because the branch-check text says names in changed files are
+        # still listed; left unmarked otherwise, so a later run where only the branch check fails tells it.
+        if branch_check_error is not None:
+            failure_text = failure_report_once(state, branch_check_error, BRANCH_CHECK_FAILURE_TEMPLATE)
+            if failure_text:
+                messages.append(failure_text)
 
     state["file_cache"] = file_cache
     # Only the names the reminder shows count as reported; the rest are shown by a later reminder.

@@ -499,6 +499,26 @@ def case_branch_check_failure_is_told_and_the_file_check_still_runs(root):
     check("the file-name check still runs after a failing branch check", "still-checked-name" in context, context)
 
 
+def case_branch_check_and_lister_both_failing_tell_only_the_lister_failure(root):
+    clone = make_clone(root, BASE_MAIN_FILES)
+    hook = load_module("hook_for_both_failures_case", HOOK_PATH)
+    working_lister = hook.load_lister
+
+    def lister_that_fails():
+        raise RuntimeError("planted lister failure")
+    hook.load_lister = lister_that_fails
+    _, both = run_hook_in_process(hook, root, clone, {"tool_name": "Write",
+                                  "tool_input": {"file_path": "a.md"}}, {"symbolic-ref": 128})
+    check("when both checks fail, the lister failure is told", "planted lister failure" in both, both)
+    check("when both checks fail, no line says names in changed files are still listed",
+          "still listed" not in both and "git symbolic-ref exited 128" not in both, both)
+    hook.load_lister = working_lister
+    _, later = run_hook_in_process(hook, root, clone, {"tool_name": "Write",
+                                   "tool_input": {"file_path": "a.md"}}, {"symbolic-ref": 128})
+    check("a later run where only the branch check fails tells the branch-check failure",
+          "git symbolic-ref exited 128" in later and "still listed" in later, later)
+
+
 def case_remote_branch_lookup_failure_is_told_and_no_branch_reported(root):
     for planted, expected_text in ((128, "git show-ref exited 128"), ("timeout", "git show-ref timed out")):
         case_root = root / f"lookup-{planted}"
@@ -1121,6 +1141,7 @@ def main() -> int:
              case_agent_seat_branch_in_its_agent_home_is_not_reported,
              case_agent_home_check_failure_is_told_and_no_branch_reported,
              case_branch_check_failure_is_told_and_the_file_check_still_runs,
+             case_branch_check_and_lister_both_failing_tell_only_the_lister_failure,
              case_remote_branch_lookup_failure_is_told_and_no_branch_reported,
              case_branch_check_failure_on_a_quiet_shell_call_is_told,
              case_hook_reports_once_per_worktree,
