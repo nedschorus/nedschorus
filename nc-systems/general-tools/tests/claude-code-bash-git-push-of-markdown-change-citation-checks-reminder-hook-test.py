@@ -12,6 +12,7 @@ import contextlib
 import importlib.util
 import io
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -104,13 +105,28 @@ def run_main(command, cwd):
 
 
 NOT_CHECKED_OUT_WORDS = "is not what is checked out in"
+FAILURE_START = hook.HOOK_NAME + ": could not check whether this push changes a Markdown file"
 
 
 def is_reminder(text, top, changed_file="docs/page.md"):
-    return (isinstance(text, str) and text.startswith(hook.HOOK_NAME + ": this push sends")
+    return (isinstance(text, str) and text.startswith(hook.HOOK_NAME + ": this push goes ahead now. It sends")
             and changed_file in text
             and f"cd {top} && python3 scripts/dangling-path-citation-check.py" in text
             and f"cd {top} && python3 scripts/stale-code-citation-check.py" in text)
+
+
+def is_failure_line(text, words):
+    return isinstance(text, str) and "\n" not in text and text.startswith(FAILURE_START) and words in text
+
+
+def run_hook_file(hook_file, command):
+    """Run a copy of the hook as Claude Code does; return (exit code, added context or None, stderr)."""
+    payload = {"tool_name": "Bash", "cwd": "/", "tool_input": {"command": command}}
+    completed = subprocess.run([sys.executable, str(hook_file)], input=json.dumps(payload),
+                               capture_output=True, text=True, timeout=60)
+    text = completed.stdout.strip()
+    context = json.loads(text)["hookSpecificOutput"]["additionalContext"] if text else None
+    return completed.returncode, context, completed.stderr
 
 
 def main():
@@ -123,6 +139,35 @@ def main():
         check("a push of a branch that changes a .md file is reminded", is_reminder(text, top), repr(text))
         check("a reminder for a branch that is not checked out says to check it out first",
               isinstance(text, str) and f"markdown-branch {NOT_CHECKED_OUT_WORDS} {top}" in text, repr(text))
+        check("the check-out line comes before the two commands it must precede",
+              isinstance(text, str) and NOT_CHECKED_OUT_WORDS in text
+              and text.index(NOT_CHECKED_OUT_WORDS) < text.index(f"cd {top} && python3"), repr(text))
+
+        text = run_main("git push origin +markdown-branch", repository)
+        check("a forced +ref push of a branch that changes a .md file is reminded about that branch",
+              is_reminder(text, top) and "It sends markdown-branch," in text, repr(text))
+
+        text = run_main("git push origin markdown-branch markdown-deleting-branch", repository)
+        check("a push of two branches that both change a .md file gives a reminder for each",
+              isinstance(text, str) and text.count(": this push goes ahead now.") == 2
+              and "It sends markdown-branch," in text and "It sends markdown-deleting-branch," in text,
+              repr(text))
+
+        text = run_main("git push origin code-branch markdown-branch", repository)
+        check("a push of a branch without a .md change and one with gives the reminder for the second",
+              is_reminder(text, top) and "It sends markdown-branch," in text
+              and "code-branch" not in text, repr(text))
+
+        text = run_main("git status && git push origin markdown-branch", repository)
+        check("a git command that moves no ref, earlier in the call, leaves the push reminded",
+              is_reminder(text, top), repr(text))
+        for command in ("git commit -q -m x && git push origin markdown-branch",
+                        "(git switch -q markdown-branch) && git push"):
+            text = run_main(command, repository)
+            subcommand = "commit" if "commit" in command else "switch"
+            check(f"a push after a git {subcommand} in the same call gives the failure line naming it: {command}",
+                  is_failure_line(text, f"an earlier command in this call, git {subcommand}, can change what"),
+                  repr(text))
 
         text = run_main("git push origin markdown-deleting-branch", repository)
         check("a push of a branch that deletes a .md file is reminded",
@@ -133,7 +178,7 @@ def main():
         check("a bare push after cd, of a checked-out branch that changes a .md file, is reminded",
               is_reminder(text, top), repr(text))
         check("a reminder for a bare push names the checked-out branch and gives no check-out line",
-              isinstance(text, str) and "this push sends markdown-branch," in text
+              isinstance(text, str) and "It sends markdown-branch," in text
               and NOT_CHECKED_OUT_WORDS not in text, repr(text))
         text = run_main(f"timeout 60 git -C {repository} push -u origin HEAD:markdown-branch", root)
         check("a push behind a wrapper, with -C and a HEAD refspec, is reminded",
@@ -143,8 +188,22 @@ def main():
         text = run_main("git push origin code-branch", repository)
         check("a push of a branch that changes no .md file is silent", text is None, repr(text))
 
-        text = run_main("git push origin --delete markdown-branch", repository)
-        check("a push that deletes a remote branch is silent", text is None, repr(text))
+        # With markdown-branch checked out, a deletion read as a push of HEAD would be reminded.
+        git(repository, "switch", "-q", "markdown-branch")
+        for command in ("git push origin --delete markdown-branch", "git push -d origin markdown-branch",
+                        "git push origin :markdown-branch"):
+            text = run_main(command, repository)
+            check(f"a push that deletes a remote branch is silent: {command}", text is None, repr(text))
+        git(repository, "switch", "-q", "base")
+
+        for command, words in (
+                ("git -C $CHECKOUT push origin markdown-branch",
+                 "the push runs in a directory this hook cannot read, $CHECKOUT"),
+                ("cd $HOME/x && git push", "the push runs in a directory this hook cannot read, $HOME/x"),
+                ('git push origin "$BRANCH"', "the push names a ref this hook cannot read, $BRANCH")):
+            text = run_main(command, repository)
+            check(f"a push this hook cannot read gives the failure line: {command}",
+                  is_failure_line(text, words), repr(text))
 
         for command in ("git status", "git log --oneline -1 markdown-branch",
                         'echo "git push origin markdown-branch"'):
@@ -190,6 +249,44 @@ def main():
                   isinstance(text, str) and "\n" not in text
                   and text.startswith(hook.HOOK_NAME + ": could not check") and words in text,
                   repr(text))
+
+        git(repository, "update-ref", "refs/remotes/origin/main", "base")
+        clock_now = [0.0]
+        timeouts = []
+
+        def runner_advancing_clock(argv, **options):
+            timeouts.append(options["timeout"])
+            clock_now[0] += 15
+            return real_run(argv, **options)
+
+        messages = hook.messages_for_command("git push origin markdown-branch", str(repository),
+                                             runner_advancing_clock, clock=lambda: clock_now[0])
+        check("each git call gets at most the time left of the shared budget",
+              timeouts == [hook.GIT_TIMEOUT_SECONDS, hook.GIT_BUDGET_SECONDS - 15], repr(timeouts))
+        check("a spent git budget gives the one failure line and makes no more git calls",
+              len(messages) == 1 and is_failure_line(
+                  messages[0], f"the hook's {hook.GIT_BUDGET_SECONDS:.0f}-second limit for git ran out before git")
+              and len(timeouts) == 2, repr(messages))
+
+        settings = json.loads((REPOSITORY_ROOT / ".claude" / "settings.json").read_text())
+        registered = [entry.get("timeout") for block in settings["hooks"]["PreToolUse"]
+                      if block.get("matcher") == "Bash" for entry in block["hooks"]
+                      if HOOK_SCRIPT.name in entry["command"]]
+        check("the registered hook timeout exceeds the git budget, so the hook ends before it is killed",
+              len(registered) == 1 and isinstance(registered[0], (int, float))
+              and registered[0] > hook.GIT_BUDGET_SECONDS, repr(registered))
+
+        # A copy without scripts/ beside it cannot load the force-push guard's file.
+        copy = root / "copy" / "nc-systems" / "general-tools" / HOOK_SCRIPT.name
+        copy.parent.mkdir(parents=True)
+        shutil.copy(HOOK_SCRIPT, copy)
+        code, text, stderr = run_hook_file(copy, "ls -la")
+        check("when the force-push guard's file cannot load, a command without the word push is silent",
+              code == 0 and text is None and not stderr, f"exit {code}, {text!r}, {stderr!r}")
+        code, text, stderr = run_hook_file(copy, "git push origin markdown-branch")
+        check("when the force-push guard's file cannot load, a push gives the one failure line",
+              code == 0 and is_failure_line(text, "could not be loaded: FileNotFoundError"),
+              f"exit {code}, {text!r}, {stderr!r}")
 
         other = root / "other"
         other.mkdir()
