@@ -1,8 +1,7 @@
 #!/bin/sh
-# Refuses a push from a mutation-testing worktree, a push that loses a test case main
-# has without a commit message naming it, and a push of a branch that conflicts
-# with main; lets every other push through. The work is done by two Python files,
-# scripts/git-client-side-hooks-pre-push-refusal-of-lost-test-cases-and-of-pushes-from-mutation-testing-worktrees.py
+# Refuses a push from a mutation-testing worktree, and a push of a branch that
+# conflicts with main; lets every other push through. The work is done by two
+# Python files, scripts/git-client-side-hooks-pre-push-mutation-testing-worktree-push-refusal.py
 # and scripts/git-client-side-hooks-pre-push-conflict-check.py, whose docstrings
 # have the reasons and what is and is not checked. This file only guards the way
 # into them.
@@ -31,7 +30,7 @@
 
 hook_directory=$(dirname "$0")
 conflict_check="$hook_directory/../git-client-side-hooks-pre-push-conflict-check.py"
-lost_case_and_copy_check="$hook_directory/../git-client-side-hooks-pre-push-refusal-of-lost-test-cases-and-of-pushes-from-mutation-testing-worktrees.py"
+mutation_testing_worktree_check="$hook_directory/../git-client-side-hooks-pre-push-mutation-testing-worktree-push-refusal.py"
 refuse_push_status=10
 checked_remote=origin
 tell_user_line="Tell the user this whole message, including any error printed just above it: the next push on this machine may go unchecked the same way."
@@ -80,18 +79,18 @@ fi
 
 # Every push goes to this check, since a push from a mutation-testing worktree is refused
 # whatever it pushes. It fails open, as the conflict check below does.
-if [ -f "$lost_case_and_copy_check" ]; then
-    printf '%s\n' "$pushed_refs" | python3 "$lost_case_and_copy_check" "$@"
-    lost_case_and_copy_status=$?
-    if [ "$lost_case_and_copy_status" -eq "$refuse_push_status" ]; then
+if [ -f "$mutation_testing_worktree_check" ]; then
+    printf '%s\n' "$pushed_refs" | python3 "$mutation_testing_worktree_check" "$@"
+    mutation_testing_worktree_status=$?
+    if [ "$mutation_testing_worktree_status" -eq "$refuse_push_status" ]; then
         exit 1
     fi
-    if [ "$lost_case_and_copy_status" -ne 0 ]; then
-        echo "pre-push: the check for lost test cases and mutation-testing worktrees, $lost_case_and_copy_check, exited with status $lost_case_and_copy_status, so this push was not checked for either." >&2
+    if [ "$mutation_testing_worktree_status" -ne 0 ]; then
+        echo "pre-push: the check for mutation-testing worktrees, $mutation_testing_worktree_check, exited with status $mutation_testing_worktree_status, so this push was not checked for one." >&2
         echo "$tell_user_line" >&2
     fi
 else
-    echo "pre-push: the check for lost test cases and mutation-testing worktrees did not run, because $lost_case_and_copy_check is missing, so this push was not checked for either." >&2
+    echo "pre-push: the check for mutation-testing worktrees did not run, because $mutation_testing_worktree_check is missing, so this push was not checked for one." >&2
     echo "$tell_user_line" >&2
 fi
 

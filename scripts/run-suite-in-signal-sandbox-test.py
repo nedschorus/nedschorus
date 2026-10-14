@@ -886,21 +886,111 @@ else:
         (repository / "spawns-test.py").unlink()
         (repository / "heartbeat-child.py").unlink()
 
-        # --- A copy that cannot be removed is reported, not hidden ------------
-        real_git = program.runner.git
-        program.runner.git = lambda top, *arguments: subprocess.CompletedProcess(
-            arguments, 128, "", "fatal: the copy is locked")
-        stderr = io.StringIO()
-        try:
-            with contextlib.redirect_stderr(stderr):
-                program.mutation_testing_worktree_remove(repository, scratch / "repo-mutation-testing-worktree")
-        finally:
-            program.runner.git = real_git
-        check("a mutation-testing worktree that cannot be removed is reported with the command that "
-              "removes it",
-              "could not be removed (fatal: the copy is locked)" in stderr.getvalue()
-              and f"git -C {repository} worktree remove --force {scratch / 'repo-mutation-testing-worktree'}"
-              in stderr.getvalue(), stderr.getvalue())
+        # --- Each failure while making, filling or removing the copy -----------
+        def main_in_this_process(*arguments, git_fails_on=None, fill=None):
+            """Run main here, with runner.git failing on the git subcommand git_fails_on."""
+            real_git, real_fill = program.runner.git, program.mutation_testing_worktree_fill
+            saved_handlers = {number: signal.getsignal(number)
+                              for number in program.INTERRUPTING_SIGNALS}
+
+            def git(top, *git_arguments):
+                if git_fails_on is not None and git_arguments[:len(git_fails_on)] == git_fails_on:
+                    return subprocess.CompletedProcess(git_arguments, 128, "", "fatal: injected")
+                return real_git(top, *git_arguments)
+            program.runner.git = git
+            if fill is not None:
+                program.mutation_testing_worktree_fill = fill
+            output = io.StringIO()
+            try:
+                with contextlib.redirect_stdout(output), contextlib.redirect_stderr(output):
+                    code = program.main([*arguments, "--checkout", str(repository),
+                                         "--lock-file", str(scratch / "run.lock")])
+            finally:
+                program.runner.git, program.mutation_testing_worktree_fill = real_git, real_fill
+                for number, handler in saved_handlers.items():
+                    signal.signal(number, handler)
+            lines = output.getvalue().strip().splitlines()
+            return code, (lines[-1] if lines else ""), output.getvalue()
+
+        for failing, wanted in ((("worktree", "add"), "could not be made: fatal: injected"),
+                                (("ls-files", "-z", "--cached"), "git ls-files failed in"),
+                                (("ls-files", "-z"), "git ls-files failed in")):
+            if failing == ("ls-files", "-z"):
+                # Only the listing in the copy: the listing in the checkout passes --cached.
+                real_git = program.runner.git
+
+                def failing_in_copy(top, *git_arguments, real_git=real_git):
+                    if git_arguments == ("ls-files", "-z"):
+                        return subprocess.CompletedProcess(git_arguments, 128, "", "fatal: injected")
+                    return real_git(top, *git_arguments)
+                program.runner.git = failing_in_copy
+                try:
+                    code, last, output = main_in_this_process("doubling-test.py", "--mutant",
+                                                              str(killing))
+                finally:
+                    program.runner.git = real_git
+            else:
+                code, last, output = main_in_this_process("doubling-test.py", "--mutant",
+                                                          str(killing), git_fails_on=failing)
+            check(f"when git {' '.join(failing)} fails, the run is not run, says so, and leaves "
+                  f"no worktree", code == program.EXIT_NOT_RUN and last.startswith("VERDICT: not run")
+                  and wanted in last and worktrees(repository) == [str(repository)]
+                  and unchanged(repository), (code, output, worktrees(repository)))
+
+        for raised in (program.Terminated("SIGTERM"), OSError("disk full")):
+            def failing_fill(top, copy, raised=raised):
+                raise raised
+            try:
+                code, last, output = main_in_this_process("doubling-test.py", "--mutant",
+                                                          str(killing), fill=failing_fill)
+            except OSError:
+                code, last, output = None, "", "the OSError reached the caller"
+            check(f"a {type(raised).__name__} while the copy is filled leaves no worktree registered",
+                  worktrees(repository) == [str(repository)] and unchanged(repository),
+                  (code, output, worktrees(repository)))
+
+        code, last, output = main_in_this_process("doubling-test.py", "--mutant", str(killing),
+                                                  git_fails_on=("worktree", "remove"))
+        left = [path for path in worktrees(repository) if path != str(repository)]
+        check("a mutation-testing worktree that cannot be removed makes the run not run, not a "
+              "killed mutant, and names the command that removes it and what the run found",
+              code == program.EXIT_NOT_RUN and last.startswith("VERDICT: not run")
+              and "could not be removed (fatal: injected)" in last
+              and f"git -C {repository} worktree remove --force" in last
+              and "before that, the run ended with: VERDICT: mutant killed" in last
+              and len(left) == 1, (code, output, left))
+        for path in left:
+            subprocess.run(["git", "-C", str(repository), "worktree", "remove", "--force", path],
+                           capture_output=True, check=True)
+
+        # --- A staged deletion and a staged rename are carried into the copy ---
+        for name in ("staged-removed.txt", "renamed-from.txt"):
+            (repository / name).write_text(name + "\n")
+        for git_arguments in (["add", "-A"], ["-c", "user.name=t", "-c", "user.email=t@t",
+                                              "commit", "-qm", "b"],
+                              ["rm", "-q", "staged-removed.txt"],
+                              ["mv", "renamed-from.txt", "renamed-to.txt"]):
+            subprocess.run(["git", "-C", str(repository), *git_arguments],
+                           capture_output=True, check=True)
+        (repository / "sees-test.py").write_text(
+            "import os, sys\n"
+            "for name in ('staged-removed.txt', 'renamed-from.txt', 'renamed-to.txt'):\n"
+            "    print('present:', name, os.path.exists(name))\n"
+            "sys.path.insert(0, '.')\n"
+            "import doubling\n"
+            "sys.exit(0 if doubling.double(2) == 4 else 1)\n")
+        completed, last = run_program(scratch, repository, "sees-test.py", "--mutant", str(killing))
+        check("a file staged for deletion, and the old name of a staged rename, are not in the "
+              "mutation-testing worktree; the new name is",
+              last.startswith("VERDICT: mutant killed")
+              and "present: staged-removed.txt False" in completed.stdout
+              and "present: renamed-from.txt False" in completed.stdout
+              and "present: renamed-to.txt True" in completed.stdout,
+              (completed.returncode, completed.stdout))
+        (repository / "sees-test.py").unlink()
+        for git_arguments in (["reset", "-q", "--hard", "HEAD~1"],):
+            subprocess.run(["git", "-C", str(repository), *git_arguments],
+                           capture_output=True, check=True)
 
         # --- The lock ---------------------------------------------------------
         lock_path = scratch / "run.lock"

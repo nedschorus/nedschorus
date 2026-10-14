@@ -202,19 +202,23 @@ def files_the_patch_changes(top, patch):
 
 
 def mutation_testing_worktree_make(top, work):
-    """Return a git worktree of top, in work, holding top's files as they are now.
-
-    Its directory name ends in MUTATION_TESTING_WORKTREE_LABEL. Tracked files, with their uncommitted
-    edits, and untracked files that are not ignored are copied; a tracked file deleted in top
-    is deleted in the copy.
-    """
+    """Return a new git worktree of top's HEAD, in work, whose directory name ends in the label."""
     copy = work / f"{top.name}{MUTATION_TESTING_WORKTREE_LABEL}"
     added = runner.git(top, "worktree", "add", "--quiet", "--detach", str(copy), "HEAD")
     if added.returncode != 0:
         raise NotRun(f"the mutation-testing worktree {copy} could not be made: {added.stderr.strip()}")
+    return copy
+
+
+def mutation_testing_worktree_fill(top, copy):
+    """Make copy hold top's files as they are now.
+
+    Tracked files, with their uncommitted edits, and untracked files that are not ignored are
+    copied. A file of HEAD that top no longer has, whether deleted, staged for deletion or
+    renamed, is deleted in the copy.
+    """
     listed = runner.git(top, "ls-files", "-z", "--cached", "--others", "--exclude-standard")
     if listed.returncode != 0:
-        mutation_testing_worktree_remove(top, copy)
         raise NotRun(f"git ls-files failed in {top}: {listed.stderr.strip()}")
     for relative in sorted(set(path for path in listed.stdout.split("\0") if path)):
         source, target = top / relative, copy / relative
@@ -223,18 +227,23 @@ def mutation_testing_worktree_make(top, work):
             if target.is_symlink() or target.exists():
                 target.unlink()
             shutil.copy2(source, target, follow_symlinks=False)
-        elif not source.exists() and (target.is_symlink() or target.is_file()):
+    of_head = runner.git(copy, "ls-files", "-z")
+    if of_head.returncode != 0:
+        raise NotRun(f"git ls-files failed in {copy}: {of_head.stderr.strip()}")
+    for relative in (path for path in of_head.stdout.split("\0") if path):
+        target = copy / relative
+        if not os.path.lexists(top / relative) and (target.is_symlink() or target.is_file()):
             target.unlink()
-    return copy
 
 
 def mutation_testing_worktree_remove(top, copy):
-    """Remove the mutation-testing worktree and its worktree record; say so when it cannot be removed."""
+    """Remove the mutation-testing worktree and its worktree record; return why it could not be, or None."""
     removed = runner.git(top, "worktree", "remove", "--force", str(copy))
     if removed.returncode != 0:
-        print(f"{PROGRAM}: the mutation-testing worktree {copy} could not be removed "
-              f"({removed.stderr.strip()}). Remove it with: git -C {top} worktree remove "
-              f"--force {copy}", file=sys.stderr, flush=True)
+        return (f"the mutation-testing worktree {copy} could not be removed "
+                f"({removed.stderr.strip()}). Remove it with: git -C {top} worktree remove "
+                f"--force {copy}")
+    return None
 
 
 def remove_cached_bytecode(source):
@@ -480,7 +489,11 @@ def run(arguments, platform):
                                           platform=platform)
                 return verdict(code, mutant=False)
             copy = mutation_testing_worktree_make(top, work)
+            outcome = None
+            # Removal is armed before the copy is filled, so a failure or a signal while filling
+            # does not leave the worktree registered.
             try:
+                mutation_testing_worktree_fill(top, copy)
                 paths = files_the_patch_changes(copy, patch)
                 baseline = run_suite_confined(copy, suite, interpreter, sandbox_prefix,
                                               proof_file, platform=platform)
@@ -499,9 +512,14 @@ def run(arguments, platform):
                       f"worktree {copy}; {top} is not changed", flush=True)
                 code = run_suite_confined(copy, suite, interpreter, sandbox_prefix, proof_file,
                                           bytecode_dir=work / "bytecode", platform=platform)
-                return verdict(code, mutant=True)
+                outcome = verdict(code, mutant=True)
             finally:
-                mutation_testing_worktree_remove(top, copy)
+                not_removed = mutation_testing_worktree_remove(top, copy)
+                if not_removed is not None:
+                    # A worktree left behind is a failure, whatever the run found.
+                    found = outcome[0] if outcome else sys.exc_info()[1]
+                    raise NotRun(f"{not_removed}; before that, the run ended with: {found}")
+            return outcome
     finally:
         lock_handle.close()
 

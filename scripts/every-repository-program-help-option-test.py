@@ -65,8 +65,7 @@ EXEMPT_PROGRAMS = {
     "scripts/git-client-side-hooks-pre-push-conflict-check.py":
         "run only by the git pre-push hook scripts/git-client-side-hooks/pre-push, "
         "which hands it git's arguments and the refs being pushed on stdin",
-    "scripts/git-client-side-hooks-pre-push-refusal-of-lost-test-cases-and-of-pushes-from-"
-    "mutation-testing-worktrees.py":
+    "scripts/git-client-side-hooks-pre-push-mutation-testing-worktree-push-refusal.py":
         "run only by the git pre-push hook scripts/git-client-side-hooks/pre-push, "
         "which hands it git's arguments and the refs being pushed on stdin",
 }
