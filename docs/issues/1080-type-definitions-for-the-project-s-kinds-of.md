@@ -39,3 +39,12 @@ Define GHI-MDs and designs together, first: whether a design lives inside its GH
 - GHI [wiki-write skill, and the detect-set-aside-ask hook that enforces it — checking the file, not the tool call](https://github.com/nedschorus/nedschorus/issues/343): where the wiki-page definitions land.
 - GHI [Genre-suffix naming for non-reviewable documents (-log, -report, -capture), and mechanical exclusion from the review instruments](https://github.com/nedschorus/nedschorus/issues/152): file-name suffixes for other kinds of document.
 - GHI [One documentation tree in place of the wiki and the rest of docs, with Obsidian opened on it](https://github.com/nedschorus/nedschorus/issues/1066): may move where wiki pages live.
+
+## Provisional additions (not yet vetted by the user)
+
+- The agent-seat cold-read-improvement holds a task for the GHI-MD definition: best-practice trawl, draft, full cold read, approval-walk; not started (2026-10-14).
+- The agent-seat cold-read-improvement holds a task for the designs definition: best-practice trawl, draft, full cold read, approval-walk; not started (2026-10-14).
+- The agent-seat cold-read-improvement holds a task for the project glossary entry definition: best-practice trawl, draft, full cold read, approval-walk; not started (2026-10-14).
+- The agent-seat cold-read-improvement holds a task for the seat-brief definition: best-practice trawl, draft, full cold read, approval-walk; not started (2026-10-14).
+- The agent-seat cold-read-improvement holds a task for the handoff next-step file definition: best-practice trawl, draft, full cold read, approval-walk; not started (2026-10-14).
+- The agent-seat cold-read-improvement holds a task for the definition of wiki pages other than overviews: best-practice trawl, draft, full cold read, approval-walk; not started (2026-10-14).
