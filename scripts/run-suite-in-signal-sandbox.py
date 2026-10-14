@@ -71,6 +71,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import traceback
 from pathlib import Path
 
 PROGRAM = "run-suite-in-signal-sandbox"
@@ -564,7 +565,15 @@ def main(argv=None, platform=None):
     argv = sys.argv[1:] if argv is None else argv
     if argv[:1] == [INSIDE_CHECK_OPTION]:
         return inside_check_then_exec(argv[1], argv[3:])
-    arguments = parse_arguments(argv)
+    try:
+        arguments = parse_arguments(argv)
+    except SystemExit as exit_request:
+        if exit_request.code in (0, None):
+            raise
+        # argparse has printed what was wrong; the verdict line still ends the output.
+        print("VERDICT: not run — the arguments could not be read; see the error above",
+              flush=True)
+        return EXIT_NOT_RUN
     install_interruption_handlers()
     try:
         line, code = run(arguments, sys.platform if platform is None else platform)
@@ -578,6 +587,12 @@ def main(argv=None, platform=None):
     except (Terminated, KeyboardInterrupt) as interruption:
         line = (f"VERDICT: not run — interrupted ({type(interruption).__name__} "
                 f"{interruption}); the checkout was not changed")
+        code = EXIT_NOT_RUN
+    except Exception as error:
+        # Any other failure is the program's, not the suite's: exit 1 would read as a survivor.
+        traceback.print_exc()
+        line = (f"VERDICT: not run — this program failed: {type(error).__name__}: {error}; "
+                f"the traceback is printed above")
         code = EXIT_NOT_RUN
     print(line, flush=True)
     return code
