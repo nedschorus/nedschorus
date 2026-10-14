@@ -411,13 +411,19 @@ COMMAND_AS_FENCED_CODE_BLOCK_INSTRUCTION = (
     "backticks, or of more backticks than the longest run of backticks in that command")
 
 
-def tree_sitter_bash_install_failure_report_words_build(host, install_output, consequence):
+def tree_sitter_bash_install_failure_report_words_build(host, install_output, consequence, python_version=None):
     """Return the words to report when tree-sitter-bash is missing on host and installing it failed.
 
     consequence says what goes undone because of it; the words end with what the install printed.
     """
     where, install = python_libraries_pinned_requirements_install_if_missing_then_import_common.pinned_requirements_by_hand_install_command(
-        host, REQUIREMENTS_FILE)
+        host, REQUIREMENTS_FILE, python_version)
+    if install is None:
+        instruction = python_libraries_pinned_requirements_install_if_missing_then_import_common.python_below_minimum_version_instruction(
+            host, python_version)
+        return (f"\"tree-sitter-bash is missing on {host} and could not be installed, so "
+                f"{consequence}. {instruction}\" "
+                f"Then pass on what the install printed, quoted as it is: {install_output}")
     return (f"\"tree-sitter-bash is missing on {host} and could not be installed, so "
             f"{consequence}. To install it by hand, run this command {where}:\" Then give the "
             f"install command on a line of its own:\n"

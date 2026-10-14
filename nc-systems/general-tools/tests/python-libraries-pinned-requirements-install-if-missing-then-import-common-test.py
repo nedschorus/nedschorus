@@ -42,7 +42,8 @@ def check(name, condition, detail=None):
 
 
 HALF_IMPORTED_PACKAGE = "nedschorus_install_test_half_imported_package"
-UNRELATED_MODULE = "nedschorus_install_test_unrelated_module"
+# Shares the package name as a prefix, so a drop that matched by prefix would remove it too.
+UNRELATED_MODULE = HALF_IMPORTED_PACKAGE + "_x"
 
 
 def libraries_after(installs_needed):
@@ -103,7 +104,7 @@ with tempfile.TemporaryDirectory() as scratch:
           result == "the libraries" and raised is None and state["installs"] == 1, (result, state))
     check("a half-imported package's submodules are dropped before each import under the lock",
           state["imports"] == 2 and state["stale_submodule_seen"] == 0, state)
-    check("modules outside the named packages stay loaded", UNRELATED_MODULE in sys.modules)
+    check("modules outside the named packages stay loaded, one whose name starts with a named package's name included", UNRELATED_MODULE in sys.modules)
 
     importer, installer, package_names, state = libraries_after(0)
     result, raised = install_then_import(state_directory, importer, installer, package_names, 1000.0)
@@ -317,11 +318,27 @@ try:
 except install.PythonLibrariesPinnedRequirementsInstallOrImportFailed as error:
     raised = error
 check("below Python 3.11 pip does not run, and the failure names the interpreter, its version "
-      "and the fix",
+      "and the minimum",
       raised is not None and not hasattr(old_python_run, "command")
       and sys.executable in raised.install_output and "Python 3.9.6" in raised.install_output
-      and "3.11 or later" in raised.install_output and "Homebrew" in raised.install_output,
+      and "Python 3.11" in raised.install_output,
       raised)
+for host in ("Neds-MacBook-Pro", "ned-box"):
+    where, command = install.pinned_requirements_by_hand_install_command(
+        host, python_version=(3, 9, 6))
+    check(f"below Python 3.11 no by-hand install command is offered, on {host}",
+          command is None and where == f"on {host}", (where, command))
+instruction = install.python_below_minimum_version_instruction("Neds-MacBook-Pro", (3, 10, 14))
+check("below Python 3.11 the instruction names the interpreter, its version, the minimum, the PATH "
+      "fix and the rerun, and no pip command",
+      instruction is not None and sys.executable in instruction and "Python 3.10.14" in instruction
+      and "Python 3.11 or later on Neds-MacBook-Pro" in instruction and "Homebrew" in instruction
+      and str(Path(sys.executable).parent) in instruction and "next run" in instruction
+      and "pip" not in instruction, instruction)
+check("at Python 3.11 there is no below-minimum instruction, and the by-hand command is offered",
+      install.python_below_minimum_version_instruction("h", (3, 11, 0)) is None
+      and install.pinned_requirements_by_hand_install_command("h", python_version=(3, 11, 0))[1]
+      is not None)
 run = runner_exiting(0)
 install.pinned_requirements_pip_install(8, run, python_version=(3, 11, 0))
 check("at Python 3.11 pip runs", hasattr(run, "command"))
@@ -351,18 +368,23 @@ for groups in settings["hooks"].values():
                 continue
             script_source = (REPOSITORY_ROOT / script.group(1)).read_text(encoding="utf-8")
             if "python-libraries-pinned-requirements-install-if-missing-then-import-common.py" in script_source:
-                timeout_source = script_source
+                timeout_source, loads = script_source, "the shared module"
             elif "shell-command-tree-sitter-bash-reader-common.py" in script_source:
-                timeout_source = reader_source
+                timeout_source, loads = reader_source, "the shell reader"
             else:
                 continue
             install_timeout = int(timeout_pattern.search(timeout_source).group(1))
-            installing_hooks.append((script.group(1), install_timeout, registered.get("timeout")))
+            installing_hooks.append((script.group(1), install_timeout, registered.get("timeout"), loads))
 too_short = [entry for entry in installing_hooks
              if entry[2] is None or 2 * entry[1] >= entry[2]]
 check("every registered hook that may install the pinned libraries has a timeout longer than "
       "two installs",
-      len(installing_hooks) >= 2 and not too_short, (too_short, installing_hooks))
+      not too_short, (too_short, installing_hooks))
+# Each way a hook reaches the install must be found, or the case above checks nothing for it.
+check("the timeout case finds the hard-wrap reminder and a Bash guard that loads the shell reader",
+      ("scripts/markdown-edit-hard-wrapped-paragraph-reminder-hook.py", "the shared module")
+      in [(entry[0], entry[3]) for entry in installing_hooks]
+      and any(entry[3] == "the shell reader" for entry in installing_hooks), installing_hooks)
 
 print("all cases passed" if not failures else f"{failures} case(s) failed")
 sys.exit(1 if failures else 0)

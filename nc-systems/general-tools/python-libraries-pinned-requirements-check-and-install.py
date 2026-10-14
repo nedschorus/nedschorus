@@ -76,8 +76,9 @@ def missing_libraries(pins, versions):
 
 
 def check_and_install(host, runner=subprocess.run, installer=None,
-                      requirements_file=python_libraries_pinned_requirements_install_if_missing_then_import_common.PINNED_REQUIREMENTS_FILE):
-    """Return (exit status, report lines)."""
+                      requirements_file=python_libraries_pinned_requirements_install_if_missing_then_import_common.PINNED_REQUIREMENTS_FILE,
+                      python_version=None):
+    """Return (exit status, report lines); python_version stands in for this process's Python in tests."""
     if installer is None:
         def installer():
             return python_libraries_pinned_requirements_install_if_missing_then_import_common.pinned_requirements_pip_install(
@@ -98,9 +99,17 @@ def check_and_install(host, runner=subprocess.run, installer=None,
     return 1, [f"{host}: these pinned Python libraries are still missing after an install:",
                *(f"  {line}" for line in still_missing),
                f"What the install printed: {install_output or '(nothing)'}",
-               "To install them by hand, run this command {}: {}".format(
-                   *python_libraries_pinned_requirements_install_if_missing_then_import_common.pinned_requirements_by_hand_install_command(
-                       host, requirements_file))]
+               by_hand_install_line(host, requirements_file, python_version)]
+
+
+def by_hand_install_line(host, requirements_file, python_version=None):
+    """Return the report line that says how the user installs the pinned libraries by hand on host."""
+    install = python_libraries_pinned_requirements_install_if_missing_then_import_common
+    where, command = install.pinned_requirements_by_hand_install_command(host, requirements_file,
+                                                                        python_version)
+    if command is None:
+        return install.python_below_minimum_version_instruction(host, python_version)
+    return f"To install them by hand, run this command {where}: {command}"
 
 
 def main(arguments=None):

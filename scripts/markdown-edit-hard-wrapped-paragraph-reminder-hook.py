@@ -83,6 +83,14 @@ PARSER_MISSING_MESSAGE = (
     "command on a line of its own:\n"
     "{command}\n"
     "Then pass on what the install printed, quoted as it is: {install_output}")
+PARSER_MISSING_BELOW_MINIMUM_PYTHON_MESSAGE = (
+    "markdown-edit-hard-wrapped-paragraph-reminder: markdown-it-py is missing on {host} and "
+    "installing it failed, so the paragraphs you just wrote were not checked for hard wraps.\n"
+    "Go on with your task, and write each paragraph and list item as one line, however long.\n"
+    "Tell the user, or, if you are a subagent, the agent that dispatched you, in these words: "
+    "\"markdown-it-py is missing on {host} and could not be installed, so the hard-wrap reminder "
+    "is off there. {instruction}\" "
+    "Then pass on what the install printed, quoted as it is: {install_output}")
 # PostToolUse hooks run under a 30-second timeout; a cached wheel installs in about a second.
 INSTALL_TIMEOUT_SECONDS = 8
 INSTALL_STATE_DIRECTORY = Path.home() / ".cache" / "nedschorus-markdown-edit-hard-wrapped-paragraph-reminder"
@@ -119,11 +127,16 @@ def _install_pinned_python_libraries(runner=subprocess.run):
         INSTALL_TIMEOUT_SECONDS, runner)
 
 
-def parser_missing_message(error, host=None):
+def parser_missing_message(error, host=None, python_version=None):
     """Return the stderr text for markdown-it-py missing on this machine and its install failed."""
     host = host or socket.gethostname().split(".")[0]
-    where, command = (python_libraries_pinned_requirements_install_if_missing_then_import_common()
-                      .pinned_requirements_by_hand_install_command(host))
+    install = python_libraries_pinned_requirements_install_if_missing_then_import_common()
+    where, command = install.pinned_requirements_by_hand_install_command(
+        host, python_version=python_version)
+    if command is None:
+        return PARSER_MISSING_BELOW_MINIMUM_PYTHON_MESSAGE.format(
+            host=host, instruction=install.python_below_minimum_version_instruction(host, python_version),
+            install_output=error.install_output)
     return PARSER_MISSING_MESSAGE.format(host=host, where=where, command=command,
                                          install_output=error.install_output)
 

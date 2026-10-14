@@ -140,6 +140,14 @@ check("on another machine the by-hand command is run there as it is",
       lines[-1].startswith(f"To install them by hand, run this command on Neds-MacBook-Pro: "
                            f"{sys.executable} -m pip install --user"), lines[-1])
 
+status, lines = checker.check_and_install("ned-box", version_reader(ONE_MISSING),
+                                         installer_that("nothing was installed"),
+                                         requirements_file=FIXTURE, python_version=(3, 9, 6))
+check("below Python 3.11 the last line gives no pip command, and says how to put a newer Python "
+      "first on the PATH",
+      status == 1 and "pip" not in lines[-1] and "Python 3.9.6" in lines[-1]
+      and "on ned-box" in lines[-1] and "Homebrew" in lines[-1], lines[-1])
+
 status, lines = check_and_install_with_fixture("ned-box", version_reader(ONE_MISSING),
                                           installer_that(None))
 check("an install that succeeds but leaves a library missing exits 1, quoting what the install printed",

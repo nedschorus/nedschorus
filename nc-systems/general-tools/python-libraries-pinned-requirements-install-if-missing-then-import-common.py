@@ -24,8 +24,10 @@ new Python process can import the libraries, the caller gets
 PythonLibrariesPinnedRequirementsInstalledButImportableOnlyInANewProcessError, and does its work in a new
 process.
 
-Below Python 3.11 nothing is installed: the pinned versions need a newer
-Python, and the install would fail with pip's less helpful words.
+Python 3.11 is the project's minimum for the pinned libraries. Below it nothing
+is installed, and no by-hand install command is offered, since pip would run
+under the same interpreter; the words instead say how to put a newer Python
+first on the PATH.
 
 Load it by path, under the snake_case form of its file name:
 
@@ -72,12 +74,25 @@ def pinned_requirements_pip_install_command(requirements_file=PINNED_REQUIREMENT
             *quiet_options, "-r", str(requirements_file)]
 
 
-def pinned_requirements_by_hand_install_command(host, requirements_file=PINNED_REQUIREMENTS_FILE):
+def _dotted(version):
+    return ".".join(map(str, version))
+
+
+def _python_version(python_version):
+    return tuple(python_version or sys.version_info[:3])
+
+
+def pinned_requirements_by_hand_install_command(host, requirements_file=PINNED_REQUIREMENTS_FILE,
+                                                python_version=None):
     """Return (where, command): where the user runs the pinned file's install by hand, and the command.
 
     The command names this process's own interpreter, which is the one the libraries must be
     installed for; a bare `python3` on the user's PATH may be another one.
+    Below MINIMUM_PYTHON_VERSION no command can work, so command is None; give the user
+    python_below_minimum_version_instruction instead.
     """
+    if _python_version(python_version)[:2] < MINIMUM_PYTHON_VERSION:
+        return f"on {host}", None
     install = shlex.join(pinned_requirements_pip_install_command(requirements_file))
     # The user sits at the Mac, and reaches ned-box over ssh.
     if host == "ned-box":
@@ -85,18 +100,29 @@ def pinned_requirements_by_hand_install_command(host, requirements_file=PINNED_R
     return f"on {host}", install
 
 
+def python_below_minimum_version_instruction(host, python_version=None):
+    """Return what the user does on host when this process's Python is below the minimum, else None."""
+    version = _python_version(python_version)
+    if version[:2] >= MINIMUM_PYTHON_VERSION:
+        return None
+    minimum = _dotted(MINIMUM_PYTHON_VERSION)
+    return (f"No install command can work for {sys.executable}, which is Python {_dotted(version)}: "
+            f"the project's minimum is Python {minimum}. Install Python {minimum} or later on {host}, "
+            f"and put its directory ahead of {Path(sys.executable).parent} on the PATH; on the Mac, "
+            f"that means Homebrew's Python ahead of Apple's. The next run then installs the pinned "
+            f"libraries itself.")
+
+
 def pinned_requirements_pip_install(timeout_seconds, runner=subprocess.run,
                                     requirements_file=PINNED_REQUIREMENTS_FILE,
                                     unavailable_error=PythonLibrariesPinnedRequirementsInstallOrImportFailed,
                                     python_version=None):
     """Install the pinned requirements per user; return what pip printed, or raise unavailable_error."""
-    python_version = tuple(python_version or sys.version_info[:3])
+    python_version = _python_version(python_version)
     if python_version[:2] < MINIMUM_PYTHON_VERSION:
         raise unavailable_error(
-            f"nothing was installed: {sys.executable} is Python "
-            f"{'.'.join(map(str, python_version))}, and the pinned libraries need Python "
-            f"{'.'.join(map(str, MINIMUM_PYTHON_VERSION))} or later. The fix, on the Mac, is to put "
-            f"Homebrew's Python ahead of Apple's on the PATH.")
+            f"nothing was installed: {sys.executable} is Python {_dotted(python_version)}, below "
+            f"Python {_dotted(MINIMUM_PYTHON_VERSION)}, the project's minimum for the pinned libraries.")
     command = pinned_requirements_pip_install_command(requirements_file, "--disable-pip-version-check",
                                                       "--quiet")
     try:

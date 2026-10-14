@@ -210,6 +210,14 @@ with tempfile.TemporaryDirectory() as install_scratch:
           "run this command in a Terminal on your Mac:" in message
           and f"\nssh nedlern@ned-box '{sys.executable} -m pip install" in message, message)
 
+    message = hook.parser_missing_message(hook.MarkdownParserMissing("nothing was installed"),
+                                          "Neds-MacBook-Pro", (3, 9, 6))
+    check("below Python 3.11 the message gives no pip command, and says how to put a newer Python "
+          "first on the PATH",
+          "pip" not in message.split("Then pass on")[0] and "Python 3.9.6" in message
+          and "Homebrew" in message and "next run" in message
+          and message.endswith("quoted as it is: nothing was installed"), message)
+
     def recording_runner(command, **kwargs):
         recording_runner.kwargs = kwargs
         return subprocess.CompletedProcess(command, 0, "", "")
@@ -219,19 +227,25 @@ with tempfile.TemporaryDirectory() as install_scratch:
           recording_runner.kwargs)
 
     # A newer markdown-it-py whose dependency is missing fails partway through its import and
-    # leaves its submodules loaded; the pinned copy installed next must not be mixed with them.
+    # leaves its submodules, and the newer mdurl it loaded first, loaded; the pinned copies
+    # installed next must not be mixed with them.
     newer_site = Path(install_scratch) / "newer-site"
     pinned_site = Path(install_scratch) / "pinned-site"
     for site_directory, version, init_source in (
             (newer_site, "newer", "from markdown_it.helper import version\n"
+                                  "import mdurl\n"
                                   "import mdurl_missing_for_this_test\n"),
             (pinned_site, "pinned", "from markdown_it.helper import version\n"
+                                    "import mdurl\n"
                                     "class MarkdownIt:\n"
                                     "    def __init__(self, preset):\n"
                                     "        self.preset = preset\n"
                                     "    def enable(self, rule):\n"
-                                    "        return version\n")):
+                                    "        return version + '/' + mdurl.version\n")):
         (site_directory / "markdown_it").mkdir(parents=True)
+        (site_directory / "mdurl").mkdir(parents=True)
+        (site_directory / "mdurl" / "__init__.py").write_text(f"version = {version!r}\n",
+                                                              encoding="utf-8")
         (site_directory / "markdown_it" / "__init__.py").write_text(init_source, encoding="utf-8")
         (site_directory / "markdown_it" / "helper.py").write_text(f"version = {version!r}\n",
                                                                   encoding="utf-8")
@@ -252,8 +266,8 @@ with tempfile.TemporaryDirectory() as install_scratch:
          str(pinned_site), str(Path(install_scratch) / "half-import-state")],
         capture_output=True, text=True, timeout=60)
     check("after a newer markdown-it-py failed partway through its import, the parser is built "
-          "from the installed copy alone",
-          half_import.returncode == 0 and half_import.stdout.strip() == "pinned",
+          "from the installed markdown-it-py and mdurl alone",
+          half_import.returncode == 0 and half_import.stdout.strip() == "pinned/pinned",
           (half_import.returncode, half_import.stdout, half_import.stderr[-400:]))
 hook.INSTALL_STATE_DIRECTORY = real_install_state_directory
 
