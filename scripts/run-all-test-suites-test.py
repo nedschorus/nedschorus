@@ -536,7 +536,10 @@ with tempfile.TemporaryDirectory() as scratch:
             stdin=subprocess.DEVNULL,
             env={**os.environ, RAN_FILE_VARIABLE: str(root / "ran.txt"),
                  RENDEZVOUS_WAIT_VARIABLE: "0"})
-        time.sleep(1.5)
+        # The run prints its waiting line after it has made its first reading of the
+        # checkout and just before it blocks on the lock, so a suite committed after that
+        # line is one a run that listed its suites before the wait would miss.
+        waiting_line = waiting_run.stderr.readline()
         # A suite committed while the run waits, as a seat working in the checkout would.
         (root / "repo" / "b-test.py").write_text(SUITE_PREAMBLE + PASSES)
         git(root / "repo", "add", "--", "b-test.py")
@@ -548,8 +551,40 @@ with tempfile.TemporaryDirectory() as scratch:
         run_stdout, run_stderr = waiting_run.communicate()
     check("a suite committed while the run waits for the lock is run: the run lists the "
           "suites after it takes the lock",
-          waiting_run.returncode == 0 and ran(root) == ["a-test.py", "b-test.py"],
-          (waiting_run.returncode, ran(root), run_stderr))
+          waiting_line.startswith("run-all-test-suites: waiting up to 60 s for ")
+          and waiting_run.returncode == 0 and ran(root) == ["a-test.py", "b-test.py"],
+          (waiting_line, waiting_run.returncode, ran(root), run_stderr))
+
+with tempfile.TemporaryDirectory() as scratch:
+    root = pathlib.Path(scratch)
+    make_repo(root, {"a-test.py": PASSES})
+    lock_file = root / "emptied.lock"
+    with open(lock_file, "a+") as held:
+        fcntl.flock(held.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        waiting_run = subprocess.Popen(
+            [sys.executable, str(PROGRAM), "--checkout", str(root / "repo"),
+             "--log-dir", str(root / "logs"), "--lock-file", str(lock_file),
+             "--recorded-inputs-directory", str(root / "recordings"),
+             "--wait-for-lock-seconds", "60"],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+            stdin=subprocess.DEVNULL,
+            env={**os.environ, RAN_FILE_VARIABLE: str(root / "ran.txt"),
+                 RENDEZVOUS_WAIT_VARIABLE: "0"})
+        waiting_line = waiting_run.stderr.readline()
+        # The checkout's last suite removed while the run waits.
+        git(root / "repo", "rm", "-q", "--", "a-test.py")
+        git(root / "repo", "commit", "-q", "-m", "the last suite removed while the run waits")
+    try:
+        run_stdout, run_stderr = waiting_run.communicate(timeout=120)
+    except subprocess.TimeoutExpired:
+        waiting_run.kill()
+        run_stdout, run_stderr = waiting_run.communicate()
+    check("a checkout whose suites are all removed while the run waits is refused once the "
+          "run holds the lock: exit 2, nothing run, and the refusal on stderr",
+          waiting_line.startswith("run-all-test-suites: waiting up to 60 s for ")
+          and waiting_run.returncode == 2 and ran(root) == []
+          and "git lists no" in run_stderr and run_stdout == "",
+          (waiting_line, waiting_run.returncode, ran(root), run_stderr))
 
 # --- Refusals before anything runs: exit 2 -----------------------------------
 with tempfile.TemporaryDirectory() as scratch:

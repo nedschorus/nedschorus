@@ -956,6 +956,15 @@ else:
               completed.stdout.startswith(
                   f"run-suite-in-signal-sandbox: waiting up to 1 s for {lock_path}\n"),
               completed.stdout)
+        with contextlib.redirect_stderr(io.StringIO()) as refused_negative:
+            try:
+                program.parse_arguments(["a-test.py", "--wait-for-lock-seconds", "-1"])
+                negative_exit = None
+            except SystemExit as stopped:
+                negative_exit = stopped.code
+        check("a negative --wait-for-lock-seconds is a bad invocation, exit 2",
+              negative_exit == 2 and "at least 0" in refused_negative.getvalue(),
+              (negative_exit, refused_negative.getvalue()))
         check("the wait for the lock defaults to the runner's suggested hour",
               program.parse_arguments(["a-test.py"]).wait_for_lock_seconds
               == program.runner.MACHINE_LOCK_WAIT_SECONDS_SUGGESTED == 3600)
