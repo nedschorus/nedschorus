@@ -64,8 +64,57 @@ runner = load("run_all_test_suites", RUNNER_PATH)
 SOCKET_VARIABLES_THAT_MUST_BE_UNSET = (
     "TMUX", "TMUX_PANE", "DBUS_SESSION_BUS_ADDRESS", "SSH_AUTH_SOCK",
     "CLAUDE_CODE_MESSAGING_SOCKET")
+# gnome-shell on ned-box serves displays :0 and :1; its authorization cookie lives in the
+# runtime directory, which the test sandbox hides.
+X11_DISPLAYS_PROBED = (0, 1)
 CREDENTIAL_FILES_THAT_MUST_BE_HIDDEN = (
     ".config/nedschorus/*.token", ".claude/.credentials.json", ".codex/auth.json")
+
+# Opens an X11 connection with the first cookie it can find, as a program in the session
+# would; True only when the display accepts it. Run inside the environment by the probe,
+# and outside by this test, to show it works where the cookie can be read.
+X11_PROBE_SOURCE = r'''
+import glob, os, socket, struct
+def x11_cookies():
+    paths = [os.environ.get("XAUTHORITY", ""), os.path.expanduser("~/.Xauthority"),
+             *glob.glob("/run/user/*/.mutter-Xwaylandauth*"), *glob.glob("/run/user/*/gdm/Xauthority")]
+    cookies = []
+    for path in paths:
+        try:
+            data = open(path, "rb").read()
+        except OSError:
+            continue
+        offset = 2
+        while offset + 2 <= len(data):
+            fields = []
+            for _ in range(4):
+                length = struct.unpack(">H", data[offset:offset + 2])[0]
+                fields.append(data[offset + 2:offset + 2 + length])
+                offset += 2 + length
+            if fields[2] == b"MIT-MAGIC-COOKIE-1":
+                cookies.append(fields[3])
+            offset += 2
+    return cookies
+def x11_display_accepts(display):
+    cookies = x11_cookies() or [b""]
+    for cookie in cookies:
+        connection = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        connection.settimeout(3)
+        try:
+            try:
+                connection.connect(f"\0/tmp/.X11-unix/X{display}")
+            except OSError:
+                connection.connect(f"/tmp/.X11-unix/X{display}")
+            name = b"MIT-MAGIC-COOKIE-1" if cookie else b""
+            pad = lambda raw: raw + b"\0" * (-len(raw) % 4)
+            connection.sendall(b"l\0" + struct.pack("<HHHH", 11, 0, len(name), len(cookie))
+                               + b"\0\0" + pad(name) + pad(cookie))
+            if connection.recv(1) == b"\x01":
+                return True
+        finally:
+            connection.close()
+    return False
+'''
 
 # Runs inside the environment. Each attempt prints one JSON line: what it tried and
 # whether it worked. It writes only to the paths it is given.
@@ -117,6 +166,15 @@ def systemd_run():
                           capture_output=True, text=True)
     return done.returncode == 0
 attempt("start a process outside with systemd-run --user", systemd_run)
+def connect_tcp():
+    connection = socket.create_connection(("127.0.0.1", targets["tcp_port"]), timeout=3)
+    connection.close()
+attempt("connect to a localhost TCP port outside", connect_tcp)
+attempt("connect to an abstract Unix socket outside",
+        lambda: connect("\0" + targets["abstract_socket_name"]))
+for display in targets["x11_displays"]:
+    attempt(f"open an X11 connection to display :{display}",
+            lambda display=display: x11_display_accepts(display))
 attempt("signal the sleeper outside", lambda: os.kill(targets["sleeper_pid"], signal.SIGTERM))
 git_directory = targets["git_directory"]
 attempt("write a ref in the repository's git directory",
@@ -171,8 +229,8 @@ def run_probe(scratch):
     if not sandbox_prefix:
         print(f"SKIP  every escape case: the runner builds no sandbox here: {unconfined_because}")
         return
-    home = pathlib.Path(runner.TEST_SANDBOX_HOME)
-    runtime = pathlib.Path(runner.TEST_SANDBOX_RUNTIME_DIRECTORY)
+    home = pathlib.Path(runner.REAL_HOME_DIRECTORY_PATH_OVERLAID_COPY_ON_WRITE_IN_TEST_SANDBOX)
+    runtime = pathlib.Path(runner.XDG_RUNTIME_DIRECTORY_PATH_HIDDEN_BY_EMPTY_TMPFS_IN_TEST_SANDBOX)
     name = f"run-all-test-suites-escape-test-{os.getpid()}"
 
     # A checkout whose git directory lies inside it, as in a clone, so the read-only
@@ -208,10 +266,16 @@ def run_probe(scratch):
     listener.bind(str(runtime_socket_path))
     listener.listen(1)
     listener.setblocking(False)
+    tcp_listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    tcp_listener.bind(("127.0.0.1", 0))
+    tcp_listener.listen(4)
+    abstract_listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    abstract_listener.bind("\0" + name)
+    abstract_listener.listen(4)
     sleeper = subprocess.Popen(["sleep", "600"])
     git_before = git_directory_state(git_directory)
     credential_files = sorted(
-        set(runner.test_sandbox_real_credential_files_hidden_from_tests())
+        set(runner.real_credential_files_to_cover_with_an_empty_file_in_test_sandbox())
         | {str(path) for pattern in CREDENTIAL_FILES_THAT_MUST_BE_HIDDEN
            for path in home.glob(pattern) if path.is_file()})
     socket_variables = sorted(set(runner.TEST_SANDBOX_OUTSIDE_SOCKET_VARIABLES)
@@ -233,13 +297,16 @@ def run_probe(scratch):
         "outside_socket_variables": socket_variables,
         "checkout_file": str(checkout / "probe-stays"),
         "log_file": str(log_dir / "probe-stays"),
+        "x11_displays": X11_DISPLAYS_PROBED,
+        "tcp_port": tcp_listener.getsockname()[1],
+        "abstract_socket_name": name,
     }
     environment = runner.test_suite_launch_environment_without_git_redirecting_and_agent_session_attendance_variables()
     for variable in socket_variables:
         environment.setdefault(variable, f"/outside/{variable.lower()}")
     environment["ESCAPE_TEST_TARGETS"] = json.dumps(targets)
-    command = [*runner.signal_sandbox_prefix_for_suite(sandbox_prefix, checkout, (log_dir,)),
-               sys.executable, "-c", PROBE_SOURCE]
+    command = [*runner.command_prefix_starting_one_suite_in_its_test_sandbox(sandbox_prefix, checkout, (log_dir,)),
+               sys.executable, "-c", X11_PROBE_SOURCE + PROBE_SOURCE]
     try:
         probe = subprocess.run(command, cwd=str(checkout), env=environment,
                                stdin=subprocess.DEVNULL, capture_output=True, text=True,
@@ -259,6 +326,21 @@ def run_probe(scratch):
             record = attempts.get(attempt)
             return record is not None and not record["worked"], record
 
+        outside_x11 = {}
+        exec(X11_PROBE_SOURCE, outside_x11)
+        displays_open_outside = []
+        for display in X11_DISPLAYS_PROBED:
+            try:
+                if outside_x11["x11_display_accepts"](display):
+                    displays_open_outside.append(display)
+            except OSError:
+                pass
+        if displays_open_outside:
+            check("precondition: outside, where the cookie can be read, the X11 probe opens "
+                  f"display :{displays_open_outside[0]}", True)
+        else:
+            print("SKIP  precondition: no X11 display opens from outside either, so the X11 "
+                  "cases show nothing on this machine")
         check("precondition: the tmux server of this test started",
               tmux_started.returncode == 0, tmux_started.stderr)
         check("precondition: at least one real credential file exists and is not empty",
@@ -288,7 +370,11 @@ def run_probe(scratch):
                         "connect to the session bus",
                         "start a process outside with systemd-run --user",
                         "write a ref in the repository's git directory",
-                        "change the repository's git config", "create a branch with git"):
+                        "change the repository's git config", "create a branch with git",
+                        "connect to a localhost TCP port outside",
+                        "connect to an abstract Unix socket outside",
+                        *(f"open an X11 connection to display :{display}"
+                          for display in X11_DISPLAYS_PROBED)):
             ok, record = blocked(attempt)
             check(f"inside, this fails: {attempt}", ok, record)
         try:
@@ -304,10 +390,10 @@ def run_probe(scratch):
         for variable in socket_variables:
             ok, record = blocked(f"see variable {variable}")
             check(f"inside, the variable naming a socket outside is unset: {variable}", ok, record)
-        # A suite allowed to write the git directory gets a throwaway copy of it.
-        git_writer = next(iter(runner.SUITES_GIVEN_A_THROWAWAY_COPY_OF_THE_REPOSITORY_GIT_DIRECTORY))
+        # A suite allowed to write the git directory gets a copy-on-write overlay of it.
+        git_writer = next(iter(runner.SUITES_GIVEN_A_COPY_ON_WRITE_OVERLAY_OF_THE_REPOSITORY_GIT_DIRECTORY))
         written = subprocess.run(
-            [*runner.signal_sandbox_prefix_for_suite(sandbox_prefix, checkout, (log_dir,),
+            [*runner.command_prefix_starting_one_suite_in_its_test_sandbox(sandbox_prefix, checkout, (log_dir,),
                                                      suite=git_writer),
              "git", "-C", str(checkout), "branch", "escaped-by-git"],
             cwd=str(checkout), env=environment, stdin=subprocess.DEVNULL,
@@ -316,6 +402,22 @@ def run_probe(scratch):
               written.returncode == 0, written.stderr)
         check("outside afterwards, that branch is not in the repository's git directory",
               git_directory_state(git_directory) == git_before)
+        # A suite listed to share the machine's network reaches the same port.
+        shared = "scripts/shares-the-machine-network-for-this-case-test.py"
+        runner.SUITES_WHOSE_TEST_SANDBOX_SHARES_THE_MACHINE_NETWORK[shared] = "this case"
+        try:
+            reached = subprocess.run(
+                [*runner.command_prefix_starting_one_suite_in_its_test_sandbox(
+                    sandbox_prefix, checkout, (log_dir,), suite=shared),
+                 sys.executable, "-c",
+                 "import socket, sys\n"
+                 f"socket.create_connection(('127.0.0.1', {targets['tcp_port']}), timeout=3).close()\n"],
+                cwd=str(checkout), env=environment, stdin=subprocess.DEVNULL,
+                capture_output=True, text=True, timeout=120)
+        finally:
+            del runner.SUITES_WHOSE_TEST_SANDBOX_SHARES_THE_MACHINE_NETWORK[shared]
+        check("inside, a suite listed to share the machine's network reaches a localhost port "
+              "outside", reached.returncode == 0, reached.stderr)
         check("outside afterwards, a write in the checkout under test stays",
               (checkout / "probe-stays").is_file())
         check("outside afterwards, a write in the log directory stays",
@@ -324,6 +426,8 @@ def run_probe(scratch):
         sleeper.kill()
         sleeper.wait()
         listener.close()
+        tcp_listener.close()
+        abstract_listener.close()
         runtime_socket_path.unlink(missing_ok=True)
         subprocess.run(["tmux", "-L", name, "kill-server"], env=tmux_environment,
                        capture_output=True)

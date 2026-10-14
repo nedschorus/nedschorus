@@ -16,10 +16,13 @@ is tested with every suite whose recorded inputs read that file (the
 recordings scripts/run-all-test-suites.py keeps), plus the file's sibling
 `<name>-test.py` or `<name>-test.sh` when there is one.
 
-While cosmic-ray runs, the script holds the lock scripts/run-all-test-suites.py
-takes (--lock-file, default ~/.claude/.run-all-test-suites.lock), because each
-mutant is a test run and two test runs on one machine disturb each other. It
-takes the lock without waiting: when another process holds it, the script
+On Linux with bwrap each mutant's suites run in test sandboxes of their own, as
+scripts/run-all-test-suites.py runs them, so the script takes no lock and
+overlaps other test runs. Elsewhere, while cosmic-ray runs, the script holds the
+lock scripts/run-all-test-suites.py takes (--lock-file, default
+~/.claude/.run-all-test-suites.lock), because each mutant is a test run and two
+test runs sharing the machine disturb each other. It takes the lock without
+waiting: when another process holds it, the script
 exits 3 at once, before making the worktree. Do not run the script under
 `flock` on that lock; the script takes the lock itself, so the flock would be
 the holder it refuses on.
@@ -43,6 +46,7 @@ not be made, or a suite fails or cannot be launched on the unmutated head),
 """
 
 import argparse
+import contextlib
 import importlib.util
 import json
 import shlex
@@ -392,7 +396,15 @@ def main(argv=None):
         totals = dict.fromkeys(OUTCOME_KEYS, 0)
         untested = []
         lock_file = Path(arguments.lock_file or runner.DEFAULT_LOCK_FILE).expanduser()
-        lock_handle, holder, previous_holder = runner.take_machine_lock(lock_file, checkout)
+        # Each suite runs in its own test sandbox under bwrap, sharing no machine state with
+        # other runs, so no machine lock is taken there.
+        in_test_sandboxes = \
+            runner.does_signal_sandbox_report_killed_suite_as_exit_code_128_plus_signal(
+                sandbox_prefix)
+        if in_test_sandboxes:
+            lock_handle, holder, previous_holder = contextlib.nullcontext(), None, ""
+        else:
+            lock_handle, holder, previous_holder = runner.take_machine_lock(lock_file, checkout)
         if lock_handle is None:
             print(f"{PROGRAM}: not run — another process holds {lock_file}, the lock "
                   f"that keeps test runs on one machine apart. Its last recorded "
@@ -404,7 +416,11 @@ def main(argv=None):
                   f"finished.", file=sys.stderr)
             return EXIT_LOCKED
         # Clean up after earlier runs here, as scripts/run-all-test-suites.py does.
-        runner.clean_up_after_earlier_runs(lock_file, previous_holder)
+        if in_test_sandboxes:
+            with runner.clean_up_lock_shared_by_overlapping_runs(lock_file):
+                runner.clean_up_after_earlier_runs(lock_file, previous_holder)
+        else:
+            runner.clean_up_after_earlier_runs(lock_file, previous_holder)
         with tempfile.TemporaryDirectory(prefix=f"{PROGRAM}-") as scratch_name:
             scratch = Path(scratch_name)
             worktree = scratch / "worktree"
@@ -431,7 +447,7 @@ def main(argv=None):
                         counts, survivors, errored = mutation_test_one_file(
                             path, suites, worktree, scratch, tools, merge_base,
                             arguments, environment,
-                            {suite: runner.signal_sandbox_prefix_for_suite(
+                            {suite: runner.command_prefix_starting_one_suite_in_its_test_sandbox(
                                 sandbox_prefix, worktree, suite=suite) for suite in suites},
                             outside)
                         for key in totals:

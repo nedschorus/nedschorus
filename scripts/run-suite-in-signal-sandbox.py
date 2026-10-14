@@ -21,17 +21,20 @@ Usage:
                -mutation-testing-worktree, so a mutant cannot be pushed from it either
   --checkout   the checkout's top directory; default the current directory
   --python     the interpreter for a Python suite; default this one
-  --lock-file  default ~/.claude/.run-all-test-suites.lock, the lock
-               scripts/run-all-test-suites.py takes
+  --lock-file  default ~/.claude/.run-all-test-suites.lock. On macOS, the lock
+               scripts/run-all-test-suites.py takes there. On Linux no lock is
+               taken: the files beside it hold the run records and the admission
+               shared with scripts/run-all-test-suites.py
   --wait-for-lock-seconds
-               how long to wait for that lock, in the kernel's queue as
+               on macOS, how long to wait for that lock, in the kernel's queue as
                `flock -w` waits, before refusing; default 3600, and 0 refuses
-               at once
+               at once. On Linux it is accepted and has no effect
 
 The suite runs exactly as scripts/run-all-test-suites.py runs it: from the
 checkout's top directory, stdin closed, without the variables that redirect
 git, inside the signal sandbox (`bwrap --unshare-pid` on Linux, `sandbox-exec`
-on macOS), with RUN_ALL_TEST_SUITES_INSIDE_SIGNAL_SANDBOX=1, while holding the
+on macOS), with RUN_ALL_TEST_SUITES_INSIDE_SIGNAL_SANDBOX=1; on Linux in a test
+sandbox of its own once admission lets it start, and on macOS while holding the
 machine's test-run lock. Before the suite starts, a check inside the sandbox
 proves it is confined: on Linux, that process 1 there is bwrap; on macOS, that
 a signal to a process outside the sandbox is refused. If the check fails, the
@@ -63,6 +66,7 @@ Run: python3 scripts/run-suite-in-signal-sandbox.py scripts/a-test.py --mutant /
 """
 
 import argparse
+import contextlib
 import ctypes
 import importlib.util
 import os
@@ -396,7 +400,7 @@ def run_suite_confined(top, suite, interpreter, sandbox_prefix, proof_file, byte
     platform = sys.platform if platform is None else platform
     by_process_group = platform == "darwin"
     # The proof is read after the sandbox ends, so its directory is written for real.
-    command = [*runner.signal_sandbox_prefix_for_suite(sandbox_prefix, top, (proof_file.parent,),
+    command = [*runner.command_prefix_starting_one_suite_in_its_test_sandbox(sandbox_prefix, top, (proof_file.parent,),
                                                          suite),
                sys.executable, str(Path(__file__).resolve()),
                INSIDE_CHECK_OPTION, str(proof_file), "--",
@@ -489,70 +493,113 @@ def run(arguments, platform):
     if unconfined_because:
         raise NotRun(f"no signal sandbox: {unconfined_because}")
 
-    if arguments.wait_for_lock_seconds > 0:
-        # A caller waiting under a timeout of its own sees why nothing has happened yet.
-        print(f"{PROGRAM}: waiting up to {arguments.wait_for_lock_seconds:g} s for "
-              f"{arguments.lock_file}", flush=True)
-    lock_handle, holder, previous_holder = runner.take_machine_lock(
-        Path(arguments.lock_file), top, arguments.wait_for_lock_seconds)
-    if lock_handle is None:
-        waited = (f"after waiting {arguments.wait_for_lock_seconds:g} s "
-                  if arguments.wait_for_lock_seconds > 0 else "")
-        return (f"VERDICT: not run (lock held) — {arguments.lock_file} is still held "
-                f"{waited}by {holder}; if you started this program under flock on that "
-                f"lock, that flock is the holder, so run this program without flock, since "
-                f"it waits for the lock itself; otherwise, tell the user which process "
-                f"holds the lock"), EXIT_LOCKED
+    # In its own test sandbox the suite shares no machine state with other runs, so no
+    # machine lock is taken; admission decides when it starts, as for the runner's suites.
+    in_test_sandbox = runner.does_signal_sandbox_report_killed_suite_as_exit_code_128_plus_signal(
+        sandbox_prefix)
+    lock_handle = None
+    previous_holder = ""
+    if in_test_sandbox:
+        psutil, _ = runner.psutil_imported_or_why_not()
+        if psutil is None:
+            raise NotRun(f"{sys.executable} cannot import psutil, which reads the machine's "
+                         f"CPU use and memory before the suite starts; install the pinned "
+                         f"libraries with `python3 nc-systems/general-tools/"
+                         f"compiled-python-libraries-pinned-requirements-check-and-install.py`, "
+                         f"then run this again")
+    else:
+        if arguments.wait_for_lock_seconds > 0:
+            # A caller waiting under a timeout of its own sees why nothing has happened yet.
+            print(f"{PROGRAM}: waiting up to {arguments.wait_for_lock_seconds:g} s for "
+                  f"{arguments.lock_file}", flush=True)
+        lock_handle, holder, previous_holder = runner.take_machine_lock(
+            Path(arguments.lock_file), top, arguments.wait_for_lock_seconds)
+        if lock_handle is None:
+            waited = (f"after waiting {arguments.wait_for_lock_seconds:g} s "
+                      if arguments.wait_for_lock_seconds > 0 else "")
+            return (f"VERDICT: not run (lock held) — {arguments.lock_file} is still held "
+                    f"{waited}by {holder}; if you started this program under flock on that "
+                    f"lock, that flock is the holder, so run this program without flock, since "
+                    f"it waits for the lock itself; otherwise, tell the user which process "
+                    f"holds the lock"), EXIT_LOCKED
+    readings = None
     try:
         # Clean up after earlier runs here, as scripts/run-all-test-suites.py does.
-        runner.clean_up_after_earlier_runs(Path(arguments.lock_file), previous_holder,
-                                           platform)
-        if platform != "darwin":
-            become_child_subreaper()
-        with tempfile.TemporaryDirectory(prefix=f"{PROGRAM}-") as work_name:
-            work = Path(work_name)
-            proof_file = work / "sandbox-proof"
-            if patch is None:
-                code = run_suite_confined(top, suite, interpreter, sandbox_prefix, proof_file,
-                                          platform=platform)
-                return verdict(code, mutant=False)
-            copy = mutation_testing_worktree_make(top, work)
-            outcome = None
-            # Removal is armed before the copy is filled, so a failure or a signal while filling
-            # does not leave the worktree registered.
+        if lock_handle is None:
+            with runner.clean_up_lock_shared_by_overlapping_runs(Path(arguments.lock_file)):
+                runner.clean_up_after_earlier_runs(Path(arguments.lock_file), previous_holder,
+                                                   platform)
+        else:
+            runner.clean_up_after_earlier_runs(Path(arguments.lock_file), previous_holder,
+                                               platform)
+        admitted = contextlib.nullcontext(0.0)
+        if in_test_sandbox:
+            readings = runner.MachineReadings(psutil)
+            readings.start()
             try:
-                mutation_testing_worktree_fill(top, copy)
-                paths = files_the_patch_changes(copy, patch)
-                baseline = run_suite_confined(copy, suite, interpreter, sandbox_prefix,
-                                              proof_file, platform=platform)
-                if baseline != 0:
-                    raise NotRun(f"the suite fails without the mutant "
-                                 f"({runner.describe_exit(baseline)}), so a failure with the "
-                                 f"mutant in would not show the mutant was caught; the mutant "
-                                 f"was not applied")
-                print(f"{PROGRAM}: the suite passes without the mutant", flush=True)
-                applied = runner.git(copy, "apply", str(patch))
-                if applied.returncode != 0:
-                    raise NotRun(f"git apply failed: {applied.stderr.strip()}")
-                for relative in paths:
-                    remove_cached_bytecode(copy / relative)
-                print(f"{PROGRAM}: mutant applied to {', '.join(paths)} in the mutation-testing "
-                      f"worktree {copy}; {top} is not changed", flush=True)
-                code = run_suite_confined(copy, suite, interpreter, sandbox_prefix, proof_file,
-                                          bytecode_dir=work / "bytecode", platform=platform)
-                outcome = verdict(code, mutant=True)
-            finally:
-                not_removed = mutation_testing_worktree_remove(top, copy)
-                if not_removed is not None:
-                    # A worktree left behind is a failure, whatever the run found.
-                    found = (outcome[0].removeprefix("VERDICT: ") if outcome
-                             else sys.exc_info()[1])
-                    raise NotRun(f"{not_removed}, then run this again. The run itself ended with: "
-                                 f"{found}; it counts as not run, because it left the worktree "
-                                 f"behind.")
-            return outcome
+                admission = runner.MachineWideSuiteAdmission(
+                    runner.admission_directory_for_lock_file(arguments.lock_file), readings,
+                    lambda line: print(f"{PROGRAM}: {line}", flush=True))
+            except runner.MachineWideSuiteAdmissionFailed as error:
+                raise NotRun(f"admission could not start: {error}") from error
+            admitted = admission.admitted(suite)
+        with admitted:
+            return run_admitted_suite(top, suite, interpreter, sandbox_prefix, patch, platform)
+    except runner.MachineWideSuiteAdmissionFailed as error:
+        raise NotRun(f"admission failed: {error}") from error
     finally:
-        lock_handle.close()
+        if readings is not None:
+            readings.stop()
+        if lock_handle is not None:
+            lock_handle.close()
+
+
+def run_admitted_suite(top, suite, interpreter, sandbox_prefix, patch, platform):
+    """Run the suite, with the mutant when patch is given; return (verdict line, exit code)."""
+    if platform != "darwin":
+        become_child_subreaper()
+    with tempfile.TemporaryDirectory(prefix=f"{PROGRAM}-") as work_name:
+        work = Path(work_name)
+        proof_file = work / "sandbox-proof"
+        if patch is None:
+            code = run_suite_confined(top, suite, interpreter, sandbox_prefix, proof_file,
+                                      platform=platform)
+            return verdict(code, mutant=False)
+        copy = mutation_testing_worktree_make(top, work)
+        outcome = None
+        # Removal is armed before the copy is filled, so a failure or a signal while filling
+        # does not leave the worktree registered.
+        try:
+            mutation_testing_worktree_fill(top, copy)
+            paths = files_the_patch_changes(copy, patch)
+            baseline = run_suite_confined(copy, suite, interpreter, sandbox_prefix,
+                                          proof_file, platform=platform)
+            if baseline != 0:
+                raise NotRun(f"the suite fails without the mutant "
+                             f"({runner.describe_exit(baseline)}), so a failure with the "
+                             f"mutant in would not show the mutant was caught; the mutant "
+                             f"was not applied")
+            print(f"{PROGRAM}: the suite passes without the mutant", flush=True)
+            applied = runner.git(copy, "apply", str(patch))
+            if applied.returncode != 0:
+                raise NotRun(f"git apply failed: {applied.stderr.strip()}")
+            for relative in paths:
+                remove_cached_bytecode(copy / relative)
+            print(f"{PROGRAM}: mutant applied to {', '.join(paths)} in the mutation-testing "
+                  f"worktree {copy}; {top} is not changed", flush=True)
+            code = run_suite_confined(copy, suite, interpreter, sandbox_prefix, proof_file,
+                                      bytecode_dir=work / "bytecode", platform=platform)
+            outcome = verdict(code, mutant=True)
+        finally:
+            not_removed = mutation_testing_worktree_remove(top, copy)
+            if not_removed is not None:
+                # A worktree left behind is a failure, whatever the run found.
+                found = (outcome[0].removeprefix("VERDICT: ") if outcome
+                         else sys.exc_info()[1])
+                raise NotRun(f"{not_removed}, then run this again. The run itself ended with: "
+                             f"{found}; it counts as not run, because it left the worktree "
+                             f"behind.")
+        return outcome
 
 
 def suite_relative_to_top(given, top):
