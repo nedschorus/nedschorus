@@ -10,9 +10,9 @@ This page defines the system-terms of this project's skills: the terms they alon
 - **cold-read-target** — the document under review; a run that makes a cold-read-record copies it there at launch.
 - **cold-read-tier** — the label, `deep`, `second` or `fast`, that sets which model a cold-read-cell asks its agent-binary for, and at what reasoning effort.
 - **key-term** — in a cold-read-target, a term that is a project-term or a system-term, or should be one.
-- **sanity-check-attack** — one stance the /sanity-check instrument takes on a document, run as its own prompt: the cut-attack (what should be deleted), the mechanization-attack (which English instruction should be code), the fresh-eyes-attack (an independent design built from the problem alone).
-- **sanity-check-cell** — one fresh agent running one sanity-check-attack with `claude` or with `codex`; a run is six, the three attacks with `claude` and the three with `codex`.
+- **sanity-check-adversarial-prompt** — one stance the /sanity-check instrument takes on a document, run as its own prompt: the cut-adversarial-prompt (what should be deleted), the mechanization-adversarial-prompt (which English instruction should be code), the fresh-eyes-adversarial-prompt (an independent design built from the problem alone).
+- **sanity-check-cell** — one fresh agent running one sanity-check-adversarial-prompt with `claude` or with `codex`; a run is six, the three adversarial prompts with `claude` and the three with `codex`.
 - **sanity-check-record** — the directory one /sanity-check run leaves behind, holding its reports; kept as a log.
-- **sanity-check-request** — the file the requesting agent writes for the fresh-eyes-attack: a problem statement plus off-limits and read-first lists.
+- **sanity-check-request** — the file the requesting agent writes for the fresh-eyes-adversarial-prompt: a problem statement plus off-limits and read-first lists.
 - **walk-document** — the file `docs/walk/<name>.md`, the text of an approval-walk as presented to the user.
 - **walk-minutes** — the document the /walk-me-through skill uses to record the outcome of each item of an approval-walk.

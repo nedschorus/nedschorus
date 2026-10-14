@@ -99,7 +99,7 @@ signals silence the hook:
 The project's own headless Claude callers run no project hook at all: the
 cold-read Claude cell, and the restater-judge cell through it, pass
 `--settings` with disableAllHooks; scripts/ghi-info-ask.py and
-scripts/sanity-check-attacks.py pass `--setting-sources user`. The two
+scripts/sanity-check-adversarial-prompts.py pass `--setting-sources user`. The two
 signals cover a child started any other way.
 """
 
