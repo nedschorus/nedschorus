@@ -56,10 +56,11 @@ with the cold-read-record, as the evidence of what was put in front of the
 reviewer, and `target/` still holds the cold-read-target's own bytes. On the
 walk route it is scratch.
 
-WHERE THE REPORT GOES. A walk draft, `docs/walk/<name>-draft.md`, gets its
-suggestions file beside it: `docs/walk/<name>-suggestions.md`, which is what
-the walk reads next. Anything else -- a design, a skill, a record copy, a
-file outside this checkout -- gets a cold-read-record of its own under the
+WHERE THE REPORT GOES. A walk draft, `docs/walk/<name>-draft.md` in this
+checkout or in any other git worktree, gets its suggestions file beside it:
+`docs/walk/<name>-suggestions.md`, which is what the walk reads next.
+Anything else -- a design, a skill, a record copy, a file in no git
+worktree -- gets a cold-read-record of its own under the
 gitignored records tree:
 `cold-read-records/<name>-<YYYY-MM-DD>/fast-read.md`, where <name> is the
 cold-read-target's file name without its extension -- `SKILL-<skill name>`
@@ -268,12 +269,15 @@ def fast_read_report_path_for_target(
     `target` is absolute and resolved; `now` is the one clock reading the
     record's name is taken from, and the walk route does not use it. A walk
     draft is recognised by where it sits and how it is named --
-    `docs/walk/<name>-draft.md` under this checkout -- and a draft of that
-    name in any other directory, or a walk file not named `-draft.md`, takes
-    the records route like everything else.
+    `docs/walk/<name>-draft.md` under the git worktree that holds it, which
+    need not be the checkout this program runs from -- and its suggestions
+    file goes beside it. A draft of that name in any other directory, or a
+    walk file not named `-draft.md`, takes the records route like everything
+    else.
     """
+    checkout_root = checkout_root_holding(target)
     try:
-        relative = target.relative_to(REPO_ROOT)
+        relative = target.relative_to(checkout_root)
     except ValueError:
         relative = None
     if (relative is not None
@@ -281,7 +285,7 @@ def fast_read_report_path_for_target(
             and relative.name.endswith(WALK_DRAFT_SUFFIX)
             and len(relative.name) > len(WALK_DRAFT_SUFFIX)):
         name = relative.name[:-len(WALK_DRAFT_SUFFIX)]
-        return (REPO_ROOT / WALK_DIRECTORY_RELATIVE
+        return (checkout_root / WALK_DIRECTORY_RELATIVE
                 / f"{name}{WALK_SUGGESTIONS_SUFFIX}")
     return (fresh_record_dir(RECORDS_DIR / record_directory_name_for_target(target, now))
             / "fast-read.md")

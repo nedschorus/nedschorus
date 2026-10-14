@@ -903,14 +903,34 @@ with tempfile.TemporaryDirectory() as worktree_scratch:
     loose_brief = worktree_scratch / "no-repository/docs/agents/a-seat-instructions.md"
     loose_brief.parent.mkdir(parents=True)
     loose_brief.write_text("# A seat\n", encoding="utf-8")
+    walk_draft_in_second = second_worktree / "docs/walk/a-walk-item-draft.md"
+    walk_draft_in_second.parent.mkdir(parents=True)
+    walk_draft_in_second.write_text("## Item 1 of 1\n", encoding="utf-8")
+    loose_walk_draft = worktree_scratch / "no-repository/docs/walk/a-walk-item-draft.md"
+    loose_walk_draft.parent.mkdir(parents=True)
+    loose_walk_draft.write_text("## Item 1 of 1\n", encoding="utf-8")
 
     real_checkout = warning_module.REPO_ROOT
+    real_records = warning_module.RECORDS_DIR
     warning_module.REPO_ROOT = first_checkout.resolve()
+    warning_module.RECORDS_DIR = worktree_scratch / "records"
     try:
         in_second = class_of(brief_in_second.resolve())
         in_no_repository = class_of(loose_brief.resolve())
+        walk_report_in_second = warning_module.fast_read_report_path_for_target(
+            walk_draft_in_second.resolve(), datetime.datetime(2026, 10, 13, 12, 0))
+        loose_walk_report = warning_module.fast_read_report_path_for_target(
+            loose_walk_draft.resolve(), datetime.datetime(2026, 10, 13, 12, 0))
     finally:
         warning_module.REPO_ROOT = real_checkout
+        warning_module.RECORDS_DIR = real_records
+    check("a walk draft in another worktree gets its suggestions file beside it",
+          walk_report_in_second
+          == second_worktree.resolve() / "docs/walk/a-walk-item-suggestions.md",
+          str(walk_report_in_second))
+    check("a walk draft in no repository at all takes the records route",
+          (worktree_scratch / "records") in loose_walk_report.parents,
+          str(loose_walk_report))
     check("a brief in a second worktree of the repository is in the class",
           in_second == "a file under docs/agents/", repr(in_second))
     check("a brief in no repository at all is still not classified",
