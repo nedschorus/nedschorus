@@ -629,18 +629,43 @@ def check_dry_run_probe_failure_case(workspace: Path, resupervise, stub_answers)
     stub_answers({})
     code, output, errors = run_main_capturing(resupervise, seat_arguments)
     check("a run whose tmux probe got no answer refuses, saying nothing was killed or started",
-          code == 1 and errors == (f"{no_answer_refusal}. No agent was started "
-                                   "and no tmux session was killed\n"),
+          code == 1 and errors == (f"{no_answer_refusal}; no tmux session was killed. "
+                                   "No agent was started\n"),
           f"exit {code}; stdout {output!r}; stderr {errors!r}")
 
     stub_answers({("has-session", "dryprobe"): (0, ""),
                   ("has-session", "default"): (1, "can't find session: dryprobe\n")})
     code, output, errors = run_main_capturing(resupervise, seat_arguments)
-    check("a kill-session that got no answer refuses with words true for a timeout",
+    check("a kill-session that got no answer says the kill's outcome is unknown and how to check",
+          code == 1 and errors == ("resupervise-seat: it is unknown whether the stale tmux "
+                                   "session dryprobe (tmux socket name dryprobe) was killed: "
+                                   "tmux could not be run, or did not answer within 30 seconds; "
+                                   "check with: tmux -L dryprobe has-session -t =dryprobe. "
+                                   "No agent was started\n"),
+          f"exit {code}; stdout {output!r}; stderr {errors!r}")
+
+    stub_answers({("has-session", "dryprobe"): (0, ""),
+                  ("kill-session", "dryprobe"): (1, "permission denied\n"),
+                  ("has-session", "default"): (1, "can't find session: dryprobe\n")})
+    code, output, errors = run_main_capturing(resupervise, seat_arguments)
+    check("a kill-session tmux answered with a failure says no tmux session was killed",
           code == 1 and errors == ("resupervise-seat: could not kill the stale tmux session "
-                                   "dryprobe (tmux socket name dryprobe): tmux could not be "
-                                   "run, or did not answer within 30 seconds. No agent was "
-                                   "started and no tmux session was killed\n"),
+                                   "dryprobe (tmux socket name dryprobe): permission denied; "
+                                   "no tmux session was killed. No agent was started\n"),
+          f"exit {code}; stdout {output!r}; stderr {errors!r}")
+
+    stub_answers({("has-session", "dryprobe"): (0, ""),
+                  ("kill-session", "dryprobe"): (0, ""),
+                  ("has-session", "default"): (0, "")})
+    code, output, errors = run_main_capturing(resupervise, seat_arguments)
+    check("a second kill-session that got no answer names the session already killed, "
+          "and does not say none was",
+          code == 1 and errors == ("resupervise-seat: it is unknown whether the stale tmux "
+                                   "session dryprobe (tmux socket name default) was killed: "
+                                   "tmux could not be run, or did not answer within 30 seconds; "
+                                   "before that, the tmux session dryprobe was killed on tmux "
+                                   "socket name dryprobe; check with: tmux -L default "
+                                   "has-session -t =dryprobe. No agent was started\n"),
           f"exit {code}; stdout {output!r}; stderr {errors!r}")
 
 

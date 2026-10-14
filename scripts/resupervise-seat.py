@@ -243,19 +243,37 @@ def tmux_sockets_holding_seat_session(name: str):
     return holding, None
 
 
+def tmux_sessions_killed_before_clause(name: str, killed_sockets) -> str:
+    if not killed_sockets:
+        return ""
+    return (f"; before that, the tmux session {name} was killed on tmux socket name "
+            f"{', '.join(killed_sockets)}")
+
+
 def retire_seat_tmux_session(name: str):
-    """Retire every session named for the seat; return (killed_sockets, failure_detail)."""
+    """Retire every session named for the seat; return (killed_sockets, failure_detail).
+
+    failure_detail ends by saying what was killed, because only this function knows
+    whether a kill was attempted and whether tmux answered it.
+    """
     killed_sockets = []
     holding, probe_failure = tmux_sockets_holding_seat_session(name)
     if probe_failure is not None:
-        return killed_sockets, probe_failure
+        return killed_sockets, f"{probe_failure}; no tmux session was killed"
     for socket_name in holding:
         killed = run_tmux("kill-session", "-t", f"={name}", socket_name=socket_name)
-        if killed is None or killed.returncode != 0:
-            detail = TMUX_GAVE_NO_ANSWER if killed is None else (
-                killed.stderr.strip() or "no detail")
-            return killed_sockets, (f"could not kill the stale tmux session {name} "
-                                    f"(tmux socket name {socket_name}): {detail}")
+        before = tmux_sessions_killed_before_clause(name, killed_sockets)
+        if killed is None:
+            # tmux may have killed the session before its client timed out.
+            return killed_sockets, (
+                f"it is unknown whether the stale tmux session {name} (tmux socket name "
+                f"{socket_name}) was killed: {TMUX_GAVE_NO_ANSWER}{before}; check with: "
+                f"tmux -L {socket_name} has-session -t ={name}")
+        if killed.returncode != 0:
+            return killed_sockets, (
+                f"could not kill the stale tmux session {name} (tmux socket name "
+                f"{socket_name}): {killed.stderr.strip() or 'no detail'}"
+                f"{before or '; no tmux session was killed'}")
         killed_sockets.append(socket_name)
     return killed_sockets, None
 
@@ -431,8 +449,7 @@ def main(argv=None) -> int:
         print(f"resupervise-seat: killed the stale tmux session {arguments.name} "
               f"(tmux socket name {socket_name})")
     if retire_failure is not None:
-        nothing_killed = "" if killed_sockets else " and no tmux session was killed"
-        return refuse(f"{retire_failure}. No agent was started{nothing_killed}")
+        return refuse(f"{retire_failure}. No agent was started")
     if not killed_sockets:
         print(f"resupervise-seat: no tmux session named {arguments.name} to clear "
               "on its own server or the default one")
