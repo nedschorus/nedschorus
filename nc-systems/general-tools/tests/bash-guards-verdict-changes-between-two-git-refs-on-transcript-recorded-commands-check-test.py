@@ -158,7 +158,17 @@ try:
           status == 1 and f"search-file main(): rows whose verdict differs: {len(FIXTURE_PAIRS)}" in out
           and "in-process: rows whose verdict differs: 0" in out, f"status {status}\n{out}\n{err}")
     check("a head whose search-file main() refuses every command: its rows read as refused, not let through",
-          "head: ['refused', 0]" in out and "base: ['silent', 0]" in out, out)
+          "head: [['refused', 0], 'refused by the test']" in out and "base: [['silent', 0], None]" in out, out)
+
+    main_reworded = commit_with_guard_changed(SEARCH_FILE_GUARD, (
+        "def main(stdin=sys.stdin, clock=time.monotonic):\n"
+        "    if 'true' not in stdin.read():\n"
+        "        deny('refused by the test, in other words')\n"
+        "    return 0"), scratch)
+    status, out, err = run_replay(main_reworded, scratch, base_ref=main_refusing_all)
+    check("a head that rewords only search-file main()'s refusal: exit 0, and main()'s message difference is printed",
+          status == 0 and f"search-file main(): rows whose message differs and verdict does not: {len(FIXTURE_PAIRS)}"
+          in out and "in other words" in out, f"status {status}\n{out}\n{err}")
 
     def raise_on_ls(worktree):
         with open(worktree / TMUX_KILL_GUARD, "a") as handle:
@@ -226,6 +236,19 @@ try:
                                   "--new-process-pairs", "none")
     check("a search-file main() that hangs on the check's own `true`: exit 2 within the per-pair timeout",
           status == 2 and "search-file main() guard" in err and "TIMEOUT" in err, f"status {status}\n{out}\n{err}")
+
+    def drop_codex_hook(worktree):
+        path = worktree / ".claude" / "settings.json"
+        settings = json.loads(path.read_text())
+        for entry in settings["hooks"]["PreToolUse"]:
+            entry["hooks"] = [hook for hook in entry.get("hooks", [])
+                              if "hand-typed-codex-exec-redirect-hook.py" not in hook.get("command", "")]
+        path.write_text(json.dumps(settings, indent=2))
+    fewer_hooks = commit_with_change(drop_codex_hook, scratch)
+    status, out, err = run_replay(fewer_hooks, scratch)
+    check("a head whose settings.json lacks a Bash hook the replay reads: exit 2, naming the hook",
+          status == 2 and "replayed but not a Bash hook: ['scripts/hand-typed-codex-exec-redirect-hook.py']" in err,
+          f"status {status}\n{out}\n{err}")
 
     uncallable = commit_with_guard_changed(ISSUE_WRITE_GUARD, "del analyze_command_text", scratch)
     status, out, err = run_replay(uncallable, scratch)
@@ -300,6 +323,33 @@ try:
           and replay.GUARDS[codex_path](codex_guard[codex_path], "ls -la", "/", "/")[0] == "passed",
           replay.GUARDS[codex_path](codex_guard[codex_path], 'codex exec -C /tmp/x "do the task"', "/", "/"))
 
+    killed_on_ls = commit_with_guard_changed(TMUX_KILL_GUARD, (
+        "_refusal_for_as_written = refusal_for\n"
+        "def refusal_for(command):\n"
+        "    if command == 'ls -la':\n"
+        "        os.kill(os.getpid(), signal.SIGKILL)\n"
+        "    return _refusal_for_as_written(command)\n"
+        "import os, signal"), scratch)
+    killed_scratch = Path(scratch) / "run-killed-worker"
+    started = time.monotonic()
+    try:
+        killed = subprocess.run(
+            [sys.executable, str(SCRIPT_PATH), "--repository", str(REPOSITORY_ROOT), "--base-ref", killed_on_ls,
+             "--head-ref", killed_on_ls, "--pairs-file", str(Path(scratch) / "fixture-pairs.json"), "--jobs", "2",
+             "--new-process-pairs", "none", "--scratch-directory", str(killed_scratch)],
+            capture_output=True, text=True, timeout=180)
+        still_running = subprocess.run(["pgrep", "-f", str(killed_scratch)], capture_output=True,
+                                        text=True).stdout.split()
+        check("a worker killed by SIGKILL: exit 2 within 180 s, naming the pairs not read, no process left",
+              killed.returncode == 2 and "a worker reading at" in killed.stderr and "'ls -la'" in killed.stderr
+              and not still_running and not worktrees_registered_under(killed_scratch),
+              f"exit {killed.returncode} after {time.monotonic() - started:.0f}s; running {still_running}\n"
+              f"{killed.stdout}\n{killed.stderr}")
+    except subprocess.TimeoutExpired:
+        check("a worker killed by SIGKILL: exit 2 within 180 s, naming the pairs not read, no process left",
+              False, "the replay was still running after 180 s")
+        subprocess.run(["pkill", "-f", str(killed_scratch)])
+
     slow_on_ls = commit_with_guard_changed(TMUX_KILL_GUARD, (
         "_refusal_for_as_written = refusal_for\n"
         "def refusal_for(command):\n"
@@ -307,26 +357,42 @@ try:
         "        time.sleep(120)\n"
         "    return _refusal_for_as_written(command)\n"
         "import time"), scratch)
-    stopped_scratch = Path(scratch) / "run-stopped"
-    (Path(scratch) / "fixture-pairs.json").write_text(json.dumps(FIXTURE_PAIRS))
-    stopped = subprocess.Popen(
-        [sys.executable, str(SCRIPT_PATH), "--repository", str(REPOSITORY_ROOT), "--base-ref", slow_on_ls,
-         "--head-ref", slow_on_ls, "--pairs-file", str(Path(scratch) / "fixture-pairs.json"), "--jobs", "2",
-         "--per-pair-timeout-seconds", "300", "--scratch-directory", str(stopped_scratch)],
-        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-    deadline = time.monotonic() + 120
-    while time.monotonic() < deadline and not (
-            len(worktrees_registered_under(stopped_scratch)) == 2
-            and list(stopped_scratch.glob("verdicts-in-process-base.log"))):
-        time.sleep(0.5)
-    time.sleep(3)  # The step's pool workers are now reading the fixture.
-    stopped.send_signal(signal.SIGTERM)
-    stopped_output = stopped.communicate(timeout=60)[0]
-    still_running = subprocess.run(["pgrep", "-f", str(stopped_scratch)], capture_output=True, text=True).stdout.split()
-    check("a replay stopped by SIGTERM in the middle of a step: exit 2, its checkouts removed, no process left",
-          stopped.returncode == 2 and not worktrees_registered_under(stopped_scratch) and not still_running,
-          f"exit {stopped.returncode}; registered {worktrees_registered_under(stopped_scratch)}; "
-          f"running {still_running}\n{stopped_output}")
+    for stop_signal in (signal.SIGTERM, signal.SIGHUP):
+        stopped_scratch = Path(scratch) / f"run-stopped-by-{stop_signal.name}"
+        (Path(scratch) / "fixture-pairs.json").write_text(json.dumps(FIXTURE_PAIRS))
+        stopped = subprocess.Popen(
+            [sys.executable, str(SCRIPT_PATH), "--repository", str(REPOSITORY_ROOT), "--base-ref", slow_on_ls,
+             "--head-ref", slow_on_ls, "--pairs-file", str(Path(scratch) / "fixture-pairs.json"), "--jobs", "2",
+             "--per-pair-timeout-seconds", "300", "--scratch-directory", str(stopped_scratch)],
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        deadline = time.monotonic() + 120
+        while time.monotonic() < deadline and not (
+                len(worktrees_registered_under(stopped_scratch)) == 2
+                and list(stopped_scratch.glob("verdicts-in-process-base.log"))):
+            time.sleep(0.5)
+        time.sleep(3)  # The step's pool workers are now reading the fixture.
+        stopped.send_signal(stop_signal)
+        stopped_output = stopped.communicate(timeout=60)[0]
+        still_running = subprocess.run(["pgrep", "-f", str(stopped_scratch)], capture_output=True, text=True).stdout.split()
+        check(f"a replay stopped by {stop_signal.name} in the middle of a step: exit 2, its checkouts removed, "
+              f"no process left",
+              stopped.returncode == 2 and not worktrees_registered_under(stopped_scratch) and not still_running,
+              f"exit {stopped.returncode}; registered {worktrees_registered_under(stopped_scratch)}; "
+              f"running {still_running}\n{stopped_output}")
+
+    step_deadline_as_written = replay.step_deadline_seconds
+    replay.step_deadline_seconds = lambda pair_count, jobs, timeout: 10
+    started = time.monotonic()
+    try:
+        status, out, err = run_replay(slow_on_ls, scratch, "--per-pair-timeout-seconds", "300",
+                                      "--new-process-pairs", "none", base_ref=slow_on_ls)
+    finally:
+        replay.step_deadline_seconds = step_deadline_as_written
+    still_running = subprocess.run(["pgrep", "-f", str(Path(scratch) / f"run-")], capture_output=True,
+                                    text=True).stdout.split()
+    check("a step that runs past its deadline: exit 2 within about the deadline, no process left",
+          status == 2 and "ran past its deadline of 10 s" in err and time.monotonic() - started < 60
+          and not still_running, f"status {status} after {time.monotonic() - started:.0f}s; running {still_running}\n{err}")
 
     left_over = worktrees_registered_under(Path(scratch) / "run-")
     check("every checkout the replay made is removed", not left_over, left_over)
@@ -359,6 +425,42 @@ try:
     git("worktree", "unlock", str(locked))
     check("a checkout git cannot remove is reported, with git's reason",
           len(not_removed) == 1 and str(locked) in not_removed[0] and "exited" in not_removed[0], not_removed)
+
+    hanging_git = Path(scratch) / "hanging-git"
+    hanging_git.mkdir()
+    (hanging_git / "git").write_text("#!/bin/sh\nsleep 60\n")
+    (hanging_git / "git").chmod(0o755)
+    path_as_set, timeout_as_set = os.environ["PATH"], replay.GIT_TIMEOUT_SECONDS
+    os.environ["PATH"], replay.GIT_TIMEOUT_SECONDS = f"{hanging_git}:{path_as_set}", 2
+    started = time.monotonic()
+    try:
+        status, out, err = run_replay("HEAD", scratch)
+    finally:
+        os.environ["PATH"], replay.GIT_TIMEOUT_SECONDS = path_as_set, timeout_as_set
+    check("a git call that hangs: exit 2 after the git timeout",
+          status == 2 and "did not finish in 2 s" in err and time.monotonic() - started < 30,
+          f"status {status} after {time.monotonic() - started:.0f}s\n{err}")
+
+    never_added = Path(scratch) / "never-added-checkout"
+    check("a checkout whose add never started is no removal failure",
+          replay.remove_checkouts(str(REPOSITORY_ROOT), [never_added]) == [], never_added)
+
+    run_git_as_written = replay.run_git
+    def run_git_stopped_after_the_add(repository, *arguments):
+        result = run_git_as_written(repository, *arguments)
+        if arguments[:2] == ("worktree", "add"):
+            raise SystemExit(2)  # As raise_terminated() does when SIGTERM lands while git is adding.
+        return result
+    replay.run_git = run_git_stopped_after_the_add
+    try:
+        status, out, err = run_replay("HEAD", scratch)
+    except SystemExit as stop:
+        status = stop.code
+    finally:
+        replay.run_git = run_git_as_written
+    check("a replay stopped during `git worktree add` removes the checkout that add made",
+          status == 2 and not worktrees_registered_under(Path(scratch) / "run-"),
+          worktrees_registered_under(Path(scratch) / "run-"))
 
     transcripts = Path(scratch) / "transcripts" / "project"
     transcripts.mkdir(parents=True)

@@ -43,7 +43,8 @@ import subprocess
 import sys
 import tempfile
 import time
-from multiprocessing import Pool
+from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures.process import BrokenProcessPool
 from pathlib import Path
 
 DEFAULT_TRANSCRIPT_DIRECTORIES = [
@@ -59,6 +60,11 @@ DEFAULT_TRANSCRIPT_DIRECTORIES = [
 NEW_PROCESS_SUBSET_PATTERN = re.compile(r"<<|case|;&|~")
 
 DEFAULT_PER_PAIR_TIMEOUT_SECONDS = 20
+# Pairs a worker reads per task; a worker that dies loses at most this many, and they are named.
+PAIRS_PER_TASK = 200
+# Margin for starting interpreters and loading the guards, on top of the worst case for the readings.
+STEP_DEADLINE_MARGIN_SECONDS = 600
+GIT_TIMEOUT_SECONDS = 600
 PRINTED_TEXT_LENGTH = 300
 
 # Copied from the parent, never inherited: a git variable would point the checkouts' git at
@@ -279,7 +285,7 @@ def guard_readings(guards, command, working_directory, search_file_directory):
         except PairTimedOut:
             readings[path] = ("TIMEOUT", None)
         except (Exception, SystemExit) as error:  # A failed reading; is_failed_reading() makes the run exit 2.
-            # SystemExit too: one escaping a Pool worker kills it, and Pool.map then waits forever.
+            # SystemExit too: one escaping a worker would end that worker.
             readings[path] = (f"EXCEPTION {type(error).__name__}", str(error))
         finally:
             signal.alarm(0)
@@ -295,43 +301,51 @@ def worker_start(checkout, new_process, search_file_directory, timeout):
     WORKER["search_file_directory"] = search_file_directory
 
 
-def worker_guard_row(pair):
-    command, working_directory = pair
-    row = {key: list(value) for key, value in guard_readings(
-        WORKER["guards"], command, working_directory, WORKER["search_file_directory"]).items()}
-    return row, WORKER["switched"]
+def worker_guard_rows(pairs):
+    rows = []
+    for command, working_directory in pairs:
+        rows.append({key: list(value) for key, value in guard_readings(
+            WORKER["guards"], command, working_directory, WORKER["search_file_directory"]).items()})
+    return rows, WORKER["switched"]
 
 
 def search_file_main_outcome(guard, command, working_directory):
-    """Return what the search-file guard's main() does with the hook payload of one recorded call."""
+    """Return ([what the search-file guard's main() does, its exit status], the message it prints)
+    for the hook payload of one recorded call."""
     payload = json.dumps({"tool_name": "Bash", "cwd": working_directory, "tool_input": {"command": command}})
     printed = io.StringIO()
     with contextlib.redirect_stdout(printed):
         exit_status = guard.main(stdin=io.StringIO(payload))
     text = printed.getvalue().strip()
     if not text:
-        return ["silent", exit_status]
+        return ["silent", exit_status], None
     try:
         output = json.loads(text)["hookSpecificOutput"]
     except (ValueError, KeyError, TypeError):
-        return ["output that is not hook JSON", exit_status]
+        return ["output that is not hook JSON", exit_status], text
     if output.get("permissionDecision") == "deny":
-        return ["refused", exit_status]
-    return ["let through with a note", exit_status]
+        return ["refused", exit_status], output.get("permissionDecisionReason")
+    return ["let through with a note", exit_status], output.get("additionalContext")
 
 
-def worker_search_file_main_row(pair):
-    command, working_directory = pair
-    try:
-        signal.alarm(WORKER["timeout"])
-        row = search_file_main_outcome(WORKER["guards"][SEARCH_FILE_GUARD], command, working_directory)
-    except PairTimedOut:
-        row = ["TIMEOUT", None]
-    except (Exception, SystemExit) as error:  # A failed reading; is_failed_reading() makes the run exit 2.
-        row = [f"EXCEPTION {type(error).__name__}", None]
-    finally:
-        signal.alarm(0)
-    return row, WORKER["switched"]
+def worker_search_file_main_rows(pairs):
+    rows = []
+    for command, working_directory in pairs:
+        try:
+            signal.alarm(WORKER["timeout"])
+            verdict, message = search_file_main_outcome(WORKER["guards"][SEARCH_FILE_GUARD], command,
+                                                         working_directory)
+            if isinstance(message, str):
+                message = message.replace(WORKER["checkout"], "<checkout>")
+            row = [verdict, message]
+        except PairTimedOut:
+            row = ["TIMEOUT", None]
+        except (Exception, SystemExit) as error:  # A failed reading; is_failed_reading() makes the run exit 2.
+            row = [f"EXCEPTION {type(error).__name__}", str(error)]
+        finally:
+            signal.alarm(0)
+        rows.append(row)
+    return rows, WORKER["switched"]
 
 
 def smoke_check(checkout, new_process, search_file_directory, timeout):
@@ -345,7 +359,7 @@ def smoke_check(checkout, new_process, search_file_directory, timeout):
     readings = guard_readings(guards, "true", "/", search_file_directory)
     try:
         signal.alarm(timeout)
-        readings["search-file main()"] = (search_file_main_outcome(guards[SEARCH_FILE_GUARD], "true", "/")[0], None)
+        readings["search-file main()"] = search_file_main_outcome(guards[SEARCH_FILE_GUARD], "true", "/")
     except PairTimedOut:
         readings["search-file main()"] = ("TIMEOUT", None)
     except (Exception, SystemExit) as error:
@@ -362,15 +376,35 @@ def smoke_check(checkout, new_process, search_file_directory, timeout):
 
 def ref_verdicts(checkout, pairs, jobs, new_process, search_file_directory, search_file_main, timeout):
     switched = smoke_check(checkout, new_process, search_file_directory, timeout)
-    with Pool(jobs, initializer=worker_start, initargs=(checkout, new_process, search_file_directory, timeout)) as pool:
-        results = pool.map(worker_search_file_main_row if search_file_main else worker_guard_row, pairs, chunksize=200)
-    if len(results) != len(pairs):
-        raise ReplayFailed(f"{checkout} gave {len(results)} rows for {len(pairs)} pairs")
-    workers_switched = {worker_switched for _, worker_switched in results}
+    tasks = [pairs[start:start + PAIRS_PER_TASK] for start in range(0, len(pairs), PAIRS_PER_TASK)]
+    read = worker_search_file_main_rows if search_file_main else worker_guard_rows
+    # Not multiprocessing.Pool: when a Pool worker dies, its task is never finished and map() waits
+    # forever. A ProcessPoolExecutor marks every unfinished task broken instead.
+    executor = ProcessPoolExecutor(jobs, initializer=worker_start,
+                                   initargs=(checkout, new_process, search_file_directory, timeout))
+    rows, not_read, workers_switched = [], [], set()
+    try:
+        futures = [executor.submit(read, task) for task in tasks]
+        for task, future in zip(tasks, futures):
+            try:
+                task_rows, worker_switched = future.result()
+            except BrokenProcessPool:
+                not_read.extend(task)
+                continue
+            rows.extend(task_rows)
+            workers_switched.add(worker_switched)
+    finally:
+        # Without waiting: the step then exits, and run_step_in_child() stops its process group.
+        executor.shutdown(wait=False, cancel_futures=True)
+    if not_read:
+        raise ReplayFailed(f"a worker reading at {checkout} died, so {len(not_read)} pairs were not read; the first: "
+                           + "; ".join(repr(command[:100]) for command, _ in not_read[:5]))
+    if len(rows) != len(pairs):
+        raise ReplayFailed(f"{checkout} gave {len(rows)} rows for {len(pairs)} pairs")
     if workers_switched - {switched}:
         raise ReplayFailed(f"the workers at {checkout} switched {sorted(workers_switched)} shell readers to a new "
                            f"process, where the check before them switched {switched}")
-    return [row for row, _ in results], switched
+    return rows, switched
 
 
 # ---------------------------------------------------------------- step 4: compare
@@ -387,8 +421,10 @@ def verdict_differences(pairs, base_rows, head_rows):
                     differences.append((pair, key, base[key], head[key]))
                 elif base[key][1] != head[key][1]:
                     message_differences.append((pair, key, base[key], head[key]))
-        elif base != head:
+        elif base[0] != head[0]:
             differences.append((pair, "search-file main()", base, head))
+        elif base[1] != head[1]:
+            message_differences.append((pair, "search-file main()", base, head))
     return differences, message_differences
 
 
@@ -412,27 +448,40 @@ def child_environment():
 
 
 def run_git(repository, *arguments):
-    completed = subprocess.run(["git", "-C", repository, *arguments], capture_output=True, text=True,
-                               env=child_environment())
+    try:
+        completed = subprocess.run(["git", "-C", repository, *arguments], capture_output=True, text=True,
+                                   env=child_environment(), timeout=GIT_TIMEOUT_SECONDS)
+    except subprocess.TimeoutExpired as error:
+        raise ReplayFailed(f"git {' '.join(arguments)} did not finish in {GIT_TIMEOUT_SECONDS} s") from error
     if completed.returncode != 0:
         raise ReplayFailed(f"git {' '.join(arguments)} exited {completed.returncode}: {completed.stderr.strip()}")
     return completed.stdout.strip()
 
 
-def run_step_in_child(arguments, log_path):
+def step_deadline_seconds(pair_count, jobs, timeout):
+    """The longest one step can take if every reading of every pair runs to its timeout."""
+    readings_per_pair = len(GUARDS) + 1  # The guards, or search-file main(); plus the smoke check's share.
+    return -(-pair_count // jobs) * readings_per_pair * timeout + STEP_DEADLINE_MARGIN_SECONDS
+
+
+def run_step_in_child(arguments, log_path, deadline_seconds):
     """Run one ref's step in a fresh interpreter, so each ref's modules load from that ref alone."""
-    # In its own process group, so stopping the replay also stops the step's pool workers, which
-    # would otherwise go on reading checkouts the replay is removing.
+    # In its own process group, so a step that ends, fails or is stopped takes its workers with it;
+    # they would otherwise go on reading checkouts the replay is removing.
     with open(log_path, "w") as log:
         step = subprocess.Popen([sys.executable, "-B", __file__, *arguments], stdout=log,
                                 stderr=subprocess.STDOUT, env=child_environment(), start_new_session=True)
         try:
-            returncode = step.wait()
-        except BaseException:
+            returncode = step.wait(timeout=deadline_seconds)
+        except subprocess.TimeoutExpired:
+            returncode = None
+        finally:
             with contextlib.suppress(ProcessLookupError):
                 os.killpg(step.pid, signal.SIGKILL)
             step.wait()
-            raise
+    if returncode is None:
+        raise ReplayFailed(f"the step {arguments[1]} ran past its deadline of {deadline_seconds} s and was stopped; "
+                           f"log {log_path}")
     if returncode != 0:
         tail = Path(log_path).read_text(errors="replace").strip().splitlines()[-5:]
         raise ReplayFailed(f"the step {arguments[1]} exited {returncode}; log {log_path}: " + " | ".join(tail))
@@ -461,22 +510,49 @@ def print_rows(title, items, limit):
 
 
 def remove_checkouts(repository, checkouts):
-    """Remove each checkout; return the ones git could not remove, with git's reason."""
+    """Remove each checkout that git has registered or that exists; return the ones that could not be
+    removed, with the reason."""
     failed = []
+    try:
+        listed = subprocess.run(["git", "-C", repository, "worktree", "list", "--porcelain"], capture_output=True,
+                                text=True, env=child_environment(), timeout=GIT_TIMEOUT_SECONDS)
+    except subprocess.TimeoutExpired:
+        return [f"{checkout}: git worktree list did not finish in {GIT_TIMEOUT_SECONDS} s" for checkout in checkouts]
+    if listed.returncode != 0:
+        return [f"{checkout}: git worktree list exited {listed.returncode}: {listed.stderr.strip()}"
+                for checkout in checkouts]
+    registered = {line[len("worktree "):] for line in listed.stdout.splitlines() if line.startswith("worktree ")}
     for checkout in checkouts:
-        completed = subprocess.run(["git", "-C", repository, "worktree", "remove", "--force", str(checkout)],
-                                   capture_output=True, text=True, env=child_environment())
+        if str(checkout) not in registered:
+            if os.path.exists(checkout):
+                shutil.rmtree(checkout, ignore_errors=True)  # An add stopped before git registered it.
+            if os.path.exists(checkout):
+                failed.append(f"{checkout}: not registered with git, and it could not be deleted")
+            continue
+        try:
+            completed = subprocess.run(["git", "-C", repository, "worktree", "remove", "--force", str(checkout)],
+                                       capture_output=True, text=True, env=child_environment(),
+                                       timeout=GIT_TIMEOUT_SECONDS)
+        except subprocess.TimeoutExpired:
+            failed.append(f"{checkout}: git worktree remove did not finish in {GIT_TIMEOUT_SECONDS} s")
+            continue
         if completed.returncode != 0:
             failed.append(f"{checkout}: git worktree remove exited {completed.returncode}: {completed.stderr.strip()}")
     return failed
 
 
+# The steps run in their own sessions, so a SIGHUP from a closing terminal reaches only the replay,
+# which must then remove its checkouts and stop the steps as it does for SIGTERM.
+STOP_SIGNALS = (signal.SIGTERM, signal.SIGHUP)
+
+
 def replay(arguments):
-    previous_handler = signal.signal(signal.SIGTERM, raise_terminated)
+    previous_handlers = {number: signal.signal(number, raise_terminated) for number in STOP_SIGNALS}
     try:
         return replay_with_sigterm_handled(arguments)
     finally:
-        signal.signal(signal.SIGTERM, previous_handler)
+        for number, handler in previous_handlers.items():
+            signal.signal(number, handler)
 
 
 def replay_with_sigterm_handled(arguments):
@@ -515,8 +591,8 @@ def replay_with_sigterm_handled(arguments):
         for label, ref in (("base", arguments.base_ref), ("head", arguments.head_ref)):
             commit = run_git(repository, "rev-parse", "--verify", ref + "^{commit}")
             checkout = scratch / f"checkout-{label}"
+            checkouts[label] = checkout  # Before the add, so a stop in the middle of the add is cleaned up too.
             run_git(repository, "worktree", "add", "--detach", str(checkout), commit)
-            checkouts[label] = checkout
             print(f"{label}: {ref} at {commit}")
             check_guards_match_settings(checkout, label)
 
@@ -536,7 +612,9 @@ def replay_with_sigterm_handled(arguments):
                                    str(arguments.jobs), "1" if new_process else "0",
                                    "1" if search_file_main else "0", str(search_file_directory),
                                    str(arguments.per_pair_timeout_seconds)],
-                                  scratch / f"verdicts-{mode.split()[0]}-{label}.log")
+                                  scratch / f"verdicts-{mode.split()[0]}-{label}.log",
+                                  step_deadline_seconds(len(mode_pairs), arguments.jobs,
+                                                        arguments.per_pair_timeout_seconds))
                 written = json.loads(out.read_text())
                 rows[label] = written["rows"]
                 failed = failed_readings(mode_pairs, rows[label], label)
@@ -563,7 +641,8 @@ def replay_with_sigterm_handled(arguments):
             print("NO VERDICT CHANGED")
             status = 0
     finally:
-        signal.signal(signal.SIGTERM, signal.SIG_IGN)  # A second SIGTERM must not stop the removal.
+        for number in STOP_SIGNALS:
+            signal.signal(number, signal.SIG_IGN)  # A second stop must not interrupt the removal.
         not_removed = remove_checkouts(repository, checkouts.values())
         if not_removed:
             print("REPLAY FAILED: these checkouts could not be removed; remove them with git worktree remove --force:\n  "
