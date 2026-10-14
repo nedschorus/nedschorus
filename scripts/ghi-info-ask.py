@@ -335,7 +335,7 @@ RULING_QUESTION_MESSAGE_TEMPLATE = (
     "Otherwise, ask the user whether that ruling still applies, and put the question on your task list.")
 # What follows the sentence when it opened with the number of the issue
 # holding the ruling; scripts/ghi-issue-write.py reads the number back from it.
-RULING_QUESTION_HELD_IN_TEMPLATE = " (held in GHI {number})"
+RULING_QUESTION_RULING_GHI_NUMBER_SUFFIX_TEMPLATE = " (held in GHI {number})"
 # Printed on stderr after an answer asked without --include-closed. stderr,
 # because stdout is the answer that callers such as ghi-issue-write.py parse.
 # The command names the question asked, shell-quoted, so it runs as printed.
@@ -356,7 +356,7 @@ def caller_message_for_passthrough_reply(text: str):
     """(message, exit code) for a not-about-issues or ask-user-about-ruling:
     reply, or None for any other reply. The ruling sentence is carried over
     as ghi-info wrote it, with the prefix and surrounding whitespace removed;
-    a leading `#<n>` is moved to the end as RULING_QUESTION_HELD_IN_TEMPLATE."""
+    a leading `#<n>` is moved to the end as RULING_QUESTION_RULING_GHI_NUMBER_SUFFIX_TEMPLATE."""
     stripped = text.strip()
     if stripped.lower() in NOT_ABOUT_ISSUES_REPLY_WORDS:
         return NOT_ABOUT_ISSUES_MESSAGE, EXIT_NOT_ABOUT_ISSUES
@@ -366,7 +366,7 @@ def caller_message_for_passthrough_reply(text: str):
             numbered = re.match(r"#(\d+)\s*(.*)", sentence, re.DOTALL)
             if numbered:
                 sentence = (numbered.group(2).strip()
-                            + RULING_QUESTION_HELD_IN_TEMPLATE.format(
+                            + RULING_QUESTION_RULING_GHI_NUMBER_SUFFIX_TEMPLATE.format(
                                 number=numbered.group(1)))
             return (RULING_QUESTION_MESSAGE_TEMPLATE.format(sentence=sentence),
                     EXIT_RULING_QUESTION)

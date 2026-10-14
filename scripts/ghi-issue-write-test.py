@@ -1294,14 +1294,14 @@ def run_cases(scratch: Path):
               "{sentence}\n")[1].startswith(
                   tool.GHI_INFO_ASK_RULING_QUESTION_SENTENCE_END),
           tool.GHI_INFO_ASK_RULING_QUESTION_SENTENCE_END)
-    held_in_783 = tool.GHI_INFO_ASK_RULING_QUESTION_HELD_IN_PATTERN.search(
-        "a sentence" + ask_module.RULING_QUESTION_HELD_IN_TEMPLATE.format(
+    held_in_783 = tool.GHI_INFO_ASK_RULING_QUESTION_RULING_GHI_NUMBER_SUFFIX_PATTERN.search(
+        "a sentence" + ask_module.RULING_QUESTION_RULING_GHI_NUMBER_SUFFIX_TEMPLATE.format(
             number=783))
     check("the tool's pattern for the issue number after the ruling "
           "question's sentence reads ghi-info-ask.py's",
           held_in_783 is not None and held_in_783.group(1) == "783"
           and held_in_783.start() == len("a sentence"),
-          ask_module.RULING_QUESTION_HELD_IN_TEMPLATE)
+          ask_module.RULING_QUESTION_RULING_GHI_NUMBER_SUFFIX_TEMPLATE)
 
     # --- A ruling question: the write goes ahead and records it ----------
 

@@ -436,9 +436,9 @@ GHI_INFO_ASK_RULING_QUESTION_EXIT_CODE = 3
 # A sentence can run over several lines. Copied and checked like the above.
 GHI_INFO_ASK_RULING_QUESTION_SENTENCE_END = "If you file or edit the GHI"
 # How the sentence ends when ghi-info named the issue holding the ruling:
-# ghi-info-ask.py's RULING_QUESTION_HELD_IN_TEMPLATE, as a pattern whose group
+# ghi-info-ask.py's RULING_QUESTION_RULING_GHI_NUMBER_SUFFIX_TEMPLATE, as a pattern whose group
 # is the number. Copied and checked like the above.
-GHI_INFO_ASK_RULING_QUESTION_HELD_IN_PATTERN = re.compile(
+GHI_INFO_ASK_RULING_QUESTION_RULING_GHI_NUMBER_SUFFIX_PATTERN = re.compile(
     r"\s*\(held in GHI (\d+)\)$")
 # A proposed-improvements-or-changes-file sits beside its GHI-MD and is named
 # `<GHI-MD name>-proposed-improvements-or-changes-<source>-<YYYY-MM-DD>[-<n>].md`
@@ -491,7 +491,7 @@ def ruling_conflict_from_stderr(stderr: str):
                 break
             parts.append(following.strip())
         sentence = " ".join(part for part in parts if part)
-        held_in = GHI_INFO_ASK_RULING_QUESTION_HELD_IN_PATTERN.search(sentence)
+        held_in = GHI_INFO_ASK_RULING_QUESTION_RULING_GHI_NUMBER_SUFFIX_PATTERN.search(sentence)
         if held_in:
             return RulingConflict(int(held_in.group(1)),
                                   sentence[:held_in.start()].strip())
