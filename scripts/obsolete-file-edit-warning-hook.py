@@ -289,7 +289,7 @@ def warning_record_write(git_directory: Path, head_sha: str, main_sha: str,
     try:
         (git_directory / PATH_SET_CACHE_FILE_NAME).write_text(
             json.dumps({"head": head_sha, "main_tip": main_sha, "paths": sorted(paths),
-                        "warned": warned}, indent=2, ensure_ascii=False) + "\n",
+                        "warned": warned}, indent=2) + "\n",
             encoding="utf-8")
     except OSError as error:
         return f"{type(error).__name__}: {error}"
@@ -484,10 +484,7 @@ def main() -> int:
         advice, advice_on_own_lines)
     if not advice_reports_failure and warned.get(repository_path) == line:
         return 0
-    if advice_reports_failure:
-        warned.pop(repository_path, None)
-    else:
-        warned[repository_path] = line
+    warned[repository_path] = line
     write_failure = warning_record_write(git_directory, head_sha, main_sha, obsolete, warned)
     if write_failure is not None:
         line += "\n" + RECORD_WRITE_FAILED_LINE.format(

@@ -713,8 +713,12 @@ with tempfile.TemporaryDirectory() as temporary_directory:
         main_blob_file.rename(hidden_blob_file)
         try:
             warning = detached_warning(shared_file)
+            repeated_warning = detached_warning(shared_file)
         finally:
             hidden_blob_file.rename(main_blob_file)
+        check("detached: main's copy still unreadable at the next edit is reported again, "
+              "never held back as a repeat",
+              repeated_warning == warning, repeated_warning)
         last_line = warning.split("\n")[-1]
         check("detached: main's copy that git cannot read is reported with git's text, "
               "not as a deleted file",
@@ -764,6 +768,85 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     check("unknown branch state: the same failure at the next edit is reported again, "
           "never held back as a repeat",
           agent_text(result) == "\n".join(lines), agent_text(result))
+
+    # head_state() answering "unknown" on a branch: no origin/<branch>, and the
+    # walk of the branch's own commits fails, so whether they were pushed is unknown.
+    unknown_state_checkout = tmp / "unknown-head-state-checkout"
+    git(["clone", "-q", str(origin), str(unknown_state_checkout)], tmp)
+    configure_identity(unknown_state_checkout)
+    git(["checkout", "-q", "-b", "a-branch-whose-pushes-git-cannot-check"],
+        unknown_state_checkout)
+    commit_file(unknown_state_checkout, "lib/branch-own.py", "own\n", "the branch's own commit")
+    unknown_state_main_tip = git(["rev-parse", "origin/main"], unknown_state_checkout).stdout.strip()
+    git(["checkout", "-q", "--detach", "origin/main"], unknown_state_checkout)
+    commit_file(unknown_state_checkout, "scripts/recover-crashed-seats.py",
+                "main moved this file\n", "main moves a file the branch has")
+    moved_main_tip = git(["rev-parse", "HEAD"], unknown_state_checkout).stdout.strip()
+    git(["checkout", "-q", "a-branch-whose-pushes-git-cannot-check"], unknown_state_checkout)
+    git(["update-ref", "refs/remotes/origin/main", moved_main_tip, unknown_state_main_tip],
+        unknown_state_checkout)
+    own_commit_walk_failing_git_directory = tmp / "own-commit-walk-failing-git"
+    own_commit_walk_failing_git_directory.mkdir()
+    (own_commit_walk_failing_git_directory / "git").write_text(
+        "#!/bin/sh\n"
+        'if [ "$1" = "rev-list" ] && [ "$2" = "origin/main..HEAD" ]; then\n'
+        '  printf "shimmed: the own-commit walk fails\\n" >&2\n'
+        "  exit 128\n"
+        "fi\n"
+        f'exec "{real_git}" "$@"\n', encoding="utf-8")
+    (own_commit_walk_failing_git_directory / "git").chmod(0o755)
+    unknown_state_file = unknown_state_checkout / "scripts/recover-crashed-seats.py"
+    result = run_hook(hook_payload(unknown_state_checkout, unknown_state_file),
+                      path_prefix=own_commit_walk_failing_git_directory)
+    first_unknown_state_warning = agent_text(result)
+    check("unknown head state on a branch: the warning says git could not report the "
+          "branch state",
+          "git could not report this checkout's branch state (head state unknowable"
+          in first_unknown_state_warning, result.stdout + result.stderr)
+    result = run_hook(hook_payload(unknown_state_checkout, unknown_state_file),
+                      path_prefix=own_commit_walk_failing_git_directory)
+    check("unknown head state on a branch: the same warning at the next edit is given "
+          "again, never held back as a repeat",
+          agent_text(result) == first_unknown_state_warning, result.stdout + result.stderr)
+
+    # A path on main whose name is not UTF-8: git's output is decoded with
+    # surrogateescape, so the path set holds a lone surrogate the record must
+    # still be able to write. The name only ever lives in git's objects, never
+    # on disk, so the case runs on a filesystem that refuses such names.
+    byte_path_checkout = tmp / "byte-path-checkout"
+    git(["clone", "-q", str(origin), str(byte_path_checkout)], tmp)
+    configure_identity(byte_path_checkout)
+    git(["checkout", "-q", "-b", "a-branch-beside-a-byte-named-path"], byte_path_checkout)
+    byte_path_main_tip = git(["rev-parse", "origin/main"], byte_path_checkout).stdout.strip()
+    byte_path_index = tmp / "byte-path-index"
+    index_environment = dict(os.environ, GIT_INDEX_FILE=str(byte_path_index))
+    def plumbing(arguments, stdin=b""):
+        return subprocess.run(["git", *arguments], cwd=str(byte_path_checkout),
+                              input=stdin, capture_output=True, check=True,
+                              env=index_environment).stdout.decode().strip()
+    plumbing(["read-tree", byte_path_main_tip])
+    byte_named_blob = plumbing(["hash-object", "-w", "--stdin"], b"named in bytes\n")
+    moved_blob = plumbing(["hash-object", "-w", "--stdin"], b"main moved this file too\n")
+    plumbing(["update-index", "--index-info"],
+             b"100644 " + byte_named_blob.encode() + b"\tdocs/byte-\xff-named.md\n"
+             + b"100644 " + moved_blob.encode() + b"\tscripts/recover-crashed-seats.py\n")
+    byte_path_tree = plumbing(["write-tree"])
+    byte_path_commit = plumbing(["commit-tree", byte_path_tree, "-p", byte_path_main_tip,
+                                 "-m", "main adds a path whose name is not UTF-8"])
+    git(["update-ref", "refs/remotes/origin/main", byte_path_commit, byte_path_main_tip],
+        byte_path_checkout)
+    byte_path_neighbour = byte_path_checkout / "scripts/recover-crashed-seats.py"
+    result = run_hook(hook_payload(byte_path_checkout, byte_path_neighbour))
+    check("a path on main whose name is not UTF-8: an edit of an ordinary file main "
+          "changed still warns, exit 0",
+          result.returncode == 0
+          and "scripts/recover-crashed-seats.py" in agent_text(result)
+          and "could not record" not in agent_text(result),
+          result.stdout + result.stderr)
+    result = run_hook(hook_payload(byte_path_checkout, byte_path_neighbour))
+    check("a path on main whose name is not UTF-8: the record was written and read back, "
+          "so the same warning is not repeated",
+          silent(result), result.stdout + result.stderr)
 
     # -----------------------------------------------------------------------
     # NEVER FETCHES. The Stop hook fetches on its own throttle; a PostToolUse
