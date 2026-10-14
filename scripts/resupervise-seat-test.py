@@ -563,7 +563,7 @@ def load_resupervise():
     return module
 
 
-def run_tmux_probe_failure_cases():
+def run_tmux_probe_failure_cases(workspace: Path):
     """Only tmux's own absent answers mean no session; any other failure refuses.
 
     Retiring kills the seat's session so the launcher's `tmux new-session -A`
@@ -588,8 +588,27 @@ def run_tmux_probe_failure_cases():
     real_which = shutil.which
     try:
         check_tmux_probe_failure_cases(resupervise, calls, stub_answers)
+        check_dry_run_probe_failure_case(workspace, resupervise, stub_answers)
     finally:
         shutil.which = real_which  # the module's shutil is this process's shutil
+
+
+def check_dry_run_probe_failure_case(workspace: Path, resupervise, stub_answers):
+    """A dry run whose probe got no answer refuses, rather than promising a clean launch."""
+    import contextlib
+    import io
+    resupervise.shutil.which = lambda program: "/usr/bin/tmux"
+    stub_answers({})  # every tmux call gets no answer, as when tmux times out
+    write_handoff(workspace, "dryprobe", counter=1)
+    errors = io.StringIO()
+    with contextlib.redirect_stdout(io.StringIO()) as output, contextlib.redirect_stderr(errors):
+        code = resupervise.main(["dryprobe", "--handoff-dir", str(workspace),
+                                 "--agents-root", str(workspace / "agents"),
+                                 "--dry-run", "--prepare-only"])
+    check("a dry run whose tmux probe got no answer refuses instead of reporting a clean launch",
+          code == 1 and "could not tell whether the tmux session dryprobe is still there"
+          in errors.getvalue() and "DRY RUN" not in output.getvalue(),
+          f"exit {code}; stdout {output.getvalue()!r}; stderr {errors.getvalue()!r}")
 
 
 def check_tmux_probe_failure_cases(resupervise, calls, stub_answers):
@@ -607,7 +626,7 @@ def check_tmux_probe_failure_cases(resupervise, calls, stub_answers):
     stub_answers({("has-session", "probeseat"): (1, "no server running on /tmp/x\n")})
     killed, failure = resupervise.retire_seat_tmux_session("probeseat")
     check("a has-session that does not answer refuses instead of reading as no session",
-          failure is not None and "did not answer" in failure and killed == [],
+          failure is not None and "tmux cannot be run here" in failure and killed == [],
           f"killed={killed} failure={failure}")
     check("nothing is killed after a probe that did not answer",
           not any(command == "kill-session" for command, _ in calls), str(calls))
@@ -627,6 +646,13 @@ def check_tmux_probe_failure_cases(resupervise, calls, stub_answers):
     killed, failure = resupervise.retire_seat_tmux_session("probeseat")
     check("a session on the seat's own server is killed when the default server says absent",
           killed == ["probeseat"] and failure is None, f"killed={killed} failure={failure}")
+
+    held, detail = resupervise.tmux_has_session(
+        "probeseat", "default",
+        run=lambda *arguments, socket_name=None: subprocess.CompletedProcess(
+            ["tmux"], 1, "can't find session: probeseat\n", ""))
+    check("an absent answer tmux printed on stdout, with stderr empty, still reads as absent",
+          held is False and "can't find session" in detail, repr((held, detail)))
 
     resupervise.shutil.which = lambda program: None
     calls.clear()
@@ -903,7 +929,7 @@ def run_all_cases() -> int:
         run_end_to_end_case(workspace)
         run_per_seat_server_end_to_end_case(workspace)
         run_missing_tmux_case(workspace)
-        run_tmux_probe_failure_cases()
+        run_tmux_probe_failure_cases(workspace)
         run_agent_box_case(workspace)
         run_override_propagation_case(workspace)
         run_apostrophe_propagation_case(workspace)

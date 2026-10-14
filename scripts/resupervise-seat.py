@@ -197,32 +197,44 @@ def run_tmux(*arguments_after_tmux, socket_name=None):
         return None
 
 
+def tmux_has_session(name: str, socket_name: str, run=None):
+    """Return (held, detail) for one tmux server, with held None when tmux gave no answer.
+
+    has-session's failure is an answer ("not held") only when tmux says the session
+    or its server does not exist; a timeout or any other error says nothing about
+    whether the session is there. recover-crashed-seats.py probes through this
+    function too, passing its own run_tmux as run.
+    """
+    completed = (run or run_tmux)("has-session", "-t", f"={name}", socket_name=socket_name)
+    if completed is None:
+        return None, "tmux cannot be run here"
+    if completed.returncode == 0:
+        return True, ""
+    reason = (completed.stderr or completed.stdout or "").strip()
+    if tmux_error_pattern.tmux_error_text_says_target_or_server_does_not_exist(reason):
+        return False, reason
+    return None, (f"tmux has-session on socket '{socket_name}' exited "
+                  f"{completed.returncode}: {reason or 'with no output'}")
+
+
 def tmux_sockets_holding_seat_session(name: str):
     """Return (socket names holding the seat session in kill order, failure_detail).
 
-    A socket counts as not holding the session only when tmux says the session or
-    its server does not exist. Any other failure is returned as failure_detail:
-    the session may still be there, and the launcher's `tmux new-session -A` would
-    then attach to it instead of starting a supervisor.
+    A probe tmux did not answer is returned as failure_detail: the session may still
+    be there, and the launcher's `tmux new-session -A` would then attach to it
+    instead of starting a supervisor.
     """
     # Check both seat and default servers: leaving either session alive creates a decoy seat.
     if shutil.which("tmux") is None:
         return [], None  # no tmux on this machine, so no tmux session either
     holding = []
     for socket_name in dict.fromkeys((name, "default")):
-        completed = run_tmux("has-session", "-t", f"={name}", socket_name=socket_name)
-        if completed is None:
+        held, detail = tmux_has_session(name, socket_name)
+        if held is None:
             return holding, (f"could not tell whether the tmux session {name} is still there "
-                             f"(server socket {socket_name}): tmux did not answer within "
-                             "30 seconds or could not be run")
-        if completed.returncode == 0:
+                             f"(server socket {socket_name}): {detail}")
+        if held:
             holding.append(socket_name)
-        elif not tmux_error_pattern.tmux_error_text_says_target_or_server_does_not_exist(
-                completed.stderr):
-            return holding, (f"could not tell whether the tmux session {name} is still there "
-                             f"(server socket {socket_name}): tmux exited "
-                             f"{completed.returncode}: "
-                             f"{completed.stderr.strip() or 'no detail'}")
     return holding, None
 
 
