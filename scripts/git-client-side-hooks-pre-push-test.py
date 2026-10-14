@@ -78,8 +78,8 @@ TELL_USER_LINE = ("Tell the user this whole message, including any error printed
                   "the same way.")
 RERUN_VERDICT_LINE = ("If that run also prints no VERDICT line, tell the user this "
                       "whole message and what that run printed.")
-NO_BRANCH_CHECKED = ("so no branch in this push was checked for conflicts with "
-                     "origin/main: %s.")
+NO_BRANCH_CHECKED = ("so this push goes ahead with none of its branches checked for "
+                     "conflicts with origin/main: %s.")
 SHORT_COMMIT_LENGTH = 12
 
 
@@ -460,8 +460,8 @@ def run_unit_cases():
     check("an error before the pushed refs were read says no branch was checked",
           stream.getvalue().splitlines() == [
               "pre-push: the pre-push conflict check failed with RuntimeError: boom "
-              "before reading which branches this push sends, so no branch in this "
-              "push was checked for conflicts with origin/main.",
+              "before reading which branches this push sends, so this push goes ahead "
+              "with none of its branches checked for conflicts with origin/main.",
               "For each branch this push sends to origin, other than main, run from "
               "your worktree: python3 scripts/branch-conflict-check.py --head "
               "<branch name>",
