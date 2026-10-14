@@ -429,7 +429,7 @@ def check_overview_lock_and_environment_variable_sources(line: str, md_path: Pat
 GITHUB_REPOSITORY = "nedschorus/nedschorus"
 PLANNED_WORK_HEADING = "## Planned work"
 PLANNED_WORK_GHI_LINE = re.compile(
-    r"(?:[-*+]|\d+[.)]) GHI \[(?P<title>.+)\]\(https://github\.com/"
+    r"\s*(?:[-*+]|\d+[.)]) GHI \[(?P<title>.+)\]\(https://github\.com/"
     + re.escape(GITHUB_REPOSITORY) + r"/issues/(?P<number>\d+)\)")
 PLANNED_WORK_ENTRY = re.compile(r"\s*(?:[-*+]|\d+[.)])\s|.*github\.com/[^)\s]+/issues/\d+")
 GITHUB_QUERY_TIMEOUT_SECONDS = 60

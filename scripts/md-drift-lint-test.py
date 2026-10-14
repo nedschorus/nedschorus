@@ -607,7 +607,8 @@ with tempfile.TemporaryDirectory() as overview_workspace:
         outside = Path(outside_workspace) / "nedschorus-demo-architecture-overview.md"
         outside.write_text("- `scripts/unregistered-hook.py`, a `Stop` hook.\n",
                            encoding="utf-8")
-        findings = [problem for _, problem in lint.lint_markdown(outside, root)]
+        findings = [problem for _, problem in lint.lint_markdown(
+            outside, root, architecture_overview_checks=True)]
         check("a file outside the repository is not taken for an architecture overview",
               findings == [], str(findings))
     findings = problems_for(
@@ -681,6 +682,7 @@ with tempfile.TemporaryDirectory() as overview_workspace:
             "- A task with no GHI\n"
             "* A starred task with no GHI\n"
             f"1. GHI [Open one]({url}1)\n"
+            f"  - GHI [Open one]({url}1)\n"
             f"See also [Open one]({url}1).\n\n"
             "**Checked against:** commit [abc1234](https://example.invalid)\n",
             root, OVERVIEW_NAME)
