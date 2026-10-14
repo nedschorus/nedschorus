@@ -46,7 +46,7 @@ time: applying a fast read's findings changes the document, which would
 otherwise make it due again every time the agent linked it. A read is this
 agent-session's own when the file a finished fast read writes beside its
 report (nc-systems/cold-read/cold-read-record-names.py,
-fast_read_agent_session_path) names the payload's session_id and the
+cold_read_fast_read_report_agent_session_id_file_path) names the payload's session_id and the
 document's resolved path. The fast read takes the ID from
 CLAUDE_CODE_SESSION_ID, which a subagent's Bash shares with its parent, so a
 fast read a subagent runs counts as its parent agent-session's own. A record
@@ -242,15 +242,17 @@ def walk_draft_suggestions_path(document):
 
 
 def read_by_agent_session(report, document, session_id, record_names):
-    return record_names.fast_read_agent_session_read_target(report, session_id) == document
+    return record_names.cold_read_fast_read_target_path_if_run_by_given_agent_session(report, session_id) == document
 
 
 def document_is_due(document, record_directories, document_top, record_names,
                     session_id=None):
     suggestions = walk_draft_suggestions_path(document)
     if suggestions is not None and suggestions.is_file():
+        # Read the agent-session file first, so a malformed one is reported here as on the records route.
+        read_by_this_agent_session = read_by_agent_session(suggestions, document, session_id, record_names)
         if (suggestions.stat().st_mtime >= document.stat().st_mtime
-                or read_by_agent_session(suggestions, document, session_id, record_names)):
+                or read_by_this_agent_session):
             return False
     pattern = record_names.record_directory_name_pattern_for_target(document)
     current_bytes = document.read_bytes()

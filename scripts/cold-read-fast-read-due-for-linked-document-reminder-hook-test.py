@@ -340,11 +340,19 @@ def main():
            case.run("Applied the findings to docs/plan-of-record.md."), [document])
     (record / "fast-read.md.agent-session.json").write_text("not json\n")
     completed = case.run("Applied the findings to docs/plan-of-record.md.")
-    check("an agent-session file that is not JSON is a fault: exit 1, one stderr line, no output",
+    check("an agent-session file that is not JSON is a fault naming the file: exit 1, one stderr line, no output",
           completed.returncode == 1 and completed.stdout == ""
           and "made no check" in completed.stderr
+          and str(record / "fast-read.md.agent-session.json") in completed.stderr
           and len(completed.stderr.strip().splitlines()) == 1,
           f"exit {completed.returncode}, stdout {completed.stdout!r}, stderr {completed.stderr!r}")
+    for label, content in (("empty", b""), ("not UTF-8", b"\xff\xfe{")):
+        (record / "fast-read.md.agent-session.json").write_bytes(content)
+        completed = case.run("Applied the findings to docs/plan-of-record.md.")
+        check(f"an agent-session file that is {label} is a fault naming the file: exit 1",
+              completed.returncode == 1
+              and str(record / "fast-read.md.agent-session.json") in completed.stderr,
+              f"exit {completed.returncode}, stderr {completed.stderr!r}")
     (record / "fast-read.md.agent-session.json").write_text('{"agent_session_id": "s1"}\n')
     completed = case.run("Applied the findings to docs/plan-of-record.md.")
     check("an agent-session file without a target is a fault: exit 1",
@@ -359,6 +367,17 @@ def main():
     name_agent_session(suggestions, "s1", draft)
     expect("a walk-document this agent-session fast-read, then changed, is not raised again",
            case.run("The walk-document is docs/walk/naming-rules-draft.md."), None)
+
+    case = Case()
+    draft = case.document("docs/walk/naming-rules-draft.md", modified=4_000_000)
+    suggestions = case.document("docs/walk/naming-rules-suggestions.md", modified=5_000_000)
+    malformed = suggestions.parent / (suggestions.name + ".agent-session.json")
+    malformed.write_text("not json\n")
+    completed = case.run("The walk-document is docs/walk/naming-rules-draft.md.")
+    check("a malformed agent-session file beside suggestions newer than the walk-document is a fault naming the file",
+          completed.returncode == 1 and completed.stdout == ""
+          and str(malformed) in completed.stderr,
+          f"exit {completed.returncode}, stdout {completed.stdout!r}, stderr {completed.stderr!r}")
 
     case = Case()
     case.document("docs/plan-of-record.md", modified=5_000_000)

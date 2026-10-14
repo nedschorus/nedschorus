@@ -762,7 +762,7 @@ def main() -> int:
                 if bare_references is not None:
                     attached += bare_references_section(bare_references)
                 report.write_text(attached, encoding="utf-8")
-                record_names.write_fast_read_agent_session(
+                record_names.cold_read_fast_read_report_agent_session_id_file_write_or_remove(
                     report, target,
                     os.environ.get(record_names.AGENT_SESSION_ID_ENVIRONMENT_VARIABLE))
                 if bare_references:

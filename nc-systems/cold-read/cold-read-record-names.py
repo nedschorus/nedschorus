@@ -27,7 +27,7 @@ GENERATED_INPUT_COPY_SUFFIXES = (SENTENCE_ID_MARKED_COPY_SUFFIX,)
 # naming the agent-session that ran it, so a Stop hook can tell its own
 # session's reads from other sessions'. Claude Code sets the variable in the
 # Bash environment; a subagent's Bash sees its parent's ID.
-FAST_READ_AGENT_SESSION_FILE_SUFFIX = ".agent-session.json"
+COLD_READ_FAST_READ_REPORT_AGENT_SESSION_ID_FILE_SUFFIX = ".agent-session.json"
 AGENT_SESSION_ID_ENVIRONMENT_VARIABLE = "CLAUDE_CODE_SESSION_ID"
 
 
@@ -86,12 +86,12 @@ def record_holds_completed_report(record_dir: pathlib.Path) -> bool:
                for entry in record_dir.iterdir())
 
 
-def fast_read_agent_session_path(report: pathlib.Path) -> pathlib.Path:
+def cold_read_fast_read_report_agent_session_id_file_path(report: pathlib.Path) -> pathlib.Path:
     """The file beside a finished fast read's report naming the agent-session that ran it."""
-    return report.with_name(report.name + FAST_READ_AGENT_SESSION_FILE_SUFFIX)
+    return report.with_name(report.name + COLD_READ_FAST_READ_REPORT_AGENT_SESSION_ID_FILE_SUFFIX)
 
 
-def write_fast_read_agent_session(report: pathlib.Path, target: pathlib.Path, session_id) -> None:
+def cold_read_fast_read_report_agent_session_id_file_write_or_remove(report: pathlib.Path, target: pathlib.Path, session_id) -> None:
     """Record which agent-session read target, an absolute resolved path, into report.
 
     Without a session ID the file is removed instead: a walk draft's
@@ -99,29 +99,33 @@ def write_fast_read_agent_session(report: pathlib.Path, target: pathlib.Path, se
     go on naming the agent-session of an earlier read.
     """
     if not session_id:
-        fast_read_agent_session_path(report).unlink(missing_ok=True)
+        cold_read_fast_read_report_agent_session_id_file_path(report).unlink(missing_ok=True)
         return
-    fast_read_agent_session_path(report).write_text(json.dumps(
+    cold_read_fast_read_report_agent_session_id_file_path(report).write_text(json.dumps(
         {"agent_session_id": session_id, "target": str(target)}) + "\n",
         encoding="utf-8")
 
 
-def fast_read_agent_session_read_target(report: pathlib.Path, session_id):
+def cold_read_fast_read_target_path_if_run_by_given_agent_session(report: pathlib.Path, session_id):
     """The resolved target report's fast read was of, when agent-session session_id ran it; else None.
 
     A report with no agent-session file, as older reads and reads run without
     the variable leave, returns None. A file that is not the JSON object
-    write_fast_read_agent_session writes raises ValueError, and one that
+    cold_read_fast_read_report_agent_session_id_file_write_or_remove writes raises ValueError, and one that
     cannot be read raises OSError, for the caller to report.
     """
+    path = cold_read_fast_read_report_agent_session_id_file_path(report)
     try:
-        text = fast_read_agent_session_path(report).read_text(encoding="utf-8")
+        data = path.read_bytes()
     except FileNotFoundError:
         return None
-    recorded = json.loads(text)
+    try:
+        recorded = json.loads(data.decode("utf-8"))
+    except ValueError:
+        recorded = None
     if (not isinstance(recorded, dict) or not isinstance(recorded.get("agent_session_id"), str)
             or not isinstance(recorded.get("target"), str)):
-        raise ValueError(f"{fast_read_agent_session_path(report)} is not an agent-session record")
+        raise ValueError(f"{path} is not an agent-session record")
     if recorded["agent_session_id"] != session_id:
         return None
     return pathlib.Path(recorded["target"])
