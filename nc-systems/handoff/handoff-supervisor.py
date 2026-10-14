@@ -170,6 +170,12 @@ SIGKILL_SESSION_EXIT_CODES = (137, -9)
 CONSECUTIVE_RESUMES_WITHOUT_NEW_WORK_BUDGET = 1
 
 PROJECTS_ROOT = Path.home() / ".claude" / "projects"
+
+_transcript_project_directory_spec = importlib.util.spec_from_file_location(
+    "claude_code_session_transcript_project_directory_for_agent_seat_common",
+    SCRIPTS_DIRECTORY / "claude-code-session-transcript-project-directory-for-agent-seat-common.py")
+transcript_project_directory = importlib.util.module_from_spec(_transcript_project_directory_spec)
+_transcript_project_directory_spec.loader.exec_module(transcript_project_directory)
 # Live supervisors resolve this path at import; moving the extractor would break those processes.
 EXTRACTOR_PATH = SCRIPTS_DIRECTORY / "handoff-extract-conversation.py"
 CLEAN_WORKTREES_PATH = SCRIPTS_DIRECTORY / "clean-worktrees.py"
@@ -677,11 +683,7 @@ def pinned_task_list_id() -> str:
 
 def project_directory_for_working_directory(working_directory: Path) -> Path:
     """Return the harness project directory holding the worktree's sessions."""
-    mangled = "".join(
-        character if (character.isalnum() or character in "-_") else "-"
-        for character in str(working_directory)
-    )
-    return PROJECTS_ROOT / mangled
+    return transcript_project_directory.project_directory_for_seat(working_directory, PROJECTS_ROOT)
 
 
 def substantive_turn_count_of_session_transcript(session_id: str, working_directory: Path) -> int:
