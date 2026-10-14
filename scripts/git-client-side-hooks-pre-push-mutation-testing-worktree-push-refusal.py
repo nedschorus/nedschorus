@@ -65,7 +65,8 @@ def main():
     try:
         refusal = mutation_testing_worktree_refusal(sys.stdin.read())
     except RuntimeError as error:
-        say(f"{error}, so this push was not checked for a mutation-testing worktree.")
+        say(f"{error}, so this check lets the push through without checking whether it comes "
+            f"from a mutation-testing worktree.")
         return EXIT_CHECK_FAILED
     for line in refusal:
         say(line)

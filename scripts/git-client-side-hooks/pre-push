@@ -30,7 +30,9 @@
 
 hook_directory=$(dirname "$0")
 conflict_check="$hook_directory/../git-client-side-hooks-pre-push-conflict-check.py"
-mutation_testing_worktree_check="$hook_directory/../git-client-side-hooks-pre-push-mutation-testing-worktree-push-refusal.py"
+# Resolved, so a message names the file by a path a reader can open.
+scripts_directory=$(cd "$hook_directory/.." 2>/dev/null && pwd -P) || scripts_directory="$hook_directory/.."
+mutation_testing_worktree_check="$scripts_directory/git-client-side-hooks-pre-push-mutation-testing-worktree-push-refusal.py"
 refuse_push_status=10
 checked_remote=origin
 tell_user_line="Tell the user this whole message, including any error printed just above it: the next push on this machine may go unchecked the same way."
@@ -86,11 +88,11 @@ if [ -f "$mutation_testing_worktree_check" ]; then
         exit 1
     fi
     if [ "$mutation_testing_worktree_status" -ne 0 ]; then
-        echo "pre-push: the check for mutation-testing worktrees, $mutation_testing_worktree_check, exited with status $mutation_testing_worktree_status, so this push was not checked for one." >&2
+        echo "pre-push: the check for mutation-testing worktrees, $mutation_testing_worktree_check, exited with status $mutation_testing_worktree_status, so this check lets the push through without checking whether it comes from a mutation-testing worktree." >&2
         echo "$tell_user_line" >&2
     fi
 else
-    echo "pre-push: the check for mutation-testing worktrees did not run, because $mutation_testing_worktree_check is missing, so this push was not checked for one." >&2
+    echo "pre-push: the check for mutation-testing worktrees did not run, because $mutation_testing_worktree_check is missing, so this check lets the push through without checking whether it comes from a mutation-testing worktree." >&2
     echo "$tell_user_line" >&2
 fi
 

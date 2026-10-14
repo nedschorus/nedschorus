@@ -242,7 +242,7 @@ def mutation_testing_worktree_remove(top, copy):
     if removed.returncode != 0:
         return (f"the mutation-testing worktree {copy} could not be removed "
                 f"({removed.stderr.strip()}). Remove it with: git -C {top} worktree remove "
-                f"--force {copy}")
+                f"--force {copy} (or, once that directory is gone, git -C {top} worktree prune)")
     return None
 
 
@@ -517,8 +517,11 @@ def run(arguments, platform):
                 not_removed = mutation_testing_worktree_remove(top, copy)
                 if not_removed is not None:
                     # A worktree left behind is a failure, whatever the run found.
-                    found = outcome[0] if outcome else sys.exc_info()[1]
-                    raise NotRun(f"{not_removed}; before that, the run ended with: {found}")
+                    found = (outcome[0].removeprefix("VERDICT: ") if outcome
+                             else sys.exc_info()[1])
+                    raise NotRun(f"{not_removed}, then run this again. The run itself ended with: "
+                                 f"{found}; it counts as not run, because it left the worktree "
+                                 f"behind.")
             return outcome
     finally:
         lock_handle.close()
@@ -548,6 +551,11 @@ def main(argv=None, platform=None):
         line, code = run(arguments, sys.platform if platform is None else platform)
     except NotRun as error:
         line, code = f"VERDICT: not run — {error}", EXIT_NOT_RUN
+    except OSError as error:
+        # A failure of the machine, such as a full disk while the worktree is filled.
+        line = (f"VERDICT: not run — {type(error).__name__}: {error}; run this again once "
+                f"that is put right")
+        code = EXIT_NOT_RUN
     except (Terminated, KeyboardInterrupt) as interruption:
         line = (f"VERDICT: not run — interrupted ({type(interruption).__name__} "
                 f"{interruption}); the checkout was not changed")

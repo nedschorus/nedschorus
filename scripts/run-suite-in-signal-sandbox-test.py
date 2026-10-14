@@ -940,13 +940,12 @@ else:
         for raised in (program.Terminated("SIGTERM"), OSError("disk full")):
             def failing_fill(top, copy, raised=raised):
                 raise raised
-            try:
-                code, last, output = main_in_this_process("doubling-test.py", "--mutant",
-                                                          str(killing), fill=failing_fill)
-            except OSError:
-                code, last, output = None, "", "the OSError reached the caller"
-            check(f"a {type(raised).__name__} while the copy is filled leaves no worktree registered",
-                  worktrees(repository) == [str(repository)] and unchanged(repository),
+            code, last, output = main_in_this_process("doubling-test.py", "--mutant",
+                                                      str(killing), fill=failing_fill)
+            check(f"a {type(raised).__name__} while the copy is filled leaves no worktree "
+                  f"registered and ends in a not-run verdict, exit 2",
+                  worktrees(repository) == [str(repository)] and unchanged(repository)
+                  and code == program.EXIT_NOT_RUN and last.startswith("VERDICT: not run"),
                   (code, output, worktrees(repository)))
 
         code, last, output = main_in_this_process("doubling-test.py", "--mutant", str(killing),
@@ -957,7 +956,10 @@ else:
               code == program.EXIT_NOT_RUN and last.startswith("VERDICT: not run")
               and "could not be removed (fatal: injected)" in last
               and f"git -C {repository} worktree remove --force" in last
-              and "before that, the run ended with: VERDICT: mutant killed" in last
+              and f"git -C {repository} worktree prune" in last
+              and "then run this again. The run itself ended with: mutant killed" in last
+              and "it counts as not run, because it left the worktree behind." in last
+              and last.count("VERDICT") == 1
               and len(left) == 1, (code, output, left))
         for path in left:
             subprocess.run(["git", "-C", str(repository), "worktree", "remove", "--force", path],

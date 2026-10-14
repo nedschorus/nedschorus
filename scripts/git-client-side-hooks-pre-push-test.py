@@ -869,7 +869,7 @@ def run_mutation_testing_worktree_cases(scratch):
 
     for label, text, expected in [
             ("crashes", "raise RuntimeError('broken')\n",
-             "-push-refusal.py, exited with status 1, so this push was not checked for one."),
+             "-push-refusal.py, exited with status 1, so this check lets the push through without checking whether it comes from a mutation-testing worktree."),
             ("is missing", None, "the check for mutation-testing worktrees did not run, because ")]:
         hooks = make_layout(scratch, "layout-worktree-check-" + label.replace(" ", "-"),
                             mutation_testing_worktree_check_text=text,
@@ -880,6 +880,8 @@ def run_mutation_testing_worktree_cases(scratch):
               f"hook says what was not checked and to tell the user",
               went_through(result) and expected in result.stderr
               and TELL_USER_LINE in result.stderr, result.describe())
+        check(f"when the mutation-testing worktree check {label}, the hook names it by a resolved "
+              f"path, with no ../ in it", "/../" not in result.stderr, result.describe())
 
     # A push from a copy whose directory name ends in -mutation-testing-worktree is refused, whatever it pushes.
     scenario = Scenario(scratch, "copy", real)
@@ -933,7 +935,7 @@ def run_mutation_testing_worktree_cases(scratch):
           status == loaded.EXIT_CHECK_FAILED
           and status not in (loaded.EXIT_REFUSE_PUSH, loaded.EXIT_ALLOW_PUSH)
           and printed.getvalue() == "pre-push: git rev-parse --show-toplevel failed: fatal: "
-          "injected, so this push was not checked for a mutation-testing worktree.\n",
+          "injected, so this check lets the push through without checking whether it comes from a mutation-testing worktree.\n",
           (status, printed.getvalue()))
 
 
