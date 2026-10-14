@@ -1954,17 +1954,19 @@ with tempfile.TemporaryDirectory() as notes_scratch:
     check("a note that a move was blocked is dropped once the move is made",
           "Not updated" not in told and (notes_seat / "c.txt").exists(), told)
 
+    # The write is made to fail by putting a directory where the stamp goes:
+    # a read-only git directory would also stop git itself, and the checkout
+    # could not move.
     origin_repo, notes_seat = notes_fixture()
     stop_only(notes_seat)
     stamp_file = stamp_path_of(notes_seat)
     commit_file(origin_repo, "CLAUDE.md", "- rule\n", "main adds CLAUDE.md")
-    stamp_file.chmod(0o444)
-    stamp_file.parent.chmod(0o555)
+    stamp_file.unlink()
+    stamp_file.mkdir()
     try:
         stop = stop_only(notes_seat)
     finally:
-        stamp_file.parent.chmod(0o755)
-        stamp_file.chmod(0o644)
+        stamp_file.rmdir()
     stop_context = ((emitted_object(stop) or {}).get("hookSpecificOutput", {})
                     .get("additionalContext", ""))
     check("notes that cannot be queued go out at Stop instead, saying why",
@@ -2000,6 +2002,107 @@ with tempfile.TemporaryDirectory() as notes_scratch:
     check("and when even those are too long, the newest that fit are kept, the rest counted",
           len(cut) <= catch_up_module.DELIVERY_CHARACTER_LIMIT
           and cut.startswith("checkout-freshness: 3 older note(s) did not fit"), cut[:120])
+
+
+    def queued_notes(checkout):
+        notes = stamp_of(checkout).get("pending_agent_notes", [])
+        return notes if isinstance(notes, list) else []
+
+    origin_repo, notes_seat = notes_fixture()
+    detached = notes_seat.parent / "detached"
+    git(["worktree", "add", "-q", "--detach", str(detached), "main"], notes_seat.parent / "clone")
+    configure_identity(detached)
+    (detached / "shared.txt").write_text("dirty\n", encoding="utf-8")
+    commit_file(origin_repo, "a.txt", "a\n", "advance a")
+    stop_only(detached)
+    check("a detached HEAD that is not moved queues its note as a blocked note",
+          [note.get("kind") for note in queued_notes(detached)] == ["blocked"]
+          and "was not moved forward" in queued_notes(detached)[0]["text"],
+          str(queued_notes(detached)))
+    git(["checkout", "--", "shared.txt"], detached)
+    stop_only(detached)
+    check("once the detached HEAD is moved, its queued not-moved note is dropped from the queue",
+          (detached / "a.txt").exists()
+          and not any("was not moved forward" in note["text"] for note in queued_notes(detached)),
+          str(queued_notes(detached)))
+
+    origin_repo, notes_seat = notes_fixture()
+    (notes_seat / "shared.txt").write_text("dirty\n", encoding="utf-8")
+    commit_file(origin_repo, "a.txt", "a\n", "advance a")
+    stop_only(notes_seat)
+    git(["checkout", "--", "shared.txt"], notes_seat)
+    git(["rebase", "-q", "origin/main"], notes_seat)
+    stop_only(notes_seat)
+    check("a queued blocked note is dropped once the checkout is level with main by other means",
+          (notes_seat / "a.txt").exists() and queued_notes(notes_seat) == [],
+          str(queued_notes(notes_seat)))
+
+    origin_repo, notes_seat = notes_fixture()
+    (notes_seat / "shared.txt").write_text("dirty\n", encoding="utf-8")
+    commit_file(origin_repo, "a.txt", "a\n", "advance a")
+    stop_only(notes_seat)
+    count_fails = tmp / "count-fails-shim"
+    count_fails.mkdir()
+    (count_fails / "git").write_text(
+        "#!/bin/sh\n"
+        'for argument in "$@"; do\n'
+        '  if [ "$argument" = "--count" ]; then\n'
+        '    echo "fatal: shimmed count failure" >&2; exit 128\n'
+        "  fi\n"
+        "done\n"
+        f'exec "{real_git}" "$@"\n', encoding="utf-8")
+    (count_fails / "git").chmod(0o755)
+    stop_only(notes_seat, path_prefix=str(count_fails))
+    check("a count git cannot make keeps the queued notes, since nothing shows the checkout caught up",
+          [note.get("kind") for note in queued_notes(notes_seat)] == ["blocked"],
+          str(queued_notes(notes_seat)))
+
+    origin_repo, notes_seat = notes_fixture()
+    git(["push", "-q", "-u", "origin", "seat"], notes_seat)
+    commit_file(origin_repo, "a.txt", "a\n", "advance a")
+    stop_only(notes_seat)
+    commit_file(origin_repo, "b.txt", "b\n", "advance b")
+    stop_only(notes_seat)
+    check("a newer note on a pushed branch replaces the older one in the queue",
+          [note.get("kind") for note in queued_notes(notes_seat)] == ["pushed"]
+          and "2 behind" in queued_notes(notes_seat)[0]["text"],
+          str(queued_notes(notes_seat)))
+
+    six_thousand_to_nine = "".join(f"- line {n:03d} {'w' * 55}\n" for n in range(100))
+    origin_repo, notes_seat = notes_fixture({"CLAUDE.md": "- one rule\n"})
+    commit_file(origin_repo, "CLAUDE.md", six_thousand_to_nine, "a rewrite of about 7,000 characters")
+    stop_only(notes_seat)
+    told = delivered_text(deliver(notes_seat))
+    check("a CLAUDE.md diff over 6,000 characters is named by its lines even when the "
+          "delivery would fit it",
+          len(six_thousand_to_nine) < catch_up_module.DELIVERY_CHARACTER_LIMIT - 1000
+          and "Read CLAUDE.md again before your next action." in told
+          and "line 050" not in told, told[:400])
+
+    origin_repo, notes_seat = notes_fixture({".claude/skills/gone/SKILL.md": "steps\n",
+                                             "shared.txt": "first\n"})
+    git(["rm", "-q", ".claude/skills/gone/SKILL.md"], origin_repo)
+    git(["commit", "-q", "-m", "main deletes a skill"], origin_repo)
+    stop_only(notes_seat)
+    told = delivered_text(deliver(notes_seat))
+    check("a skill main deleted is told as deleted, not as one to invoke again",
+          "checkout-freshness: main deleted .claude/skills/gone/SKILL.md." in told
+          and "invoke it again" not in told, told)
+
+    def write_stamp_notes(path, notes):
+        path.write_text(json.dumps({"pending_agent_notes": notes}) + "\n", encoding="utf-8")
+
+    reread_dir = tmp / "reread-stamp"
+    reread_dir.mkdir()
+    reread_stamp = reread_dir / "stamp.json"
+    stale_note = {"kind": "moved", "text": "already delivered"}
+    write_stamp_notes(reread_stamp, [])
+    catch_up_module.AGENT_NOTES.append({"kind": "moved", "text": "new"})
+    catch_up_module.save_stamp_with_queued_notes(reread_stamp,
+                                                 {"pending_agent_notes": [stale_note]})
+    check("the queue is re-read just before the write, so a delivery made meanwhile is not undone",
+          [note["text"] for note in json.loads(reread_stamp.read_text())["pending_agent_notes"]]
+          == ["new"], reread_stamp.read_text())
 
 
 print()

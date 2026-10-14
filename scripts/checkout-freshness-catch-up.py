@@ -409,6 +409,10 @@ INSTRUCTION_FILE_CHANGED_NOTE = (
     "checkout-freshness: main changed {path}, a file of standing instructions. If you are "
     "following it, read it again before you next act on it."
 )
+STANDING_INSTRUCTION_DELETED_NOTE = (
+    "checkout-freshness: main deleted {path}. If you are following it, stop: it is no "
+    "longer on main."
+)
 MOVED_WITHOUT_LIST_NOTE = (
     "checkout-freshness: this checkout was moved forward to origin/main, but git could not "
     "list what main changed ({error}).\n"
@@ -416,16 +420,18 @@ MOVED_WITHOUT_LIST_NOTE = (
     "If you are following a skill, invoke it again before its next step."
 )
 NOTES_DID_NOT_FIT_LINE = (
-    "checkout-freshness: {count} older note(s) did not fit and were left out; run "
-    "`python3 scripts/checkout-freshness-catch-up.py --report` to see this checkout's state."
+    "checkout-freshness: {count} older note(s) did not fit and were left out.\n"
+    "Read CLAUDE.md again before your next action.\n"
+    "If you are following a skill, invoke it again before its next step."
 )
 NOTES_NOT_QUEUED_LINE = (
     "checkout-freshness: these notes come now, not with your next prompt, because they "
     "could not be saved to {path} ({error})."
 )
 NOTES_UNREADABLE_LINE = (
-    "checkout-freshness: notes queued for you could not be read from {path} ({error}); "
-    "run `python3 scripts/checkout-freshness-catch-up.py --report` to see this checkout's state."
+    "checkout-freshness: notes queued for you could not be read from {path} ({error}).\n"
+    "Read CLAUDE.md again before your next action.\n"
+    "If you are following a skill, invoke it again before its next step."
 )
 NOTES_NOT_CLEARED_LINE = (
     "checkout-freshness: these notes could not be cleared from {path} ({error}), so they "
@@ -1163,7 +1169,11 @@ def tell_standing_instructions_moved(checkout: Path, old_head: str, paths, diff_
         return
     texts, shorts = [], []
     for path in standing_instruction_paths(paths):
-        if is_claude_md(path):
+        # The checkout is at origin/main now, so a listed path it lacks is one
+        # main deleted; --name-only does not say which paths those are.
+        if not (checkout / path).exists():
+            text = short = STANDING_INSTRUCTION_DELETED_NOTE.format(path=path)
+        elif is_claude_md(path):
             text, short = claude_md_change_note(checkout, old_head, path)
         elif skill_of(path):
             text = short = SKILL_CHANGED_NOTE.format(path=path, skill=skill_of(path))
@@ -1238,7 +1248,10 @@ def catch_up_session_checkout(checkout: Path, interval_seconds: int) -> None:
     facts, parts = drift_facts(checkout, stamp, branch, state_key, state_text)
     if facts is None:
         stamp.pop("last_told", None)
-        drop_queued_notes_of_kinds(*NOTE_KINDS_REPLACED_BY_NEWER)
+        # Only a count of 0 behind shows the checkout caught up; a count git
+        # could not make leaves the queued notes as they are.
+        if stamp.get("behind") == 0:
+            drop_queued_notes_of_kinds(*NOTE_KINDS_REPLACED_BY_NEWER)
         save_stamp_with_queued_notes(stamp_path, stamp)
         return
     told = {"branch": parts["branch"], "main_tip": facts["main_tip"],
