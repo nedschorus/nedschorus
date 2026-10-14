@@ -5,7 +5,7 @@ A program that needs one of these libraries imports it; when the import
 fails, python_libraries_pinned_requirements_install_if_missing_then_import installs the whole pinned
 file per user, with pip's --user --break-system-packages, and imports again.
 The user hears only when the install fails: the caller gets
-PythonLibrariesPinnedRequirementsUnavailable, whose install_output says what the install
+PythonLibrariesPinnedRequirementsInstallOrImportFailed, whose install_output says what the install
 printed, and says so in its own message.
 
 Callers that run in parallel, such as the Bash guards on one command, take
@@ -13,16 +13,24 @@ turns on a lock file, so only the first installs. A failed install is
 recorded, and for ten minutes later callers get the recorded output instead of
 waiting for an install that fails again.
 
+Before each import under the lock, the caller's packages are dropped from
+sys.modules, submodules included: an import that failed partway, such as a
+newer markdown-it-py whose dependency is missing, leaves its submodules loaded,
+and the next import would mix them with the installed version.
+
 A compiled module cannot be replaced inside a running process. When the
 install succeeds but this process still holds a copy it could not use, and a
 new Python process can import the libraries, the caller gets
-PythonLibrariesPinnedRequirementsInstalledForANewProcess, and does its work in a new
+PythonLibrariesPinnedRequirementsInstalledButImportableOnlyInANewProcessError, and does its work in a new
 process.
+
+Below Python 3.11 nothing is installed: the pinned versions need a newer
+Python, and the install would fail with pip's less helpful words.
 
 Load it by path, under the snake_case form of its file name:
 
     spec = importlib.util.spec_from_file_location(
-        "python_libraries_pinned_requirements_install_then_import_common", <path>)
+        "python_libraries_pinned_requirements_install_if_missing_then_import_common", <path>)
 """
 
 # Deferred annotations let the module load on the Mac's system Python 3.9.
@@ -40,9 +48,10 @@ PINNED_REQUIREMENTS_FILE = Path(__file__).resolve().with_name(
 INSTALL_RETRY_SECONDS = 600
 INSTALL_LOCK_FILE_NAME = "install.lock"
 INSTALL_FAILURE_FILE_NAME = "last-install-failure.txt"
+MINIMUM_PYTHON_VERSION = (3, 11)
 
 
-class PythonLibrariesPinnedRequirementsUnavailable(Exception):
+class PythonLibrariesPinnedRequirementsInstallOrImportFailed(Exception):
     """A pinned library could not be imported, and installing it failed.
 
     install_output holds what the install printed, or why it did not run.
@@ -53,7 +62,7 @@ class PythonLibrariesPinnedRequirementsUnavailable(Exception):
         self.install_output = install_output
 
 
-class PythonLibrariesPinnedRequirementsInstalledForANewProcess(PythonLibrariesPinnedRequirementsUnavailable):
+class PythonLibrariesPinnedRequirementsInstalledButImportableOnlyInANewProcessError(PythonLibrariesPinnedRequirementsInstallOrImportFailed):
     """The install succeeded, but this process still holds the unusable copy it loaded first."""
 
 
@@ -78,8 +87,16 @@ def pinned_requirements_by_hand_install_command(host, requirements_file=PINNED_R
 
 def pinned_requirements_pip_install(timeout_seconds, runner=subprocess.run,
                                     requirements_file=PINNED_REQUIREMENTS_FILE,
-                                    unavailable_error=PythonLibrariesPinnedRequirementsUnavailable):
+                                    unavailable_error=PythonLibrariesPinnedRequirementsInstallOrImportFailed,
+                                    python_version=None):
     """Install the pinned requirements per user; return what pip printed, or raise unavailable_error."""
+    python_version = tuple(python_version or sys.version_info[:3])
+    if python_version[:2] < MINIMUM_PYTHON_VERSION:
+        raise unavailable_error(
+            f"nothing was installed: {sys.executable} is Python "
+            f"{'.'.join(map(str, python_version))}, and the pinned libraries need Python "
+            f"{'.'.join(map(str, MINIMUM_PYTHON_VERSION))} or later. The fix, on the Mac, is to put "
+            f"Homebrew's Python ahead of Apple's on the PATH.")
     command = pinned_requirements_pip_install_command(requirements_file, "--disable-pip-version-check",
                                                       "--quiet")
     try:
@@ -95,9 +112,9 @@ def pinned_requirements_pip_install(timeout_seconds, runner=subprocess.run,
 
 
 def python_libraries_pinned_requirements_install_if_missing_then_import(
-        importer, installer, clock, fresh_process_check, state_directory, forget_loaded_copies,
-        unavailable_error=PythonLibrariesPinnedRequirementsUnavailable,
-        installed_for_new_process_error=PythonLibrariesPinnedRequirementsInstalledForANewProcess):
+        importer, installer, clock, fresh_process_check, state_directory, loaded_package_names,
+        unavailable_error=PythonLibrariesPinnedRequirementsInstallOrImportFailed,
+        installed_for_new_process_error=PythonLibrariesPinnedRequirementsInstalledButImportableOnlyInANewProcessError):
     """Install with installer(), unless another caller already has, and return importer()'s result.
 
     Call it after importer() has failed once.
@@ -105,7 +122,8 @@ def python_libraries_pinned_requirements_install_if_missing_then_import(
     importer raises ImportError while a library is missing or unusable.
     installer raises unavailable_error when the install fails.
     fresh_process_check returns whether a new Python process can import the libraries.
-    forget_loaded_copies drops this process's cached copies, so the next import loads the disk copy.
+    loaded_package_names are the top-level packages importer() loads; they and their submodules
+    are dropped from sys.modules before each import, so the import loads the copy on disk.
     The lock and the failure record live in state_directory.
     """
     try:
@@ -122,7 +140,7 @@ def python_libraries_pinned_requirements_install_if_missing_then_import(
             pass  # Without the lock, two installs may run; each installs the same pinned files.
         # Another caller may have installed into a user site this process did not have at start-up.
         _refresh_import_paths()
-        forget_loaded_copies()
+        _forget_loaded_packages(loaded_package_names)
         try:
             return importer()
         except ImportError:
@@ -137,7 +155,7 @@ def python_libraries_pinned_requirements_install_if_missing_then_import(
         try:
             installer()
             _refresh_import_paths()
-            forget_loaded_copies()
+            _forget_loaded_packages(loaded_package_names)
             try:
                 modules = importer()
             except ImportError as error:
@@ -158,6 +176,11 @@ def python_libraries_pinned_requirements_install_if_missing_then_import(
             raise
         _forget_failure(failure_record)
         return modules
+
+
+def _forget_loaded_packages(package_names):
+    for name in [name for name in sys.modules if name.split(".")[0] in package_names]:
+        del sys.modules[name]
 
 
 def _forget_failure(failure_record):

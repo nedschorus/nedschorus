@@ -23,7 +23,7 @@ _spec = importlib.util.spec_from_file_location(
     / "python-libraries-pinned-requirements-check-and-install.py")
 checker = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(checker)
-install = checker.python_libraries_pinned_requirements_install_then_import
+install = checker.python_libraries_pinned_requirements_install_if_missing_then_import_common
 
 failures = 0
 
@@ -98,7 +98,7 @@ def installer_that(outcome):
     def installer():
         state["installs"] += 1
         if outcome is not None:
-            raise install.PythonLibrariesPinnedRequirementsUnavailable(outcome)
+            raise install.PythonLibrariesPinnedRequirementsInstallOrImportFailed(outcome)
         return "Successfully installed tree-sitter-bash-0.25.1"
     installer.state = state
     return installer

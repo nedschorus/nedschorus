@@ -23,11 +23,11 @@ import subprocess
 import sys
 from pathlib import Path
 
-_python_libraries_pinned_requirements_install_then_import_spec = importlib.util.spec_from_file_location(
-    "python_libraries_pinned_requirements_install_then_import_common",
-    Path(__file__).resolve().with_name("python-libraries-pinned-requirements-install-then-import-common.py"))
-python_libraries_pinned_requirements_install_then_import = importlib.util.module_from_spec(_python_libraries_pinned_requirements_install_then_import_spec)
-_python_libraries_pinned_requirements_install_then_import_spec.loader.exec_module(python_libraries_pinned_requirements_install_then_import)
+_python_libraries_pinned_requirements_install_if_missing_then_import_spec = importlib.util.spec_from_file_location(
+    "python_libraries_pinned_requirements_install_if_missing_then_import_common",
+    Path(__file__).resolve().with_name("python-libraries-pinned-requirements-install-if-missing-then-import-common.py"))
+python_libraries_pinned_requirements_install_if_missing_then_import_common = importlib.util.module_from_spec(_python_libraries_pinned_requirements_install_if_missing_then_import_spec)
+_python_libraries_pinned_requirements_install_if_missing_then_import_spec.loader.exec_module(python_libraries_pinned_requirements_install_if_missing_then_import_common)
 
 # Run by hand or once a day, not inside a hook, so a slow download may finish.
 INSTALL_TIMEOUT_SECONDS = 600
@@ -44,7 +44,7 @@ INSTALLED_VERSIONS_PROGRAM = (
     "print(json.dumps(versions))\n")
 
 
-def pinned_versions(requirements_file=python_libraries_pinned_requirements_install_then_import.PINNED_REQUIREMENTS_FILE):
+def pinned_versions(requirements_file=python_libraries_pinned_requirements_install_if_missing_then_import_common.PINNED_REQUIREMENTS_FILE):
     """Return {name: version} for each `name==version` line of the requirements file."""
     pins = {}
     for line in requirements_file.read_text(encoding="utf-8").splitlines():
@@ -76,11 +76,11 @@ def missing_libraries(pins, versions):
 
 
 def check_and_install(host, runner=subprocess.run, installer=None,
-                      requirements_file=python_libraries_pinned_requirements_install_then_import.PINNED_REQUIREMENTS_FILE):
+                      requirements_file=python_libraries_pinned_requirements_install_if_missing_then_import_common.PINNED_REQUIREMENTS_FILE):
     """Return (exit status, report lines)."""
     if installer is None:
         def installer():
-            return python_libraries_pinned_requirements_install_then_import.pinned_requirements_pip_install(
+            return python_libraries_pinned_requirements_install_if_missing_then_import_common.pinned_requirements_pip_install(
                 INSTALL_TIMEOUT_SECONDS, runner, requirements_file=requirements_file)
     pins = pinned_versions(requirements_file)
     missing = missing_libraries(pins, installed_versions(pins, runner))
@@ -89,7 +89,7 @@ def check_and_install(host, runner=subprocess.run, installer=None,
                    f"at their pinned versions."]
     try:
         install_output = installer()
-    except python_libraries_pinned_requirements_install_then_import.PythonLibrariesPinnedRequirementsUnavailable as error:
+    except python_libraries_pinned_requirements_install_if_missing_then_import_common.PythonLibrariesPinnedRequirementsInstallOrImportFailed as error:
         install_output = error.install_output
     still_missing = missing_libraries(pins, installed_versions(pins, runner))
     if not still_missing:
@@ -99,7 +99,7 @@ def check_and_install(host, runner=subprocess.run, installer=None,
                *(f"  {line}" for line in still_missing),
                f"What the install printed: {install_output or '(nothing)'}",
                "To install them by hand, run this command {}: {}".format(
-                   *python_libraries_pinned_requirements_install_then_import.pinned_requirements_by_hand_install_command(
+                   *python_libraries_pinned_requirements_install_if_missing_then_import_common.pinned_requirements_by_hand_install_command(
                        host, requirements_file))]
 
 

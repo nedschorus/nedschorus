@@ -46,6 +46,7 @@ import importlib.util
 import json
 import re
 import socket
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -96,12 +97,12 @@ class MarkdownParserMissing(Exception):
 
 
 @functools.lru_cache(maxsize=None)
-def python_libraries_pinned_requirements_install_then_import():
+def python_libraries_pinned_requirements_install_if_missing_then_import_common():
     """Return the shared install module, loaded by path when first needed."""
     specification = importlib.util.spec_from_file_location(
-        "python_libraries_pinned_requirements_install_then_import_common",
+        "python_libraries_pinned_requirements_install_if_missing_then_import_common",
         Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
-        / "python-libraries-pinned-requirements-install-then-import-common.py")
+        / "python-libraries-pinned-requirements-install-if-missing-then-import-common.py")
     module = importlib.util.module_from_spec(specification)
     specification.loader.exec_module(module)
     return module
@@ -113,15 +114,15 @@ def import_markdown_it():
     return MarkdownIt
 
 
-def _install_pinned_python_libraries():
-    return python_libraries_pinned_requirements_install_then_import().pinned_requirements_pip_install(
-        INSTALL_TIMEOUT_SECONDS)
+def _install_pinned_python_libraries(runner=subprocess.run):
+    return python_libraries_pinned_requirements_install_if_missing_then_import_common().pinned_requirements_pip_install(
+        INSTALL_TIMEOUT_SECONDS, runner)
 
 
 def parser_missing_message(error, host=None):
     """Return the stderr text for markdown-it-py missing on this machine and its install failed."""
     host = host or socket.gethostname().split(".")[0]
-    where, command = (python_libraries_pinned_requirements_install_then_import()
+    where, command = (python_libraries_pinned_requirements_install_if_missing_then_import_common()
                       .pinned_requirements_by_hand_install_command(host))
     return PARSER_MISSING_MESSAGE.format(host=host, where=where, command=command,
                                          install_output=error.install_output)
@@ -141,19 +142,19 @@ def _load_edited_file_path_within_checkout_root_and_git_check_ignore():
 def markdown_parser(importer=import_markdown_it, installer=_install_pinned_python_libraries, clock=time.time):
     """Return a CommonMark parser with tables, installing markdown-it-py when it is missing.
 
-    markdown-it-py is written only in Python: an import that failed leaves no copy loaded, so
-    this process imports the installed copy and never needs a new process.
+    markdown-it-py and mdurl are written only in Python, so once their half-imported modules
+    are dropped, this process imports the installed copy and never needs a new process.
 
     Raises MarkdownParserMissing when markdown-it-py is missing and installing it failed.
     """
     try:
         markdown_it_class = importer()
     except ImportError:
-        install = python_libraries_pinned_requirements_install_then_import()
+        install = python_libraries_pinned_requirements_install_if_missing_then_import_common()
         try:
             markdown_it_class = install.python_libraries_pinned_requirements_install_if_missing_then_import(
-                importer, installer, clock, lambda: False, INSTALL_STATE_DIRECTORY, lambda: None)
-        except install.PythonLibrariesPinnedRequirementsUnavailable as error:
+                importer, installer, clock, lambda: False, INSTALL_STATE_DIRECTORY, ("markdown_it", "mdurl"))
+        except install.PythonLibrariesPinnedRequirementsInstallOrImportFailed as error:
             raise MarkdownParserMissing(error.install_output) from error
     return markdown_it_class("commonmark").enable("table")
 

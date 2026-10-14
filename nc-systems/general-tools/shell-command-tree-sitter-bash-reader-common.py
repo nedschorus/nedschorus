@@ -57,19 +57,19 @@ import sys
 import time
 from pathlib import Path
 
-_python_libraries_pinned_requirements_install_then_import_spec = importlib.util.spec_from_file_location(
-    "python_libraries_pinned_requirements_install_then_import_common",
-    Path(__file__).resolve().with_name("python-libraries-pinned-requirements-install-then-import-common.py"))
-python_libraries_pinned_requirements_install_then_import = importlib.util.module_from_spec(_python_libraries_pinned_requirements_install_then_import_spec)
-_python_libraries_pinned_requirements_install_then_import_spec.loader.exec_module(python_libraries_pinned_requirements_install_then_import)
+_python_libraries_pinned_requirements_install_if_missing_then_import_spec = importlib.util.spec_from_file_location(
+    "python_libraries_pinned_requirements_install_if_missing_then_import_common",
+    Path(__file__).resolve().with_name("python-libraries-pinned-requirements-install-if-missing-then-import-common.py"))
+python_libraries_pinned_requirements_install_if_missing_then_import_common = importlib.util.module_from_spec(_python_libraries_pinned_requirements_install_if_missing_then_import_spec)
+_python_libraries_pinned_requirements_install_if_missing_then_import_spec.loader.exec_module(python_libraries_pinned_requirements_install_if_missing_then_import_common)
 
-REQUIREMENTS_FILE = python_libraries_pinned_requirements_install_then_import.PINNED_REQUIREMENTS_FILE
+REQUIREMENTS_FILE = python_libraries_pinned_requirements_install_if_missing_then_import_common.PINNED_REQUIREMENTS_FILE
 # The Bash guards run in parallel with a 30-second hook timeout; a cached wheel installs in about a second.
 INSTALL_TIMEOUT_SECONDS = 8
-INSTALL_RETRY_SECONDS = python_libraries_pinned_requirements_install_then_import.INSTALL_RETRY_SECONDS
+INSTALL_RETRY_SECONDS = python_libraries_pinned_requirements_install_if_missing_then_import_common.INSTALL_RETRY_SECONDS
 STATE_DIRECTORY = Path.home() / ".cache" / "nedschorus-shell-command-reader"
-INSTALL_LOCK_FILE_NAME = python_libraries_pinned_requirements_install_then_import.INSTALL_LOCK_FILE_NAME
-INSTALL_FAILURE_FILE_NAME = python_libraries_pinned_requirements_install_then_import.INSTALL_FAILURE_FILE_NAME
+INSTALL_LOCK_FILE_NAME = python_libraries_pinned_requirements_install_if_missing_then_import_common.INSTALL_LOCK_FILE_NAME
+INSTALL_FAILURE_FILE_NAME = python_libraries_pinned_requirements_install_if_missing_then_import_common.INSTALL_FAILURE_FILE_NAME
 
 RECURSION_LIMIT_FOR_DEEP_NESTING = 100_000
 
@@ -111,7 +111,7 @@ def _shell_text_errors(error):
 codecs.register_error(SHELL_TEXT_ERRORS, _shell_text_errors)
 
 
-class ShellParserUnavailable(python_libraries_pinned_requirements_install_then_import.PythonLibrariesPinnedRequirementsUnavailable):
+class ShellParserUnavailable(python_libraries_pinned_requirements_install_if_missing_then_import_common.PythonLibrariesPinnedRequirementsInstallOrImportFailed):
     """tree-sitter-bash could not be imported, and installing it failed.
 
     install_output holds what the install printed, or why it did not run.
@@ -314,9 +314,9 @@ def _index_after_options(words, index, wrapper, options):
     return index
 
 
-def install_pinned_python_libraries(runner=subprocess.run):
+def shell_reader_python_libraries_pinned_requirements_pip_install(runner=subprocess.run):
     """Install the pinned requirements per user; return what pip printed, or raise ShellParserUnavailable."""
-    return python_libraries_pinned_requirements_install_then_import.pinned_requirements_pip_install(
+    return python_libraries_pinned_requirements_install_if_missing_then_import_common.pinned_requirements_pip_install(
         INSTALL_TIMEOUT_SECONDS, runner, REQUIREMENTS_FILE, ShellParserUnavailable)
 
 
@@ -349,7 +349,7 @@ def imports_in_a_fresh_process(runner=subprocess.run):
     return completed.returncode == 0
 
 
-def load_parser(importer=import_tree_sitter_bash, installer=install_pinned_python_libraries,
+def load_parser(importer=import_tree_sitter_bash, installer=shell_reader_python_libraries_pinned_requirements_pip_install,
                 clock=time.time, fresh_process_check=imports_in_a_fresh_process):
     """Return a tree-sitter Parser for bash, installing the libraries when they are missing."""
     try:
@@ -360,17 +360,10 @@ def load_parser(importer=import_tree_sitter_bash, installer=install_pinned_pytho
     return tree_sitter.Parser(tree_sitter.Language(tree_sitter_bash.language()))
 
 
-def _forget_loaded_copies():
-    # A copy that imported but could not be used stays cached and would be returned again.
-    for name in [name for name in sys.modules
-                 if name.split(".")[0] in ("tree_sitter", "tree_sitter_bash")]:
-        del sys.modules[name]
-
-
 def _install_then_import(importer, installer, clock, fresh_process_check):
     # The guards run in parallel on each command, so they take turns, and only the first installs.
-    return python_libraries_pinned_requirements_install_then_import.python_libraries_pinned_requirements_install_if_missing_then_import(
-        importer, installer, clock, fresh_process_check, STATE_DIRECTORY, _forget_loaded_copies,
+    return python_libraries_pinned_requirements_install_if_missing_then_import_common.python_libraries_pinned_requirements_install_if_missing_then_import(
+        importer, installer, clock, fresh_process_check, STATE_DIRECTORY, ("tree_sitter", "tree_sitter_bash"),
         ShellParserUnavailable, ShellParserInstalledForANewProcess)
 
 
@@ -423,7 +416,7 @@ def tree_sitter_bash_install_failure_report_words_build(host, install_output, co
 
     consequence says what goes undone because of it; the words end with what the install printed.
     """
-    where, install = python_libraries_pinned_requirements_install_then_import.pinned_requirements_by_hand_install_command(
+    where, install = python_libraries_pinned_requirements_install_if_missing_then_import_common.pinned_requirements_by_hand_install_command(
         host, REQUIREMENTS_FILE)
     return (f"\"tree-sitter-bash is missing on {host} and could not be installed, so "
             f"{consequence}. To install it by hand, run this command {where}:\" Then give the "

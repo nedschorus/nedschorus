@@ -189,7 +189,7 @@ with tempfile.TemporaryDirectory() as install_scratch:
         raise ImportError("No module named 'markdown_it'")
 
     def failing_installer():
-        raise hook.python_libraries_pinned_requirements_install_then_import().PythonLibrariesPinnedRequirementsUnavailable(
+        raise hook.python_libraries_pinned_requirements_install_if_missing_then_import_common().PythonLibrariesPinnedRequirementsInstallOrImportFailed(
             "pip: network is unreachable")
     try:
         hook.markdown_parser(importer_never, failing_installer, lambda: 2000.0)
@@ -209,6 +209,52 @@ with tempfile.TemporaryDirectory() as install_scratch:
     check("for ned-box, the by-hand command is the ssh form the user runs from the Mac",
           "run this command in a Terminal on your Mac:" in message
           and f"\nssh nedlern@ned-box '{sys.executable} -m pip install" in message, message)
+
+    def recording_runner(command, **kwargs):
+        recording_runner.kwargs = kwargs
+        return subprocess.CompletedProcess(command, 0, "", "")
+    hook._install_pinned_python_libraries(recording_runner)
+    check("the install gives pip the hook's install timeout",
+          recording_runner.kwargs.get("timeout") == hook.INSTALL_TIMEOUT_SECONDS,
+          recording_runner.kwargs)
+
+    # A newer markdown-it-py whose dependency is missing fails partway through its import and
+    # leaves its submodules loaded; the pinned copy installed next must not be mixed with them.
+    newer_site = Path(install_scratch) / "newer-site"
+    pinned_site = Path(install_scratch) / "pinned-site"
+    for site_directory, version, init_source in (
+            (newer_site, "newer", "from markdown_it.helper import version\n"
+                                  "import mdurl_missing_for_this_test\n"),
+            (pinned_site, "pinned", "from markdown_it.helper import version\n"
+                                    "class MarkdownIt:\n"
+                                    "    def __init__(self, preset):\n"
+                                    "        self.preset = preset\n"
+                                    "    def enable(self, rule):\n"
+                                    "        return version\n")):
+        (site_directory / "markdown_it").mkdir(parents=True)
+        (site_directory / "markdown_it" / "__init__.py").write_text(init_source, encoding="utf-8")
+        (site_directory / "markdown_it" / "helper.py").write_text(f"version = {version!r}\n",
+                                                                  encoding="utf-8")
+    half_import_code = (
+        "import importlib.util, sys\n"
+        "from pathlib import Path\n"
+        "hook_path, newer, pinned, state = sys.argv[1:5]\n"
+        "sys.path.insert(0, newer)\n"
+        "spec = importlib.util.spec_from_file_location('hook', hook_path)\n"
+        "hook = importlib.util.module_from_spec(spec); spec.loader.exec_module(hook)\n"
+        "hook.INSTALL_STATE_DIRECTORY = Path(state)\n"
+        "def installer():\n"
+        "    sys.path.remove(newer); sys.path.insert(0, pinned)\n"
+        "    return 'installed'\n"
+        "print(hook.markdown_parser(installer=installer, clock=lambda: 1000.0))\n")
+    half_import = subprocess.run(
+        [sys.executable, "-I", "-c", half_import_code, specification.origin, str(newer_site),
+         str(pinned_site), str(Path(install_scratch) / "half-import-state")],
+        capture_output=True, text=True, timeout=60)
+    check("after a newer markdown-it-py failed partway through its import, the parser is built "
+          "from the installed copy alone",
+          half_import.returncode == 0 and half_import.stdout.strip() == "pinned",
+          (half_import.returncode, half_import.stdout, half_import.stderr[-400:]))
 hook.INSTALL_STATE_DIRECTORY = real_install_state_directory
 
 if PARSER_AVAILABLE:
@@ -569,7 +615,7 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     blocked_home = tmp / "blocked-home"
     blocked_state = blocked_home / hook.INSTALL_STATE_DIRECTORY.relative_to(Path.home())
     blocked_state.mkdir(parents=True)
-    (blocked_state / hook.python_libraries_pinned_requirements_install_then_import().INSTALL_FAILURE_FILE_NAME
+    (blocked_state / hook.python_libraries_pinned_requirements_install_if_missing_then_import_common().INSTALL_FAILURE_FILE_NAME
      ).write_text("pip: blocked by the test", encoding="utf-8")
     blocked_packages = tmp / "blocked-packages"
     (blocked_packages / "markdown_it").mkdir(parents=True)
