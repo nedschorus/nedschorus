@@ -2105,10 +2105,55 @@ with tempfile.TemporaryDirectory() as notes_scratch:
         "done\n"
         f'exec "{real_git}" "$@"\n', encoding="utf-8")
     (count_fails / "git").chmod(0o755)
-    stop_only(notes_seat, path_prefix=str(count_fails))
+    first_count_failure = stop_only(notes_seat, path_prefix=str(count_fails))
     check("a count git cannot make keeps the queued notes, since nothing shows the checkout caught up",
-          [note.get("kind") for note in queued_notes(notes_seat)] == ["blocked"],
+          [note.get("kind") for note in queued_notes(notes_seat)] == ["blocked", "count-failed"],
           str(queued_notes(notes_seat)))
+    count_failed_text = next((note["text"] for note in queued_notes(notes_seat)
+                              if note.get("kind") == "count-failed"), "")
+    check("a count git cannot make is told to the agent, with git's message, byte for byte",
+          count_failed_text.startswith(
+              "checkout-freshness: git could not count how far seat is behind origin/main "
+              "(git rev-list exited 128: fatal: shimmed count failure), so this checkout was not "
+              "compared with main and may be older than main.\n"
+              "Run `git fetch origin` and then `git rev-list --count HEAD..origin/main` to see "
+              "the count, or git's message.\n"
+              "If git cannot make the count either, tell the user what git said: a checkout that "
+              "cannot be compared with main changes the work you are doing with him, so the last "
+              "line of this note does not forbid telling him.\n")
+          and count_failed_text.endswith("\n" + NOT_FOR_THE_USER_LINE), count_failed_text)
+    deliver(notes_seat)
+    again = stop_only(notes_seat, path_prefix=str(count_fails))
+    check("the same count failure is told once, not at every turn's end",
+          queued_notes(notes_seat) == [], str(queued_notes(notes_seat)))
+    reference_count_line = ("was not compared with origin/main, because git could not count how "
+                            "far behind it is: git rev-list exited 128: fatal: shimmed count failure")
+    check("a reference checkout git cannot count is told to the user, with git's message",
+          f"catch-up: reference checkout {(notes_seat.parent / 'clone').resolve()} "
+          f"{reference_count_line}" in display_text(first_count_failure),
+          display_text(first_count_failure))
+    check("and only once", reference_count_line not in display_text(again), display_text(again))
+    report_result = run_catch_up_once(["--report", "--repo", str(notes_seat)],
+                                      path_prefix=str(count_fails))
+    check("--report says the comparison could not be made, and git's message",
+          report_result.stdout.strip() == f"freshness: {notes_seat.resolve()} could not be "
+          f"compared with origin/main: git rev-list exited 128: fatal: shimmed count failure",
+          report_result.stdout)
+    stop_only(notes_seat, path_prefix=str(count_fails))
+    check("(fixture) the queue is empty before the count-failed note is queued again",
+          queued_notes(notes_seat) == [], str(queued_notes(notes_seat)))
+    stamp_file = stamp_path_of(notes_seat)
+    stamp_now = json.loads(stamp_file.read_text(encoding="utf-8"))
+    stamp_now.pop("last_count_error", None)
+    stamp_file.write_text(json.dumps(stamp_now) + "\n", encoding="utf-8")
+    stop_only(notes_seat, path_prefix=str(count_fails))
+    check("(fixture) a count-failed note is queued",
+          "count-failed" in [note.get("kind") for note in queued_notes(notes_seat)],
+          str(queued_notes(notes_seat)))
+    stop_only(notes_seat)
+    check("a queued count-failed note is dropped once a count succeeds",
+          "count-failed" not in [note.get("kind") for note in queued_notes(notes_seat)]
+          and "last_count_error" not in stamp_of(notes_seat), str(queued_notes(notes_seat)))
 
     origin_repo, notes_seat = notes_fixture()
     git(["push", "-q", "-u", "origin", "seat"], notes_seat)
@@ -2141,6 +2186,78 @@ with tempfile.TemporaryDirectory() as notes_scratch:
     check("a skill main deleted is told as deleted, not as one to invoke again",
           "checkout-freshness: main deleted .claude/skills/gone/SKILL.md." in told
           and "invoke it again" not in told, told)
+
+    skill_reload_lines = (
+        "If you are following a skill, invoke it again before its next step.\n"
+        "If that skill's .claude/skills/<name>/SKILL.md is no longer in this checkout, main "
+        "deleted the skill: stop following it.")
+    for note_name, rendered in (
+            ("the did-not-fit line", catch_up_module.delivery_text(many)),
+            ("the could-not-be-read line", catch_up_module.NOTES_UNREADABLE_LINE.format(
+                path="stamp.json", error="unreadable")),
+            ("the moved-without-a-list note", catch_up_module.MOVED_WITHOUT_LIST_NOTE.format(
+                error="no list"))):
+        check(f"{note_name} says to invoke the skill again, and to stop following a skill "
+              f"main deleted, byte for byte", skill_reload_lines in rendered, rendered[:600])
+
+    origin_repo, notes_seat = notes_fixture()
+    commit_file(notes_seat, "own.txt", "mine\n", "the seat's own work")
+    commit_file(origin_repo, "a.txt", "a\n", "advance a")
+    stop_only(notes_seat)
+    told = delivered_text(deliver(notes_seat))
+    check("a rebase under the branch's own commits ends with the test-run instruction, byte for byte",
+          "was rebased onto origin/main" in told
+          and told.endswith("\nRun `python3 scripts/run-all-test-suites.py "
+                            "--only-suites-whose-recorded-inputs-changed-since origin/main`: "
+                            "your work now sits on newer code.\n" + NOT_FOR_THE_USER_LINE), told)
+
+    git(["push", "-q", "-u", "origin", "seat"], notes_seat)
+    git(["commit", "-q", "--amend", "-m", "amended once"], notes_seat)
+    stop_only(notes_seat)
+    git(["commit", "-q", "--amend", "-m", "amended twice"], notes_seat)
+    second_amend = git(["rev-parse", "--short=12", "HEAD"], notes_seat).stdout.strip()
+    stop_only(notes_seat)
+    told = delivered_text(deliver(notes_seat))
+    check("a newer rewritten-head note replaces an older one not yet delivered",
+          told.count("no longer contains its pushed head") == 1
+          and f"seat's HEAD ({second_amend})" in told, told)
+    git(["commit", "-q", "--amend", "-m", "amended a third time"], notes_seat)
+    stop_only(notes_seat)
+    git(["reset", "-q", "--hard", "origin/seat"], notes_seat)
+    stop_only(notes_seat)
+    check("a queued rewritten-head note is dropped once the head contains its pushed head again",
+          "rewritten-head" not in [note.get("kind") for note in queued_notes(notes_seat)],
+          str(queued_notes(notes_seat)))
+
+    origin_repo, notes_seat = notes_fixture()
+    commit_file(notes_seat, "own.txt", "mine\n", "the seat's own work")
+    before_merge = git(["rev-parse", "HEAD"], notes_seat).stdout.strip()
+    commit_file(origin_repo, "a.txt", "a\n", "advance a")
+    git(["fetch", "-q", "origin"], notes_seat)
+    git(["merge", "-q", "--no-edit", "origin/main"], notes_seat)
+    stop_only(notes_seat)
+    stop_only(notes_seat)
+    check("a merge from main is queued as a merges-from-main note, kept at later turn ends "
+          "while the branch is level with main",
+          [note.get("kind") for note in queued_notes(notes_seat)] == ["merges-from-main"],
+          str(queued_notes(notes_seat)))
+    commit_file(origin_repo, "b.txt", "b\n", "advance b")
+    git(["fetch", "-q", "origin"], notes_seat)
+    git(["merge", "-q", "--no-edit", "origin/main"], notes_seat)
+    stop_only(notes_seat)
+    told = delivered_text(deliver(notes_seat))
+    check("a newer merges-from-main note replaces an older one not yet delivered",
+          told.count("merge commit(s) from main") == 1
+          and "seat carries 2 merge commit(s) from main" in told, told)
+    commit_file(origin_repo, "c.txt", "c\n", "advance c")
+    git(["fetch", "-q", "origin"], notes_seat)
+    git(["merge", "-q", "--no-edit", "origin/main"], notes_seat)
+    stop_only(notes_seat)
+    git(["reset", "-q", "--hard", before_merge], notes_seat)
+    stop_only(notes_seat)
+    check("a queued merges-from-main note is dropped once the branch no longer carries the merges",
+          "merges-from-main" not in [note.get("kind") for note in queued_notes(notes_seat)]
+          and (notes_seat / "c.txt").exists(), str(queued_notes(notes_seat)))
 
     def write_stamp_notes(path, notes):
         path.write_text(json.dumps({"pending_agent_notes": notes}) + "\n", encoding="utf-8")

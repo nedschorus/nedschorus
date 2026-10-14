@@ -79,7 +79,7 @@ FILES_AWAITING_THE_COMMENT_TRIM = {
     "scripts/backup-health-check.py": 2,
     "scripts/branch-conflict-check-test.py": 20,
     "scripts/checkout-freshness-catch-up-test.py": 40,
-    "scripts/checkout-freshness-catch-up.py": 8,
+    "scripts/checkout-freshness-catch-up.py": 5,
     "scripts/clean-worktrees-test.py": 5,
     "scripts/clean-worktrees.py": 3,
     "scripts/code-review-codex-cell-test.py": 12,

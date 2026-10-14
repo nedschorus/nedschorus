@@ -73,8 +73,11 @@ answering it. They are queued in the stamp's `pending_agent_notes`, and the
 same script, registered as a UserPromptSubmit hook with
 --deliver-pending-agent-notes, hands them to the agent with its next prompt
 as `additionalContext` and clears the queue. A note about a move adds to the
-queue; a note that a move was blocked replaces the previous one of its kind,
-and is dropped once the checkout is current. If the queue cannot be saved,
+queue; every other note describes the checkout as it now is, so it replaces
+the previous one of its kind, and is dropped once what it describes is gone.
+A count of how far behind main the checkout is that git cannot make is told
+to the agent once per distinct error, and for the reference checkout to the
+user, once per distinct error. If the queue cannot be saved,
 the notes go out at Stop after all, with a line saying why, rather than
 being lost. Every note the agent receives ends by saying it is not for the
 user, because agents were repeating these notes to him.
@@ -418,16 +421,21 @@ STANDING_INSTRUCTION_DELETED_NOTE = (
     "checkout-freshness: main deleted {path}. If you are following it, stop: it is no "
     "longer on main."
 )
+SKILL_RELOAD_LINES = (
+    "If you are following a skill, invoke it again before its next step.\n"
+    "If that skill's .claude/skills/<name>/SKILL.md is no longer in this checkout, main "
+    "deleted the skill: stop following it."
+)
 MOVED_WITHOUT_LIST_NOTE = (
     "checkout-freshness: this checkout was moved forward to origin/main, but git could not "
     "list what main changed ({error}).\n"
     "Read CLAUDE.md again before your next action.\n"
-    "If you are following a skill, invoke it again before its next step."
+    f"{SKILL_RELOAD_LINES}"
 )
 NOTES_DID_NOT_FIT_LINE = (
     "checkout-freshness: {count} older note(s) did not fit and were left out.\n"
     "Read CLAUDE.md again before your next action.\n"
-    "If you are following a skill, invoke it again before its next step."
+    f"{SKILL_RELOAD_LINES}"
 )
 NOTES_NOT_QUEUED_LINE = (
     "checkout-freshness: these notes come now, not with your next prompt, because they "
@@ -436,7 +444,16 @@ NOTES_NOT_QUEUED_LINE = (
 NOTES_UNREADABLE_LINE = (
     "checkout-freshness: notes queued for you could not be read from {path} ({error}).\n"
     "Read CLAUDE.md again before your next action.\n"
-    "If you are following a skill, invoke it again before its next step."
+    f"{SKILL_RELOAD_LINES}"
+)
+COUNT_FAILED_NOTE = (
+    "checkout-freshness: git could not count how far {branch} is behind origin/main "
+    "({error}), so this checkout was not compared with main and may be older than main.\n"
+    "Run `git fetch origin` and then `git rev-list --count HEAD..origin/main` to see the "
+    "count, or git's message.\n"
+    "If git cannot make the count either, tell the user what git said: a checkout that "
+    "cannot be compared with main changes the work you are doing with him, so the last line "
+    "of this note does not forbid telling him."
 )
 NOTES_NOT_CLEARED_LINE = (
     "checkout-freshness: these notes could not be cleared from {path} ({error}), so they "
@@ -444,15 +461,23 @@ NOTES_NOT_CLEARED_LINE = (
 )
 PENDING_AGENT_NOTES_KEY = "pending_agent_notes"
 
-# Kinds of note. A "moved" note tells what one move changed, so moves add up;
-# a "blocked" note (a move that could not be made) or a "pushed" note (what a
-# pushed branch lacks) describes the checkout as it now is, so the newest
-# replaces older ones of its kind, and both are dropped once the checkout is
-# current; a successful move drops "blocked" notes too.
+# Kinds of note. A "moved" note tells what one move changed, so moves add up.
+# Every other kind describes the checkout as it now is, so the newest replaces
+# older ones of its kind: "blocked" (a move that could not be made) and
+# "pushed" (what a pushed branch lacks), both dropped once the checkout is
+# level with main, "blocked" also by a successful move; "merges-from-main" and
+# "rewritten-head", dropped once the branch no longer shows them; and
+# "count-failed", dropped once a count succeeds.
 NOTE_KIND_MOVED = "moved"
 NOTE_KIND_BLOCKED = "blocked"
 NOTE_KIND_PUSHED = "pushed"
-NOTE_KINDS_REPLACED_BY_NEWER = (NOTE_KIND_BLOCKED, NOTE_KIND_PUSHED)
+NOTE_KIND_MERGES_FROM_MAIN = "merges-from-main"
+NOTE_KIND_REWRITTEN_HEAD = "rewritten-head"
+NOTE_KIND_COUNT_FAILED = "count-failed"
+NOTE_KINDS_DROPPED_WHEN_LEVEL_WITH_MAIN = (NOTE_KIND_BLOCKED, NOTE_KIND_PUSHED)
+NOTE_KINDS_REPLACED_BY_NEWER = (NOTE_KIND_BLOCKED, NOTE_KIND_PUSHED,
+                                NOTE_KIND_MERGES_FROM_MAIN, NOTE_KIND_REWRITTEN_HEAD,
+                                NOTE_KIND_COUNT_FAILED)
 
 # Two queues, two audiences. The user's lines are shown at Stop; the agent's
 # notes are queued in the stamp for its next prompt.
@@ -669,18 +694,24 @@ def fetch_if_stale(checkout: Path, stamp_path: Path, interval_seconds: int) -> d
 
 
 def counts_against_main(checkout: Path):
-    """(behind, ahead) of HEAD against origin/main, or None when unknowable."""
+    """((behind, ahead), None) of HEAD against origin/main, or (None, error)
+    when git could not make the count."""
     if run_git(["rev-parse", "--verify", "--quiet", "origin/main"], checkout,
                timeout=15).returncode != 0:
-        return None
+        return None, "there is no origin/main"
     behind = run_git(["rev-list", "--count", "HEAD..origin/main"], checkout, timeout=30)
     ahead = run_git(["rev-list", "--count", "origin/main..HEAD"], checkout, timeout=30)
-    if behind.returncode != 0 or ahead.returncode != 0:
-        return None
+    for counted in (behind, ahead):
+        if counted.returncode != 0:
+            detail = "; ".join(line.strip() for line in counted.stderr.splitlines()
+                               if line.strip())
+            return None, (f"git rev-list exited {counted.returncode}"
+                          + (f": {detail}" if detail else ""))
     try:
-        return int(behind.stdout.strip()), int(ahead.stdout.strip())
+        return (int(behind.stdout.strip()), int(ahead.stdout.strip())), None
     except ValueError:
-        return None
+        return None, (f"git rev-list printed {behind.stdout.strip()!r} and "
+                      f"{ahead.stdout.strip()!r}, not counts")
 
 
 def own_commit_count(checkout: Path):
@@ -920,12 +951,18 @@ def drift_facts(checkout: Path, stamp: dict, branch: str, state_key: str, state_
     turn — the misbehaviour detectors run whether or not the branch is behind —
     and computing them twice would be two chances to disagree.
     """
-    counts = counts_against_main(checkout)
+    counts, error = counts_against_main(checkout)
     if counts is None:
         # Unknowable is not "still whatever it was": a preserved stale count
         # would render as knowledge (silent-safety rule).
         stamp["behind"] = stamp["ahead"] = None
+        if stamp.get("last_count_error") != error:
+            tell(COUNT_FAILED_NOTE.format(branch=branch or "detached HEAD", error=error),
+                 kind=NOTE_KIND_COUNT_FAILED)
+        stamp["last_count_error"] = error
         return None, None
+    if stamp.pop("last_count_error", None) is not None:
+        drop_queued_notes_of_kinds(NOTE_KIND_COUNT_FAILED)
     behind, ahead = counts
     stamp["behind"], stamp["ahead"] = behind, ahead
     if behind == 0:
@@ -1233,6 +1270,10 @@ def catch_up_session_checkout(checkout: Path, interval_seconds: int) -> None:
         head = run_git(["rev-parse", "HEAD"], checkout, timeout=15).stdout.strip()[:12]
         remote = run_git(["rev-parse", f"origin/{branch}"], checkout, timeout=15).stdout.strip()[:12]
         found["rewritten_head"] = [head, remote]
+    if "merges_from_main" not in found:
+        drop_queued_notes_of_kinds(NOTE_KIND_MERGES_FROM_MAIN)
+    if "rewritten_head" not in found:
+        drop_queued_notes_of_kinds(NOTE_KIND_REWRITTEN_HEAD)
     if found and stamp.get("last_misbehaviour") != found:
         if "merges_from_main" in found:
             tell(f"checkout-freshness: {branch} carries {len(merged)} merge commit(s) from "
@@ -1240,13 +1281,14 @@ def catch_up_session_checkout(checkout: Path, interval_seconds: int) -> None:
                  f"rebasing it onto main, not by merging main into it. If the branch was "
                  f"never pushed, rebase it onto origin/main. If it was pushed, leave its "
                  f"history and tell the agent-seat merge-lane-2, with SendMessage, which "
-                 f"merge commits it carries.")
+                 f"merge commits it carries.", kind=NOTE_KIND_MERGES_FROM_MAIN)
         if "rewritten_head" in found:
             head, remote = found["rewritten_head"]
             tell(f"checkout-freshness: {branch}'s HEAD ({head}) no longer contains its pushed "
                  f"head origin/{branch} ({remote}): an amend or a rebase rewrote pushed "
                  f"commits, which moves the code under its reviewer. Do not push this HEAD. "
-                 f"Put your change back as one commit on top of origin/{branch}, then push.")
+                 f"Put your change back as one commit on top of origin/{branch}, then push.",
+                 kind=NOTE_KIND_REWRITTEN_HEAD)
     if found:
         stamp["last_misbehaviour"] = found
     else:
@@ -1259,7 +1301,7 @@ def catch_up_session_checkout(checkout: Path, interval_seconds: int) -> None:
         # Only a count of 0 behind shows the checkout caught up; a count git
         # could not make leaves the queued notes as they are.
         if stamp.get("behind") == 0:
-            drop_queued_notes_of_kinds(*NOTE_KINDS_REPLACED_BY_NEWER)
+            drop_queued_notes_of_kinds(*NOTE_KINDS_DROPPED_WHEN_LEVEL_WITH_MAIN)
         save_stamp_with_queued_notes(stamp_path, stamp)
         return
     told = {"branch": parts["branch"], "main_tip": facts["main_tip"],
@@ -1444,12 +1486,17 @@ def fast_forward_reference_checkout(reference: Path, interval_seconds: int,
             report(line)
         stamp["last_reference_blockers"] = reasons
 
-    counts = counts_against_main(reference)
+    counts, error = counts_against_main(reference)
     if counts is None:
         # Unknowable is not "still whatever it was" — same silent-safety rule
         # the seat's own path applies. Leaving the previous numbers in place
         # renders a stale count as knowledge.
         stamp["behind"] = stamp["ahead"] = None
+        stamp["last_action"] = f"reference count failed: {error}"
+        report_reason([f"count failed: {error}"],
+                      f"catch-up: reference checkout {reference} was not compared with "
+                      f"origin/main, because git could not count how far behind it is: "
+                      f"{error}{fetch_note}")
         write_stamp(stamp_path, stamp)
         return
     behind, ahead = counts
@@ -1506,14 +1553,14 @@ def report_line(checkout: Path, interval_seconds: int) -> str:
         return f"freshness: {checkout} is not a git checkout"
     stamp_path = git_dir / STAMP_FILE_NAME
     stamp = fetch_if_stale(checkout, stamp_path, interval_seconds)
-    counts = counts_against_main(checkout)
+    counts, error = counts_against_main(checkout)
     if counts is None:
         # Same rule again: the line about to be printed says the comparison
         # could not be made, so the stamp behind it must not keep claiming a
         # number.
         stamp["behind"] = stamp["ahead"] = None
         write_stamp(stamp_path, stamp)
-        return f"freshness: {checkout} has no origin/main to compare against"
+        return f"freshness: {checkout} could not be compared with origin/main: {error}"
     behind, ahead = counts
     stamp["behind"], stamp["ahead"] = behind, ahead
     write_stamp(stamp_path, stamp)
