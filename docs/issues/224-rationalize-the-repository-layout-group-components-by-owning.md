@@ -88,3 +88,7 @@ Open questions for the user, not settled here:
 ## Search receipt
 
 `scripts/ghi-info-ask.py` over both mirrors, 2026-08-31: nothing proposes organizing by owning system or a hook dispatcher; closest are GHI [Layer-design draft held on branch repo-boundary-and-runtime-layers: land or discard](https://github.com/nedschorus/nedschorus/issues/79) (layers) and GHI [built-in-process-planned documents: design docs convert to a pointer map of built / in process / planned, with a skill that verifies and updates them](https://github.com/nedschorus/nedschorus/issues/219) (the status document).
+
+## Provisional additions (not yet vetted by the user)
+
+- MD-skills, 2026-10-14: Rename `.claude/hooks/` to `.claude/guard-hooks/`, holding all six guards, as one pull request of its own in this layout migration (MD-skills task #135).
