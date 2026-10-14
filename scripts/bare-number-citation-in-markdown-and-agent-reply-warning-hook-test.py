@@ -901,6 +901,9 @@ check("and the record is written afresh, so the same reply is not noted again",
       run_hook(prompt_payload(path, session_id="garbled-record-session"),
                dict(HOOK_ENVIRONMENT, TMPDIR=str(garbled_records))).stdout == "", "")
 
+# The case above rewrote the record as valid JSON; garble it again so this case meets a read failure.
+(garbled_records / NOTE_RECORD_DIRECTORY_NAME / "garbled-record-session.json").write_text(
+    "{not json", encoding="utf-8")
 clean_path = transcript(user("go"), assistant("c1", text_block("Nothing to cite here.")))
 result = run_hook(prompt_payload(clean_path, session_id="garbled-record-session"),
                   dict(HOOK_ENVIRONMENT, TMPDIR=str(garbled_records)))
