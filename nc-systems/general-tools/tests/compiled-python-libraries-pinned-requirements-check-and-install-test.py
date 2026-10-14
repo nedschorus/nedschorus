@@ -122,10 +122,11 @@ text = "\n".join(lines)
 check("a failed install exits 1, naming the machine, what is missing and what the install printed",
       status == 1 and "ned-box:" in lines[0] and "tree-sitter-bash: wanted 0.25.1, found none" in text
       and "no network" in text, lines)
-check("on ned-box the by-hand command is the ssh form the user runs from the Mac, naming this interpreter",
+check("on ned-box the by-hand command is the ssh form the user runs from the Mac, naming this interpreter "
+      "and the list that was checked",
       lines[-1] == f"To install them by hand, run this command in a Terminal on your Mac: "
                    f"ssh nedlern@ned-box '{sys.executable} -m pip install --user "
-                   f"--break-system-packages -r {install.PINNED_REQUIREMENTS_FILE}'", lines[-1])
+                   f"--break-system-packages -r {FIXTURE}'", lines[-1])
 status, lines = check_and_install_with_fixture("Neds-MacBook-Pro", version_reader(ONE_MISSING),
                                           installer_that("no network"))
 check("on another machine the by-hand command is run there as it is",
@@ -145,6 +146,30 @@ except RuntimeError as error:
     raised = error
 check("a versions read that fails raises, quoting what it printed",
       raised is not None and "boom" in str(raised), raised)
+
+def reader_and_pip(*answers):
+    """A runner that answers versions reads with the next of answers, and any pip install with success."""
+    reads = version_reader(*answers)
+    installs = []
+
+    def run(command, **kwargs):
+        if "pip" in command:
+            installs.append(command)
+            return subprocess.CompletedProcess(command, 0, "Successfully installed", "")
+        return reads(command, **kwargs)
+    run.installs = installs
+    return run
+
+
+runner = reader_and_pip(ONE_MISSING, ALL_PINNED)
+status, lines = checker.check_and_install("ned-box", runner, requirements_file=FIXTURE)
+check("the default installer installs the list that was checked, not the real list",
+      status == 0 and len(runner.installs) == 1 and runner.installs[0][-2:] == ["-r", str(FIXTURE)],
+      (status, runner.installs))
+
+status, lines = checker.check_and_install("ned-box", version_reader(dict(real_pins)), installer_that(None))
+check("with no requirements_file, the real pinned list is the one checked",
+      status == 0 and f"all {len(real_pins)} pinned" in lines[0], (status, lines))
 
 versions = checker.installed_versions({"pip", "no-such-library-for-this-test"})
 check("this python3's real installed versions are read, and an absent library reads as None",
