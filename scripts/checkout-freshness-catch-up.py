@@ -118,6 +118,14 @@ _git_output_spec = importlib.util.spec_from_file_location(
 git_output = importlib.util.module_from_spec(_git_output_spec)
 _git_output_spec.loader.exec_module(git_output)
 
+# Every Stop hook obeys this rule first: see the module's docstring.
+_stop_hooks_stay_silent_rule_specification = importlib.util.spec_from_file_location(
+    "claude_code_stop_hooks_stay_silent_while_agent_answers_a_stop_hook_rule_common",
+    Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+    / "claude-code-stop-hooks-stay-silent-while-agent-answers-a-stop-hook-rule-common.py")
+stop_hooks_stay_silent_rule = importlib.util.module_from_spec(_stop_hooks_stay_silent_rule_specification)
+_stop_hooks_stay_silent_rule_specification.loader.exec_module(stop_hooks_stay_silent_rule)
+
 STAMP_FILE_NAME = "checkout-freshness-stamp.json"
 
 # A git that never ran reports a code git itself cannot return, so "no answer"
@@ -1556,6 +1564,8 @@ def main(argv=None) -> int:
             payload = json.loads(sys.stdin.read() or "{}")
         except (json.JSONDecodeError, UnicodeDecodeError):
             payload = {}
+        if stop_hooks_stay_silent_rule.stop_hook_stays_silent_while_agent_answers_a_stop_hook(payload):
+            return 0
     session_cwd = (Path(arguments.cwd) if arguments.cwd is not None
                    else Path(payload.get("cwd") or "."))
 
