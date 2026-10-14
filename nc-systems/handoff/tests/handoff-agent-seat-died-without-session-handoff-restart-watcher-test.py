@@ -102,6 +102,14 @@ class Harness:
         exit_code = self.window_exit_codes.pop(0) if self.window_exit_codes else 0
         return exit_code, "" if exit_code == 0 else "the Mac cannot be reached"
 
+    def open_page(self, path):
+        # Recorded beside the windows, so one list gives the order of everything shown.
+        self.windows.append(["page", path])
+        exit_code = self.window_exit_codes.pop(0) if self.window_exit_codes else 0
+        return exit_code, ("" if exit_code == 0 else
+                           "the Mac refused the request" if exit_code == 2
+                           else "the Mac cannot be reached")
+
     def open_seat_window(self, seat):
         self.seat_windows.append(seat)
         opened = self.seat_window_results.pop(0) if self.seat_window_results else True
@@ -116,6 +124,7 @@ class Harness:
             recover=self.recover, open_window=self.open_window,
             show_notice_words=lambda path: ["/usr/bin/python3", str(SCRIPT_PATH),
                                             "--show-notice", path],
+            open_page=self.open_page,
             stopped_on_purpose=lambda seat, detail: self.on_purpose,
             recorded_exit_question=recovery_module.restart_question_for_a_seat_with_a_recorded_exit,
             open_seat_window=self.open_seat_window,
@@ -237,9 +246,9 @@ def run_decision_cases(root: Path):
           "scripts/recover-crashed-seats.py merge-lane-2'\n" in text, text)
     check("the second-crash notice names the transcripts by their path on the Mac",
           "/Volumes/nedhome/.claude/projects/-merge-lane-2" in text, text)
-    check("the second-crash window shows the notice and does not attach",
-          harness.windows[-1][-2] == "--show-notice" and "attach" not in harness.windows[-1],
-          repr(harness.windows[-1]))
+    check("the second-crash notice opens as its HTML page in the Mac's browser",
+          harness.windows[-1][0] == "page" and harness.windows[-1][1].endswith(".html")
+          and "/notice-pages/" in harness.windows[-1][1], repr(harness.windows[-1]))
     check("a notice gives the record's path on the Mac and on ned-box",
           f"(on ned-box: {root / 'second-crash' / 'decisions.jsonl'})" in text, text)
 
@@ -410,9 +419,9 @@ def run_decision_cases(root: Path):
     check("a notice the Mac cannot be reached for stays pending",
           len(pending) == 1 and "recovery-failed" in pending[0].get("path", ""), repr(pending))
     harness.run(SEEN_RUNNING + timedelta(minutes=17))
-    check("a pending notice is shown once the Mac answers",
+    check("a pending notice is shown once the Mac answers, as its page",
           harness.state["pending_notices"] == []
-          and harness.windows[-1][-2] == "--show-notice", repr(harness.windows))
+          and harness.windows[-1][0] == "page", repr(harness.windows))
 
     harness = Harness(root / "assessment-failed")
     harness.assessment_errors["merge-lane-2"] = OSError("Permission denied: '/home/nedlern/agents'")
@@ -958,10 +967,12 @@ def run_run_failure_cases(root: Path):
     windows = []
     window_exit_codes = [1]
     real_program, real_opener = watcher_module.LOGIN_RESTART_PROGRAM, watcher_module.open_mac_window
+    real_page_opener = watcher_module.open_mac_browser_page
     watcher_module.LOGIN_RESTART_PROGRAM = root / "no-such-login-restart.py"
     watcher_module.open_mac_window = lambda words: (
         windows.append(words) or ((window_exit_codes.pop(0), "unreachable") if window_exit_codes
                                   else (0, "")))
+    watcher_module.open_mac_browser_page = lambda path: watcher_module.open_mac_window(["page", path])
     raised = []
     try:
         for _ in range(3):
@@ -971,6 +982,7 @@ def run_run_failure_cases(root: Path):
                 raised.append(error)
     finally:
         watcher_module.LOGIN_RESTART_PROGRAM, watcher_module.open_mac_window = real_program, real_opener
+        watcher_module.open_mac_browser_page = real_page_opener
     notices = sorted((root / "failed-log" / "notices").glob("*run-failed.txt"))
     text = notices[-1].read_text(encoding="utf-8") if notices else ""
     check("a failed run still fails, so cron's log keeps the traceback",
@@ -979,6 +991,9 @@ def run_run_failure_cases(root: Path):
           "watching no agent-seat" in text and "no-such-login-restart.py" in text, text)
     check("a failed run's notice is retried while the Mac cannot be reached, then shown once",
           len(windows) == 2, repr(windows))
+    check("a failed run's notice opens as its HTML page",
+          all(window[0] == "page" and window[1].endswith("run-failed.html") for window in windows),
+          repr(windows))
 
     environment = {watcher_module.STATE_DIRECTORY_ENVIRONMENT_VARIABLE: str(root / "healed-state"),
                    watcher_module.LOG_DIRECTORY_ENVIRONMENT_VARIABLE: str(root / "healed-log")}
@@ -988,6 +1003,7 @@ def run_run_failure_cases(root: Path):
     watcher_module.open_mac_window = lambda words: (
         windows.append(words) or ((window_exit_codes.pop(0), "unreachable") if window_exit_codes
                                   else (0, "")))
+    watcher_module.open_mac_browser_page = lambda path: watcher_module.open_mac_window(["page", path])
     try:
         try:
             watcher_module.run_once(environment)
@@ -995,6 +1011,7 @@ def run_run_failure_cases(root: Path):
             pass
     finally:
         watcher_module.LOGIN_RESTART_PROGRAM, watcher_module.open_mac_window = real_program, real_opener
+        watcher_module.open_mac_browser_page = real_page_opener
     state_path = root / "healed-state" / f"{watcher_module.PROGRAM}-state.json"
     saved = watcher_module.read_state(state_path)
     check("a failed run's notice the Mac missed waits in the state every run reads",
@@ -1013,9 +1030,10 @@ def run_run_failure_cases(root: Path):
 
 def run_report_run_failure_state_cases(root: Path):
     """report_run_failure when the state it would queue a notice in cannot be read or saved."""
-    real_opener = watcher_module.open_mac_window
+    real_opener, real_page_opener = watcher_module.open_mac_window, watcher_module.open_mac_browser_page
     windows = []
     watcher_module.open_mac_window = lambda words: windows.append(words) or (1, "unreachable")
+    watcher_module.open_mac_browser_page = lambda path: windows.append(["page", path]) or (1, "unreachable")
     try:
         corrupt = root / "corrupt-state"
         corrupt.mkdir()
@@ -1051,6 +1069,106 @@ def run_report_run_failure_state_cases(root: Path):
               repr(raised))
     finally:
         watcher_module.open_mac_window = real_opener
+        watcher_module.open_mac_browser_page = real_page_opener
+
+
+def run_notice_page_cases(root: Path):
+    """A notice's HTML page: what it shows, and what happens when it cannot be written."""
+    harness = Harness(root / "page-contents",
+                      recovery_result=(1, "merge-lane-2: REFUSED <the durable checkout> & more"))
+    crash_after_running(harness)
+    pages = sorted((root / "page-contents" / "notice-pages").glob("*recovery-failed.html"))
+    page = pages[0].read_text(encoding="utf-8") if pages else ""
+    check("a notice is written as an HTML page whose title names the seat",
+          len(pages) == 1 and "<title>merge-lane-2: the crash watcher needs you</title>" in page,
+          repr(pages))
+    check("the page escapes every inserted text, so recovery's output cannot break the page",
+          "REFUSED &lt;the durable checkout&gt; &amp; more" in page and "<the durable" not in page,
+          page)
+    check("the page shows each command in a block that says it runs on the Mac, with a Copy button",
+          page.count("Run in a Terminal on your Mac") == 2 and page.count('data-copy="') == 2
+          and "ssh -t nedlern@ned-box &#x27;cd ~/Projects/nedschorus &amp;&amp; python3 "
+              "scripts/recover-crashed-seats.py merge-lane-2&#x27;" in page, page)
+    check("the page shows recovery's quoted line as output, with no Copy button",
+          "Output, quoted" in page, page)
+    check("the page carries both light and dark colours",
+          "prefers-color-scheme: dark" in page and "--background" in page, page)
+    check("the notice's text is still kept, beside the page",
+          len([path for path in harness.notices() if "recovery-failed" in path.name]) == 1,
+          repr(harness.notices()))
+    check("the page, not a terminal window, is what opens on the Mac",
+          harness.windows == [["page", str(pages[0])]] if pages else False, repr(harness.windows))
+
+    log_directory = root / "page-unwritable"
+    (log_directory).mkdir()
+    # A file where the pages' directory belongs, so the page cannot be written.
+    (log_directory / "notice-pages").write_text("not a directory\n", encoding="utf-8")
+    harness = Harness(log_directory, recovery_result=(1, "merge-lane-2: REFUSED"))
+    crash_after_running(harness)
+    check("a page that cannot be written leaves the notice to open in a terminal window",
+          len(harness.windows) == 1 and harness.windows[0][-2] == "--show-notice"
+          and harness.windows[0][-1].endswith("recovery-failed.txt"), repr(harness.windows))
+    check("a page that cannot be written is logged",
+          any(entry["decision"].startswith("notice page not written")
+              for entry in harness.decisions()), repr(harness.decisions()))
+
+    harness = Harness(root / "page-mac-unreachable",
+                      recovery_result=(1, "merge-lane-2: REFUSED"), window_exit_codes=[1])
+    crash_after_running(harness)
+    pending = harness.state["pending_notices"]
+    check("a page the Mac cannot be reached for stays pending, with its page",
+          len(pending) == 1 and pending[0].get("page", "").endswith("recovery-failed.html"),
+          repr(pending))
+    harness.run(SEEN_RUNNING + timedelta(minutes=17))
+    check("a pending page is opened once the Mac answers",
+          harness.state["pending_notices"] == [] and harness.windows[-1][0] == "page"
+          and len(harness.windows) == 2, repr(harness.windows))
+
+    harness = Harness(root / "page-refused-by-the-mac",
+                      recovery_result=(1, "merge-lane-2: REFUSED"), window_exit_codes=[2, 0])
+    crash_after_running(harness)
+    check("a page the Mac refuses opens the notice in a terminal window instead, at once",
+          len(harness.windows) == 2 and harness.windows[0][0] == "page"
+          and harness.windows[1][-2] == "--show-notice"
+          and harness.windows[1][-1].endswith("recovery-failed.txt")
+          and harness.state["pending_notices"] == [], repr(harness.windows))
+    check("a page the Mac refuses is logged",
+          any(entry["decision"].startswith("page refused by the Mac")
+              for entry in harness.decisions()), repr(harness.decisions()))
+
+    harness = Harness(root / "page-refused-window-unreachable",
+                      recovery_result=(1, "merge-lane-2: REFUSED"), window_exit_codes=[2, 1])
+    crash_after_running(harness)
+    check("a refused page whose terminal window the Mac also misses stays pending",
+          len(harness.state["pending_notices"]) == 1, repr(harness.state["pending_notices"]))
+    harness.window_exit_codes = [1]
+    harness.run(SEEN_RUNNING + timedelta(minutes=17))
+    check("a notice whose page was refused retries only its terminal window, and the refusal "
+          "is logged once",
+          [window[0] == "page" for window in harness.windows] == [True, False, False]
+          and len(harness.state["pending_notices"]) == 1
+          and sum(entry["decision"].startswith("page refused by the Mac")
+                  for entry in harness.decisions()) == 1,
+          repr((harness.windows, harness.decisions())))
+
+    page = watcher_module.failed_restart_notice_html_page_build("seat<b>&x", "seat<b>&x is down.", "now")
+    check("the page escapes the seat's name in its title",
+          "<title>seat&lt;b&gt;&amp;x: the crash watcher needs you</title>" in page
+          and "<title>seat<b>" not in page, page[:600])
+
+    state = {"seats": {}, "pending_notices": [{"path": str(root / "old-notice.txt")}],
+             "reported_errors": []}
+    windows = []
+    watcher = watcher_module.Watcher(
+        state=state, now=SEEN_RUNNING, boot_at=BOOT, log_directory=root / "old-pending",
+        assess=None, died_at_about=lambda seat: None, transcripts_directory=None, recover=None,
+        open_window=lambda words: windows.append(words) or (0, ""),
+        show_notice_words=lambda path: ["--show-notice", path],
+        open_page=lambda path: windows.append(["page", path]) or (0, ""))
+    watcher.run([])
+    check("a notice left pending before pages existed still opens, in a terminal window",
+          windows == [["--show-notice", str(root / "old-notice.txt")]] and state["pending_notices"] == [],
+          repr(windows))
 
 
 def run_state_cases(root: Path):
@@ -1133,6 +1251,9 @@ def run_watch_wiring_cases(root: Path):
           len(built) == 1 and built[0].get("open_seat_window")
           is FakeRecovery.agent_seat_mac_window_open_unless_tmux_client_already_attached,
           repr(built))
+    check("watch() passes the browser page opener to the Watcher as open_page",
+          len(built) == 1 and built[0].get("open_page") is watcher_module.open_mac_browser_page,
+          repr(built))
     check("watch() passes recovery's tmux session check to the Watcher as seat_session_alive",
           len(built) == 1
           and built[0].get("seat_session_alive") is FakeRecovery.tmux_session_alive_anywhere,
@@ -1165,6 +1286,7 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     run_command_line_cases(Path(temporary_directory))
     run_report_run_failure_state_cases(Path(temporary_directory))
     run_state_cases(Path(temporary_directory))
+    run_notice_page_cases(Path(temporary_directory))
 
 if failures:
     print(f"\n{len(failures)} case(s) failed")

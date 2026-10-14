@@ -49,14 +49,20 @@ The user hears from the watcher only when it cannot do its job of restarting:
 a crash it will not restart (a second crash inside RESTART_LIMIT_SECONDS), a
 seat down in a state only he should restart from (the two cases above), a seat
 recovery refuses or a leftover shell holds (the case after those), and each
-failure become a notice shown in a window the program opens on his Mac with
-scripts/open-mac-window-from-ned-box.py. A refused seat gets one notice until
+failure become a notice. Each notice is kept as text, and also written as an
+HTML page under notice-pages/ in LOG_DIRECTORY, which the program opens in the
+browser on his Mac with scripts/open-html-page-in-mac-browser-from-ned-box.py:
+a browser tab stays findable where one more terminal window is easily lost.
+When the page cannot be written, or the Mac refuses it (its mount of ned-box's
+home is missing, or its clone does not yet know the request), the notice opens
+instead in a terminal window on his Mac, with
+scripts/open-mac-window-from-ned-box.py running --show-notice. A refused seat gets one notice until
 it is seen running again or restarted, however long the refusal lasts. The cases it leaves
 alone stay silent, logged only: a stop on purpose, and a seat not seen running
 since the machine booted. A restart it carries out shows no
 notice: recover-crashed-seats.py opens a window on the Mac attached to the
-restarted seat's tmux session. A window the Mac cannot be reached for, a
-notice's or a restarted seat's, stays pending and is tried again on every run. Every decision, each restart
+restarted seat's tmux session. A page or window the Mac cannot be reached for,
+a notice's or a restarted seat's, stays pending and is tried again on every run. Every decision, each restart
 included, is appended to decisions.jsonl in LOG_DIRECTORY; the notices are
 kept beside it.
 
@@ -78,6 +84,7 @@ state and the log go: the seams the test suite uses.
 
 import argparse
 import fcntl
+import html
 import importlib.util
 import json
 import os
@@ -92,6 +99,7 @@ REPOSITORY = Path(__file__).resolve().parent.parent.parent
 RECOVERY_PROGRAM = REPOSITORY / "scripts" / "recover-crashed-seats.py"
 LOGIN_RESTART_PROGRAM = REPOSITORY / "scripts" / "restart-live-seats-at-login.py"
 MAC_WINDOW_OPENER_PROGRAM = REPOSITORY / "scripts" / "open-mac-window-from-ned-box.py"
+MAC_BROWSER_PAGE_OPENER_PROGRAM = REPOSITORY / "scripts" / "open-html-page-in-mac-browser-from-ned-box.py"
 
 LOG_DIRECTORY = Path("/home/nedlern/nedschorus-logs") / PROGRAM
 STATE_DIRECTORY = Path("~/.local/state/nedschorus").expanduser()
@@ -116,6 +124,10 @@ NED_BOX_HOME = "/home/nedlern"
 NED_BOX_HOME_ON_THE_MAC = "/Volumes/nedhome"
 # launch-claude-ubuntu is not on the Mac's PATH; the Mac's checkout holds it.
 MAC_LAUNCHER = "/Users/el/Projects/nedschorus/scripts/launch-claude-ubuntu"
+
+# open-html-page-in-mac-browser-from-ned-box.py's EXIT_USAGE_OR_REFUSED: the page was refused,
+# here or by the Mac, so retrying the page cannot help.
+MAC_BROWSER_PAGE_REFUSED_EXIT_STATUS = 2
 
 # recover-crashed-seats.py's ALL_AGENT_SEATS_RECOVERED_BUT_MAC_WINDOW_OPEN_FAILED_EXIT_STATUS:
 # the seat came up, but its window on the Mac did not open.
@@ -239,6 +251,86 @@ RECOVERY_REFUSES_NOTICE_TEMPLATE = (
 
 SHOW_NOTICE_CLOSE_PROMPT = "Press Enter to close this window."
 
+# A notice's indented line is a command when it starts like one of these; every one runs on the Mac.
+MAC_COMMAND_PREFIXES = ("ssh -t nedlern@ned-box ", MAC_LAUNCHER + " ")
+
+NOTICE_PAGE_TEMPLATE = """<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{title}</title>
+<style>
+:root {{ --background: #ffffff; --text: #1b1b1b; --muted: #5a5a5a; --block: #f2f2f2;
+         --border: #d0d0d0; --accent: #b3261e; --button: #e6e6e6; }}
+@media (prefers-color-scheme: dark) {{
+  :root {{ --background: #1a1a1a; --text: #e8e8e8; --muted: #a8a8a8; --block: #262626;
+           --border: #444444; --accent: #ff8a80; --button: #333333; }}
+}}
+body {{ background: var(--background); color: var(--text); margin: 0 auto; max-width: 52rem;
+        padding: 1.5rem 1rem; font: 16px/1.5 -apple-system, system-ui, sans-serif; }}
+h1 {{ color: var(--accent); font-size: 1.4rem; margin: 0 0 0.25rem; }}
+.when {{ color: var(--muted); margin: 0 0 1.25rem; font-size: 0.9rem; }}
+p {{ margin: 0 0 0.9rem; overflow-wrap: anywhere; }}
+.block {{ border: 1px solid var(--border); border-radius: 6px; margin: 0 0 1rem; }}
+.label {{ display: flex; justify-content: space-between; align-items: center; gap: 0.5rem;
+          padding: 0.35rem 0.6rem; border-bottom: 1px solid var(--border); color: var(--muted);
+          font-size: 0.85rem; }}
+pre {{ background: var(--block); margin: 0; padding: 0.6rem; overflow-x: auto;
+       font: 14px/1.4 ui-monospace, Menlo, monospace; white-space: pre-wrap; word-break: break-all; }}
+button {{ background: var(--button); color: var(--text); border: 1px solid var(--border);
+          border-radius: 4px; padding: 0.15rem 0.6rem; font-size: 0.85rem; cursor: pointer; }}
+</style>
+</head>
+<body>
+<h1>{title}</h1>
+<p class="when">Written by the crash watcher on ned-box at {written_at}.</p>
+{body}
+<script>
+for (const button of document.querySelectorAll("button[data-copy]")) {{
+  button.addEventListener("click", () => {{
+    const text = document.getElementById(button.dataset.copy).textContent;
+    const done = () => {{ button.textContent = "Copied"; setTimeout(() => {{ button.textContent = "Copy"; }}, 1500); }};
+    if (navigator.clipboard) {{
+      navigator.clipboard.writeText(text).then(done, () => {{ button.textContent = "Select and copy by hand"; }});
+    }} else {{
+      button.textContent = "Select and copy by hand";
+    }}
+  }});
+}}
+</script>
+</body>
+</html>
+"""
+
+
+def failed_restart_notice_html_page_build(seat, text, written_at) -> str:
+    """The HTML page of one notice: each line a paragraph, each indented line a block.
+
+    An indented line that starts like a command gets a label naming the Mac, where all of
+    them run, and a Copy button; any other indented line is quoted output.
+    """
+    parts = []
+    for number, line in enumerate(text.splitlines()):
+        if not line.strip():
+            continue
+        if not line.startswith("  "):
+            parts.append(f"<p>{html.escape(line)}</p>")
+            continue
+        content = line.strip()
+        identifier = f"block-{number}"
+        if content.startswith(MAC_COMMAND_PREFIXES):
+            label = ("<span>Run in a Terminal on your Mac</span>"
+                     f'<button type="button" data-copy="{identifier}">Copy</button>')
+        else:
+            label = "<span>Output, quoted</span>"
+        parts.append(f'<div class="block"><div class="label">{label}</div>'
+                     f'<pre id="{identifier}">{html.escape(content)}</pre></div>')
+    title = ("The crash watcher needs you" if seat == "watcher"
+             else f"{seat}: the crash watcher needs you")
+    return NOTICE_PAGE_TEMPLATE.format(title=html.escape(title), written_at=html.escape(written_at),
+                                       body="\n".join(parts))
+
 
 def load_module(name: str, path: Path):
     specification = importlib.util.spec_from_file_location(name, path)
@@ -300,8 +392,11 @@ class Watcher:
                  transcripts_directory, recover, open_window, show_notice_words,
                  stopped_on_purpose=None, recorded_exit_question=None, open_seat_window=None,
                  seat_session_alive=None, assess_as_though_leftover_shell_closed=None,
-                 down_agent_seat_records_stopped_on_purpose=None):
+                 down_agent_seat_records_stopped_on_purpose=None, open_page=None):
         self.state = state
+        # path -> (exit code, output): opens a notice's HTML page in the Mac's browser. None
+        # shows every notice in a terminal window instead.
+        self.open_page = open_page
         self.stopped_on_purpose = stopped_on_purpose or (lambda seat, detail: False)
         self.recorded_exit_question = recorded_exit_question or (
             lambda seat, exit_code: f"Restart {seat}? y/n")
@@ -350,16 +445,46 @@ class Watcher:
         # The user may hand a notice to an agent on ned-box, which needs the ned-box path.
         record = (f"{path_on_the_mac(self.decisions_path)} "
                   f"(on ned-box: {self.decisions_path})")
-        path.write_text(template.format(seat=seat, record=record, mac_launcher=MAC_LAUNCHER,
-                                        **fields),
-                        encoding="utf-8")
+        text = template.format(seat=seat, record=record, mac_launcher=MAC_LAUNCHER, **fields)
+        path.write_text(text, encoding="utf-8")
         notice = {"path": str(path)}
+        page = self.write_notice_page(seat, path, text)
+        if page is not None:
+            notice["page"] = str(page)
         self.show(notice)
         return notice
 
+    def write_notice_page(self, seat, notice_path: Path, text):
+        """Write the notice's HTML page; return its path, or None to show the text instead."""
+        if self.open_page is None:
+            return None
+        page = self.log_directory / "notice-pages" / f"{notice_path.stem}.html"
+        try:
+            page.parent.mkdir(parents=True, exist_ok=True)
+            page.write_text(failed_restart_notice_html_page_build(seat, text, clock_text(self.now)),
+                            encoding="utf-8")
+        except OSError as error:
+            self.log(seat, "notice page not written; the notice opens in a terminal window instead",
+                     notice=str(notice_path), error=f"{type(error).__name__}: {error}")
+            return None
+        return page
+
     def show(self, window) -> bool:
         """Open a pending window on the Mac: a notice ({"path"}) or a restarted seat ({"attach_seat"})."""
-        if "path" in window:
+        if "page" in window and self.open_page is not None:
+            what = window["page"]
+            exit_code, output = self.open_page(window["page"])
+            if exit_code == MAC_BROWSER_PAGE_REFUSED_EXIT_STATUS:
+                # The Mac refuses a page while its mount of ned-box's home is missing, or before
+                # its clone knows the request; a terminal window needs neither. The page is
+                # dropped from the notice, so a notice still pending retries only the window.
+                self.log(None, "page refused by the Mac; the notice opens in a terminal window "
+                         "on the Mac instead", refused_page=what, opener_output=output)
+                window.pop("page")
+                what = window["path"]
+                exit_code, output = self.open_window(self.show_notice_words(window["path"]))
+            opened = exit_code == 0
+        elif "path" in window:
             what = window["path"]
             exit_code, output = self.open_window(self.show_notice_words(window["path"]))
             opened = exit_code == 0
@@ -716,7 +841,8 @@ def report_run_failure(error_text, state_directory: Path, log_directory: Path):
     watcher = Watcher(state=state, now=now, boot_at=now, log_directory=log_directory,
                       assess=None, died_at_about=None, transcripts_directory=None,
                       recover=None, open_window=open_mac_window,
-                      show_notice_words=show_notice_words_for_window)
+                      show_notice_words=show_notice_words_for_window,
+                      open_page=open_mac_browser_page)
     watcher.log(None, "run failed", error=error_text)
     for notice in list(state["pending_notices"]):
         watcher.show(notice)
@@ -738,6 +864,10 @@ def report_run_failure(error_text, state_directory: Path, log_directory: Path):
 
 def open_mac_window(words):
     return run_command([sys.executable, str(MAC_WINDOW_OPENER_PROGRAM), *words])
+
+
+def open_mac_browser_page(path):
+    return run_command([sys.executable, str(MAC_BROWSER_PAGE_OPENER_PROGRAM), path])
 
 
 def show_notice_words_for_window(path):
@@ -813,6 +943,7 @@ def watch(environment, state_directory: Path, log_directory: Path) -> int:
         log_directory=log_directory, assess=assess, died_at_about=died_at_about,
         transcripts_directory=transcripts_directory, recover=recover,
         open_window=open_mac_window, show_notice_words=show_notice_words_for_window,
+        open_page=open_mac_browser_page,
         stopped_on_purpose=stopped_on_purpose_predicate(supervisor, handoff_directory),
         recorded_exit_question=recovery.restart_question_for_a_seat_with_a_recorded_exit,
         open_seat_window=recovery.agent_seat_mac_window_open_unless_tmux_client_already_attached,

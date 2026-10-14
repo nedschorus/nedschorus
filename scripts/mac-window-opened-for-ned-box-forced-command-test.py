@@ -461,6 +461,85 @@ else:
     shutil.rmtree(files)
     shutil.rmtree(not_mounted)
 
+
+def browser_refusal_of(request, ned_box_home="/home/nedlern"):
+    try:
+        forced_command.open_in_browser_request_html_page_path_check(request, ned_box_home)
+    except forced_command.RequestRefused as refusal:
+        return str(refusal)
+    return None
+
+
+for request in ["open-in-browser /home/nedlern/nedschorus-logs/watcher/notices/20261013T000000Z-a-leftover-shell.html",
+                "open-in-browser /home/nedlern/nedschorus-logs/a.html"]:
+    check(f"browser accepted: {request!r}", browser_refusal_of(request) is None, browser_refusal_of(request))
+
+BROWSER_REFUSED = {
+    "another verb": ("open-in-typora /home/nedlern/nedschorus-logs/a.html", "does not start with the verb 'open-in-browser'"),
+    "a page outside the log-store": ("open-in-browser /home/nedlern/a.html", "not under /home/nedlern/nedschorus-logs/"),
+    "a directory that only starts like the log-store": ("open-in-browser /home/nedlern/nedschorus-logsx/a.html", "not under /home/nedlern/nedschorus-logs/"),
+    "a file that is not .html": ("open-in-browser /home/nedlern/nedschorus-logs/a.md", "does not end in .html"),
+    "a '..' out of the log-store": ("open-in-browser /home/nedlern/nedschorus-logs/../.ssh/a.html", "'..' component"),
+    "two paths": ("open-in-browser /home/nedlern/nedschorus-logs/a.html /home/nedlern/nedschorus-logs/b.html", "exactly one path"),
+    "a quote": ("open-in-browser /home/nedlern/nedschorus-logs/a'b.html", "outside letters, digits"),
+    "a path outside the home": ("open-in-browser /etc/a.html", "not under /home/nedlern/"),
+}
+for case_name, (request, expected) in BROWSER_REFUSED.items():
+    reason = browser_refusal_of(request)
+    check(f"browser refused: {case_name}", reason is not None and expected in reason, reason)
+
+result, opened, log = run_program("open-in-browser tmux")
+check("an open-in-browser request opens no window", opened is None, opened)
+check("a window request that is refused names the open-in-browser form too",
+      "scripts/open-html-page-in-mac-browser-from-ned-box.py" in run_program("open-windowx tmux")[0].stderr)
+
+if mount is None or not os.access(mount, os.W_OK):
+    # The log-store must sit at the stand-in mount's top, which the Mac's /System/Volumes/Data does not let the user write.
+    print("SKIP  open-in-browser end-to-end cases: they need a mount point whose top directory this user can write, "
+          "to stand in for the Mac's mount of ned-box's home, and this machine has none; "
+          "/dev/shm is one on Linux")
+else:
+    # The log-store sits inside the stand-in home, a real mount point, so a path maps onto itself.
+    log_store = Path(mount) / "nedschorus-logs"
+    # Shared with the other browser suite, which may run at the same time, so it is
+    # created if missing and never removed: each suite removes only its own directory in it.
+    log_store.mkdir(exist_ok=True)
+    pages = Path(tempfile.mkdtemp(prefix="mac-browser-pages-", dir=log_store))
+    page = pages / "notice.html"
+    page.write_text("<!doctype html><title>notice</title>\n")
+    outside_page = Path(tempfile.mkdtemp(prefix="mac-browser-outside-", dir=writable_inside)) / "elsewhere.html"
+    outside_page.write_text("<!doctype html>\n")
+    (pages / "escape.html").symlink_to(outside_page)
+
+    result, opened, log = run_typora(f"open-in-browser {page}", mount, mount)
+    check("browser: an accepted page exits 0", result.returncode == 0, result.stderr)
+    check("browser: open gets only the mapped page, so the default browser shows it", opened == [str(page)], opened)
+    check("browser: an accepted page says what was opened", f"opened {page} in the Mac's browser" in result.stdout, result.stdout)
+    check("browser: an accepted page is logged before it opens",
+          f" accepted 'open-in-browser {page}'" in log and log.index(" accepted ") < log.index(" opened "), log)
+
+    for case_name, request, expected in [
+        ("a missing page", f"open-in-browser {pages / 'absent.html'}", "there is no"),
+        ("a link leading out of the log-store", f"open-in-browser {pages / 'escape.html'}", "leads outside"),
+    ]:
+        result, opened, log = run_typora(request, mount, mount)
+        check(f"browser: {case_name} opens nothing", opened is None, opened)
+        check(f"browser: {case_name} exits 2 and says why", result.returncode == 2 and expected in result.stderr
+              and "the page was not opened, because" in result.stderr, (result.returncode, result.stderr))
+        check(f"browser: {case_name} is logged as refused", " refused " in log, log)
+
+    result, opened, log = run_typora(f"open-in-browser {page}", mount, mount, open_body="echo 'no application' >&2; exit 1\n")
+    check("browser: an open that fails exits 1 with open's own error",
+          result.returncode == 1 and "no application" in result.stderr and "browser may not have opened" in result.stderr, result.stderr)
+    check("browser: an open that fails is logged", "open-failed-1" in log, log)
+
+    result, opened, log = run_typora(f"open-in-browser {page}", mount, mount, log_unwritable=True)
+    check("browser: a request that cannot be logged opens nothing and exits 3",
+          opened is None and result.returncode == 3 and "none opens unlogged" in result.stderr, (result.returncode, result.stderr))
+
+    shutil.rmtree(pages)
+    shutil.rmtree(outside_page.parent)
+
 print()
 if failures:
     print(f"{len(failures)} case(s) failed")
