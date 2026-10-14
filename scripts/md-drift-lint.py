@@ -32,17 +32,20 @@ Checks, per file type:
 
 An architecture overview, a file at the path
 scripts/architecture-overview-path-template-and-checked-against-commit-reader.py
-gives, gets the overview checks of
-docs/nedschorus-wiki/nedschorus-how-to-write-an-architecture-overview.md too:
+gives for a system with a directory under nc-systems/, gets the overview
+checks of docs/nedschorus-wiki/nedschorus-how-to-write-an-architecture-overview.md
+too, when this script is run (a program that calls lint_markdown() gets them
+only by asking):
         - a component written "`<path>`, a `<event>` hook", or with a name
           between, "`<path>`, the <name>, a `<event>` hook", is registered
           under that event in .claude/settings.json (a <placeholder> path is
           skipped)
         - a lock name (`<name>.lock`) or environment variable in backticks
           appears in the source of a file named in backticks on the same line,
-          a <placeholder> in a lock name matching anything; a line naming no
-          such file is not checked
-        - each line under "## Planned work" is written
+          a <placeholder> in a lock name matching anything, the fixed parts in
+          order; a line naming no such file is not checked
+        - each list item, and each line linking an issue, under
+          "## Planned work" is written
           "- GHI [<title>](https://github.com/nedschorus/nedschorus/issues/<number>)",
           and the GHI is open on GitHub with that title
         and, as a note that is not a finding, each program (.py, .sh, or a
@@ -352,7 +355,10 @@ def architecture_overview_system(path: Path, repo_root: Path):
     except ValueError:
         return None
     match = ARCHITECTURE_OVERVIEW_PATH.fullmatch(relative)
-    return match.group("system") if match else None
+    # The template alone also matches nedschorus-how-to-write-an-architecture-overview.md.
+    if match is None or not (repo_root / "nc-systems" / match.group("system")).is_dir():
+        return None
+    return match.group("system")
 
 
 HOOK_COMPONENT = re.compile(
@@ -413,8 +419,9 @@ def check_overview_lock_and_environment_variable_sources(line: str, md_path: Pat
     sources = [component.read_text(encoding="utf-8", errors="replace")
                for component in components]
     for claim in claims:
-        fixed_parts = [part for part in PLACEHOLDER_SPAN.split(claim) if part]
-        if not any(all(part in source for part in fixed_parts) for source in sources):
+        in_order = re.compile(".*?".join(re.escape(part) for part in PLACEHOLDER_SPAN.split(claim)),
+                              re.DOTALL)
+        if not any(in_order.search(source) for source in sources):
             names = ", ".join(sorted(component.name for component in components))
             yield f"{claim} does not appear in the source of {names}"
 
@@ -422,8 +429,9 @@ def check_overview_lock_and_environment_variable_sources(line: str, md_path: Pat
 GITHUB_REPOSITORY = "nedschorus/nedschorus"
 PLANNED_WORK_HEADING = "## Planned work"
 PLANNED_WORK_GHI_LINE = re.compile(
-    r"- GHI \[(?P<title>.+)\]\(https://github\.com/" + re.escape(GITHUB_REPOSITORY)
-    + r"/issues/(?P<number>\d+)\)")
+    r"(?:[-*+]|\d+[.)]) GHI \[(?P<title>.+)\]\(https://github\.com/"
+    + re.escape(GITHUB_REPOSITORY) + r"/issues/(?P<number>\d+)\)")
+PLANNED_WORK_ENTRY = re.compile(r"\s*(?:[-*+]|\d+[.)])\s|.*github\.com/[^)\s]+/issues/\d+")
 GITHUB_QUERY_TIMEOUT_SECONDS = 60
 
 
@@ -468,7 +476,7 @@ def planned_work_lines(lines):
     for line_number, line in enumerate(lines, 1):
         if line.startswith("#"):
             in_planned_work = line.strip() == PLANNED_WORK_HEADING
-        elif in_planned_work and line.startswith("- "):
+        elif in_planned_work and PLANNED_WORK_ENTRY.match(line):
             yield line_number, line.rstrip()
 
 
@@ -483,7 +491,7 @@ def check_overview_planned_work(lines):
         listed.append((line_number, match.group("title"), int(match.group("number"))))
     if not listed:
         return
-    issues = github_issue_states_and_titles([number for _, _, number in listed])
+    issues = github_issue_states_and_titles(sorted({number for _, _, number in listed}))
     for line_number, title, number in listed:
         issue = issues.get(number)
         if not isinstance(issue, dict):
@@ -501,8 +509,6 @@ PROGRAM_SUFFIXES = (".py", ".sh")
 def is_program(path: Path) -> bool:
     if path.suffix in PROGRAM_SUFFIXES:
         return True
-    if path.suffix:
-        return False
     with path.open("rb") as handle:
         return handle.read(2) == b"#!"
 
@@ -514,8 +520,6 @@ def architecture_overview_unnamed_programs(path: Path, repo_root: Path):
     if system is None:
         return []
     system_directory = repo_root / "nc-systems" / system
-    if not system_directory.is_dir():
-        return []
     text = path.read_text(encoding="utf-8")
     unnamed = []
     for candidate in sorted(system_directory.rglob("*")):
@@ -559,11 +563,14 @@ def in_frozen_measured_data(path: Path, repo_root: Path) -> bool:
     return bool(parts) and parts[0] in FROZEN_MEASURED_DATA_DIRECTORIES
 
 
-def lint_markdown(path: Path, repo_root: Path):
+def lint_markdown(path: Path, repo_root: Path, architecture_overview_checks=False):
+    """Yield (line number, problem). The architecture overview checks, one of
+    which queries GitHub, run only when architecture_overview_checks is true."""
     if in_frozen_measured_data(path, repo_root):
         return
     lines = path.read_text(encoding="utf-8").splitlines()
-    overview = architecture_overview_system(path, repo_root) is not None
+    overview = (architecture_overview_checks
+                and architecture_overview_system(path, repo_root) is not None)
     in_code_fence = False
     for line_number, line in enumerate(lines, 1):
         if line.lstrip().startswith("```"):
@@ -628,7 +635,7 @@ def main(argv=None) -> int:
         if path.suffix == ".json":
             problems = lint_json(path)
         else:
-            problems = lint_markdown(path, REPO_ROOT)
+            problems = lint_markdown(path, REPO_ROOT, architecture_overview_checks=True)
             notes += [
                 f"{name}: note: {program} is a program the overview does not name"
                 for program in architecture_overview_unnamed_programs(path, REPO_ROOT)]

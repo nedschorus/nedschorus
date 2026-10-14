@@ -74,10 +74,12 @@ def check(case_name, condition, detail=""):
         failures.append(case_name)
 
 
-def problems_for(md_text: str, repo_root: Path, name="doc.md"):
+def problems_for(md_text: str, repo_root: Path, name="doc.md",
+                 architecture_overview_checks=True):
     path = repo_root / name
     path.write_text(md_text, encoding="utf-8")
-    return [problem for _, problem in lint.lint_markdown(path, repo_root)]
+    return [problem for _, problem in lint.lint_markdown(
+        path, repo_root, architecture_overview_checks=architecture_overview_checks)]
 
 
 with tempfile.TemporaryDirectory() as workspace:
@@ -565,6 +567,7 @@ OVERVIEW_PATH_MODULE = LINT_SCRIPT.with_name(
 def overview_repository(root: Path):
     (root / "docs" / "nedschorus-wiki").mkdir(parents=True)
     (root / "scripts").mkdir()
+    (root / "nc-systems" / "demo").mkdir(parents=True)
     (root / ".claude").mkdir()
     (root / ".claude" / "settings.json").write_text(
         '{"hooks": {"Stop": [{"hooks": [{"type": "command", "command": '
@@ -608,6 +611,16 @@ with tempfile.TemporaryDirectory() as overview_workspace:
         check("a file outside the repository is not taken for an architecture overview",
               findings == [], str(findings))
     findings = problems_for(
+        "- `scripts/unregistered-hook.py`, a `Stop` hook: does a thing.\n", root,
+        OVERVIEW_NAME, architecture_overview_checks=False)
+    check("lint_markdown() runs no overview check unless asked to",
+          findings == [], str(findings))
+    findings = problems_for(
+        "- `scripts/unregistered-hook.py`, a `Stop` hook: does a thing.\n", root,
+        "docs/nedschorus-wiki/nedschorus-how-to-write-an-architecture-overview.md")
+    check("a page at the overview path with no nc-systems/ directory is not an overview",
+          findings == [], str(findings))
+    findings = problems_for(
         "- `scripts/<name>-hook.py`, a `Stop` hook: a template.\n", root, OVERVIEW_NAME)
     check("a hook path holding a placeholder is skipped", findings == [], str(findings))
     findings = problems_for(
@@ -639,6 +652,11 @@ with tempfile.TemporaryDirectory() as overview_workspace:
         "- Every launcher sets `OTHER_VARIABLE`.\n", root, OVERVIEW_NAME)
     check("a line naming no component is not checked for its environment variable",
           findings == [], str(findings))
+    findings = problems_for(
+        "- `<x>-demo<y>-seat-<z>.lock`: held by `lock-holder.py`.\n", root, OVERVIEW_NAME)
+    check("a placeholder lock name whose fixed parts appear only out of order is reported",
+          findings == ["<x>-demo<y>-seat-<z>.lock does not appear in the source of lock-holder.py"],
+          str(findings))
 
     # The GitHub query is replaced here; the real one is exercised below through a fake gh.
     asked = []
@@ -660,11 +678,16 @@ with tempfile.TemporaryDirectory() as overview_workspace:
             f"- GHI [Closed one]({url}2)\n"
             f"- GHI [Old title]({url}3)\n"
             f"- GHI [Missing]({url}4)\n"
-            "- A task with no GHI\n\n"
+            "- A task with no GHI\n"
+            "* A starred task with no GHI\n"
+            f"1. GHI [Open one]({url}1)\n"
+            f"See also [Open one]({url}1).\n\n"
             "**Checked against:** commit [abc1234](https://example.invalid)\n",
             root, OVERVIEW_NAME)
         check("Planned work: an open GHI with its title passes, the rest are reported",
               findings == ["Planned work line is not written - GHI [<title>](<issue url>)",
+                           "Planned work line is not written - GHI [<title>](<issue url>)",
+                           "Planned work line is not written - GHI [<title>](<issue url>)",
                            "GHI 2 is closed, not open",
                            "GHI 3's link text is not its title: Renamed on GitHub",
                            "GHI 4 does not exist on GitHub"], str(findings))
@@ -676,11 +699,12 @@ with tempfile.TemporaryDirectory() as overview_workspace:
         lint.github_issue_states_and_titles = real_query
 
     system = root / "nc-systems" / "demo"
-    (system / "tests").mkdir(parents=True)
+    (system / "tests").mkdir()
     (system / "named-program.py").write_text("", encoding="utf-8")
     (system / "unnamed-program.py").write_text("", encoding="utf-8")
     (system / "supervisor.py").write_text("", encoding="utf-8")
     (system / "unnamed-launcher").write_text("#!/bin/sh\n", encoding="utf-8")
+    (system / "unnamed-runner.bash").write_text("#!/bin/bash\n", encoding="utf-8")
     (system / "design.md").write_text("", encoding="utf-8")
     (system / "tests" / "unnamed-program-test.py").write_text("", encoding="utf-8")
     overview = root / OVERVIEW_NAME
@@ -690,7 +714,8 @@ with tempfile.TemporaryDirectory() as overview_workspace:
     check("the programs under nc-systems/<system>/ the overview does not name are listed, "
           "tests/ and documents left out",
           unnamed == ["nc-systems/demo/supervisor.py", "nc-systems/demo/unnamed-launcher",
-                      "nc-systems/demo/unnamed-program.py"], str(unnamed))
+                      "nc-systems/demo/unnamed-program.py",
+                      "nc-systems/demo/unnamed-runner.bash"], str(unnamed))
 
 with tempfile.TemporaryDirectory() as unsettled_workspace:
     unsettled_root = Path(unsettled_workspace)
@@ -714,7 +739,6 @@ def run_lint_with_fake_gh(gh_source):
         for script in (LINT_SCRIPT, OVERVIEW_PATH_MODULE):
             (root / "scripts" / script.name).write_text(
                 script.read_text(encoding="utf-8"), encoding="utf-8")
-        (root / "nc-systems" / "demo").mkdir(parents=True)
         (root / "nc-systems" / "demo" / "unnamed-program.py").write_text("", encoding="utf-8")
         (root / OVERVIEW_NAME).write_text(
             "## Planned work\n\n"
