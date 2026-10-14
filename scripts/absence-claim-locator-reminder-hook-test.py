@@ -234,10 +234,19 @@ for case_name, text in [
     ("B03's claim fires", 'I did not locate your "y" to item 5 itself or to item 2, and the review says so.'),
     ("no reply in between fires", "There was no reply from you in between those two messages."),
     ("a ruling never given fires", "That item rests on a ruling you never gave."),
-    ("a backquoted home path fires", "The copy at `~/.local/state/claude/fires.jsonl` is gone."),
-    ("a backquoted file name fires", "The file `fires.jsonl` is gone."),
+    ("a backquoted home path fires", "`~/.local/state/claude/fires.jsonl` is gone."),
+    ("a backquoted file name fires", "`fires.jsonl` is gone."),
 ]:
     check(f"trigger: {case_name}", bool(hook.absence_claim_matches(text)), text)
+
+# Pattern 2 fires only after a word naming a stored artifact, so a sentence
+# whose only such word comes from a backquoted path tests the FILE substitution.
+for case_name, text in [
+    ("a backquoted home path", "`~/.local/state/claude/fires.jsonl` is gone."),
+    ("a backquoted file name", "`fires.jsonl` is gone."),
+]:
+    check(f"strip_noise: {case_name} becomes the word FILE",
+          hook.strip_noise(text).split() == ["FILE", "is", "gone."], hook.strip_noise(text))
 
 for case_name, text in [
     ("processes gone are not files", "The child processes are gone now, so the file lock is free."),
