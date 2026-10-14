@@ -35,6 +35,11 @@
             "type": "command",
             "command": "python3 \"$CLAUDE_PROJECT_DIR\"/scripts/checkout-freshness-catch-up.py --deliver-pending-agent-notes",
             "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/scripts/ned-box-path-in-agent-reply-unclickable-on-mac-warning-hook.py",
+            "timeout": 10
           }
         ]
       }
