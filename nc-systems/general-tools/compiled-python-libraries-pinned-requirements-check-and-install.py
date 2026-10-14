@@ -75,13 +75,8 @@ def missing_libraries(pins, versions):
             for name in sorted(pins) if versions.get(name) != pins[name]]
 
 
-def check_and_install(host, runner=subprocess.run, installer=None,
-                      state_directory=pinned_libraries_install.PINNED_REQUIREMENTS_INSTALL_STATE_DIRECTORY):
-    """Return (exit status, report lines).
-
-    The install holds the install lock, so it never runs pip at the same time as a Bash guard's
-    install; a guard that finds the lock held lets its command through instead of waiting.
-    """
+def check_and_install(host, runner=subprocess.run, installer=None):
+    """Return (exit status, report lines)."""
     if installer is None:
         def installer():
             return pinned_libraries_install.pinned_requirements_pip_install(INSTALL_TIMEOUT_SECONDS, runner)
@@ -91,8 +86,7 @@ def check_and_install(host, runner=subprocess.run, installer=None,
         return 0, [f"{host}: all {len(pins)} pinned compiled Python libraries are installed "
                    f"at their pinned versions."]
     try:
-        with pinned_libraries_install.pinned_requirements_install_lock(state_directory):
-            install_output = installer()
+        install_output = installer()
     except pinned_libraries_install.CompiledPythonLibrariesUnavailable as error:
         install_output = error.install_output
     still_missing = missing_libraries(pins, installed_versions(pins, runner))

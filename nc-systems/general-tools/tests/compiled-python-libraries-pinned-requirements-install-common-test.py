@@ -10,7 +10,6 @@ Prints one line per case and exits non-zero if any case fails.
 """
 
 import importlib.util
-import json
 import os
 import subprocess
 import sys
@@ -182,62 +181,6 @@ with tempfile.TemporaryDirectory() as scratch:
           isinstance(raised, install.CompiledPythonLibrariesUnavailable) and state["installs"] == 1,
           (raised, state))
     read_only.chmod(0o755)
-
-    import fcntl
-    import threading
-    held = Path(scratch) / "held-state"
-    held.mkdir()
-    # The caller runs in a child with a timeout, so a caller that waits too long prints FAIL here
-    # instead of hanging the suite. The child's deadline is argv[3] seconds; its importer succeeds,
-    # as it does once another process's install has finished.
-    held_lock_caller_code = (
-        "import importlib.util, json, sys, time\n"
-        "from pathlib import Path\n"
-        "spec = importlib.util.spec_from_file_location('m', sys.argv[1])\n"
-        "m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)\n"
-        "m.INSTALL_LOCK_WAIT_SECONDS = float(sys.argv[3])\n"
-        "installs = []\n"
-        "started = time.monotonic()\n"
-        "try:\n"
-        "    result = m.compiled_python_libraries_install_then_import(lambda: 'the libraries',\n"
-        "        lambda: installs.append(1), lambda: 9000.0, lambda: False, Path(sys.argv[2]), lambda: None)\n"
-        "    outcome = {'result': result, 'raised': None}\n"
-        "except m.CompiledPythonLibrariesUnavailable as error:\n"
-        "    outcome = {'raised': error.install_output, 'class': type(error).__name__}\n"
-        "outcome.update(installs=len(installs), elapsed=time.monotonic() - started)\n"
-        "print(json.dumps(outcome))\n")
-
-    def caller_while_lock_held(wait_seconds, release_after=None):
-        other_install = open(held / install.INSTALL_LOCK_FILE_NAME, "w")
-        fcntl.flock(other_install, fcntl.LOCK_EX)
-        if release_after is not None:
-            threading.Timer(release_after, other_install.close).start()
-        try:
-            child = subprocess.run([sys.executable, "-c", held_lock_caller_code, _spec.origin, str(held),
-                                    str(wait_seconds)], capture_output=True, text=True, timeout=20)
-            return json.loads(child.stdout) if child.returncode == 0 else {"child": child.stderr[-500:]}
-        except subprocess.TimeoutExpired:
-            return {"child": "waited for the lock until the 20 s timeout"}
-        finally:
-            if release_after is None:
-                other_install.close()
-
-    outcome = caller_while_lock_held(1)
-    check("when another process still holds the install lock at the deadline, the caller gives up: "
-          "CompiledPythonLibrariesInstallAlreadyRunning, saying an install is still running, no install, "
-          "no failure recorded",
-          outcome.get("class") == "CompiledPythonLibrariesInstallAlreadyRunning"
-          and "still running" in outcome.get("raised", "") and outcome.get("installs") == 0
-          and 1 <= outcome.get("elapsed", 0) < 10
-          and not (held / install.INSTALL_FAILURE_FILE_NAME).exists(), outcome)
-    # The other install finishes 2 s after it starts; the child's own start-up uses part of that.
-    outcome = caller_while_lock_held(15, release_after=2)
-    check("when another process's install finishes within the deadline, the caller waits, then "
-          "imports what that install put in place, without installing",
-          outcome.get("result") == "the libraries" and outcome.get("installs") == 0
-          and 0.5 <= outcome.get("elapsed", 0) < 10, outcome)
-    check("the guards' deadline stays well under Claude Code's 30-second hook timeout",
-          0 < install.INSTALL_LOCK_WAIT_SECONDS <= 20, install.INSTALL_LOCK_WAIT_SECONDS)
 
 
 def runner_exiting(returncode, stdout="", stderr=""):

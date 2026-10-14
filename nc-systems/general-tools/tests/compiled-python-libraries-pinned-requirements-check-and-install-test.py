@@ -8,7 +8,6 @@ Run: python3 nc-systems/general-tools/tests/compiled-python-libraries-pinned-req
 Prints one line per case and exits non-zero if any case fails.
 """
 
-import fcntl
 import importlib.util
 import json
 import subprocess
@@ -38,15 +37,6 @@ def check(name, condition, detail=None):
         print(f"FAIL  {name}: {detail!r}")
 
 
-LOCK_DIRECTORY = Path(tempfile.mkdtemp()) / "install-state"
-real_check_and_install_before_lock = checker.check_and_install
-
-
-def check_and_install_in_scratch(host, runner, installer):
-    return real_check_and_install_before_lock(host, runner, installer, LOCK_DIRECTORY)
-
-
-checker.check_and_install = check_and_install_in_scratch
 PINS = checker.pinned_versions()
 check("the pinned file's lines are read as name and version, and its comments skipped",
       PINS == {"tree-sitter": "0.25.2", "tree-sitter-bash": "0.25.1"}, PINS)
@@ -82,17 +72,10 @@ ONE_MISSING = {"tree-sitter": "0.25.2", "tree-sitter-bash": None}
 
 
 def installer_that(outcome):
-    state = {"installs": 0, "lock_held": None}
+    state = {"installs": 0}
 
     def installer():
         state["installs"] += 1
-        # The lock is held when another opener cannot take it without waiting.
-        with open(LOCK_DIRECTORY / install.INSTALL_LOCK_FILE_NAME, "w") as other:
-            try:
-                fcntl.flock(other, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                state["lock_held"] = False
-            except BlockingIOError:
-                state["lock_held"] = True
         if outcome is not None:
             raise install.CompiledPythonLibrariesUnavailable(outcome)
         return "Successfully installed tree-sitter-bash-0.25.1"
@@ -111,8 +94,6 @@ status, lines = checker.check_and_install("ned-box", version_reader(ONE_MISSING,
 check("a missing library is installed, and the one line names what was installed",
       status == 0 and installer.state["installs"] == 1 and len(lines) == 1
       and "tree-sitter-bash: wanted 0.25.1, found none" in lines[0], (status, lines))
-check("the install runs holding the install lock the Bash guards take",
-      installer.state["lock_held"] is True, installer.state)
 
 installer = installer_that(None)
 status, lines = checker.check_and_install(
@@ -155,24 +136,6 @@ versions = checker.installed_versions({"pip", "no-such-library-for-this-test"})
 check("this python3's real installed versions are read, and an absent library reads as None",
       isinstance(versions.get("pip"), str) and versions["no-such-library-for-this-test"] is None,
       versions)
-
-import threading
-other_install = open(LOCK_DIRECTORY / install.INSTALL_LOCK_FILE_NAME, "w")
-fcntl.flock(other_install, fcntl.LOCK_EX)
-threading.Timer(0.5, other_install.close).start()
-installer = installer_that(None)
-status, lines = checker.check_and_install("ned-box", version_reader(ONE_MISSING, ALL_PINNED), installer)
-check("the script waits for an install another process is running, then installs",
-      status == 0 and installer.state["installs"] == 1, (status, lines))
-
-blocking_file = Path(tempfile.mkdtemp()) / "a-file-not-a-directory"
-blocking_file.write_text("x")
-installer = installer_that(None)
-status, lines = real_check_and_install_before_lock("ned-box", version_reader(ONE_MISSING), installer,
-                                                   blocking_file / "state")
-check("an install lock that cannot be opened is reported as the install's failure, not a traceback",
-      status == 1 and installer.state["installs"] == 0
-      and any("install lock" in line for line in lines), (status, lines))
 
 import contextlib
 import io

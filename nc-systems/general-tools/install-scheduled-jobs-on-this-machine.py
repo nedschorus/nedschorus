@@ -571,17 +571,6 @@ def markdown_code_span(text):
 
 def shell_parser_refusal(error, line) -> Refusal:
     host = socket.gethostname().split(".")[0]
-    if isinstance(error, shell_reader.ShellParserInstallAlreadyRunning):
-        return Refusal(
-            f"{PROGRAM}: not run — another process on {host} is still installing the shell parser "
-            f"tree-sitter-bash, which this program uses to read the crontab's commands. That "
-            f"install has not failed. Nothing on this machine changed.",
-            f"Leave this run of {PROGRAM} undone; run it again, with the same options, a minute from "
-            f"now. If it refuses again, it says why.",
-            *shell_reader.report_to_user_or_dispatching_agent_instruction_build(
-                shell_reader.tree_sitter_bash_install_already_running_report_words_build(
-                    host, f"{PROGRAM} did not run there",
-                    f"{PROGRAM} can be run again a minute from now")).split("\n"))
     if isinstance(error, shell_reader.ShellCommandUnreadable):
         return Refusal(
             f"{PROGRAM}: not run — the shell command reader "

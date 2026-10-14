@@ -1420,9 +1420,7 @@ with tempfile.TemporaryDirectory() as temporary:
     try:
         for label, failure in (
                 ("the parser is missing", shell_reader.ShellParserUnavailable("pip exited 1")),
-                ("the reader failed", shell_reader.ShellCommandUnreadable("ValueError: injected")),
-                ("an install is still running",
-                 shell_reader.ShellParserInstallAlreadyRunning("still running after 15 seconds"))):
+                ("the reader failed", shell_reader.ShellCommandUnreadable("ValueError: injected"))):
             for session in ((None, None), (None, "1")):
                 built.clear()
                 with shell_reader.agent_session_attendance_environment_variables_temporarily_set_for_test(
@@ -1433,13 +1431,6 @@ with tempfile.TemporaryDirectory() as temporary:
                       (built, refusal_text))
     finally:
         shell_reader.report_to_user_or_dispatching_agent_instruction_build = real_build
-    busy_text = "\n".join(installer.shell_parser_refusal(
-        shell_reader.ShellParserInstallAlreadyRunning("still running after 15 seconds"), runs_directly).lines)
-    check("when another process is still installing tree-sitter-bash, the refusal says so, and to run "
-          "again a minute from now, not that the install failed",
-          "is still installing the shell parser tree-sitter-bash" in busy_text
-          and "run it again, with the same options, a minute from now" in busy_text and "installing it failed" not in busy_text
-          and "pip install" not in busy_text, busy_text)
 
     # A failure inside the shell reader stops this program the same way, naming the failure.
     real_collect = shell_reader._collect

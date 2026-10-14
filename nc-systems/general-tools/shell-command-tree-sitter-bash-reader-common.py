@@ -67,7 +67,7 @@ REQUIREMENTS_FILE = pinned_libraries_install.PINNED_REQUIREMENTS_FILE
 # The Bash guards run in parallel with a 30-second hook timeout; a cached wheel installs in about a second.
 INSTALL_TIMEOUT_SECONDS = 8
 INSTALL_RETRY_SECONDS = pinned_libraries_install.INSTALL_RETRY_SECONDS
-STATE_DIRECTORY = pinned_libraries_install.PINNED_REQUIREMENTS_INSTALL_STATE_DIRECTORY
+STATE_DIRECTORY = Path.home() / ".cache" / "nedschorus-shell-command-reader"
 INSTALL_LOCK_FILE_NAME = pinned_libraries_install.INSTALL_LOCK_FILE_NAME
 INSTALL_FAILURE_FILE_NAME = pinned_libraries_install.INSTALL_FAILURE_FILE_NAME
 
@@ -123,13 +123,6 @@ class ShellCommandUnreadable(ShellParserUnavailable):
 
     A kind of ShellParserUnavailable, so a guard that lets a command through
     when the parser is missing does the same here.
-    """
-
-
-class ShellParserInstallAlreadyRunning(ShellParserUnavailable):
-    """Another process was still installing tree-sitter-bash when this guard's wait ended.
-
-    That install has not failed, and later commands are checked once it finishes.
     """
 
 
@@ -375,11 +368,10 @@ def _forget_loaded_copies():
 
 
 def _install_then_import(importer, installer, clock, fresh_process_check):
-    # The guards run in parallel on each command; each waits a bounded time for another's install,
-    # so they take turns and only the first installs.
+    # The guards run in parallel on each command, so they take turns, and only the first installs.
     return pinned_libraries_install.compiled_python_libraries_install_then_import(
         importer, installer, clock, fresh_process_check, STATE_DIRECTORY, _forget_loaded_copies,
-        ShellParserUnavailable, ShellParserInstalledForANewProcess, ShellParserInstallAlreadyRunning)
+        ShellParserUnavailable, ShellParserInstalledForANewProcess)
 
 
 _parser = None
@@ -440,39 +432,9 @@ def tree_sitter_bash_install_failure_report_words_build(host, install_output, co
             f"Then pass on what the install printed, quoted as it is: {install_output}")
 
 
-def tree_sitter_bash_install_already_running_report_words_build(host, consequence, afterwards):
-    """Return the words to report when another process was still installing tree-sitter-bash on host.
-
-    consequence says what went undone; afterwards says what happens once that install finishes.
-    """
-    return (f"\"An install of the shell parser tree-sitter-bash was still running on {host}, so "
-            f"{consequence}. Nothing needs installing by hand: {afterwards}.\"")
-
-
 def parser_unavailable_hook_output(guard_name, error, environment=os.environ):
     """Return the PreToolUse JSON that lets the command through and says it was not checked."""
     host = socket.gethostname().split(".")[0]
-    if isinstance(error, ShellParserInstallAlreadyRunning):
-        message = (
-            f"{guard_name} let this command through without checking it, and the command has run: "
-            f"another process on {host} was still installing the shell parser tree-sitter-bash, "
-            f"and {guard_name} could not wait longer for it. That install has not failed.\n"
-            f"Look at what the command did. If the command did what {guard_name} exists to stop, "
-            f"undo what the command did, now, where you can.\n"
-            f"Later commands are checked once that install finishes. Until then each is let "
-            f"through with this message, and if that install fails, with the message that says "
-            f"so.\n"
-            + report_to_user_or_dispatching_agent_instruction_build(
-                tree_sitter_bash_install_already_running_report_words_build(
-                    host, f"{guard_name} let a command through unchecked",
-                    "later commands are checked once that install finishes")
-                + f"\nThen {COMMAND_AS_FENCED_CODE_BLOCK_INSTRUCTION}, and say whether it did what "
-                f"{guard_name} exists to stop, what you undid, and what you could not undo.",
-                environment))
-        return json.dumps({"hookSpecificOutput": {
-            "hookEventName": "PreToolUse",
-            "additionalContext": message,
-        }})
     if isinstance(error, ShellCommandUnreadable):
         message = (
             f"{guard_name} let this command through without checking it, and the command has "
