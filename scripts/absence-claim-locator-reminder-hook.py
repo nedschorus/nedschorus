@@ -33,7 +33,11 @@ THE HOOK STAYS SILENT when any of these holds:
     ordinary case, not a fault, and nothing is logged for it.
 
 OUTPUT when it reminds: {"decision": "block", "reason": <reminder>}, which
-keeps the agent going with the reminder as its next instruction.
+keeps the agent going with the reminder as its next instruction. At
+SubagentStop the reminder also tells the subagent to end with its whole
+report again, because Claude Code hands the dispatching agent only the
+subagent's last message, and a reply to the reminder alone would replace the
+report.
 
 THE LOG gets one JSON line per triggering reply, whatever the outcome
 (reminded, locator_ran, already_reminded, headless), and one per internal
@@ -84,19 +88,32 @@ LOG_ENVIRONMENT_VARIABLE = "NEDSCHORUS_ABSENCE_CLAIM_REMINDER_LOG"
 STATE_ENVIRONMENT_VARIABLE = "NEDSCHORUS_ABSENCE_CLAIM_REMINDER_STATE_DIRECTORY"
 REPLY_TEXT_LOGGED_CHARACTERS = 4000
 
-REMINDER_TEMPLATE = (
+REMINDER_HEAD = (
     "absence-claim reminder: your reply says a file or record is gone, missing "
     "or cannot be found ({matched}), and you have not run the locator this "
     "turn. Files agents call missing are often in another checkout, the "
     "log-store, a transcript or a backup.\n"
     "Before you tell anyone it does not exist, run: python3 "
     "scripts/locate-file-copies-across-machines.py <the file's name>\n"
+)
+REMINDER_TEMPLATE = REMINDER_HEAD + (
     "If the locator finds it, tell whoever read your reply that it is not "
     "missing, and where it is.\n"
     "If the locator finds nothing, say where you looked, not that the file "
     "does not exist.\n"
     "If your reply was not about a stored file or record, carry on; this "
     "reminder comes once per session."
+)
+SUBAGENT_REMINDER_TEMPLATE = REMINDER_HEAD + (
+    "The agent that dispatched you receives only your last message, so what "
+    "you write now replaces your report unless it contains the report.\n"
+    "If the locator finds it, end with your whole report again, with that "
+    "claim corrected to say where the file is.\n"
+    "If the locator finds nothing, end with your whole report again, with "
+    "that claim saying where you looked, not that the file does not exist.\n"
+    "If your reply was not about a stored file or record, say so in one line, "
+    "then end with your whole report again, unchanged; this reminder comes "
+    "once per subagent."
 )
 
 # The pattern numbers are kept from the detector these were measured in, so
@@ -117,7 +134,8 @@ SCORING_REPLY = re.compile(r"\b(?:match file|match to|report covers|answer-key e
 def strip_noise(text):
     """Remove what an agent quotes rather than asserts: fenced and indented
     code, block quotes, inline code, link targets, emphasis and double-quoted
-    text. An inline code span that looks like a path becomes the word FILE."""
+    text. An inline code span that looks like a path, one with no space that
+    holds a slash or a file extension, becomes the word FILE."""
     text = text.replace("’", "'").replace("‘", "'").replace(" ", " ")
     lines = []
     fence = None
@@ -140,7 +158,9 @@ def strip_noise(text):
 
     def inline(code_match):
         body = code_match[2]
-        if re.search(r"(?:[/~]|\.[a-zA-Z0-9]{1,8}\b)", body) and not re.search(r"\s", body):
+        # A slash or a file extension marks a path; a tilde alone does not,
+        # since agents backquote a lone ~ as a character, and ~/x has a slash.
+        if re.search(r"(?:/|\.[a-zA-Z0-9]{1,8}\b)", body) and not re.search(r"\s", body):
             return " FILE "
         return " "
     text = re.sub(r"(`+)([^`\n]*?)\1", inline, text)
@@ -352,8 +372,9 @@ def run(stdin_text, environment, home, now):
     if outcome != "reminded":
         return None
     matched = ", ".join(f'"{phrase}"' for _, phrase in matches[:3])
+    template = SUBAGENT_REMINDER_TEMPLATE if event == "SubagentStop" else REMINDER_TEMPLATE
     return json.dumps({"decision": "block",
-                       "reason": REMINDER_TEMPLATE.format(matched=matched)},
+                       "reason": template.format(matched=matched)},
                       ensure_ascii=False)
 
 

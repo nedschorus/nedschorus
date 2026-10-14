@@ -44,6 +44,23 @@ REMINDER_FOR_B01 = (
     "If your reply was not about a stored file or record, carry on; this "
     "reminder comes once per session."
 )
+SUBAGENT_REMINDER_FOR_B01 = (
+    "absence-claim reminder: your reply says a file or record is gone, missing "
+    "or cannot be found (\"are gone\"), and you have not run the locator this "
+    "turn. Files agents call missing are often in another checkout, the "
+    "log-store, a transcript or a backup.\n"
+    "Before you tell anyone it does not exist, run: python3 "
+    "scripts/locate-file-copies-across-machines.py <the file's name>\n"
+    "The agent that dispatched you receives only your last message, so what "
+    "you write now replaces your report unless it contains the report.\n"
+    "If the locator finds it, end with your whole report again, with that "
+    "claim corrected to say where the file is.\n"
+    "If the locator finds nothing, end with your whole report again, with "
+    "that claim saying where you looked, not that the file does not exist.\n"
+    "If your reply was not about a stored file or record, say so in one line, "
+    "then end with your whole report again, unchanged; this reminder comes "
+    "once per subagent."
+)
 
 failures = []
 SUITE_ROOT = Path(tempfile.mkdtemp(prefix="absence-claim-locator-reminder-test-"))
@@ -217,6 +234,8 @@ for case_name, text in [
     ("B03's claim fires", 'I did not locate your "y" to item 5 itself or to item 2, and the review says so.'),
     ("no reply in between fires", "There was no reply from you in between those two messages."),
     ("a ruling never given fires", "That item rests on a ruling you never gave."),
+    ("a backquoted home path fires", "The copy at `~/.local/state/claude/fires.jsonl` is gone."),
+    ("a backquoted file name fires", "The file `fires.jsonl` is gone."),
 ]:
     check(f"trigger: {case_name}", bool(hook.absence_claim_matches(text)), text)
 
@@ -241,6 +260,7 @@ for case_name, text in [
     ("before saying it is gone", "I ran the locator before saying the transcript is gone."),
     ("a glossary entry", "The glossary file is missing an entry for that term."),
     ("nothing is lost", "Nothing in the record is lost by the rename."),
+    ("a backquoted lone tilde", "- **Lost `~` mark:** the mark on `~` words is lost when the reader runs in a separate process."),
 ]:
     check(f"trigger: silent on {case_name}", not hook.absence_claim_matches(text),
           hook.absence_claim_matches(text))
@@ -371,14 +391,14 @@ subagent_payload = {"hook_event_name": "SubagentStop", "agent_id": "agent-one",
                     "transcript_path": "/nonexistent-parent.jsonl",
                     "agent_transcript_path": str(case.transcript)}
 result = case.run(subagent_payload)
-check("a subagent's claim: reminded, read from agent_transcript_path",
-      result.returncode == 0 and blocked_reason(result) == REMINDER_FOR_B01, result.stdout)
+check("a subagent's claim: reminded, read from agent_transcript_path, told to resend its report",
+      result.returncode == 0 and blocked_reason(result) == SUBAGENT_REMINDER_FOR_B01, result.stdout)
 check("a subagent's claim: logged with its event and agent",
       [(line.get("event"), line.get("agent_id")) for line in case.log_lines()]
       == [("SubagentStop", "agent-one")], case.log_lines())
 result = case.run(dict(subagent_payload, agent_id="agent-two"))
 check("another subagent in the same session is reminded on its own",
-      blocked_reason(result) == REMINDER_FOR_B01, result.stdout)
+      blocked_reason(result) == SUBAGENT_REMINDER_FOR_B01, result.stdout)
 result = case.run({"hook_event_name": "SubagentStop", "agent_id": "agent-three",
                    "transcript_path": str(case.transcript)})
 check("a SubagentStop without agent_transcript_path: silent", result.stdout == "", result.stdout)
