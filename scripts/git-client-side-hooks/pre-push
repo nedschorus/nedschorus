@@ -99,7 +99,7 @@ fi
 [ -n "$branch_list" ] || exit 0
 
 say_no_branch_checked() {
-    echo "pre-push: $1, so no branch in this push was checked for conflicts with origin/main: $branch_list." >&2
+    echo "pre-push: $1, so this push goes ahead with none of its branches checked for conflicts with origin/main: $branch_list." >&2
     printf '%s' "$unchecked_lines" >&2
     echo "$tell_user_line" >&2
 }
