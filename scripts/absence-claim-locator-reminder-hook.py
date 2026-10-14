@@ -415,17 +415,19 @@ def main(argv=None):
         if output is not None:
             print(output)
     except Exception as error:
+        not_logged = ""
         try:
             append_log_line(log_path(os.environ, Path.home()), {
                 "time": datetime.now(timezone.utc).isoformat(),
                 "outcome": "error",
                 "error": f"{type(error).__name__}: {error}",
             })
-        except Exception:
-            pass  # the stderr line below reports the fault whether or not it was logged
+        except Exception as log_error:
+            not_logged = (f"; the failure was not logged either: "
+                          f"{type(log_error).__name__}: {log_error}")
         print(f"absence-claim-locator-reminder-hook: the last reply was not checked for a "
               f"claim that a file is missing, because the hook failed; the turn ends as "
-              f"usual: {type(error).__name__}: {error}", file=sys.stderr)
+              f"usual: {type(error).__name__}: {error}{not_logged}", file=sys.stderr)
         return 1
     return 0
 

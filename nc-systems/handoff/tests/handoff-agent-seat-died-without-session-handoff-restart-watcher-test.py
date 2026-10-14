@@ -1004,14 +1004,17 @@ def run_run_failure_cases(root: Path):
         windows.append(words) or ((window_exit_codes.pop(0), "unreachable") if window_exit_codes
                                   else (0, "")))
     watcher_module.open_mac_browser_page = lambda path: watcher_module.open_mac_window(["page", path])
+    setup_raised = []
     try:
         try:
             watcher_module.run_once(environment)
-        except Exception:  # noqa: BLE001 - the failing run is the setup
-            pass
+        except Exception as error:  # noqa: BLE001 - the failing run is the setup
+            setup_raised.append(error)
     finally:
         watcher_module.LOGIN_RESTART_PROGRAM, watcher_module.open_mac_window = real_program, real_opener
         watcher_module.open_mac_browser_page = real_page_opener
+    check("the setup run for the healed case fails, leaving a notice to show",
+          len(setup_raised) == 1, repr(setup_raised))
     state_path = root / "healed-state" / f"{watcher_module.PROGRAM}-state.json"
     saved = watcher_module.read_state(state_path)
     check("a failed run's notice the Mac missed waits in the state every run reads",

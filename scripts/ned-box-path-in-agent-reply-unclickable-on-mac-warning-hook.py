@@ -297,11 +297,8 @@ def main():
         if output is not None:
             print(output)
     except Exception as error:
-        try:
-            reason = f"{type(error).__name__}: {error}"
-            print("\n".join(FAULT_LINES).format(reason=reason), file=sys.stderr)
-        except Exception:
-            pass
+        reason = f"{type(error).__name__}: {error}"
+        print("\n".join(FAULT_LINES).format(reason=reason), file=sys.stderr)
         return 1
     return 0
 
