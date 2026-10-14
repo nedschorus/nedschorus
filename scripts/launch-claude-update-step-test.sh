@@ -208,8 +208,11 @@ case "$box_command" in
 esac
 P23_STUBS="$WORKSPACE/p23-stubs"; mkdir -p "$P23_STUBS"
 P23_HOME="$WORKSPACE/p23-home"; mkdir -p "$P23_HOME"
+# has-session answers "no such session" without logging, so the box command
+# takes its prepare-and-start branch; only a later tmux call counts as reached.
 cat > "$P23_STUBS/tmux" << 'EOF'
 #!/bin/sh
+case " $* " in (*" has-session "*) exit 1;; esac
 echo "TMUX-RAN $*" >> "${TMUX_RAN_LOG:?}"
 exit 0
 EOF
