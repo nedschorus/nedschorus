@@ -201,8 +201,7 @@ DAILY_FULL_TEST_RUN_LOCK_FILE_NAME = "daily-full-test-run-of-main.lock"
 
 DAILY_FULL_TEST_RUN_RUNNER_PATH_IN_WORKTREE = Path("scripts") / "run-all-test-suites.py"
 
-# Read wait bounds at runtime so tests can shorten them.
-DAILY_FULL_TEST_RUN_LOCK_WAIT_SECONDS = 2
+# Read at runtime so tests can shorten it.
 DAILY_FULL_TEST_RUN_LOCK_WAIT_BOUND_SECONDS = 3600
 
 DAILY_FULL_TEST_RUN_RECORD_WRITE_TIMEOUT_SECONDS = 30
@@ -281,23 +280,35 @@ def remove_worktree_of_main(clone: Path, worktree: Path):
     return None
 
 
-def run_test_suite_runner_waiting_for_the_machine_lock(command, worktree: Path, wait,
-                                                       monotonic):
-    """Return (process result, seconds waiting, whether the lock timed out)."""
-    waiting_started = monotonic()
-    while True:
-        attempt_started = monotonic()
-        completed = subprocess.run(
-            command, cwd=str(worktree),
-            env=run_all_test_suites.environment_without_git_redirecting_variables(),
-            stdin=subprocess.DEVNULL, capture_output=True, text=True, errors="replace",
-            check=False)
-        waited = attempt_started - waiting_started
-        if completed.returncode != run_all_test_suites.EXIT_LOCKED:
-            return completed, waited, False
-        if waited >= DAILY_FULL_TEST_RUN_LOCK_WAIT_BOUND_SECONDS:
-            return completed, waited, True
-        wait(DAILY_FULL_TEST_RUN_LOCK_WAIT_SECONDS)
+def run_test_suite_runner_waiting_for_the_machine_lock(command, worktree: Path, monotonic):
+    """Return (process result, seconds waiting for the lock, whether the lock was never taken).
+
+    The runner waits for the lock itself, in the kernel's queue; retrying the runner
+    instead loses the lock to every process blocked on it."""
+    started = monotonic()
+    completed = subprocess.run(
+        [*command, "--wait-for-lock-seconds", f"{DAILY_FULL_TEST_RUN_LOCK_WAIT_BOUND_SECONDS:g}"],
+        cwd=str(worktree),
+        env=run_all_test_suites.environment_without_git_redirecting_variables(),
+        stdin=subprocess.DEVNULL, capture_output=True, text=True, errors="replace",
+        check=False)
+    if completed.returncode == run_all_test_suites.EXIT_LOCKED:
+        return completed, monotonic() - started, True
+    waited = [line[len(run_all_test_suites.MACHINE_LOCK_WAITED_LINE_PREFIX):]
+              for line in completed.stdout.splitlines()
+              if line.startswith(run_all_test_suites.MACHINE_LOCK_WAITED_LINE_PREFIX)]
+    seconds = float(waited[0].split()[0]) if waited else 0.0
+    return completed, seconds, False
+
+
+def lock_never_taken_step_failed(completed, seconds_waiting_for_lock):
+    """The failed step recorded when the runner waited for the machine's lock in vain."""
+    return (f"not run — the machine's lock was not released within "
+            f"{DAILY_FULL_TEST_RUN_LOCK_WAIT_BOUND_SECONDS:g} s: "
+            f"{run_all_test_suites.PROGRAM} waited {seconds_waiting_for_lock:.0f} s for it and "
+            f"exited {run_all_test_suites.EXIT_LOCKED}; its refusal: "
+            f"{first_stderr_line_or_no_detail(completed.stderr)}",
+            "Run this again after the run holding that lock has finished.")
 
 
 def runner_summary_line(completed):
@@ -343,7 +354,7 @@ def parse_arguments(argv):
     return parser.parse_args(argv)
 
 
-def main(argv=None, now=None, wait=time.sleep, monotonic=time.monotonic) -> int:
+def main(argv=None, now=None, monotonic=time.monotonic) -> int:
     arguments = parse_arguments(argv)
     now = now or datetime.now(timezone.utc)
     mark = daily_memory_review_mark
@@ -363,13 +374,13 @@ def main(argv=None, now=None, wait=time.sleep, monotonic=time.monotonic) -> int:
         return EXIT_ANOTHER_DAILY_RUN_HOLDS_THE_LOCK
     try:
         return daily_full_test_run_under_lock(
-            arguments, now, wait, monotonic, on_ned_box, machine, pacific_date, clone,
+            arguments, now, monotonic, on_ned_box, machine, pacific_date, clone,
             directory)
     finally:
         lock_handle.close()
 
 
-def daily_full_test_run_under_lock(arguments, now, wait, monotonic, on_ned_box, machine,
+def daily_full_test_run_under_lock(arguments, now, monotonic, on_ned_box, machine,
                                    pacific_date, clone, directory) -> int:
     mark = daily_memory_review_mark
     worktree = directory / DAILY_FULL_TEST_RUN_WORKTREE_DIRECTORY_NAME
@@ -416,15 +427,10 @@ def daily_full_test_run_under_lock(arguments, now, wait, monotonic, on_ned_box, 
                                 arguments.recorded_inputs_directory]
                 completed, seconds_waiting_for_lock, lock_never_released = (
                     run_test_suite_runner_waiting_for_the_machine_lock(
-                        command, worktree, wait, monotonic))
+                        command, worktree, monotonic))
                 if lock_never_released:
-                    steps_failed.append((
-                        f"not run — the lock was never released: "
-                        f"{run_all_test_suites.PROGRAM} exited "
-                        f"{run_all_test_suites.EXIT_LOCKED} on every attempt for "
-                        f"{seconds_waiting_for_lock:.0f} s; its last refusal: "
-                        f"{first_stderr_line_or_no_detail(completed.stderr)}",
-                        "Run this again after the run holding that lock has finished."))
+                    steps_failed.append(
+                        lock_never_taken_step_failed(completed, seconds_waiting_for_lock))
                 elif completed.returncode < 0:
                     steps_failed.append((
                         f"{run_all_test_suites.PROGRAM} was "

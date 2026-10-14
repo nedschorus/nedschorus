@@ -11,11 +11,10 @@ fixture's main as scripts/run-all-test-suites.py so the program's own default
 finds it in the worktree it makes, which prints lines in the real runner's
 shapes and exits as the case tells it; ned-box is played by an ssh first on
 PATH that records its arguments and runs the command it was handed here; the
-machine's name is set per case; and the moment, the wait and the clock are
-passed in, so no case run inside this process sleeps. The wait passed in
-raises once the program has waited past its own bound, and a case is failed
-by whatever leaves the program's main, so a program that waits for ever fails
-a case instead of hanging the suite.
+machine's name is set per case; and the moment and the clock are passed in,
+so no case run inside this process sleeps. The runner waits for the machine's
+lock itself, so the stand-in plays a wait by what it prints and exits with. A
+case is failed by whatever leaves the program's main.
 
 Prints one line per case and exits non-zero if any case fails.
 """
@@ -131,9 +130,9 @@ if behaviour.get("leaves_a_directory_its_owner_may_not_write_to"):
 if behaviour.get("removes_the_git_file_of_the_checkout"):
     (checkout / ".git").unlink()
 if exit_code == 3:
-    print("run-all-test-suites: not run — another run holds /a/lock: pid 1, checkout "
-          "/a/checkout, started 2026-10-01T03:29:00Z.\nRun this again after that run has "
-          "finished.", file=sys.stderr)
+    print("run-all-test-suites: not run — waited 3600 s for /a/lock, the lock that keeps "
+          "test runs on one machine apart, and it was still held by pid 1, checkout "
+          "/a/checkout, started 2026-10-01T03:29:00Z.", file=sys.stderr)
     sys.exit(3)
 if exit_code == 2:
     print("run-all-test-suites: not run — git lists no *-test.py file in " + str(checkout)
@@ -226,13 +225,12 @@ def fixture_git(directory: Path, *arguments) -> str:
     return completed.stdout.strip()
 
 
-class StandInWaitRaised(Exception):
-    """Raised by the wait a case passes the program: at once when the case
-    says so, and otherwise once the program has waited past its own bound."""
+class StandInRunnerStepRaised(Exception):
+    """Raised in place of running the runner, when a case says so."""
 
 
 class RunResult:
-    def __init__(self, code, stdout, stderr, ssh_calls, runner_calls, waits, raised=None):
+    def __init__(self, code, stdout, stderr, ssh_calls, runner_calls, raised=None):
         # None when main did not return, and `raised` is what left it.
         self.code = code
         self.raised = raised
@@ -240,12 +238,11 @@ class RunResult:
         self.stderr = stderr
         self.ssh_calls = ssh_calls
         self.runner_calls = runner_calls
-        self.waits = waits
 
     def __repr__(self):
         return (f"exit {self.code}\nraised: {self.raised!r}\n"
                 f"stdout: {self.stdout}\nstderr: {self.stderr}\n"
-                f"ssh calls: {self.ssh_calls!r}\nwaits: {self.waits!r}\n"
+                f"ssh calls: {self.ssh_calls!r}\n"
                 f"runner calls: {json.dumps(self.runner_calls, indent=1)}")
 
 
@@ -319,11 +316,11 @@ class Fixture:
     def run(self, exits=(0,), lines=PASSING_RUNNER_LINES, hostname="ned-box",
             now=PACIFIC_EVENING_THAT_IS_TOMORROW_IN_UTC,
             ssh_body=SSH_THAT_RUNS_THE_COMMAND_HERE, extra_arguments=(), clone=None,
-            lock_wait_bound_seconds=None, wait_raises_at_once=False,
+            lock_wait_bound_seconds=None, runner_step_raises=False,
             stand_in_runner_behaviour=None, chmod_is_refused=False) -> RunResult:
         """main's exit code and output, with the fake ssh's calls, the stand-in
-        runner's calls and the waits main asked for. The clock is the sum of
-        those waits, so a case takes no time. Whatever leaves main is kept as
+        runner's calls. The clock stands still, so a case takes no time. With
+        `runner_step_raises`, running the runner raises. Whatever leaves main is kept as
         the result's `raised`, with no exit code, so it fails the case's check
         and the suite goes on. With `chmod_is_refused`, every os.chmod made
         in this process while main runs raises PermissionError, which stands
@@ -336,26 +333,18 @@ class Fixture:
              **(stand_in_runner_behaviour or {})}),
             encoding="utf-8")
         fake_ssh = self.fake_ssh_directory(scratch, ssh_body)
-        waits = []
         clock = [0.0]
 
-        def wait(seconds):
-            waits.append(seconds)
-            clock[0] += seconds
-            if wait_raises_at_once:
-                raise StandInWaitRaised("the case told the wait to raise")
-            # The program's last attempt starts at the first moment at or
-            # past its bound, which is less than one wait past the bound.
-            if clock[0] > (program.DAILY_FULL_TEST_RUN_LOCK_WAIT_BOUND_SECONDS
-                           + program.DAILY_FULL_TEST_RUN_LOCK_WAIT_SECONDS):
-                raise StandInWaitRaised(
-                    f"the program asked to wait at {clock[0]:.0f} s, past its bound of "
-                    f"{program.DAILY_FULL_TEST_RUN_LOCK_WAIT_BOUND_SECONDS} s")
+        def runner_step_that_raises(*_arguments):
+            raise StandInRunnerStepRaised("the case told the runner step to raise")
 
         saved_bound = program.DAILY_FULL_TEST_RUN_LOCK_WAIT_BOUND_SECONDS
         if lock_wait_bound_seconds is not None:
             program.DAILY_FULL_TEST_RUN_LOCK_WAIT_BOUND_SECONDS = lock_wait_bound_seconds
         saved_chmod = os.chmod
+        saved_runner_step = program.run_test_suite_runner_waiting_for_the_machine_lock
+        if runner_step_raises:
+            program.run_test_suite_runner_waiting_for_the_machine_lock = runner_step_that_raises
 
         def refused_chmod(path, *_arguments, **_keywords):
             raise PermissionError(errno.EPERM, "Operation not permitted", str(path))
@@ -372,7 +361,7 @@ class Fixture:
                 os.chmod = refused_chmod
             with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
                 code = program.main([*self.arguments(clone), *extra_arguments], now=now,
-                                    wait=wait, monotonic=lambda: clock[0])
+                                    monotonic=lambda: clock[0])
         except Exception as error:  # every one fails the case that reads the result
             raised = error
         finally:
@@ -381,12 +370,13 @@ class Fixture:
             socket.gethostname = saved_gethostname
             program.DAILY_FULL_TEST_RUN_LOCK_WAIT_BOUND_SECONDS = saved_bound
             os.chmod = saved_chmod
+            program.run_test_suite_runner_waiting_for_the_machine_lock = saved_runner_step
         ssh_calls_file = scratch / "ssh-calls"
         ssh_calls = (ssh_calls_file.read_text(encoding="utf-8").splitlines()
                      if ssh_calls_file.exists() else [])
         runner_calls = json.loads(calls_file.read_text()) if calls_file.exists() else []
         return RunResult(code, stdout.getvalue(), stderr.getvalue(), ssh_calls, runner_calls,
-                         waits, raised)
+                         raised)
 
     def environment_of_a_run_as_a_program(self, behaviour: dict):
         """(the environment the program is started in as its own process, the
@@ -483,11 +473,12 @@ def run_cases_on_ned_box(workspace: Path):
           result.stdout == "daily-full-test-run-of-main: record written to nedlern@ned-box:"
           f"{fixture.log_store}/daily-full-test-runs/ned-box/2026-09-30.txt\n", result.stdout)
     check("the runner is run once, by the Python running this program, as the worktree's "
-          "scripts/run-all-test-suites.py --log-dir <logs>, with no selection option, no -j "
-          "and no --recorded-inputs-directory",
+          "scripts/run-all-test-suites.py --log-dir <logs> --wait-for-lock-seconds 3600, with "
+          "no selection option, no -j and no --recorded-inputs-directory",
           len(result.runner_calls) == 1
           and call.get("argv") == [str(fixture.worktree / "scripts" / "run-all-test-suites.py"),
-                                   "--log-dir", str(fixture.logs)]
+                                   "--log-dir", str(fixture.logs),
+                                   "--wait-for-lock-seconds", "3600"]
           and os.path.realpath(call.get("executable", "")) == os.path.realpath(sys.executable),
           repr(result))
     check("the fetch found main's newer commit, and the worktree was a detached worktree at "
@@ -537,50 +528,49 @@ def run_cases_on_ned_box(workspace: Path):
           and sorted(path.name for path in fixture.logs.iterdir()) == ["log-of-call-1.log"],
           repr(result))
 
-    # --- Exit 3 is waited out -------------------------------------------------
-    result = fixture.run(exits=(3, 3, 0))
+    # --- The runner waits for the machine's lock -----------------------------
+    result = fixture.run(lines=[*PASSING_RUNNER_LINES[:-1],
+                                "seconds waiting for the machine's lock: 4",
+                                PASSING_RUNNER_LINES[-1]])
     record_lines = (fixture.record("ned-box") or "").splitlines()
-    check("while the runner exits 3 the program waits 2 seconds and runs it again",
-          result.code == 0 and result.waits == [2, 2] and len(result.runner_calls) == 3,
-          repr(result))
-    check("the record of a run that waited holds the run that followed and the seconds "
-          "waited, and none of the refusals",
-          PASSING_SUMMARY_LINE in record_lines and "runner exit code: 0" in record_lines
-          and "seconds waiting for the machine's lock: 4" in record_lines
-          and "wall-clock seconds: 4" in record_lines
-          and not any("another run holds" in line for line in record_lines),
-          repr(record_lines))
+    check("the runner is run once and waits for the lock itself: the record gives the "
+          "seconds the runner says it waited",
+          result.code == 0 and len(result.runner_calls) == 1
+          and PASSING_SUMMARY_LINE in record_lines and "runner exit code: 0" in record_lines
+          and "seconds waiting for the machine's lock: 4" in record_lines,
+          f"{result!r}\n{record_lines!r}")
 
     result = fixture.run(exits=(3,), lock_wait_bound_seconds=6)
     record_lines = (fixture.record("ned-box") or "").splitlines()
-    check("the wait is bounded: with a bound of 6 seconds the runner is run at 0, 2, 4 and 6 "
-          "seconds and no more, and the program exits 4",
-          result.code == 4 and result.waits == [2, 2, 2] and len(result.runner_calls) == 4,
+    check("a runner that waited out its bound is run once and passed the bound, and the "
+          "program exits 4",
+          result.code == 4 and len(result.runner_calls) == 1
+          and result.runner_calls[0]["argv"][-2:] == ["--wait-for-lock-seconds", "6"],
           repr(result))
-    check("the record says the lock was never released, with the runner's last refusal",
-          any(line.startswith("not run — the lock was never released: run-all-test-suites "
-                              "exited 3 on every attempt for 6 s; its last refusal: "
-                              "run-all-test-suites: not run — another run holds /a/lock")
+    check("the record says the lock was not released within the bound, with the runner's "
+          "refusal",
+          any(line.startswith("not run — the machine's lock was not released within 6 s: "
+                              "run-all-test-suites waited 0 s for it and exited 3; its "
+                              "refusal: run-all-test-suites: not run — waited 3600 s for "
+                              "/a/lock")
               for line in record_lines)
           and "runner exit code: 3" in record_lines
           and not any(line.startswith("SUMMARY:") for line in record_lines),
           repr(record_lines))
-    check("stderr says the lock was never released and what to do",
-          "not run — the lock was never released" in result.stderr
+    check("stderr says the lock was not released and what to do",
+          "not run — the machine's lock was not released within 6 s" in result.stderr
           and result.stderr.endswith(
               "\nRun this again after the run holding that lock has finished.\n"),
           result.stderr)
-    check("the bound is an hour", program.DAILY_FULL_TEST_RUN_LOCK_WAIT_BOUND_SECONDS == 3600
-          and program.DAILY_FULL_TEST_RUN_LOCK_WAIT_SECONDS == 2)
-    check("the worktree is removed after the lock was never released",
+    check("the bound is an hour", program.DAILY_FULL_TEST_RUN_LOCK_WAIT_BOUND_SECONDS == 3600)
+    check("the worktree is removed after the lock was not released",
           fixture.worktree_is_gone(), fixture_git(fixture.clone, "worktree", "list"))
 
     # --- The runner step raises ------------------------------------------------------
-    result = fixture.run(exits=(3,), wait_raises_at_once=True)
+    result = fixture.run(runner_step_raises=True)
     check("when the runner step raises, what it raised leaves main and the worktree and "
           "its registration are removed all the same",
-          isinstance(result.raised, StandInWaitRaised) and result.code is None
-          and len(result.runner_calls) == 1 and result.waits == [2]
+          isinstance(result.raised, StandInRunnerStepRaised) and result.code is None
           and fixture.worktree_is_gone(),
           f"{result!r}\n{fixture_git(fixture.clone, 'worktree', 'list')}")
 
@@ -613,7 +603,7 @@ def run_cases_on_ned_box(workspace: Path):
     recorded_inputs = workspace / "a-recorded-inputs-directory"
     result = fixture.run(extra_arguments=["--recorded-inputs-directory", str(recorded_inputs)])
     check("--recorded-inputs-directory is passed through to the runner",
-          result.code == 0 and result.runner_calls[0]["argv"][-2:]
+          result.code == 0 and result.runner_calls[0]["argv"][-4:-2]
           == ["--recorded-inputs-directory", str(recorded_inputs)]
           and not recorded_inputs.exists(), repr(result))
     stand_in_elsewhere = workspace / "a-stand-in-runner-outside-the-worktree.py"
@@ -623,7 +613,8 @@ def run_cases_on_ned_box(workspace: Path):
     check("--test-suite-runner-program is run in place of the worktree's runner, from the "
           "worktree, with the same arguments",
           result.code == 0 and result.runner_calls[0]["argv"]
-          == [str(stand_in_elsewhere), "--log-dir", str(fixture.logs)]
+          == [str(stand_in_elsewhere), "--log-dir", str(fixture.logs),
+              "--wait-for-lock-seconds", "3600"]
           and result.runner_calls[0]["checkout"] == str(fixture.worktree), repr(result))
 
     # --- What a killed run left -------------------------------------------------

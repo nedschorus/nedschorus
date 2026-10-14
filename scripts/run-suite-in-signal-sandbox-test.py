@@ -941,12 +941,20 @@ else:
             holder.truncate(0)
             holder.write("pid 1, checkout elsewhere, started then\n")
             holder.flush()
+            started = time.monotonic()
             completed, last = run_program(scratch, repository, "doubling-test.py",
-                                          "--mutant", str(killing))
-        check("while another run holds the lock, nothing runs, nothing is mutated, exit 3",
+                                          "--mutant", str(killing),
+                                          "--wait-for-lock-seconds", "1")
+            waited = time.monotonic() - started
+        check("while another run holds the lock past the wait, nothing runs, nothing is "
+              "mutated, exit 3, and the verdict names the wait and the holder",
               completed.returncode == 3 and "lock held" in last and "checkout elsewhere" in last
+              and "after waiting 1 s" in last and waited >= 1
               and "all cases passed" not in completed.stdout and unchanged(repository),
               (completed.returncode, completed.stdout))
+        check("the wait for the lock defaults to the runner's suggested hour",
+              program.parse_arguments(["a-test.py"]).wait_for_lock_seconds
+              == program.runner.MACHINE_LOCK_WAIT_SECONDS_SUGGESTED == 3600)
 
         # A killed run of scripts/run-all-test-suites.py left traces; its run record
         # shows nothing of it still runs, so this program removes them as that runner would.

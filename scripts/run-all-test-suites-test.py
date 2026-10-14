@@ -27,6 +27,7 @@ import io
 import importlib.util
 import json
 import os
+import shlex
 import pathlib
 import shutil
 import subprocess
@@ -424,9 +425,11 @@ with tempfile.TemporaryDirectory() as scratch:
         result = run(root, lock_file=lock_file)
         check("a run while another holds the lock exits 3", result.returncode == 3,
               (result.returncode, result.stdout, result.stderr))
-        check("the refusal names the holder, and says to run again after it finishes",
+        check("the refusal quotes the lock file's description, and says to wait with "
+              "--wait-for-lock-seconds rather than retry",
               "pid 424242, checkout /elsewhere" in result.stderr
-              and "Run this again after that run has finished." in result.stderr,
+              and "run this again with --wait-for-lock-seconds 3600" in result.stderr
+              and "instead of retrying in a loop" in result.stderr,
               result.stderr)
         check("a refused run runs no suite and prints nothing on stdout",
               ran(root) == [] and result.stdout == "", (ran(root), result.stdout))
@@ -434,6 +437,75 @@ with tempfile.TemporaryDirectory() as scratch:
     check("once the lock is released the next run proceeds",
           result.returncode == 0 and ran(root) == ["a-test.py"],
           (result.returncode, result.stderr))
+
+# --- Waiting for the lock: in the kernel's queue, with a deadline ------------
+with tempfile.TemporaryDirectory() as scratch:
+    root = pathlib.Path(scratch)
+    make_repo(root, {"a-test.py": PASSES})
+    lock_file = root / "waited.lock"
+    flock_program = shutil.which("flock")
+    if flock_program is None:
+        print("SKIP the case of a flock -w waiter beside a waiting run: flock is not installed")
+    else:
+        order_file = root / "order.txt"
+        with open(lock_file, "a+") as held:
+            fcntl.flock(held.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            # The flock -w waiter queues first, as the waiters that starved
+            # retrying runs did, then the run queues behind it.
+            blocked_waiter = subprocess.Popen(
+                [flock_program, "-w", "60", str(lock_file), "sh", "-c",
+                 f"echo flock >> {shlex.quote(str(order_file))}; sleep 1"])
+            time.sleep(0.5)
+            waiting_run = subprocess.Popen(
+                [sys.executable, str(PROGRAM), "--checkout", str(root / "repo"),
+                 "--log-dir", str(root / "logs"), "--lock-file", str(lock_file),
+                 "--recorded-inputs-directory", str(root / "recordings"),
+                 "--wait-for-lock-seconds", "60"],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                stdin=subprocess.DEVNULL,
+                env={**os.environ, RAN_FILE_VARIABLE: str(root / "ran.txt"),
+                     RENDEZVOUS_WAIT_VARIABLE: "0"})
+            time.sleep(1.5)
+            check("while the lock is held, both the flock -w waiter and the run wait",
+                  blocked_waiter.poll() is None and waiting_run.poll() is None
+                  and ran(root) == [],
+                  (blocked_waiter.poll(), waiting_run.poll(), ran(root)))
+        try:
+            waiter_code = blocked_waiter.wait(timeout=60)
+            run_stdout, run_stderr = waiting_run.communicate(timeout=120)
+        except subprocess.TimeoutExpired:
+            blocked_waiter.kill()
+            waiting_run.kill()
+            waiter_code, run_stdout, run_stderr = None, "", "timed out"
+        check("once the lock is released, each gets it in turn: the flock -w waiter "
+              "runs its command, and the run runs its suite",
+              waiter_code == 0 and order_file.read_text() == "flock\n"
+              and waiting_run.returncode == 0 and ran(root) == ["a-test.py"],
+              (waiter_code, waiting_run.returncode, run_stderr))
+        check("a run that waited for the lock says how long, on a line of its own",
+              any(line.startswith("seconds waiting for the machine's lock: ")
+                  for line in lines(run_stdout)), run_stdout)
+
+    with open(lock_file, "a+") as held:
+        fcntl.flock(held.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        held.truncate(0)
+        held.write(f"pid {os.getpid()}, checkout /elsewhere, started 2026-09-21T00:00:00Z\n")
+        held.flush()
+        started = time.monotonic()
+        result = run(root, "--wait-for-lock-seconds", "1", lock_file=lock_file)
+        waited = time.monotonic() - started
+    check("a run whose wait reaches its deadline exits 3, having waited at least that long "
+          "and not much longer",
+          result.returncode == 3 and 1 <= waited < 30, (result.returncode, waited))
+    check("its refusal says it waited, names the live holder, and says what to do",
+          f"waited 1 s for {lock_file}" in result.stderr
+          and f"pid {os.getpid()}, checkout /elsewhere" in result.stderr
+          and "earlier run" not in result.stderr
+          and "run this program without flock" in result.stderr
+          and "tell the user which process holds the lock" in result.stderr,
+          result.stderr)
+    check("a refused run runs no suite and prints nothing on stdout",
+          result.stdout == "", result.stdout)
 
 # --- Refusals before anything runs: exit 2 -----------------------------------
 with tempfile.TemporaryDirectory() as scratch:
@@ -2077,6 +2149,25 @@ with tempfile.TemporaryDirectory() as scratch:
           code == 0 and lock.read_text().startswith("pid ")
           and not module.run_records_directory_for_lock_file(lock).exists(), (code, lock.read_text()))
 
+# --- The lock file's holder, when its process has ended ------------------------
+ended = subprocess.Popen([sys.executable, "-c", "pass"])
+ended.wait()
+dead_description = f"pid {ended.pid}, checkout /elsewhere, started 2026-09-21T00:00:00Z"
+check("a description naming a process that has ended is not given as the holder",
+      module.lock_holder_described(dead_description)
+      == "a process that wrote no description of itself; the lock file still holds "
+         f"\"{dead_description}\", from an earlier run whose process has ended",
+      module.lock_holder_described(dead_description))
+live_description = f"pid {os.getpid()}, checkout /here, started 2026-09-21T00:00:00Z"
+check("a description naming a running process is the holder",
+      module.lock_holder_described(live_description) == live_description,
+      module.lock_holder_described(live_description))
+check("an empty lock file names no holder",
+      module.lock_holder_described("") == "a process that wrote no description of itself",
+      module.lock_holder_described(""))
+check("a process this user may not signal still counts as running",
+      module.process_running(1) is True)
+
 # --- The defaults -------------------------------------------------------------
 defaults = module.parse_arguments([])
 check("--checkout defaults to the checkout this program is in",
@@ -2094,6 +2185,8 @@ for jobs_given, suites_to_run, cores, expected, case in (
         (5, 2, 16, 5, "-j N is used as given, even above the number of suites")):
     answer = module.suites_run_at_once(jobs_given, suites_to_run, cores)
     check(case, answer == expected, (jobs_given, suites_to_run, cores, answer))
+check("--wait-for-lock-seconds defaults to 0, so a plain run refuses at once",
+      defaults.wait_for_lock_seconds == 0, defaults.wait_for_lock_seconds)
 check("--lock-file defaults to one file per machine under ~/.claude",
       pathlib.Path(defaults.lock_file) == pathlib.Path.home() / ".claude"
       / ".run-all-test-suites.lock", defaults.lock_file)
