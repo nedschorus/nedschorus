@@ -475,7 +475,7 @@ def run_unit_cases():
     # The shell part filters the pushed refs the same way: the same push, given
     # straight to the hook with the Python file missing, names exactly the
     # branches branches_to_check returns above, under sh and under dash.
-    layout_parent = Path(tempfile.mkdtemp(prefix="pre-push-shell-filter-"))
+    layout_parent = Path(tempfile.mkdtemp(prefix="pre-push-shell-filter-")).resolve()
     try:
         hooks = make_layout(layout_parent, "filter", conflict_check=None,
                             include_runner=False,
@@ -941,7 +941,9 @@ def run_mutation_testing_worktree_cases(scratch):
 
 def main():
     run_unit_cases()
-    scratch = Path(tempfile.mkdtemp(prefix="pre-push-test-"))
+    # Resolved, because git and the hooks print resolved paths: on macOS the temporary
+    # directory is under /var, a symlink to /private/var.
+    scratch = Path(tempfile.mkdtemp(prefix="pre-push-test-")).resolve()
     try:
         run_push_cases(scratch)
         run_mutation_testing_worktree_cases(scratch)

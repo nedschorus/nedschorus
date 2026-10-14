@@ -193,7 +193,9 @@ check("a suite killed by a signal with the mutant in is 'mutant killed' naming t
 # --- Process 1 check ----------------------------------------------------------
 
 with tempfile.TemporaryDirectory() as scratch_name:
-    scratch = pathlib.Path(scratch_name)
+    # Resolved, because git prints resolved paths: on macOS the temporary directory is under
+    # /var, a symlink to /private/var.
+    scratch = pathlib.Path(scratch_name).resolve()
     (scratch / "bwrap-comm").write_text("bwrap\n")
     (scratch / "init-comm").write_text("systemd\n")
     check("process 1 named bwrap passes the check",
@@ -328,7 +330,7 @@ if not sys.platform.startswith("linux"):
           "/proc, which only Linux has")
 else:
     with tempfile.TemporaryDirectory() as scratch_name:
-        leftover_file = pathlib.Path(scratch_name) / "leftover-pid"
+        leftover_file = pathlib.Path(scratch_name).resolve() / "leftover-pid"
         # The leader starts a sleeper in its own process group, records it, and exits 5.
         leader = subprocess.Popen(
             [sys.executable, "-c",
@@ -421,7 +423,7 @@ check("a pgrep that fails is reported, not read as an empty group", pgrep_failur
 
 # run_suite_confined on macOS must stop leftovers by process group, never through /proc.
 with tempfile.TemporaryDirectory() as scratch_name:
-    scratch = pathlib.Path(scratch_name)
+    scratch = pathlib.Path(scratch_name).resolve()
     (scratch / "quiet-test.py").write_text("pass\n")
     stops = []
     original_group_stop = program.stop_process_group_then_reap
@@ -505,7 +507,7 @@ with tempfile.TemporaryDirectory() as scratch_name:
 # --- Refusals that run nothing ------------------------------------------------
 
 with tempfile.TemporaryDirectory() as scratch_name:
-    scratch = pathlib.Path(scratch_name)
+    scratch = pathlib.Path(scratch_name).resolve()
     repository = scratch_checkout(scratch)
     def main_with_nothing_run(platform, sandbox=None, mutant=None, sandbox_function=None):
         """Run main in this process with the suite run replaced; return (exit, output, runs).
@@ -648,7 +650,7 @@ if not sys.platform.startswith("linux") or not bwrap_usable():
 else:
     # --- Runs without a mutant ------------------------------------------------
     with tempfile.TemporaryDirectory() as scratch_name:
-        scratch = pathlib.Path(scratch_name)
+        scratch = pathlib.Path(scratch_name).resolve()
         repository = scratch_checkout(scratch)
 
         completed, last = run_program(scratch, repository, "doubling-test.py")
