@@ -6,8 +6,9 @@ Prints one line per case and exits non-zero if any case fails.
 
 The detector's cases call markdown_has_hard_wrapped_paragraph directly. The
 detector needs markdown-it-py; without it the suite fails, naming the command that
-installs the package, and one case checks that the hook reports the missing
-package as a non-blocking error when the package fails to import. The hook's
+installs the pinned file. Cases with a test-double importer and installer check
+that a missing markdown-it-py is installed through the shared install module, and
+one case checks that the hook reports a failed install as a non-blocking error. The hook's
 cases run the hook as Claude Code does, as a subprocess reading a PostToolUse
 payload on stdin, against a throwaway repository under a temporary directory
 with a .gitignore that ignores one directory.
@@ -151,10 +152,64 @@ try:
     PARSER_AVAILABLE = True
 except ImportError:
     PARSER_AVAILABLE = False
-PARSER_INSTALL_COMMAND = ("python3 -m pip install --user --break-system-packages markdown-it-py, "
+PARSER_INSTALL_COMMAND = ("python3 -m pip install --user --break-system-packages -r "
+                          "nc-systems/general-tools/python-libraries-pinned-requirements.txt, "
                           "run with the python3 that `command -v python3` finds in the shell Claude Code runs hooks from")
 check("markdown-it-py is installed, so the reminder works on this machine",
       PARSER_AVAILABLE, f"install it with: {PARSER_INSTALL_COMMAND}")
+
+# A missing markdown-it-py is installed through the shared install module, in a scratch state
+# directory; the importer and the installer are test doubles, so nothing is installed.
+real_install_state_directory = hook.INSTALL_STATE_DIRECTORY
+with tempfile.TemporaryDirectory() as install_scratch:
+    hook.INSTALL_STATE_DIRECTORY = Path(install_scratch) / "install-state"
+    install_state = {"installs": 0}
+
+    class FakeMarkdownIt:
+        def __init__(self, preset):
+            self.preset = preset
+
+        def enable(self, rule):
+            return (self.preset, rule)
+
+    def importer_after_install():
+        if not install_state["installs"]:
+            raise ImportError("No module named 'markdown_it'")
+        return FakeMarkdownIt
+
+    def counting_installer():
+        install_state["installs"] += 1
+        return "Successfully installed markdown-it-py-3.0.0"
+    parser_built = hook.markdown_parser(importer_after_install, counting_installer, lambda: 1000.0)
+    check("a missing markdown-it-py is installed once, then the parser is built",
+          install_state["installs"] == 1 and parser_built == ("commonmark", "table"),
+          (install_state, parser_built))
+
+    def importer_never():
+        raise ImportError("No module named 'markdown_it'")
+
+    def failing_installer():
+        raise hook.python_libraries_pinned_requirements_install_then_import().PythonLibrariesPinnedRequirementsUnavailable(
+            "pip: network is unreachable")
+    try:
+        hook.markdown_parser(importer_never, failing_installer, lambda: 2000.0)
+        raised = None
+    except hook.MarkdownParserMissing as error:
+        raised = error
+    check("a failed install raises MarkdownParserMissing with what the install printed",
+          raised is not None and "network is unreachable" in raised.install_output, raised)
+    message = hook.parser_missing_message(raised, "Neds-MacBook-Pro") if raised else ""
+    check("the failed-install message names the machine, the by-hand install of the pinned file "
+          "for this interpreter, and what the install printed",
+          "markdown-it-py is missing on Neds-MacBook-Pro and installing it failed" in message
+          and f"{sys.executable} -m pip install --user --break-system-packages -r " in message
+          and "python-libraries-pinned-requirements.txt" in message
+          and message.endswith("quoted as it is: pip: network is unreachable"), message)
+    message = hook.parser_missing_message(hook.MarkdownParserMissing("x"), "ned-box")
+    check("for ned-box, the by-hand command is the ssh form the user runs from the Mac",
+          "run this command in a Terminal on your Mac:" in message
+          and f"\nssh nedlern@ned-box '{sys.executable} -m pip install" in message, message)
+hook.INSTALL_STATE_DIRECTORY = real_install_state_directory
 
 if PARSER_AVAILABLE:
     for case_name, text in BROKEN_CASES:
@@ -507,22 +562,30 @@ with tempfile.TemporaryDirectory() as temporary_directory:
               result.stdout + result.stderr)
 
     # A machine without markdown-it-py: a package of that name that fails to
-    # import stands in for the missing one, and the hook must say so on stderr
-    # with exit 1, a non-blocking error Claude Code shows, and give no reminder.
+    # import stands in for the missing one. A failed install recorded a minute ago
+    # in a scratch home stops the hook from running pip; the hook must report the
+    # failed install on stderr with exit 1, a non-blocking error Claude Code shows,
+    # and give no reminder.
+    blocked_home = tmp / "blocked-home"
+    blocked_state = blocked_home / hook.INSTALL_STATE_DIRECTORY.relative_to(Path.home())
+    blocked_state.mkdir(parents=True)
+    (blocked_state / hook.python_libraries_pinned_requirements_install_then_import().INSTALL_FAILURE_FILE_NAME
+     ).write_text("pip: blocked by the test", encoding="utf-8")
     blocked_packages = tmp / "blocked-packages"
     (blocked_packages / "markdown_it").mkdir(parents=True)
     (blocked_packages / "markdown_it" / "__init__.py").write_text(
         "raise ImportError('markdown-it-py blocked by the test')\n", encoding="utf-8")
     blocked_file = checkout / "docs" / "blocked.md"
     blocked_file.write_text(BROKEN_TEXT, encoding="utf-8")
-    blocked_environment = {**CLEAN_ENVIRONMENT, "PYTHONPATH": str(blocked_packages)}
+    blocked_environment = {**CLEAN_ENVIRONMENT, "PYTHONPATH": str(blocked_packages), "HOME": str(blocked_home)}
     result = subprocess.run(
         [sys.executable, str(HOOK_PATH)],
         input=json.dumps(payload_for(checkout, "Write", blocked_file, {"content": BROKEN_TEXT})),
         capture_output=True, text=True, check=False, env=blocked_environment)
-    check("without markdown-it-py the hook reports the missing package and exits 1",
+    check("without markdown-it-py, after a failed install, the hook reports the failure and exits 1",
           result.returncode == 1 and result.stdout.strip() == ""
-          and "markdown-it-py is not installed" in result.stderr,
+          and "markdown-it-py is missing on" in result.stderr
+          and "pip: blocked by the test" in result.stderr,
           f"exit {result.returncode}: {result.stdout + result.stderr}")
 
     result = write_then_run(checkout, checkout / "scripts" / "tool.txt",

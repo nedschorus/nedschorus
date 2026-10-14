@@ -1181,7 +1181,7 @@ except r.ShellParserUnavailable as error:
         return run
 
     run = runner_exiting(0, "Successfully installed tree-sitter-0.25.2")
-    printed = reader.install_compiled_libraries(run)
+    printed = reader.install_pinned_python_libraries(run)
     check("the install runs pip per user, from the pinned requirements file, within its timeout",
           run.command[1:7] == ["-m", "pip", "install", "--user", "--break-system-packages",
                                "--disable-pip-version-check"]
@@ -1189,7 +1189,7 @@ except r.ShellParserUnavailable as error:
           and run.kwargs["timeout"] == reader.INSTALL_TIMEOUT_SECONDS
           and "Successfully installed" in printed, (run.command, run.kwargs))
     try:
-        reader.install_compiled_libraries(runner_exiting(1, "", "ERROR: No matching distribution"))
+        reader.install_pinned_python_libraries(runner_exiting(1, "", "ERROR: No matching distribution"))
         raised = None
     except reader.ShellParserUnavailable as error:
         raised = error
@@ -1200,7 +1200,7 @@ except r.ShellParserUnavailable as error:
     def runner_timing_out(command, **kwargs):
         raise subprocess.TimeoutExpired(command, kwargs["timeout"])
     try:
-        reader.install_compiled_libraries(runner_timing_out)
+        reader.install_pinned_python_libraries(runner_timing_out)
         raised = None
     except reader.ShellParserUnavailable as error:
         raised = error

@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Install the compiled Python libraries pinned in compiled-python-libraries-pinned-requirements.txt.
+"""Install the Python libraries pinned in python-libraries-pinned-requirements.txt.
 
 A program that needs one of these libraries imports it; when the import
-fails, compiled_python_libraries_install_then_import installs the whole pinned
+fails, python_libraries_pinned_requirements_install_if_missing_then_import installs the whole pinned
 file per user, with pip's --user --break-system-packages, and imports again.
 The user hears only when the install fails: the caller gets
-CompiledPythonLibrariesUnavailable, whose install_output says what the install
+PythonLibrariesPinnedRequirementsUnavailable, whose install_output says what the install
 printed, and says so in its own message.
 
 Callers that run in parallel, such as the Bash guards on one command, take
@@ -16,13 +16,13 @@ waiting for an install that fails again.
 A compiled module cannot be replaced inside a running process. When the
 install succeeds but this process still holds a copy it could not use, and a
 new Python process can import the libraries, the caller gets
-CompiledPythonLibrariesInstalledForANewProcess, and does its work in a new
+PythonLibrariesPinnedRequirementsInstalledForANewProcess, and does its work in a new
 process.
 
 Load it by path, under the snake_case form of its file name:
 
     spec = importlib.util.spec_from_file_location(
-        "compiled_python_libraries_pinned_requirements_install_common", <path>)
+        "python_libraries_pinned_requirements_install_then_import_common", <path>)
 """
 
 # Deferred annotations let the module load on the Mac's system Python 3.9.
@@ -36,13 +36,13 @@ import sys
 from pathlib import Path
 
 PINNED_REQUIREMENTS_FILE = Path(__file__).resolve().with_name(
-    "compiled-python-libraries-pinned-requirements.txt")
+    "python-libraries-pinned-requirements.txt")
 INSTALL_RETRY_SECONDS = 600
 INSTALL_LOCK_FILE_NAME = "install.lock"
 INSTALL_FAILURE_FILE_NAME = "last-install-failure.txt"
 
 
-class CompiledPythonLibrariesUnavailable(Exception):
+class PythonLibrariesPinnedRequirementsUnavailable(Exception):
     """A pinned library could not be imported, and installing it failed.
 
     install_output holds what the install printed, or why it did not run.
@@ -53,7 +53,7 @@ class CompiledPythonLibrariesUnavailable(Exception):
         self.install_output = install_output
 
 
-class CompiledPythonLibrariesInstalledForANewProcess(CompiledPythonLibrariesUnavailable):
+class PythonLibrariesPinnedRequirementsInstalledForANewProcess(PythonLibrariesPinnedRequirementsUnavailable):
     """The install succeeded, but this process still holds the unusable copy it loaded first."""
 
 
@@ -78,7 +78,7 @@ def pinned_requirements_by_hand_install_command(host, requirements_file=PINNED_R
 
 def pinned_requirements_pip_install(timeout_seconds, runner=subprocess.run,
                                     requirements_file=PINNED_REQUIREMENTS_FILE,
-                                    unavailable_error=CompiledPythonLibrariesUnavailable):
+                                    unavailable_error=PythonLibrariesPinnedRequirementsUnavailable):
     """Install the pinned requirements per user; return what pip printed, or raise unavailable_error."""
     command = pinned_requirements_pip_install_command(requirements_file, "--disable-pip-version-check",
                                                       "--quiet")
@@ -94,10 +94,10 @@ def pinned_requirements_pip_install(timeout_seconds, runner=subprocess.run,
     return printed
 
 
-def compiled_python_libraries_install_then_import(
+def python_libraries_pinned_requirements_install_if_missing_then_import(
         importer, installer, clock, fresh_process_check, state_directory, forget_loaded_copies,
-        unavailable_error=CompiledPythonLibrariesUnavailable,
-        installed_for_new_process_error=CompiledPythonLibrariesInstalledForANewProcess):
+        unavailable_error=PythonLibrariesPinnedRequirementsUnavailable,
+        installed_for_new_process_error=PythonLibrariesPinnedRequirementsInstalledForANewProcess):
     """Install with installer(), unless another caller already has, and return importer()'s result.
 
     Call it after importer() has failed once.

@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Tests for nc-systems/general-tools/compiled-python-libraries-pinned-requirements-install-common.py.
+"""Tests for nc-systems/general-tools/python-libraries-pinned-requirements-install-then-import-common.py.
 
 The importer, the installer, pip and the clock are test doubles, so no
 library is installed. The shell reader's own tests run the same code through
 the reader's load_parser.
 
-Run: python3 nc-systems/general-tools/tests/compiled-python-libraries-pinned-requirements-install-common-test.py
+Run: python3 nc-systems/general-tools/tests/python-libraries-pinned-requirements-install-then-import-common-test.py
 Prints one line per case and exits non-zero if any case fails.
 """
 
@@ -19,9 +19,9 @@ from pathlib import Path
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 
 _spec = importlib.util.spec_from_file_location(
-    "compiled_python_libraries_pinned_requirements_install_common",
+    "python_libraries_pinned_requirements_install_then_import_common",
     REPOSITORY_ROOT / "nc-systems" / "general-tools"
-    / "compiled-python-libraries-pinned-requirements-install-common.py")
+    / "python-libraries-pinned-requirements-install-then-import-common.py")
 install = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(install)
 
@@ -55,7 +55,7 @@ def libraries_after(installs_needed):
     return importer, installer, forget_loaded_copies, state
 
 
-def failing_installer(state, error_class=install.CompiledPythonLibrariesUnavailable):
+def failing_installer(state, error_class=install.PythonLibrariesPinnedRequirementsUnavailable):
     def installer():
         state["installs"] += 1
         raise error_class("pip: network is unreachable")
@@ -65,10 +65,10 @@ def failing_installer(state, error_class=install.CompiledPythonLibrariesUnavaila
 def install_then_import(state_directory, importer, installer, forget, now, fresh_process=False,
                         **error_classes):
     try:
-        return install.compiled_python_libraries_install_then_import(
+        return install.python_libraries_pinned_requirements_install_if_missing_then_import(
             importer, installer, lambda: now, lambda: fresh_process, state_directory, forget,
             **error_classes), None
-    except install.CompiledPythonLibrariesUnavailable as error:
+    except install.PythonLibrariesPinnedRequirementsUnavailable as error:
         return None, error
 
 
@@ -91,7 +91,7 @@ with tempfile.TemporaryDirectory() as scratch:
     importer, _installer, forget, state = libraries_after(99)
     result, raised = install_then_import(state_directory, importer, failing_installer(state), forget,
                                          1000.0)
-    check("a failed install raises CompiledPythonLibrariesUnavailable with what the install printed",
+    check("a failed install raises PythonLibrariesPinnedRequirementsUnavailable with what the install printed",
           raised is not None and "network is unreachable" in raised.install_output, raised)
     check("a failed install is recorded",
           record.is_file() and "network is unreachable" in record.read_text(encoding="utf-8"))
@@ -116,9 +116,9 @@ with tempfile.TemporaryDirectory() as scratch:
     result, raised = install_then_import(state_directory, importer_never, lambda: "installed",
                                          lambda: None, 5000.0, fresh_process=False)
     check("an install that leaves the import failing in every process raises "
-          "CompiledPythonLibrariesUnavailable and is recorded",
+          "PythonLibrariesPinnedRequirementsUnavailable and is recorded",
           raised is not None and "importing still fails" in raised.install_output
-          and not isinstance(raised, install.CompiledPythonLibrariesInstalledForANewProcess)
+          and not isinstance(raised, install.PythonLibrariesPinnedRequirementsInstalledForANewProcess)
           and record.is_file(), raised)
     os.utime(record, (5000.0, 5000.0))
 
@@ -126,11 +126,11 @@ with tempfile.TemporaryDirectory() as scratch:
                                          lambda: None, 5000.0 + install.INSTALL_RETRY_SECONDS + 1,
                                          fresh_process=True)
     check("an install that a new process can import raises "
-          "CompiledPythonLibrariesInstalledForANewProcess and clears the older failure record",
-          isinstance(raised, install.CompiledPythonLibrariesInstalledForANewProcess)
+          "PythonLibrariesPinnedRequirementsInstalledForANewProcess and clears the older failure record",
+          isinstance(raised, install.PythonLibrariesPinnedRequirementsInstalledForANewProcess)
           and not record.exists(), raised)
 
-    class CallerUnavailable(install.CompiledPythonLibrariesUnavailable):
+    class CallerUnavailable(install.PythonLibrariesPinnedRequirementsUnavailable):
         pass
 
     class CallerInstalledForANewProcess(CallerUnavailable):
@@ -162,7 +162,7 @@ with tempfile.TemporaryDirectory() as scratch:
     blocking_file.write_text("x")
     importer, installer, forget, state = libraries_after(1)
     result, raised = install_then_import(blocking_file / "state", importer, installer, forget, 9000.0)
-    check("a state directory that cannot be made raises CompiledPythonLibrariesUnavailable saying so",
+    check("a state directory that cannot be made raises PythonLibrariesPinnedRequirementsUnavailable saying so",
           raised is not None and "install lock" in raised.install_output and state["installs"] == 0,
           (raised, state))
 
@@ -177,10 +177,51 @@ with tempfile.TemporaryDirectory() as scratch:
     except OSError as error:
         raised = error
     check("a failed install whose record cannot be written still raises "
-          "CompiledPythonLibrariesUnavailable",
-          isinstance(raised, install.CompiledPythonLibrariesUnavailable) and state["installs"] == 1,
+          "PythonLibrariesPinnedRequirementsUnavailable",
+          isinstance(raised, install.PythonLibrariesPinnedRequirementsUnavailable) and state["installs"] == 1,
           (raised, state))
     read_only.chmod(0o755)
+
+    # Parallel callers, such as the Bash guards on one command, take turns on the install lock,
+    # so only the first installs. Two child processes start together; each one's installer takes a
+    # second and then writes the marker its importer looks for. Each child has a timeout, so a
+    # caller that never gets the lock prints FAIL instead of hanging the suite.
+    parallel_state = Path(scratch) / "parallel-state"
+    installed_marker = Path(scratch) / "parallel-installed"
+    installs_log = Path(scratch) / "parallel-installs.log"
+    parallel_caller_code = (
+        "import importlib.util, sys, time\n"
+        "from pathlib import Path\n"
+        "spec = importlib.util.spec_from_file_location('m', sys.argv[1])\n"
+        "m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)\n"
+        "marker, log = Path(sys.argv[3]), Path(sys.argv[4])\n"
+        "def importer():\n"
+        "    if not marker.exists():\n"
+        "        raise ImportError('No module named tree_sitter')\n"
+        "    return 'the libraries'\n"
+        "def installer():\n"
+        "    with open(log, 'a') as handle:\n"
+        "        handle.write('install\\n')\n"
+        "    time.sleep(1)\n"
+        "    marker.write_text('')\n"
+        "print(m.python_libraries_pinned_requirements_install_if_missing_then_import(\n"
+        "    importer, installer, time.time, lambda: False, Path(sys.argv[2]), lambda: None))\n")
+    callers = [subprocess.Popen([sys.executable, "-c", parallel_caller_code, _spec.origin, str(parallel_state),
+                                 str(installed_marker), str(installs_log)],
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+               for _ in range(2)]
+    outcomes = []
+    for caller in callers:
+        try:
+            stdout, stderr = caller.communicate(timeout=30)
+            outcomes.append((caller.returncode, stdout.strip(), stderr[-300:]))
+        except subprocess.TimeoutExpired:
+            caller.kill()
+            outcomes.append(("timed out", "", ""))
+    installs = installs_log.read_text().count("install") if installs_log.exists() else 0
+    check("two callers starting together take turns on the install lock: one installs, both import",
+          installs == 1 and all(outcome[:2] == (0, "the libraries") for outcome in outcomes),
+          (installs, outcomes))
 
 
 def runner_exiting(returncode, stdout="", stderr=""):
@@ -200,19 +241,19 @@ check("the install runs pip per user, from the pinned requirements file, within 
       and "Successfully installed" in printed, (run.command, run.kwargs))
 check("the pinned requirements file sits beside the module",
       install.PINNED_REQUIREMENTS_FILE.is_file()
-      and install.PINNED_REQUIREMENTS_FILE.name == "compiled-python-libraries-pinned-requirements.txt")
+      and install.PINNED_REQUIREMENTS_FILE.name == "python-libraries-pinned-requirements.txt")
 try:
     install.pinned_requirements_pip_install(8, runner_exiting(1, "", "ERROR: No matching distribution"))
     raised = None
-except install.CompiledPythonLibrariesUnavailable as error:
+except install.PythonLibrariesPinnedRequirementsUnavailable as error:
     raised = error
-check("pip exiting nonzero raises CompiledPythonLibrariesUnavailable with its output",
+check("pip exiting nonzero raises PythonLibrariesPinnedRequirementsUnavailable with its output",
       raised is not None and "No matching distribution" in raised.install_output
       and "exited 1" in raised.install_output, raised)
 try:
     install.pinned_requirements_pip_install(8, runner_exiting(1))
     raised = None
-except install.CompiledPythonLibrariesUnavailable as error:
+except install.PythonLibrariesPinnedRequirementsUnavailable as error:
     raised = error
 check("pip exiting nonzero with no output says so",
       raised is not None and "(no output)" in raised.install_output, raised)
@@ -225,9 +266,9 @@ def runner_timing_out(command, **kwargs):
 try:
     install.pinned_requirements_pip_install(8, runner_timing_out)
     raised = None
-except install.CompiledPythonLibrariesUnavailable as error:
+except install.PythonLibrariesPinnedRequirementsUnavailable as error:
     raised = error
-check("pip timing out raises CompiledPythonLibrariesUnavailable saying it did not finish",
+check("pip timing out raises PythonLibrariesPinnedRequirementsUnavailable saying it did not finish",
       raised is not None and "did not finish" in raised.install_output, raised)
 
 import shlex
