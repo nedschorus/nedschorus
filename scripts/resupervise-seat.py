@@ -97,6 +97,14 @@ _supervisor_spec = importlib.util.spec_from_file_location(
 supervisor = importlib.util.module_from_spec(_supervisor_spec)
 _supervisor_spec.loader.exec_module(supervisor)
 
+_tmux_error_pattern_spec = importlib.util.spec_from_file_location(
+    "tmux_target_or_server_does_not_exist_error_pattern_common",
+    Path(__file__).resolve().parent.parent / "nc-systems" / "general-tools"
+    / "tmux-target-or-server-does-not-exist-error-pattern-common.py"
+)
+tmux_error_pattern = importlib.util.module_from_spec(_tmux_error_pattern_spec)
+_tmux_error_pattern_spec.loader.exec_module(tmux_error_pattern)
+
 SCRIPT_DIRECTORY = Path(__file__).resolve().parent
 
 
@@ -189,21 +197,42 @@ def run_tmux(*arguments_after_tmux, socket_name=None):
         return None
 
 
-def tmux_sockets_holding_seat_session(name: str) -> list:
-    """Return socket names holding the seat session, in kill order."""
+def tmux_sockets_holding_seat_session(name: str):
+    """Return (socket names holding the seat session in kill order, failure_detail).
+
+    A socket counts as not holding the session only when tmux says the session or
+    its server does not exist. Any other failure is returned as failure_detail:
+    the session may still be there, and the launcher's `tmux new-session -A` would
+    then attach to it instead of starting a supervisor.
+    """
     # Check both seat and default servers: leaving either session alive creates a decoy seat.
+    if shutil.which("tmux") is None:
+        return [], None  # no tmux on this machine, so no tmux session either
     holding = []
     for socket_name in dict.fromkeys((name, "default")):
         completed = run_tmux("has-session", "-t", f"={name}", socket_name=socket_name)
-        if completed is not None and completed.returncode == 0:
+        if completed is None:
+            return holding, (f"could not tell whether the tmux session {name} is still there "
+                             f"(server socket {socket_name}): tmux did not answer within "
+                             "30 seconds or could not be run")
+        if completed.returncode == 0:
             holding.append(socket_name)
-    return holding
+        elif not tmux_error_pattern.tmux_error_text_says_target_or_server_does_not_exist(
+                completed.stderr):
+            return holding, (f"could not tell whether the tmux session {name} is still there "
+                             f"(server socket {socket_name}): tmux exited "
+                             f"{completed.returncode}: "
+                             f"{completed.stderr.strip() or 'no detail'}")
+    return holding, None
 
 
 def retire_seat_tmux_session(name: str):
     """Retire every session named for the seat; return (killed_sockets, failure_detail)."""
     killed_sockets = []
-    for socket_name in tmux_sockets_holding_seat_session(name):
+    holding, probe_failure = tmux_sockets_holding_seat_session(name)
+    if probe_failure is not None:
+        return killed_sockets, probe_failure
+    for socket_name in holding:
         killed = run_tmux("kill-session", "-t", f"={name}", socket_name=socket_name)
         if killed is None or killed.returncode != 0:
             detail = "tmux could not be run" if killed is None else (
@@ -370,7 +399,9 @@ def main(argv=None) -> int:
             )
 
     if arguments.dry_run:
-        stale_sockets = tmux_sockets_holding_seat_session(arguments.name)
+        stale_sockets, probe_failure = tmux_sockets_holding_seat_session(arguments.name)
+        if probe_failure is not None:
+            return refuse(probe_failure)
         would_launch = ("stop there (--prepare-only)" if arguments.prepare_only
                         else f"run {launcher} {arguments.name}")
         print(f"resupervise-seat: DRY RUN -- would "

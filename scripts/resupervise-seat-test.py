@@ -311,10 +311,12 @@ def run_missing_launcher_case(workspace: Path):
     # uncommitted-work-snapshots.py reads git's output with the shared module.
     general_tools_home = workspace / "nc-systems" / "general-tools"
     general_tools_home.mkdir(parents=True)
-    git_output_module = "git-machine-readable-output-runner-and-parser-common.py"
-    (general_tools_home / git_output_module).write_text(
-        (SUPERVISOR_SCRIPT.parents[1] / "general-tools" / git_output_module)
-        .read_text(encoding="utf-8"), encoding="utf-8")
+    # resupervise-seat.py reads tmux's absent-session answers with the shared pattern module.
+    for general_tools_module in ("git-machine-readable-output-runner-and-parser-common.py",
+                                 "tmux-target-or-server-does-not-exist-error-pattern-common.py"):
+        (general_tools_home / general_tools_module).write_text(
+            (SUPERVISOR_SCRIPT.parents[1] / "general-tools" / general_tools_module)
+            .read_text(encoding="utf-8"), encoding="utf-8")
     scripts_home = workspace / "scripts"
     scripts_home.mkdir(parents=True, exist_ok=True)
     for supervisor_import in re.findall(
@@ -550,6 +552,88 @@ def run_missing_tmux_case(workspace: Path):
           "Traceback" not in result.stderr, result.stderr)
     check("a machine without tmux still exits cleanly",
           result.returncode in (0, 1), f"exit {result.returncode}")
+
+
+def load_resupervise():
+    """Load resupervise-seat.py as a module, so its tmux calls can be stubbed."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("resupervise_seat_under_test", RESUPERVISE_SCRIPT)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def run_tmux_probe_failure_cases():
+    """Only tmux's own absent answers mean no session; any other failure refuses.
+
+    Retiring kills the seat's session so the launcher's `tmux new-session -A`
+    starts a supervisor instead of attaching to it. A probe that failed for
+    another reason, such as a timeout or a refused socket, says nothing about
+    whether the session is there, so reading it as "absent" would kill nothing
+    and let the launcher attach to the old session.
+    """
+    resupervise = load_resupervise()
+    calls = []
+
+    def stub_answers(answers):
+        def fake_run_tmux(*arguments_after_tmux, socket_name=None):
+            calls.append((arguments_after_tmux[0], socket_name))
+            answer = answers.get((arguments_after_tmux[0], socket_name))
+            if answer is None:
+                return None
+            returncode, stderr = answer
+            return subprocess.CompletedProcess(["tmux"], returncode, "", stderr)
+        resupervise.run_tmux = fake_run_tmux
+
+    real_which = shutil.which
+    try:
+        check_tmux_probe_failure_cases(resupervise, calls, stub_answers)
+    finally:
+        shutil.which = real_which  # the module's shutil is this process's shutil
+
+
+def check_tmux_probe_failure_cases(resupervise, calls, stub_answers):
+    resupervise.shutil.which = lambda program: "/usr/bin/tmux"
+    absent_on_both = {("has-session", "probeseat"): (1, "no server running on /tmp/x\n"),
+                      ("has-session", "default"): (1, "can't find session: probeseat\n")}
+
+    calls.clear()
+    stub_answers(absent_on_both)
+    killed, failure = resupervise.retire_seat_tmux_session("probeseat")
+    check("tmux's absent answers on both servers retire nothing and report no failure",
+          killed == [] and failure is None, f"killed={killed} failure={failure}")
+
+    calls.clear()
+    stub_answers({("has-session", "probeseat"): (1, "no server running on /tmp/x\n")})
+    killed, failure = resupervise.retire_seat_tmux_session("probeseat")
+    check("a has-session that does not answer refuses instead of reading as no session",
+          failure is not None and "did not answer" in failure and killed == [],
+          f"killed={killed} failure={failure}")
+    check("nothing is killed after a probe that did not answer",
+          not any(command == "kill-session" for command, _ in calls), str(calls))
+
+    calls.clear()
+    stub_answers({("has-session", "probeseat"): (1, "error connecting to /tmp/x (Permission denied)\n"),
+                  ("has-session", "default"): (1, "can't find session: probeseat\n")})
+    killed, failure = resupervise.retire_seat_tmux_session("probeseat")
+    check("a has-session error that is not an absent answer refuses, quoting tmux",
+          failure is not None and "Permission denied" in failure and killed == [],
+          f"killed={killed} failure={failure}")
+
+    calls.clear()
+    stub_answers({("has-session", "probeseat"): (0, ""),
+                  ("kill-session", "probeseat"): (0, ""),
+                  ("has-session", "default"): (1, "can't find session: probeseat\n")})
+    killed, failure = resupervise.retire_seat_tmux_session("probeseat")
+    check("a session on the seat's own server is killed when the default server says absent",
+          killed == ["probeseat"] and failure is None, f"killed={killed} failure={failure}")
+
+    resupervise.shutil.which = lambda program: None
+    calls.clear()
+    killed, failure = resupervise.retire_seat_tmux_session("probeseat")
+    check("a machine without tmux holds no tmux session to retire",
+          killed == [] and failure is None and calls == [],
+          f"killed={killed} failure={failure} calls={calls}")
 
 
 def run_agent_box_case(workspace: Path):
@@ -819,6 +903,7 @@ def run_all_cases() -> int:
         run_end_to_end_case(workspace)
         run_per_seat_server_end_to_end_case(workspace)
         run_missing_tmux_case(workspace)
+        run_tmux_probe_failure_cases()
         run_agent_box_case(workspace)
         run_override_propagation_case(workspace)
         run_apostrophe_propagation_case(workspace)

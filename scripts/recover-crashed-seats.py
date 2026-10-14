@@ -1044,7 +1044,7 @@ def recover_seat(name: str, agents_root: Path, handoff_directory: Path,
             pane_process_ids = rechecked_pane_process_ids
         else:
             # A failed idle proof does not prove the session exists; a vanished session holds no work.
-            # Ask tmux explicitly, since retirement treats an unanswered socket as empty.
+            # Ask tmux explicitly: a session still there was not proven idle again, so it must not be retired.
             session_still_there, liveness_detail = tmux_session_alive_anywhere(name)
             if session_still_there is None:
                 return f"{name}: REFUSED — {liveness_detail}"
