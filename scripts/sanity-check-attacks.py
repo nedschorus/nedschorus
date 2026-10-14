@@ -336,6 +336,9 @@ RUN_STOP_SIGNALS = (signal.SIGTERM, signal.SIGINT, signal.SIGHUP)
 # How long the stopped agents' processes are given to end on SIGTERM before
 # they are sent SIGKILL.
 STOPPED_PROCESS_GRACE_SECONDS = 10.0
+# How long the main thread waits for a cell at a time, and so the longest a
+# stop signal can wait for its handler: see run_cells_in_review_copy.
+MAIN_THREAD_WAIT_STEP_SECONDS = 0.25
 # Set by the first stop signal, and read by every thread before it launches an
 # agent-binary: a cell stopped with its run is not relaunched, and the claude
 # chain does not go on to its next model.
@@ -1893,10 +1896,21 @@ def run_cells_in_review_copy(args, target_path: pathlib.Path, run_log: RunOutput
                                 checkout, copy_record_dir)
                     for attack, runtime in cells
                 ]
-                for future in concurrent.futures.as_completed(futures):
-                    _, cell_ok = future.result()
-                    ok = ok and cell_ok
-                    saved_count += 1 if cell_ok else 0
+                # Waited for in short steps, not with as_completed: Python runs
+                # stop_run_on_signal only in the main thread, and when Linux
+                # hands a stop signal to a cell's thread, a main thread blocked
+                # with no timeout runs the handler only when some cell
+                # finishes, which can be minutes later. Each step's end lets
+                # the handler run.
+                waiting = set(futures)
+                while waiting:
+                    finished, waiting = concurrent.futures.wait(
+                        waiting, timeout=MAIN_THREAD_WAIT_STEP_SECONDS,
+                        return_when=concurrent.futures.FIRST_COMPLETED)
+                    for future in finished:
+                        _, cell_ok = future.result()
+                        ok = ok and cell_ok
+                        saved_count += 1 if cell_ok else 0
                 run_log.reports_saved_once_cells_ended = saved_count
         except RunStoppedBySignal:
             # A stop that came after every cell had finished, saving its

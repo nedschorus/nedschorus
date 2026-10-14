@@ -2311,7 +2311,11 @@ time.sleep(300)
         signal ends the hold (`<file>.held` again); and
         DRIVER_HOLD_LAST_REPORT_CHECK holds the second cell to finish, after
         its agent-binary has exited and before its report is saved, until that
-        file exists (`<file>.held` again). DRIVER_PROBE_VERSIONS, set to any
+        file exists (`<file>.held` again); with
+        DRIVER_SIGNAL_THE_HELD_CELL_THREAD also set, that cell's thread waits
+        for the other cell to finish and then sends SIGTERM to itself, as Linux
+        may hand a signal sent to the process to any of its threads.
+        DRIVER_PROBE_VERSIONS, set to any
         value, leaves the CLI version cache empty, so a cell probes the
         stand-in's `--version` as a real run does."""
         driver = base / "run-the-runner.py"
@@ -2359,6 +2363,16 @@ if report_check_hold:
     def last_report_check_held(*arguments, **keywords):
         reports_checked.append(1)
         if len(reports_checked) == 2:
+            if os.environ.get("DRIVER_SIGNAL_THE_HELD_CELL_THREAD"):
+                import signal, threading
+                # Once the other cell has finished, so nothing but this
+                # held cell could wake a main thread waiting for the cells;
+                # the half second lets the main thread go back to waiting.
+                deadline = time.monotonic() + 30
+                while not module.CELLS_FINISHED and time.monotonic() < deadline:
+                    time.sleep(0.02)
+                time.sleep(0.5)
+                signal.pthread_kill(threading.get_ident(), signal.SIGTERM)
             held_until(report_check_hold)
         return check_report(*arguments, **keywords)
     module.missing_report_phrases = last_report_check_held
@@ -3054,6 +3068,51 @@ sys.exit(module.main())
             check("and that run still ends by the signal, its copy removed",
                   process.returncode == -signal.SIGTERM and left_in_copies_root(base) == [],
                   f"exit {process.returncode}, copies root {left_in_copies_root(base)}")
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.communicate()
+            end_stand_ins(recorded)
+
+    # Case 55, with the signal handed to a cell's thread rather than the main
+    # thread, as Linux does on a busy machine: the main thread, waiting for
+    # the cells, must still run the stop handler while the cell is held,
+    # not once the cell finishes. This is how cases 49 and 55 failed on
+    # merge-lane-2's busy test runs, with the handler held off for the hold.
+    with tempfile.TemporaryDirectory() as scratch:
+        base = pathlib.Path(scratch).resolve()
+        target = "docs/stopped-from-a-cell-thread.md"
+        repo = scratch_repository_with_design(base, target)
+        programs, recorded = stand_in_agent_binaries(base)
+        report_check_hold = base / "report-check-hold"
+        walk_done = base / "stop-walk-done"
+        environment = runner_process_environment(
+            programs, recorded, codex="report", claude="report")
+        environment["DRIVER_HOLD_LAST_REPORT_CHECK"] = str(report_check_hold)
+        environment["DRIVER_SIGNAL_THE_HELD_CELL_THREAD"] = "1"
+        environment["DRIVER_STOP_WALK_DONE"] = str(walk_done)
+        process = subprocess.Popen(
+            [sys.executable, "-B", str(runner_driver(base, repo)),
+             "--target", target, "--attack", "cut"],
+            env=environment, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        try:
+            held = wait_until(lambda: pathlib.Path(str(report_check_hold) + ".held").exists())
+            # Well inside the driver's 60 s hold: before the fix, the handler
+            # ran only when the hold ended.
+            walked = wait_until(walk_done.exists, 20.0)
+            report_check_hold.write_text("", encoding="utf-8")
+            try:
+                out, err = process.communicate(timeout=30)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                out, err = process.communicate()
+            check("a stop signal handed to a cell's thread runs the stop handler while "
+                  "the cell is held, and the run ends with its STOPPED line",
+                  held and walked and "STOPPED: SIGTERM ended this run" in out
+                  and process.returncode == -signal.SIGTERM
+                  and left_in_copies_root(base) == [],
+                  f"held {held}, walked {walked}, exit {process.returncode}, "
+                  f"copies root {left_in_copies_root(base)}, stdout {out!r}, stderr {err!r}")
         finally:
             if process.poll() is None:
                 process.kill()
