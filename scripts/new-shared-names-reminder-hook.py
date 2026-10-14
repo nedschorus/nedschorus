@@ -302,8 +302,8 @@ def branch_named_by_no_agent(checkout: Path, branch: str) -> bool:
     try:
         agent_homes = (Path.home() / "agents").resolve()
         top_level = checkout.resolve()
-    except (OSError, RuntimeError):
-        return False
+    except (OSError, RuntimeError) as error:
+        raise BranchCheckFailure(f"could not resolve the home directory's agents directory or this checkout: {error}") from error
     return top_level.parent == agent_homes and top_level.name == branch
 
 
