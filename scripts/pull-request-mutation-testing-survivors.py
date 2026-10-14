@@ -170,8 +170,13 @@ def suites_for_file(path, suites_at_head, recordings_directory, runner):
 def test_command_for(suites, interpreter, sandbox_prefix=(), suites_outside_sandbox=()):
     # The same launch the suite runner uses, so a suite judged by its exit code here is judged the same way there.
     # A mutant can aim a signal anywhere, so each suite runs inside the runner's signal sandbox.
+    # sandbox_prefix is one prefix for every suite, or a mapping of each suite to its own.
+    def prefix_of(suite):
+        if suite in suites_outside_sandbox:
+            return ()
+        return sandbox_prefix[suite] if isinstance(sandbox_prefix, dict) else sandbox_prefix
     chain = " && ".join(
-        shlex.join([*(() if suite in suites_outside_sandbox else sandbox_prefix),
+        shlex.join([*prefix_of(suite),
                     *(["sh", suite] if suite.endswith("-test.sh")
                       else [interpreter, "-u", suite])])
         for suite in suites)
@@ -425,7 +430,10 @@ def main(argv=None):
                                       f"sandbox: {outside[suite]}", flush=True)
                         counts, survivors, errored = mutation_test_one_file(
                             path, suites, worktree, scratch, tools, merge_base,
-                            arguments, environment, sandbox_prefix, outside)
+                            arguments, environment,
+                            {suite: runner.signal_sandbox_prefix_for_suite(
+                                sandbox_prefix, worktree, suite=suite) for suite in suites},
+                            outside)
                         for key in totals:
                             totals[key] += counts[key]
                         for label, mutants in (("SURVIVED", survivors),

@@ -63,12 +63,31 @@ checkout's top directory, stdin closed,
 stdout and stderr together into its own log file. A suite that starts
 `python3` itself gets whatever PATH finds, not --python.
 
-EACH SUITE RUNS IN A SIGNAL SANDBOX on Linux: `bwrap --dev-bind / /
---unshare-pid --die-with-parent --proc /proc`, so the suite and everything it
-starts sit in a PID namespace of their own. The file system and network are
-unchanged, and the suite runs as the same user, so a signal a suite sends can
-reach only the processes it started, never the agent-seats that run as the
-same account. bwrap also gives the suite a user namespace of its own, in which
+EACH SUITE RUNS IN A SIGNAL SANDBOX on Linux: bwrap with
+SIGNAL_SANDBOX_BWRAP_ARGUMENTS, so the suite and everything it starts sit in a
+PID namespace of their own. The suite runs as the same user, so a signal a
+suite sends can reach only the processes it started, never the agent-seats
+that run as the same account.
+
+THE SIGNAL SANDBOX IS ALSO EACH SUITE'S TEST SANDBOX, built when the
+suite starts and gone when it ends. The file system is read-only, except: a
+private /tmp, which TMPDIR and TMUX_TMPDIR name, so no tmux server or socket
+of an agent-seat is reachable; a private /dev; the home directory as a
+copy-on-write overlay, so a suite reads the real home but its writes there
+vanish when it ends; the checkout under test and the run's log directory,
+bound writable, so what the suite writes there stays. The checkout's git
+common directory is bound read-only above the checkout, since every worktree
+of the repository shares it. Each file
+TEST_SANDBOX_REAL_CREDENTIAL_FILES_HIDDEN_FROM_TESTS names is
+covered with an empty file. The session's runtime directory, /run/user/<uid>,
+is an empty tmpfs: it holds the D-Bus session bus, through which
+`systemd-run --user` would start processes outside the sandbox, and the
+sockets of the running agent-sessions, and a read-only mount does not stop a
+connection to a socket. The variables in
+TEST_SANDBOX_OUTSIDE_SOCKET_VARIABLES, which name sockets
+outside, are unset. The network is unchanged.
+scripts/run-all-test-suites-test-sandbox-escape-test.py tries
+each escape and fails if one works. bwrap also gives the suite a user namespace of its own, in which
 every file owned by another user, root included, shows as owned by nobody: a
 check of a file's owner, such as ssh's check of its config files, fails there. bwrap is
 tried once before any suite runs; when it is on PATH but cannot start, the
@@ -440,6 +459,7 @@ import os
 import re
 import shutil
 import signal
+import stat
 import subprocess
 import sys
 import tempfile
@@ -479,8 +499,51 @@ AGENT_SESSION_ATTENDANCE_ENVIRONMENT_VARIABLES = (
 # again (Ubuntu's AppArmor profile denies them capabilities), so a run inside
 # the sandbox, such as a suite that tests this program, runs its suites as they
 # are: they are already inside.
+#
+# The signal sandbox is also each suite's test sandbox: the file system read-only, a
+# private /tmp and /dev, the home directory a copy-on-write overlay whose writes vanish
+# when the suite ends, and the session's runtime directory hidden, since it holds the
+# D-Bus session bus, through which `systemd-run --user` starts processes outside the
+# sandbox, and the sockets of the running agent-sessions. A Unix socket accepts a
+# connection through a read-only mount, so hiding it is the only protection.
+# test_sandbox_arguments() adds, per suite, the directories the suite may
+# write for real.
+TEST_SANDBOX_HOME = str(Path.home())
+TEST_SANDBOX_RUNTIME_DIRECTORY = f"/run/user/{os.getuid()}"
+# Variables naming a socket or a server outside the test sandbox.
+TEST_SANDBOX_OUTSIDE_SOCKET_VARIABLES = (
+    "TMUX",
+    "TMUX_PANE",
+    "DBUS_SESSION_BUS_ADDRESS",
+    "SSH_AUTH_SOCK",
+    "CLAUDE_CODE_MESSAGING_SOCKET",
+    "DISPLAY",
+    "WAYLAND_DISPLAY",
+    "GPG_AGENT_INFO",
+)
+# Relative to the home directory; a pattern is matched in its own directory only.
+TEST_SANDBOX_REAL_CREDENTIAL_FILES_HIDDEN_FROM_TESTS = (
+    ".config/nedschorus/*.token",
+    ".claude/.credentials.json",
+    ".codex/auth.json",
+    ".config/gh/hosts.yml",
+    ".ssh/id_*",
+    ".git-credentials",
+    ".netrc",
+)
 SIGNAL_SANDBOX_BWRAP_ARGUMENTS = (
-    "--dev-bind", "/", "/", "--unshare-pid", "--die-with-parent", "--proc", "/proc")
+    "--ro-bind", "/", "/", "--dev", "/dev", "--tmpfs", "/dev/shm", "--proc", "/proc",
+    "--tmpfs", "/tmp",
+    *(("--tmpfs", TEST_SANDBOX_RUNTIME_DIRECTORY,
+       "--setenv", "XDG_RUNTIME_DIR", TEST_SANDBOX_RUNTIME_DIRECTORY)
+      if os.path.isdir(TEST_SANDBOX_RUNTIME_DIRECTORY)
+      else ("--unsetenv", "XDG_RUNTIME_DIR")),
+    "--overlay-src", TEST_SANDBOX_HOME,
+    "--tmp-overlay", TEST_SANDBOX_HOME,
+    "--unshare-pid", "--die-with-parent",
+    "--setenv", "TMPDIR", "/tmp", "--setenv", "TMUX_TMPDIR", "/tmp",
+    *(argument for variable in TEST_SANDBOX_OUTSIDE_SOCKET_VARIABLES
+      for argument in ("--unsetenv", variable)))
 SIGNAL_SANDBOX_INSIDE_VARIABLE = "RUN_ALL_TEST_SUITES_INSIDE_SIGNAL_SANDBOX"
 SIGNAL_SANDBOX_START_TIMEOUT_SECONDS = 60
 # The profile the user's Mac run of the check passed on 2026-10-08 (macOS 26.6.2).
@@ -514,9 +577,19 @@ SUITES_RUN_OUTSIDE_THE_SIGNAL_SANDBOX = {
         "it starts the agy cell's own bwrap, which cannot start inside bwrap",
     "scripts/run-all-test-suites-cleanup-after-killed-runs-real-process-test.py":
         "it starts this program, whose suites run in bwrap, which cannot start inside bwrap",
+    "scripts/run-all-test-suites-test-sandbox-escape-test.py":
+        "it builds test sandboxes itself with bwrap, which cannot start inside bwrap",
     "scripts/mac-window-opened-for-ned-box-forced-command-test.py":
         "it runs the real ssh, which refuses its root-owned config files because "
         "inside the sandbox's user namespace they show as owned by nobody",
+}
+
+# Suites that must write the git directory of the repository under test, such as with
+# `git worktree add`. Their git directory is a copy-on-write overlay instead of read-only,
+# so the writes work inside the suite and vanish when it ends.
+SUITES_GIVEN_A_THROWAWAY_COPY_OF_THE_REPOSITORY_GIT_DIRECTORY = {
+    "nc-systems/general-tools/tests/bash-guards-verdict-changes-between-two-git-refs-on-transcript-recorded-commands-check-test.py":
+        "it replays at two refs, each in a worktree it adds to this repository",
 }
 
 DEFAULT_LOCK_FILE = Path.home() / ".claude" / ".run-all-test-suites.lock"
@@ -1391,6 +1464,75 @@ def signal_sandbox(platform=None, environment=None, which=shutil.which,
     return prefix, None
 
 
+def test_sandbox_real_credential_files_hidden_from_tests(home=None):
+    """The credential files present now, each to be covered with an empty file."""
+    home = Path(TEST_SANDBOX_HOME if home is None else home)
+    found = []
+    for pattern in TEST_SANDBOX_REAL_CREDENTIAL_FILES_HIDDEN_FROM_TESTS:
+        for path in sorted(home.glob(pattern)):
+            if path.name.endswith(".pub") or not path.is_file():
+                continue
+            found.append(str(path))
+    return found
+
+
+def test_sandbox_empty_file_covering_credentials():
+    """An empty, read-only regular file to bind over each credential file.
+
+    Fails rather than return a file that is not empty: binding one with content over a
+    credential file would hand a suite that content."""
+    path = Path(tempfile.gettempdir()) / f"{PROGRAM}-empty-file-covering-credentials-{os.getuid()}"
+    descriptor = os.open(path, os.O_RDONLY | os.O_CREAT | os.O_NOFOLLOW, 0o444)
+    try:
+        status = os.fstat(descriptor)
+    finally:
+        os.close(descriptor)
+    if not stat.S_ISREG(status.st_mode) or status.st_size != 0 or status.st_uid != os.getuid():
+        raise SignalSandboxCouldNotStart(
+            f"{path}, the empty file that covers each credential file inside the throwaway "
+            f"test environment, is not an empty regular file of this account; delete it, "
+            f"then run this again")
+    return str(path)
+
+
+def test_sandbox_arguments(checkout, writable_directories=(), suite=None):
+    """bwrap arguments, after SIGNAL_SANDBOX_BWRAP_ARGUMENTS, for one suite's environment.
+
+    The checkout under test and writable_directories are bound writable, so what a suite
+    writes there stays after it ends; the checkout's git common directory is bound
+    read-only above them, since every worktree of the repository shares it, or for a
+    suite in SUITES_GIVEN_A_THROWAWAY_COPY_OF_THE_REPOSITORY_GIT_DIRECTORY is a
+    copy-on-write overlay; each credential file is covered with an empty file."""
+    arguments = []
+    for directory in (checkout, *writable_directories):
+        real = os.path.realpath(directory)
+        arguments += ["--bind", real, real]
+        given = os.path.abspath(directory)
+        if given != real:
+            arguments += ["--bind", real, given]
+    common = git_common_directory_of_checkout(Path(os.path.realpath(checkout)))
+    if common is not None and os.path.isdir(common):
+        if suite in SUITES_GIVEN_A_THROWAWAY_COPY_OF_THE_REPOSITORY_GIT_DIRECTORY:
+            arguments += ["--overlay-src", common, "--tmp-overlay", common]
+        else:
+            arguments += ["--ro-bind", common, common]
+    credentials = test_sandbox_real_credential_files_hidden_from_tests()
+    if credentials:
+        cover = test_sandbox_empty_file_covering_credentials()
+        for path in credentials:
+            arguments += ["--ro-bind", cover, path]
+    return arguments
+
+
+def signal_sandbox_prefix_for_suite(sandbox_prefix, checkout, writable_directories=(),
+                                    suite=None):
+    """The sandbox prefix with one suite's test sandbox added under bwrap."""
+    if not does_signal_sandbox_report_killed_suite_as_exit_code_128_plus_signal(sandbox_prefix):
+        return tuple(sandbox_prefix)
+    return (*sandbox_prefix,
+            *test_sandbox_arguments(checkout, writable_directories, suite))
+
+
 def macos_signal_sandbox(runner, sandbox_exec, outside_process_id):
     """Return the sandbox-exec prefix once a trial inside it is refused a signal to outside_process_id."""
     if not Path(sandbox_exec).is_file():
@@ -1487,6 +1629,10 @@ def run_one_suite(top, interpreter, suite, log_dir, recorder=None, sandbox_prefi
                        "-o", str(strace_dir / "trace"), *command]
     if suite in SUITES_RUN_OUTSIDE_THE_SIGNAL_SANDBOX:
         sandbox_prefix = ()
+    # The recorder's logs and traces are read after the suite ends, so they are written for real.
+    sandbox_prefix = signal_sandbox_prefix_for_suite(
+        sandbox_prefix, top,
+        (log_dir, *((recorder[0], recorder[1]) if recorder is not None else ())), suite)
     status_read = status_write = None
     if sandbox_prefix and note_suite_process is not None:
         status_read_fd, status_write = os.pipe()

@@ -395,7 +395,10 @@ def run_suite_confined(top, suite, interpreter, sandbox_prefix, proof_file, byte
     """
     platform = sys.platform if platform is None else platform
     by_process_group = platform == "darwin"
-    command = [*sandbox_prefix, sys.executable, str(Path(__file__).resolve()),
+    # The proof is read after the sandbox ends, so its directory is written for real.
+    command = [*runner.signal_sandbox_prefix_for_suite(sandbox_prefix, top, (proof_file.parent,),
+                                                         suite),
+               sys.executable, str(Path(__file__).resolve()),
                INSIDE_CHECK_OPTION, str(proof_file), "--",
                *suite_command(top, suite, interpreter)]
     environment = runner.test_suite_launch_environment_without_git_redirecting_and_agent_session_attendance_variables()

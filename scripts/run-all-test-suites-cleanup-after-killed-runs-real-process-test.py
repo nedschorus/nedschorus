@@ -142,8 +142,10 @@ def start_run(root, repo, name):
     """Start the runner on repo with its own log directory; return (process, log dir)."""
     environment = dict(os.environ)
     environment.pop(module.SIGNAL_SANDBOX_INSIDE_VARIABLE, None)
-    environment[STARTED_FILE_VARIABLE] = str(root / f"{name}.started")
-    environment[STOP_FILE_VARIABLE] = str(root / "stop")
+    # In the checkout, which the test sandbox binds writable, so the suite inside it
+    # and this test outside it see the same files.
+    environment[STARTED_FILE_VARIABLE] = str(repo / f"{name}.started")
+    environment[STOP_FILE_VARIABLE] = str(repo / "stop")
     log_dir = root / f"logs-{name}"
     process = subprocess.Popen(
         [sys.executable, str(PROGRAM), "--checkout", str(repo), "--log-dir", str(log_dir),
@@ -266,7 +268,7 @@ else:
             quick_repo = make_repo(root, "quick-test.py", "print('ok')\n", "quick-repo")
             run_b, logs_b = start_run(root, repo, "b")
             try:
-                started = wait_until(lambda: (root / "b.started").exists())
+                started = wait_until(lambda: (repo / "b.started").exists())
                 check("the killed run's suite starts", started, run_b.poll())
                 records = run_records(root)
                 suite_processes = records[0]["suite_processes"] if records else []
@@ -280,12 +282,12 @@ else:
                 signal_own_descendant(run_b.pid, runner_ticks, signal.SIGKILL)
                 run_b.wait(timeout=30)
                 run_b.stdout.close()
-                suite_pid = int((root / "b.started").read_text())
+                suite_pid = int((repo / "b.started").read_text())
                 check("the suite outlives its killed runner",
                       module.process_start_ticks(suite_pid) is not None)
                 result_c = finish_run(root, quick_repo, "c-with-the-suite-still-running")
             finally:
-                (root / "stop").write_text("stop\n")
+                (repo / "stop").write_text("stop\n")
             check("the next run keeps the traces of a killed run whose suite still runs",
                   trace.exists(), result_c.stdout)
             check("and says why",
@@ -314,7 +316,7 @@ else:
             quick_repo = make_repo(root, "quick-test.py", "print('ok')\n", "quick-repo")
             run_e, logs_e = start_run(root, repo, "e")
             try:
-                started = wait_until(lambda: (root / "e.started").exists())
+                started = wait_until(lambda: (repo / "e.started").exists())
                 records = run_records(root)
                 suite_processes = records[0]["suite_processes"] if records else []
                 init = suite_processes[0] if suite_processes else {}
@@ -334,7 +336,7 @@ else:
                       init_pid is not None and wait_until(
                           lambda: module.process_start_ticks(init_pid) is None, seconds=10))
             finally:
-                (root / "stop").write_text("stop\n")
+                (repo / "stop").write_text("stop\n")
             trace = logs_e / "recorded-inputs" / "left.strace"
             trace.mkdir(parents=True, exist_ok=True)
             result_f = finish_run(root, quick_repo, "f")
