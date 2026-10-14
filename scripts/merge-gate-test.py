@@ -92,6 +92,17 @@ after all mutations as the control.
 
 F7, UNSTABLE on the merge-state allow-list, has no case by the user's ruling.
 
+THE DESCRIPTION CASES. The gate refuses a pull request whose description has no
+line beginning "Root cause:", "Root cause not fixed:" or "No defect fixed.". The
+stand-in serves the description read, `gh pr view --json body`, from the route
+"body"; a case that arranges none is served the 1364 capture, a description
+with a plain "Root cause:" line, so every other case reaches its own point. Each
+description is captured from a merged nedschorus pull request: 1364 plain, 1360
+"Root cause not fixed:", 1278 an indented bullet, 1320 bold type, 1298 two
+labelled lines, 1363 no label at all, and 1279 "Root cause:" only in the middle
+of lines. No capture carries "No defect fixed.", so that case appends the line
+to the 1363 capture.
+
 Run: python3 scripts/merge-gate-test.py
 """
 
@@ -121,7 +132,7 @@ with open(os.environ["MERGE_GATE_TEST_GH_CALL_LOG"], "a") as log:
     log.write(json.dumps({"argv": argv, "gh_token": os.environ.get("GH_TOKEN")}) + "\n")
 routes = json.load(open(os.environ["MERGE_GATE_TEST_GH_ROUTES"]))
 if argv[:2] == ["pr", "view"]:
-    key = "state"
+    key = "body" if argv[argv.index("--json") + 1] == "body" else "state"
 elif argv[:1] == ["api"]:
     endpoint = argv[1]
     channel = ("reviews" if endpoint.endswith("/reviews") else
@@ -207,6 +218,7 @@ def captured_channel_routes(channel, stem):
                           first_page if first_page.exists() else None)
 
 
+DESCRIPTION_WITH_ROOT_CAUSE = "nedschorus-nedschorus-1364-pr-view-body.json"
 QUIET_INLINE = captured_channel_routes("inline", "nedschorus-nedschorus-665-inline-channel")
 QUIET_ISSUE = captured_channel_routes("issue", "nedschorus-nedschorus-665-issue-channel")
 CLEAN = captured_value("cli-cli-14475-pr-view-state.json", "mergeStateStatus")
@@ -265,6 +277,8 @@ def run_gate(gate, pr, expected, since, routes, token=TEST_TOKEN, path_override=
     stand_in = stand_in_dir / "gh"
     stand_in.write_text(GH_STAND_IN)
     stand_in.chmod(0o755)
+    routes = dict(routes)
+    routes.setdefault("body", {"stdout_file": str(captured(DESCRIPTION_WITH_ROOT_CAUSE))})
     routes_file = case_dir / "routes.json"
     routes_file.write_text(json.dumps(routes))
     call_log = case_dir / "gh-calls.jsonl"
@@ -959,6 +973,91 @@ def case_fa_chain_line_stops_when_the_gate_could_not_run(gate):
             and "GATE COULD NOT RUN" in run.stderr), run.summary()
 
 
+
+DESCRIPTION_REFUSAL_LINES = (
+    f"GATE REFUSED (#{BASE_PR}): the pull request's description has no line beginning "
+    "\"Root cause:\", \"Root cause not fixed:\" or \"No defect fixed.\", so it does not say whether "
+    "the pull request fixes a defect and, if it does, whether the change removes the defect's "
+    "root cause.\n",
+    "\nHave the pull request's author add one of these lines to the description, starting the "
+    "line with the label, which may follow a bullet and may be in bold type: \"Root cause:\" and "
+    "the root cause the change removes; \"Root cause not fixed:\" and the root cause that stays, "
+    "or that none was found, with the reason; or \"No defect fixed.\" when the pull request fixes "
+    "no defect.\n",
+    "\nEditing the description needs no new commit. Once the description has the line, run the "
+    "gate again.\n")
+
+
+def description_run(gate, body_file, **route):
+    routes = base_routes()
+    routes["body"] = dict(route, stdout_file=str(body_file))
+    return run_gate(gate, BASE_PR, BASE_HEAD, BASE_APPROVAL["submitted_at"], routes)
+
+
+def description_passes(gate, body_file):
+    run = description_run(gate, body_file)
+    return (passed_pinned_to(run, BASE_PR, BASE_APPROVAL["commit_id"])
+            and any(call["argv"][:2] == ["pr", "view"] and "body" in call["argv"]
+                    for call in run.calls)), run.summary()
+
+
+def description_refused(gate, body_file):
+    run = description_run(gate, body_file)
+    return refused_with(run, BASE_PR, *DESCRIPTION_REFUSAL_LINES), run.summary()
+
+
+def case_description_root_cause_not_fixed_line(gate):
+    return description_passes(gate, captured("nedschorus-nedschorus-1360-pr-view-body.json"))
+
+
+def case_description_label_after_an_indented_bullet(gate):
+    return description_passes(gate, captured("nedschorus-nedschorus-1278-pr-view-body.json"))
+
+
+def case_description_label_in_bold_type(gate):
+    return description_passes(gate, captured("nedschorus-nedschorus-1320-pr-view-body.json"))
+
+
+def case_description_with_two_labelled_lines(gate):
+    return description_passes(gate, captured("nedschorus-nedschorus-1298-pr-view-body.json"))
+
+
+def case_description_no_defect_fixed_line(gate):
+    description = json.loads(captured("nedschorus-nedschorus-1363-pr-view-body.json").read_text())
+    description["body"] += "\n\nNo defect fixed."
+    path = Path(tempfile.mkstemp(dir=scratch, suffix="-body.json")[1])
+    path.write_text(json.dumps(description))
+    return description_passes(gate, path)
+
+
+def case_description_without_a_label(gate):
+    return description_refused(gate, captured("nedschorus-nedschorus-1363-pr-view-body.json"))
+
+
+def case_description_with_the_label_only_mid_line(gate):
+    return description_refused(gate, captured("nedschorus-nedschorus-1279-pr-view-body.json"))
+
+
+def case_description_read_fails(gate):
+    not_found = captured("nedschorus-nedschorus-999999-pr-view-body-not-found.json")
+    record = capture_record_entry(not_found.name)
+    run = description_run(gate, not_found, exit=record["exit_code"], stderr=record["stderr"])
+    return (record["exit_code"] != 0
+            and could_not_run_after_gh(
+                run, BASE_PR,
+                f"GATE COULD NOT RUN: could not read pull request {BASE_PR}'s description; any "
+                "error gh printed is just above this line.\n", f"\n{RERUN_ONCE_GH}\n")), run.summary()
+
+
+def case_description_unparsable(gate):
+    # gh pr view exits 0 but prints what jq cannot read as a description: a
+    # captured channel, a list, which has no body field.
+    run = description_run(gate, captured("nedschorus-nedschorus-665-inline-channel-paginated.json"))
+    return could_not_run_after_gh(
+        run, BASE_PR, f"GATE COULD NOT RUN: could not parse pull request {BASE_PR}'s description\n",
+        JQ_ERROR_ABOVE, f"\n{RERUN_ONCE_JQ}\n"), run.summary()
+
+
 CASES = [
     ("A1 everything in order passes, pinned to the approval's commit", case_a1_pass_control),
     ("LIVE CHAIN: PR 665 as the chain gates it, approved only by ned-review-merge, passes",
@@ -1024,6 +1123,18 @@ CASES = [
     ("F-a the chain's gate line stops on a refusal", case_fa_chain_line_stops_on_a_refusal),
     ("F-a the chain's gate line stops when the gate could not run",
      case_fa_chain_line_stops_when_the_gate_could_not_run),
+    ("G1 a description with a \"Root cause not fixed:\" line passes",
+     case_description_root_cause_not_fixed_line),
+    ("G1 a description whose label follows an indented bullet passes",
+     case_description_label_after_an_indented_bullet),
+    ("G1 a description whose label is in bold type passes", case_description_label_in_bold_type),
+    ("G1 a description with two labelled lines passes", case_description_with_two_labelled_lines),
+    ("G1 a description with a \"No defect fixed.\" line passes", case_description_no_defect_fixed_line),
+    ("G2 a description with no labelled line refuses", case_description_without_a_label),
+    ("G2 a description with \"Root cause:\" only in the middle of lines refuses",
+     case_description_with_the_label_only_mid_line),
+    ("G3 gh failing on the description read could not run", case_description_read_fails),
+    ("G3 a description jq cannot read could not run", case_description_unparsable),
 ]
 
 
@@ -1157,6 +1268,26 @@ MUTATIONS = [
      [case_e2_head_moved]),
     ("without the pin-is-head check", [('[ "$approved_sha" = "$head" ] ||', "true ||")],
      [case_e3_approval_covers_another_commit]),
+    ("without the description check", [('[ "$has_defect_line" = "true" ] ||', "true ||")],
+     [case_description_without_a_label]),
+    ("the label allowed anywhere in a line", [('any(test("^', 'any(test("')],
+     [case_description_with_the_label_only_mid_line]),
+    ("no bullet allowed before the label", [("(?:[-*+]\\\\s+)?", "")],
+     [case_description_label_after_an_indented_bullet]),
+    ("no bold type allowed around the label", [("(?:\\\\*\\\\*|__)?", "")],
+     [case_description_label_in_bold_type]),
+    ("\"Root cause not fixed:\" not accepted", [("(?: not fixed)?", "")],
+     [case_description_root_cause_not_fixed_line]),
+    ("\"No defect fixed.\" not accepted", [("|No defect fixed(?:", "|No defect fixed never(?:")],
+     [case_description_no_defect_fixed_line]),
+    ("without the description read check",
+     [('[ $? -eq 0 ] || cannot "could not read pull request $PR\'s description',
+       ': || cannot "could not read pull request $PR\'s description')],
+     [case_description_read_fails]),
+    ("without the description parse check",
+     [('[ $? -eq 0 ] || cannot "could not parse pull request $PR\'s description',
+       ': || cannot "could not parse pull request $PR\'s description')],
+     [case_description_unparsable]),
 ]
 
 

@@ -733,6 +733,150 @@
       "stored": false,
       "note": "byte-identical to nedschorus-nedschorus-722-issue-channel-paginated.json when captured (the channel is under one page); not stored, and the suite serves nedschorus-nedschorus-722-issue-channel-paginated.json for this call",
       "gh_version": "gh version 2.101.0 (2026-09-15)"
+    },
+    {
+      "file": "nedschorus-nedschorus-1364-pr-view-body.json",
+      "command": [
+        "gh",
+        "pr",
+        "view",
+        "1364",
+        "--repo",
+        "nedschorus/nedschorus",
+        "--json",
+        "body"
+      ],
+      "captured_at_utc": "2026-10-14T21:07:19Z",
+      "exit_code": 0,
+      "stderr": "",
+      "gh_version": "gh version 2.102.0 (2026-09-30)",
+      "machine": "ned-box"
+    },
+    {
+      "file": "nedschorus-nedschorus-1360-pr-view-body.json",
+      "command": [
+        "gh",
+        "pr",
+        "view",
+        "1360",
+        "--repo",
+        "nedschorus/nedschorus",
+        "--json",
+        "body"
+      ],
+      "captured_at_utc": "2026-10-14T21:07:19Z",
+      "exit_code": 0,
+      "stderr": "",
+      "gh_version": "gh version 2.102.0 (2026-09-30)",
+      "machine": "ned-box"
+    },
+    {
+      "file": "nedschorus-nedschorus-1278-pr-view-body.json",
+      "command": [
+        "gh",
+        "pr",
+        "view",
+        "1278",
+        "--repo",
+        "nedschorus/nedschorus",
+        "--json",
+        "body"
+      ],
+      "captured_at_utc": "2026-10-14T21:07:20Z",
+      "exit_code": 0,
+      "stderr": "",
+      "gh_version": "gh version 2.102.0 (2026-09-30)",
+      "machine": "ned-box"
+    },
+    {
+      "file": "nedschorus-nedschorus-1320-pr-view-body.json",
+      "command": [
+        "gh",
+        "pr",
+        "view",
+        "1320",
+        "--repo",
+        "nedschorus/nedschorus",
+        "--json",
+        "body"
+      ],
+      "captured_at_utc": "2026-10-14T21:07:21Z",
+      "exit_code": 0,
+      "stderr": "",
+      "gh_version": "gh version 2.102.0 (2026-09-30)",
+      "machine": "ned-box"
+    },
+    {
+      "file": "nedschorus-nedschorus-1363-pr-view-body.json",
+      "command": [
+        "gh",
+        "pr",
+        "view",
+        "1363",
+        "--repo",
+        "nedschorus/nedschorus",
+        "--json",
+        "body"
+      ],
+      "captured_at_utc": "2026-10-14T21:07:21Z",
+      "exit_code": 0,
+      "stderr": "",
+      "gh_version": "gh version 2.102.0 (2026-09-30)",
+      "machine": "ned-box"
+    },
+    {
+      "file": "nedschorus-nedschorus-1279-pr-view-body.json",
+      "command": [
+        "gh",
+        "pr",
+        "view",
+        "1279",
+        "--repo",
+        "nedschorus/nedschorus",
+        "--json",
+        "body"
+      ],
+      "captured_at_utc": "2026-10-14T21:07:22Z",
+      "exit_code": 0,
+      "stderr": "",
+      "gh_version": "gh version 2.102.0 (2026-09-30)",
+      "machine": "ned-box"
+    },
+    {
+      "file": "nedschorus-nedschorus-999999-pr-view-body-not-found.json",
+      "command": [
+        "gh",
+        "pr",
+        "view",
+        "999999",
+        "--repo",
+        "nedschorus/nedschorus",
+        "--json",
+        "body"
+      ],
+      "captured_at_utc": "2026-10-14T21:07:29Z",
+      "exit_code": 1,
+      "stderr": "GraphQL: Could not resolve to a PullRequest with the number of 999999. (repository.pullRequest)\n",
+      "gh_version": "gh version 2.102.0 (2026-09-30)",
+      "machine": "ned-box"
+    },
+    {
+      "file": "nedschorus-nedschorus-1298-pr-view-body.json",
+      "command": [
+        "gh",
+        "pr",
+        "view",
+        "1298",
+        "--repo",
+        "nedschorus/nedschorus",
+        "--json",
+        "body"
+      ],
+      "captured_at_utc": "2026-10-14T21:15:00Z",
+      "exit_code": 0,
+      "stderr": "",
+      "gh_version": "gh version 2.102.0 (2026-09-30)",
+      "machine": "ned-box"
     }
   ]
 }
