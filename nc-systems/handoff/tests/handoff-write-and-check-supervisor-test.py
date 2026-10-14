@@ -1526,6 +1526,18 @@ def run_completed_task_prune_remote_store_cases(workspace: Path):
     check("over ssh, a copy sha256sum cannot read gets its own remedy naming the copy, not the ssh remedy",
           f"`ls -l` on 1.json in {fixture.store_list_directory}" in line and "ssh stubhost true" not in line, line)
 
+    # 1.json is a substring of 11.json, so a loose match would name the readable 1.json too.
+    fixture = PruneFixture(workspace, "remote-unreadable-one-of-two")
+    fixture.task("1.json", task_bytes(1, "completed"))
+    fixture.task("11.json", task_bytes(11, "completed"))
+    stubs = stub_ssh_directory(fixture.root / "remote-unreadable-one-of-two-stubs",
+                               'echo "sha256sum: 11.json: Permission denied" >&2\nexit 1\n')
+    line = prune_line(fixture.run(
+        "carry on\n", TRANSCRIPT_MIRROR_DESTINATION=f"stubhost:{fixture.store_root}",
+        PATH=f"{stubs}{os.pathsep}{os.environ.get('PATH', '')}"))
+    check("over ssh, the remedy names only the copy sha256sum could not read, not a readable copy whose name it contains",
+          f"`ls -l` on 11.json in {fixture.store_list_directory}" in line and "1.json," not in line, line)
+
     stubs = stub_ssh_directory(workspace / "prune-silent-stubs", "sleep 5\n")
     original_path, original_timeout = os.environ.get("PATH", ""), writer.LOG_STORE_TASK_FILE_COPIES_HASH_SSH_TIMEOUT_SECONDS
     os.environ["PATH"] = f"{stubs}{os.pathsep}{original_path}"
