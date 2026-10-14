@@ -80,7 +80,8 @@ def check_and_install(host, runner=subprocess.run, installer=None,
     """Return (exit status, report lines)."""
     if installer is None:
         def installer():
-            return pinned_libraries_install.pinned_requirements_pip_install(INSTALL_TIMEOUT_SECONDS, runner)
+            return pinned_libraries_install.pinned_requirements_pip_install(
+                INSTALL_TIMEOUT_SECONDS, runner, requirements_file=requirements_file)
     pins = pinned_versions(requirements_file)
     missing = missing_libraries(pins, installed_versions(pins, runner))
     if not missing:
@@ -98,7 +99,8 @@ def check_and_install(host, runner=subprocess.run, installer=None,
                *(f"  {line}" for line in still_missing),
                f"What the install printed: {install_output or '(nothing)'}",
                "To install them by hand, run this command {}: {}".format(
-                   *pinned_libraries_install.pinned_requirements_by_hand_install_command(host))]
+                   *pinned_libraries_install.pinned_requirements_by_hand_install_command(
+                       host, requirements_file))]
 
 
 def main(arguments=None):
