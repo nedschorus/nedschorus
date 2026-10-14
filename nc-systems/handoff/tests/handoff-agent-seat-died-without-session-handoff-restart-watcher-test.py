@@ -1142,7 +1142,7 @@ def run_notice_page_cases(root: Path):
     check("a refused page whose terminal window the Mac also misses stays pending",
           len(harness.state["pending_notices"]) == 1, repr(harness.state["pending_notices"]))
 
-    page = watcher_module.notice_page_html("seat<b>&x", "seat<b>&x is down.", "now")
+    page = watcher_module.failed_restart_notice_html_page_build("seat<b>&x", "seat<b>&x is down.", "now")
     check("the page escapes the seat's name in its title",
           "<title>seat&lt;b&gt;&amp;x: the crash watcher needs you</title>" in page
           and "<title>seat<b>" not in page, page[:600])

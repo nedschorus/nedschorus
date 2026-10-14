@@ -304,7 +304,7 @@ for (const button of document.querySelectorAll("button[data-copy]")) {{
 """
 
 
-def notice_page_html(seat, text, written_at) -> str:
+def failed_restart_notice_html_page_build(seat, text, written_at) -> str:
     """The HTML page of one notice: each line a paragraph, each indented line a block.
 
     An indented line that starts like a command gets a label naming the Mac, where all of
@@ -461,7 +461,8 @@ class Watcher:
         page = self.log_directory / "notice-pages" / f"{notice_path.stem}.html"
         try:
             page.parent.mkdir(parents=True, exist_ok=True)
-            page.write_text(notice_page_html(seat, text, clock_text(self.now)), encoding="utf-8")
+            page.write_text(failed_restart_notice_html_page_build(seat, text, clock_text(self.now)),
+                            encoding="utf-8")
         except OSError as error:
             self.log(seat, "notice page not written; the notice opens in a terminal window instead",
                      notice=str(notice_path), error=f"{type(error).__name__}: {error}")

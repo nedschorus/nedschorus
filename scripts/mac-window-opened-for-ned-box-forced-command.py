@@ -137,7 +137,7 @@ NED_BOX_HOME = "/home/nedlern"
 MAC_MOUNT_OF_NED_BOX_HOME = "/Volumes/nedhome"
 MAXIMUM_PATH_LENGTH = 1024
 DEFAULT_OPEN_PROGRAM = "/usr/bin/open"
-OPEN_IN_MAC_BROWSER_REQUEST_VERB = "open-in-browser"
+OPEN_IN_BROWSER_REQUEST_VERB = "open-in-browser"
 LOG_STORE_DIRECTORY_NAME = "nedschorus-logs"
 BROWSER_PAGE_SUFFIX = ".html"
 
@@ -219,7 +219,7 @@ def open_in_browser_request_html_page_path_check(request, ned_box_home=NED_BOX_H
     """The ned-box path an open-in-browser request names; raises RequestRefused.
 
     Checks the text alone, so ned-box can run it before sending."""
-    path = ned_box_file_path_in_request(request, OPEN_IN_MAC_BROWSER_REQUEST_VERB, ned_box_home)
+    path = ned_box_file_path_in_request(request, OPEN_IN_BROWSER_REQUEST_VERB, ned_box_home)
     pages_prefix = f"{ned_box_home.rstrip('/')}/{LOG_STORE_DIRECTORY_NAME}/"
     if not path.startswith(pages_prefix):
         raise RequestRefused(f"the page is not under {pages_prefix}, the only place pages are opened from")
@@ -370,7 +370,7 @@ def main():
     request = os.environ.get("SSH_ORIGINAL_COMMAND")
     if request is not None and request.split(" ")[0] == TYPORA_VERB:
         return open_in_typora(request)
-    if request is not None and request.split(" ")[0] == OPEN_IN_MAC_BROWSER_REQUEST_VERB:
+    if request is not None and request.split(" ")[0] == OPEN_IN_BROWSER_REQUEST_VERB:
         return open_in_browser(request)
     try:
         if request is not None and request.split(" ")[0] == AGENT_SEAT_WINDOW_VERB:

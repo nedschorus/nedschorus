@@ -65,7 +65,7 @@ def main(arguments):
         print(f"{PROGRAM}: no request was sent, because {resolved} holds a character outside letters, digits and _ . / : = @ % + , -, such as a space.", file=sys.stderr)
         print(f"Write the page under {pages_directory}/ with a name made only of those characters.", file=sys.stderr)
         return window_sender.EXIT_USAGE_OR_REFUSED
-    request = f"{forced_command.OPEN_IN_MAC_BROWSER_REQUEST_VERB} {resolved}"
+    request = f"{forced_command.OPEN_IN_BROWSER_REQUEST_VERB} {resolved}"
     try:
         forced_command.open_in_browser_request_html_page_path_check(request, ned_box_home)
     except forced_command.RequestRefused as refusal:
