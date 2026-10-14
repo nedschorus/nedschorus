@@ -74,3 +74,7 @@ Reproduce both cases under load, with the hold kept long enough to see when the 
 - Each case either waits for its event with only a long ceiling against a hung test, or has a deadline measured to hold on ned-box under load.
 - If the cause is in `scripts/sanity-check-attacks.py`, the fix is there, and comes with a test case that fails on the code before the fix and passes with the fix.
 - In either case, `python3 scripts/run-suite-in-signal-sandbox.py scripts/sanity-check-attacks-test.py` passes 20 runs in a row, with the test as committed, while the load run of step 2 of the next action runs over and over until the 20th run ends.
+
+## Provisional additions (not yet vetted by the user)
+
+- ned-box-helper, 2026-10-14: ask the user about the "Next action for case 3" paragraph of this GHI-MD, which ned-box-helper could not settle alone.
