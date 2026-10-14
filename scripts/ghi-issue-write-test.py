@@ -2536,30 +2536,93 @@ def run_edit_cases(scratch: Path):
     proposed_moved_to = (f"nc-systems/statusline/{EDIT_NAME[:-len('.md')]}-"
                          "proposed-improvements-or-changes-ghi-info-"
                          "2026-10-03.md")
-    moved_with_proposed = StagedReader({
-        f"git show {MAIN_COMMIT}:{proposed_on_main}": Completed(
-            "# Proposed improvements or changes from ghi-info, 2026-10-03\n"),
-        **moved.answers,
-        "git ls-tree": Completed(EDIT_RELATIVE + "\0" + proposed_on_main
-                                 + "\0"),
-    })
+    other_proposed_on_main = ("docs/issues/570-test-design-proposed-"
+                              "improvements-or-changes-ghi-info-2026-10-03.md")
+    moved_pointer_line = ("This GHI has proposed improvements or changes: "
+                          "read every file in this folder whose name starts "
+                          f"with `{EDIT_NAME[:-len('.md')]}-proposed-"
+                          "improvements-or-changes-`.")
+    for case_name, author_text in (
+            ("a GHI-MD that carries the pointer line",
+             tool.with_pointer_line(FILE_TEXT, EDIT_NAME[:-len('.md')])),
+            ("a GHI-MD that lacks the pointer line", FILE_TEXT)):
+        moved_with_proposed = StagedReader({
+            f"git show {MAIN_COMMIT}:{proposed_on_main}": Completed(
+                "# Proposed improvements or changes from ghi-info, "
+                "2026-10-03\n"),
+            **moved.answers,
+            "git ls-tree": Completed(
+                EDIT_RELATIVE + "\0" + proposed_on_main + "\0"
+                + "docs/issues/570-test-design.md\0"
+                + other_proposed_on_main + "\0"),
+        })
+        moved_source = filed_ghi_md(scratch, text=author_text,
+                                    directory="nc-systems/statusline")
+        moving_lines = []
+        tool.edit(moved_source, REPO, scratch, moved_with_proposed,
+                  moving_lines.append)
+        landed_text = moved_with_proposed.staged.get(MOVED_RELATIVE, "")
+        check(f"a proposed-improvements-or-changes-file beside the "
+              f"moved-from path of {case_name} moves with the GHI-MD in the "
+              "same commit, and the GHI-MD carries the pointer line once",
+              ran_with(moved_with_proposed, "git rm", proposed_on_main)
+              and moved_with_proposed.staged.get(proposed_moved_to, "")
+              .startswith("# Proposed improvements or changes from ghi-info")
+              and comes_before(moved_with_proposed.commands(),
+                               "git rm --quiet", "git commit --quiet")
+              and moved_with_proposed.count("git commit") == 1
+              and landed_text.splitlines().count(moved_pointer_line) == 1
+              and moved_pointer_line in moved_source.read_text(
+                  encoding="utf-8").splitlines()
+              and f"moving {proposed_on_main} to {proposed_moved_to} with "
+                  "the GHI-MD" in moving_lines,
+              (moved_with_proposed.commands(),
+               sorted(moved_with_proposed.staged), moving_lines))
+        check(f"and the move of {case_name} leaves the "
+              "proposed-improvements-or-changes-files of the issue's other "
+              "GHI-MD where they are",
+              not ran_with(moved_with_proposed, "git rm",
+                           other_proposed_on_main)
+              and not any("570-test-design" in item
+                          for item in moved_with_proposed.staged),
+              str(moved_with_proposed.calls))
+        if author_text == FILE_TEXT:
+            check("the pointer line written into the author's moved file is "
+                  "reported with its path from the repository root",
+                  "added the line pointing to the "
+                  "proposed-improvements-or-changes-files under the first "
+                  f"heading of {MOVED_RELATIVE}" in moving_lines,
+                  moving_lines)
     moved_source = filed_ghi_md(scratch, directory="nc-systems/statusline")
-    tool.edit(moved_source, REPO, scratch, moved_with_proposed, quiet)
-    check("a proposed-improvements-or-changes-file beside the moved-from "
-          "path moves with the GHI-MD in the same commit, and the GHI-MD "
-          "carries the pointer line",
-          ran_with(moved_with_proposed, "git rm", proposed_on_main)
-          and moved_with_proposed.staged.get(proposed_moved_to, "")
-          .startswith("# Proposed improvements or changes from ghi-info")
-          and moved_with_proposed.count("git commit") == 1
-          and ("This GHI has proposed improvements or changes: read every "
-               "file in this folder whose name starts with "
-               f"`{EDIT_NAME[:-len('.md')]}-proposed-improvements-or-"
-               "changes-`.") in moved_with_proposed.staged.get(
-                   MOVED_RELATIVE, "").splitlines(),
-          (moved_with_proposed.commands(),
-           sorted(moved_with_proposed.staged)))
-    moved_source = filed_ghi_md(scratch, directory="nc-systems/statusline")
+
+    # Under a new name too, were the moved-from path known: the files take
+    # the GHI-MD's new name.
+    check("proposed-improvements-or-changes-files moving with a GHI-MD take "
+          "its new name, and only those beside the moved-from path",
+          tool.proposed_files_moving_with_ghi_md(
+              "docs/issues/570-old-name.md",
+              "nc-systems/statusline/570-new-name.md", "570-new-name", [
+                  "docs/issues/570-old-name.md",
+                  "docs/issues/570-old-name-proposed-improvements-or-changes-"
+                  "ghi-info-2026-10-03.md",
+                  "docs/issues/570-old-name-proposed-improvements-or-changes-"
+                  "ghi-info-2026-10-03-2.md",
+                  "docs/issues/570-old-name-extra.md",
+                  "nc-systems/other/570-old-name-proposed-improvements-or-"
+                  "changes-ghi-info-2026-10-03.md"])
+          == [("docs/issues/570-old-name-proposed-improvements-or-changes-"
+               "ghi-info-2026-10-03.md",
+               "nc-systems/statusline/570-new-name-proposed-improvements-or-"
+               "changes-ghi-info-2026-10-03.md"),
+              ("docs/issues/570-old-name-proposed-improvements-or-changes-"
+               "ghi-info-2026-10-03-2.md",
+               "nc-systems/statusline/570-new-name-proposed-improvements-or-"
+               "changes-ghi-info-2026-10-03-2.md")])
+    check("and nothing moves when the GHI-MD did not move",
+          tool.proposed_files_moving_with_ghi_md(
+              None, EDIT_RELATIVE, EDIT_NAME[:-len('.md')],
+              [proposed_on_main]) == [])
+    filed_ghi_md(scratch, directory="nc-systems/statusline")
 
     # A same-named copy in the other directory, while this run's own file
     # is where main has it, is not a move: it is an edit in place, and that
