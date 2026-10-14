@@ -97,11 +97,12 @@ line beginning "Root cause:", "Root cause not fixed:" or "No defect fixed.". The
 stand-in serves the description read, `gh pr view --json body`, from the route
 "body"; a case that arranges none is served the 1364 capture, a description
 with a plain "Root cause:" line, so every other case reaches its own point. Each
-description is captured from a merged nedschorus pull request: 1364 plain, 1360
-"Root cause not fixed:", 1278 an indented bullet, 1320 bold type, 1298 two
-labelled lines, 1363 no label at all, and 1279 "Root cause:" only in the middle
-of lines. No capture carries "No defect fixed.", so that case appends the line
-to the 1363 capture.
+description is captured from a nedschorus pull request, merged unless said: 1364
+plain, 1360 "Root cause not fixed:", 1278 an indented bullet, 1320 (open when
+captured) bold type, 1298 two labelled lines, 1363 no label at all, and 1279
+"Root cause:" only in the middle of lines. No capture carries "No defect
+fixed.", and none carries a label without its colon or period, so those cases
+append a line to the 1363 capture.
 
 Run: python3 scripts/merge-gate-test.py
 """
@@ -1022,12 +1023,25 @@ def case_description_with_two_labelled_lines(gate):
     return description_passes(gate, captured("nedschorus-nedschorus-1298-pr-view-body.json"))
 
 
-def case_description_no_defect_fixed_line(gate):
+def unlabelled_description_with_line(line):
     description = json.loads(captured("nedschorus-nedschorus-1363-pr-view-body.json").read_text())
-    description["body"] += "\n\nNo defect fixed."
+    description["body"] += "\n\n" + line
     path = Path(tempfile.mkstemp(dir=scratch, suffix="-body.json")[1])
     path.write_text(json.dumps(description))
-    return description_passes(gate, path)
+    return path
+
+
+def case_description_no_defect_fixed_line(gate):
+    return description_passes(gate, unlabelled_description_with_line("No defect fixed."))
+
+
+def case_description_root_cause_without_its_colon(gate):
+    return description_refused(
+        gate, unlabelled_description_with_line("Root cause the hook read a file it never checked exists."))
+
+
+def case_description_no_defect_fixed_without_its_period(gate):
+    return description_refused(gate, unlabelled_description_with_line("No defect fixed"))
 
 
 def case_description_without_a_label(gate):
@@ -1133,6 +1147,10 @@ CASES = [
     ("G2 a description with no labelled line refuses", case_description_without_a_label),
     ("G2 a description with \"Root cause:\" only in the middle of lines refuses",
      case_description_with_the_label_only_mid_line),
+    ("G2 a description with \"Root cause\" but no colon refuses",
+     case_description_root_cause_without_its_colon),
+    ("G2 a description with \"No defect fixed\" but no period refuses",
+     case_description_no_defect_fixed_without_its_period),
     ("G3 gh failing on the description read could not run", case_description_read_fails),
     ("G3 a description jq cannot read could not run", case_description_unparsable),
 ]
@@ -1280,6 +1298,10 @@ MUTATIONS = [
      [case_description_root_cause_not_fixed_line]),
     ("\"No defect fixed.\" not accepted", [("|No defect fixed(?:", "|No defect fixed never(?:")],
      [case_description_no_defect_fixed_line]),
+    ("the colon after \"Root cause\" made optional", [("(?:\\\\*\\\\*|__)?:|No", "(?:\\\\*\\\\*|__)?:?|No")],
+     [case_description_root_cause_without_its_colon]),
+    ("the period after \"No defect fixed\" dropped", [("(?:\\\\*\\\\*|__)?\\\\.)", "(?:\\\\*\\\\*|__)?)")],
+     [case_description_no_defect_fixed_without_its_period]),
     ("without the description read check",
      [('[ $? -eq 0 ] || cannot "could not read pull request $PR\'s description',
        ': || cannot "could not read pull request $PR\'s description')],
