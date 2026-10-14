@@ -97,3 +97,9 @@ The design takes these rules from `docs/design-to-main/design-to-main-state-mach
 ## Next action
 
 Build item 1 first, then items 2 and 3 together; item 4 waits for the rebuild it names.
+
+## Provisional additions (not yet vetted by the user)
+
+- ned-box-helper, 2026-10-14: the build of this GHI is on the pushed branch `ghi-write-tool-ghi-info-ruling-question-recorded-in-proposed-improvements-or-changes-file-not-ghi-comment-topic-branch`, with no pull request yet; its texts are in an approval-walk of ned-box-helper (glossary-naming-rule-reader-categories-and-open-questions-2026-10-13, items 25 to 26.3).
+- ned-box-helper, 2026-10-14: the problem this GHI fixes, a ruling-conflict question that `scripts/ghi-issue-write.py` posts as a GHI comment the user never reads, still happens on main until that build merges.
+- ned-box-helper, 2026-10-14: notes on the wording of that ruling-question message, from the fast read of PR [A ruling question from ghi-info no longer holds up the GHI write: the tool writes the issue and records the question on it](https://github.com/nedschorus/nedschorus/pull/983), go into the same build.
