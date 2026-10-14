@@ -476,9 +476,11 @@ class Watcher:
             exit_code, output = self.open_page(window["page"])
             if exit_code == MAC_BROWSER_PAGE_REFUSED_EXIT_STATUS:
                 # The Mac refuses a page while its mount of ned-box's home is missing, or before
-                # its clone knows the request; a terminal window needs neither.
-                self.log(None, "page refused by the Mac; the notice opens in a terminal window instead",
-                         window=what, opener_output=output)
+                # its clone knows the request; a terminal window needs neither. The page is
+                # dropped from the notice, so a notice still pending retries only the window.
+                self.log(None, "page refused by the Mac; the notice opens in a terminal window "
+                         "on the Mac instead", refused_page=what, opener_output=output)
+                window.pop("page")
                 what = window["path"]
                 exit_code, output = self.open_window(self.show_notice_words(window["path"]))
             opened = exit_code == 0

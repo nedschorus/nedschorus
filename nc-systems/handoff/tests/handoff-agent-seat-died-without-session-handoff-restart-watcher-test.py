@@ -1141,6 +1141,15 @@ def run_notice_page_cases(root: Path):
     crash_after_running(harness)
     check("a refused page whose terminal window the Mac also misses stays pending",
           len(harness.state["pending_notices"]) == 1, repr(harness.state["pending_notices"]))
+    harness.window_exit_codes = [1]
+    harness.run(SEEN_RUNNING + timedelta(minutes=17))
+    check("a notice whose page was refused retries only its terminal window, and the refusal "
+          "is logged once",
+          [window[0] == "page" for window in harness.windows] == [True, False, False]
+          and len(harness.state["pending_notices"]) == 1
+          and sum(entry["decision"].startswith("page refused by the Mac")
+                  for entry in harness.decisions()) == 1,
+          repr((harness.windows, harness.decisions())))
 
     page = watcher_module.failed_restart_notice_html_page_build("seat<b>&x", "seat<b>&x is down.", "now")
     check("the page escapes the seat's name in its title",

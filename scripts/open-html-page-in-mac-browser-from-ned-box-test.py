@@ -116,7 +116,9 @@ for candidate, writable_inside in (("/dev/shm", "/dev/shm"), ("/System/Volumes/D
         break
 if mount is None or not os.access(mount, os.W_OK):
     # The log-store must sit at the stand-in mount's top, which the Mac's /System/Volumes/Data does not let the user write.
-    print("SKIP  round-trip case: no mount point whose top this user may write (/dev/shm) on this machine")
+    print("SKIP  round-trip case: they need a mount point whose top directory this user can write, "
+          "to stand in for the Mac's mount of ned-box's home, and this machine has none; "
+          "/dev/shm is one on Linux")
 else:
     log_store = Path(mount) / "nedschorus-logs"
     # Shared with the other browser suite, which may run at the same time, so it is

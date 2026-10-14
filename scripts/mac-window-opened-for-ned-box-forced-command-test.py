@@ -484,7 +484,9 @@ check("a window request that is refused names the open-in-browser form too",
 
 if mount is None or not os.access(mount, os.W_OK):
     # The log-store must sit at the stand-in mount's top, which the Mac's /System/Volumes/Data does not let the user write.
-    print("SKIP  open-in-browser end-to-end cases: no mount point whose top this user may write (/dev/shm) on this machine")
+    print("SKIP  open-in-browser end-to-end cases: they need a mount point whose top directory this user can write, "
+          "to stand in for the Mac's mount of ned-box's home, and this machine has none; "
+          "/dev/shm is one on Linux")
 else:
     # The log-store sits inside the stand-in home, a real mount point, so a path maps onto itself.
     log_store = Path(mount) / "nedschorus-logs"
