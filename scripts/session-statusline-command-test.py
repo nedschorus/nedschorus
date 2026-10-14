@@ -212,6 +212,25 @@ finally:
 healthy_backup_line = statusline.status_line_text(payload)
 check("a healthy backup shows no warning", "⚠" not in healthy_backup_line, repr(healthy_backup_line))
 
+# The checker is found beside the script's __file__, so a scratch copy of the script's location loads a checker that raises.
+raising_checker_directory = isolation_root / "raising-checker"
+raising_checker_directory.mkdir()
+(raising_checker_directory / "backup-health-check.py").write_text(
+    "def diagnose():\n    raise RuntimeError('checker broke')\n", encoding="utf-8")
+original_statusline_file = statusline.__file__
+try:
+    statusline.__file__ = str(raising_checker_directory / "session-statusline-command.py")
+    try:
+        raising_checker_line = statusline.status_line_text(payload)
+    except Exception as error:  # noqa: BLE001 - the case reports the escape instead of crashing the suite
+        raising_checker_line = f"raised {error!r}"
+    check("a backup checker that raises still leaves a status line, without a warning",
+          raising_checker_line.startswith(statusline.location_segment(str(payload_checkout)))
+          and "⚠" not in raising_checker_line,
+          repr(raising_checker_line))
+finally:
+    statusline.__file__ = original_statusline_file
+
 # Every case above asserts what this script BELIEVES the harness sends.
 # That belief was wrong once and the suite could not tell: resets_at is epoch
 # seconds, the fixture sent an ISO string, and both countdowns were blank in
