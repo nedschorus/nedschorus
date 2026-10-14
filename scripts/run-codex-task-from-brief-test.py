@@ -7,6 +7,8 @@ sleeps past the deadline with a child that may ignore SIGTERM, or blocks
 reading stdin. Each case runs the real program as a process. The deadline and
 stdin cases run a second time with a fake `find` that sleeps 31 s first, so the
 credential-file scan done before Codex starts must not count against their limits.
+Two cases check the test's own bounds: a program stalled before it starts Codex,
+and one stalled after, are each stopped with every process they started.
 
 Run: python3 scripts/run-codex-task-from-brief-test.py
 Prints one line per case and exits non-zero if any case fails.
@@ -15,6 +17,7 @@ Prints one line per case and exits non-zero if any case fails.
 import json
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -27,6 +30,8 @@ PROGRAM = Path(__file__).with_name("run-codex-task-from-brief.py")
 FAKE_CODEX = r'''#!/usr/bin/env python3
 import json, os, signal, sys, time
 arguments = sys.argv[1:]
+if "FAKE_CODEX_PID_FILE" in os.environ:
+    open(os.environ["FAKE_CODEX_PID_FILE"], "w").write(str(os.getpid()))
 with open(os.environ["FAKE_CODEX_ARGUMENTS_FILE"], "w") as record:
     json.dump(arguments, record)
 report = arguments[arguments.index("-o") + 1]
@@ -81,6 +86,7 @@ try:
     brief.write_text("Do the task.\nSecond line.\n")
     arguments_file = scratch / "arguments.json"
     child_pid_file = scratch / "child.pid"
+    codex_pid_file = scratch / "codex.pid"
     # A scratch HOME keeps each run's credential-file scan, done before Codex starts,
     # from walking the real home directory; it only shortens the suite.
     scratch_home = scratch / "home"
@@ -93,23 +99,30 @@ try:
     slow_find.write_text(f'#!/bin/sh\nsleep 31\nexec "{real_find}" "$@"\n')
     slow_find.chmod(0o755)
 
-    def run(mode, *extra, stdin=None, timeout=60, path_first=None):
+    def run(mode, *extra, stdin=None, timeout=60, path_first=None,
+            start_line_timeout=600):
         """Run the program; return (completed, report, seconds since it said it is running Codex).
 
         timeout counts from that stderr line, which the program prints after building
         Codex's command line, so preparing the command line counts against no limit.
-        On timeout the program is killed and subprocess.TimeoutExpired is raised.
+        start_line_timeout bounds the wait for that line, only so a hung scan cannot
+        hang the suite. When either runs out, the program, the processes it started
+        and the fake Codex's process group are killed, and subprocess.TimeoutExpired
+        is raised.
         """
         path = os.pathsep.join(str(d) for d in (path_first, bin_dir) if d)
         environment = dict(os.environ, PATH=f"{path}{os.pathsep}{os.environ['PATH']}",
                            HOME=str(scratch_home), FAKE_CODEX_MODE=mode,
                            FAKE_CODEX_ARGUMENTS_FILE=str(arguments_file),
-                           FAKE_CODEX_CHILD_PID_FILE=str(child_pid_file))
+                           FAKE_CODEX_CHILD_PID_FILE=str(child_pid_file),
+                           FAKE_CODEX_PID_FILE=str(codex_pid_file))
         report = scratch / f"report-{mode}.md"
+        codex_pid_file.unlink(missing_ok=True)
         command = [sys.executable, str(PROGRAM), "-C", str(checkout), "--brief", str(brief),
                    "-o", str(report), *extra]
         process = subprocess.Popen(command, env=environment, stdin=stdin,
-                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                                   start_new_session=True)
         stdout_parts, stderr_lines = [], []
         codex_started = threading.Event()
         started_at = []
@@ -126,14 +139,21 @@ try:
                    threading.Thread(target=lambda: stdout_parts.append(process.stdout.read()))]
         for reader in readers:
             reader.start()
-        # The wait before that line has a bound only so a hung scan cannot hang the suite.
-        if not codex_started.wait(timeout=600):
-            process.kill()
-        start = started_at[0] if started_at else time.monotonic()
         try:
+            if not codex_started.wait(timeout=start_line_timeout):
+                raise subprocess.TimeoutExpired(command, start_line_timeout)
+            start = started_at[0] if started_at else time.monotonic()
             process.wait(timeout=max(0, timeout - (time.monotonic() - start)))
         except subprocess.TimeoutExpired:
-            process.kill()
+            # The program's group holds the scan; Codex runs in a session of its own.
+            group_leaders = [process.pid]
+            if codex_pid_file.exists():
+                group_leaders.append(int(codex_pid_file.read_text()))
+            for leader in group_leaders:
+                try:
+                    os.killpg(leader, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
             process.wait()
             for reader in readers:
                 reader.join()
@@ -307,6 +327,66 @@ try:
     else:
         print("SKIP  the deadline and stdin cases with a 31 s credential-file scan: "
               "the program runs find only on Linux")
+
+    def process_alive(pid):
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return False
+        # A killed process stays a zombie until init reaps it; a zombie is not left running.
+        try:
+            return Path(f"/proc/{pid}/stat").read_text().split(") ")[-1][0] != "Z"
+        except OSError:
+            return True
+
+    def pids_from(*pid_files):
+        return [int(f.read_text()) for f in pid_files if f.exists() and f.read_text()]
+
+    def kill_leftovers(pids):
+        for pid in pids:
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+
+    if sys.platform.startswith("linux"):
+        stalled_find_dir = scratch / "stalled-find-bin"
+        stalled_find_dir.mkdir()
+        stalled_find_pid_file = scratch / "stalled-find.pid"
+        stalled_find = stalled_find_dir / "find"
+        stalled_find.write_text(f'#!/bin/sh\necho $$ > "{stalled_find_pid_file}"\nexec sleep 20\n')
+        stalled_find.chmod(0o755)
+        started = time.monotonic()
+        try:
+            completed, _, _ = run("report", path_first=stalled_find_dir, start_line_timeout=2)
+            timed_out = False
+        except subprocess.TimeoutExpired:
+            timed_out = True
+        waited = time.monotonic() - started
+        time.sleep(0.5)
+        left = [pid for pid in pids_from(stalled_find_pid_file) if process_alive(pid)]
+        kill_leftovers(left)
+        check("a program stalled before it starts Codex is stopped at the start-line bound, "
+              "with the scan it started",
+              timed_out and waited < 15 and stalled_find_pid_file.exists() and not left,
+              f"timed out {timed_out}, {waited:.1f}s, left running {left}")
+    else:
+        print("SKIP  a program stalled before it starts Codex: the program runs find only on Linux")
+
+    child_pid_file.unlink(missing_ok=True)
+    try:
+        run("sleep", timeout=2)
+        timed_out = False
+    except subprocess.TimeoutExpired:
+        timed_out = True
+    time.sleep(0.5)
+    started_pids = pids_from(codex_pid_file, child_pid_file)
+    left = [pid for pid in started_pids if process_alive(pid)]
+    kill_leftovers(left)
+    check("a program stalled after it starts Codex is stopped at its timeout, "
+          "with Codex and the processes Codex started",
+          timed_out and len(started_pids) == 2 and not left,
+          f"timed out {timed_out}, started {started_pids}, left running {left}")
 
     empty_brief = scratch / "empty.md"
     empty_brief.write_text("  \n")
