@@ -482,12 +482,14 @@ check("an open-in-browser request opens no window", opened is None, opened)
 check("a window request that is refused names the open-in-browser form too",
       "scripts/open-html-page-in-mac-browser-from-ned-box.py" in run_program("open-windowx tmux")[0].stderr)
 
-if mount is None:
-    print("SKIP  open-in-browser end-to-end cases: no writable mount point (/dev/shm or /System/Volumes/Data) on this machine")
+if mount is None or not os.access(mount, os.W_OK):
+    # The log-store must sit at the stand-in mount's top, which the Mac's /System/Volumes/Data does not let the user write.
+    print("SKIP  open-in-browser end-to-end cases: no mount point whose top this user may write (/dev/shm) on this machine")
 else:
     # The log-store sits inside the stand-in home, a real mount point, so a path maps onto itself.
     log_store = Path(mount) / "nedschorus-logs"
-    created_log_store = not log_store.exists()
+    # Shared with the other browser suite, which may run at the same time, so it is
+    # created if missing and never removed: each suite removes only its own directory in it.
     log_store.mkdir(exist_ok=True)
     pages = Path(tempfile.mkdtemp(prefix="mac-browser-pages-", dir=log_store))
     page = pages / "notice.html"
@@ -524,8 +526,6 @@ else:
 
     shutil.rmtree(pages)
     shutil.rmtree(outside_page.parent)
-    if created_log_store:
-        log_store.rmdir()
 
 print()
 if failures:

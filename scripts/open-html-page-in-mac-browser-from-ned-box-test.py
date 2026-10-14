@@ -114,11 +114,13 @@ for candidate, writable_inside in (("/dev/shm", "/dev/shm"), ("/System/Volumes/D
     if os.path.ismount(candidate) and os.access(writable_inside, os.W_OK):
         mount = candidate
         break
-if mount is None:
-    print("SKIP  round-trip case: no writable mount point (/dev/shm or /System/Volumes/Data) on this machine")
+if mount is None or not os.access(mount, os.W_OK):
+    # The log-store must sit at the stand-in mount's top, which the Mac's /System/Volumes/Data does not let the user write.
+    print("SKIP  round-trip case: no mount point whose top this user may write (/dev/shm) on this machine")
 else:
     log_store = Path(mount) / "nedschorus-logs"
-    created_log_store = not log_store.exists()
+    # Shared with the other browser suite, which may run at the same time, so it is
+    # created if missing and never removed: each suite removes only its own directory in it.
     log_store.mkdir(exist_ok=True)
     files = Path(tempfile.mkdtemp(prefix="open-browser-round-trip-", dir=log_store))
     round_trip_page = files / "notice.html"
@@ -129,8 +131,6 @@ else:
     check("round trip: the Mac's confirmation reaches the caller",
           f"opened {round_trip_page} in the Mac's browser" in result.stdout, result.stdout)
     shutil.rmtree(files)
-    if created_log_store:
-        log_store.rmdir()
 
 shutil.rmtree(home)
 

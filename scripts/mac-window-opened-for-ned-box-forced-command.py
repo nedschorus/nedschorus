@@ -92,8 +92,9 @@ THE FOURTH ACCEPTED SHAPE, an HTML page to open in the default browser:
   list, so the Mac's default application for .html files, its browser, shows
   it. A page opened from a file runs no request to any server.
 
-So the most this verb can do is show, in the user's browser, a page ned-box's
-programs wrote into the log-store, which the Mac can already read.
+So the most this verb can do is open, with the Mac's default application for
+it, a file named .html under ned-box's log-store, which the Mac can already
+read. The name is checked, not the file a link leads to inside the log-store.
 
 Every request, accepted or refused, is appended to REQUEST_LOG_PATH, so the
 user can see what ned-box asked his Mac to do. An accepted request is logged

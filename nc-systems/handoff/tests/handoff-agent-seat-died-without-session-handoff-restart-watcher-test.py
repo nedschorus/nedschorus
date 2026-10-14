@@ -106,7 +106,9 @@ class Harness:
         # Recorded beside the windows, so one list gives the order of everything shown.
         self.windows.append(["page", path])
         exit_code = self.window_exit_codes.pop(0) if self.window_exit_codes else 0
-        return exit_code, "" if exit_code == 0 else "the Mac cannot be reached"
+        return exit_code, ("" if exit_code == 0 else
+                           "the Mac refused the request" if exit_code == 2
+                           else "the Mac cannot be reached")
 
     def open_seat_window(self, seat):
         self.seat_windows.append(seat)
@@ -1121,6 +1123,29 @@ def run_notice_page_cases(root: Path):
     check("a pending page is opened once the Mac answers",
           harness.state["pending_notices"] == [] and harness.windows[-1][0] == "page"
           and len(harness.windows) == 2, repr(harness.windows))
+
+    harness = Harness(root / "page-refused-by-the-mac",
+                      recovery_result=(1, "merge-lane-2: REFUSED"), window_exit_codes=[2, 0])
+    crash_after_running(harness)
+    check("a page the Mac refuses opens the notice in a terminal window instead, at once",
+          len(harness.windows) == 2 and harness.windows[0][0] == "page"
+          and harness.windows[1][-2] == "--show-notice"
+          and harness.windows[1][-1].endswith("recovery-failed.txt")
+          and harness.state["pending_notices"] == [], repr(harness.windows))
+    check("a page the Mac refuses is logged",
+          any(entry["decision"].startswith("page refused by the Mac")
+              for entry in harness.decisions()), repr(harness.decisions()))
+
+    harness = Harness(root / "page-refused-window-unreachable",
+                      recovery_result=(1, "merge-lane-2: REFUSED"), window_exit_codes=[2, 1])
+    crash_after_running(harness)
+    check("a refused page whose terminal window the Mac also misses stays pending",
+          len(harness.state["pending_notices"]) == 1, repr(harness.state["pending_notices"]))
+
+    page = watcher_module.notice_page_html("seat<b>&x", "seat<b>&x is down.", "now")
+    check("the page escapes the seat's name in its title",
+          "<title>seat&lt;b&gt;&amp;x: the crash watcher needs you</title>" in page
+          and "<title>seat<b>" not in page, page[:600])
 
     state = {"seats": {}, "pending_notices": [{"path": str(root / "old-notice.txt")}],
              "reported_errors": []}

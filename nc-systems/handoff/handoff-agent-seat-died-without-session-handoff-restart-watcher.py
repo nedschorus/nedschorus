@@ -53,9 +53,10 @@ failure become a notice. Each notice is kept as text, and also written as an
 HTML page under notice-pages/ in LOG_DIRECTORY, which the program opens in the
 browser on his Mac with scripts/open-html-page-in-mac-browser-from-ned-box.py:
 a browser tab stays findable where one more terminal window is easily lost.
-Only when the page cannot be written does the notice open instead in a
-terminal window on his Mac, with scripts/open-mac-window-from-ned-box.py
-running --show-notice. A refused seat gets one notice until
+When the page cannot be written, or the Mac refuses it (its mount of ned-box's
+home is missing, or its clone does not yet know the request), the notice opens
+instead in a terminal window on his Mac, with
+scripts/open-mac-window-from-ned-box.py running --show-notice. A refused seat gets one notice until
 it is seen running again or restarted, however long the refusal lasts. The cases it leaves
 alone stay silent, logged only: a stop on purpose, and a seat not seen running
 since the machine booted. A restart it carries out shows no
@@ -123,6 +124,10 @@ NED_BOX_HOME = "/home/nedlern"
 NED_BOX_HOME_ON_THE_MAC = "/Volumes/nedhome"
 # launch-claude-ubuntu is not on the Mac's PATH; the Mac's checkout holds it.
 MAC_LAUNCHER = "/Users/el/Projects/nedschorus/scripts/launch-claude-ubuntu"
+
+# open-html-page-in-mac-browser-from-ned-box.py's EXIT_USAGE_OR_REFUSED: the page was refused,
+# here or by the Mac, so retrying the page cannot help.
+MAC_BROWSER_PAGE_REFUSED_EXIT_STATUS = 2
 
 # recover-crashed-seats.py's ALL_AGENT_SEATS_RECOVERED_BUT_MAC_WINDOW_OPEN_FAILED_EXIT_STATUS:
 # the seat came up, but its window on the Mac did not open.
@@ -468,6 +473,13 @@ class Watcher:
         if "page" in window and self.open_page is not None:
             what = window["page"]
             exit_code, output = self.open_page(window["page"])
+            if exit_code == MAC_BROWSER_PAGE_REFUSED_EXIT_STATUS:
+                # The Mac refuses a page while its mount of ned-box's home is missing, or before
+                # its clone knows the request; a terminal window needs neither.
+                self.log(None, "page refused by the Mac; the notice opens in a terminal window instead",
+                         window=what, opener_output=output)
+                what = window["path"]
+                exit_code, output = self.open_window(self.show_notice_words(window["path"]))
             opened = exit_code == 0
         elif "path" in window:
             what = window["path"]
