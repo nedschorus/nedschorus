@@ -2334,6 +2334,38 @@ with tempfile.TemporaryDirectory() as notes_scratch:
           "merges-from-main" not in [note.get("kind") for note in queued_notes(notes_seat)]
           and (notes_seat / "c.txt").exists(), str(queued_notes(notes_seat)))
 
+    no_main_repo = tmp / "no-origin-main"
+    no_main_repo.mkdir()
+    git(["init", "-q", "-b", "seat"], no_main_repo)
+    configure_identity(no_main_repo)
+    commit_file(no_main_repo, "own.txt", "mine\n", "the seat's own work")
+    no_main_run = stop_only(no_main_repo)
+    check("a checkout with no origin/main and no stamp yet runs to the end without a crash, "
+          "and queues the could-not-count note",
+          no_main_run.returncode == 0 and "Traceback" not in no_main_run.stderr
+          and "git could not count how far seat is behind origin/main"
+          in " ".join(note["text"] for note in queued_notes(no_main_repo)),
+          no_main_run.stderr + str(queued_notes(no_main_repo)))
+
+    origin_repo, notes_seat = notes_fixture()
+    commit_file(notes_seat, "own.txt", "mine\n", "the seat's own work")
+    commit_file(origin_repo, "a.txt", "a\n", "advance a")
+    git(["fetch", "-q", "origin"], notes_seat)
+    git(["merge", "-q", "--no-edit", "origin/main"], notes_seat)
+    git(["push", "-q", "-u", "origin", "seat"], notes_seat)
+    stop_only(notes_seat)
+    deliver(notes_seat)
+    git(["commit", "-q", "--amend", "-m", "the merge, amended"], notes_seat)
+    carried_run = stop_only(notes_seat, path_prefix=merges_unlisted)
+    carried_kinds = sorted(note.get("kind") for note in queued_notes(notes_seat))
+    check("when git cannot list the merges and the rewritten head changes, the carried "
+          "merges are told again with their count, without a crash",
+          carried_run.returncode == 0 and "Traceback" not in carried_run.stderr
+          and carried_kinds == ["merges-from-main", "rewritten-head"]
+          and "seat carries 1 merge commit(s) from main"
+          in " ".join(note["text"] for note in queued_notes(notes_seat)),
+          carried_run.stderr + str(queued_notes(notes_seat)))
+
     def write_stamp_notes(path, notes):
         path.write_text(json.dumps({"pending_agent_notes": notes}) + "\n", encoding="utf-8")
 
