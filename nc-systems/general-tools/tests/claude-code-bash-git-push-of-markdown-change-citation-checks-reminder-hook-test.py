@@ -158,13 +158,22 @@ def main():
               is_reminder(text, top) and "It sends markdown-branch," in text
               and "code-branch" not in text, repr(text))
 
-        text = run_main("git status && git push origin markdown-branch", repository)
-        check("a git command that moves no ref, earlier in the call, leaves the push reminded",
-              is_reminder(text, top), repr(text))
-        for command in ("git commit -q -m x && git push origin markdown-branch",
-                        "(git switch -q markdown-branch) && git push"):
+        for command in ("git status && git push origin markdown-branch",
+                        "git branch -v && git push origin markdown-branch",
+                        "git fetch -q origin && git push origin markdown-branch"):
             text = run_main(command, repository)
-            subcommand = "commit" if "commit" in command else "switch"
+            check(f"a git command that moves no ref, earlier in the call, leaves the push reminded: {command}",
+                  is_reminder(text, top), repr(text))
+        for command, subcommand in (
+                ("git commit -q -m x && git push origin markdown-branch", "commit"),
+                ("(git switch -q markdown-branch) && git push", "switch"),
+                (f"git -C {repository} commit -q -m x && git push origin markdown-branch", "commit"),
+                ("git -c user.name=x commit -q -m x; git push origin markdown-branch", "commit"),
+                ("git branch -f code-branch markdown-branch && git push origin code-branch", "branch"),
+                ("git branch --force code-branch markdown-branch && git push origin code-branch", "branch"),
+                ("git branch -M code-branch && git push origin code-branch", "branch"),
+                ("git fetch -q . markdown-branch:code-branch && git push origin code-branch", "fetch")):
+            text = run_main(command, repository)
             check(f"a push after a git {subcommand} in the same call gives the failure line naming it: {command}",
                   is_failure_line(text, f"an earlier command in this call, git {subcommand}, can change what"),
                   repr(text))

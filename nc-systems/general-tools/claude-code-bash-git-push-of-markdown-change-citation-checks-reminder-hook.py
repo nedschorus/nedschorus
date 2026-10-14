@@ -22,7 +22,9 @@ another repository, gets no reminder, since the commands would not run there.
 The hook runs before the Bash call, so it sees the refs as they are before any
 of the call's commands. When a git command earlier in the same call can move
 a ref, as `git commit -m x && git push` does, the pushed ref is not judged:
-the hook gives its failure line instead, naming that command.
+the hook gives its failure line instead, naming that command. The commands
+counted are those in REF_CHANGING_GIT_SUBCOMMANDS, git branch with an option
+that moves, copies or renames a branch, and git fetch with a src:dst refspec.
 
 Any failure, git erroring, the git calls running past the hook's time budget,
 the shell reader failing, or the force-push guard's file failing to load,
@@ -69,6 +71,9 @@ ENVIRONMENT_ASSIGNMENT_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 # git subcommands that can move a ref or HEAD before a later push in the same call.
 REF_CHANGING_GIT_SUBCOMMANDS = {"am", "checkout", "cherry-pick", "commit", "merge", "pull",
                                 "rebase", "reset", "revert", "switch", "update-ref"}
+# Short options of git branch that set, copy or rename a branch; a cluster such as -fm counts too.
+BRANCH_REF_MOVING_SHORT_OPTIONS = set("fcCmM")
+BRANCH_REF_MOVING_LONG_OPTIONS = {"--force", "--copy", "--move"}
 
 REMINDER_TEMPLATE = (
     HOOK_NAME + ": this push goes ahead now. It sends {ref}, which changes "
@@ -138,10 +143,11 @@ class GitCaller:
 
 
 def git_subcommand(words):
-    """Return the subcommand a git simple command runs, or None when the words do not run git."""
+    """Return a git simple command's subcommand and the words after it, or (None, []) when the
+    words do not run git."""
     index, _ = shell_reader.simple_command_program_index_skipping_wrappers(words)
     if index is None or not shell_reader.is_program(words[index], "git"):
-        return None
+        return None, []
     index += 1
     while index < len(words):
         word = words[index]
@@ -150,7 +156,23 @@ def git_subcommand(words):
         elif word.startswith("-"):
             index += 1
         else:
-            return word
+            return word, list(words[index + 1:])
+    return None, []
+
+
+def ref_changing_git_command(words):
+    """Return the name of the git command the words run when it can move a ref, else None."""
+    subcommand, arguments = git_subcommand(words)
+    if subcommand in REF_CHANGING_GIT_SUBCOMMANDS:
+        return subcommand
+    if subcommand == "branch" and any(
+            word in BRANCH_REF_MOVING_LONG_OPTIONS
+            or (word.startswith("-") and not word.startswith("--")
+                and BRANCH_REF_MOVING_SHORT_OPTIONS & set(word[1:]))
+            for word in arguments):
+        return "branch"
+    if subcommand == "fetch" and any(":" in word for word in arguments):
+        return "fetch"
     return None
 
 
@@ -252,9 +274,9 @@ def messages_for_command(command, payload_cwd, runner=None, clock=time.monotonic
             continue
         invocation = force_push_guard.find_git_push_invocation(words)
         if invocation is None:
-            subcommand = git_subcommand(words)
-            if subcommand in REF_CHANGING_GIT_SUBCOMMANDS:
-                earlier_ref_change = subcommand
+            ref_change = ref_changing_git_command(words)
+            if ref_change is not None:
+                earlier_ref_change = ref_change
             continue
         try:
             found = push_messages(invocation, directory, unresolved_directory, earlier_ref_change, git)
