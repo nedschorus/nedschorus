@@ -6,6 +6,7 @@ the worktree is on, so a later agent-session of the same agent-seat is not told 
 that branch, a new branch that adds the same name is told it, and each other worktree keeps its
 own record. Entries for branches that no longer exist are dropped when the record is written.
 The content cache and the once-per-session failure reports stay per agent-session.
+A branch whose name no agent chose is not reported: see branch_named_by_no_agent().
 """
 # The hook never blocks: any failure leaves the agent's turn as it was, apart from one line saying the check failed.
 
@@ -28,6 +29,8 @@ FILE_WRITING_TOOL_NAMES = frozenset({"Write", "Edit", "MultiEdit", "NotebookEdit
 SHELL_TOOL_NAME = "Bash"
 STATE_DIRECTORY = Path(tempfile.gettempdir()) / "new-shared-names-reminder-hook-state"
 SESSION_ID_SAFE_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
+# Claude Code names an isolated subagent's worktree branch worktree-agent-<17 hex digits>.
+HARNESS_SUBAGENT_WORKTREE_BRANCH_PATTERN = re.compile(r"^worktree-agent-[0-9a-f]{17}$")
 LISTER_PATH = Path(__file__).resolve().parent / "new-shared-names-in-changed-files-list.py"
 
 _git_machine_readable_output_spec = importlib.util.spec_from_file_location(
@@ -69,6 +72,12 @@ FAILURE_TEMPLATE = (
     "If the error names origin/main, run `git fetch`; the check runs again after your next "
     "edit.\n"
     "Until it works, check new names by hand against {page}."
+)
+BRANCH_CHECK_FAILURE_TEMPLATE = (
+    "new-shared-names-reminder: the check of whether this branch's name is new failed, so "
+    "the branch's name is not being listed; new names in changed files are still listed: {error}\n"
+    "The check runs again after your next edit.\n"
+    "Until it works, if you chose this branch's name, check it by hand against {page}."
 )
 
 
@@ -286,8 +295,27 @@ class BranchCheckFailure(Exception):
     pass
 
 
+def branch_named_by_no_agent(checkout: Path, branch: str) -> bool:
+    """Whether the branch is one whose name no agent chose: the branch Claude Code makes for an
+    isolated subagent's worktree, or an agent-seat's own branch in its agent-home.
+
+    An agent-home is ~/agents/<seat>, on the branch <seat>, a name the user approved when he made
+    the agent-seat. The location matters: a topic worktree is often named after its branch, so a
+    branch equal to its directory's name anywhere else is still reported.
+    """
+    if HARNESS_SUBAGENT_WORKTREE_BRANCH_PATTERN.match(branch):
+        return True
+    try:
+        agent_homes = (Path.home() / "agents").resolve()
+        top_level = checkout.resolve()
+    except (OSError, RuntimeError) as error:
+        raise BranchCheckFailure(f"could not resolve the home directory's agents directory or this checkout: {error}") from error
+    return top_level.parent == agent_homes and top_level.name == branch
+
+
 def unreported_new_branch(checkout: Path, reported) -> str:
-    """Return this worktree's branch when origin lacks it and it is not yet reported, else "".
+    """Return this worktree's branch when origin lacks it, it is not yet reported and an agent
+    chose its name, else "".
 
     Only this worktree's own branch is considered: other worktrees of the same clone share
     refs/heads, and their branches belong to other agents.
@@ -306,7 +334,7 @@ def unreported_new_branch(checkout: Path, reported) -> str:
         first_line = (finished.stderr.strip().splitlines() or [""])[0][:200]
         raise BranchCheckFailure(f"git symbolic-ref exited {finished.returncode}: {first_line}")
     branch = finished.stdout.strip()
-    if not branch or f"branch\t{branch}" in reported:
+    if not branch or f"branch\t{branch}" in reported or branch_named_by_no_agent(checkout, branch):
         return ""
     try:
         lookup = subprocess.run(["git", "show-ref", "--verify", "--quiet", f"refs/remotes/origin/{branch}"],
@@ -324,13 +352,13 @@ def unreported_new_branch(checkout: Path, reported) -> str:
     return branch
 
 
-def failure_report_once(state: dict, error: str):
+def failure_report_once(state: dict, error: str, template: str = FAILURE_TEMPLATE):
     """Return the failure text the first time this error is seen in the agent-session, else None."""
     failures = set(state.get("reported_failures", []))
     if error in failures:
         return None
     state["reported_failures"] = sorted(failures | {error})
-    return FAILURE_TEMPLATE.format(error=error, page=NAMING_PAGE_PATH)
+    return template.format(error=error, page=NAMING_PAGE_PATH)
 
 
 def reminder_text(new_names) -> str:
@@ -424,7 +452,7 @@ def main() -> int:
         new_branch = unreported_new_branch(checkout, reported)
     except BranchCheckFailure as failure:
         new_branch = ""
-        failure_text = failure_report_once(state, str(failure))
+        failure_text = failure_report_once(state, str(failure), BRANCH_CHECK_FAILURE_TEMPLATE)
         if failure_text:
             messages.append(failure_text)
     # A shell command that changed no file and left no new branch has nothing new to list.

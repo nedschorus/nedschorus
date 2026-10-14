@@ -1279,7 +1279,7 @@ except r.ShellParserUnavailable as error:
           words[0].endswith("so nothing is checked there. To install it by hand, run this command "
                             "in a Terminal on your Mac:\" Then give the install command on a line "
                             "of its own:")
-          and words[1] == f"ssh nedlern@ned-box 'python3 -m pip install --user "
+          and words[1] == f"ssh nedlern@ned-box '{sys.executable} -m pip install --user "
           f"--break-system-packages -r {reader.REQUIREMENTS_FILE}'", words)
     check("the words to report end with what the install printed, quoted as it is",
           words[2:] == ["Then pass on what the install printed, quoted as it is: pip: no network"],
@@ -1288,11 +1288,20 @@ except r.ShellParserUnavailable as error:
         "Neds-MacBook", "pip: no network", "nothing is checked there").splitlines()
     check("for any other machine, the install command is run on that machine as it is",
           "run this command on Neds-MacBook:" in words[0]
-          and words[1] == f"python3 -m pip install --user --break-system-packages "
+          and words[1] == f"{sys.executable} -m pip install --user --break-system-packages "
           f"-r {reader.REQUIREMENTS_FILE}", words)
+    real_executable = sys.executable
+    sys.executable = "/usr/bin/python3"
+    try:
+        words = reader.tree_sitter_bash_install_failure_report_words_build(
+            "Neds-MacBook", "pip: no network", "nothing is checked there").splitlines()
+    finally:
+        sys.executable = real_executable
+    check("the install command names the interpreter the guard runs under, not a bare python3",
+          words[1].startswith("/usr/bin/python3 -m pip install "), words)
     on_ned_box = __import__("socket").gethostname().split(".")[0] == "ned-box"
     check("the install command for ned-box is given in the ssh form the user runs from the Mac",
-          on_ned_box == ("ssh nedlern@ned-box 'python3 -m pip install" in first), first)
+          on_ned_box == (f"ssh nedlern@ned-box '{sys.executable} -m pip install" in first), first)
     check("an agent-session no user attends is not told to tell the user",
           "Tell the user" not in unattended and "without checking it" in unattended
           and "No user attends" in unattended, unattended)

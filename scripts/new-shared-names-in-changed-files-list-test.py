@@ -96,8 +96,10 @@ def names_only(listed):
     return {name for _, _, name in listed}
 
 
-def run_hook(clone: Path, state_root: Path, payload: dict):
+def run_hook(clone: Path, state_root: Path, payload: dict, home=None):
     environment = dict(os.environ, TMPDIR=str(state_root))
+    if home is not None:
+        environment["HOME"] = str(home)
     body = dict({"session_id": "session-one", "cwd": str(clone)}, **payload)
     finished = subprocess.run([sys.executable, str(HOOK_PATH)], input=json.dumps(body),
                               capture_output=True, text=True, env=environment)
@@ -346,6 +348,82 @@ def case_hook_reports_this_worktrees_new_branch(root):
         reported = set(re.findall(r"^  (\S+) \(branch\)", context, re.M))
         expected = {branch} if branch else set()
         check(f"after {command!r} the hook reports {expected or 'no branch'}", reported == expected, context)
+
+
+def reported_branches(context: str):
+    return set(re.findall(r"^  (\S+) \(branch\)", context, re.M))
+
+
+def case_subagent_worktree_branch_claude_code_named_is_not_reported(root):
+    clone = make_clone(root, BASE_MAIN_FILES)
+    state_root = root / "state"
+    state_root.mkdir()
+    for branch, expected in (("worktree-agent-0123456789abcdef0", set()),
+                             ("worktree-agent-abc", {"worktree-agent-abc"}),
+                             ("worktree-agent-0123456789abcdef", {"worktree-agent-0123456789abcdef"}),
+                             ("worktree-agent-FEDCBA9876543210F", {"worktree-agent-FEDCBA9876543210F"}),
+                             ("worktree-agent-0123456789abcdef0-fix", {"worktree-agent-0123456789abcdef0-fix"})):
+        git(["switch", "-q", "-c", branch], clone)
+        _, context = run_hook(clone, state_root, {"tool_name": "Bash", "session_id": f"session-{branch}",
+                                                  "tool_input": {"command": f"git switch -c {branch}"}})
+        check(f"on branch {branch} the hook reports {expected or 'no branch'}",
+              reported_branches(context) == expected, context)
+
+
+def case_agent_seat_branch_in_its_agent_home_is_not_reported(root):
+    clone = make_clone(root, BASE_MAIN_FILES)
+    home = root / "home"
+    agent_home = home / "agents" / "some-seat"
+    agent_home.parent.mkdir(parents=True)
+    git(["worktree", "add", "-q", "-b", "some-seat", str(agent_home)], clone)
+    state_root = root / "state"
+    state_root.mkdir()
+    _, context = run_hook(agent_home, state_root, {"tool_name": "Bash", "session_id": "session-seat",
+                                                   "tool_input": {"command": "ls"}}, home=home)
+    check("an agent-seat's own branch in its agent-home ~/agents/<seat> is not reported",
+          reported_branches(context) == set(), context)
+    _, elsewhere = run_hook(agent_home, state_root, {"tool_name": "Bash", "session_id": "session-other-home",
+                                                     "tool_input": {"command": "ls"}}, home=root / "other-home")
+    check("the same branch and directory outside the home's agents directory is reported",
+          reported_branches(elsewhere) == {"some-seat"}, elsewhere)
+    git(["switch", "-q", "-c", "a-topic-in-the-agent-home"], agent_home)
+    _, topic = run_hook(agent_home, state_root, {"tool_name": "Bash", "session_id": "session-seat",
+                                                 "tool_input": {"command": "git switch -c a-topic-in-the-agent-home"}},
+                        home=home)
+    check("a topic branch in an agent-home is reported",
+          reported_branches(topic) == {"a-topic-in-the-agent-home"}, topic)
+    topic_worktree = home / "agents" / "some-seat-worktrees" / "a-named-topic"
+    git(["worktree", "add", "-q", "-b", "a-named-topic", str(topic_worktree)], clone)
+    _, named = run_hook(topic_worktree, state_root, {"tool_name": "Bash", "session_id": "session-topic",
+                                                     "tool_input": {"command": "ls"}}, home=home)
+    check("a topic branch in a worktree named after it, below ~/agents but not directly in it, is reported",
+          reported_branches(named) == {"a-named-topic"}, named)
+
+
+def case_agent_home_check_failure_is_told_and_no_branch_reported(root):
+    clone = make_clone(root, BASE_MAIN_FILES)
+    git(["switch", "-q", "-c", "topic-while-home-unknown"], clone)
+    write(clone, "scripts/file-added-while-home-unknown.py", "print('x')\n")
+    hook = load_module("hook_for_home_failure_case", HOOK_PATH)
+    real_home = Path.home
+
+    def home_that_fails():
+        raise RuntimeError("Could not determine home directory.")
+    Path.home = staticmethod(home_that_fails)
+    try:
+        code, context = run_hook_in_process(hook, root, clone, {"tool_name": "Bash",
+                                            "tool_input": {"command": "git switch -c topic-while-home-unknown"}}, {})
+    finally:
+        Path.home = real_home
+    check("a failed agent-home check exits 0", code == 0)
+    check("a failed agent-home check is told to the agent",
+          "could not resolve the home directory's agents directory" in context, context)
+    check("a failed agent-home check reports no branch", "(branch)" not in context, context)
+    check("a failed agent-home check still lists the new names in changed files",
+          "scripts/file-added-while-home-unknown.py (file-path)" in context, context)
+    check("a failed agent-home check's line says names in changed files are still listed",
+          "new names in changed files are still listed" in context
+          and "no names are being listed" not in context, context)
 
 
 def case_branch_origin_already_has_is_not_reported(root):
@@ -1006,6 +1084,8 @@ def case_hook_reports_failure_once(root):
     code, first = run_hook(lonely, state_root, {"tool_name": "Write", "tool_input": {"file_path": "a.md"}})
     check("a failing check exits 0", code == 0)
     check("a failing check tells the agent the check failed", "failed" in first and "origin/main" in first, first)
+    check("a failing check of changed files says no names are being listed",
+          "no names are being listed" in first and "still listed" not in first, first)
     _, second = run_hook(lonely, state_root, {"tool_name": "Write", "tool_input": {"file_path": "a.md"}})
     check("the failure text is short", len(first) < 800, str(len(first)))
     check("the same failure is told only once per agent-session", second == "", second)
@@ -1037,6 +1117,9 @@ def main() -> int:
              case_timeout_failure_text_is_stable, case_hook_shows_names_past_the_cap_later,
              case_hook_reports_this_worktrees_new_branch, case_two_worktrees_each_report_their_own_branch,
              case_branch_origin_already_has_is_not_reported,
+             case_subagent_worktree_branch_claude_code_named_is_not_reported,
+             case_agent_seat_branch_in_its_agent_home_is_not_reported,
+             case_agent_home_check_failure_is_told_and_no_branch_reported,
              case_branch_check_failure_is_told_and_the_file_check_still_runs,
              case_remote_branch_lookup_failure_is_told_and_no_branch_reported,
              case_branch_check_failure_on_a_quiet_shell_call_is_told,

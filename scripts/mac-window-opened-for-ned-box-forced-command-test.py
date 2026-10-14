@@ -232,13 +232,14 @@ for name in ["merge-lane-2", "reboot_test", "_x", "9", "a.b", ".hidden", "-v", "
           name)
 
 
-def mac_bash_range_rules(bash="bash"):
+def mac_bash_range_rules(bash="bash", installed_locales=None):
     """Return (bash options, locale environment) that make bash match ranges as the Mac's bash 3.2 does, or a skip reason."""
     # The Mac's /bin/bash 3.2 has no globasciiranges, so a bracket range such as a-z follows the
     # UTF-8 locale's collation there and can match é; bash 5 with globasciiranges off does the same.
     # Setting the option is the probe: `shopt globasciiranges` exits 1 both when the option is off
     # and when this bash has no such option.
-    locales = subprocess.run(["locale", "-a"], capture_output=True, text=True).stdout.split()
+    locales = (installed_locales if installed_locales is not None
+               else subprocess.run(["locale", "-a"], capture_output=True, text=True).stdout.split())
     utf8_locale = next((name for name in locales if name.lower() in ("en_us.utf8", "en_us.utf-8")), None)
     if utf8_locale is None:
         return "no en_US UTF-8 locale is installed"
@@ -276,9 +277,19 @@ with tempfile.TemporaryDirectory() as no_option_directory:
         "done\n"
         f"exec {shutil.which('bash')} -c 'shopt -u globasciiranges; . \"$0\"' \"$@\"\n")
     no_option_bash.chmod(0o755)
-    check("the range-rules probe drops globasciiranges for a bash that has no such option",
-          not isinstance(mac_bash_range_rules(str(no_option_bash)), str)
-          and mac_bash_range_rules(str(no_option_bash))[0] == (), mac_bash_range_rules(str(no_option_bash)))
+
+    def check_probe_drops_missing_option(installed_locales=None):
+        rules = mac_bash_range_rules(str(no_option_bash), installed_locales)
+        if isinstance(rules, str):
+            print(f"SKIP  the range-rules probe with a bash that has no globasciiranges: {rules}")
+            return "skipped"
+        check("the range-rules probe drops globasciiranges for a bash that has no such option",
+              rules[0] == (), rules)
+        return "checked"
+
+    check_probe_drops_missing_option()
+    check("with no en_US UTF-8 locale installed, the probe's case skips instead of failing",
+          check_probe_drops_missing_option(installed_locales=[]) == "skipped")
     check_seat_names_under_mac_range_rules(str(no_option_bash), " (a bash with no globasciiranges)")
 
 

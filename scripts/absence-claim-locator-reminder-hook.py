@@ -28,9 +28,11 @@ THE HOOK STAYS SILENT when any of these holds:
     become the child's last words, which its caller reads as the answer;
   - a SubagentStop payload names no agent_transcript_path: the main
     transcript holds the parent's reply, not the subagent's;
-  - a SubagentStop payload names an agent_transcript_path that does not
-    exist: Claude Code sends that for most subagent stops, so it is the
-    ordinary case, not a fault, and nothing is logged for it.
+  - the transcript the payload names does not exist (reading it raises
+    FileNotFoundError): Claude Code sends that for most subagent stops, and
+    rarely for a Stop, so it is the ordinary case, not a fault, and nothing
+    is logged for it. Any other error reading it, such as a permission
+    error, is a fault.
 
 OUTPUT when it reminds: {"decision": "block", "reason": <reminder>}, which
 keeps the agent going with the reminder as its next instruction. At
@@ -340,9 +342,10 @@ def run(stdin_text, environment, home, now):
         transcript_path = payload.get("transcript_path")
     if not transcript_path:
         return None
-    if event == "SubagentStop" and not Path(transcript_path).expanduser().exists():
+    try:
+        reply, locator_ran = read_turn(Path(transcript_path).expanduser())
+    except FileNotFoundError:
         return None
-    reply, locator_ran = read_turn(Path(transcript_path).expanduser())
     matches = absence_claim_matches(reply)
     if not matches:
         return None

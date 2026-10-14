@@ -225,8 +225,8 @@ read, for that reason — see `issue_title_after_this_edit`.
 
 THE CONFLICT THIS REFUSES ON IS THE FILE'S, NOT THE BODY'S. The user ruled
 on 2026-09-08 that a GHI edit checks for conflicts and refuses rather than
-merges; scripts/ghi-issue-body-edit.py is that ruling built, for the world
-where an author typed the body. For a link-only-GHI the body is computed from
+merges; that ruling was built for the world where an author typed the
+body. For a link-only-GHI the body is computed from
 main's file set, so two seats computing it reach the same answer and there
 is no body change to lose. The content is in the file, so the file is where
 the check belongs: main's copy is compared against the copy at `git
@@ -1601,9 +1601,8 @@ def writable_relative_path(relative: str) -> bool:
 
 
 def normalized(text) -> str:
-    """The comparable form of an issue body — LF, no trailing newlines — the
-    same normalization `scripts/ghi-issue-body-edit.py` compares with, and
-    for its reason: `gh` returns a body with a newline that is not part of
+    """The comparable form of an issue body — LF, no trailing newlines —
+    because `gh` returns a body with a newline that is not part of
     it, so an un-normalized comparison finds a difference in every body and
     rewrites bodies that already say the right thing."""
     return (text or "").replace("\r\n", "\n").replace("\r", "\n").rstrip("\n")
@@ -2447,8 +2446,7 @@ class BadInvocationArgumentParser(argparse.ArgumentParser):
     2: the exit codes it documents are 0, 1, 64 and 65, so a caller reading
     that list cannot place a 2 at all. 64 already means the caller's input is
     wrong, which a mistyped flag is. Usage text and message are argparse's,
-    unchanged; only the exit code moves. The form is
-    scripts/ghi-issue-body-edit.py's parser of the same name."""
+    unchanged; only the exit code moves."""
 
     def error(self, message):
         self.print_usage(sys.stderr)

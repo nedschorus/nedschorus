@@ -27,6 +27,9 @@ Every push runs under an outer timeout in its own process group, so a hook
 that hangs fails its case instead of wedging the suite.
 """
 
+import contextlib
+import importlib.util
+import io
 import os
 import shutil
 import signal
@@ -42,6 +45,8 @@ HOOK_DIRECTORY_NAME = "git-client-side-hooks"
 PRE_PUSH_HOOK = SCRIPTS_DIRECTORY / HOOK_DIRECTORY_NAME / "pre-push"
 PREPARE_COMMIT_MSG_HOOK = SCRIPTS_DIRECTORY / HOOK_DIRECTORY_NAME / "prepare-commit-msg"
 CONFLICT_CHECK_RUNNER = SCRIPTS_DIRECTORY / "git-client-side-hooks-pre-push-conflict-check.py"
+MUTATION_TESTING_WORKTREE_CHECK = (SCRIPTS_DIRECTORY / "git-client-side-hooks-pre-push-mutation-"
+                                   "testing-worktree-push-refusal.py")
 REAL_CONFLICT_CHECK = SCRIPTS_DIRECTORY / "branch-conflict-check.py"
 GIT_OUTPUT_MODULE_RELATIVE_PATH = Path(
     "nc-systems/general-tools/git-machine-readable-output-runner-and-parser-common.py")
@@ -177,7 +182,8 @@ time.sleep(FAKE_HANG_SECONDS)
 # --- Layouts and repositories ---------------------------------------------
 
 def make_layout(parent, name, conflict_check=REAL_CONFLICT_CHECK,
-                runner_text=None, include_runner=True):
+                runner_text=None, include_runner=True, mutation_testing_worktree_check_text=None,
+                include_mutation_testing_worktree_check=True):
     """A copy of this checkout's hooks, laid out as the hook expects.
 
     conflict_check is a Path to copy, a string of fake check source, or None
@@ -194,6 +200,11 @@ def make_layout(parent, name, conflict_check=REAL_CONFLICT_CHECK,
         runner.write_text(runner_text)
     elif include_runner:
         shutil.copy2(CONFLICT_CHECK_RUNNER, runner)
+    mutation_testing_worktree_check = scripts / MUTATION_TESTING_WORKTREE_CHECK.name
+    if mutation_testing_worktree_check_text is not None:
+        mutation_testing_worktree_check.write_text(mutation_testing_worktree_check_text)
+    elif include_mutation_testing_worktree_check:
+        shutil.copy2(MUTATION_TESTING_WORKTREE_CHECK, mutation_testing_worktree_check)
     if isinstance(conflict_check, Path):
         shutil.copy2(conflict_check, scripts / REAL_CONFLICT_CHECK.name)
         module = parent / name / GIT_OUTPUT_MODULE_RELATIVE_PATH
@@ -467,7 +478,8 @@ def run_unit_cases():
     layout_parent = Path(tempfile.mkdtemp(prefix="pre-push-shell-filter-"))
     try:
         hooks = make_layout(layout_parent, "filter", conflict_check=None,
-                            include_runner=False)
+                            include_runner=False,
+                            mutation_testing_worktree_check_text="import sys\nsys.exit(0)\n")
         expected_first_line_end = NO_BRANCH_CHECKED % ", ".join(
             [branch_entry("topic", sha), branch_entry("renamed-on-push", other)])
         for shell in SHELLS_FOR_THE_HOOK:
@@ -851,11 +863,88 @@ def run_push_cases(scratch):
           os.access(PRE_PUSH_HOOK, os.X_OK), str(PRE_PUSH_HOOK))
 
 
+# --- Pushes from a mutation-testing worktree ------------------------------
+def run_mutation_testing_worktree_cases(scratch):
+    real = make_layout(scratch, "layout-mutation-testing-worktree")
+
+    for label, text, expected in [
+            ("crashes", "raise RuntimeError('broken')\n",
+             "-push-refusal.py, exited with status 1, so this check lets the push through without checking whether it comes from a mutation-testing worktree."),
+            ("is missing", None, "the check for mutation-testing worktrees did not run, because ")]:
+        hooks = make_layout(scratch, "layout-worktree-check-" + label.replace(" ", "-"),
+                            mutation_testing_worktree_check_text=text,
+                            include_mutation_testing_worktree_check=text is not None)
+        scenario = Scenario(scratch, "worktree-check-" + label.replace(" ", "-"), hooks)
+        result = scenario.push("origin", "clean")
+        check(f"when the mutation-testing worktree check {label}, the push goes through and the "
+              f"hook says what was not checked and to tell the user",
+              went_through(result) and expected in result.stderr
+              and TELL_USER_LINE in result.stderr, result.describe())
+        check(f"when the mutation-testing worktree check {label}, the hook names it by a resolved "
+              f"path, with no ../ in it", "/../" not in result.stderr, result.describe())
+
+    # A push from a copy whose directory name ends in -mutation-testing-worktree is refused, whatever it pushes.
+    scenario = Scenario(scratch, "copy", real)
+    copy = scratch / "copy-checkout-mutation-testing-worktree"
+    scenario.git(scenario.clone, "worktree", "add", "--quiet", "--detach", str(copy), "clean")
+    result = scenario.push("origin", "HEAD:refs/heads/from-a-copy", cwd=copy)
+    check("a push from a checkout whose directory name ends in -mutation-testing-worktree is refused, "
+          "naming the copy and how to remove it",
+          was_refused(result) and str(copy) in result.stderr
+          and "Push from the checkout you work in, not from this copy." in result.stderr
+          and f"git worktree remove --force {copy}" in result.stderr
+          and scenario.origin_ref("from-a-copy") is None, result.describe())
+    result = scenario.push("origin", "clean:refs/heads/clean-mutation-testing-worktree")
+    check("a push of a branch whose name ends in -mutation-testing-worktree is refused",
+          was_refused(result) and "pushes clean-mutation-testing-worktree, whose name ends in -mutation-testing-worktree"
+          in result.stderr and scenario.origin_ref("clean-mutation-testing-worktree") is None,
+          result.describe())
+    result = scenario.push("origin", "clean")
+    check("a push of any other branch from the checkout itself goes through",
+          went_through(result) and "this push is refused" not in result.stderr, result.describe())
+    specification = importlib.util.spec_from_file_location("mutation_testing_worktree_check",
+                                                           MUTATION_TESTING_WORKTREE_CHECK)
+    loaded = importlib.util.module_from_spec(specification)
+    specification.loader.exec_module(loaded)
+    helper_source = (SCRIPTS_DIRECTORY / "run-suite-in-signal-sandbox.py").read_text()
+    check("the pre-push check and the mutation helper use the same label",
+          f'MUTATION_TESTING_WORKTREE_LABEL = "{loaded.MUTATION_TESTING_WORKTREE_LABEL}"' in helper_source,
+          loaded.MUTATION_TESTING_WORKTREE_LABEL)
+
+    # git rev-parse fails: the check says in one line what went unchecked and exits with a status
+    # the hook reports as unchecked, never taking the failure for "not a mutation-testing worktree".
+    real_run, here = loaded.subprocess.run, os.getcwd()
+    os.chdir(scenario.clone)
+
+    def failing_run(command, **options):
+        if command[:2] == ["git", "rev-parse"]:
+            return subprocess.CompletedProcess(command, 128, "", "fatal: injected")
+        return real_run(command, **options)
+    loaded.subprocess.run = failing_run
+    printed = io.StringIO()
+    real_stdin = sys.stdin
+    sys.stdin = io.StringIO(f"refs/heads/clean {'1' * 40} refs/heads/clean {'0' * 40}\n")
+    try:
+        with contextlib.redirect_stderr(printed):
+            status = loaded.main()
+    finally:
+        sys.stdin, loaded.subprocess.run = real_stdin, real_run
+        os.chdir(here)
+    check("when git rev-parse fails, the check says so in one line and exits with a status the "
+          "hook reports as unchecked, not as a refusal or a pass",
+          status == loaded.EXIT_CHECK_FAILED
+          and status not in (loaded.EXIT_REFUSE_PUSH, loaded.EXIT_ALLOW_PUSH)
+          and printed.getvalue() == "pre-push: git rev-parse --show-toplevel failed: fatal: "
+          "injected, so this check lets the push through without checking whether it comes from a mutation-testing worktree.\n",
+          (status, printed.getvalue()))
+
+
 def main():
     run_unit_cases()
     scratch = Path(tempfile.mkdtemp(prefix="pre-push-test-"))
     try:
         run_push_cases(scratch)
+        run_mutation_testing_worktree_cases(scratch)
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
     if failures:
