@@ -5,6 +5,7 @@ Usage:
   python3 scripts/run-suite-in-signal-sandbox.py <suite> [--mutant PATCH]
                                                 [--checkout DIR] [--python PY]
                                                 [--lock-file PATH]
+                                                [--wait-for-lock-seconds N]
 
   <suite>      the suite's path relative to the checkout's top directory,
                such as scripts/run-all-test-suites-test.py, or an absolute
@@ -18,6 +19,10 @@ Usage:
   --python     the interpreter for a Python suite; default this one
   --lock-file  default ~/.claude/.run-all-test-suites.lock, the lock
                scripts/run-all-test-suites.py takes
+  --wait-for-lock-seconds
+               how long to wait for that lock, in the kernel's queue as
+               `flock -w` waits, before refusing; default 3600, and 0 refuses
+               at once
 
 The suite runs exactly as scripts/run-all-test-suites.py runs it: from the
 checkout's top directory, stdin closed, without the variables that redirect
@@ -457,7 +462,12 @@ def parse_arguments(argv):
     parser.add_argument("--checkout", default=".")
     parser.add_argument("--python", default=sys.executable)
     parser.add_argument("--lock-file", default=str(runner.DEFAULT_LOCK_FILE))
-    return parser.parse_args(argv)
+    parser.add_argument("--wait-for-lock-seconds", type=float,
+                        default=runner.MACHINE_LOCK_WAIT_SECONDS_SUGGESTED)
+    arguments = parser.parse_args(argv)
+    if arguments.wait_for_lock_seconds < 0:
+        parser.error("--wait-for-lock-seconds takes a number of seconds of at least 0")
+    return arguments
 
 
 def run(arguments, platform):
@@ -490,11 +500,20 @@ def run(arguments, platform):
     if unconfined_because:
         raise NotRun(f"no signal sandbox: {unconfined_because}")
 
+    if arguments.wait_for_lock_seconds > 0:
+        # A caller waiting under a timeout of its own sees why nothing has happened yet.
+        print(f"{PROGRAM}: waiting up to {arguments.wait_for_lock_seconds:g} s for "
+              f"{arguments.lock_file}", flush=True)
     lock_handle, holder, previous_holder = runner.take_machine_lock(
-        Path(arguments.lock_file), top)
+        Path(arguments.lock_file), top, arguments.wait_for_lock_seconds)
     if lock_handle is None:
-        return (f"VERDICT: not run (lock held) — {arguments.lock_file} is held by {holder}; "
-                f"run again when that run has finished"), EXIT_LOCKED
+        waited = (f"after waiting {arguments.wait_for_lock_seconds:g} s "
+                  if arguments.wait_for_lock_seconds > 0 else "")
+        return (f"VERDICT: not run (lock held) — {arguments.lock_file} is still held "
+                f"{waited}by {holder}; if you started this program under flock on that "
+                f"lock, that flock is the holder, so run this program without flock, since "
+                f"it waits for the lock itself; otherwise, tell the user which process "
+                f"holds the lock"), EXIT_LOCKED
     try:
         # Clean up after earlier runs here, as scripts/run-all-test-suites.py does.
         runner.clean_up_after_earlier_runs(Path(arguments.lock_file), previous_holder,
