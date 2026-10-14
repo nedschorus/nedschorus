@@ -18,6 +18,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
@@ -29,6 +30,9 @@ SEARCH_FILE_GUARD = "scripts/search-file-argument-read-as-option-guard-hook.py"
 spec = importlib.util.spec_from_file_location("bash_guards_replay", SCRIPT_PATH)
 replay = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(replay)
+
+# Every Bash hook loads the shell reader, so new-process mode switches one reader per hook.
+BASH_HOOK_COUNT = len(replay.bash_hook_files(REPOSITORY_ROOT))
 
 failures = []
 
@@ -79,6 +83,7 @@ FIXTURE_PAIRS = [
     ["tmux kill-server", "/tmp"],
     ["git status && echo done", "/tmp"],
     ["cat <<'EOF'\ncase x in x) :;; esac\nEOF", "/tmp"],
+    ['codex exec -C /tmp/x "do the task"', "/tmp"],
 ]
 
 
@@ -108,11 +113,15 @@ try:
     check("the same commit: in-process, search-file main() and new-process modes each ran",
           all(f"{mode}: rows whose verdict differs: 0" in out
               for mode in ("in-process", "search-file main()", "new-process")), out)
+    check("the same commit: no message differs, though the codex exec refusal names a file in each checkout",
+          "in-process: rows whose message differs and verdict does not: 0" in out, out)
+    check("a replay that returns puts back the SIGTERM handler its caller had",
+          signal.getsignal(signal.SIGTERM) is stopped_by_sigterm, signal.getsignal(signal.SIGTERM))
     check("the same commit: the new-process subset holds only the heredoc command",
           "new-process pairs: 1" in out, out)
     check("the same commit: new-process mode reads through a new process at both refs, in-process mode does not",
           all(f"new-process, {label}: 1 rows" in out for label in ("base", "head"))
-          and out.count("shell readers in a new process: 5") == 2
+          and out.count(f"shell readers in a new process: {BASH_HOOK_COUNT}") == 2
           and out.count("shell readers in a new process: 0") == 4, out)
 
     refusing_ls = commit_with_guard_changed(TMUX_KILL_GUARD, (
@@ -123,7 +132,7 @@ try:
     check("a head whose tmux kill guard refuses `ls -la`: exit 1, the merge is blocked",
           status == 1 and "VERDICT CHANGED" in out, f"status {status}\n{out}\n{err}")
     check("a head whose tmux kill guard refuses `ls -la`: the difference names the guard and the command",
-          "in-process: rows whose verdict differs: 1" in out and "tmux-kill: 1" in out and "'ls -la'" in out
+          "in-process: rows whose verdict differs: 1" in out and f"{TMUX_KILL_GUARD}: 1" in out and "'ls -la'" in out
           and "base: ['passed', None]" in out, out)
     check("a head whose tmux kill guard refuses `ls -la`: the differences file holds the row",
           any(json.loads(path.read_text())["verdict"]
@@ -146,7 +155,7 @@ try:
         "    return 0"), scratch)
     status, out, err = run_replay(main_refusing_all, scratch)
     check("a head whose search-file main() refuses every command: exit 1, and only main()'s rows differ",
-          status == 1 and "search-file main(): rows whose verdict differs: 4" in out
+          status == 1 and f"search-file main(): rows whose verdict differs: {len(FIXTURE_PAIRS)}" in out
           and "in-process: rows whose verdict differs: 0" in out, f"status {status}\n{out}\n{err}")
     check("a head whose search-file main() refuses every command: its rows read as refused, not let through",
           "head: ['refused', 0]" in out and "base: ['silent', 0]" in out, out)
@@ -170,7 +179,7 @@ try:
     status, out, err = run_replay(raising_on_ls, scratch, base_ref=raising_on_ls)
     check("a guard that raises on a command at both refs: exit 2, the reading has no verdict",
           status == 2 and "REPLAY FAILED: readings that raised or timed out" in out
-          and "in-process, tmux-kill: 2" in out and "EXCEPTION RuntimeError" in out
+          and f"in-process, {TMUX_KILL_GUARD}: 2" in out and "EXCEPTION RuntimeError" in out
           and "NO VERDICT CHANGED" not in out, f"status {status}\n{out}\n{err}")
     check("a search-file main() that raises on a command at both refs: its rows are failed readings too",
           "search-file main(), search-file main(): 2" in out, out)
@@ -198,14 +207,30 @@ try:
         path.write_text(json.dumps(settings, indent=2))
     sixth_hook = commit_with_change(add_bash_hook, scratch)
     status, out, err = run_replay(sixth_hook, scratch)
+    check("the replay reads exactly the Bash hooks in this checkout's settings.json",
+          set(replay.GUARDS) == replay.bash_hook_files(REPOSITORY_ROOT),
+          set(replay.GUARDS) ^ replay.bash_hook_files(REPOSITORY_ROOT))
     check("a head with a Bash hook this replay does not read: exit 2, naming the hook",
           status == 2 and "scripts/a-sixth-bash-guard-hook.py" in err and "not replayed" in err,
           f"status {status}\n{out}\n{err}")
 
+    main_hanging_on_true = commit_with_guard_changed(SEARCH_FILE_GUARD, (
+        "_main_as_written = main\n"
+        "def main(stdin=sys.stdin, clock=time.monotonic):\n"
+        "    text = stdin.read()\n"
+        "    if '\"true\"' in text:\n"
+        "        time.sleep(30)\n"
+        "    return _main_as_written(stdin=io.StringIO(text), clock=clock)\n"
+        "import io"), scratch)
+    status, out, err = run_replay(main_hanging_on_true, scratch, "--per-pair-timeout-seconds", "2",
+                                  "--new-process-pairs", "none")
+    check("a search-file main() that hangs on the check's own `true`: exit 2 within the per-pair timeout",
+          status == 2 and "search-file main() guard" in err and "TIMEOUT" in err, f"status {status}\n{out}\n{err}")
+
     uncallable = commit_with_guard_changed(ISSUE_WRITE_GUARD, "del analyze_command_text", scratch)
     status, out, err = run_replay(uncallable, scratch)
     check("a head whose guard lacks the function the replay calls: exit 2, the replay failed",
-          status == 2 and "REPLAY FAILED" in err and "ghi-issue-write" in err, f"status {status}\n{out}\n{err}")
+          status == 2 and "REPLAY FAILED" in err and ISSUE_WRITE_GUARD in err, f"status {status}\n{out}\n{err}")
 
     status, out, err = run_replay("no-such-ref-for-the-replay-test", scratch)
     check("a ref that does not exist: exit 2, the replay failed",
@@ -232,8 +257,76 @@ try:
 
     guards, switched = replay.guards_loaded(REPOSITORY_ROOT, True)
     check("new-process mode switches the shell reader each guard loads",
-          switched == 5 and all(guard.shell_reader._read_in_a_new_process for guard in guards.values()),
+          switched == BASH_HOOK_COUNT and all(guard.shell_reader._read_in_a_new_process for guard in guards.values()),
           {key: guard.shell_reader._read_in_a_new_process for key, guard in guards.items()})
+
+    def exit_on_ls(worktree):
+        with open(worktree / TMUX_KILL_GUARD, "a") as handle:
+            handle.write("\n_refusal_for_as_written = refusal_for\n"
+                         "def refusal_for(command):\n"
+                         "    if command == 'ls -la':\n"
+                         "        sys.exit('the test makes this guard exit')\n"
+                         "    return _refusal_for_as_written(command)\n")
+        with open(worktree / SEARCH_FILE_GUARD, "a") as handle:
+            handle.write("\n_main_as_written = main\n"
+                         "def main(stdin=sys.stdin, clock=time.monotonic):\n"
+                         "    text = stdin.read()\n"
+                         "    if 'ls -la' in text:\n"
+                         "        sys.exit(3)\n"
+                         "    return _main_as_written(stdin=io.StringIO(text), clock=clock)\n"
+                         "import io\n")
+    exiting_on_ls = commit_with_change(exit_on_ls, scratch)
+    (Path(scratch) / "fixture-pairs.json").write_text(json.dumps(FIXTURE_PAIRS))
+    try:
+        exiting = subprocess.run(
+            [sys.executable, str(SCRIPT_PATH), "--repository", str(REPOSITORY_ROOT), "--base-ref", exiting_on_ls,
+             "--head-ref", exiting_on_ls, "--pairs-file", str(Path(scratch) / "fixture-pairs.json"), "--jobs", "2",
+             "--new-process-pairs", "none", "--scratch-directory", str(Path(scratch) / "run-exiting")],
+            capture_output=True, text=True, timeout=180)
+        check("a guard and a main() that call sys.exit on a command: exit 2 with failed readings, not a hung pool",
+              exiting.returncode == 2 and "EXCEPTION SystemExit" in exiting.stdout
+              and f"in-process, {TMUX_KILL_GUARD}: 2" in exiting.stdout
+              and "search-file main(), search-file main(): 2" in exiting.stdout,
+              f"exit {exiting.returncode}\n{exiting.stdout}\n{exiting.stderr}")
+    except subprocess.TimeoutExpired:
+        check("a guard and a main() that call sys.exit on a command: exit 2 with failed readings, not a hung pool",
+              False, "the replay was still running after 180 s")
+        subprocess.run(["pkill", "-f", str(Path(scratch) / "run-exiting")])
+
+    codex_guard, _ = replay.guards_loaded(REPOSITORY_ROOT, False)
+    codex_path = "scripts/hand-typed-codex-exec-redirect-hook.py"
+    check("the codex exec guard's reading refuses a hand-typed codex exec and passes ls",
+          replay.GUARDS[codex_path](codex_guard[codex_path], 'codex exec -C /tmp/x "do the task"', "/", "/")[0] == "refused"
+          and replay.GUARDS[codex_path](codex_guard[codex_path], "ls -la", "/", "/")[0] == "passed",
+          replay.GUARDS[codex_path](codex_guard[codex_path], 'codex exec -C /tmp/x "do the task"', "/", "/"))
+
+    slow_on_ls = commit_with_guard_changed(TMUX_KILL_GUARD, (
+        "_refusal_for_as_written = refusal_for\n"
+        "def refusal_for(command):\n"
+        "    if command == 'ls -la':\n"
+        "        time.sleep(120)\n"
+        "    return _refusal_for_as_written(command)\n"
+        "import time"), scratch)
+    stopped_scratch = Path(scratch) / "run-stopped"
+    (Path(scratch) / "fixture-pairs.json").write_text(json.dumps(FIXTURE_PAIRS))
+    stopped = subprocess.Popen(
+        [sys.executable, str(SCRIPT_PATH), "--repository", str(REPOSITORY_ROOT), "--base-ref", slow_on_ls,
+         "--head-ref", slow_on_ls, "--pairs-file", str(Path(scratch) / "fixture-pairs.json"), "--jobs", "2",
+         "--per-pair-timeout-seconds", "300", "--scratch-directory", str(stopped_scratch)],
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    deadline = time.monotonic() + 120
+    while time.monotonic() < deadline and not (
+            len(worktrees_registered_under(stopped_scratch)) == 2
+            and list(stopped_scratch.glob("verdicts-in-process-base.log"))):
+        time.sleep(0.5)
+    time.sleep(3)  # The step's pool workers are now reading the fixture.
+    stopped.send_signal(signal.SIGTERM)
+    stopped_output = stopped.communicate(timeout=60)[0]
+    still_running = subprocess.run(["pgrep", "-f", str(stopped_scratch)], capture_output=True, text=True).stdout.split()
+    check("a replay stopped by SIGTERM in the middle of a step: exit 2, its checkouts removed, no process left",
+          stopped.returncode == 2 and not worktrees_registered_under(stopped_scratch) and not still_running,
+          f"exit {stopped.returncode}; registered {worktrees_registered_under(stopped_scratch)}; "
+          f"running {still_running}\n{stopped_output}")
 
     left_over = worktrees_registered_under(Path(scratch) / "run-")
     check("every checkout the replay made is removed", not left_over, left_over)

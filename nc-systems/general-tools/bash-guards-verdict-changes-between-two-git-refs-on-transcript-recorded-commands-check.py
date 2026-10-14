@@ -53,17 +53,6 @@ DEFAULT_TRANSCRIPT_DIRECTORIES = [
     "/home/nedlern/nedschorus-logs/transcripts/recovered",
 ]
 
-# The guards, by the file each loads from in a checkout. These must be exactly the Bash
-# PreToolUse hooks in the checkout's .claude/settings.json; a hook added there without an entry
-# here would go unreplayed, so the replay fails until the entry and its reading below are added.
-GUARD_FILES = {
-    "synthetic-keystroke": "scripts/synthetic-keystroke-guard-hook.py",
-    "force-push": "scripts/force-push-with-open-pull-request-guard-hook.py",
-    "ghi-issue-write": ".claude/hooks/ghi-issue-write-redirect.py",
-    "tmux-kill": "nc-systems/general-tools/claude-code-tmux-kill-server-and-kill-session-missing-server-selection-refusal-hook.py",
-    "search-file": "scripts/search-file-argument-read-as-option-guard-hook.py",
-}
-
 # A new process per read is about 50 times slower than reading in-process, so by default
 # new-process mode reads only the commands whose reading carries the most structure across
 # the transport: a heredoc, a case terminator, or ~.
@@ -169,13 +158,13 @@ def bash_hook_files(checkout):
 
 def check_guards_match_settings(checkout, label):
     hooks = bash_hook_files(checkout)
-    replayed = set(GUARD_FILES.values())
+    replayed = set(GUARDS)
     if hooks != replayed:
         raise ReplayFailed(
             f"the Bash hooks in .claude/settings.json at the {label} ref are not the guards this replay reads; "
             f"not replayed: {sorted(hooks - replayed) or 'none'}; replayed but not a Bash hook: "
-            f"{sorted(replayed - hooks) or 'none'}. Add each new hook to GUARD_FILES and to guard_readings() "
-            f"in this script, in the pull request that adds the hook")
+            f"{sorted(replayed - hooks) or 'none'}. Add each new hook to GUARDS in this script, with a function "
+            f"that reads one command through it, in the pull request that adds the hook")
 
 
 # ---------------------------------------------------------------- step 3: one ref's verdicts
@@ -192,8 +181,8 @@ def load_module(checkout, relative_path, name):
 
 def guards_loaded(checkout, new_process):
     """Return (guards, how many shell reader modules were switched to read in a new process)."""
-    guards = {key: load_module(checkout, path, "replayed_" + key.replace("-", "_"))
-              for key, path in GUARD_FILES.items()}
+    guards = {path: load_module(checkout, path, "replayed_" + re.sub(r"\W", "_", path))
+              for path in GUARDS}
     switched = 0
     if new_process:
         for guard in guards.values():
@@ -230,44 +219,68 @@ def is_failed_reading(verdict):
     return isinstance(verdict, str) and (verdict.startswith("EXCEPTION") or verdict == "TIMEOUT")
 
 
+def read_synthetic_keystroke(guard, command, working_directory, search_file_directory):
+    runner = StubbedProbeRunner()
+    reason = guard.analyze_command_text(command, None, False, guard.GuardRun(runner, fixed_clock))
+    return ["refused" if reason else "passed", sorted(set(runner.calls))], reason
+
+
+def read_force_push(guard, command, working_directory, search_file_directory):
+    runner = StubbedProbeRunner()
+    decision, reason = guard.analyze_command_text(command, working_directory, guard.GuardRun(runner, fixed_clock))
+    return [decision, sorted(set(runner.calls))], reason
+
+
+def read_issue_write(guard, command, working_directory, search_file_directory):
+    reason = guard.analyze_command_text(command, "/nonexistent-directory")
+    return "refused" if reason else "passed", reason
+
+
+def read_tmux_kill(guard, command, working_directory, search_file_directory):
+    reason = guard.refusal_for(command)
+    return "refused" if reason else "passed", reason
+
+
+def read_search_file(guard, command, working_directory, search_file_directory):
+    reason = guard.analyze_command_text(command, search_file_directory, time.monotonic)
+    return "refused" if reason else "passed", reason
+
+
+def read_codex_exec(guard, command, working_directory, search_file_directory):
+    reason = guard.refusal_for_command(command)
+    return "refused" if reason else "passed", reason
+
+
+# Every Bash PreToolUse hook in .claude/settings.json, by the file it runs, with the function
+# that reads one command through it. check_guards_match_settings() names each hook missing here,
+# so a new guard is one line: its file and a reading function like the ones above.
+GUARDS = {
+    "scripts/synthetic-keystroke-guard-hook.py": read_synthetic_keystroke,
+    "scripts/force-push-with-open-pull-request-guard-hook.py": read_force_push,
+    ".claude/hooks/ghi-issue-write-redirect.py": read_issue_write,
+    "nc-systems/general-tools/claude-code-tmux-kill-server-and-kill-session-missing-server-selection-refusal-hook.py": read_tmux_kill,
+    "scripts/search-file-argument-read-as-option-guard-hook.py": read_search_file,
+    "scripts/hand-typed-codex-exec-redirect-hook.py": read_codex_exec,
+}
+SEARCH_FILE_GUARD = "scripts/search-file-argument-read-as-option-guard-hook.py"
+
+
 def guard_readings(guards, command, working_directory, search_file_directory):
-    """Return {guard: (verdict, message)} for one pair; the verdict is what decides the merge."""
+    """Return {guard file: (verdict, message)} for one pair; the verdict is what decides the merge."""
     readings = {}
-
-    def keystroke():
-        guard = guards["synthetic-keystroke"]
-        runner = StubbedProbeRunner()
-        reason = guard.analyze_command_text(command, None, False, guard.GuardRun(runner, fixed_clock))
-        return ["refused" if reason else "passed", sorted(set(runner.calls))], reason
-
-    def force_push():
-        guard = guards["force-push"]
-        runner = StubbedProbeRunner()
-        decision, reason = guard.analyze_command_text(command, working_directory, guard.GuardRun(runner, fixed_clock))
-        return [decision, sorted(set(runner.calls))], reason
-
-    def issue_write():
-        reason = guards["ghi-issue-write"].analyze_command_text(command, "/nonexistent-directory")
-        return "refused" if reason else "passed", reason
-
-    def tmux_kill():
-        reason = guards["tmux-kill"].refusal_for(command)
-        return "refused" if reason else "passed", reason
-
-    def search_file():
-        reason = guards["search-file"].analyze_command_text(command, search_file_directory, time.monotonic)
-        return "refused" if reason else "passed", reason
-
-    for key, read in (("synthetic-keystroke", keystroke), ("force-push", force_push),
-                      ("ghi-issue-write", issue_write), ("tmux-kill", tmux_kill),
-                      ("search-file", search_file)):
+    for path, read in GUARDS.items():
         try:
             signal.alarm(WORKER.get("timeout", DEFAULT_PER_PAIR_TIMEOUT_SECONDS))
-            readings[key] = read()
+            verdict, message = read(guards[path], command, working_directory, search_file_directory)
+            if isinstance(message, str) and WORKER.get("checkout"):
+                # A message naming a file in the checkout would differ between the base and head checkouts.
+                message = message.replace(WORKER["checkout"], "<checkout>")
+            readings[path] = (verdict, message)
         except PairTimedOut:
-            readings[key] = ("TIMEOUT", None)
-        except Exception as error:  # A failed reading; is_failed_reading() makes the run exit 2.
-            readings[key] = (f"EXCEPTION {type(error).__name__}", str(error))
+            readings[path] = ("TIMEOUT", None)
+        except (Exception, SystemExit) as error:  # A failed reading; is_failed_reading() makes the run exit 2.
+            # SystemExit too: one escaping a Pool worker kills it, and Pool.map then waits forever.
+            readings[path] = (f"EXCEPTION {type(error).__name__}", str(error))
         finally:
             signal.alarm(0)
     return readings
@@ -276,6 +289,7 @@ def guard_readings(guards, command, working_directory, search_file_directory):
 def worker_start(checkout, new_process, search_file_directory, timeout):
     os.nice(15)
     WORKER["timeout"] = timeout
+    WORKER["checkout"] = str(checkout)
     signal.signal(signal.SIGALRM, raise_pair_timed_out)
     WORKER["guards"], WORKER["switched"] = guards_loaded(checkout, new_process)
     WORKER["search_file_directory"] = search_file_directory
@@ -310,28 +324,34 @@ def worker_search_file_main_row(pair):
     command, working_directory = pair
     try:
         signal.alarm(WORKER["timeout"])
-        row = search_file_main_outcome(WORKER["guards"]["search-file"], command, working_directory)
+        row = search_file_main_outcome(WORKER["guards"][SEARCH_FILE_GUARD], command, working_directory)
     except PairTimedOut:
         row = ["TIMEOUT", None]
-    except Exception as error:  # A failed reading; is_failed_reading() makes the run exit 2.
+    except (Exception, SystemExit) as error:  # A failed reading; is_failed_reading() makes the run exit 2.
         row = [f"EXCEPTION {type(error).__name__}", None]
     finally:
         signal.alarm(0)
     return row, WORKER["switched"]
 
 
-def smoke_check(checkout, new_process, search_file_directory):
+def smoke_check(checkout, new_process, search_file_directory, timeout):
     """Fail the replay when a guard cannot read even `true`: the replay no longer fits the guards' code.
 
     Return how many shell reader modules read in a new process.
     """
     guards, switched = guards_loaded(checkout, new_process)
     signal.signal(signal.SIGALRM, raise_pair_timed_out)
+    WORKER["timeout"] = timeout
     readings = guard_readings(guards, "true", "/", search_file_directory)
     try:
-        readings["search-file main()"] = (search_file_main_outcome(guards["search-file"], "true", "/")[0], None)
-    except Exception as error:
+        signal.alarm(timeout)
+        readings["search-file main()"] = (search_file_main_outcome(guards[SEARCH_FILE_GUARD], "true", "/")[0], None)
+    except PairTimedOut:
+        readings["search-file main()"] = ("TIMEOUT", None)
+    except (Exception, SystemExit) as error:
         readings["search-file main()"] = (f"EXCEPTION {type(error).__name__}", str(error))
+    finally:
+        signal.alarm(0)
     for key, (verdict, detail) in readings.items():
         if is_failed_reading(verdict):
             raise ReplayFailed(
@@ -341,7 +361,7 @@ def smoke_check(checkout, new_process, search_file_directory):
 
 
 def ref_verdicts(checkout, pairs, jobs, new_process, search_file_directory, search_file_main, timeout):
-    switched = smoke_check(checkout, new_process, search_file_directory)
+    switched = smoke_check(checkout, new_process, search_file_directory, timeout)
     with Pool(jobs, initializer=worker_start, initargs=(checkout, new_process, search_file_directory, timeout)) as pool:
         results = pool.map(worker_search_file_main_row if search_file_main else worker_guard_row, pairs, chunksize=200)
     if len(results) != len(pairs):
@@ -362,7 +382,7 @@ def verdict_differences(pairs, base_rows, head_rows):
     differences, message_differences = [], []
     for pair, base, head in zip(pairs, base_rows, head_rows):
         if isinstance(base, dict):
-            for key in GUARD_FILES:
+            for key in GUARDS:
                 if base[key][0] != head[key][0]:
                     differences.append((pair, key, base[key], head[key]))
                 elif base[key][1] != head[key][1]:
@@ -401,12 +421,21 @@ def run_git(repository, *arguments):
 
 def run_step_in_child(arguments, log_path):
     """Run one ref's step in a fresh interpreter, so each ref's modules load from that ref alone."""
+    # In its own process group, so stopping the replay also stops the step's pool workers, which
+    # would otherwise go on reading checkouts the replay is removing.
     with open(log_path, "w") as log:
-        completed = subprocess.run([sys.executable, "-B", __file__, *arguments], stdout=log,
-                                   stderr=subprocess.STDOUT, env=child_environment())
-    if completed.returncode != 0:
+        step = subprocess.Popen([sys.executable, "-B", __file__, *arguments], stdout=log,
+                                stderr=subprocess.STDOUT, env=child_environment(), start_new_session=True)
+        try:
+            returncode = step.wait()
+        except BaseException:
+            with contextlib.suppress(ProcessLookupError):
+                os.killpg(step.pid, signal.SIGKILL)
+            step.wait()
+            raise
+    if returncode != 0:
         tail = Path(log_path).read_text(errors="replace").strip().splitlines()[-5:]
-        raise ReplayFailed(f"the step {arguments[1]} exited {completed.returncode}; log {log_path}: " + " | ".join(tail))
+        raise ReplayFailed(f"the step {arguments[1]} exited {returncode}; log {log_path}: " + " | ".join(tail))
 
 
 def shortened(value):
@@ -443,7 +472,14 @@ def remove_checkouts(repository, checkouts):
 
 
 def replay(arguments):
-    signal.signal(signal.SIGTERM, raise_terminated)
+    previous_handler = signal.signal(signal.SIGTERM, raise_terminated)
+    try:
+        return replay_with_sigterm_handled(arguments)
+    finally:
+        signal.signal(signal.SIGTERM, previous_handler)
+
+
+def replay_with_sigterm_handled(arguments):
     scratch_named = arguments.scratch_directory is not None
     scratch = Path(arguments.scratch_directory).resolve() if scratch_named else \
         Path(tempfile.mkdtemp(prefix="bash-guards-replay-"))
@@ -527,6 +563,7 @@ def replay(arguments):
             print("NO VERDICT CHANGED")
             status = 0
     finally:
+        signal.signal(signal.SIGTERM, signal.SIG_IGN)  # A second SIGTERM must not stop the removal.
         not_removed = remove_checkouts(repository, checkouts.values())
         if not_removed:
             print("REPLAY FAILED: these checkouts could not be removed; remove them with git worktree remove --force:\n  "
